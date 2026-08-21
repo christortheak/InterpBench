@@ -336,8 +336,15 @@ fi
 # ── Build ────────────────────────────────────────────────────────────────────
 if [ "$DO_BUILD" -eq 1 ]; then
   step "Building $SCHEME (Release) — only Xcode can build the Metal shaders"
+  # CLANG_COVERAGE_MAPPING=NO: the package has test targets, so Xcode's
+  # auto-generated scheme turns on gather-coverage, and that instruments even
+  # plain `build` actions — the shipped binaries then carry __llvm_prf
+  # sections (megabytes of them) and write default.profraw into whatever cwd
+  # they run from. A command-line setting outranks the scheme; the test lane
+  # (`xcodebuild test`) is a different invocation and keeps its coverage.
   xcodebuild build -skipMacroValidation -scheme "$SCHEME" \
     -destination 'platform=macOS' -configuration Release \
+    CLANG_COVERAGE_MAPPING=NO \
     -derivedDataPath "$DERIVED" >/dev/null \
     || die "the build failed — rerun the xcodebuild line without >/dev/null to see why" 3
 
@@ -346,6 +353,7 @@ if [ "$DO_BUILD" -eq 1 ]; then
   step "Building $CLI_SCHEME (Release) — the CLI the bundle carries"
   xcodebuild build -skipMacroValidation -scheme "$CLI_SCHEME" \
     -destination 'platform=macOS' -configuration Release \
+    CLANG_COVERAGE_MAPPING=NO \
     -derivedDataPath "$DERIVED" >/dev/null \
     || die "the $CLI_SCHEME build failed — rerun the xcodebuild line without >/dev/null to see why" 3
 fi

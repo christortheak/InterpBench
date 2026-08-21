@@ -80,6 +80,10 @@ if let buildReason {
         [
             "build", "-skipMacroValidation", "-scheme", "SteerLabApp",
             "-destination", "platform=macOS,arch=arm64",
+            // The auto-generated scheme gathers coverage even for plain
+            // builds (the package has test targets); an instrumented app
+            // drops default.profraw into its cwd.
+            "CLANG_COVERAGE_MAPPING=NO",
             "-derivedDataPath", derivedData.path,
         ],
         cwd: projectRoot)
