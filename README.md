@@ -8,17 +8,32 @@
 > results across installations. Interfaces on the study path are versioned
 > and change additively, but nothing here is 1.0.
 
-SteerLab is a concept-steering workbench for open-weight language models. It
-does three things, and everything else in the repository exists to make those
-three trustworthy:
+SteerLab is a workbench for building and studying **steered agents**:
+open-weight language models given deliberately induced dispositions, then
+measured with the discipline of a controlled experiment.
 
-1. **Extract** a named concept direction from a model — a vector in the
-   residual stream derived from a contrastive stimulus set, by contrastive
-   activation addition, a PCA-based reading of difference vectors, a
-   grand-mean contrast against a reference corpus, or a linear probe.
-2. **Inject** that direction during generation, at a chosen layer and a
-   strength measured in units of the residual-stream norm at that layer, on
-   every decode step rather than only during prefill.
+An agent here is a base model plus a chosen combination of interventions —
+activation vectors injected during generation and fine-tuned adapters —
+though the workhorse case is a single vector at one layer and strength. The
+vectors can be **extracted** in-workbench from contrastive stimulus sets
+(contrastive activation addition, a grand-mean contrast against a reference
+corpus, PCA-based readings of difference vectors, linear probes) or
+**imported** from external interpretability work, including
+sparse-autoencoder feature directions (e.g. Gemma Scope) and Jacobian-lens
+vectors. However an agent is built, it lands in the same artifact model with
+the same provenance, and a study is a **comparison between agents**: an agent
+against its paired unsteered baseline, agents against each other under
+identical conditions, or agents interacting in multi-agent scenarios to see
+how induced dispositions propagate.
+
+Underneath, the engine does three things, and everything else in the
+repository exists to make them trustworthy:
+
+1. **Source** a concept direction — extract it from stimuli you author, or
+   import and rescale one derived elsewhere.
+2. **Inject** it during generation, at a chosen layer and a strength measured
+   in units of the residual-stream norm at that layer, on every decode step
+   rather than only during prefill.
 3. **Measure** what moved — with paired baselines, matched-norm random
    controls, capability batteries, answer-token log-probabilities for
    categorical outcomes, and effect sizes with bootstrap confidence
@@ -44,20 +59,12 @@ Three commitments shape everything else in the design:
   hand-off. Point a coding agent at it and the instrument is as drivable by an
   LLM as by a person at the keyboard.
 
-- **The agent is the unit of study.** The thing SteerLab builds, compares, and
-  measures is a configured *agent*: a base model plus a chosen combination of
-  interventions — activation-vector injections and fine-tuned adapters —
-  though the workhorse case is a single vector at a single layer and strength.
-  The vectors themselves can be derived many ways (contrastive activation
-  addition, a grand-mean contrast, PCA-based readings of difference vectors,
-  linear probes) or imported from external interpretability work, including
-  sparse-autoencoder feature directions (e.g. Gemma Scope) and Jacobian-lens
-  vectors — all landing in the same artifact model with the same provenance.
-  In the app these configurations accumulate in a variant library and can be
-  promoted to named agents; a study is then a *comparison between agents* —
-  an agent against its paired unsteered baseline, agents against each other
-  under identical conditions, or agents placed together in multi-agent
-  scenarios to see how induced dispositions propagate through interaction.
+- **The agent is the unit of study.** As the opening says: configured agents —
+  base model plus interventions — are what get built, compared, and measured.
+  The instrument enforces it structurally: in the app, configurations
+  accumulate in a **variant library** and are promoted to named agents, and
+  new capability routes through that library rather than around it, so
+  anything you can build is automatically something you can compare.
 
 - **Rigor is structural, not aspirational.** The discipline is built into the
   artifact lifecycle rather than left to good intentions: inputs pinned by
@@ -112,108 +119,53 @@ licenses are your own to read — see NOTICE.
 
 ## Quickstart
 
-**If you have SteerLab.app, you already have the command line.** The app ships
-the CLI it was built from, inside the bundle at
-`Contents/Helpers/steerlab-cli`: the same binary the app itself calls into,
-signed with the bundle, carrying its own copy of the Metal shader library. So
-there is nothing to build and no Xcode involved — just give it a name on your
-`PATH`:
-
-```bash
-mkdir -p ~/.local/bin
-ln -s ~/SteerLab/SteerLab.app/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab-cli
-
-# `steerlab` is the shorter name the rest of these docs use, and the name
-# install-cli.sh's shim takes. TEMPORARY alias: the `steerlab` name is
-# reserved for a future cross-platform client, which will take it over —
-# `steerlab-cli` is this binary's durable name.
-ln -s ~/SteerLab/SteerLab.app/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab
-
-export PATH="$HOME/.local/bin:$PATH"
-steerlab --version    # the build, and where every shipped resource resolved
-steerlab --help
-```
-
-A symlink is enough: the binary resolves its shaders and the app's bundled
-resources against its real location, not the link's. Invoking it in place by
-full path works identically, and the path inside the bundle is the same
-wherever the app lives — `~/SteerLab`, `/Applications`, anywhere.
-
-**Building from source** is the developer path, and the only one that needs
-Xcode 27:
-
 ```bash
 git clone <this repository>
-cd <checkout>
-
-# Build the Swift CLI with xcodebuild and install it under ~/.local.
-# Re-runnable; a failed install leaves the previous one untouched.
-./scripts/install-cli.sh
-
-# Put it on PATH if it isn't already, then confirm what you installed.
-export PATH="$HOME/.local/bin:$PATH"
-steerlab --version
-steerlab --help
 ```
 
-If `xcode-select` points at an older Xcode, set `DEVELOPER_DIR` to your
-Xcode 27 installation before running the installer. `scripts/build-app.sh`
-assembles the signed app from the same checkout, CLI included.
+Then take either seat, or both:
 
-Either way, create the home layout — a `SteerLab/` folder holding your
-workspaces, your private site library, and (if you have one) the checkout as
-siblings, so one directory moves and backs up as a unit:
+- **Point a coding agent at the checkout.** [AGENTS.md](AGENTS.md) at the
+  repository root is the cold-start contract: it tells the agent how to see
+  what your machine already has, install the command line (using the app's
+  bundled CLI when there is no Xcode), create the `~/SteerLab/` home layout
+  and your first workspace, and hand off to that workspace's own `AGENTS.md`
+  for study work. *"Read AGENTS.md and set me up"* is a complete instruction.
+- **Open the Mac app.** Download SteerLab.app from this repository's
+  Releases, unzip it into `~/SteerLab/`, and launch. The app carries the same
+  CLI inside its bundle (`Contents/Helpers/steerlab-cli`), so this path needs
+  no developer tools at all.
 
-```bash
-steerlab init                      # or: steerlab init --home /path/to/SteerLab
-```
+Everything converges on one home folder that moves and backs up as a unit:
 
 ```text
 ~/SteerLab/
 ├── Workspaces/     study workspaces, one folder each, each its own git repo
-├── Sites/          your PRIVATE site registry (cluster-site profiles, presets)
-│   └── cluster-sites/  one JSON file per site — the app AND the CLI read this
+├── Sites/          your PRIVATE cluster-site registry — one JSON file per
+│                   site under cluster-sites/, read and written by the app
+│                   AND the CLI; keep it in a private git repo to sync
+│                   between machines. Tokens and passwords never go here —
+│                   they live in each Mac's Keychain.
 ├── SteerLab.app/   the app, and the CLI it carries
 └── <checkout>/     this repository — any folder name; detected by content
 ```
 
-`init` creates the two directories if they are absent and reports what was
-already there; run it as often as you like. It never deletes or overwrites
-anything, creates no workspace, and does not change how a workspace root is
-resolved. `Sites/` is deliberately left empty so you can `git clone` your own
-private site repository into it — keeping site configuration out of workspaces
-you share.
+Preferring to do it by hand — installing the CLI, `steerlab init`, creating a
+workspace — is [docs/ONBOARDING.md](docs/ONBOARDING.md) §4–5, and building
+from source (the one path that needs Xcode 27) is covered there too.
 
-`Sites/cluster-sites/` is the **canonical cluster-site registry**: one
-human-editable, pretty-printed JSON file per site, and the single store the app
-and `steerlab cluster` both read and write. Add a site in the app and the file
-appears there; `git commit && git push` and your other Mac has it after a pull.
-SteerLab never runs git for you — its writes just leave the tree dirty, and
-committing is your step.
+## The study lifecycle
 
-**Tokens, keys, and passwords are never written into `Sites/`.** They live in
-this Mac's Keychain, so the registry is safe to keep in a private repository
-and a new machine prompts you once. Connection state (tunnel endpoints, last
-server build) is per-machine too, in
-`~/Library/Application Support/SteerLab/site-runtime.json` — so connecting and
-disconnecting never dirties the registry.
-
-Then create a workspace — a plain folder holding `prompts/`, `experiments/`, and
-`runs/`, its own git repository, seeded with templates and its own
-`AGENTS.md`. Study data lives in a workspace, never in this checkout:
+A workspace is a plain folder holding `prompts/`, `experiments/`, and
+`runs/` — its own git repository, seeded with templates and its own
+`AGENTS.md`, which is written to hand a coding agent. Study data lives in a
+workspace, never in this checkout. Drive the lifecycle through the app,
+through your agent, or yourself:
 
 ```bash
 steerlab workspace init ~/SteerLab/Workspaces/my-study
 export STEERLAB_WORKSPACE=~/SteerLab/Workspaces/my-study
-```
 
-Any location works: the resolution order is `STEERLAB_WORKSPACE`, then
-`--workspace`, then the choice the app has persisted.
-
-Then either point your coding agent at the workspace's `AGENTS.md` — it is
-written for exactly that — or drive the lifecycle yourself:
-
-```bash
 steerlab experiment --help                    # the study lifecycle, one line each
 steerlab experiment create demo --model <model-id>
 steerlab experiment attach demo <concept>     # pins stimulus hashes + options
