@@ -2233,7 +2233,9 @@ public final class ClusterProvisioner {
 
     /// Quote one word for a remote POSIX shell. Safe words (paths, flags,
     /// `~`-prefixed, `$`-carrying) stay bare so tilde/parameter expansion
-    /// still happens remotely; everything else is single-quoted.
+    /// still happens remotely; a `$`-carrying word whose only unsafe
+    /// characters are expansion syntax is double-quoted for the same reason;
+    /// everything else is single-quoted.
     nonisolated static func shellQuoted(_ word: String) -> String {
         let safeExtras = "@%+=:,./-_~$"
         let isSafe = !word.isEmpty
@@ -2243,6 +2245,28 @@ public final class ClusterProvisioner {
                         || safeExtras.contains(character))
             }
         if isSafe { return word }
+        // A site profile may carry a remote-expanded storage root such as
+        // `/scratch/${USER:-$(id -un)}/steerlab-workspace` — the exact
+        // default `bootstrap.sh` uses, and the right shape for a site file
+        // SHARED between researchers, whose home layout differs per user.
+        // Single quotes would freeze it literal; the first live cluster
+        // start then ran `mkdir -p '/scratch/${USER:-$(id -un)}/…'` and died
+        // with "Permission denied" creating a directory literally named
+        // `${USER:-$(id -un)}` (2026-08-21). Double quotes keep `${…}` and
+        // `$(…)` live remotely, and the branch is deliberately narrow: only
+        // `$`-carrying words whose every character is either safe or
+        // expansion syntax (braces, parens, space) qualify, so sed programs,
+        // globs, and anything carrying quoting characters of its own still
+        // take the literal single-quote path below.
+        let expansionExtras = "{}() "
+        let isExpandable = word.contains("$")
+            && word.allSatisfy { character in
+                character.isASCII
+                    && (character.isLetter || character.isNumber
+                        || safeExtras.contains(character)
+                        || expansionExtras.contains(character))
+            }
+        if isExpandable { return "\"" + word + "\"" }
         return "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 

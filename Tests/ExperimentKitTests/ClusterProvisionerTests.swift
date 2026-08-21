@@ -1280,6 +1280,32 @@ struct ClusterProvisionerTests {
         #expect(ClusterProvisioner.shellQuoted("don't") == "'don'\\''t'")
     }
 
+    /// A shared site file's storage root is username-agnostic on purpose —
+    /// `/scratch/${USER:-$(id -un)}/steerlab-workspace` is bootstrap.sh's own
+    /// default shape — and single-quoting it froze the placeholder literal:
+    /// the first live cluster start ran
+    /// `mkdir -p '/scratch/${USER:-$(id -un)}/…'` and died with "Permission
+    /// denied" creating a directory literally named `${USER:-$(id -un)}`
+    /// (2026-08-21). Such words are double-quoted so the REMOTE shell expands
+    /// them; words carrying their own quoting characters keep the literal
+    /// single-quote path.
+    @Test func remoteExpansionSyntaxIsDoubleQuotedNotFrozenLiteral() {
+        #expect(
+            ClusterProvisioner.shellQuoted(
+                "/scratch/${USER:-$(id -un)}/steerlab-workspace")
+                == "\"/scratch/${USER:-$(id -un)}/steerlab-workspace\"")
+        #expect(ClusterProvisioner.shellQuoted("/scratch/$USER/ws")
+            == "/scratch/$USER/ws")  // already bare-safe, unchanged
+        // A `$`-carrying word with characters outside the expansion set is
+        // NOT the expandable case — sed programs stay literal.
+        #expect(
+            ClusterProvisioner.shellQuoted("s|@X@|$HOME/envs|g")
+                == "'s|@X@|$HOME/envs|g'")
+        // No `$` at all: plain unsafe words keep the single-quote path even
+        // when their characters are all in the expansion set.
+        #expect(ClusterProvisioner.shellQuoted("two words") == "'two words'")
+    }
+
     @Test func selectingASiteKeepsMaterializationAtItsDeclaredDefault() {
         // Regression (WP5 Step 9 flag): this reset once wrote the stale Step 6
         // opt-in literal and silently defeated default-on materialization the
