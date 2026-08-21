@@ -110,8 +110,11 @@ public final class ChatService {
     /// The roadmap's model tiers (CLAUDE.md › Models). Dev 4B for fast
     /// iteration; 8-bit 14B/12B for main experiments (quantization noise
     /// degrades steering fidelity at 4-bit); 32B/27B for the scale check.
-    /// Load downloads a model on first use (~3 GB dev, ~13–16 GB main,
-    /// ~29–35 GB scale).
+    /// These are CANDIDATES, not an inventory: a fresh Mac has none of them
+    /// downloaded. Whether a tier's weights are actually here is
+    /// `SubstrateCatalog.isInstalled`, and getting them is Download — a named,
+    /// visible, cancellable install (~3 GB dev, ~13–16 GB main, ~29–35 GB
+    /// scale), never a side effect of Load.
     public static let availableModels: [SmokeTestConfig.ModelSpec] = [
         .init(family: "qwen3", id: "Qwen/Qwen3-4B-MLX-4bit", contextWindow: 65_536),
         .init(family: "gemma3", id: "mlx-community/gemma-3-4b-it-4bit", contextWindow: 32_768),
@@ -134,6 +137,12 @@ public final class ChatService {
     /// the connection store; panels read models/artifacts through it instead
     /// of fetching `/api/state` themselves.
     public let catalog: SubstrateCatalog
+    /// Local (MLX) model installs — the counterpart to the server's
+    /// `installModel` job, owned here so a multi-gigabyte fetch survives view
+    /// churn and every local model picker can show the same progress. On
+    /// success it re-scans the catalog's installed-models index, which is what
+    /// flips a picker row from "not installed" to loadable.
+    public let modelInstaller = LocalModelInstaller()
     public var selectedRemoteModelID: String?
     public var selectedRemoteVariantPath: String?
     public var selectedRemoteVariantHash: String?
@@ -514,13 +523,32 @@ public final class ChatService {
         cluster.workspaceSyncArtifactRefresh = { [weak self] in
             await self?.refreshServerSteeringArtifacts()
         }
+        // A finished install is exactly the moment the installed-models index
+        // is stale: re-scan so the picker's availability and the Load gate
+        // both see the new weights without a relaunch.
+        modelInstaller.onFinished = { [weak self] _ in
+            self?.catalog.refreshLocalInstalledModels()
+        }
         refreshVectors()
     }
 
     // MARK: - Derived state
 
     public var selectedModel: SmokeTestConfig.ModelSpec {
-        Self.availableModels.first { $0.id == selectedModelID } ?? Self.availableModels[0]
+        Self.modelSpec(for: selectedModelID)
+    }
+
+    /// The spec for a local model id. A model installed by slug is not in the
+    /// pinned tiers, and falling back to `availableModels[0]` there would load
+    /// a DIFFERENT model than the one selected — silently. Unknown ids keep
+    /// their own identity and get a family derived from the id (the same
+    /// string test the chat-template constraints use) and no pinned context
+    /// window, so budget checks fall back to the decoded model config.
+    public static func modelSpec(for id: String) -> SmokeTestConfig.ModelSpec {
+        if let pinned = availableModels.first(where: { $0.id == id }) { return pinned }
+        let lowered = id.lowercased()
+        let family = lowered.contains("gemma") ? "gemma3" : "qwen3"
+        return .init(family: family, id: id, contextWindow: nil)
     }
 
     public func artifact(for slot: SteerSlot) -> VectorArtifact? {
@@ -930,6 +958,31 @@ public final class ChatService {
         case .local: await loadModel()
         case .server: await loadRemoteModel()
         }
+    }
+
+    /// Install a model INTO the active workspace's registry: this Mac's HF
+    /// cache locally, the server's cache (as a durable job) on a server. Same
+    /// affordance, same registry the builders' selectors read — the Playground
+    /// is a consumer of the install machinery, not a special case.
+    public func installWorkspaceModel(_ modelID: String) async {
+        switch cluster.activeWorkspace {
+        case .local:
+            modelInstaller.install(modelID)
+        case .server:
+            await cluster.installModel(modelID)
+        }
+    }
+
+    /// What the Local model button should do for the current selection —
+    /// the view's single source for its title, action, and enablement.
+    public var localModelButtonAction: LocalModelAction {
+        let isLoading: Bool
+        if case .loading = state { isLoading = true } else { isLoading = false }
+        return Self.localModelAction(
+            selectedModelID: selectedModelID,
+            isInstalled: catalog.isInstalled(selectedModelID, in: .local),
+            isLoading: isLoading,
+            isInstalling: modelInstaller.isInstalling)
     }
 
     /// "The active workspace has a runnable model" — the Save Variant gate
@@ -2136,8 +2189,16 @@ public final class ChatService {
     /// start — "no model loaded" is a state building handles, not a blocker.
     public nonisolated static func localModelSelectionCaption(
         selectedModelID: String,
-        loadedModelID: String?
+        loadedModelID: String?,
+        isInstalled: Bool = true
     ) -> String? {
+        // "Building will load it" is a promise the build cannot keep for
+        // weights that are not on the Mac — it would refuse. Say the real
+        // next step instead.
+        guard isInstalled else {
+            return "\(selectedModelID) is not downloaded — use Add Model… to "
+                + "fetch it before building"
+        }
         guard let loadedModelID else {
             return "no model loaded — building will load \(selectedModelID)"
         }
@@ -2182,8 +2243,63 @@ public final class ChatService {
         }
     }
 
+    /// What the Local workspace's model button should DO for a selection:
+    /// load it, or offer the download it needs first. Engine-pure so the gate
+    /// is testable without a cache or a network.
+    ///
+    /// This is the rule that makes a fresh machine survivable. Before it, the
+    /// Playground listed six pinned tiers as if they were all present and
+    /// `loadModel()` handed an absent one straight to the Hugging Face
+    /// downloader, which fetched several gigabytes with no visible progress
+    /// in the section, no cancel, and no bound on how long it could sit there.
+    public enum LocalModelAction: Equatable, Sendable {
+        /// Weights are in the local cache — load it.
+        case load(String)
+        /// Not installed: offer the download explicitly, by name.
+        case download(String)
+        /// Nothing can start right now (a load or install is in flight).
+        case busy(reason: String)
+    }
+
+    public nonisolated static func localModelAction(
+        selectedModelID: String,
+        isInstalled: Bool,
+        isLoading: Bool,
+        isInstalling: Bool
+    ) -> LocalModelAction {
+        if isLoading {
+            return .busy(reason: "a model load is already in progress")
+        }
+        if isInstalling {
+            return .busy(reason: "a model download is already in progress")
+        }
+        return isInstalled ? .load(selectedModelID) : .download(selectedModelID)
+    }
+
+    /// Why a local load must refuse this model, or nil when it may proceed.
+    /// The one refusal `loadModel()` enforces itself, so no caller — the
+    /// Playground button, a builder's `ensureSelectedLocalModelLoaded`, the
+    /// headless web host — can start an invisible multi-gigabyte download.
+    public nonisolated static func localLoadRefusal(
+        modelID: String, isInstalled: Bool
+    ) -> String? {
+        guard !isInstalled else { return nil }
+        return "\(modelID) is not installed on this Mac — use Download to "
+            + "fetch its weights (several GB) first; Load never downloads"
+    }
+
     public func loadModel() async {
         guard state != .loading(percent: 0) else { return }
+        // Fail closed on a missing model, with the cache re-scanned first so
+        // the refusal and the picker's availability badges agree.
+        catalog.refreshLocalInstalledModels()
+        if let refusal = Self.localLoadRefusal(
+            modelID: selectedModelID,
+            isInstalled: catalog.isInstalled(selectedModelID, in: .local))
+        {
+            errorMessage = refusal
+            return
+        }
         state = .loading(percent: 0)
         errorMessage = nil
         transcript = []

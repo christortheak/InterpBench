@@ -128,6 +128,17 @@ import Testing
         #expect(caption?.contains("reset the chat") == true)
     }
 
+    /// Weights that are not on the Mac get the honest next step: the build
+    /// would refuse rather than "load" them, so the caption must not promise
+    /// a load it cannot perform.
+    @Test func anUninstalledSelectionPointsAtTheDownload() {
+        let caption = ChatService.localModelSelectionCaption(
+            selectedModelID: selected, loadedModelID: nil, isInstalled: false)
+        #expect(caption?.contains("not downloaded") == true)
+        #expect(caption?.contains(selected) == true)
+        #expect(caption?.contains("Add Model") == true)
+    }
+
     /// Nothing to say when the selection is already resident.
     @Test func aMatchingSelectionHasNoCaption() {
         #expect(

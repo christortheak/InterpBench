@@ -212,6 +212,42 @@ struct SubstrateCatalogTests {
         #expect(!models.isEmpty)
     }
 
+    /// Availability on Local is the HF-cache scan, NOT the pinned tier list:
+    /// on a fresh Mac every tier is offerable and none is installed, which is
+    /// exactly the distinction the Playground's Load gate rests on.
+    @Test func localAvailabilityComesFromTheCacheScan() throws {
+        let store = ClusterConnectionStore(defaults: try freshDefaults("local-availability"))
+        let tier = ChatService.availableModels[0].id
+        let catalog = SubstrateCatalog(store: store, localCacheScan: { [tier] })
+
+        // Nothing scanned yet: offerable, but nothing claimed installed.
+        #expect(catalog.installedModels(for: .local) == ChatService.availableModels.map(\.id))
+        #expect(!catalog.isInstalled(tier, in: .local))
+
+        catalog.refreshLocalInstalledModels()
+        #expect(catalog.isInstalled(tier, in: .local))
+        #expect(!catalog.isInstalled(ChatService.availableModels[1].id, in: .local))
+    }
+
+    /// A model installed by slug joins the SAME offerable list the builders
+    /// read — appended after the pinned tiers, never a second registry.
+    @Test func slugInstalledModelJoinsTheOfferableList() throws {
+        let store = ClusterConnectionStore(defaults: try freshDefaults("local-extras"))
+        let tier = ChatService.availableModels[0].id
+        let catalog = SubstrateCatalog(
+            store: store,
+            localCacheScan: { ["vendor-a/model-small-4bit", tier] })
+        catalog.refreshLocalInstalledModels()
+
+        let options = catalog.installedModels(for: .local)
+        #expect(options.prefix(ChatService.availableModels.count)
+            == ArraySlice(ChatService.availableModels.map(\.id)))
+        #expect(options.last == "vendor-a/model-small-4bit")
+        // The pinned tier is not duplicated by also being in the cache.
+        #expect(options.filter { $0 == ChatService.availableModels[0].id }.count == 1)
+        #expect(catalog.isInstalled("vendor-a/model-small-4bit", in: .local))
+    }
+
     @Test func serverInstalledModelsReadActiveRemoteStateOnly() throws {
         let store = ClusterConnectionStore(defaults: try freshDefaults("server-models"))
         let a = store.addServer(name: "A", urlString: "http://gpu-a:8080")

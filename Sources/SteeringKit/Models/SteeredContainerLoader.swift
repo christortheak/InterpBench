@@ -30,6 +30,43 @@ public enum SteeredContainerLoader {
         )
     }
 
+    /// Download a model's snapshot into the HF cache WITHOUT loading it into
+    /// MLX — the "install" half of `load`, so an install can be offered as its
+    /// own visible, cancellable operation instead of happening invisibly
+    /// inside a button called Load. Same cache, same layout, same file set as
+    /// the load path (mlx-swift-lm's `modelDownloadPatterns`, which is
+    /// `package`-scoped upstream and therefore restated here), so a completed
+    /// install makes `isCached` true and the next `load` a pure cache read.
+    ///
+    /// Cancellable: the task's cancellation propagates through the hub
+    /// client's URLSession work.
+    @discardableResult
+    public static func downloadSnapshot(
+        modelID: String,
+        revision: String? = nil,
+        progressHandler: @Sendable @escaping (Progress) -> Void = { _ in }
+    ) async throws -> URL {
+        let downloader: any Downloader = #hubDownloader()
+        return try await downloader.download(
+            id: modelID,
+            revision: revision,
+            matching: modelDownloadPatterns,
+            useLatest: false,
+            progressHandler: progressHandler)
+    }
+
+    /// The file set a load resolves — weights plus the tokenizer/config JSON
+    /// (and Jinja templates). Mirrors mlx-swift-lm's `modelDownloadPatterns`.
+    static let modelDownloadPatterns = ["*.safetensors", "*.json", "*.jinja"]
+
+    /// Is this model already in the local HF cache — i.e. can it be loaded
+    /// without touching the network? The ONE local installed-model test:
+    /// membership in the same enumeration `localModelIDs` reports, so a
+    /// picker's "installed" badge and a load's refusal can never disagree.
+    public static func isCached(modelID: String, cacheRoot override: URL? = nil) -> Bool {
+        localModelIDs(cacheRoot: override).contains(modelID)
+    }
+
     /// The commit hash of the locally cached snapshot for a model id, read
     /// from the HF cache's `refs/main` (honors `HF_HOME`). This is what a
     /// revision-less load actually runs, so it is the value to pin for

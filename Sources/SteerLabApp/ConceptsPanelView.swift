@@ -292,9 +292,20 @@ struct ConceptsPanelView: View {
                         InstallModelButton(cluster: service.cluster)
                         Spacer()
                     }
-                } else if let caption = ChatService.localModelSelectionCaption(
-                    selectedModelID: service.selectedModelID,
-                    loadedModelID: service.loadedModelID)
+                } else {
+                    // Same install affordance on Local: the builder's selector
+                    // drives the model, so it needs the same way to get one.
+                    HStack {
+                        AddLocalModelButton(service: service)
+                        Spacer()
+                    }
+                }
+                if service.cluster.computeTarget == .local,
+                    let caption = ChatService.localModelSelectionCaption(
+                        selectedModelID: service.selectedModelID,
+                        loadedModelID: service.loadedModelID,
+                        isInstalled: service.catalog.isInstalled(
+                            service.selectedModelID, in: .local))
                 {
                     // Not an instruction any more: this selector DRIVES the
                     // model, so building swaps the resident one itself (the

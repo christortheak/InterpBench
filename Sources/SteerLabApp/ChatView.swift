@@ -277,14 +277,55 @@ struct ChatView: View {
 
     private var loadButtonTitle: String {
         switch service.cluster.computeTarget {
-        case .local: service.state == .ready ? "Reload" : "Load"
+        case .local:
+            switch service.localModelButtonAction {
+            // Never "Load" for weights that are not here: a button named Load
+            // must not start a multi-gigabyte download.
+            case .download: "Download…"
+            case .load, .busy: service.state == .ready ? "Reload" : "Load"
+            }
         case .server: "Load on Server"
+        }
+    }
+
+    private var loadButtonHelp: String {
+        switch service.cluster.computeTarget {
+        case .local:
+            switch service.localModelButtonAction {
+            case .download(let model):
+                return "\(model) is not on this Mac — download its weights "
+                    + "(several GB) into the model cache; Load enables when it "
+                    + "finishes"
+            case .load(let model):
+                return "load \(model) from the local model cache; clears the chat"
+            case .busy(let reason):
+                return reason
+            }
+        case .server:
+            return "load the selected model on \(service.cluster.substrateLabel)"
+        }
+    }
+
+    /// Local: Load loads, Download downloads — one button, two verbs, never
+    /// the second disguised as the first.
+    private func runLoadButtonAction() {
+        guard service.cluster.computeTarget == .local else {
+            Task { await service.loadWorkspaceModel() }
+            return
+        }
+        switch service.localModelButtonAction {
+        case .download(let model):
+            Task { await service.installWorkspaceModel(model) }
+        case .load:
+            Task { await service.loadWorkspaceModel() }
+        case .busy:
+            break
         }
     }
 
     private var loadButtonDisabled: Bool {
         switch service.cluster.computeTarget {
-        case .local: isLoading
+        case .local: isLoading || service.modelInstaller.isInstalling
         // Also disabled mid-load: repeated clicks launched overlapping load
         // streams, and switching models made whichever finished last win
         // (engineer review 2026-07-17). And disabled when the CURRENT
@@ -992,6 +1033,37 @@ struct ChatView: View {
         }
     }
 
+    /// Local install/load progress. The install is a network fetch measured in
+    /// gigabytes and the load is a cache read; both now say so here rather
+    /// than leaving the section mute while the button sits disabled.
+    @ViewBuilder
+    private var localModelProgressRows: some View {
+        if !isServerWorkspace {
+            if service.modelInstaller.isInstalling {
+                ProgressView(value: localInstallFraction)
+            }
+            if let status = service.modelInstaller.statusLine {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(
+                        service.modelInstaller.isFailed ? .orange : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if case .loading(let percent) = service.state {
+                Text("loading from the local model cache — \(percent)%")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var localInstallFraction: Double {
+        if case .installing(_, let percent) = service.modelInstaller.phase {
+            return Double(percent) / 100
+        }
+        return 0
+    }
+
     // MARK: Steering panel
 
     private var steeringPanel: some View {
@@ -1009,16 +1081,13 @@ struct ChatView: View {
                 WorkspaceModelPicker(service: service)
                     .disabled(service.isRemoteModelLoading)
                 HStack(spacing: 8) {
-                    Button(loadButtonTitle) {
-                        Task { await service.loadWorkspaceModel() }
-                    }
-                    .disabled(loadButtonDisabled)
-                    .help(
-                        service.cluster.computeTarget == .local
-                            ? "download (first time) or load the model from the local cache; clears the chat"
-                            : "load the selected model on \(service.cluster.substrateLabel)")
+                    Button(loadButtonTitle) { runLoadButtonAction() }
+                        .disabled(loadButtonDisabled)
+                        .help(loadButtonHelp)
                     if isServerWorkspace {
                         InstallModelButton(cluster: service.cluster)
+                    } else {
+                        AddLocalModelButton(service: service)
                     }
                     if service.isRemoteModelLoading {
                         Button("Cancel Load") { service.cancelRemoteLoad() }
@@ -1026,8 +1095,18 @@ struct ChatView: View {
                                 "stop waiting for this load — the server may "
                                 + "still finish it and keep the model resident")
                     }
+                    if service.modelInstaller.isInstalling {
+                        Button("Cancel Download") { service.modelInstaller.cancel() }
+                            .help(
+                                "stop the download — files already fetched stay "
+                                    + "in the cache and a re-run resumes")
+                    }
                     Spacer()
                 }
+                // The local half of the load story, which used to be invisible:
+                // download progress and, when it fails, the reason — in the
+                // section, not only in the window subtitle.
+                localModelProgressRows
                 // The selected model's memory-fit refusal, named where the
                 // disabled Load button would otherwise be mute.
                 if let note = SessionModelFit.tooBigNote(

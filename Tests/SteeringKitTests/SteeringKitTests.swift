@@ -28,6 +28,28 @@ import Foundation
 
         #expect(SteeredContainerLoader.localModelIDs(cacheRoot: root) == ["Qwen/Qwen3-4B-MLX-4bit"])
     }
+
+    /// "Is it downloaded?" and "what is downloaded?" must be the same
+    /// question: the load gate and the picker's availability badge both read
+    /// this one enumeration, so they cannot disagree about a model.
+    @Test func isCachedAgreesWithTheCacheEnumeration() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(component: "hf-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let modelDir = root.appending(components: "hub", "models--vendor-a--model-small-4bit")
+        try FileManager.default.createDirectory(
+            at: modelDir.appending(component: "refs"), withIntermediateDirectories: true)
+        try "abc123".write(
+            to: modelDir.appending(components: "refs", "main"),
+            atomically: true, encoding: .utf8)
+
+        #expect(
+            SteeredContainerLoader.isCached(
+                modelID: "vendor-a/model-small-4bit", cacheRoot: root))
+        #expect(
+            !SteeredContainerLoader.isCached(
+                modelID: "vendor-b/model-large-8bit", cacheRoot: root))
+    }
 }
 
 /// A model's own `config.json` must never be able to kill the process.

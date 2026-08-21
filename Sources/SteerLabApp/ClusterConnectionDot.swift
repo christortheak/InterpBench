@@ -153,11 +153,23 @@ struct ClusterConnectionDot: View {
             }
             Button("Set Up Cluster…") { showingSetupWizard = true }
         } label: {
-            Image(systemName: "circle.fill")
-                .foregroundStyle(dotColor)
-                .imageScale(.small)
+            // Fresh-Mac finding: a bare coloured circle is unreadable to
+            // anyone who has not been told what it means — it looks like
+            // decoration, and its four states are indistinguishable to a
+            // colour-blind reader. Same one-glance state, now spelled out:
+            // a network glyph tinted by state PLUS the state's own word.
+            Label {
+                Text(connectionTitle)
+            } icon: {
+                // Only the glyph carries the state tint — a fully coloured
+                // toolbar label reads as an alert, and macOS toolbars are
+                // monochrome apart from deliberate status indicators.
+                Image(systemName: connectionSymbol)
+                    .foregroundStyle(dotColor)
+            }
         }
-        .help("cluster connection — \(titleLine): \(stateLine)")
+        .labelStyle(.titleAndIcon)
+        .help("connection — \(titleLine): \(stateLine)")
         .onChange(of: cluster.activeSite, initial: true) { _, newSite in
             tunnel.configure(site: newSite)
         }
@@ -254,24 +266,67 @@ struct ClusterConnectionDot: View {
         return cluster.status ?? "not connected"
     }
 
-    private var dotColor: Color {
+    /// One word for the transport's state, next to the glyph. Deliberately
+    /// short — the sentence is in the menu and the tooltip.
+    private var connectionTitle: String {
+        guard case .server = cluster.activeWorkspace, cluster.activeSite != nil else {
+            return "Local"
+        }
+        switch connectionState {
+        case .connected: return "Connected"
+        case .authenticate: return "Authenticate"
+        case .working: return "Connecting"
+        case .degraded: return "Degraded"
+        case .offline: return "Not Connected"
+        }
+    }
+
+    private var connectionSymbol: String {
+        switch connectionState {
+        case .connected: return "network"
+        case .authenticate: return "lock"
+        case .working: return "network"
+        case .degraded: return "exclamationmark.triangle.fill"
+        case .offline: return "network.slash"
+        }
+    }
+
+    /// The transport's state, normalized across the two transports so the
+    /// label, the glyph, and the colour cannot drift apart.
+    private enum ConnectionState {
+        case connected, authenticate, working, degraded, offline
+    }
+
+    private var connectionState: ConnectionState {
         guard case .server = cluster.activeWorkspace, let site = cluster.activeSite else {
-            return .secondary  // grey: Local-only
+            return .offline
         }
         if site.isSSHTransport {
             switch tunnel.state {
-            case .up: return .green
-            case .needsAuth, .opening: return .orange
-            case .degraded: return .red
-            case .idle, .closed: return .secondary
+            case .up: return .connected
+            case .needsAuth: return .authenticate
+            case .opening: return .working
+            case .degraded: return .degraded
+            case .idle, .closed: return .offline
             }
         }
-        guard let status = cluster.status else { return .secondary }
+        guard let status = cluster.status else { return .offline }
         if status.contains("failed") || status.contains("invalid") || status.contains("rejected") {
-            return .red
+            return .degraded
         }
-        if status.hasSuffix("...") { return .orange }
-        return .green
+        if status.hasSuffix("...") { return .working }
+        return .connected
+    }
+
+    /// Same four colours as before, now derived from the single normalized
+    /// state so the tint can never contradict the word beside it.
+    private var dotColor: Color {
+        switch connectionState {
+        case .connected: return .green
+        case .authenticate, .working: return .orange
+        case .degraded: return .red
+        case .offline: return .secondary  // grey: Local-only or not connected
+        }
     }
 
     private var showsDisconnect: Bool {

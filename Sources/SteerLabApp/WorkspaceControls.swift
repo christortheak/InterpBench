@@ -34,9 +34,15 @@ struct WorkspaceSelector: View {
             // Substrate-prominence (live-testing finding): the selector
             // itself names the active substrate — "<workspace> — MLX" or
             // "<workspace> — Server: <label>" — so the researcher never has
-            // to open a menu to know where builds and runs execute.
-            Text("\(workspace.displayName) — \(substrateSuffix)")
+            // to open a menu to know where builds and runs execute. The
+            // folder glyph says WHICH of the toolbar's menus this is at a
+            // glance (fresh-Mac finding: unlabelled toolbar controls read as
+            // decoration, not as the data/compute/connection triple).
+            Label(
+                "\(workspace.displayName) — \(substrateSuffix)",
+                systemImage: "folder")
         }
+        .labelStyle(.titleAndIcon)
         .help(helpText)
         .alert(
             "Workspace", isPresented: showingError,
@@ -247,6 +253,81 @@ struct InstallModelButton: View {
     }
 }
 
+/// Local (MLX) twin of `InstallModelButton`: install a model into THIS Mac's
+/// Hugging Face cache by slug, through `ChatService.installWorkspaceModel` →
+/// `LocalModelInstaller`, so it lands in the same installed-models registry
+/// every builder's selector reads. Shows the in-flight percentage and a
+/// Cancel, because the thing it starts is measured in gigabytes.
+struct AddLocalModelButton: View {
+    @Bindable var service: ChatService
+    @State private var showingInstaller = false
+    @State private var modelID = ""
+
+    var body: some View {
+        Button {
+            showingInstaller = true
+        } label: {
+            Label("Add Model…", systemImage: "square.and.arrow.down.on.square")
+        }
+        .help(
+            "download a Hugging Face repo into this Mac's model cache "
+                + "(~/.cache/huggingface) so it can be loaded here and picked "
+                + "in the builders — MLX-quantized repos, e.g. "
+                + "mlx-community/gemma-3-4b-it-4bit")
+        .popover(isPresented: $showingInstaller, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Add Model to This Mac")
+                    .font(.headline)
+                TextField(
+                    "HF repo id (e.g. mlx-community/gemma-3-4b-it-4bit)",
+                    text: $modelID)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 300)
+                Text("Downloads the full weights — typically 3–35 GB. It keeps "
+                    + "running while you work, and a cancelled download resumes.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 320, alignment: .leading)
+                HStack(spacing: 8) {
+                    Button("Download") {
+                        Task { await service.installWorkspaceModel(modelID) }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(
+                        service.modelInstaller.isInstalling
+                            || modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+                                .isEmpty)
+                    if service.modelInstaller.isInstalling {
+                        Button("Cancel Download") { service.modelInstaller.cancel() }
+                    }
+                    Spacer()
+                }
+                if service.modelInstaller.isInstalling {
+                    ProgressView(value: installFraction)
+                        .frame(maxWidth: 320)
+                }
+                if let status = service.modelInstaller.statusLine {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 320, alignment: .leading)
+                }
+            }
+            .padding(12)
+        }
+    }
+
+    private var installFraction: Double {
+        if case .installing(_, let percent) = service.modelInstaller.phase {
+            return Double(percent) / 100
+        }
+        return 0
+    }
+}
+
 /// Model picker over the active workspace's installed models (Local = the
 /// app's pinned tiers, server = that server's inventory), bound to the shared
 /// workspace selection on `ChatService`.
@@ -279,7 +360,12 @@ struct WorkspaceModelPicker: View {
                         .tag(String?.some(model))
                         .selectionDisabled()
                 } else {
-                    Text(model).tag(String?.some(model))
+                    // Availability, per row. On a fresh Mac none of the pinned
+                    // tiers are downloaded, and a picker that hides that turns
+                    // Load into a silent multi-gigabyte fetch. Not-installed
+                    // rows stay SELECTABLE — selecting one is how you choose
+                    // what to download — but they say so.
+                    Text(rowTitle(for: model)).tag(String?.some(model))
                 }
             }
             if let selected = service.workspaceSelectedModelID,
@@ -292,10 +378,15 @@ struct WorkspaceModelPicker: View {
         }
         .help(
             service.cluster.activeWorkspace == .local
-                ? "the dual-track local model tiers; vectors are model-specific, "
-                    + "so artifact lists follow the loaded model"
+                ? "the dual-track local model tiers plus anything else in this "
+                    + "Mac's Hugging Face cache; rows marked \"not downloaded\" "
+                    + "need Download before they can load. Vectors are "
+                    + "model-specific, so artifact lists follow the loaded model"
                 : "models installed on \(service.cluster.substrateLabel) — use "
                     + "Install model… to prefetch another")
+        // Cheap directory listing; run whenever the picker appears so a model
+        // installed elsewhere (a builder, another window, the CLI) shows up.
+        .task { service.catalog.refreshLocalInstalledModels() }
         if isServerWorkspace, installed.isEmpty {
             Text(
                 "no models installed on \(service.cluster.substrateLabel) — "
@@ -311,5 +402,18 @@ struct WorkspaceModelPicker: View {
 
     private var installed: [String] {
         service.workspaceModelOptions
+    }
+
+    /// "<id>" when the weights are present, "<id> — not downloaded" when they
+    /// are not, "<id> — downloading N%" while an install runs.
+    private func rowTitle(for model: String) -> String {
+        guard !isServerWorkspace else { return model }
+        if case .installing(let installing, let percent) = service.modelInstaller.phase,
+            installing == model
+        {
+            return "\(model) — downloading \(percent)%"
+        }
+        return service.catalog.isInstalled(model, in: .local)
+            ? model : "\(model) — not downloaded"
     }
 }

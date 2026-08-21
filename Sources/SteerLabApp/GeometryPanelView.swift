@@ -74,14 +74,37 @@ struct GeometryPanelView: View {
 
     private var loadButtonTitle: String {
         switch service.cluster.computeTarget {
-        case .local: service.state == .ready ? "Reload" : "Load"
+        case .local:
+            switch service.localModelButtonAction {
+            // Same rule as Playground: weights that are not here get a button
+            // that says Download, never one that says Load.
+            case .download: "Download…"
+            case .load, .busy: service.state == .ready ? "Reload" : "Load"
+            }
         case .server: "Load on Server"
+        }
+    }
+
+    /// Local: Load loads, Download downloads. Shared with the "needs a model"
+    /// empty state so both entry points behave identically.
+    private func runLoadButtonAction() {
+        guard service.cluster.computeTarget == .local else {
+            Task { await service.loadWorkspaceModel() }
+            return
+        }
+        switch service.localModelButtonAction {
+        case .download(let model):
+            Task { await service.installWorkspaceModel(model) }
+        case .load:
+            Task { await service.loadWorkspaceModel() }
+        case .busy:
+            break
         }
     }
 
     private var loadButtonDisabled: Bool {
         switch service.cluster.computeTarget {
-        case .local: isLoadingModel
+        case .local: isLoadingModel || service.modelInstaller.isInstalling
         // Same eligibility rule as Playground (engineer review 2026-07-18:
         // Geometry's gate missed both the single-flight guard and the
         // memory-fit check, so an oversized stale selection stayed loadable
@@ -356,19 +379,33 @@ struct GeometryPanelView: View {
         Section("Model") {
             WorkspaceModelPicker(service: service)
             HStack(spacing: 8) {
-                Button(loadButtonTitle) {
-                    Task { await service.loadWorkspaceModel() }
-                }
-                .disabled(loadButtonDisabled)
-                .help(
-                    isServerWorkspace
-                        ? "load the selected model on \(service.cluster.substrateLabel)"
-                        : "download (first time) or load the model from the local cache")
+                Button(loadButtonTitle) { runLoadButtonAction() }
+                    .disabled(loadButtonDisabled)
+                    .help(
+                        isServerWorkspace
+                            ? "load the selected model on \(service.cluster.substrateLabel)"
+                            : "load the selected model from this Mac's model "
+                                + "cache; models that are not downloaded offer "
+                                + "Download instead")
                 if isServerWorkspace {
                     InstallModelButton(cluster: service.cluster)
                         .controlSize(.small)
+                } else {
+                    AddLocalModelButton(service: service)
+                        .controlSize(.small)
+                }
+                if service.modelInstaller.isInstalling {
+                    Button("Cancel Download") { service.modelInstaller.cancel() }
+                        .controlSize(.small)
                 }
                 Spacer()
+            }
+            if !isServerWorkspace, let status = service.modelInstaller.statusLine {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(
+                        service.modelInstaller.isFailed ? .orange : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Text(modelStatusLine)
                 .font(.caption)
@@ -385,17 +422,18 @@ struct GeometryPanelView: View {
             Text(message)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Button(loadPromptTitle) {
-                Task { await service.loadWorkspaceModel() }
-            }
-            .disabled(loadButtonDisabled)
+            Button(loadPromptTitle) { runLoadButtonAction() }
+                .disabled(loadButtonDisabled)
         }
     }
 
     private var loadPromptTitle: String {
-        isLoadingModel
-            ? "Loading…"
-            : "Load \(service.workspaceSelectedModelID ?? service.selectedModelID)"
+        if isLoadingModel { return "Loading…" }
+        let model = service.workspaceSelectedModelID ?? service.selectedModelID
+        if !isServerWorkspace, case .download = service.localModelButtonAction {
+            return "Download \(model)…"
+        }
+        return "Load \(model)"
     }
 
     private var sourceCaption: some View {

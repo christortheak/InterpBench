@@ -225,8 +225,9 @@ private struct SubstrateSelector: View {
                 }
             }
         } label: {
-            Text("Compute: \(cluster.substrateLabel)")
+            Label("Compute: \(cluster.substrateLabel)", systemImage: "cpu")
         }
+        .labelStyle(.titleAndIcon)
         .help(
             "which workspace the app is scoped to: the MLX engine in this app, "
                 + "or a saved Python SteerLab server (its installed models, "

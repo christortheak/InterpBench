@@ -101,15 +101,30 @@ public final class SubstrateCatalog {
 
     private let store: ClusterConnectionStore
 
+    /// The local installed-model scan, injectable so tests are not at the
+    /// mercy of whatever the developer's own Hugging Face cache holds.
+    /// Defaults to the ONE local detection path,
+    /// `SteeredContainerLoader.localModelIDs()`.
+    private let localCacheScan: @Sendable () -> [String]
+
     /// Local artifacts, refreshed from the runs tree on demand (`refresh`).
     public private(set) var localVectors: [VectorArtifact] = []
+    /// Model ids actually present in this Mac's Hugging Face cache — i.e.
+    /// loadable without touching the network. Empty until
+    /// `refreshLocalInstalledModels()` runs, so nothing in a headless host
+    /// silently depends on the developer's cache.
+    public private(set) var localInstalledModelIDs: Set<String> = []
     /// The active server's artifact catalog; cleared when no server is active.
     public private(set) var remoteVectors: [RemoteVectorRecord] = []
     /// Last remote-catalog fetch failure, for a status row; nil on success.
     public private(set) var remoteVectorsError: String?
 
-    public init(store: ClusterConnectionStore) {
+    public init(
+        store: ClusterConnectionStore,
+        localCacheScan: (@Sendable () -> [String])? = nil
+    ) {
         self.store = store
+        self.localCacheScan = localCacheScan ?? { SteeredContainerLoader.localModelIDs() }
         // A server-side workspace switch repoints which tree the server's
         // catalog enumerates: refetch the remote artifact list so pickers
         // never keep offering the OLD workspace's vectors.
@@ -132,6 +147,13 @@ public final class SubstrateCatalog {
         localVectors = VectorCatalog.scan()
     }
 
+    /// Re-scan the local Hugging Face cache. Cheap (a directory listing), so
+    /// callers refresh it whenever a model picker appears and after an
+    /// install finishes.
+    public func refreshLocalInstalledModels() {
+        localInstalledModelIDs = Set(localCacheScan())
+    }
+
     /// Fetch the *active* server's catalog. No-op (cleared) when the Local
     /// workspace is active — inactive servers are never polled.
     public func refreshRemoteVectors() async {
@@ -151,18 +173,41 @@ public final class SubstrateCatalog {
 
     // MARK: Availability
 
-    /// Installed, loadable model ids for a workspace. Local = the app's
-    /// pinned model tiers (`ChatService.availableModels` — a hardcoded
-    /// candidate list, kept as the local source for now, not an HF-cache
-    /// scan). Server = the active server's reported inventory; an *inactive*
-    /// server returns empty (never polled, no last-known inventory kept).
+    /// Model ids a workspace can OFFER. Local = the app's pinned model tiers
+    /// (candidates, whether or not their weights are downloaded yet) plus
+    /// anything else found in this Mac's HF cache — a model installed by slug
+    /// belongs in the same list the builders read, not in a second one.
+    /// Server = the active server's reported inventory; an *inactive* server
+    /// returns empty (never polled, no last-known inventory kept).
+    ///
+    /// Offerable is NOT the same as ready-to-load on Local: ask `isInstalled`
+    /// for that. Keeping them separate is the point — the tiers must stay
+    /// listed on a fresh machine (they are what you would download) while
+    /// only the cached ones may be loaded.
     public func installedModels(for workspace: ClusterConnectionStore.Workspace) -> [String] {
         switch workspace {
         case .local:
-            return ChatService.availableModels.map(\.id)
+            let tiers = ChatService.availableModels.map(\.id)
+            let extras = localInstalledModelIDs.subtracting(tiers).sorted()
+            return tiers + extras
         case .server(let id):
             guard store.activeWorkspace == .server(id) else { return [] }
             return store.remoteState?.models ?? []
+        }
+    }
+
+    /// Are this model's weights present on the workspace — loadable without a
+    /// download? Local reads the HF-cache scan (`refreshLocalInstalledModels`);
+    /// a server workspace's inventory IS its installed set, so membership in
+    /// `installedModels` answers it there.
+    public func isInstalled(
+        _ modelID: String, in workspace: ClusterConnectionStore.Workspace
+    ) -> Bool {
+        switch workspace {
+        case .local:
+            return localInstalledModelIDs.contains(modelID)
+        case .server:
+            return installedModels(for: workspace).contains(modelID)
         }
     }
 
