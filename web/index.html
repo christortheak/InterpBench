@@ -1,0 +1,1436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SteerLab</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; --accent: #0a84ff; --warn: #ff9f0a; --bad: #ff453a;
+          --bg2: rgba(127,127,127,.12); --bg3: rgba(127,127,127,.22); }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px -apple-system, system-ui, sans-serif; display: flex;
+         flex-direction: column; height: 100vh; }
+  header { display: flex; gap: 8px; align-items: center; padding: 8px 12px;
+           border-bottom: 1px solid var(--bg3); flex-wrap: wrap; }
+  header .state { color: gray; font-size: 12px; margin-left: auto; }
+  main { display: flex; flex: 1; min-height: 0; }
+  #chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #messages { flex: 1; overflow-y: auto; padding: 12px; }
+  .msg { max-width: 78%; padding: 8px 10px; border-radius: 10px; margin: 4px 0;
+         white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { background: color-mix(in srgb, var(--accent) 25%, transparent); margin-left: auto; }
+  .msg.assistant { background: var(--bg2); }
+  .msg b, .msg strong { font-weight: 600 }
+  #inputrow { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--bg3); }
+  #inputrow textarea { flex: 1; resize: none; height: 44px; padding: 8px;
+                       border-radius: 8px; border: 1px solid var(--bg3); font: inherit; }
+  #panel { width: 380px; border-left: 1px solid var(--bg3); overflow-y: auto;
+           overflow-x: hidden; padding: 10px; flex-shrink: 0; }
+  /* containment: flex items may shrink below content width; long unbroken
+     strings (model ids, hashes, vector labels) wrap instead of overflowing */
+  #panel .row > * { min-width: 0; }
+  #panel select { max-width: 100%; }
+  fieldset { min-width: 0; }
+  #tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+  #tabs button { flex: 1; }
+  fieldset { border: 1px solid var(--bg3); border-radius: 8px; margin: 0 0 10px;
+             padding: 8px 10px; }
+  legend { font-size: 12px; color: gray; padding: 0 4px; }
+  .row { display: flex; gap: 6px; align-items: center; margin: 5px 0; flex-wrap: wrap; }
+  .row label:first-child { min-width: 88px; font-size: 13px; }
+  .fieldgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+               gap: 8px; margin: 6px 0; align-items: start; }
+  .field label { display: block; font-size: 12px; color: gray; margin-bottom: 3px; }
+  .field .hint { display: block; font-size: 11px; color: gray; margin-top: 2px; }
+  .field input, .field select { width: 100%; }
+  .grow { flex: 1; }
+  button { font: inherit; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--bg3);
+           background: var(--bg2); cursor: pointer; }
+  button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  select, input[type=text], input[type=number], input[type=password], textarea {
+    font: inherit; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--bg3); }
+  input[type=range] { flex: 1; }
+  textarea.stim { width: 100%; height: 58px; max-height: 220px; overflow: auto; resize: vertical; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px;
+          table-layout: fixed; }
+  td { padding: 2px 4px; vertical-align: top; overflow-wrap: anywhere; }
+  td:first-child { color: gray; white-space: nowrap; width: 80px; }
+  .chip { font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--bg2); }
+  .chip.warn { background: color-mix(in srgb, var(--warn) 25%, transparent); }
+  .stim-row { display: flex; gap: 6px; font-size: 12.5px; padding: 2px 0;
+              border-bottom: 1px solid var(--bg2); align-items: baseline; }
+  .stim-row > * { min-width: 0; }
+  .stim-row > span:nth-child(2), .stim-row > div { flex: 1 1 auto;
+              overflow-wrap: anywhere; }
+  .stim-row .m { margin-left: auto; font-variant-numeric: tabular-nums; color: gray;
+                 flex-shrink: 0; }
+  .stim-row .m.neg { color: var(--bad); }
+  .stim-row button { padding: 0 6px; font-size: 11px; }
+  .vector-list { max-height: 360px; overflow: auto; border-top: 1px solid var(--bg2); }
+  .muted { color: gray; font-size: 12px; }
+  .statline { display: flex; justify-content: space-between; font-size: 13px; margin: 3px 0; }
+  .matrix-wrap { overflow: auto; max-height: 280px; border: 1px solid var(--bg2);
+                 border-radius: 6px; padding: 4px; }
+  .matrix { width: max-content; min-width: 100%; table-layout: auto; }
+  .matrix th, .matrix td { padding: 3px 5px; text-align: right; white-space: nowrap;
+                           overflow-wrap: normal; }
+  .matrix th { color: gray; font-weight: 500; font-size: 11.5px; }
+	  .matrix th:first-child, .matrix td:first-child { position: sticky; left: 0;
+	                           background: Canvas; z-index: 1; text-align: right; }
+	  .geo-cell { display: inline-block; min-width: 42px; padding: 2px 4px;
+	              border-radius: 4px; font-variant-numeric: tabular-nums; }
+	  svg.spark { width: 100%; height: 36px; }
+	  .review-backdrop { position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,.42);
+	                     display: flex; align-items: stretch; justify-content: center; padding: 22px; }
+	  .review-window { width: min(1120px, 100%); background: Canvas; color: CanvasText;
+	                   border: 1px solid var(--bg3); border-radius: 8px; box-shadow: 0 18px 70px rgba(0,0,0,.35);
+	                   display: flex; flex-direction: column; min-height: 0; }
+	  .review-head { display: flex; align-items: start; gap: 12px; padding: 12px 14px;
+	                 border-bottom: 1px solid var(--bg3); }
+	  .review-head h2 { margin: 0; font-size: 18px; }
+	  .review-body { overflow: auto; padding: 14px; }
+	  .review-card { border: 1px solid var(--bg2); border-radius: 8px; padding: 12px;
+	                 margin-bottom: 12px; background: color-mix(in srgb, CanvasText 3%, transparent); }
+	  .review-card h3 { margin: 0 0 6px; font-size: 14px; }
+	  .review-card pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12.5px ui-monospace,SFMono-Regular,Menlo,monospace;
+	                     background: var(--bg2); padding: 10px; border-radius: 6px; }
+	  .download-row a { color: var(--accent); text-decoration: none; margin-right: 10px; font-size: 12px; }
+	  .live-card { border: 1px solid var(--bg2); border-radius: 8px; padding: 9px;
+	               margin: 8px 0; background: color-mix(in srgb, CanvasText 3%, transparent); }
+	  .live-generating { border-color: color-mix(in srgb, var(--accent) 35%, var(--bg3)); }
+	  .live-judging { border-color: color-mix(in srgb, var(--warn) 35%, var(--bg3)); }
+	  .live-card pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12.5px ui-monospace,SFMono-Regular,Menlo,monospace;
+	                   background: var(--bg2); padding: 8px; border-radius: 6px; max-height: 260px; overflow: auto; }
+	  .judge-chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--bg2); }
+	  .judge-chip.condition { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+	  .judge-chip.baseline { background: color-mix(in srgb, var(--warn) 26%, transparent); }
+	  .clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+	  #error { background: var(--bad); color: white; padding: 4px 10px; font-size: 13px;
+	           display: none; }
+</style>
+</head>
+<body>
+<header>
+  <select id="model" title="the dual-track 4B dev models; vectors are model-specific, so the steering list follows the loaded model"></select>
+  <button id="load" title="download (first time) or load the model; clears the chat">Load</button>
+  <button id="reset" title="clear the conversation and its KV cache; steering settings are kept">Reset chat</button>
+  <span class="state" id="state">connecting…</span>
+</header>
+<div id="error"></div>
+<main>
+  <div id="chat">
+    <div id="messages"></div>
+    <div id="inputrow">
+      <textarea id="input" placeholder="message (Enter sends, Shift-Enter for newline)" title="chat with the loaded model; steering applies from the next message. Enter sends; Shift-Enter inserts a newline"></textarea>
+      <button id="send" class="primary" title="send (Enter)">Send</button>
+      <button id="stop" style="display:none" title="cancel the in-flight response; partial text is kept">Stop</button>
+    </div>
+  </div>
+  <div id="panel">
+    <div id="tabs">
+      <button id="tab-steer" class="primary">Steering</button>
+      <button id="tab-concepts">Concept Lab</button>
+      <button id="tab-geo">Geometry</button>
+      <button id="tab-exp">Studies</button>
+    </div>
+    <div id="pane-steer"></div>
+    <div id="pane-concepts" style="display:none"></div>
+    <div id="pane-geo" style="display:none"></div>
+    <div id="pane-exp" style="display:none"></div>
+  </div>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let S = null;           // last state snapshot
+let pane = "steer";
+let geoSelected = new Set();
+let geoResult = null;
+let geoLayer = 0;
+let geoStatus = "";
+let geoGemmaLayer = 0;
+let geoGemmaStatus = "";
+let geoGemmaRunning = false;
+let geoReportID = "";
+let geoImportStatus = "";
+let conceptVectorFilter = new Set();
+let conceptVectorSort = "newest";
+let readerList = [];    // GET /api/readers snapshot (fetched on demand, not polled)
+const post = (path, body) => fetch(path, {method:"POST", body: JSON.stringify(body||{})});
+const esc = t => t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const fmt = (x, d=2) => x == null ? "—" : Number(x).toFixed(d);
+// minimal markdown: bold/italic/code + bullet lines
+function md(t) {
+  let h = esc(t);
+  h = h.replace(/`([^`]+)`/g, "<code>$1</code>")
+       .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+       .replace(/(^|\W)\*([^*\n]+)\*(?=\W|$)/g, "$1<i>$2</i>")
+       .replace(/^[-*] (.*)$/gm, "&bull; $1");
+  return h;
+}
+// only write a control's value when the user isn't editing it
+function setVal(el, v) { if (document.activeElement !== el) el.value = v; }
+function setChk(el, v) { if (document.activeElement !== el) el.checked = v; }
+
+/* ---------- steering pane: globals + uniform per-vector boxes ---------- */
+function steerPane() {
+  return `
+  <fieldset><legend>Steering</legend>
+    <div class="row"><label title="master switch: every enabled box below adds its α·v to the residual stream on each generated token — multiple boxes inject the linear combination h + Σ αᵢ·vᵢ. Applies from the next message">
+      <input type="checkbox" id="st-on"> Inject vectors</label></div>
+    <div class="row"><label title="shared by all boxes: inject across N consecutive layers centered on each box's layer">Band</label>
+      <input type="number" id="st-band" min="1" max="11" step="2" style="width:60px"></div>
+	    <div class="row"><label title="shared by all boxes: the injected perturbation's L2 norm becomes alpha × the layer's typical residual norm exactly (the vector's own norm is folded out). On the 4B shakedown, expression appears ~0.2–0.4 and collapse above ~1. Re-enter alphas when flipping — the numbers change meaning">
+	      <input type="checkbox" id="st-norm"> Norm units</label></div>
+	    <div class="row"><label title="project active steering vectors away from the selected neutral-corpus PC basis at generation time; saved vector artifacts are unchanged">
+	      <input type="checkbox" id="st-neutral-remove"> Remove neutral directions</label></div>
+	    <div class="row"><label>Neutral basis</label>
+	      <select id="st-neutral-basis" class="grow"></select></div>
+	    <div class="row"><label>Neutral corpus</label>
+	      <select id="st-neutral-corpus" class="grow"></select></div>
+	    <div class="row"><label title="chat assistant uses the model chat template and session history; raw completion sends literal text through the study-style generator">Mode</label>
+	      <select id="st-mode" class="grow"></select></div>
+	    <div class="row"><textarea id="st-system" class="grow" rows="3" placeholder="system prompt" title="optional system instruction for chat mode, or text prepended in raw mode"></textarea></div>
+	    <div class="row"><label title="sampling temperature for interactive steering; defaults to the study value, 0">Temp</label>
+	      <input type="range" id="st-temp" min="0" max="1.5" step="0.1"><span id="st-temp-v"></span></div>
+	    <div class="row"><label title="Qwen-only chat-template option. Studies default to no-think; toggling this resets the chat because the rendered prompt format changes">
+	      <input type="checkbox" id="st-think"> Qwen thinking</label></div>
+	    <button id="st-rescan" title="re-discover vector artifacts saved by the CLI or the Concepts panel">Rescan runs/</button>
+  </fieldset>
+  <div id="st-slots"></div>
+  <div id="st-alpha-note" class="muted"></div>
+  <button id="st-add" title="add another steering box (inherits the last box's settings). All enabled boxes inject simultaneously as a linear combination — composition (fear+authority), counter-vectors, or purification via a negative α on a control concept">Add vector</button>`;
+}
+function vecOpts(selected) {
+  return `<option value="">none</option>` + S.vectors.map(v =>
+    `<option value="${esc(v.id)}" ${v.id===selected?"selected":""}>${esc(v.label)}${v.stale?" ⚠︎ stale":""}</option>`).join("");
+}
+function collectSlots() {
+  return [...document.querySelectorAll("[data-slot]")].map(box => ({
+    id: box.dataset.slot,
+    vectorID: box.querySelector(".sl-vec").value || null,
+    layer: +box.querySelector(".sl-layer").value,
+    alpha: +box.querySelector(".sl-alpha-n").value,
+    enabled: box.querySelector(".sl-on").checked,
+  }));
+}
+const postSlots = () => post("/api/steering/slots", {slots: collectSlots()});
+async function useVectorInSteering(id) {
+  if (!(S.vectors || []).some(x => x.id === id)) return;
+  // Selection is an engine decision (SlotAlphaDefault): the server sets the
+  // slot's layer, α, and units from the artifact — never a literal here.
+  await post("/api/steering", {enabled: true});
+  await post("/api/steering/select-vector", {
+    slotID: (S.slots && S.slots[0]) ? S.slots[0].id : null,
+    vectorID: id,
+    enabled: true,
+  });
+}
+function renderSlots() {
+  const div = $("st-slots");
+  const sig = JSON.stringify(S.slots) + "|" + S.normUnits + "|" + S.steeringEnabled + "|" +
+              S.vectors.map(v => v.id + v.stale).join();
+  if (div.contains(document.activeElement) || div.dataset.sig === sig) return;
+  div.dataset.sig = sig;
+  const aMin = S.normUnits ? -1 : -10, aMax = S.normUnits ? 1 : 10,
+        aStep = S.normUnits ? 0.01 : 0.1;
+  div.innerHTML = S.slots.map(s => {
+    const v = S.vectors.find(x => x.id === s.vectorID);
+    const maxL = v ? v.layerCount - 1 : 1;
+    const fixed = v && v.fixedLayer != null ? v.fixedLayer : null;
+    const L = fixed != null ? fixed : Math.round(s.layer);
+    const prov = v
+      ? `${v.concept.startsWith("sae:") ? "Gemma Scope SAE" : (v.method ? (v.method === "lat" ? "LAT" : "mean-diff") : "mean-diff*")} · ${esc(v.reading || "last token*")} · ${esc(v.extracted)} · norm@L${L} ${fmt(v.normsPerLayer[Math.min(L, v.normsPerLayer.length - 1)], 3)} · α units: ${esc(v.normSource || "extraction-stimuli*")}`
+      : "no vector selected";
+    return `<fieldset data-slot="${s.id}" ${S.steeringEnabled ? "" : `disabled style="opacity:.45" title="turn on 'Inject vectors' to apply or edit the steering boxes"`}><legend>${v ? esc(v.concept) : "vector"}</legend>
+      <div class="row">
+        <input type="checkbox" class="sl-on" ${s.enabled ? "checked" : ""} title="include this vector in the injected sum">
+        <select class="sl-vec grow" title="vector for this box (label: concept · file · method · date; ⚠︎ = stimulus files changed since extraction)">${vecOpts(s.vectorID)}</select>
+        <button class="sl-del" title="remove this steering box (the last box clears instead)">✕</button>
+      </div>
+      <div class="row"><label title="${fixed != null ? `Gemma Scope SAE feature vectors are tied to source layer L${fixed}; band width is ignored for this slot.` : "band center for this vector; mid-network layers usually steer best"}">Layer <span class="sl-layer-v">${fixed != null ? `${fixed} fixed` : L}</span></label>
+        <input type="range" class="sl-layer" min="0" max="${maxL}" step="1" value="${fixed != null ? fixed : s.layer}" ${fixed != null ? "disabled" : ""}></div>
+      <div class="row"><label title="this vector's coefficient in the injected sum; negative steers away / subtracts">Alpha</label>
+        <input type="range" class="sl-alpha" min="${aMin}" max="${aMax}" step="${aStep}" value="${s.alpha}">
+        <input type="number" class="sl-alpha-n" step="${aStep}" value="${s.alpha}" style="width:70px"></div>
+      <div class="muted" title="provenance recorded in this vector's sidecar: method · reading position · extraction date · vector norm at the chosen layer">${prov}</div>
+    </fieldset>`;
+  }).join("");
+  div.querySelectorAll("[data-slot]").forEach(box => {
+    const sync = el => {
+      if (el.classList.contains("sl-vec")) {
+        const nv = S.vectors.find(x => x.id === el.value);
+        if (nv) box.querySelector(".sl-layer").max = nv.layerCount - 1;
+        // Selecting a vector adopts what the artifact knows about itself
+        // (layer, α, units — SlotAlphaDefault, applied server-side); this box
+        // repaints from the resolved slot the response carries.
+        post("/api/steering/select-vector", {slotID: box.dataset.slot, vectorID: el.value})
+          .then(r => r.json()).then(d => {
+            if (!d.slot) return;
+            box.querySelector(".sl-alpha-n").value = d.slot.alpha;
+            box.querySelector(".sl-alpha").value = d.slot.alpha;
+            box.querySelector(".sl-layer").value = d.slot.layer;
+            box.querySelector(".sl-layer-v").textContent = Math.round(d.slot.layer);
+          });
+        return;
+      }
+      if (el.classList.contains("sl-alpha"))
+        box.querySelector(".sl-alpha-n").value = el.value;
+      if (el.classList.contains("sl-alpha-n"))
+        box.querySelector(".sl-alpha").value = el.value;
+      if (el.classList.contains("sl-layer"))
+        box.querySelector(".sl-layer-v").textContent = Math.round(el.value);
+      postSlots();
+    };
+    box.querySelectorAll(".sl-on,.sl-vec,.sl-layer,.sl-alpha,.sl-alpha-n").forEach(el => {
+      el.onchange = () => sync(el);
+      if (el.type === "range") el.oninput = () => sync(el);
+    });
+    box.querySelector(".sl-del").onclick = () => { box.remove(); postSlots(); };
+  });
+}
+function renderSteer() {
+  const p = $("pane-steer");
+  if (!p.dataset.built) { p.innerHTML = steerPane(); p.dataset.built = 1; wireSteer(); }
+  setChk($("st-on"), S.steeringEnabled);
+  setVal($("st-band"), S.bandWidth);
+	  setChk($("st-norm"), S.normUnits);
+	  // Unavailability may only block turning norm units ON — turning OFF must
+	  // always work, or a norms-less vector locks the toggle ON with no path
+	  // to raw α (same rule as the native Playground, 2026-08-06).
+	  $("st-norm").disabled = !S.normUnitsAvailable && !S.normUnits;
+	  setChk($("st-neutral-remove"), S.removeNeutralDirections);
+	  const neutralBasis = $("st-neutral-basis");
+	  if (document.activeElement !== neutralBasis) {
+	    neutralBasis.innerHTML = `<option value="">None</option>` + (S.neutralPCBases || []).map(b =>
+	      `<option value="${esc(b.id)}" ${b.id===S.neutralPCBasisID?"selected":""}>${esc(b.label)}</option>`).join("");
+	  }
+	  neutralBasis.disabled = !S.removeNeutralDirections || !(S.neutralPCBases || []).length;
+	  const neutralCorpus = $("st-neutral-corpus");
+	  if (document.activeElement !== neutralCorpus) {
+	    neutralCorpus.innerHTML = (S.neutralCorpora || []).map(c =>
+	      `<option value="${esc(c.id)}" ${c.id===S.neutralCorpusID?"selected":""}>${esc(c.label)} · ${esc(c.kind)} · ${c.count}</option>`).join("");
+	  }
+	  const modeSelect = $("st-mode");
+	  if (document.activeElement !== modeSelect) {
+	    modeSelect.innerHTML = (S.promptModes || []).map(m =>
+	      `<option value="${esc(m.value)}" ${m.value===S.promptMode?"selected":""}>${esc(m.label)}</option>`).join("");
+	  }
+	  setVal($("st-system"), S.systemPrompt || "");
+	  setVal($("st-temp"), S.temperature); $("st-temp-v").textContent = S.temperature.toFixed(1);
+	  setChk($("st-think"), S.qwenThinkingEnabled);
+	  $("st-think").disabled = !S.qwenThinkingAvailable;
+	  $("st-add").disabled = !S.steeringEnabled;
+	  // Engine-authored α provenance (SlotAlphaDefault.Decision) — displayed
+	  // verbatim; the tooltip carries the unit label, denominator convention,
+	  // and (raw mode only) the backfill repair.
+	  const note = $("st-alpha-note"), ad = S.alphaDefault;
+	  note.textContent = ad ? ad.rationale : "";
+	  note.title = ad
+	    ? [ad.label,
+	       ad.conventionNote ? "denominator convention: " + ad.conventionNote : null,
+	       ad.backfillHint ? "give this vector a denominator with: " + ad.backfillHint : null]
+	      .filter(Boolean).join(" · ")
+	    : "";
+  renderSlots();
+}
+function wireSteer() {
+  $("st-on").onchange = e => post("/api/steering", {enabled: e.target.checked});
+  $("st-rescan").onclick = () => post("/api/vectors/rescan");
+	  $("st-band").onchange = e => post("/api/steering", {bandWidth: +e.target.value});
+	  $("st-norm").onchange = e => post("/api/steering", {normUnits: e.target.checked});
+	  $("st-neutral-remove").onchange = e => post("/api/steering", {removeNeutralDirections: e.target.checked});
+	  $("st-neutral-basis").onchange = e => post("/api/steering", {neutralPCBasisID: e.target.value});
+	  $("st-neutral-corpus").onchange = e => post("/api/steering", {neutralCorpusID: e.target.value});
+	  $("st-mode").onchange = e => post("/api/steering", {promptMode: e.target.value});
+	  $("st-system").onchange = e => post("/api/steering", {systemPrompt: e.target.value});
+	  $("st-temp").oninput = e => post("/api/steering", {temperature: +e.target.value});
+	  $("st-think").onchange = e => post("/api/steering", {qwenThinkingEnabled: e.target.checked});
+  // Same engine path as the native button (ChatService.addSlot): inherit the
+  // previous box, default to the next unused vector — no α literal here.
+  $("st-add").onclick = () => post("/api/steering/slots/add");
+}
+
+/* ---------- concepts pane ---------- */
+function conceptsPane() {
+  return `
+  <fieldset><legend>Concept Library</legend>
+    <div class="row"><label>Concept</label>
+      <select id="c-sel" class="grow" title="select the concept whose datasets and vector artifacts you want to inspect"></select>
+      <button id="c-new" title="create a new concept">+</button>
+      <button id="c-delete" title="delete this concept's editable datasets; saved vector artifacts remain">🗑</button></div>
+    <div class="row" id="c-name-row"><label>Name</label>
+      <input type="text" id="c-name" class="grow" placeholder="kebab-case" title="becomes the directory name under prompts/concepts/"></div>
+    <div class="row"><label>Datasets</label><span id="c-dataset-summary" class="muted"></span></div>
+    <div class="row"><label>Vectors</label><span id="c-vector-count" class="muted"></span></div>
+  </fieldset>
+  <fieldset><legend id="c-data-title">Dataset Builder</legend>
+    <div class="row"><label title="choose the data contract before entering data">Dataset recipe</label>
+      <select id="c-recipe">
+        <option value="caaMeanDifference">CAA mean difference</option>
+        <option value="repeLAT">LAT paired direction (RepE-inspired)</option>
+        <option value="emotionGrandMean">Grand mean</option>
+      </select></div>
+    <details id="c-browse-details"><summary id="c-browse-title">Browse dataset</summary><div id="c-browse" style="max-height:260px;overflow-y:auto"></div></details>
+    <div id="c-paired-editor">
+    <div class="muted" id="c-pos-label">Positive (expresses the concept — depict it, never name it)</div>
+    <textarea id="c-pos" class="stim" title="one stimulus per line; depict the concept through situation and detail — never name it. Also accepts pasted pair-JSONL from the Copy LLM prompt round trip"></textarea>
+    <div class="muted" id="c-neg-label">Negative (content-matched, without the concept)</div>
+    <textarea id="c-neg" class="stim" title="line i should match positive line i: same topic and length, minus the concept"></textarea>
+    </div>
+    <div id="c-emotion-editor" style="display:none">
+      <div class="muted">Vector derived later: <code>mean(selected concept stories) - mean(selected story rows)</code>. Corpus generation is symmetric; no concept is special yet.</div>
+      <div class="fieldgrid">
+        <div class="field">
+          <label>Story concept</label>
+          <input type="text" id="c-multi-concept" placeholder="blank = selected concept" title="leave blank for the selected concept; type another concept for shared-corpus rows">
+          <span class="hint">blank uses selected concept</span>
+        </div>
+        <div class="field">
+          <label>Topic</label>
+          <input type="text" id="c-multi-topic" placeholder="e.g. commute" title="reuse topic names across concepts">
+          <span class="hint">reuse across concepts</span>
+        </div>
+        <div class="field">
+          <label>Split</label>
+          <select id="c-multi-split" title="build rows are used to extract the vector; validation rows are held out">
+            <option>build</option><option>validation</option>
+          </select>
+          <span class="hint">default: build</span>
+        </div>
+      </div>
+      <div class="muted">Story text</div>
+      <textarea id="c-multi" class="stim" style="height:140px" title="type/paste one story, or separate multiple stories with blank lines. JSONL still works for bulk imports"></textarea>
+      <div class="muted">Concept is filled from the concept name. Topic helps avoid learning topic vectors; split separates build data from held-out validation data.</div>
+    </div>
+    <div class="row">
+      <button id="c-add" title="append the pasted lines to the working set; stats go stale until you rebuild (one forward pass per new stimulus)">Add to set</button>
+      <button id="c-rebuild" title="recompute the direction and stats; the pass count is the forward passes needed for uncached stimuli (incl. control concepts). Zero-pass rebuilds run automatically">Rebuild stats</button>
+      <label class="grow" id="c-import-wrap" style="text-align:right"><input type="file" id="c-import" style="display:none">
+        <button id="c-import-btn" title="import pairs made elsewhere: JSONL ({&quot;positive&quot;,&quot;negative&quot;} per line), JSON array, or two-column CSV">Import…</button></label>
+    </div>
+    <div class="row"><button id="c-copy-prompt" title="copies a complete instruction prompt for ANY LLM: methodology rules, all current pairs as examples and anti-duplication context, and a strict JSONL output format the app parses back via paste or Import">Copy LLM prompt</button>
+      <button id="c-copy-cowork" title="copies instructions for Claude Cowork to spawn parallel agents, generate a balanced concept × topic Grand Mean story grid, and return one JSONL corpus">Copy Claude Cowork prompt</button>
+      <span class="muted">paste the model's JSONL reply into the visible data box → Add</span></div>
+    <div id="c-prompt-preview"></div>
+  </fieldset>
+  <fieldset><legend>Neutral Norm Corpus</legend>
+    <div class="row"><label>Selected corpus</label><select id="c-neutral-corpus" class="grow"></select></div>
+    <div class="row"><label>Selected rows</label><span id="c-neutral-count" class="muted"></span></div>
+    <div class="row"><label>Selected hash</label><span id="c-neutral-hash" class="muted"></span></div>
+    <div class="row"><label>Norm rows</label><span id="c-neutral-norm-count" class="muted"></span></div>
+    <div class="row"><label>Projection name</label><input id="c-neutral-projection-name" class="grow" placeholder="assistant-dialogue-neutral"><button id="c-neutral-select-projection">Select/create</button></div>
+    <input id="c-neutral-concepts" class="grow" placeholder="neutral against concepts, e.g. fear, joy, arousal">
+    <input id="c-neutral-domains" class="grow" placeholder="matched domains/settings">
+    <input id="c-neutral-exclusions" class="grow" placeholder="avoid settings/dimensions">
+    <div class="row">
+      <button id="c-copy-neutral-prompt" title="copy a prompt for long, domain-neutral calibration passages suitable for token-50 residual norm measurement">Copy neutral corpus prompt</button>
+      <button id="c-copy-neutral-dialogue-prompt" title="copy an Anthropic-style prompt for neutral Human/Assistant dialogues used as a nuisance/projection corpus">Copy Anthropic dialogue prompt</button>
+      <button id="c-neutral-build" title="run the loaded model over the neutral corpus and store token-position PCs for optional steering-time removal">Build neutral PCs</button>
+      <span class="muted">paste JSONL below, then import</span>
+    </div>
+    <textarea id="c-neutral-draft" class="stim" style="height:120px" placeholder="Paste neutral corpus JSONL here" title="expected rows: {&quot;text&quot;:&quot;long neutral passage...&quot;}"></textarea>
+    <div class="row">
+      <button id="c-neutral-import" title="replace prompts/neutral/corpus.jsonl with the pasted neutral rows">Import neutral corpus</button>
+      <span class="muted">short rows are ignored for token-50 norm calibration</span>
+    </div>
+    <div class="muted" id="c-neutral-pc-status"></div>
+  </fieldset>
+  <fieldset><legend>Probe Training Data</legend>
+    <div class="row"><label>Separate examples</label><span id="c-probe-count" class="muted"></span></div>
+    <div class="row">
+      <button id="c-copy-probe-prompt" title="copy a prompt for a separate labeled probe corpus; these examples are not used to build vectors">Copy probe LLM prompt</button>
+      <span class="muted">paste the JSONL reply below, then import</span>
+    </div>
+    <textarea id="c-probe-draft" class="stim" style="height:120px" placeholder="Paste probe JSONL here" title="expected fields: text, expresses, topic, split"></textarea>
+    <div class="row">
+      <button id="c-probe-import" title="save pasted probe examples to prompts/probes/&lt;concept&gt;/items.jsonl">Import probe examples</button>
+      <button id="c-probe-train" title="train a model-specific reading probe from the imported examples and make it available in chat highlighting">Train chat probe</button>
+      <span class="muted">stored separately from CAA, RepE, and Grand Mean data</span>
+    </div>
+    <details><summary id="c-probe-title">Browse probe examples</summary><div id="c-probe-browse" style="max-height:220px;overflow-y:auto"></div></details>
+  </fieldset>
+  <fieldset><legend>RepE reader (faithful)</legend>
+    <div class="muted">A reader is a fitted measurement instrument (task template + LAT token position + PCA training normalization + held-out accuracy) — not "positive/negative text → vector". The "LAT paired direction (RepE-inspired)" recipe above is a separate, direction-only comparison. Fit readers in the app or on the server workbench; this client lists and scores local reader artifacts only.</div>
+    <div class="row"><label>Reader</label>
+      <select id="c-reader-sel" class="grow" title="fitted reader artifacts discovered under runs/; a reader is per-model and per-substrate — scoring through the wrong model is refused"></select>
+      <button id="c-reader-refresh" title="rescan runs/ for reader artifacts">↻</button></div>
+    <div id="c-reader-info" class="muted"></div>
+    <textarea id="c-reader-texts" class="stim" placeholder="one text per line" title="each line is rendered through the reader's OWN template, the LAT token is captured at the reader's layer, and the stored training normalization scores it — the paper's exact inference, not cosine-to-vector"></textarea>
+    <div class="row"><button id="c-reader-score" class="primary" title="POST /api/reader/score on the loaded model">Score texts</button>
+      <span class="muted" id="c-reader-status"></span></div>
+    <div id="c-reader-scores"></div>
+  </fieldset>
+  <div id="c-proposals"></div>
+  <div id="c-status" class="muted"></div>
+  <fieldset><legend>Concept Vector Builder</legend>
+    <div class="row">
+      <span class="chip" id="c-chip-stats" title="whether the numbers below describe the current stimuli and options"></span>
+      <span class="chip" id="c-chip-saved" title="whether the working set and options match the files on disk and the newest vector artifact"></span>
+    </div>
+    <div class="row"><label>Model</label><span id="c-model" class="muted"></span></div>
+    <div class="row"><label>Dataset</label>
+      <select id="c-vector-dataset">
+        <option value="caaMeanDifference">CAA mean difference</option>
+        <option value="repeLAT">LAT paired direction (RepE-inspired)</option>
+        <option value="emotionGrandMean">Grand mean</option>
+      </select></div>
+    <label class="row" id="c-build-all-row" title="when enabled, each checked concept becomes its own vector artifact from the same selected Grand Mean corpus">
+      <input type="checkbox" id="c-build-all"> Build one vector for every checked concept</label>
+    <div id="c-topic-box"></div>
+    <div class="row"><label title="off = read at last token (RepE); on = average positions from an index">
+      <input type="checkbox" id="c-pool"> Pool from token</label>
+      <input type="number" id="c-pool-k" min="0" max="200" step="10" style="width:64px"></div>
+    <button id="c-save" class="grow" title="write the selected recipe dataset and extract a model-specific per-layer vector artifact into an immutable run directory. Lit = something to publish">Build vector artifact</button>
+  </fieldset>
+  <fieldset><legend id="c-stats-title">Dataset Diagnostics</legend><div id="c-stats"></div></fieldset>
+  <fieldset><legend>Vector Library</legend><div id="c-vectors"></div></fieldset>
+  <div class="muted">Concepts are reusable primitives. Datasets belong to concepts; vector artifacts belong to model + revision + recipe + selected data.</div>`;
+}
+function renderConcepts() {
+  const p = $("pane-concepts");
+  if (!p.dataset.built) { p.innerHTML = conceptsPane(); p.dataset.built = 1; wireConcepts(); }
+  const c = S.concept;
+  const chipS = $("c-chip-stats");
+  chipS.textContent = c.statsStale ? (c.pendingPassCount ? `stats stale (${c.pendingPassCount} passes)` : "stats stale") : "stats current";
+  chipS.className = "chip" + (c.statsStale ? " warn" : "");
+  const chipU = $("c-chip-saved");
+  chipU.textContent = c.unsavedChanges ? "unsaved changes" : "saved";
+  chipU.className = "chip" + (c.unsavedChanges ? " warn" : "");
+  const save = $("c-save");
+  save.className = c.canSaveAndExtract ? "grow primary" : "grow";
+  save.disabled = !c.canSaveAndExtract || c.isWorking || S.modelState !== "ready";
+  const sel = $("c-sel");
+  if (document.activeElement !== sel) {
+    sel.innerHTML = c.existing.map(n =>
+      `<option ${n===c.selected?"selected":""}>${esc(n)}</option>`).join("");
+  }
+  $("c-delete").disabled = !c.selected;
+  $("c-name-row").style.display = c.selected ? "none" : "";
+  setVal($("c-name"), c.name);
+  setVal($("c-recipe"), c.recipeFamily || "caaMeanDifference");
+  setVal($("c-vector-dataset"), c.recipeFamily || "caaMeanDifference");
+  const paired = (c.recipeFamily || "caaMeanDifference") !== "emotionGrandMean";
+  const conceptName = c.selected || String(c.name || "").toLowerCase().replaceAll(" ", "-").replace(/[^a-z0-9-]/g, "");
+  const compatibleVectors = (S.vectors || []).slice();
+  const compatibleIDs = new Set(compatibleVectors.map(v => v.id));
+  const vectorConcepts = [...new Set(compatibleVectors.map(v => v.concept))].sort();
+  let allVectors = compatibleVectors.filter(v => !conceptVectorFilter.size || conceptVectorFilter.has(v.concept));
+  allVectors.sort((a, b) => {
+    if (conceptVectorSort === "oldest") return String(a.extracted || "").localeCompare(String(b.extracted || ""));
+    if (conceptVectorSort === "concept") return String(a.concept || "").localeCompare(String(b.concept || "")) || String(b.extracted || "").localeCompare(String(a.extracted || ""));
+    if (conceptVectorSort === "recipe") return String(a.method || "").localeCompare(String(b.method || "")) || String(b.extracted || "").localeCompare(String(a.extracted || ""));
+    if (conceptVectorSort === "layers") return Number(b.layerCount || 0) - Number(a.layerCount || 0) || String(b.extracted || "").localeCompare(String(a.extracted || ""));
+    return String(b.extracted || "").localeCompare(String(a.extracted || ""));
+  });
+  const artifacts = conceptName ? compatibleVectors.filter(v => v.concept === conceptName) : [];
+  const datasetParts = [];
+  if ((c.positives || []).length || (c.negatives || []).length) datasetParts.push(`contrastive ${(c.positives || []).length}+/${(c.negatives || []).length}-`);
+  if ((c.multiConceptRows || []).length) datasetParts.push(`stories ${(c.multiConceptRows || []).length}`);
+  if ((c.probeExamples || []).length) datasetParts.push(`probe ${c.probePositiveCount || 0}+/${c.probeNegativeCount || 0}-`);
+  $("c-dataset-summary").textContent = datasetParts.length ? datasetParts.join(" · ") : "none yet";
+  $("c-vector-count").textContent = `${artifacts.length} for selected · ${compatibleVectors.length} compatible`;
+  $("c-model").textContent = S.loadedModel || S.selectedModel || "";
+  $("c-data-title").textContent = paired ? "Dataset Builder · paired contrast" : "Dataset Builder · multi-concept stories";
+  $("c-paired-editor").style.display = paired ? "" : "none";
+  $("c-emotion-editor").style.display = paired ? "none" : "";
+  $("c-import-wrap").style.display = paired ? "" : "none";
+  $("c-add").textContent = paired ? "Add to set" : "Add to corpus";
+  $("c-pos-label").textContent = c.recipeFamily === "repeLAT"
+    ? "Positive reader prompt (concept-present)" : "Positive (expresses the concept)";
+  $("c-neg-label").textContent = c.recipeFamily === "repeLAT"
+    ? "Negative reader prompt (matched control)" : "Negative (content-matched, without the concept)";
+  setChk($("c-pool"), c.poolFromToken != null);
+  setVal($("c-pool-k"), c.poolFromToken ?? 0);
+  $("c-pool-k").style.display = c.poolFromToken != null ? "" : "none";
+  $("c-build-all-row").style.display = paired ? "none" : "";
+  setChk($("c-build-all"), !!c.buildAllGrandMeanConcepts);
+  const rb = $("c-rebuild");
+  rb.textContent = c.pendingPassCount ? `Rebuild stats (${c.pendingPassCount} passes)` : "Rebuild stats";
+  rb.className = c.statsStale ? "primary" : "";
+  rb.disabled = c.isWorking || S.modelState !== "ready" || !paired;
+  $("c-add").disabled = c.isWorking;
+  $("c-copy-cowork").disabled = paired;
+  $("c-probe-count").textContent = `${c.probePositiveCount || 0}+ / ${c.probeNegativeCount || 0}-`;
+  const conceptNeutralCorpus = $("c-neutral-corpus");
+  if (document.activeElement !== conceptNeutralCorpus) {
+    conceptNeutralCorpus.innerHTML = (S.neutralCorpora || []).map(corpus =>
+      `<option value="${esc(corpus.id)}" ${corpus.id===S.neutralCorpusID?"selected":""}>${esc(corpus.label)} · ${esc(corpus.kind)} · ${corpus.count}</option>`).join("");
+  }
+  $("c-neutral-count").textContent = `${c.neutralCorpusCount || 0}`;
+  $("c-neutral-hash").textContent = c.neutralCorpusHash || "";
+  $("c-neutral-norm-count").textContent = `${c.normNeutralCorpusCount || 0}${c.normNeutralCorpusHash ? " · " + c.normNeutralCorpusHash : ""}`;
+  setVal($("c-neutral-projection-name"), c.projectionNeutralCorpusName || "");
+  setVal($("c-neutral-concepts"), c.projectionNeutralConcepts || "");
+  setVal($("c-neutral-domains"), c.projectionNeutralDomains || "");
+  setVal($("c-neutral-exclusions"), c.projectionNeutralExclusions || "");
+  $("c-neutral-build").disabled = S.isBuildingNeutralPCBasis || S.modelState !== "ready" || !(c.neutralCorpusCount || 0);
+  $("c-neutral-build").textContent = S.isBuildingNeutralPCBasis ? "Building neutral PCs…" : "Build neutral PCs";
+  $("c-neutral-pc-status").textContent = S.neutralPCStatus || `${(S.neutralPCBases || []).length} compatible neutral PC basis${(S.neutralPCBases || []).length === 1 ? "" : "es"}`;
+  $("c-probe-train").disabled = c.isWorking || S.modelState !== "ready" || (c.probePositiveCount || 0) < 4 || (c.probeNegativeCount || 0) < 4;
+  $("c-probe-title").textContent = `Browse probe examples (${(c.probeExamples || []).length})`;
+  $("c-probe-browse").innerHTML = !(c.probeExamples || []).length ? `<div class="muted">No probe examples yet.</div>` :
+    (c.probeExamples || []).map(item => `<div class="stim-row">
+      <span>${item.expresses ? "+" : "−"}</span>
+      <span><b>${item.expresses ? "concept-present" : "control"}</b>${item.topic ? ` · ${esc(item.topic)}` : ""}<br>${esc(item.text)}</span>
+      <span class="muted">${esc(item.split || "validation")}</span>
+    </div>`).join("");
+  $("c-topic-box").innerHTML = !paired && ((c.emotionTopics || []).length || (c.emotionConcepts || []).length) ? `
+    ${(c.emotionConcepts || []).length ? `<details><summary>Grand Mean concept set</summary>
+      <div>${(c.emotionConcepts || []).map(name => {
+        const selected = !c.includedEmotionConcepts || c.includedEmotionConcepts.length === 0 || c.includedEmotionConcepts.includes(name);
+        return `<label class="chip" style="display:inline-block;margin:2px"><input type="checkbox" data-emotion-concept="${esc(name)}" ${selected ? "checked" : ""}> ${esc(name)}${name === conceptName ? " (default target)" : ""}</label>`;
+      }).join("")}
+      <button id="c-concept-all" title="include every story concept">Use all</button></div>
+      <div class="muted">${c.buildAllGrandMeanConcepts ? "Each checked concept becomes a saved vector; the checked set also forms the grand mean." : "The checked set forms the grand mean; the default target is the only saved vector."}</div>
+    </details>` : ""}
+    <details><summary>Topics included in this vector</summary>
+      <div>${(c.emotionTopics || []).map(t => {
+        const selected = !c.includedEmotionTopics || c.includedEmotionTopics.length === 0 || c.includedEmotionTopics.includes(t);
+        return `<label class="chip" style="display:inline-block;margin:2px"><input type="checkbox" data-topic="${esc(t)}" ${selected ? "checked" : ""}> ${esc(t)}</label>`;
+      }).join("")}
+      <button id="c-topic-all" title="include every build topic">Use all</button></div>
+      <div class="muted">Unchecked topics stay in the corpus but are excluded from this vector artifact.</div>
+    </details>` : "";
+  // proposals
+  $("c-proposals").innerHTML = !c.proposals.length ? "" :
+    `<fieldset><legend>Proposals — accept or reject each</legend>` +
+    c.proposals.map(pr => `
+      <div class="stim-row"><input type="checkbox" data-pid="${pr.id}" ${pr.included?"checked":""}>
+        <div><div>+ ${esc(pr.positive)}</div><div class="muted">− ${esc(pr.negative)}</div></div></div>`).join("") +
+    `<div class="row"><button id="c-accept" class="primary" title="append the checked pairs to the working set; unchecked pairs are dropped">Accept checked</button>
+     <button id="c-discard" title="reject the whole batch; the working set is untouched">Discard all</button></div></fieldset>`;
+  if ($("c-accept")) {
+    $("c-accept").onclick = () => post("/api/concept/proposals",
+      {acceptedIDs: [...document.querySelectorAll("[data-pid]")].filter(x=>x.checked).map(x=>x.dataset.pid)});
+    $("c-discard").onclick = () => post("/api/concept/proposals", {acceptedIDs: null});
+  }
+  $("c-status").textContent = (c.isWorking ? "working… " : "") + (c.status || "");
+  // stats
+  $("c-stats-title").textContent = c.stats
+    ? `Dataset Diagnostics @ layer ${c.stats.statsLayer}` + (c.statsStale ? " ⚠︎ stale" : "") : "Dataset Diagnostics";
+  $("c-stats").innerHTML = !paired ? `<div class="muted">pair-margin stats are for CAA/RepE paired data; save to extract the emotion grand-mean vector</div>` :
+    !c.stats ? `<div class="muted">add ≥4 stimuli per side and rebuild</div>` : `
+    <div class="statline" title="the headline stat: ~20% of stimuli are excluded from the direction and classified by it — out-of-sample by construction; this is the number to optimize"><span>Held-out accuracy</span><b>${c.stats.heldOutAccuracy==null?"needs more stimuli":Math.round(c.stats.heldOutAccuracy*100)+"% (n="+c.stats.heldOutCount+")"}</b></div>
+    <div class="statline" title="cosine between directions from disjoint halves; high = stimuli agree on what the concept is"><span>Split-half</span><span>${fmt(c.stats.splitHalf)}</span></div>
+    <div class="statline" title="cosine vs the previous rebuild; near 1.00 across additions = converged"><span>Stability</span><span>${fmt(c.stats.stability)}</span></div>
+    <div title="where in the network the contrast lives (dot = stats layer); peaks in the middle third are typical">${spark(c.stats.normByLayer, c.stats.statsLayer)}</div>
+    ${Object.entries(c.stats.controlCosines).map(([n, v]) =>
+      `<div class="statline" title="discriminant check — above |0.6| the concepts are collapsing into one direction"><span>vs ${esc(n)}</span><span style="${Math.abs(v)>0.6?"color:var(--bad)":""}">${fmt(v)}</span></div>`).join("")}`;
+  // browse
+  const row = (s, i, pos) => `
+    <div class="stim-row"><span>${pos?"+":"−"}</span><span>${esc(s.text)}</span>
+      <span class="m ${s.margin<0?"neg":""}" title="decision margin along the current direction — negative means wrong side">${fmt(s.margin)}</span>
+      <button data-del="${pos?"p":"n"}${i}" title="remove from working set (files unchanged until save)">✕</button></div>`;
+  $("c-browse-title").textContent = paired ? "Dataset Coverage" : "Dataset Coverage · corpus balance";
+  const es = c.emotionSummary || {};
+  const balance = !paired ? `
+    <div class="statline"><span>Build rows</span><b>${es.rowCount || 0}</b></div>
+    <div class="statline"><span>Validation rows</span><b>${es.validationRowCount || 0}</b></div>
+    <div class="statline"><span>Total rows</span><b>${es.totalRowCount || 0}</b></div>
+    <div class="statline"><span>Concepts</span><b>${(es.conceptCounts || []).length}</b></div>
+    <div class="statline"><span>Topics</span><b>${(es.topicCounts || []).length}</b></div>
+    <div class="statline"><span>Target rows</span><b>${es.targetRowCount || 0}</b></div>
+    <div class="muted">${(es.conceptCounts || []).length < 2 ? "Add at least one comparison concept before extracting." :
+      es.isBalanced ? "Topic/concept cells are balanced." :
+      `Balance warning: ${es.missingCellCount || 0} empty topic/concept cells; counts range ${es.minCellCount || 0}-${es.maxCellCount || 0}.`}</div>
+    ${(es.topicCounts || []).map(t => `<div class="statline"><span>${esc(t.name)}</span><span>${(es.conceptCounts || []).map(cc => {
+      const cell = (es.cellCounts || []).find(x => x.topic === t.name && x.concept === cc.name);
+      const n = cell ? cell.count : 0;
+      return `<span style="${n ? "" : "color:var(--bad)"}">${esc(cc.name)}:${n}</span>`;
+    }).join(" · ")}</span></div>`).join("")}` : "";
+  $("c-browse").innerHTML = paired
+    ? c.positives.map((s,i)=>row(s,i,true)).join("") + c.negatives.map((s,i)=>row(s,i,false)).join("")
+    : balance + (c.multiConceptRows || []).map(r => `<div class="stim-row"><span>${esc(r.concept)}</span><span><b>${esc(r.topic || "manual")}</b><br>${esc(r.text)}</span><span class="muted">${esc(r.split || "draft")}</span></div>`).join("");
+  document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => {
+    const k = b.dataset.del;
+    post("/api/concept/remove", {isPositive: k[0]==="p", index: +k.slice(1)});
+  });
+  document.querySelectorAll("[data-topic]").forEach(b => b.onchange = () => {
+    const selected = [...document.querySelectorAll("[data-topic]")]
+      .filter(x => x.checked)
+      .map(x => x.dataset.topic);
+    post("/api/concept/topics", {topics: selected});
+  });
+  const allTopics = $("c-topic-all");
+  if (allTopics) allTopics.onclick = () => post("/api/concept/topics", {});
+  document.querySelectorAll("[data-emotion-concept]").forEach(b => b.onchange = () => {
+    const selected = [...document.querySelectorAll("[data-emotion-concept]")]
+      .filter(x => x.checked)
+      .map(x => x.dataset.emotionConcept);
+    post("/api/concept/emotion-concepts", {concepts: selected});
+  });
+  const allConcepts = $("c-concept-all");
+  if (allConcepts) allConcepts.onclick = () => post("/api/concept/emotion-concepts", {});
+  $("c-vectors").innerHTML = !compatibleVectors.length ? `<div class="muted">${S.modelState === "ready" ? "No vectors for this model in runs/." : "Load a model to see compatible vectors."}</div>` :
+    `<div class="row"><span class="muted">${allVectors.length} compatible artifacts</span><select id="c-vector-sort" title="sort compatible vector artifacts">
+      <option value="newest">Newest</option><option value="oldest">Oldest</option><option value="concept">Concept</option><option value="recipe">Recipe</option><option value="layers">Layer count</option>
+    </select></div>
+    ${vectorConcepts.length ? `<details><summary>Filter concepts</summary><div><button id="c-vector-all">All</button> ${vectorConcepts.map(name => {
+      const selected = !conceptVectorFilter.size || conceptVectorFilter.has(name);
+      return `<label class="chip" style="display:inline-block;margin:2px"><input type="checkbox" data-vector-concept="${esc(name)}" ${selected ? "checked" : ""}> ${esc(name)}</label>`;
+    }).join("")}</div></details>` : ""}
+    <div class="vector-list">` +
+    allVectors.map(v => `<div class="stim-row">
+      <span>${esc(v.concept)}</span>
+      <span><b>${esc(v.label)}</b><br>
+        <span class="muted">current model · ${esc(v.modelID)} · ${esc(v.method || "meanDifference")} · ${esc(v.reading || "last token")} · ${v.layerCount} layers · ${esc(v.extracted || "").replace("T"," ").slice(0,16)} · data ${esc(v.stimulusHash)}</span>
+      </span>
+      <button data-use-vector="${esc(v.id)}" title="select this vector into the first steering slot">Use</button>
+    </div>`).join("") + `</div>`;
+  if ($("c-vector-sort")) {
+    setVal($("c-vector-sort"), conceptVectorSort);
+    $("c-vector-sort").onchange = e => { conceptVectorSort = e.target.value; renderConcepts(); };
+  }
+  if ($("c-vector-all")) $("c-vector-all").onclick = () => { conceptVectorFilter = new Set(); renderConcepts(); };
+  document.querySelectorAll("[data-vector-concept]").forEach(b => b.onchange = () => {
+    if (!conceptVectorFilter.size) conceptVectorFilter = new Set(vectorConcepts);
+    if (b.checked) conceptVectorFilter.add(b.dataset.vectorConcept);
+    else conceptVectorFilter.delete(b.dataset.vectorConcept);
+    renderConcepts();
+  });
+  document.querySelectorAll("[data-use-vector]").forEach(b => {
+    b.onclick = () => useVectorInSteering(b.dataset.useVector);
+  });
+}
+function spark(values, mark) {
+  if (!values || values.length < 2) return "";
+  const max = Math.max(...values) || 1;
+  const pts = values.map((v,i) => `${(i/(values.length-1))*100},${34-(v/max)*30}`).join(" ");
+  const mx = (mark/(values.length-1))*100, my = 34-(values[mark]/max)*30;
+  return `<svg class="spark" viewBox="0 0 100 36" preserveAspectRatio="none">
+    <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.2"/>
+    <circle cx="${mx}" cy="${my}" r="2" fill="var(--accent)"/></svg>`;
+}
+function wireConcepts() {
+  $("c-sel").onchange = e => post("/api/concept/select", {name: e.target.value || null});
+  $("c-new").onclick = () => post("/api/concept/new");
+  $("c-delete").onclick = () => {
+    const name = S.concept.selected || S.concept.name || "this concept";
+    if (confirm(`Delete editable datasets for ${name}? Saved vector artifacts and runs remain.`))
+      post("/api/concept/delete");
+  };
+  $("c-name").onchange = e => post("/api/concept/name", {name: e.target.value});
+  $("c-recipe").onchange = e => post("/api/concept/options", {recipeFamily: e.target.value});
+  $("c-vector-dataset").onchange = e => post("/api/concept/options", {recipeFamily: e.target.value});
+  $("c-pool").onchange = e => post("/api/concept/options", {pooling: e.target.checked, poolFromToken: +$("c-pool-k").value});
+  $("c-pool-k").onchange = e => post("/api/concept/options", {poolFromToken: +e.target.value});
+  $("c-build-all").onchange = e => post("/api/concept/options", {buildAllGrandMeanConcepts: e.target.checked});
+  $("c-add").onclick = async () => {
+    await post("/api/concept/add", {
+      positive: $("c-pos").value,
+      negative: $("c-neg").value,
+      multiConcept: $("c-multi").value,
+      multiConceptStoryConcept: $("c-multi-concept").value,
+      multiConceptTopic: $("c-multi-topic").value,
+      multiConceptSplit: $("c-multi-split").value
+    });
+    $("c-pos").value = ""; $("c-neg").value = ""; $("c-multi").value = "";
+  };
+  $("c-rebuild").onclick = () => post("/api/concept/rebuild");
+  const copyPrompt = async (path, buttonID, resetLabel) => {
+    const r = await fetch(path);
+    const t = await r.text();
+    const b = $(buttonID);
+    if (r.ok) {
+      try {
+        await navigator.clipboard.writeText(t);
+        b.textContent = "Copied ✓";
+      } catch {
+        b.textContent = "Select below";
+      }
+      $("c-prompt-preview").innerHTML = `<textarea class="stim" style="height:180px" readonly>${esc(t)}</textarea>`;
+    } else {
+      b.textContent = "needs setup";
+      $("c-prompt-preview").innerHTML = `<div class="muted">${esc(t)}</div>`;
+    }
+    setTimeout(() => b.textContent = resetLabel, 1800);
+  };
+  $("c-copy-prompt").onclick = () => copyPrompt("/api/concept/prompt", "c-copy-prompt", "Copy LLM prompt");
+  $("c-copy-cowork").onclick = () => copyPrompt("/api/concept/cowork-prompt", "c-copy-cowork", "Copy Claude Cowork prompt");
+  $("c-copy-probe-prompt").onclick = () => copyPrompt("/api/concept/probe-prompt", "c-copy-probe-prompt", "Copy probe LLM prompt");
+  $("c-copy-neutral-prompt").onclick = () => copyPrompt("/api/concept/neutral-prompt", "c-copy-neutral-prompt", "Copy neutral corpus prompt");
+  $("c-copy-neutral-dialogue-prompt").onclick = () => copyPrompt("/api/concept/neutral-dialogue-prompt", "c-copy-neutral-dialogue-prompt", "Copy Anthropic dialogue prompt");
+  $("c-neutral-corpus").onchange = e => post("/api/steering", {neutralCorpusID: e.target.value});
+  $("c-neutral-select-projection").onclick = () => post("/api/concept/options", {projectionNeutralCorpusName: $("c-neutral-projection-name").value});
+  $("c-neutral-concepts").onchange = e => post("/api/concept/options", {projectionNeutralConcepts: e.target.value});
+  $("c-neutral-domains").onchange = e => post("/api/concept/options", {projectionNeutralDomains: e.target.value});
+  $("c-neutral-exclusions").onchange = e => post("/api/concept/options", {projectionNeutralExclusions: e.target.value});
+  $("c-neutral-build").onclick = () => post("/api/neutral-pcs/build");
+  $("c-neutral-import").onclick = async () => {
+    await post("/api/concept/neutral-import", {content: $("c-neutral-draft").value});
+    $("c-neutral-draft").value = "";
+  };
+  $("c-probe-import").onclick = async () => {
+    await post("/api/concept/probe-import", {content: $("c-probe-draft").value});
+    $("c-probe-draft").value = "";
+  };
+  $("c-probe-train").onclick = () => post("/api/concept/probe-train");
+  // RepE reader (faithful): list + score only — fitting stays in the app /
+  // server workbench (this client has no local fit route on purpose).
+  const readerLabel = r =>
+    `${r.concept} · L${r.layer} · ${r.templateID}` +
+    (r.heldOutAccuracy != null ? ` · held-out ${Math.round(r.heldOutAccuracy * 100)}%` : "") +
+    ` · ${String(r.extracted || "").slice(0, 10)}`;
+  const renderReaderInfo = () => {
+    const r = readerList.find(x => x.id === $("c-reader-sel").value);
+    $("c-reader-info").textContent = r
+      ? `${r.modelID} · substrate ${r.substrate} · LAT token ${r.latTokenPosition} · dataset ${String(r.datasetHash || "").slice(0, 12)}` +
+        (r.templateDivergence ? ` · divergence: ${r.templateDivergence}` : "")
+      : "";
+  };
+  const loadReaders = async () => {
+    try {
+      const r = await fetch("/api/readers");
+      readerList = (await r.json()).readers || [];
+    } catch { readerList = []; }
+    const sel = $("c-reader-sel");
+    const prev = sel.value;
+    sel.innerHTML = readerList.length
+      ? readerList.map(r => `<option value="${esc(r.id)}" ${r.id === prev ? "selected" : ""}>${esc(readerLabel(r))}</option>`).join("")
+      : `<option value="">no reader artifacts under runs/ — fit one in the app or on the server workbench</option>`;
+    renderReaderInfo();
+  };
+  $("c-reader-refresh").onclick = loadReaders;
+  $("c-reader-sel").onchange = renderReaderInfo;
+  $("c-reader-score").onclick = async () => {
+    const readerID = $("c-reader-sel").value;
+    const texts = $("c-reader-texts").value.split("\n").map(t => t.trim()).filter(Boolean);
+    const st = $("c-reader-status");
+    if (!readerID) { st.textContent = "no reader selected"; return; }
+    if (!texts.length) { st.textContent = "enter texts, one per line"; return; }
+    st.textContent = "scoring…";
+    $("c-reader-score").disabled = true;
+    try {
+      const r = await fetch("/api/reader/score", {method: "POST", body: JSON.stringify({readerID, texts})});
+      const payload = await r.json();
+      if (!r.ok || payload.error) throw new Error(payload.error || "scoring failed");
+      st.textContent = `${payload.concept} · layer ${payload.layer} · ${payload.templateID}`;
+      $("c-reader-scores").innerHTML = payload.scores.map((s, i) =>
+        `<div class="stim-row"><span class="m">${fmt(s, 3)}</span><span>${esc(texts[i])}</span></div>`).join("");
+    } catch (e) {
+      st.textContent = String(e.message || e);
+      $("c-reader-scores").innerHTML = "";
+    }
+    $("c-reader-score").disabled = false;
+  };
+  loadReaders();
+  $("c-save").onclick = () => post("/api/concept/save");
+  $("c-import-btn").onclick = () => $("c-import").click();
+  $("c-import").onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    post("/api/concept/import", {content: await f.text(), filename: f.name});
+    e.target.value = "";
+  };
+}
+
+/* ---------- geometry pane ---------- */
+function shortLabel(label) {
+  const head = label.split("·")[0].trim();
+  return head.length > 10 ? head.slice(0, 9) + "…" : head;
+}
+function geoCell(value) {
+  const x = Number(value);
+  const opacity = Math.min(1, Math.abs(x)) * 0.35;
+  const color = x >= 0 ? `rgba(10,132,255,${opacity})` : `rgba(255,69,58,${opacity})`;
+  return `<span class="geo-cell" style="background:${color}" title="${fmt(x, 4)}">${fmt(x, 2)}</span>`;
+}
+function matrixTable(matrix) {
+  return `<div class="matrix-wrap"><table class="matrix"><tr><th></th>${
+    matrix.labels.map(l => `<th title="${esc(l)}">${esc(shortLabel(l))}</th>`).join("")
+  }</tr>${
+    matrix.labels.map((label, row) => `<tr><td title="${esc(label)}">${esc(shortLabel(label))}</td>${
+      matrix.values[row].map(v => `<td>${geoCell(v)}</td>`).join("")
+    }</tr>`).join("")
+  }</table></div>`;
+}
+function rsaTable(result) {
+  const labels = result.matrices.map(m => `L${m.layer}`);
+  return `<div class="matrix-wrap"><table class="matrix"><tr><th></th>${
+    labels.map(l => `<th>${esc(l)}</th>`).join("")
+  }</tr>${
+    labels.map((label, row) => `<tr><td>${esc(label)}</td>${
+      result.rsa[row].map(v => `<td>${geoCell(v)}</td>`).join("")
+    }</tr>`).join("")
+  }</table></div>`;
+}
+function gemmaScopePanel(info) {
+  if (!info) {
+    return `<fieldset><legend>Gemma Scope</legend>
+      <div class="muted">Load a Gemma 3 model to see Gemma Scope 2 repositories and SAELens snippets.</div>
+    </fieldset>`;
+  }
+  const selected = S.vectors.filter(v => geoSelected.has(v.id));
+  const artifact = selected.length === 1 ? selected[0] : null;
+  const maxLayer = artifact ? Math.max(0, artifact.layerCount - 1) : 0;
+  geoGemmaLayer = Math.min(Math.max(0, geoGemmaLayer), maxLayer);
+  const availableLayers = info.availableLayers || [];
+  const snappedLayer = availableLayers.length
+    ? availableLayers.reduce((best, layer) => Math.abs(layer - geoGemmaLayer) < Math.abs(best - geoGemmaLayer) ? layer : best, availableLayers[0])
+    : geoGemmaLayer;
+  const shown = Object.assign({}, info, {
+    recommendedLayer: snappedLayer,
+    recommendedSAEID: info.recommendedSAEID.replace(/layer_\d+_/, `layer_${snappedLayer}_`)
+  });
+  const snippet = `from sae_lens import SAE
+
+sae, cfg_dict, sparsity = SAE.from_pretrained(
+    release="${shown.recommendedRelease}",
+    sae_id="${shown.recommendedSAEID}",
+)`;
+  return `<fieldset><legend>Gemma Scope</legend>
+    <div class="statline"><span>Suite</span><span>${esc(shown.suiteName)}</span></div>
+    <div class="statline"><span>Model</span><span>${esc(shown.modelSize)} ${esc(shown.tuning).toUpperCase()}</span></div>
+    <div class="statline"><span>Site</span><span>${esc(shown.recommendedSite)}</span></div>
+    <div class="statline"><span>Release</span><span>${esc(shown.recommendedRelease)}</span></div>
+    <div class="statline"><span>SAE layer</span><span>${shown.recommendedLayer}</span></div>
+    <div class="statline"><span>SAE id</span><span>${esc(shown.recommendedSAEID)}</span></div>
+    ${artifact ? `<div class="row"><label>Analyze layer <span id="geo-gemma-layer-v">${geoGemmaLayer}</span></label>
+      <input type="range" id="geo-gemma-layer" min="0" max="${maxLayer}" step="1" value="${geoGemmaLayer}">
+      <button id="geo-gemma-run" class="primary" ${geoGemmaRunning ? "disabled" : ""} title="run SAELens against this vector layer and ingest the resulting Gemma Scope report">${geoGemmaRunning ? "Analyzing…" : "Run analysis"}</button></div>`
+      : `<div class="muted">Select exactly one vector to run a Gemma Scope analysis.</div>`}
+    <div class="row">
+      <a href="${esc(shown.landingPageURL)}" target="_blank" rel="noreferrer">${esc(shown.suiteName)}</a>
+      <a href="${esc(shown.repositoryURL)}" target="_blank" rel="noreferrer">${esc(shown.repository)}</a>
+    </div>
+    <details><summary>SAELens snippet</summary>
+      <textarea class="stim" style="height:120px" readonly>${esc(snippet)}</textarea>
+    </details>
+    ${shown.notes.map(note => `<div class="muted">${esc(note)}</div>`).join("")}
+    ${geoGemmaStatus ? `<div class="muted" style="white-space:pre-wrap">${esc(geoGemmaStatus)}</div>` : ""}
+  </fieldset>`;
+}
+function gemmaScopeReportRows(rows, source) {
+  return rows.slice(0, 8).map(row => `<tr>
+    <td>F${row.feature}</td>
+    <td>${fmt(row.cosine, 3)}</td>
+    <td>${row.sparsity == null ? "—" : fmt(row.sparsity, 3)}</td>
+    <td><button data-gemma-import="${row.feature}" data-gemma-source="${source}" ${row.decoderAvailable ? "" : "disabled"} title="${row.decoderAvailable ? "import this SAE decoder as a steerable vector" : "rerun this Gemma Scope job to export decoder vectors"}">Import</button></td>
+  </tr>`).join("");
+}
+function gemmaScopeReportsPanel() {
+  const reports = S.gemmaScopeReports || [];
+  if (!reports.length) {
+    return `<fieldset><legend>Gemma Scope Reports</legend>
+      <div class="muted">Run a Gemma Scope analysis to create gemmascope-report.json.</div>
+    </fieldset>`;
+  }
+  if (!geoReportID || !reports.some(r => r.id === geoReportID)) geoReportID = reports[0].id;
+  const report = reports.find(r => r.id === geoReportID) || reports[0];
+  const featureTable = (title, rows, source) => `<details><summary>${title}</summary>
+    <div class="matrix-wrap"><table class="matrix"><tr><th>feature</th><th>cosine</th><th>sparsity</th><th></th></tr>${gemmaScopeReportRows(rows, source)}</table></div>
+  </details>`;
+  return `<fieldset><legend>Gemma Scope Reports</legend>
+    <div class="row"><select id="geo-report" class="grow">
+      ${reports.map(r => `<option value="${esc(r.id)}" ${r.id === report.id ? "selected" : ""}>${esc(r.label)}</option>`).join("")}
+    </select></div>
+    <div class="statline"><span>Vector</span><span>${esc(report.concept)}</span></div>
+    <div class="statline"><span>Layer</span><span>${report.layer}</span></div>
+    <div class="statline"><span>SAE</span><span>${esc(report.saeID)}</span></div>
+    ${featureTable("Top positive", report.topPositive, "top-positive")}
+    ${featureTable("Top negative", report.topNegative, "top-negative")}
+    ${featureTable("Top absolute", report.topAbsolute, "top-absolute")}
+    ${geoImportStatus ? `<div class="muted" style="white-space:pre-wrap">${esc(geoImportStatus)}</div>` : ""}
+  </fieldset>`;
+}
+async function importGemmaScopeFeature(feature, source) {
+  if (!geoReportID) return;
+  geoImportStatus = "importing…";
+  renderGeometry(true);
+  try {
+    const r = await fetch("/api/gemmascope/import", {
+      method: "POST",
+      body: JSON.stringify({reportID: geoReportID, feature, source})
+    });
+    const payload = await r.json();
+    if (!r.ok || payload.error) throw new Error(payload.error || "Gemma Scope import failed");
+    geoImportStatus = payload.summary;
+    geoSelected = new Set([payload.vectorID]);
+    const state = await fetch("/api/state");
+    S = await state.json();
+  } catch (e) {
+    geoImportStatus = String(e.message || e);
+  }
+  renderGeometry(true);
+}
+async function runGemmaScope() {
+  const selected = S.vectors.filter(v => geoSelected.has(v.id));
+  if (selected.length !== 1) return;
+  geoGemmaRunning = true;
+  geoGemmaStatus = "running Gemma Scope analysis…";
+  renderGeometry(true);
+  try {
+    const r = await fetch("/api/gemmascope/run", {
+      method: "POST",
+      body: JSON.stringify({vectorID: selected[0].id, layer: geoGemmaLayer})
+    });
+    const payload = await r.json();
+    if (!r.ok || payload.error) throw new Error(payload.error || "Gemma Scope analysis failed");
+    geoGemmaStatus = payload.succeeded
+      ? `${payload.summary}\n${payload.prepared.directory}`
+      : `${payload.summary}\n${payload.stderr || payload.stdout || ""}`;
+    const state = await fetch("/api/state");
+    S = await state.json();
+  } catch (e) {
+    geoGemmaStatus = String(e.message || e);
+  }
+  geoGemmaRunning = false;
+  renderGeometry(true);
+}
+async function computeGeometry() {
+  geoStatus = "computing…";
+  renderGeometry(true);
+  try {
+    const r = await fetch("/api/geometry/analyze", {
+      method: "POST",
+      body: JSON.stringify({vectorIDs: [...geoSelected]})
+    });
+    const payload = await r.json();
+    if (!r.ok || payload.error) throw new Error(payload.error || "geometry failed");
+    geoResult = payload;
+    geoLayer = Math.min(geoLayer, Math.max(0, geoResult.matrices.length - 1));
+    geoStatus = `computed ${geoResult.matrices.length} layer matrices`;
+  } catch (e) {
+    geoResult = null;
+    geoStatus = String(e.message || e);
+  }
+  renderGeometry(true);
+}
+function renderGeometry(force=false) {
+  const p = $("pane-geo");
+  if (!S) return;
+  const available = new Set(S.vectors.map(v => v.id));
+  for (const id of [...geoSelected]) if (!available.has(id)) geoSelected.delete(id);
+  const sig = JSON.stringify([S.vectors.map(v => [v.id, v.label, v.stale]), S.gemmaScope, S.gemmaScopeReports, geoReportID, geoImportStatus, [...geoSelected], geoLayer, geoGemmaLayer, geoGemmaStatus, geoGemmaRunning, geoStatus, geoResult]);
+  if (!force && (p.contains(document.activeElement) || p.dataset.sig === sig)) return;
+  p.dataset.sig = sig;
+  const selectedCount = geoSelected.size;
+  const matrix = geoResult && geoResult.matrices.length
+    ? geoResult.matrices[Math.min(geoLayer, geoResult.matrices.length - 1)]
+    : null;
+  p.innerHTML = `
+    <fieldset><legend>Geometry</legend>
+      <div class="row">
+        <button id="geo-all" ${S.vectors.length ? "" : "disabled"} title="select every vector compatible with the loaded model">Select All</button>
+        <button id="geo-clear" ${selectedCount ? "" : "disabled"} title="clear selection and computed matrices">Clear</button>
+        <button id="geo-compute" class="primary" ${selectedCount < 2 ? "disabled" : ""} title="compute per-layer cosine matrices and layer-wise RSA from selected vector artifacts">Compute</button>
+      </div>
+      ${geoResult ? `<div class="statline"><span>Vectors</span><span>${geoResult.artifactLabels.length}</span></div>
+        <div class="statline"><span>Common layers</span><span>${geoResult.matrices.length}</span></div>
+        <div class="row"><label>Layer <span id="geo-layer-v">${matrix ? matrix.layer : 0}</span></label>
+          <input type="range" id="geo-layer" min="0" max="${Math.max(0, geoResult.matrices.length - 1)}" step="1" value="${geoLayer}"></div>`
+        : `<div class="muted">Select at least two compatible vectors.</div>`}
+      ${geoStatus ? `<div class="muted">${esc(geoStatus)}</div>` : ""}
+    </fieldset>
+    ${gemmaScopePanel(S.gemmaScope)}
+    ${gemmaScopeReportsPanel()}
+    <fieldset><legend>Vectors</legend>
+      ${S.vectors.length ? S.vectors.map(v => `<label class="stim-row" title="${esc(v.concept)} · ${esc(v.modelID)} · ${esc(v.stimulusHash)}…">
+        <input type="checkbox" data-geoid="${esc(v.id)}" ${geoSelected.has(v.id) ? "checked" : ""}>
+        <span>${esc(v.label)}${v.stale ? " ⚠︎ stale" : ""}</span></label>`).join("")
+        : `<div class="muted">${S.modelState === "ready" ? "No vectors for this model in runs/." : "Load a model to see compatible vectors."}</div>`}
+    </fieldset>
+    ${matrix ? `<fieldset><legend>Cosines @ L${matrix.layer}</legend>${matrixTable(matrix)}</fieldset>` : ""}
+    ${geoResult && geoResult.rsa.length ? `<fieldset><legend>Layer RSA</legend>${rsaTable(geoResult)}</fieldset>` : ""}`;
+  $("geo-all").onclick = () => { geoSelected = new Set(S.vectors.map(v => v.id)); geoResult = null; renderGeometry(true); };
+  $("geo-clear").onclick = () => { geoSelected.clear(); geoResult = null; geoStatus = ""; geoLayer = 0; renderGeometry(true); };
+  $("geo-compute").onclick = computeGeometry;
+  if ($("geo-layer")) {
+    $("geo-layer").oninput = e => {
+      geoLayer = +e.target.value;
+      $("geo-layer-v").textContent = geoResult.matrices[geoLayer].layer;
+      renderGeometry(true);
+    };
+  }
+  if ($("geo-gemma-layer")) {
+    $("geo-gemma-layer").oninput = e => {
+      geoGemmaLayer = +e.target.value;
+      $("geo-gemma-layer-v").textContent = geoGemmaLayer;
+      renderGeometry(true);
+    };
+  }
+  if ($("geo-gemma-run")) $("geo-gemma-run").onclick = runGemmaScope;
+  if ($("geo-report")) {
+    $("geo-report").onchange = e => {
+      geoReportID = e.target.value;
+      geoImportStatus = "";
+      renderGeometry(true);
+    };
+  }
+  document.querySelectorAll("[data-gemma-import]").forEach(button => {
+    button.onclick = e => {
+      importGemmaScopeFeature(+e.target.dataset.gemmaImport, e.target.dataset.gemmaSource);
+    };
+  });
+  document.querySelectorAll("[data-geoid]").forEach(box => {
+    box.onchange = e => {
+      if (e.target.checked) geoSelected.add(e.target.dataset.geoid);
+      else geoSelected.delete(e.target.dataset.geoid);
+      geoResult = null;
+      geoGemmaStatus = "";
+      renderGeometry(true);
+    };
+  });
+}
+
+/* ---------- experiments pane ---------- */
+function renderExperiments() {
+  const p = $("pane-exp");
+  const sig = JSON.stringify([S.experiments, S.experiment, S.experimentStatus]);
+  if (p.contains(document.activeElement) || p.dataset.sig === sig) return;
+  p.dataset.sig = sig;
+  const e = S.experiment;
+  p.innerHTML = `
+  <div style="background: color-mix(in srgb, var(--warn) 22%, transparent); border: 1px solid var(--warn); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px;">
+    <strong>Monitor only.</strong> Study authoring lives in the native SteerLab app —
+    use this page to watch runs and read results. Edits made here are limited and
+    the prompt editor is read-only.
+  </div>
+  <fieldset><legend>Study</legend>
+    <div class="row"><select id="ex-sel" class="grow" title="studies are versioned manifests in experiments/<name>/">
+      <option value="">select…</option>
+      ${S.experiments.map(x => `<option value="${esc(x.name)}" ${e && x.name===e.name?"selected":""}>${esc(x.name)} [${x.status}]</option>`).join("")}
+    </select></div>
+    <div class="row"><input type="text" id="ex-new" class="grow" placeholder="new study name" title="creates a draft pinned to the currently selected model"></div>
+    <div class="row"><textarea id="ex-new-desc" class="grow" rows="2" placeholder="question or purpose" title="short domain-neutral purpose for the draft protocol"></textarea></div>
+    <div class="row"><button id="ex-create">Create Draft</button></div>
+  </fieldset>` + (!e ? "" : `
+  <fieldset><legend>Model Comparison &amp; Generation</legend>
+    <div class="row"><textarea id="ex-desc" class="grow" rows="2" placeholder="question or purpose" ${e.status!=="draft"?"disabled":""} title="what this study asks; not tied to any domain">${esc(e.description||"")}</textarea></div>
+    <div class="row"><textarea id="ex-task" class="grow" rows="3" placeholder="task: what the model or agents will do" ${e.status!=="draft"?"disabled":""} title="examples: write an opinion, play a game, answer advice prompts, allocate resources, classify scenarios">${esc(e.taskDescription||"")}</textarea></div>
+    <div class="row"><textarea id="ex-outcomes" class="grow" rows="3" placeholder="outcome measures" ${e.status!=="draft"?"disabled":""} title="what you will measure: flips, scores, cooperation rate, style markers, capability battery, degeneration">${esc(e.outcomeMeasures||"")}</textarea></div>
+    <div class="row"><label title="relative path to a {&quot;text&quot;: ...}-per-line JSONL file; Save Protocol pins its current hash">Prompts</label><input type="text" id="ex-prompts" class="grow" value="${esc(e.taskPromptsFile||"prompts/dev/dev-prompts.jsonl")}" ${e.status!=="draft"?"disabled":""}></div>
+    ${e.taskPromptsHash ? `<div class="muted">task prompts @ ${esc(e.taskPromptsHash)}…</div>` : ""}
+	    <div class="row">
+	      <button id="ex-load-prompts" title="read the JSONL prompt file into the viewer below">Load Prompts</button>
+	    </div>
+	    <div class="row"><textarea id="ex-prompt-text" class="grow" rows="8" readonly placeholder="load the prompt file to view it" title="read-only view of the task prompts. Edit and Save &amp; Pin in the native app's Studies panel — it round-trips per-item instrument fields (options/target) that a plain text save would destroy">${esc(e.taskPromptsText||"")}</textarea></div>
+	    <div class="muted">Prompt editing is disabled here: per-item instrument fields (<code>options</code>/<code>target</code>) need the app's field-preserving editor. Use Save &amp; Pin Prompts in the native app.</div>
+	    ${e.taskPromptsStatus ? `<div class="muted">${esc(e.taskPromptsStatus)}</div>` : ""}
+	    <div class="row"><label title="chat assistant uses the model chat template with user/assistant roles; raw completion sends literal text without role wrapping">Mode</label><select id="ex-prompt-mode" class="grow" ${e.status!=="draft"?"disabled":""}>
+	      ${(e.promptModes||[]).map(m => `<option value="${esc(m.value)}" ${m.value===(e.promptMode||"chatAssistant")?"selected":""}>${esc(m.label)}</option>`).join("")}
+	    </select></div>
+	    <div class="row"><textarea id="ex-system" class="grow" rows="3" placeholder="baseline system prompt" ${e.status!=="draft"?"disabled":""} title="optional system instruction for the baseline condition; saved variants use their own system prompt">${esc(e.systemPrompt||"")}</textarea></div>
+	    <div class="row"><label title="baseline Qwen-only setting; measured studies default to no-think"><input type="checkbox" id="ex-think" ${e.qwenThinkingEnabled?"checked":""} ${e.status!=="draft" || !String(e.modelID||"").toLowerCase().includes("qwen")?"disabled":""}> Baseline Qwen thinking</label></div>
+	    <div class="row"><label title="study-wide generation temperature; measured variant-comparison runs currently require 0">Temp</label><input type="number" id="ex-temp" min="0" max="1.5" step="0.1" value="${esc(String(e.temperature))}" ${e.status!=="draft"?"disabled":""}></div>
+    <div class="row"><label title="study-wide per-response token cap for baseline and variants">Max tokens</label><input type="number" id="ex-max" min="1" step="1" value="${esc(String(e.maxTokens))}" ${e.status!=="draft"?"disabled":""}></div>
+  </fieldset>
+  <fieldset><legend>Evaluation</legend>
+    <div class="row"><label title="local model used for paired judge evaluation; Claude API models remain available for older protocols">Judge</label><select id="ex-judge-model" class="grow">
+      ${(e.judgeModelOptions||[]).map(m => `<option value="${esc(m)}" ${m===(e.judgeModel||"")?"selected":""}>${esc(m)}</option>`).join("")}
+    </select></div>
+    <div class="row"><textarea id="ex-judge-prompt" class="grow" rows="5" placeholder="paired judge rubric" title="judge rubric. Draft studies save this into the protocol; Results can also use the current text to evaluate an existing immutable run artifact">${esc(e.judgePrompt||"")}</textarea></div>
+    ${e.status === "draft" ? `<button id="ex-save-protocol" title="save model comparison, generation, and evaluation settings into the draft manifest">Save Study Setup</button>` : ""}
+  </fieldset>
+  <fieldset><legend>${esc(e.name)} — ${e.status}</legend>
+    <div class="muted" title="runs load exactly this model snapshot; the revision is pinned from the local HF cache by the first extract/validate/sweep or at freeze">model: ${esc(e.modelID)}${e.modelRevision ? ` @ ${esc(e.modelRevision)}…` : " (revision unpinned)"}</div>
+    ${e.freezeHash ? `<div class="muted" title="canonical content hash stamped at freeze; every run records it">frozen @ ${esc(e.freezeHash)}… · git ${esc(e.gitCommit||"—")}</div>` : ""}
+    ${e.violations.map(v => `<div style="color:var(--bad)" title="pinned inputs no longer match reality">⚠ ${esc(v)}</div>`).join("")}
+  </fieldset>
+  <fieldset><legend>Concepts (pinned by stimulus hash)</legend>
+    ${e.concepts.map(c => `<div class="statline" title="method: ${esc(c.method)} · reading: ${esc(c.reading)}${c.neutralPCs?` · top-${c.neutralPCs} neutral PCs projected out`:""}"><span>${esc(c.name)}</span><span class="muted">${esc(c.hash)}…</span></div>`).join("")}
+    ${e.status === "draft" && e.attachable.length ? `<div class="row"><select id="ex-attach-sel">${e.attachable.map(n=>`<option>${esc(n)}</option>`).join("")}</select>
+      <button id="ex-attach" title="pins the concept's CURRENT stimulus hash and the concepts panel's current extraction options">Attach</button></div>` : ""}
+  </fieldset>
+  <fieldset><legend>Conditions</legend>
+    ${e.conditions.map(c => `<div class="stim-row" title="a condition is a full steering configuration, hashable as a unit"><span>${esc(c.name)}</span><span class="muted">${esc(c.summary)}</span>${e.status==="draft"?`<button data-delcond="${esc(c.name)}">✕</button>`:""}</div>`).join("")}
+    ${e.status === "draft" ? `<div class="row"><input type="text" id="ex-cond-name" placeholder="condition name" class="grow">
+      <button id="ex-baseline" title="adds a no-steer condition for the same task and sampling settings">Add Baseline</button>
+      <button id="ex-capture" ${S.configuredSlotCount ? "" : "disabled"} title="serializes the configured steering boxes (enabled slots, band, norm units) into the manifest; un-attached concepts are pinned automatically">Capture Steering</button></div>` : ""}
+  </fieldset>
+  <div class="row">
+    ${e.status === "draft" ? `<button id="ex-freeze" class="primary" ${e.violations.length?"disabled":""} title="ONE-WAY: verifies every pinned input, requires a pinned model revision and a matching validate run (the circularity firewall), stamps content hash + git commit, manifest becomes read-only. Iterate afterwards by duplicating; CLI --force skips the validation gate">Freeze Study</button>` : ""}
+    <button id="ex-dup" title="the only way to iterate on a frozen study">Duplicate as draft</button>
+  </div>
+  <div class="row">
+    <button id="ex-validate" ${e.isValidating || e.isRunning || e.violations.length ? "disabled" : ""} title="creates the validation evidence required by Freeze Study: verifies pinned inputs, loads the model at its pinned revision (or pins the local cached revision for drafts), re-derives concept vectors, runs never-named validation scenarios when present, writes the cross-concept cosine matrix, and stores a manifest snapshot in a new runs/ validate directory">${e.isValidating ? "Validating Study…" : "Validate Study"}</button>
+    <button id="ex-run" ${e.isRunning || e.violations.length || e.temperature !== 0 ? "disabled" : ""} title="executes the study in the webapp: verifies pins, loads the model at the pinned revision, re-derives vectors, runs every condition × seed × task prompt, and writes generations, metrics.csv, report.json, vector sidecars, and the manifest snapshot into a new immutable runs/ directory. Currently requires Temp = 0 because mlx-swift-lm does not expose a per-run seed for reproducible sampling">${e.isRunning ? "Running Study…" : "Run Study"}</button>
+  </div>
+  ${e.temperature !== 0 ? `<div class="muted">Run Study requires Temp = 0 for reproducible measured runs.</div>` : ""}
+  ${e.lastValidationDirectory ? `<div class="muted" title="latest completed validation run directory">${esc(e.lastValidationDirectory)}</div>` : ""}
+  ${e.lastRunDirectory ? `<div class="muted" title="latest completed study run directory">${esc(e.lastRunDirectory)}</div>` : ""}
+  <div class="muted">Same engine as CLI: steerlab-cli experiment extract|validate|sweep|run ${esc(e.name)}</div>
+  ${liveExperimentViewerHTML(e)}
+  <fieldset><legend>Results</legend>
+    ${resultsHTML(e)}
+  </fieldset>`)
+  + (S.experimentStatus ? `<div class="muted" style="margin-top:6px">${esc(S.experimentStatus)}</div>` : "");
+
+  $("ex-sel").onchange = ev => post("/api/experiment/select", {name: ev.target.value || null});
+  $("ex-create").onclick = () => { const n = $("ex-new").value.trim(); if (n) post("/api/experiment/create", {name: n, description: $("ex-new-desc").value}); };
+  if ($("ex-save-protocol")) $("ex-save-protocol").onclick = () => post("/api/experiment/protocol", {
+    description: $("ex-desc").value,
+    task: $("ex-task").value,
+    outcomes: $("ex-outcomes").value,
+	    judgeModel: $("ex-judge-model").value,
+	    judgePrompt: $("ex-judge-prompt").value,
+	    taskPromptsFile: $("ex-prompts").value,
+	    promptMode: $("ex-prompt-mode").value,
+	    systemPrompt: $("ex-system").value,
+	    qwenThinkingEnabled: $("ex-think").checked,
+	    temperature: Number($("ex-temp").value),
+    maxTokens: Number($("ex-max").value)
+  });
+  if ($("ex-load-prompts")) $("ex-load-prompts").onclick = () => post("/api/experiment/prompts/load");
+  // Save & Pin removed on purpose (2026-07-19): this page is a monitor. The
+  // native app's editor round-trips per-item instrument fields; a text-only
+  // save from here could still restructure or drop items.
+  if ($("ex-attach")) $("ex-attach").onclick = () => post("/api/experiment/attach", {concept: $("ex-attach-sel").value});
+  if ($("ex-baseline")) $("ex-baseline").onclick = () => post("/api/experiment/baseline", {name: $("ex-cond-name").value || null});
+  if ($("ex-capture")) $("ex-capture").onclick = () => post("/api/experiment/capture", {name: $("ex-cond-name").value || null});
+  if ($("ex-freeze")) $("ex-freeze").onclick = () => {
+    if (confirm(`Freeze '${e.name}'? This is one-way — afterwards the study can only be duplicated, never edited.`))
+      post("/api/experiment/freeze");
+  };
+  if ($("ex-dup")) $("ex-dup").onclick = () => post("/api/experiment/duplicate");
+  if ($("ex-result-sel")) $("ex-result-sel").onchange = ev => post("/api/experiment/result/select", {id: ev.target.value || null});
+	  if ($("ex-results-refresh")) $("ex-results-refresh").onclick = () => post("/api/experiment/results/refresh");
+	  if ($("ex-evaluate")) $("ex-evaluate").onclick = () => post("/api/experiment/evaluate", {
+	    judgeModel: $("ex-judge-model").value,
+	    judgePrompt: $("ex-judge-prompt").value
+	  });
+	  if ($("ex-review-generations")) $("ex-review-generations").onclick = () => showReview("generations");
+	  if ($("ex-review-judgments")) $("ex-review-judgments").onclick = () => showReview("judgments");
+	  if ($("ex-validate")) $("ex-validate").onclick = () => post("/api/experiment/validate");
+  if ($("ex-run")) $("ex-run").onclick = () => post("/api/experiment/run");
+  document.querySelectorAll("[data-delcond]").forEach(b =>
+    b.onclick = () => post("/api/experiment/removeCondition", {name: b.dataset.delcond}));
+}
+
+function liveExperimentViewerHTML(e) {
+  const hasLive = e.isRunning || e.isEvaluating || e.liveRunDirectory || e.liveEvaluationDirectory ||
+    e.liveActiveGeneration || e.liveActiveJudgment ||
+    (e.liveGenerations && e.liveGenerations.length) ||
+    (e.liveJudgments && e.liveJudgments.length);
+  if (!hasLive) return "";
+  const active = e.liveActiveGeneration;
+  const activeJudge = e.liveActiveJudgment;
+  return `<fieldset><legend>Run Viewer</legend>
+    ${e.liveRunDirectory ? `<div class="muted">run: ${esc(shortPath(e.liveRunDirectory))}</div>` : ""}
+    ${e.liveEvaluationDirectory ? `<div class="muted">judge: ${esc(shortPath(e.liveEvaluationDirectory))}</div>` : ""}
+    ${active ? `<div class="live-card live-generating">
+      <div class="statline"><strong>Generating ${esc(active.condition)} · ${esc(active.promptID)}</strong><span class="muted">${wordCount(active.output)} words</span></div>
+      ${active.prompt ? `<div class="muted clamp">${esc(active.prompt)}</div>` : ""}
+      <pre>${esc(active.output || "waiting for first tokens…")}</pre>
+    </div>` : ""}
+    ${e.liveGenerations && e.liveGenerations.length ? `<details open><summary>Generated Responses (${e.liveGenerations.length})</summary>
+      ${e.liveGenerations.slice(0, 12).map(g => `<div class="live-card">
+        <div class="statline"><strong>${esc(g.condition)} · ${esc(g.promptID)}</strong><span class="muted">${g.wordCount} words · distinct-2 ${Number(g.distinct2 || 0).toFixed(3)}</span></div>
+        <pre>${esc((g.output || "") + (g.truncated ? "\\n…" : ""))}</pre>
+      </div>`).join("")}
+    </details>` : ""}
+    ${activeJudge ? `<div class="live-card live-judging"><strong>Judging ${esc(activeJudge.condition)} · ${esc(activeJudge.promptID)}</strong></div>` : ""}
+    ${e.liveJudgments && e.liveJudgments.length ? `<details open><summary>Judge Results (${e.liveJudgments.length})</summary>
+      ${e.liveJudgments.slice(0, 20).map(j => `<div class="live-card live-judge">
+        <div class="statline"><strong>${esc(j.condition)} · ${esc(j.promptID)}</strong><span class="judge-chip ${esc(j.conditionResult || "tie")}">${esc(j.conditionResult || "tie")}</span></div>
+        <div class="muted">winner ${esc(j.winner || "—")} · confidence ${Number(j.confidence || 0).toFixed(2)}</div>
+        <div>${esc(j.briefReason || "")}</div>
+        ${j.structuredFields ? `<div class="muted">${esc(structuredFieldsLine(j.structuredFields))}</div>` : ""}
+      </div>`).join("")}
+    </details>` : ""}
+  </fieldset>`;
+}
+
+function shortPath(path) {
+  return String(path || "").split("/").filter(Boolean).slice(-1)[0] || path || "";
+}
+
+function wordCount(text) {
+  return String(text || "").trim().split(/\s+/).filter(Boolean).length;
+}
+
+function structuredFieldsLine(fields) {
+  return "structured_fields [" + Object.keys(fields).sort().map(k => `${k}: ${JSON.stringify(fields[k])}`).join(", ") + "]";
+}
+
+function resultsHTML(e) {
+  if (!e.resultRuns || !e.resultRuns.length) {
+    return `<div class="muted">No run artifacts for this study yet.</div>`;
+  }
+  const d = e.selectedResult;
+  const opts = e.resultRuns.map(r =>
+    `<option value="${esc(r.directoryName)}" ${e.selectedResultID === r.directoryName ? "selected": ""}>${resultOptionLabel(r)}</option>`).join("");
+	  return `<div class="row"><select id="ex-result-sel" class="grow">${opts}</select>
+	    <button id="ex-results-refresh" title="rescan runs/ for this study">Refresh</button></div>` +
+	    (!d ? "" : `<div class="muted" title="run artifact path">run: ${esc(d.item.path)}</div>` +
+	      (d.judgeArtifactDirectory ? `<div class="muted" title="judge artifact path">judge: ${esc(d.judgeArtifactDirectory)}</div>` : "") +
+	      downloadsHTML(d) +
+	      (d.item.kind === "run" ? `<div class="row"><button id="ex-evaluate" ${e.isEvaluating || e.isRunning || e.isValidating ? "disabled" : ""} title="pair each condition response with its same-prompt baseline, shuffle A/B labels, ask the current judge prompt, and write a separate evaluate artifact">${e.isEvaluating ? "Judging…" : "Run Paired Judge"}</button></div>` : "") +
+	      judgeReportHTML(d.pairedJudgeReport) +
+	      reportHTML(d.report) +
+	      (d.validationReportText ? `<details><summary>Validation Report</summary><pre class="muted" style="white-space:pre-wrap">${esc(d.validationReportText)}</pre></details>` : "") +
+	      responseButtonsHTML(d));
+		}
+
+	function resultOptionLabel(r) {
+	  if (r.kind === "run") return `run · ${esc(r.directoryName)}${r.generationCount ? ` · ${r.generationCount} outputs` : ""}`;
+	  if (r.kind === "validate") return `validation · ${esc(r.directoryName)}`;
+	  return `${esc(r.kind || "artifact")} · ${esc(r.directoryName)}`;
+	}
+
+		function artifactFileLink(name, label) {
+	  return `<a href="/api/experiment/result/file?name=${encodeURIComponent(name)}" download>${esc(label)}</a>`;
+	}
+
+	function downloadsHTML(d) {
+	  const links = [];
+	  if ((d.generations || []).length) links.push(artifactFileLink("generations.jsonl", "generations.jsonl"));
+	  if ((d.judgments || []).length) links.push(artifactFileLink("judgments.jsonl", "judgments.jsonl"));
+	  if (d.report || d.validationReportText) links.push(artifactFileLink("report.json", "report.json"));
+	  if (d.pairedJudgeReport) links.push(artifactFileLink("judge-report.json", "judge-report.json"));
+	  return links.length ? `<div class="download-row">${links.join("")}</div>` : "";
+	}
+
+	function judgeReportHTML(report) {
+	  if (!report) return "";
+	  const rows = (report.conditions || []).map(c =>
+	    `<tr><td>${esc(c.name)}</td><td>${c.pairs}</td><td>${c.conditionWins}</td><td>${c.baselineWins}</td><td>${c.ties}</td><td>${fmt(c.meanConfidence, 2)}</td></tr>`).join("");
+	  return `<details open><summary>Paired Judge Report</summary>
+    <div class="muted">judge: ${esc(report.judgeModel)} · source: ${esc(report.sourceRunDirectory)}</div>
+    <div class="matrix-wrap"><table><tr><th>condition</th><th>pairs</th><th>condition</th><th>baseline</th><th>ties</th><th>conf</th></tr>${rows}</table></div>
+	  </details>`;
+	}
+
+function reportHTML(report) {
+  if (!report) return "";
+  const conditions = (report.conditions || []).map(c => {
+    const nonzero = Object.entries(c.meanMarkerDensity || {})
+      .filter(([,v]) => Number(v) !== 0)
+      .map(([k,v]) => `${esc(k)} ${fmt(v, 3)}`).join(" · ");
+    return `<tr><td>${esc(c.name)}</td><td>${c.generations}</td><td>${fmt(c.meanWordCount, 1)}</td><td>${fmt(c.meanDistinct2, 3)}</td><td>${nonzero || "—"}</td></tr>`;
+  }).join("");
+  return `<div class="statline"><span>Prompts</span><span>${report.promptCount ?? "—"}</span></div>
+    <div class="statline"><span>Conditions</span><span>${report.conditionCount ?? "—"}</span></div>
+    <div class="matrix-wrap"><table><tr><th>condition</th><th>n</th><th>words</th><th>distinct-2</th><th>markers</th></tr>${conditions}</table></div>`;
+}
+
+	function responseButtonsHTML(d) {
+	  const rows = [];
+	  if ((d.generations || []).length) {
+	    rows.push(`<button id="ex-review-generations">Review Responses (${d.generations.length})</button>`);
+	  }
+	  if ((d.judgments || []).length) {
+	    rows.push(`<button id="ex-review-judgments">Review Judge Responses (${d.judgments.length})</button>`);
+	  }
+	  if (!rows.length) return "";
+	  const preview = (d.generations || []).slice(0, 5).map(g =>
+	    `<div class="statline"><span>${esc(g.condition)} · ${esc(g.promptID)}</span><span>${g.wordCount} words</span></div>`).join("");
+	  return `<div class="row">${rows.join("")}</div>${preview}`;
+	}
+
+	function showReview(kind) {
+	  const d = S && S.experiment && S.experiment.selectedResult;
+	  if (!d) return;
+	  const isJudge = kind === "judgments";
+	  const title = isJudge ? "Judge Responses" : "Generated Responses";
+	  const items = isJudge ? (d.judgments || []) : (d.generations || []);
+	  const cards = items.map(x => isJudge ? judgmentCardHTML(x) : generationCardHTML(x)).join("");
+	  const old = $("review-modal");
+	  if (old) old.remove();
+	  const modal = document.createElement("div");
+	  modal.id = "review-modal";
+	  modal.className = "review-backdrop";
+	  modal.innerHTML = `<div class="review-window" role="dialog" aria-modal="true">
+	    <div class="review-head"><div class="grow"><h2>${title}</h2><div class="muted">${esc(d.item.directoryName)}</div></div><button id="review-close">Close</button></div>
+	    <div class="review-body">${cards || `<div class="muted">No records loaded for this artifact.</div>`}</div>
+	  </div>`;
+	  document.body.appendChild(modal);
+	  $("review-close").onclick = () => modal.remove();
+	  modal.onclick = ev => { if (ev.target === modal) modal.remove(); };
+	}
+
+	function generationCardHTML(g) {
+	  return `<div class="review-card">
+	    <h3>${esc(g.condition)} · ${esc(g.promptID)}</h3>
+	    <div class="muted">${g.wordCount} words · distinct-2 ${fmt(g.distinct2, 3)}</div>
+	    <p class="muted">${esc(g.prompt)}</p>
+	    <pre>${esc(g.output)}${g.truncated ? "\n…" : ""}</pre>
+	  </div>`;
+	}
+
+	function judgmentCardHTML(j) {
+	  const a = scoresHTML(j.aScores);
+	  const b = scoresHTML(j.bScores);
+	  return `<div class="review-card">
+	    <h3>${esc(j.condition)} · ${esc(j.promptID)}</h3>
+	    <div class="muted">winner ${esc(j.winner)} · ${esc(j.conditionResult)} · confidence ${fmt(j.confidence, 2)} · baseline ${esc(j.baselineWas)} · condition ${esc(j.conditionWas)}</div>
+	    <p class="muted">${esc(j.prompt)}</p>
+	    <p>${esc(j.briefReason)}</p>
+	    ${a || b ? `<div class="muted">A ${a || "no scores"} · B ${b || "no scores"}</div>` : ""}
+	    <details><summary>Raw judge JSON</summary><pre>${esc(j.rawJSON || "")}</pre></details>
+	  </div>`;
+	}
+
+	function scoresHTML(scores) {
+	  const entries = Object.entries(scores || {});
+	  return entries.length ? entries.map(([k,v]) => `${esc(k)}: ${esc(String(v))}`).join(", ") : "";
+	}
+
+/* ---------- chat + global ---------- */
+function render() {
+  $("state").textContent = S.modelState + (S.loadedModel ? " · " + S.loadedModel : "");
+  const err = $("error");
+  err.style.display = S.errorMessage ? "" : "none";
+  err.textContent = S.errorMessage || "";
+  const m = $("model");
+  if (document.activeElement !== m) {
+    m.innerHTML = S.models.map(id =>
+      `<option ${id===S.selectedModel?"selected":""}>${esc(id)}</option>`).join("");
+  }
+  $("send").style.display = S.isGenerating ? "none" : "";
+  $("stop").style.display = S.isGenerating ? "" : "none";
+  const box = $("messages");
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 60;
+  box.innerHTML = S.transcript.map(t =>
+    `<div class="msg ${t.role}">${t.role==="assistant" ? md(t.text||"…") : esc(t.text)}</div>`).join("");
+  if (atBottom) box.scrollTop = box.scrollHeight;
+  renderSteer();
+  if (pane === "concepts") renderConcepts();
+  if (pane === "geo") renderGeometry();
+  if (pane === "exp") renderExperiments();
+}
+async function poll() {
+  try {
+    const r = await fetch("/api/state");
+    S = await r.json();
+    render();
+  } catch (e) { $("state").textContent = "server unreachable"; }
+  setTimeout(poll, S && (S.isGenerating || S.concept.isWorking || (S.experiment && (S.experiment.isRunning || S.experiment.isValidating || S.experiment.isEvaluating))) ? 350 : 900);
+}
+$("load").onclick = () => post("/api/load", {model: $("model").value});
+$("reset").onclick = () => post("/api/chat/reset");
+$("send").onclick = sendMsg;
+$("stop").onclick = () => post("/api/chat/stop");
+$("input").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();  // Enter sends; Shift-Enter inserts a newline
+    sendMsg();
+  }
+});
+function sendMsg() {
+  const t = $("input").value.trim();
+  if (!t) return;
+  $("input").value = "";
+  post("/api/chat", {text: t});
+}
+$("tab-steer").onclick = () => switchPane("steer");
+$("tab-concepts").onclick = () => switchPane("concepts");
+$("tab-geo").onclick = () => switchPane("geo");
+$("tab-exp").onclick = () => switchPane("exp");
+function switchPane(p) {
+  pane = p;
+  $("pane-steer").style.display = p === "steer" ? "" : "none";
+  $("pane-concepts").style.display = p === "concepts" ? "" : "none";
+  $("pane-geo").style.display = p === "geo" ? "" : "none";
+  $("pane-exp").style.display = p === "exp" ? "" : "none";
+  $("tab-steer").className = p === "steer" ? "primary" : "";
+  $("tab-concepts").className = p === "concepts" ? "primary" : "";
+  $("tab-geo").className = p === "geo" ? "primary" : "";
+  $("tab-exp").className = p === "exp" ? "primary" : "";
+  if (S) render();
+}
+poll();
+</script>
+</body>
+</html>

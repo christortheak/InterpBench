@@ -371,7 +371,20 @@ fi
 # as Bundle.main.resourceURL/<name> and fails closed when one is missing.
 step "Staging CodeResources families"
 cp -R "$REPO/WorkspaceSeed" "$RES/WorkspaceSeed" || die "could not stage WorkspaceSeed"
-cp -R "$REPO/web" "$RES/web" || die "could not stage web assets"
+# web/ splits by nature: index.html is hand-written SOURCE and ships in
+# the repo; results-explorer/ is BUILD OUTPUT the repo deliberately does
+# not carry (the CI lane's rule — a cold clone must produce it), so the
+# app build produces it here when absent. First caught building from a
+# fresh clone (2026-08-20): every earlier build ran from a tree that
+# happened to carry both.
+mkdir -p "$RES/web"
+cp "$REPO/web/index.html" "$RES/web/index.html" || die "web/index.html missing — it is checked-in source"
+if [ ! -d "$REPO/web/results-explorer" ]; then
+  step "Building the embedded results explorer (web/results-explorer is not checked in)"
+  command -v npm >/dev/null 2>&1 || die "npm is required to build the results explorer (web/results-explorer is build output, produced from results-explorer/)"
+  ( cd "$REPO/results-explorer" && npm ci --silent && npm run --silent build:embed ) || die "results-explorer build failed"
+fi
+cp -R "$REPO/web/results-explorer" "$RES/web/results-explorer" || die "could not stage the results explorer build"
 cp "$SUPPORT/SteerLab.icns" "$RES/SteerLab.icns" || die "could not stage the app icon"
 
 # AnalysisTools = the checkout's scripts/, minus generated caches.
