@@ -31,7 +31,7 @@ from ..experiment import resume as resume_mod
 from ..experiment.generate import CellInjection, stream_generate
 from ..experiment.manifest import Manifest
 from ..steering import model_loader, vector_math, vector_store
-from . import dto, gpu_session
+from . import dto, gpu_session, workspace_lock
 from .executors import SlurmExecutor, SlurmResources
 from .jobs import ResubmitRefused
 from .model_registry import ModelRegistry
@@ -879,6 +879,11 @@ def build_router(state: ServiceState) -> APIRouter:
     @router.post("/api/extract")
     def extract_route(body: dto.ExtractRequest):
         state.require_model()
+        # `outputName` becomes the artifact name AND the run-directory slug
+        # (`api-extract-<name>`); refuse a path component synchronously, so a
+        # traversal attempt is a 400 rather than a job that dies later.
+        if body.outputName:
+            _safe_name(str(body.outputName))
         from ..steering.extractor import ExtractionOptions, extract
         from ..steering.reading_position import from_label
         from ..steering.stimulus_set import StimulusSet, load_texts
@@ -1288,6 +1293,15 @@ def build_router(state: ServiceState) -> APIRouter:
         (This also covers checkpointed Slurm jobs — non-terminal — so the
         reconciler's cached executor never builds a resubmission under a root
         the job was not submitted with.)
+
+        That refusal is only as good as its atomicity, which is what
+        ``workspace_lock`` supplies: the active-job scan and the mutation run
+        inside ONE exclusive critical section, and every submission path holds
+        the shared side while it resolves roots and registers. Without it the
+        scan and the mutation were two steps with a window between them, and a
+        submission landing in that window was neither refused nor contained —
+        its early paths resolved against the old root and its later ones
+        against the new (review finding, 2026-08-21).
         """
         raw = str(body.get("root") or "").strip()
         if not raw:
@@ -1312,44 +1326,47 @@ def build_router(state: ServiceState) -> APIRouter:
             raise HTTPException(status_code=403, detail=policy["reason"])
 
         from .jobs import TERMINAL
-        manager = state.job_manager_or_none
-        active = ([j for j in manager.list() if j.status not in TERMINAL]
-                  if manager is not None else [])
-        if active:
-            names = ", ".join(f"{j.id} ({j.kind}: {j.status})" for j in active[:8])
-            more = f" and {len(active) - 8} more" if len(active) > 8 else ""
-            raise HTTPException(
-                status_code=409,
-                detail=(f"cannot switch workspace while {len(active)} job(s) "
-                        f"are not terminal: {names}{more} — wait or cancel "
-                        "them first"))
-
-        if os.path.exists(target):
-            # An existing directory is served AS-IS — never seeded. Writing
-            # the WORKSPACE.md marker into an arbitrary existing tree would,
-            # among other things, silently reclassify a source checkout as a
-            # data workspace and defeat the pairing warning.
-            if not os.path.isdir(target):
+        # EXCLUSIVE for the scan AND the mutation. No submission can register
+        # a job (or resolve a submission root) between the two.
+        with workspace_lock.switching():
+            manager = state.job_manager_or_none
+            active = ([j for j in manager.list() if j.status not in TERMINAL]
+                      if manager is not None else [])
+            if active:
+                names = ", ".join(f"{j.id} ({j.kind}: {j.status})" for j in active[:8])
+                more = f" and {len(active) - 8} more" if len(active) > 8 else ""
                 raise HTTPException(
-                    status_code=400, detail=f"{target} is not a directory")
-        elif os.path.isdir(os.path.dirname(target)):
-            # Parent exists: create and seed a fresh workspace skeleton, the
-            # same shape the Mac app seeds (prompts/experiments/runs +
-            # WORKSPACE.md marker).
-            paths.seed_workspace(target)
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=(f"neither {target} nor its parent directory "
-                        "exists on the server"))
+                    status_code=409,
+                    detail=(f"cannot switch workspace while {len(active)} job(s) "
+                            f"are not terminal: {names}{more} — wait or cancel "
+                            "them first"))
 
-        # Pin the metadata tree BEFORE the root moves (see docstring).
-        os.environ.setdefault(
-            "STEERLAB_METADATA_ROOT", ServerProfile.from_env().metadata_root)
-        os.environ["STEERLAB_ROOT"] = target
-        # ServiceState snapshotted a profile at construction; refresh it so
-        # nothing ever reads a stale root through the snapshot.
-        state.profile = ServerProfile.from_env()
+            if os.path.exists(target):
+                # An existing directory is served AS-IS — never seeded. Writing
+                # the WORKSPACE.md marker into an arbitrary existing tree would,
+                # among other things, silently reclassify a source checkout as a
+                # data workspace and defeat the pairing warning.
+                if not os.path.isdir(target):
+                    raise HTTPException(
+                        status_code=400, detail=f"{target} is not a directory")
+            elif os.path.isdir(os.path.dirname(target)):
+                # Parent exists: create and seed a fresh workspace skeleton, the
+                # same shape the Mac app seeds (prompts/experiments/runs +
+                # WORKSPACE.md marker).
+                paths.seed_workspace(target)
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(f"neither {target} nor its parent directory "
+                            "exists on the server"))
+
+            # Pin the metadata tree BEFORE the root moves (see docstring).
+            os.environ.setdefault(
+                "STEERLAB_METADATA_ROOT", ServerProfile.from_env().metadata_root)
+            os.environ["STEERLAB_ROOT"] = target
+            # ServiceState snapshotted a profile at construction; refresh it so
+            # nothing ever reads a stale root through the snapshot.
+            state.profile = ServerProfile.from_env()
         return {"switched": True, **_info_payload()}
 
     @router.post("/api/generation-prompt")
@@ -3159,6 +3176,14 @@ def build_router(state: ServiceState) -> APIRouter:
         command = body.get("command")
         if not isinstance(command, list) or not all(isinstance(x, str) for x in command):
             raise HTTPException(status_code=400, detail="command must be a list of strings")
+        # Shared workspace-root hold: the bundle directory below is resolved
+        # against the current root and the job record is written after sbatch
+        # returns — a switch between the two would file the record under a
+        # different workspace than the bundle it names.
+        with workspace_lock.submitting():
+            return _slurm_submit(body, command)
+
+    def _slurm_submit(body: dict, command: list[str]):
         bundle_dir = body.get("bundleDirectory") or paths.make_unique_run_directory("slurm-submit")
         if not os.path.isabs(bundle_dir):
             bundle_dir = state.resolver.resolve_workspace(bundle_dir)
@@ -3903,6 +3928,9 @@ def build_router(state: ServiceState) -> APIRouter:
         vp, nm = body.get("vectorPath"), body.get("name")
         if not vp or not nm:
             raise HTTPException(status_code=400, detail="vectorPath + name required")
+        # `nm` becomes a run-directory slug below (`gemmascope-<nm>`); a
+        # separator in it would place the run outside runs/.
+        _safe_name(str(nm))
         vp = state.resolver.require_dir(vp, allow_local_absolute=True)
         info = gemma_scope.scope_info(body.get("modelID", ""),
                                       preferred_layer=body.get("layer"))
@@ -3935,6 +3963,10 @@ def build_router(state: ServiceState) -> APIRouter:
         if not report_path or feature is None:
             raise HTTPException(status_code=400, detail="reportPath + feature required")
         report_path = state.resolver.require_file(report_path, allow_local_absolute=True)
+        try:
+            feature = int(feature)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="feature must be an integer")
         run_dir = paths.make_unique_run_directory(f"sae-feature-{feature}")
         from ..experiment.run_config import write_run_config
         write_run_config(run_dir, "sae-feature-import", model_id=model.model_id,

@@ -10,6 +10,7 @@ reproducible files needed to run the same job from the CLI.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import sys
@@ -26,10 +27,31 @@ from .executors import (SlurmExecutor, SlurmResources, _parse_walltime,
                         first_crossing_window)
 from .jobs import JobManager
 from .profile import ServerProfile
+from .workspace_lock import submitting as _submitting_workspace
 
 
 VALID_STUDY_VERBS = {"verify", "extract", "validate", "sweep", "run",
                      "evaluate", "analyze", "pipeline"}
+
+
+def _root_stays_put(fn):
+    """Hold the SHARED workspace-root lock for a whole submission.
+
+    A submission resolves its root SEVERAL times — the submission directory,
+    the packaged bundle, the child command's ``--target-root``, the job record
+    — and ``POST /api/workspace/switch`` moves that root under it. Registering
+    the job under the lock is not enough here: everything above happens BEFORE
+    the job exists, so a switch landing mid-preparation would split one
+    submission across two workspaces. Shared, so concurrent submissions never
+    serialize on each other (see ``api/workspace_lock``).
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _submitting_workspace():
+            return fn(*args, **kwargs)
+
+    return wrapper
+
 
 #: Verbs that never load the model: pure-CPU statistics/reporting over an
 #: already-completed run. Their preflight must not demand a GPU or size the
@@ -110,6 +132,7 @@ class StudySubmission:
         }
 
 
+@_root_stays_put
 def submit_study(experiment: str, *, verb: str, jobs: JobManager,
                  executor: str | None = None, dry_run: bool = False,
                  root: str | None = None, target_root: str | None = None,
@@ -311,6 +334,7 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
                            submission_dir, preflight=preflight)
 
 
+@_root_stays_put
 def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
                       executor: str | None = None, dry_run: bool = False,
                       target_root: str | None = None, dtype: str = "auto",

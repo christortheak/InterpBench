@@ -395,3 +395,87 @@ def test_get_requests_are_not_swept_up_by_the_mutating_rule():
 def test_non_api_paths_are_never_privileged():
     assert not request_is_privileged("POST", "/")
     assert not request_is_privileged("POST", "/docs")
+
+
+# --------------------------------------------------------------------------
+# 4. The OBSERVED peer, not the declared bind
+# --------------------------------------------------------------------------
+# `uvicorn steerlab_server.api.app:app --host 0.0.0.0` never sets
+# STEERLAB_BIND, so every gate above reads bind=127.0.0.1 / auth_mode=none and
+# the whole API was reachable from the network. The socket is the authority on
+# where the caller is; these pin that it now decides.
+
+def _open_local_posture(monkeypatch):
+    """The historical convenience tier: local profile, local executor, the
+    default loopback bind, no auth at all."""
+    monkeypatch.setenv("STEERLAB_AUTH_MODE", "none")
+    monkeypatch.setenv("STEERLAB_SERVER_PROFILE", "local")
+    monkeypatch.setenv("STEERLAB_EXECUTOR", "local")
+    monkeypatch.setenv("STEERLAB_BIND", "127.0.0.1")
+    monkeypatch.delenv("STEERLAB_AUTH_TOKEN", raising=False)
+
+
+@pytest.mark.parametrize("peer", ["10.0.0.7", "192.168.1.4", "203.0.113.9",
+                                  "2001:db8::1", "::ffff:203.0.113.9"])
+def test_an_unauthenticated_request_from_off_box_is_refused(monkeypatch, peer):
+    _open_local_posture(monkeypatch)
+    client = TestClient(app, client=(peer, 41234))
+    for method, path, body in (("GET", "/api/state", None),
+                               ("POST", "/api/load", {"model": "x"})):
+        resp = client.request(method, path, json=body)
+        assert resp.status_code == 403, resp.text
+        detail = resp.json()["detail"]
+        assert "non-loopback" in detail
+        assert "steerlab-server serve" in detail
+        assert "STEERLAB_AUTH_MODE=token" in detail
+
+
+def test_a_peerless_request_is_treated_as_off_box(monkeypatch):
+    # An ASGI scope with no `client` (unix socket, or a server that omits it)
+    # is NOT evidence of locality — fail closed rather than guess.
+    _open_local_posture(monkeypatch)
+    resp = TestClient(app, client=None).get("/api/state")
+    assert resp.status_code == 403
+    assert "non-loopback" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize("peer", ["127.0.0.1", "127.0.0.53", "::1",
+                                  "::ffff:127.0.0.1", "localhost"])
+def test_loopback_peers_keep_the_open_local_tier(monkeypatch, peer):
+    _open_local_posture(monkeypatch)
+    resp = TestClient(app, client=(peer, 41234)).get("/api/state")
+    assert resp.status_code == 200, resp.text
+
+
+def test_an_off_box_peer_with_a_valid_token_still_works(monkeypatch):
+    # The refusal is about UNAUTHENTICATED off-box access. A token-mode
+    # deployment (the daemon-in-a-job / GPU-session worker binds non-loopback
+    # on purpose) must be entirely unaffected.
+    monkeypatch.setenv("STEERLAB_AUTH_MODE", "token")
+    monkeypatch.setenv("STEERLAB_AUTH_TOKEN", "right")
+    client = TestClient(app, client=("10.0.0.7", 41234))
+    assert client.get("/api/state").status_code == 401
+    ok = client.get("/api/state", headers={"authorization": "Bearer right"})
+    assert ok.status_code == 200, ok.text
+
+
+def test_external_auth_mode_leaves_off_box_requests_to_the_proxy(monkeypatch):
+    # `external` declares that a fronting proxy authenticated the caller, so
+    # this server performs no check of its own — including this one.
+    monkeypatch.setenv("STEERLAB_AUTH_MODE", "external")
+    monkeypatch.delenv("STEERLAB_AUTH_TOKEN", raising=False)
+    resp = TestClient(app, client=("10.0.0.7", 41234)).get("/api/state")
+    assert resp.status_code == 200, resp.text
+
+
+def test_the_peer_gate_does_not_read_the_declared_bind(monkeypatch):
+    # The exact hole: STEERLAB_BIND unset (so the profile reports the loopback
+    # default) while the process actually accepted a connection from the
+    # network. The old code consulted only the profile and let it through.
+    monkeypatch.setenv("STEERLAB_AUTH_MODE", "none")
+    monkeypatch.delenv("STEERLAB_BIND", raising=False)
+    monkeypatch.delenv("STEERLAB_AUTH_TOKEN", raising=False)
+    from steerlab_server.api.profile import ServerProfile
+    assert ServerProfile.from_env().bind == "127.0.0.1"
+    assert TestClient(app, client=("10.0.0.7", 1)).get(
+        "/api/state").status_code == 403

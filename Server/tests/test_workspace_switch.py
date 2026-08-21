@@ -247,3 +247,169 @@ def test_workspace_get_and_capability_flag(tmp_path, monkeypatch):
     monkeypatch.setenv("STEERLAB_WORKSPACE_PARENT", str(tmp_path))
     body = client.get("/api/workspace").json()
     assert body["parent"] == os.path.realpath(str(tmp_path))
+
+
+# --------------------------------------------------------------------------
+# The check-then-switch window (review finding, 2026-08-21)
+# --------------------------------------------------------------------------
+# The active-job refusal above is only as strong as its atomicity. Before
+# ``api/workspace_lock`` the scan and the env mutation were two unsynchronized
+# steps, so a submission arriving between them was neither refused nor
+# contained: its submission directory and packaged bundle resolved against the
+# OLD root and everything after the switch against the NEW one.
+#
+# Two layers are pinned: the ROUTE holds the exclusive side across scan AND
+# mutation (deterministic, no threads — the lock state is read from inside the
+# scan itself), and the LOCK delivers the exclusion those holds assume.
+
+from steerlab_server.api import workspace_lock          # noqa: E402
+from steerlab_server.api.jobs import JobManager          # noqa: E402
+
+
+def test_the_active_job_scan_runs_inside_the_exclusive_section(
+        tmp_path, monkeypatch):
+    """The scan the refusal depends on must see a locked root.
+
+    Read from INSIDE ``JobManager.list`` — the exact call the route makes —
+    so this cannot pass by locking somewhere else in the handler.
+    """
+    ws1 = _make_workspace(tmp_path, "ws1")
+    ws2 = _make_workspace(tmp_path, "ws2")
+    monkeypatch.setenv("STEERLAB_ROOT", str(ws1))
+
+    seen = []
+    original = JobManager.list
+
+    def listing(self):
+        lock = workspace_lock.WORKSPACE_ROOT_LOCK
+        seen.append({"exclusive": lock._writer,
+                     "root": os.environ.get("STEERLAB_ROOT")})
+        return original(self)
+
+    monkeypatch.setattr(JobManager, "list", listing)
+    assert client.post("/api/workspace/switch",
+                       json={"root": str(ws2)}).status_code == 200
+
+    assert seen, "the switch never scanned the job table"
+    assert seen[0]["exclusive"] is True, (
+        "the active-job scan ran without the exclusive workspace-root lock — "
+        "a job submitted between the scan and the env flip would be neither "
+        "refused nor contained")
+    # …and the scan saw the OLD root: the mutation is after it, in the SAME
+    # critical section.
+    assert seen[0]["root"] == str(ws1)
+
+
+def test_job_registration_runs_inside_the_shared_section(tmp_path, monkeypatch):
+    """The other half of the pair: a job becomes visible to that scan only
+    while the shared side is held, so registration and the switch cannot
+    interleave."""
+    monkeypatch.setenv("STEERLAB_ROOT", str(_make_workspace(tmp_path, "ws")))
+    seen = []
+    store = state.jobs.store
+    original = type(store).insert
+
+    def insert(self, job):
+        seen.append(workspace_lock.WORKSPACE_ROOT_LOCK.readers)
+        return original(self, job)
+
+    monkeypatch.setattr(type(store), "insert", insert)
+    release = threading.Event()
+
+    def work(job):
+        release.wait(timeout=30)
+        return {}
+
+    job = state.jobs.submit("test:lockcheck", work)
+    release.set()
+    assert seen and seen[0] >= 1, (
+        "JobManager.submit registered a job without the shared "
+        "workspace-root lock")
+
+    seen.clear()
+    external = state.jobs.record_external(
+        "test:lockcheck-external", status="prepared", executor="local")
+    assert seen and seen[0] >= 1, (
+        "JobManager.record_external registered a job without the shared "
+        "workspace-root lock")
+    assert external.id and job.id
+
+
+def test_a_switch_waits_for_an_in_flight_submission():
+    """The exclusion the route's holds assume: a switch cannot enter while a
+    submission holds the shared side, and proceeds the moment it lets go."""
+    lock = workspace_lock.WorkspaceRootLock()
+    submitting = threading.Event()
+    switch_entered = threading.Event()
+    let_go = threading.Event()
+
+    def submission():
+        with lock.submitting():
+            submitting.set()
+            let_go.wait(timeout=30)
+
+    def switch():
+        with lock.switching():
+            switch_entered.set()
+
+    holder = threading.Thread(target=submission)
+    switcher = threading.Thread(target=switch)
+    holder.start()
+    assert submitting.wait(timeout=10)
+    switcher.start()
+    # Can only fail if the lock let a switch in over a live submission.
+    assert not switch_entered.wait(timeout=0.25)
+    let_go.set()
+    assert switch_entered.wait(timeout=10)
+    holder.join(timeout=10)
+    switcher.join(timeout=10)
+
+
+def test_a_waiting_switch_holds_off_new_submissions():
+    """Writer-preferring: a steady stream of submissions must not starve the
+    switch, so a submission arriving after the switch queues behind it."""
+    lock = workspace_lock.WorkspaceRootLock()
+    holding = threading.Event()
+    let_go = threading.Event()
+    switch_waiting = threading.Event()
+    late_entered = threading.Event()
+
+    def first():
+        with lock.submitting():
+            holding.set()
+            let_go.wait(timeout=30)
+
+    def switch():
+        switch_waiting.set()
+        with lock.switching():
+            pass
+
+    def late():
+        with lock.submitting():
+            late_entered.set()
+
+    holder = threading.Thread(target=first)
+    switcher = threading.Thread(target=switch)
+    holder.start()
+    assert holding.wait(timeout=10)
+    switcher.start()
+    assert switch_waiting.wait(timeout=10)
+    latecomer = threading.Thread(target=late)
+    latecomer.start()
+    assert not late_entered.wait(timeout=0.25)
+    let_go.set()
+    assert late_entered.wait(timeout=10)
+    for thread in (holder, switcher, latecomer):
+        thread.join(timeout=10)
+
+
+def test_the_shared_side_is_reentrant_on_one_thread():
+    """``submit_study`` holds it for the whole submission and calls
+    ``JobManager.submit``, which takes it again — without reentrancy that
+    inner acquisition deadlocks as soon as a switch starts waiting."""
+    lock = workspace_lock.WorkspaceRootLock()
+    with lock.submitting():
+        with lock.submitting():
+            assert lock.readers == 1
+        assert lock.readers == 1
+    assert lock.readers == 0

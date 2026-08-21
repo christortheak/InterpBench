@@ -39,7 +39,7 @@ from .submissions import (PREFLIGHT_WALLTIME_MARGIN,
                           _check, _check_gpu_request, _check_maintenance,
                           _gate_on_preflight, _gb, _gres_gpu_count,
                           _resources_from_dict, _stamped_resources,
-                          _verdict_of)
+                          _root_stays_put, _verdict_of)
 
 
 class FineTuneRequestError(ValueError):
@@ -775,6 +775,7 @@ def _execute_command(job_directory: str, record_path: str) -> list[str]:
             job_directory, "--record", record_path]
 
 
+@_root_stays_put
 def submit_finetune(body: dict, *, jobs, resolver, root: str | None = None,
                     profile: ServerProfile | None = None,
                     env: dict | None = None) -> dict:

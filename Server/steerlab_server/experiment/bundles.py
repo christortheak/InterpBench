@@ -27,9 +27,99 @@ from .manifest import Manifest
 
 BUNDLE_SCHEMA = 1
 
+#: How much of one archive member is held in memory at a time while it is
+#: hashed and written. Big enough that a multi-GB safetensors member is not
+#: read a page at a time, small enough to be irrelevant next to a model load.
+MEMBER_CHUNK_BYTES = 4 * 1024 * 1024
+
+
+def max_member_bytes() -> int:
+    """Upper bound on ONE member's UNCOMPRESSED size, in bytes.
+
+    The upload cap (``routes._max_upload_bytes``, ``STEERLAB_MAX_UPLOAD_BYTES``,
+    4 GiB) counts COMPRESSED bytes, which says nothing about what an archive
+    expands to: a gzip member of highly repetitive bytes expands by three
+    orders of magnitude, so a bundle well inside that cap can carry a member
+    far larger than the machine's RAM. This is the uncompressed companion —
+    generous (a sharded safetensors member is GBs, not tens of GBs) but
+    bounded, so a hostile or simply broken bundle is a REPORTED refusal
+    instead of an OOM kill of the whole server process.
+
+    Read per call and tunable the same way its compressed sibling is:
+    ``STEERLAB_MAX_BUNDLE_MEMBER_BYTES``; default 16 GiB.
+    """
+    return int(os.environ.get("STEERLAB_MAX_BUNDLE_MEMBER_BYTES",
+                              str(16 * 1024**3)))
+
+
+def max_metadata_bytes() -> int:
+    """The same bound for the bundle's own JSON documents
+    (``steerlab-bundle.json``, ``steerlab-evidence.json``,
+    ``steerlab-pipeline.json``), which ARE parsed whole because they must be.
+    A manifest of hash entries is measured in MB even for a large study.
+    Override with ``STEERLAB_MAX_BUNDLE_METADATA_BYTES``; default 64 MiB.
+    """
+    return int(os.environ.get("STEERLAB_MAX_BUNDLE_METADATA_BYTES",
+                              str(64 * 1024**2)))
+
 
 class BundleError(Exception):
     pass
+
+
+def _refuse_oversized_member(member, limit: int, *, what: str = "member") -> None:
+    """Refuse on the DECLARED size, before a single byte is read."""
+    if member.size > limit:
+        raise BundleError(
+            f"bundle {what} {member.name!r} declares {member.size} uncompressed "
+            f"bytes, over the {limit}-byte limit "
+            "(STEERLAB_MAX_BUNDLE_MEMBER_BYTES / "
+            "STEERLAB_MAX_BUNDLE_METADATA_BYTES) — refusing to expand it")
+
+
+def _read_metadata_member(tar, member) -> bytes:
+    """Whole-member read for a bundle's own JSON, with the size refusal in
+    front of it (these must be parsed as one document, so they cannot stream)."""
+    _refuse_oversized_member(member, max_metadata_bytes(), what="metadata member")
+    handle = tar.extractfile(member)
+    if handle is None:
+        return b""
+    with handle:
+        return handle.read()
+
+
+def _stream_member(tar, member, temp_path: str, limit: int) -> tuple[str, int]:
+    """Copy one member to ``temp_path`` in chunks; return ``(sha256, bytes)``.
+
+    The member is never materialized: ``source.read()`` with no argument
+    pulled the WHOLE thing into memory, which the 4-GiB compressed upload cap
+    does not bound (see :func:`max_member_bytes`). Hashing as the bytes go by
+    preserves the pre-landing integrity check exactly — the digest is of what
+    the tar actually carried, computed before ``dest`` is touched, so the
+    tamper firewall neither weakens nor starts racing a sibling shard.
+
+    The declared size was already refused above; this re-checks the ACTUAL
+    byte count, because a tar header is just a claim.
+    """
+    digest = hashlib.sha256()
+    written = 0
+    source = tar.extractfile(member)
+    if source is None:  # pragma: no cover - callers filter these out first
+        return digest.hexdigest(), 0
+    with source, open(temp_path, "wb") as handle:
+        while True:
+            chunk = source.read(MEMBER_CHUNK_BYTES)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > limit:
+                raise BundleError(
+                    f"bundle member {member.name!r} expands past the "
+                    f"{limit}-byte limit (STEERLAB_MAX_BUNDLE_MEMBER_BYTES) — "
+                    "its tar header understated its size; refusing")
+            digest.update(chunk)
+            handle.write(chunk)
+    return digest.hexdigest(), written
 
 
 @dataclass
@@ -464,13 +554,13 @@ def inspect_bundle(bundle_path: str) -> dict:
                 member = tar.getmember(candidate)
             except KeyError:
                 continue
-            with tar.extractfile(member) as handle:
-                if handle is None:
-                    break
-                data = json.loads(handle.read().decode("utf-8"))
-                data["bundlePath"] = bundle_path
-                data["bundleSha256"] = sha256_file(bundle_path)
-                return data
+            payload = _read_metadata_member(tar, member)
+            if not payload:
+                break
+            data = json.loads(payload.decode("utf-8"))
+            data["bundlePath"] = bundle_path
+            data["bundleSha256"] = sha256_file(bundle_path)
+            return data
     raise BundleError("not a SteerLab bundle")
 
 
@@ -567,8 +657,7 @@ def import_bundle(bundle_path: str, *, target_root: str | None = None,
                 # extraction so local readers resolve stage references
                 # without cluster paths.
                 expected = meta.get("pipelinePortableSha256")
-                source = tar.extractfile(member)
-                payload = source.read() if source is not None else b""
+                payload = _read_metadata_member(tar, member)
                 if not expected:
                     raise BundleError(
                         "portable pipeline ledger carries no hash pin — "
@@ -596,52 +685,16 @@ def import_bundle(bundle_path: str, *, target_root: str | None = None,
             dest = os.path.realpath(os.path.join(target, member.name))
             if os.path.commonpath([target, dest]) != target:
                 raise BundleError(f"bundle member escapes target root: {member.name}")
-            source = tar.extractfile(member)
-            if source is None:
+            # Refuse on the DECLARED uncompressed size before opening the
+            # member at all: the 4-GiB upload cap counts compressed bytes, so
+            # a bundle inside it can still declare a member nothing on this
+            # machine can hold (see ``max_member_bytes``).
+            member_limit = max_member_bytes()
+            _refuse_oversized_member(member, member_limit)
+            if tar.extractfile(member) is None:
                 continue
-            with source:
-                payload = source.read()
-            # The integrity check runs on the IN-MEMORY payload, BEFORE any
-            # disk mutation (2026-08-04 shard race): the old order wrote
-            # dest and then re-hashed it from disk — but concurrent shard
-            # jobs of one submission extract the same bundle into the same
-            # workspace, so another shard's in-progress (identical) rewrite
-            # could be read torn, refusing a perfectly good bundle after
-            # 3 seconds ("hash mismatch after extracting …"). Hashing the
-            # payload verifies what the tar actually carried — the tamper
-            # firewall this check exists for — and cannot race.
-            expected = _entry_hash(meta, member.name)
-            if expected and hashlib.sha256(payload).hexdigest() != expected:
-                raise BundleError(f"hash mismatch after extracting {member.name}")
-            if os.path.exists(dest):
-                if not allow_overwrite:
-                    raise BundleError(f"refusing to overwrite existing file: {member.name}")
-                # Circularity firewall: never silently replace a FROZEN manifest
-                # with different content, even when allow_overwrite is set (which
-                # bundle-execute does for run artifacts). Re-importing the identical
-                # frozen manifest is fine; changed content is a freeze/verify
-                # violation surfaced as an error, not a silent stomp.
-                if _is_manifest_path(dest, target) and _is_frozen_manifest(dest):
-                    with open(dest, "rb") as existing:
-                        if existing.read() != payload:
-                            raise BundleError(
-                                f"refusing to overwrite frozen manifest {member.name} with "
-                                "different content (freeze firewall)")
-                # The same firewall one tier down, for DRAFTS (open-issues §8):
-                # a bundle carrying a skeleton manifest must not silently take
-                # a draft that has since gained concepts and conditions to
-                # both-empty. `_is_frozen_manifest` is False for a draft, so
-                # the check above never saw this; the arms simply vanished and
-                # only the run directory's snapshot remembered them.
-                if _is_manifest_path(dest, target) and _clears_every_arm(dest, payload):
-                    raise BundleError(
-                        f"refusing to overwrite draft manifest {member.name} with a "
-                        "document that has no concepts and no conditions — the "
-                        "workspace copy holds arms this bundle does not (import "
-                        "into a clean target root, or duplicate the workspace "
-                        "study before re-importing)")
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            # Atomic landing (same incident): a plain open(dest, "wb")
+            # Atomic landing (2026-08-04 shard race): a plain open(dest, "wb")
             # truncates in place, so a concurrent extractor — or a running
             # shard READING this artifact — could observe a torn file.
             # Temp-in-same-directory + os.replace means every observer sees
@@ -649,8 +702,56 @@ def import_bundle(bundle_path: str, *, target_root: str | None = None,
             # for sibling shards of one submission, are the same bytes).
             temp = f"{dest}.extract-{os.getpid()}.tmp"
             try:
-                with open(temp, "wb") as handle:
-                    handle.write(payload)
+                # The member streams into the temp file in chunks and is
+                # hashed on the way past (never held whole in memory).
+                digest, _written = _stream_member(tar, member, temp, member_limit)
+                # The integrity check runs on the STAGED bytes, BEFORE `dest`
+                # is touched (same incident): the old order wrote dest and
+                # then re-hashed it from disk — but concurrent shard jobs of
+                # one submission extract the same bundle into the same
+                # workspace, so another shard's in-progress (identical)
+                # rewrite could be read torn, refusing a perfectly good bundle
+                # after 3 seconds ("hash mismatch after extracting …").
+                # Hashing what the tar actually carried is the tamper firewall
+                # this check exists for, and it cannot race.
+                expected = _entry_hash(meta, member.name)
+                if expected and digest != expected:
+                    raise BundleError(f"hash mismatch after extracting {member.name}")
+                if os.path.exists(dest):
+                    if not allow_overwrite:
+                        raise BundleError(f"refusing to overwrite existing file: {member.name}")
+                    if _is_manifest_path(dest, target):
+                        # Manifests are small JSON documents, and both
+                        # firewalls below compare whole documents — so this is
+                        # the one place the staged bytes are read back.
+                        with open(temp, "rb") as staged:
+                            payload = staged.read()
+                        # Circularity firewall: never silently replace a FROZEN
+                        # manifest with different content, even when
+                        # allow_overwrite is set (which bundle-execute does for
+                        # run artifacts). Re-importing the identical frozen
+                        # manifest is fine; changed content is a freeze/verify
+                        # violation surfaced as an error, not a silent stomp.
+                        if _is_frozen_manifest(dest):
+                            with open(dest, "rb") as existing:
+                                if existing.read() != payload:
+                                    raise BundleError(
+                                        f"refusing to overwrite frozen manifest {member.name} with "
+                                        "different content (freeze firewall)")
+                        # The same firewall one tier down, for DRAFTS
+                        # (open-issues §8): a bundle carrying a skeleton
+                        # manifest must not silently take a draft that has since
+                        # gained concepts and conditions to both-empty.
+                        # `_is_frozen_manifest` is False for a draft, so the
+                        # check above never saw this; the arms simply vanished
+                        # and only the run directory's snapshot remembered them.
+                        if _clears_every_arm(dest, payload):
+                            raise BundleError(
+                                f"refusing to overwrite draft manifest {member.name} with a "
+                                "document that has no concepts and no conditions — the "
+                                "workspace copy holds arms this bundle does not (import "
+                                "into a clean target root, or duplicate the workspace "
+                                "study before re-importing)")
                 os.replace(temp, dest)
             except BaseException:
                 try:

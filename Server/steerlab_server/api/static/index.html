@@ -528,9 +528,17 @@ async function api(path, opts){ opts = opts||{}; opts.headers = withAuth(opts.he
   const r = await fetch(path, opts);
   if(!r.ok){ let d; try{ d = (await r.json()).detail; }catch(e){} throw new Error(d||`${r.status} ${path}`); }
   return r.headers.get("content-type")?.includes("json") ? r.json() : r.text(); }
+// Built as a NODE, never as markup. `msg` is usually an API error string, and
+// server detail text quotes caller-controlled names and paths back — with a
+// bearer token sitting in localStorage, an innerHTML sink here is a
+// token-theft primitive, not a cosmetic bug.
 function toast(msg, bad){ const t = $("#toast");
-  t.innerHTML = `<div class="toast" style="${bad?'border-color:var(--bad)':''}">${msg}</div>`;
-  setTimeout(()=>t.innerHTML="", 4000); }
+  const box = document.createElement("div");
+  box.className = "toast";
+  if(bad) box.style.borderColor = "var(--bad)";
+  box.textContent = (msg ?? "").toString();
+  t.replaceChildren(box);
+  setTimeout(()=>t.replaceChildren(), 4000); }
 function esc(s){ return (s??"").toString().replace(/[&<>"']/g,
   c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
@@ -561,7 +569,7 @@ function showTab(t){ TABS.forEach(([k])=>{ elFor(k).classList.toggle("active", k
   if(t==="runs") loadRuns(); if(t==="jobs") loadJobs(); if(t==="geometry") loadGeometry();
   if(t==="tuning") loadTuning(); if(t==="agents") loadAgents(); if(t==="scope") loadScope();
   if(t==="jspace") loadJSpace(); }
-$("#nav").innerHTML = TABS.map(([k,l])=>`<button data-t="${k}">${l}</button>`).join("");
+$("#nav").innerHTML = TABS.map(([k,l])=>`<button data-t="${esc(k)}">${esc(l)}</button>`).join("");
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>showTab(b.dataset.t));
 
 // ---- J-Space (server-only, Gemma-only) ----------------------------------
@@ -616,8 +624,8 @@ function renderLensRows(){
     const q = (l.qualifications||[]).filter(x=>x.passed);
     return `<tr><td class="mono">${esc(l.lensID)}</td>
       <td>${tierPill(tierOf(l.fit?.modelID))}</td>
-      <td class="mono">${l.sourceLayers?.[0]}..${l.sourceLayers?.[l.sourceLayers.length-1]}
-        →${l.targetLayer}</td>
+      <td class="mono">${esc(l.sourceLayers?.[0])}..${esc(l.sourceLayers?.[l.sourceLayers.length-1])}
+        →${esc(l.targetLayer)}</td>
       <td>${l.converted ? `<span class="status-ok">${esc(l.converted.dtype)}</span>`
                         : '<span class="status-bad">not converted</span>'}</td>
       <td>${q.length ? `<span class="status-ok">${q.length}</span>`
@@ -663,9 +671,9 @@ async function jlJob(path, body, label){
       headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
     const j = await pollJob(jobId);
     $("#jlJobStatus").innerHTML = j.status === "succeeded"
-      ? `<span class="status-ok">${label}: ok</span> <span class="mono">${esc(
+      ? `<span class="status-ok">${esc(label)}: ok</span> <span class="mono">${esc(
           JSON.stringify(j.result||{}).slice(0,300))}</span>`
-      : `<span class="status-bad">${label} ${esc(j.status)}: ${esc(j.error||"")}</span>`;
+      : `<span class="status-bad">${esc(label)} ${esc(j.status)}: ${esc(j.error||"")}</span>`;
     await loadJSpace();
     if(typeof loadVectors === "function") try{ await loadVectors(); }catch(e){}
   }catch(e){ $("#jlJobStatus").innerHTML = `<span class="status-bad">${esc(e.message)}</span>`; }
@@ -686,14 +694,14 @@ $("#jlTokenBtn").onclick = async () => {
       body: JSON.stringify({modelID: $("#jlModel").value, text,
                             includeCaseVariants: $("#jlCaseVariants").checked})});
     $("#jlTokenRows").innerHTML = (d.candidates||[]).map(c => `<tr>
-      <td class="mono">${c.tokenID}</td><td>${esc(c.form)}</td>
+      <td class="mono">${esc(c.tokenID)}</td><td>${esc(c.form)}</td>
       <td>${c.singleToken ? '<span class="status-ok">yes</span>'
                           : '<span class="status-bad">no</span>'}</td>
       <td class="mono">${esc(c.piece)}</td>
       <td class="mono">${esc(JSON.stringify(c.decoded))}</td>
       <td class="mono muted" title="unambiguous even when the text is unprintable
 or renders identically to another token">${esc(c.decodedBytes)}</td>
-      <td><button class="act ghost" data-tok="${c.tokenID}"
+      <td><button class="act ghost" data-tok="${esc(c.tokenID)}"
             data-piece="${esc(c.decoded||c.piece)}">select</button>
           ${c.note ? `<div class="muted" style="font-size:11px">${esc(c.note)}</div>` : ""}</td>
       </tr>`).join("") || `<tr><td colspan="7" class="muted">no candidates</td></tr>`;
@@ -748,8 +756,8 @@ $("#jlTraceBtn").onclick = async () => {
   const incomplete = rows.filter(r => !r.traceComplete).length;
   const obs = rows.reduce((n,r) => n + (r.observationCount||0), 0);
   $("#jlTraceSummary").innerHTML =
-    `${rows.length} traced generation(s), ${obs} observation(s) ${
-      incomplete ? `<span class="status-bad">— ${incomplete} INCOMPLETE, not usable as a readout</span>`
+    `${rows.length} traced generation(s), ${esc(obs)} observation(s) ${
+      incomplete ? `<span class="status-bad">— ${esc(incomplete)} INCOMPLETE, not usable as a readout</span>`
                  : '<span class="status-ok">— complete</span>'} ${
       tierPill(rows[0]?.evidenceTier)} ${claimPill(rows)}`;
   await renderTrace(rows[0]);
@@ -779,17 +787,17 @@ async function renderTrace(row){
     const t = (v-lo)/span;
     const mentioned = (row.mentionMask||{})[String(s)] &&
       Object.values((row.mentionMask||{})[String(s)]||{}).some(Boolean);
-    return `<td title="layer ${l} step ${s}: ${v.toFixed(2)}${mentioned?' (mentioned — primed)':''}"
+    return `<td title="layer ${esc(l)} step ${esc(s)}: ${v.toFixed(2)}${mentioned?' (mentioned — primed)':''}"
       style="background:rgba(90,180,255,${t.toFixed(3)});${mentioned
         ?'outline:1px dashed var(--warn);outline-offset:-2px':''}"></td>`;
   };
   $("#jlHeatmap").innerHTML = `<div class="muted" style="font-size:12px">
-      layer × prediction step — watched token <span class="mono">${watch[0]??"?"}</span>,
+      layer × prediction step — watched token <span class="mono">${esc(watch[0]??"?")}</span>,
       range ${isFinite(lo)?lo.toFixed(1):"?"}…${isFinite(hi)?hi.toFixed(1):"?"};
       dashed = mention-primed at that step</div>
     <table style="table-layout:fixed"><thead><tr><th style="width:52px">layer</th>
-      ${steps.map(s=>`<th class="mono" style="font-weight:400">${s}</th>`).join("")}</tr></thead>
-    <tbody>${layers.map(l=>`<tr><td class="mono">${l}</td>${
+      ${steps.map(s=>`<th class="mono" style="font-weight:400">${esc(s)}</th>`).join("")}</tr></thead>
+    <tbody>${layers.map(l=>`<tr><td class="mono">${esc(l)}</td>${
       steps.map(s=>cell(l,s)).join("")}</tr>`).join("")}</tbody></table>`;
 
   // Prediction-aligned table: every row names the token that activation
@@ -800,8 +808,8 @@ async function renderTrace(row){
       <th>watched (J)</th><th>watched (logit lens)</th><th>top-k (J)</th>
       <th>top-k (logit lens)</th></tr></thead><tbody>${
     shown.map(o=>`<tr>
-      <td class="mono">${o.layer}</td><td>${esc(o.passKind)}</td>
-      <td class="mono">${o.position}</td><td class="mono">${o.predictedIndex}</td>
+      <td class="mono">${esc(o.layer)}</td><td>${esc(o.passKind)}</td>
+      <td class="mono">${esc(o.position)}</td><td class="mono">${esc(o.predictedIndex)}</td>
       <td class="mono">${o.predictedTokenID == null
         ? '<span class="status-bad">unaligned</span>'
         : esc(piece(o.predictedTokenID))}</td>
@@ -811,7 +819,7 @@ async function renderTrace(row){
       <td class="mono muted">${esc((o.topKIDsLogitLens||[]).slice(0,3).map(piece).join(" "))}</td>
       </tr>`).join("")
   }</tbody></table>${obs.length>200
-    ? `<div class="muted" style="font-size:12px">showing 200 of ${obs.length} observations</div>` : ""}`;
+    ? `<div class="muted" style="font-size:12px">showing 200 of ${esc(obs.length)} observations</div>` : ""}`;
 }
 
 // ---- state polling ----
@@ -831,7 +839,7 @@ async function refreshState(){
 }
 async function refreshInfo(){ try{ INFO = await api("/api/info"); $("#rootPill").textContent = "root " + INFO.root;
   const devs = INFO.devices || ["cpu"];
-  $("#device").innerHTML = `<option value="auto">auto (${devs[0]})</option>` + devs.map(d=>`<option>${d}</option>`).join("");
+  $("#device").innerHTML = `<option value="auto">auto (${esc(devs[0])})</option>` + devs.map(d=>`<option>${esc(d)}</option>`).join("");
 }catch(e){} }
 
 // ---- model load ----
@@ -853,11 +861,11 @@ function renderSlots(){
   $("#vecHint").textContent = STATE.loadedModel
     ? `${compat.length} vectors for ${STATE.loadedModel}` : "load a model to enable steering";
   $("#slots").innerHTML = SLOTS.map((s,i)=>{
-    const opts = compat.map((v,j)=>`<option value="${j}" ${s.vec===j?"selected":""}>${esc(v.concept)} · L?/${v.layerCount} · ${esc(v.method||"")} · ${v.extracted||""}</option>`).join("");
+    const opts = compat.map((v,j)=>`<option value="${j}" ${s.vec===j?"selected":""}>${esc(v.concept)} · L?/${esc(v.layerCount)} · ${esc(v.method||"")} · ${esc(v.extracted||"")}</option>`).join("");
     return `<div class="slot">
       <div style="flex:1"><label>vector</label><select data-i="${i}" class="slotVec"><option value="">— none —</option>${opts}</select></div>
-      <div><label>layer</label><input type="number" class="slotLayer" data-i="${i}" value="${s.layer}" /></div>
-      <div><label>alpha</label><input type="number" class="slotAlpha" data-i="${i}" value="${s.alpha}" step="0.5" /></div>
+      <div><label>layer</label><input type="number" class="slotLayer" data-i="${i}" value="${esc(s.layer)}" /></div>
+      <div><label>alpha</label><input type="number" class="slotAlpha" data-i="${i}" value="${esc(s.alpha)}" step="0.5" /></div>
       <div><label>on</label><input type="checkbox" class="slotOn" data-i="${i}" ${s.on?"checked":""} /></div>
       <button class="act ghost slotDel" data-i="${i}">✕</button></div>`;
   }).join("");
@@ -899,7 +907,7 @@ $("#stopBtn").onclick = ()=>{ if(genAbort) genAbort.abort(); };
 let CUR = null;  // {name, positive:[], negative:[]}
 async function loadConcepts(){ const {concepts} = await api("/api/concepts");
   $("#conceptRows").innerHTML = concepts.map(c=>`<tr class="clickable" data-n="${esc(c.name)}">
-    <td>${esc(c.name)}</td><td>${c.positiveCount}</td><td>${c.negativeCount}</td>
+    <td>${esc(c.name)}</td><td>${esc(c.positiveCount)}</td><td>${esc(c.negativeCount)}</td>
     <td>${c.hasValidation?"✓":""}</td><td>${c.hasMarkers?"✓":""}</td></tr>`).join("");
   document.querySelectorAll("#conceptRows tr").forEach(r=>r.onclick=()=>editConcept(r.dataset.n));
   loadVectorLib(); loadReaders(); }
@@ -909,7 +917,7 @@ async function loadVectorLib(){ await loadVectors();
   const q = ($("#vecSearch").value||"").toLowerCase();
   const hits = VECTORS.filter(v=>!q || (v.concept+" "+(v.method||"")+" "+v.modelID).toLowerCase().includes(q));
   $("#vecLib").innerHTML = hits.slice(0,80).map(v=>`<div style="display:flex;gap:6px;align-items:center;margin-bottom:3px;font-size:12px">
-    <span style="flex:1">${esc(v.concept)} <span class="muted mono">${esc(v.method||"")}·L${v.layerCount}·${esc(v.modelID.split("/").pop())}</span></span>
+    <span style="flex:1">${esc(v.concept)} <span class="muted mono">${esc(v.method||"")}·L${esc(v.layerCount)}·${esc(v.modelID.split("/").pop())}</span></span>
     <button class="act ghost vecUse" data-rd="${esc(v.runDirectory)}" data-nm="${esc(v.name)}" ${v.modelID===STATE.loadedModel?'':'disabled title="load this model to use"'}>use</button></div>`).join("")
     || "<span class='muted'>no matches</span>";
   document.querySelectorAll(".vecUse").forEach(b=>b.onclick=()=>{
@@ -950,7 +958,7 @@ function renderProposals(){
   if(!PROPOSALS.length){ $("#proposalsList").innerHTML=""; return; }
   $("#proposalsList").innerHTML = PROPOSALS.map((p,i)=>`<div style="display:flex;gap:6px;font-size:12px;margin-bottom:3px">
     <input type="checkbox" class="propChk" data-i="${i}" ${p.on?"checked":""}>
-    <span style="flex:1"><span class="status-ok">${esc(p.positive).slice(0,60)}</span> / <span class="muted">${esc(p.negative).slice(0,60)}</span></span></div>`).join("")
+    <span style="flex:1"><span class="status-ok">${esc(p.positive.slice(0,60))}</span> / <span class="muted">${esc(p.negative.slice(0,60))}</span></span></div>`).join("")
     + `<div class="row" style="margin-top:6px"><button class="act" id="acceptPropBtn">Accept checked</button>
        <button class="act ghost" id="discardPropBtn">Discard all</button></div>`;
   document.querySelectorAll(".propChk").forEach(c=>c.onchange=e=>PROPOSALS[+e.target.dataset.i].on=e.target.checked);
@@ -962,9 +970,9 @@ function renderProposals(){
 // ---- neutral corpus + PCs ----
 async function loadNeutral(){ const r = await api("/api/neutral/corpora");
   $("#neutralPanel").style.display = "";
-  $("#neutralCorpus").innerHTML = r.corpora.map(c=>`<option value="${c.name==='norm'?'':esc(c.name)}">${esc(c.name)} (${c.count})</option>`).join("");
+  $("#neutralCorpus").innerHTML = r.corpora.map(c=>`<option value="${c.name==='norm'?'':esc(c.name)}">${esc(c.name)} (${esc(c.count)})</option>`).join("");
   $("#neutralBases").innerHTML = r.bases.length
-    ? "<b>bases:</b> " + r.bases.map(b=>`<span class="tag">${esc(b.corpusName)} · ${b.totalComponents} PCs · ${esc(b.modelID.split("/").pop())}</span>`).join(" ")
+    ? "<b>bases:</b> " + r.bases.map(b=>`<span class="tag">${esc(b.corpusName)} · ${esc(b.totalComponents)} PCs · ${esc(b.modelID.split("/").pop())}</span>`).join(" ")
     : "<span class='muted'>no neutral-PC bases yet</span>"; }
 $("#neutralImportBtn").onclick = async ()=>{
   const name = $("#neutralProjName").value.trim() || $("#neutralCorpus").value;
@@ -1026,7 +1034,7 @@ function readerPairsJSONL(concept, positives, negatives, heldOut, templateID){
 async function loadReaders(){
   try{ READERS = (await api("/api/readers")).readers; }catch(e){ READERS = []; }
   $("#rdSelect").innerHTML = READERS.length ? READERS.map(r =>
-    `<option value="${esc(r.id)}">${esc(r.concept)} · L${r.layer} · ${esc(r.templateID||"")}`
+    `<option value="${esc(r.id)}">${esc(r.concept)} · L${esc(r.layer)} · ${esc(r.templateID||"")}`
     + (r.heldOutAccuracy!=null ? ` · held-out ${Math.round(r.heldOutAccuracy*100)}%` : "")
     + ` · ${esc((r.modelID||"").split("/").pop())}</option>`).join("")
     : `<option value="">no readers fitted on this server yet</option>`;
@@ -1059,7 +1067,7 @@ $("#rdFitBtn").onclick = async () => {
     const scores = (job.result && job.result.layerScores) || [];
     $("#rdFitStatus").textContent = "done · " + String(job.result && job.result.runDirectory || "").split("/").pop();
     $("#rdLayerScores").innerHTML = `<table><thead><tr><th>layer</th><th>train</th><th>held-out</th><th>PC1 var</th></tr></thead><tbody>${
-      scores.map(s => `<tr><td class="mono">${s.layer}</td><td>${Math.round(s.trainAccuracy*100)}%</td>`
+      scores.map(s => `<tr><td class="mono">${esc(s.layer)}</td><td>${Math.round(s.trainAccuracy*100)}%</td>`
         + `<td>${s.heldOutAccuracy==null ? "—" : Math.round(s.heldOutAccuracy*100)+"%"}</td>`
         + `<td class="mono">${Number(s.pc1ExplainedVariance).toFixed(2)}</td></tr>`).join("")}</tbody></table>`;
     loadReaders(); toast("reader fitted — one artifact per layer");
@@ -1088,8 +1096,8 @@ $("#rdScoreBtn").onclick = async () => {
 function renderStimuli(){
   for(const [side, id] of [["positive","posList"],["negative","negList"]]){
     $("#"+id).innerHTML = CUR[side].map((t,i)=>`<div style="display:flex;gap:4px;margin-bottom:4px">
-      <textarea data-side="${side}" data-i="${i}" rows="1" style="flex:1">${esc(t)}</textarea>
-      <button class="act ghost" data-del data-side="${side}" data-i="${i}">✕</button></div>`).join("");
+      <textarea data-side="${esc(side)}" data-i="${i}" rows="1" style="flex:1">${esc(t)}</textarea>
+      <button class="act ghost" data-del data-side="${esc(side)}" data-i="${i}">✕</button></div>`).join("");
   }
   document.querySelectorAll("#editorBody textarea").forEach(t=>t.oninput=e=>{
     CUR[e.target.dataset.side][+e.target.dataset.i] = e.target.value; });
@@ -1121,7 +1129,7 @@ async function loadGrandMean(){ const {concepts} = await api("/api/multiconcept/
   if(CUR && !concepts.some(c=>c.concept===CUR.name)) GM.concepts.forEach((c,i)=>{ if(i===0) c.build=true; });
   renderGrandMean(); }
 function renderGrandMean(){
-  $("#mcCorpus").innerHTML = GM.concepts.map((c,i)=>`<tr><td>${esc(c.concept)}</td><td class="muted">${c.stories}</td>
+  $("#mcCorpus").innerHTML = GM.concepts.map((c,i)=>`<tr><td>${esc(c.concept)}</td><td class="muted">${esc(c.stories)}</td>
     <td><input type="checkbox" class="mcInc" data-i="${i}" ${c.include?"checked":""}></td>
     <td><input type="checkbox" class="mcBuild" data-i="${i}" ${c.build?"checked":""}></td></tr>`).join("");
   document.querySelectorAll(".mcInc").forEach(e=>e.onchange=ev=>GM.concepts[+ev.target.dataset.i].include=ev.target.checked);
@@ -1181,11 +1189,11 @@ $("#statsBtn").onclick = async ()=>{ if(!CUR) return; if(!STATE.loadedModel) ret
     const spark = s.normByLayer.map(n=>{ const h=Math.round(2+18*n/mx); return `<span title="${n.toFixed(2)}" style="display:inline-block;width:4px;height:${h}px;background:var(--accent);margin-right:1px;vertical-align:bottom"></span>`; }).join("");
     const ctrl = Object.entries(s.controlCosines).slice(0,8).map(([c,v])=>`<span class="tag" style="${Math.abs(v)>0.6?'color:var(--bad)':''}">${esc(c)} ${v.toFixed(2)}</span>`).join(" ") || "<span class='muted'>none</span>";
     $("#statsOut").innerHTML = `
-      <div class="row" style="gap:18px"><div><b>held-out acc</b><br>${ho}</div>
-        <div><b>split-half cos</b><br>${sh}</div>
-        <div><b>norm by layer</b> (L${s.statsLayer})<br>${spark}</div></div>
-      <div style="margin-top:8px"><b>control cosines</b> ${s.controlWarn.length?`<span class="status-bad">⚠ collapse: ${s.controlWarn.join(", ")}</span>`:""}<br>${ctrl}</div>
-      ${s.outliers.length?`<div style="margin-top:8px"><b>least-aligned</b>: ${s.outliers.map(o=>`<span class="tag" style="${o.margin<0?'color:var(--bad)':''}">${o.side} #${o.index} (${o.margin.toFixed(2)})</span>`).join(" ")}</div>`:""}`;
+      <div class="row" style="gap:18px"><div><b>held-out acc</b><br>${esc(ho)}</div>
+        <div><b>split-half cos</b><br>${esc(sh)}</div>
+        <div><b>norm by layer</b> (L${esc(s.statsLayer)})<br>${spark}</div></div>
+      <div style="margin-top:8px"><b>control cosines</b> ${s.controlWarn.length?`<span class="status-bad">⚠ collapse: ${esc(s.controlWarn.join(", "))}</span>`:""}<br>${ctrl}</div>
+      ${s.outliers.length?`<div style="margin-top:8px"><b>least-aligned</b>: ${s.outliers.map(o=>`<span class="tag" style="${o.margin<0?'color:var(--bad)':''}">${esc(o.side)} #${esc(o.index)} (${o.margin.toFixed(2)})</span>`).join(" ")}</div>`:""}`;
   }catch(e){ $("#statsOut").innerHTML = `<span class="status-bad">${esc(e.message)}</span>`; } };
 
 document.querySelectorAll(".promptHelper").forEach(b=>b.onclick=async()=>{ if(!CUR) return;
@@ -1205,7 +1213,7 @@ $("#parseImportBtn").onclick = async ()=>{ if(!CUR) return;
 // ---- geometry ----
 async function loadGeometry(){ await loadVectors();
   $("#geoVecList").innerHTML = VECTORS.map((v,i)=>`<label style="display:inline-block;margin:2px 10px 2px 0">
-    <input type="checkbox" class="geoVec" data-i="${i}" /> ${esc(v.concept)} <span class="muted mono">${esc(v.modelID.split("/").pop())}·L?/${v.layerCount}</span></label>`).join("") || "<span class='muted'>no vectors</span>"; }
+    <input type="checkbox" class="geoVec" data-i="${i}" /> ${esc(v.concept)} <span class="muted mono">${esc(v.modelID.split("/").pop())}·L?/${esc(v.layerCount)}</span></label>`).join("") || "<span class='muted'>no vectors</span>"; }
 $("#geoCompute").onclick = async ()=>{
   const picked = [...document.querySelectorAll(".geoVec:checked")].map(c=>VECTORS[+c.dataset.i]);
   if(picked.length < 2) return toast("pick at least 2 vectors", true);
@@ -1217,16 +1225,16 @@ $("#geoCompute").onclick = async ()=>{
     return `<td style="background:${b};color:#06121f;text-align:center" class="mono">${x.toFixed(2)}</td>`; };
   $("#geoMatrix").innerHTML = `<table><thead><tr><th></th>${r.labels.map(l=>`<th class="mono">${esc(l)}</th>`).join("")}</tr></thead>
     <tbody>${r.matrix.map((row,i)=>`<tr><th class="mono">${esc(r.labels[i])}</th>${row.map(cell).join("")}</tr>`).join("")}</tbody></table>
-    <p class="muted" style="margin-top:8px">layers used: ${r.layers.join(", ")}</p>`;
+    <p class="muted" style="margin-top:8px">layers used: ${esc(r.layers.join(", "))}</p>`;
 };
 
 // ---- gemma scope ----
 async function loadScope(){ const info = await api("/api/gemmascope/info");
   $("#scopeInfo").innerHTML = info.available
-    ? `<span class="status-ok">SAE available</span> · ${esc(info.release)} · <span class="mono">${esc(info.saeID)}</span> · layer ${info.layer} <span class="muted">(of ${info.availableLayers.join(", ")})</span>`
+    ? `<span class="status-ok">SAE available</span> · ${esc(info.release)} · <span class="mono">${esc(info.saeID)}</span> · layer ${esc(info.layer)} <span class="muted">(of ${esc(info.availableLayers.join(", "))})</span>`
     : `<span class="status-bad">${esc(info.reason||"not a Gemma 3 model")}</span>`;
   await loadVectors();
-  $("#scopeVec").innerHTML = compatibleVectors().map((v,i)=>`<option value="${i}">${esc(v.concept)} · L${v.layerCount} · ${esc(v.method||"")}</option>`).join("") || "<option>no vectors</option>";
+  $("#scopeVec").innerHTML = compatibleVectors().map((v,i)=>`<option value="${i}">${esc(v.concept)} · L${esc(v.layerCount)} · ${esc(v.method||"")}</option>`).join("") || "<option>no vectors</option>";
 }
 $("#scopeRunBtn").onclick = async ()=>{ if(!STATE.loadedModel) return toast("load a Gemma 3 model first",true);
   const v = compatibleVectors()[+$("#scopeVec").value]; if(!v) return toast("no vector",true);
@@ -1245,7 +1253,7 @@ $("#scopeImportBtn").onclick = async ()=>{ if(!STATE.loadedModel) return toast("
 async function loadTuning(){
   const {variants} = await api("/api/variants");
   $("#variantList").innerHTML = "<b>saved variants</b><br>" + (variants.map(v=>`<div style="display:flex;gap:6px;align-items:center;margin-top:4px;font-size:12px">
-    <span style="flex:1">${esc(v.name)} <span class="muted mono">${esc(v.baseModelID.split("/").pop())}·${v.injections} inj${v.adapters?("·"+v.adapters+" adp"):""}</span></span>
+    <span style="flex:1">${esc(v.name)} <span class="muted mono">${esc(v.baseModelID.split("/").pop())}·${esc(v.injections)} inj${v.adapters?("·"+esc(v.adapters)+" adp"):""}</span></span>
     <button class="act ghost varApply" data-p="${esc(v.path)}">apply</button></div>`).join("") || "<span class='muted'>none</span>");
   $("#variantChatSelect").innerHTML = variants.map(v=>`<option value="${esc(v.path)}">${esc(v.name)} · ${esc(v.baseModelID)}</option>`).join("");
   document.querySelectorAll(".varApply").forEach(b=>b.onclick=()=>applyVariant(b.dataset.p));
@@ -1335,14 +1343,14 @@ async function showExperiment(name){ const e = await api(`/api/experiment/${enco
         <span class="muted">runs every gate; to force past a failing gate use the CLI's loud-and-stamped <code>freeze --force</code></span></div>
     </div>` : `<div class="muted" style="margin-top:10px">frozen${e.frozenBy?(" by "+esc(e.frozenBy)):""} — duplicate to iterate</div>`;
   $("#expDetail").innerHTML = `<b>${esc(e.name)}</b> <span class="tag">${esc(e.status)}</span>
-    <div class="muted mono" style="margin:6px 0">${esc(e.modelID)}${e.modelRevision?(" @ "+e.modelRevision.slice(0,10)):""}${e.studyKind&&e.studyKind!=="modelOutput"?(" · "+esc(e.studyKind)):""}</div>
+    <div class="muted mono" style="margin:6px 0">${esc(e.modelID)}${e.modelRevision?(" @ "+esc(e.modelRevision.slice(0,10))):""}${e.studyKind&&e.studyKind!=="modelOutput"?(" · "+esc(e.studyKind)):""}</div>
     <div>${esc(e.description||"")}</div>
     <div style="margin-top:8px"><b>concepts</b>: ${(e.concepts||[]).map(c=>`<span class="tag">${esc(c.name)} · ${esc(c.method)} · ${esc(c.reading)}</span>`).join(" ")||"<span class='muted'>none</span>"}</div>
     <div style="margin-top:6px"><b>conditions</b>: ${(e.conditions||[]).map(c=>`<span class="tag">${esc(c.name)}${c.normUnits?" (norm)":""}</span>`).join(" ")||"<span class='muted'>none</span>"}</div>
     ${(e.evaluation)?`<div style="margin-top:6px"><b>judge</b>: <span class="tag">${esc(e.evaluation.kind)} · ${esc(e.evaluation.judgeModel)}</span></div>`:""}
     <div class="row" style="margin-top:12px">
       <button class="act ghost" id="verifyBtn">Verify</button>
-      ${verbs.map(v=>`<button class="act" data-v="${v}">${v}</button>`).join("")}
+      ${verbs.map(v=>`<button class="act" data-v="${esc(v)}">${esc(v)}</button>`).join("")}
       <button class="act ghost" id="dupBtn">Duplicate</button></div>
     ${author}
     <div id="verifyOut" class="muted" style="margin-top:8px"></div>`;
@@ -1393,7 +1401,7 @@ const PD_TEMPLATE = {
 };
 async function loadAgents(){ const {scenarios} = await api("/api/scenarios");
   $("#scenarioList").innerHTML = scenarios.length ? scenarios.map(s=>`<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;font-size:12px">
-    <span style="flex:1">${esc(s.name)} <span class="muted mono">${s.agents}a·${s.turns}t</span></span>
+    <span style="flex:1">${esc(s.name)} <span class="muted mono">${esc(s.agents)}a·${esc(s.turns)}t</span></span>
     <button class="act ghost scLoad" data-p="${esc(s.path)}">load</button>
     <button class="act scRun" data-p="${esc(s.path)}">run</button></div>`).join("") : "<span class='muted'>no saved scenarios</span>";
   document.querySelectorAll(".scLoad").forEach(b=>b.onclick=async()=>{ const sc=await api("/api/scenario?path="+encodeURIComponent(b.dataset.p));
@@ -1417,7 +1425,7 @@ async function loadRuns(){ const {runs} = await api("/api/runs");
   $("#runRows").innerHTML = runs.map(r=>{ const out=[]; if(r.hasReport)out.push("report"); if(r.hasGenerations)out.push("generations");
     if(r.hasCosineMatrix)out.push("cosine"); if(r.vectorNames.length)out.push(r.vectorNames.length+" vec");
     return `<tr class="clickable" data-id="${esc(r.id)}"><td class="mono">${esc(r.id)}</td><td>${esc(r.task||"")}</td>
-      <td class="muted">${out.join(" · ")}</td></tr>`; }).join("");
+      <td class="muted">${esc(out.join(" · "))}</td></tr>`; }).join("");
   document.querySelectorAll("#runRows tr").forEach(tr=>tr.onclick=()=>showRun(tr.dataset.id, runs.find(r=>r.id===tr.dataset.id))); }
 async function showRun(id, run){ $("#runDetail").innerHTML = `<b class="mono">${esc(id)}</b>
   <div style="margin-top:8px">${run.files.map(f=>`<button class="act ghost runFile" data-f="${esc(f)}" style="margin:2px">${esc(f)}</button>`).join("")}</div>
@@ -1428,7 +1436,7 @@ async function showFile(id, name){ const v = $("#fileView"); v.textContent = "lo
     if(name.endsWith(".json")){ v.innerHTML = `<pre class="code">${esc(JSON.stringify(JSON.parse(txt), null, 2))}</pre>`; }
     else if(name.endsWith(".jsonl")){ const rows = txt.trim().split("\n").slice(0,50).map(l=>JSON.parse(l));
       const cols = [...new Set(rows.flatMap(r=>Object.keys(r)))].filter(k=>k!=="output"&&k!=="prompt").slice(0,6);
-      v.innerHTML = `<div class="muted">${rows.length} rows (first 50)</div><table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}<th>output</th></tr></thead><tbody>${
+      v.innerHTML = `<div class="muted">${esc(rows.length)} rows (first 50)</div><table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}<th>output</th></tr></thead><tbody>${
         rows.map(r=>`<tr>${cols.map(c=>`<td class="mono">${esc(String(r[c]).slice(0,40))}</td>`).join("")}<td class="muted">${esc(String(r.output||"").slice(0,120))}</td></tr>`).join("")}</tbody></table>`; }
     else { v.innerHTML = `<pre class="code">${esc(txt.slice(0,8000))}</pre>`; }
   } catch(e){ v.textContent = "error: " + e.message; } }
@@ -1438,8 +1446,8 @@ let jobTimer = null, jobStreamAbort = null;
 async function loadJobs(){ const {jobs} = await api("/api/jobs");
   $("#jobRows").innerHTML = jobs.map(j=>{ const cls = j.status==="succeeded"?"status-ok":j.status==="failed"?"status-bad":j.status==="running"?"status-run":"muted";
     const res = j.result?.runDirectory ? j.result.runDirectory.split("/").pop() : (j.error||"");
-    return `<tr class="clickable" data-id="${j.id}"><td class="mono">${j.id}</td><td>${esc(j.kind)}</td>
-      <td class="${cls}">${j.status}</td><td class="muted mono">${esc(String(res).slice(0,40))}</td></tr>`; }).join("") || `<tr><td colspan=4 class="muted">no jobs yet</td></tr>`;
+    return `<tr class="clickable" data-id="${esc(j.id)}"><td class="mono">${esc(j.id)}</td><td>${esc(j.kind)}</td>
+      <td class="${esc(cls)}">${esc(j.status)}</td><td class="muted mono">${esc(String(res).slice(0,40))}</td></tr>`; }).join("") || `<tr><td colspan=4 class="muted">no jobs yet</td></tr>`;
   document.querySelectorAll("#jobRows tr[data-id]").forEach(tr=>tr.onclick=()=>streamJob(tr.dataset.id)); }
 async function streamJob(id){ if(jobStreamAbort) jobStreamAbort.abort(); jobStreamAbort = new AbortController();
   $("#jobLog").textContent = "";

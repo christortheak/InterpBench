@@ -118,3 +118,77 @@ def test_exhausted_retry_budget_raises_loudly(tmp_path, monkeypatch, frozen_stam
         os.makedirs(os.path.join(runs_root, name))
     with pytest.raises(RuntimeError, match="unique run directory"):
         paths.make_unique_run_directory(SLUG, root=str(tmp_path))
+
+
+# --------------------------------------------------------------------------
+# Containment: a slug is a NAME, never a path (review finding, 2026-08-21)
+# --------------------------------------------------------------------------
+# Most call sites build the slug from a verb plus an already-safe-named value,
+# but several interpolate data straight out of a request body, a bundle's
+# metadata, or a scenario file. One separator turned `runs/<stamp>-<slug>`
+# into an arbitrary filesystem path.
+
+@pytest.mark.parametrize("slug", [
+    "gemmascope-../../../escaped",
+    "../escaped",
+    "..",
+    ".",
+    "nested/slug",
+    "back\\slash",
+    "/absolute",
+    os.path.join(os.sep, "tmp", "absolute"),
+    "nul\0byte",
+    "",
+])
+def test_a_slug_that_could_leave_runs_is_refused(tmp_path, slug):
+    with pytest.raises(paths.UnsafeRunSlug):
+        paths.make_unique_run_directory(slug, root=str(tmp_path))
+    # Nothing was created on the way to the refusal.
+    runs_root = os.path.join(str(tmp_path), "runs")
+    assert not os.path.exists(runs_root) or not os.listdir(runs_root)
+    assert not os.path.exists(os.path.join(str(tmp_path), "escaped"))
+
+
+def test_the_refusal_is_a_value_error_callers_can_catch(tmp_path):
+    # `UnsafeRunSlug` subclasses ValueError so the routes that already map
+    # ValueError to a 400 keep doing the right thing without a new handler.
+    assert issubclass(paths.UnsafeRunSlug, ValueError)
+    with pytest.raises(ValueError, match="path separator"):
+        paths.make_unique_run_directory("a/b", root=str(tmp_path))
+
+
+@pytest.mark.parametrize("slug", [
+    SLUG,
+    "exp-case1-run",
+    "submit-my.study-run",
+    "sae-feature-62389",
+    "gemmascope-joy",
+    "multi-agent-prisoners-dilemma-baseline",
+    "reader-fit-concept_name",
+    "vec 2026",
+    "concept-café",
+    "a" * 120,
+])
+def test_legitimate_slugs_are_untouched(tmp_path, frozen_stamp, slug):
+    """Naming is unchanged for every ordinary slug — an existing run tree
+    must stay resolvable by the names it already has on disk."""
+    made = paths.make_unique_run_directory(slug, root=str(tmp_path))
+    assert made == os.path.join(str(tmp_path), "runs", f"{STAMP}-{slug}")
+    assert os.path.isdir(made)
+
+
+def test_an_existing_run_directory_still_resolves(tmp_path, frozen_stamp):
+    """The check guards CREATION only: nothing about reading a run tree that
+    was written before it existed changes."""
+    runs_root = os.path.join(str(tmp_path), "runs")
+    legacy = os.path.join(runs_root, f"{STAMP}-{SLUG}")
+    os.makedirs(legacy)
+    with open(os.path.join(legacy, "report.json"), "w", encoding="utf-8") as fh:
+        fh.write("{}")
+    assert paths.runs_directory(str(tmp_path)) == runs_root
+    assert os.path.isfile(
+        paths.resolve(os.path.join("runs", f"{STAMP}-{SLUG}", "report.json"),
+                      str(tmp_path)))
+    # …and a second call still ladders off the existing name.
+    assert paths.make_unique_run_directory(SLUG, root=str(tmp_path)) == \
+        os.path.join(runs_root, f"{STAMP}-{SLUG}-2")

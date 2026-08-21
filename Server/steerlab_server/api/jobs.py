@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .profile import ServerProfile, capability_snapshot
+from .workspace_lock import submitting as _submitting_workspace
 
 
 # "prepared" is the completed outcome of a dry-run submission: the bundle was
@@ -931,7 +932,11 @@ class JobManager:
             capability_snapshot=snapshot,
             _store=self.store,
         )
-        with self._lock:
+        # Shared workspace-root hold across REGISTRATION only (workspace_lock):
+        # a job that exists is a job POST /api/workspace/switch must see and
+        # refuse over. Outside it, the worker below resolves paths on its own
+        # thread — by then the switch has already been refused.
+        with _submitting_workspace(), self._lock:
             self._jobs[job.id] = job
             self.store.insert(job)
 
@@ -1063,7 +1068,9 @@ class JobManager:
             capability_snapshot=snapshot,
             _store=self.store,
         )
-        with self._lock:
+        # Same registration barrier as ``submit`` — an externally executed job
+        # (sbatch) is just as much a claim on the current root.
+        with _submitting_workspace(), self._lock:
             self._jobs[job.id] = job
             self.store.insert(job)
         if log:

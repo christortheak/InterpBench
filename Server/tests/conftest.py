@@ -13,6 +13,39 @@ os.environ.setdefault(
     "STEERLAB_METADATA_ROOT", tempfile.mkdtemp(prefix="steerlab-test-meta-"))
 
 
+def _test_clients_present_a_loopback_peer() -> None:
+    """Give every ``TestClient`` a real loopback peer address.
+
+    ``auth_middleware`` refuses an unauthenticated request whose PEER is not
+    on this machine (``app.peer_is_loopback``), and it treats an unknown peer
+    as non-loopback on purpose — a socket whose other end the process cannot
+    see is not evidence of locality. Starlette's ASGI transport stamps the
+    synthetic peer ``("testclient", 50000)``, which is neither an address nor
+    ``localhost``, so the suite would (correctly, by that rule) 403.
+
+    Rather than teach the production check about a test-only hostname — which
+    would put a string a real deployment could conceivably present onto the
+    loopback side of a security gate — the TEST TRANSPORT is corrected to say
+    what it actually is: a client on 127.0.0.1. Patched at import time, not in
+    a fixture, because several test modules build their client at module
+    scope.
+    """
+    try:
+        from starlette.testclient import TestClient
+    except ImportError:  # pragma: no cover - httpx/starlette optional
+        return
+    original = TestClient.__init__
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("client", ("127.0.0.1", 50000))
+        original(self, *args, **kwargs)
+
+    TestClient.__init__ = __init__
+
+
+_test_clients_present_a_loopback_peer()
+
+
 @pytest.fixture(autouse=True)
 def _no_live_provider_preflight(monkeypatch):
     """No test may reach the real internet. The openrouter provider

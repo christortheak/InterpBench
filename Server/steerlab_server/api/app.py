@@ -8,6 +8,7 @@ OnDemand or an SSH tunnel and enable token/external auth for API routes.
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import os
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
@@ -235,6 +236,66 @@ def request_is_privileged(method: str, path: str) -> bool:
     return False
 
 
+def peer_is_loopback(request: Request) -> bool:
+    """Whether the CONNECTING PEER is on this machine.
+
+    ``ServerProfile.bind`` reports what ``STEERLAB_BIND`` *says*; it is a
+    declaration, not an observation, and a direct
+    ``uvicorn steerlab_server.api.app:app --host 0.0.0.0`` never sets it. The
+    peer address is what the socket actually accepted, so every gate that
+    means "this machine only" reads THIS, not the configured bind.
+
+    Fail-closed by construction:
+
+    - No peer in the ASGI scope at all (``request.client is None``) counts as
+      NON-loopback. That covers unix-domain-socket serving and any ASGI server
+      that omits ``client`` — both then need an auth mode declared, which is
+      the honest answer for a socket whose other end this process cannot see.
+    - A hostname that is not an IP literal is only loopback when it is
+      literally in :data:`LOOPBACK_HOSTS` (``localhost``). A real network
+      server always puts an ADDRESS here, never a name, so nothing a remote
+      peer controls can spell its way into this branch.
+    """
+    client = request.client
+    host = (getattr(client, "host", "") or "").strip().lower() if client else ""
+    if not host:
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return host in _LOOPBACK
+    # ::ffff:127.0.0.1 is 127.0.0.1 arriving on a dual-stack socket, and
+    # ipaddress does not call the mapped form loopback on its own.
+    mapped = getattr(address, "ipv4_mapped", None)
+    return (mapped or address).is_loopback
+
+
+def _server_authenticates(profile: ServerProfile) -> bool:
+    """Whether this deployment performs ANY authentication of its own.
+
+    ``token`` checks a bearer token below; ``external`` declares that a
+    fronting proxy (Open OnDemand, an SSO gateway) has already authenticated
+    the caller. ``none`` means every /api route is open to whoever can reach
+    the socket — legal on loopback, never off it.
+    """
+    return profile.auth_mode in ("token", "external")
+
+
+#: What to tell a caller whose request was refused for arriving from off-box
+#: with no auth configured. Names the supported launch path first: ``serve``
+#: resolves token mode by default and mints/reads the token file, so the
+#: overwhelmingly common cause is a hand-rolled uvicorn line.
+_OPEN_INSTRUMENT_REFUSAL = (
+    "refusing a non-loopback request: this server has no authentication "
+    "configured (STEERLAB_AUTH_MODE=none), so serving it off this machine "
+    "would leave every mutating and compute route open to the network. "
+    "Start the server with `steerlab-server serve` (token mode is the "
+    "default; it reads or mints STEERLAB_AUTH_TOKEN_FILE), or set "
+    "STEERLAB_AUTH_MODE=token with STEERLAB_AUTH_TOKEN — or keep the socket "
+    "on loopback and reach it through an SSH tunnel."
+)
+
+
 def _host_only(value: str) -> str:
     """Bare hostname from a Host header value (strip port and IPv6 brackets)."""
     v = value.strip()
@@ -356,6 +417,18 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     bind_is_loopback = profile.bind in _LOOPBACK
+
+    # (0) Fail-closed on the OBSERVED peer, before anything else. Every gate
+    # below keys on the CONFIGURED bind, which is a claim the process cannot
+    # verify: `uvicorn steerlab_server.api.app:app --host 0.0.0.0` never sets
+    # STEERLAB_BIND, so `profile.bind` reads 127.0.0.1 and the whole API was
+    # open to the network with auth_mode=none. The socket knows better — if
+    # the request came from off this machine and this deployment authenticates
+    # nothing, refuse it. A request carrying valid auth (token/external mode)
+    # is unaffected, and so is every loopback caller.
+    if not _server_authenticates(profile) and not peer_is_loopback(request):
+        return JSONResponse({"detail": _OPEN_INSTRUMENT_REFUSAL},
+                            status_code=403)
 
     # (1) CSRF / DNS-rebinding defense. Browsers stamp Origin / Sec-Fetch-* on
     # every request; curl, the SwiftUI client, and SSH-tunnel users do not.

@@ -192,6 +192,43 @@ def resolve_artifact(reference: str, root: str | None = None) -> str:
 MAX_RUN_DIRECTORY_ATTEMPTS = 500
 
 
+class UnsafeRunSlug(ValueError):
+    """A run-directory slug that would not stay inside ``runs/``."""
+
+
+def _checked_slug(slug: str) -> str:
+    """Refuse a run slug that could leave ``runs/`` — the containment check
+    at the helper, not at each of its ~50 call sites.
+
+    Most callers build the slug from a verb plus a name they safe-named
+    first, but several interpolate data straight from a request body, a
+    bundle's metadata, or a scenario file (``f"gemmascope-{name}"``,
+    ``f"submit-bundle-{experiment}-{verb}"``). One separator in any of those
+    turns ``runs/<stamp>-<slug>`` into an arbitrary filesystem path:
+    ``gemmascope-../../../escaped`` resolved outside the workspace entirely.
+
+    REFUSES rather than sanitizes on purpose. Rewriting a bad slug would
+    silently change where a run lands — and a legitimate slug is left exactly
+    as it was, so every existing on-disk run directory keeps its name and
+    stays resolvable.
+    """
+    text = str(slug)
+    if not text:
+        raise UnsafeRunSlug("run directory slug is empty")
+    if "\0" in text:
+        raise UnsafeRunSlug(f"run directory slug contains a NUL byte: {text!r}")
+    separators = {os.sep, os.altsep, "/", "\\"} - {None}
+    for separator in separators:
+        if separator in text:
+            raise UnsafeRunSlug(
+                f"run directory slug may not contain a path separator: "
+                f"{text!r} (a run always lands directly in runs/)")
+    if os.path.isabs(text) or text in (os.curdir, os.pardir):
+        raise UnsafeRunSlug(
+            f"run directory slug may not be a path: {text!r}")
+    return text
+
+
 def make_unique_run_directory(slug: str, root: str | None = None) -> str:
     """Create a fresh immutable ``runs/<stamp>-<slug>`` directory.
 
@@ -206,7 +243,11 @@ def make_unique_run_directory(slug: str, root: str | None = None) -> str:
     shared filesystem both exit the loop with the same path, and one dies with
     ``FileExistsError`` (or, worse on the Swift side, both proceed into one
     directory and mutate an "immutable" run).
+
+    Raises :class:`UnsafeRunSlug` (a ``ValueError``) for a slug that would
+    escape ``runs/`` — see :func:`_checked_slug`.
     """
+    slug = _checked_slug(slug)
     runs_root = runs_directory(root)
     os.makedirs(runs_root, exist_ok=True)
     now = datetime.now(timezone.utc)

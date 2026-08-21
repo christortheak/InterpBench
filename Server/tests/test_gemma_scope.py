@@ -245,3 +245,55 @@ def test_sidecar_reader_is_lenient_about_convention_fields():
     assert d["gemmascopeConvention"] == "analyzed-vector-norm-match"
     assert d["rawDecoderNorm"] == 0.5
     assert d["gemmascopeTargetNorm"] == 12.0
+
+
+# --------------------------------------------------------------------------
+# The route's own containment (review finding, 2026-08-21)
+# --------------------------------------------------------------------------
+# `POST /api/gemmascope/run` interpolated the caller's `name` into a run
+# directory slug (`gemmascope-<name>`), and `POST /api/gemmascope/import`
+# interpolated the raw `feature` body value — neither was validated as a path
+# component. `paths.make_unique_run_directory` now refuses such a slug too,
+# but the request must fail as a clean 400 here, before a job is started.
+
+def test_gemmascope_run_refuses_a_traversing_name(tmp_path, monkeypatch):
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from steerlab_server.api.app import app
+
+    monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path))
+    (tmp_path / "runs" / "vec").mkdir(parents=True)
+    resp = TestClient(app).post(
+        "/api/gemmascope/run",
+        json={"vectorPath": "runs/vec", "name": "../../../escaped"})
+    assert resp.status_code == 400, resp.text
+    assert "invalid name" in resp.json()["detail"]
+    assert not (tmp_path.parent / "escaped").exists()
+
+
+def test_gemmascope_import_refuses_a_non_integer_feature(tmp_path, monkeypatch):
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from steerlab_server.api.app import app, state
+
+    monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path))
+    report = tmp_path / "runs" / "r" / "gemmascope-report.json"
+    report.parent.mkdir(parents=True)
+    report.write_text("{}", encoding="utf-8")
+
+    class _Model:
+        model_id = "google/gemma-3-4b-it"
+        revision = "abc"
+
+    monkeypatch.setattr(state, "model", _Model())
+    resp = TestClient(app).post(
+        "/api/gemmascope/import",
+        json={"reportPath": "runs/r/gemmascope-report.json",
+              "feature": "../../../escaped"})
+    assert resp.status_code == 400, resp.text
+    assert "integer" in resp.json()["detail"]
+    assert not (tmp_path.parent / "escaped").exists()

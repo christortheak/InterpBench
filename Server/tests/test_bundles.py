@@ -900,3 +900,138 @@ def test_concurrent_identical_rewrite_cannot_fail_verification(
     assert (target / "prompts" / "concepts" / "fair"
             / "positive.jsonl").read_text(encoding="utf-8") \
         == '{"text":"fair"}\n'
+
+
+# --------------------------------------------------------------------------
+# Members stream; they are never materialized (review finding, 2026-08-21)
+# --------------------------------------------------------------------------
+# `import_bundle` called `source.read()` on every member. The 4-GiB upload cap
+# counts COMPRESSED bytes, so a bundle well inside it can carry a member that
+# expands past anything the machine can hold — a highly compressible member
+# reaches 1000:1 easily. The refusal must be a reported BundleError, and it
+# must happen without expanding the member.
+
+def _bundle_with_member(path, name, payload, *, extra=None):
+    """A minimal, well-formed bundle carrying exactly one payload member."""
+    import hashlib
+    import io
+    import tarfile
+    import time
+
+    meta = {
+        "schemaVersion": bundles.BUNDLE_SCHEMA,
+        "kind": "runBundle",
+        "createdAt": time.time(),
+        "experiment": "member-cap",
+        "entries": [{"path": name,
+                     "sha256": hashlib.sha256(payload).hexdigest(),
+                     "bytes": len(payload)}],
+    }
+    meta.update(extra or {})
+    with tarfile.open(path, "w:gz") as tar:
+        for member_name, blob in (("steerlab-bundle.json",
+                                   json.dumps(meta).encode("utf-8")),
+                                  (name, payload)):
+            info = tarfile.TarInfo(member_name)
+            info.size = len(blob)
+            tar.addfile(info, io.BytesIO(blob))
+    return meta
+
+
+def test_a_member_over_the_uncompressed_cap_is_refused(tmp_path, monkeypatch):
+    """A 4 MiB member of zeros compresses to a few KB — inside every cap on
+    compressed bytes — and is refused on its DECLARED uncompressed size."""
+    bundle = str(tmp_path / "big.tar.gz")
+    payload = b"\0" * (4 * 1024 * 1024)
+    _bundle_with_member(bundle, "runs/huge/weights.bin", payload)
+    assert os.path.getsize(bundle) < 64 * 1024, "the fixture must be tiny on disk"
+
+    monkeypatch.setenv("STEERLAB_MAX_BUNDLE_MEMBER_BYTES", str(1024 * 1024))
+    target = tmp_path / "target"
+    with pytest.raises(bundles.BundleError) as excinfo:
+        bundles.import_bundle(bundle, target_root=str(target))
+    detail = str(excinfo.value)
+    assert "uncompressed" in detail
+    assert "STEERLAB_MAX_BUNDLE_MEMBER_BYTES" in detail
+    # Refused BEFORE expansion: nothing of the member reached the target.
+    assert not (target / "runs" / "huge" / "weights.bin").exists()
+    for leftover in target.rglob("*.tmp"):
+        raise AssertionError(f"staged file left behind: {leftover}")
+
+
+def test_the_refusal_does_not_materialize_the_member(tmp_path, monkeypatch):
+    """Not one byte of an oversized member is read — pinned by making the
+    chunked reader itself fail if it is ever entered."""
+    bundle = str(tmp_path / "big.tar.gz")
+    _bundle_with_member(bundle, "runs/huge/weights.bin", b"\0" * (2 * 1024 * 1024))
+
+    def _never(*args, **kwargs):
+        raise AssertionError("an oversized member was opened for reading")
+
+    monkeypatch.setattr(bundles, "_stream_member", _never)
+    monkeypatch.setenv("STEERLAB_MAX_BUNDLE_MEMBER_BYTES", "1024")
+    with pytest.raises(bundles.BundleError, match="uncompressed"):
+        bundles.import_bundle(bundle, target_root=str(tmp_path / "target"))
+
+
+def test_a_lying_tar_header_is_caught_while_streaming(tmp_path, monkeypatch):
+    """The declared size is a claim. A member that understates itself is
+    stopped mid-stream instead of running the machine out of memory."""
+    bundle = str(tmp_path / "liar.tar.gz")
+    _bundle_with_member(bundle, "runs/huge/weights.bin", b"\0" * (512 * 1024))
+    monkeypatch.setattr(bundles, "MEMBER_CHUNK_BYTES", 4096)
+    monkeypatch.setenv("STEERLAB_MAX_BUNDLE_MEMBER_BYTES", str(64 * 1024))
+    # Neutralize the header check, so only the streaming byte counter is left
+    # to notice — the situation a forged tar header creates.
+    monkeypatch.setattr(bundles, "_refuse_oversized_member",
+                        lambda member, limit, what="member": None)
+
+    target = tmp_path / "target"
+    with pytest.raises(bundles.BundleError) as excinfo:
+        bundles.import_bundle(bundle, target_root=str(target))
+    assert "understated its size" in str(excinfo.value)
+    assert not (target / "runs" / "huge" / "weights.bin").exists()
+    for leftover in target.rglob("*.tmp"):
+        raise AssertionError(f"staged file left behind: {leftover}")
+
+
+def test_an_ordinary_member_still_imports_and_verifies(tmp_path):
+    """The generous default leaves every real bundle alone, and the hash
+    firewall still runs on the streamed bytes."""
+    bundle = str(tmp_path / "ok.tar.gz")
+    payload = b"the quick brown fox\n" * 5000     # ~100 KB, over one chunk
+    _bundle_with_member(bundle, "runs/ok/data.jsonl", payload)
+    target = tmp_path / "target"
+    result = bundles.import_bundle(bundle, target_root=str(target))
+    assert result["extracted"] == ["runs/ok/data.jsonl"]
+    assert (target / "runs" / "ok" / "data.jsonl").read_bytes() == payload
+
+    # …and a tampered member is still refused, now on the streamed digest.
+    tampered = str(tmp_path / "bad.tar.gz")
+    _bundle_with_member(tampered, "runs/ok/data.jsonl", payload)
+    import tarfile as _tarfile
+    import io as _io
+    with _tarfile.open(tampered, "r:gz") as source:
+        meta = json.loads(source.extractfile("steerlab-bundle.json").read())
+    meta["entries"][0]["sha256"] = "0" * 64
+    with _tarfile.open(tampered, "w:gz") as tar:
+        for name, blob in (("steerlab-bundle.json", json.dumps(meta).encode()),
+                           ("runs/ok/data.jsonl", payload)):
+            info = _tarfile.TarInfo(name)
+            info.size = len(blob)
+            tar.addfile(info, _io.BytesIO(blob))
+    with pytest.raises(bundles.BundleError, match="hash mismatch"):
+        bundles.import_bundle(tampered, target_root=str(tmp_path / "t2"))
+
+
+def test_bundle_metadata_has_its_own_bound(tmp_path, monkeypatch):
+    """``steerlab-bundle.json`` must be parsed whole, so it gets the smaller
+    metadata cap rather than the member one."""
+    bundle = str(tmp_path / "fat-meta.tar.gz")
+    _bundle_with_member(bundle, "runs/ok/data.jsonl", b"x",
+                        extra={"padding": "y" * (256 * 1024)})
+    monkeypatch.setenv("STEERLAB_MAX_BUNDLE_METADATA_BYTES", "1024")
+    with pytest.raises(bundles.BundleError, match="metadata member"):
+        bundles.inspect_bundle(bundle)
+    monkeypatch.delenv("STEERLAB_MAX_BUNDLE_METADATA_BYTES")
+    assert bundles.inspect_bundle(bundle)["experiment"] == "member-cap"
