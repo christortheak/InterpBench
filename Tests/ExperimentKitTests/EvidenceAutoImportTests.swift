@@ -502,7 +502,7 @@ struct EvidenceAutoImportTests {
         let suite = "steerlab.tests.autoimport-flags.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
 
         let ssh = store.addSite(
             ClusterSiteProfile(

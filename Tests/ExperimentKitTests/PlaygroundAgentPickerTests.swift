@@ -160,7 +160,7 @@ struct PlaygroundAgentSelectionTests {
     private func makeServerWorkspaceService(
         _ name: String, models: [String]
     ) throws -> ChatService {
-        let store = ClusterConnectionStore(defaults: try freshDefaults(name))
+        let store = clusterStore(defaults: try freshDefaults(name))
         let entry = store.addServer(name: "stub", urlString: "http://127.0.0.1:9")
         store.activeWorkspace = .server(entry.id)
         store.remoteState = RemoteState(
@@ -241,7 +241,7 @@ struct PlaygroundAgentSelectionTests {
     }
 
     @Test func localWorkspaceSelectionMirrorsSteeringVariantID() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("local"))
+        let store = clusterStore(defaults: try freshDefaults("local"))
         let service = ChatService(cluster: store)
         let record = makeRecord()
 
@@ -312,7 +312,7 @@ extension ExperimentStoreTests {
         let suite = "steerlab.tests.playground-picker.refresh"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         let service = ChatService(cluster: store)
         #expect(service.playgroundAgentPickerRows.isEmpty)
 

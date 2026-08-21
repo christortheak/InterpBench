@@ -571,13 +571,12 @@ struct ClusterCLIRunnerTests {
         var root: URL
         var payloadRoot: URL
         var manifestBytes: String
-        /// What `--activate-in-app` wrote, instead of touching UserDefaults.
-        var activations: ActivationRecorder
     }
 
-    private final class ActivationRecorder: @unchecked Sendable {
+    /// Collects the lines a verb streams through `emit`.
+    private final class LineRecorder: @unchecked Sendable {
         private(set) var endpoints: [String] = []
-        func record(_ endpoint: String) { endpoints.append(endpoint) }
+        func record(_ line: String) { endpoints.append(line) }
     }
 
     private func temporaryDirectory(_ name: String) throws -> URL {
@@ -618,7 +617,7 @@ struct ClusterCLIRunnerTests {
                 component: ClusterProvisioner.deploymentManifestFileName))
 
         let repository = ClusterSiteRepository(
-            fileURL: root.appending(component: "cluster-sites.json"),
+            directory: root.appending(component: "cluster-sites"),
             legacyRegistryData: { nil })
         _ = try repository.upsert(profile: slurmProfile())
         let operationStore = ClusterOperationStore(
@@ -628,13 +627,12 @@ struct ClusterCLIRunnerTests {
         let tunnelController = FakeCLITunnel(observation: tunnel)
         let launcher = FakeCLILauncher()
         let streamer = FakeCLILogStreamer()
-        let activations = ActivationRecorder()
 
         let runner = ClusterCLIRunner(
             repository: repository, operationStore: operationStore, shell: shell,
             secrets: secrets, tunnel: tunnelController, endpointProbe: probe,
             authenticationLauncher: launcher, logStreamer: streamer,
-            now: { now }, activationSink: { activations.record($0) },
+            now: { now },
             // Bootstrap polling is a cadence of separate short commands; a
             // test must not wait it out.
             bootstrapPollDelay: .zero, bootstrapPollLimit: 3)
@@ -643,8 +641,7 @@ struct ClusterCLIRunnerTests {
             runner: runner, repository: repository, operationStore: operationStore,
             shell: shell, secrets: secrets, tunnel: tunnelController,
             launcher: launcher, streamer: streamer, root: root,
-            payloadRoot: payloadRoot, manifestBytes: manifestBytes,
-            activations: activations)
+            payloadRoot: payloadRoot, manifestBytes: manifestBytes)
     }
 
     /// Every override the CLI would pass for this harness's payload.
@@ -661,13 +658,13 @@ struct ClusterCLIRunnerTests {
         jobID: String? = nil, planHash: String? = nil, outPath: String? = nil,
         jobClass: ClusterEnvironmentRenderer.JobClass? = nil,
         positional: String? = nil, follow: Bool = false, dryRun: Bool = false,
-        redact: Bool = false, activateInApp: Bool = false,
+        redact: Bool = false, force: Bool = false,
         renderOnly: Bool = false
     ) -> ClusterCLIInvocation {
         ClusterCLIInvocation(
             verb: verb, siteReference: "test-cluster", permissions: permissions,
             redact: redact, dryRun: dryRun, follow: follow,
-            activateInApp: activateInApp, renderOnly: renderOnly,
+            force: force, renderOnly: renderOnly,
             planHash: planHash, jobID: jobID,
             outPath: outPath, jobClass: jobClass, positional: positional,
             overrides: overrides(harness))
@@ -777,12 +774,26 @@ struct ClusterCLIRunnerTests {
             !ClusterProfileTokenScrub.withoutDeclaredTokenPath(text).lowercased()
                 .contains("token"))
 
-        // Re-importing dedupes by canonical identity rather than forking.
-        let imported = await harness.runner.run(
+        // Re-importing over a site the registry already holds REFUSES: the
+        // registry is a git repository the researcher syncs between machines,
+        // and a silently replaced profile is a conflict found at connect time.
+        let refused = await harness.runner.run(
             ClusterCLIInvocation(verb: .sitesImport, positional: out.path))
+        #expect(refused.exitCode != 0)
+        #expect(refused.envelope.error?.code == "siteFileExists")
+        #expect(refused.envelope.error?.repairAction.contains("--force") == true)
+
+        // With --force it dedupes by canonical identity rather than forking.
+        let imported = await harness.runner.run(
+            ClusterCLIInvocation(
+                verb: .sitesImport, force: true, positional: out.path))
         #expect(imported.exitCode == 0)
         #expect(imported.envelope.siteID == "test-cluster")
         #expect(try harness.repository.sites().count == 1)
+        // The import names the file it wrote, in the canonical directory.
+        #expect(
+            imported.envelope.outputPath
+                == harness.repository.fileURL(forSite: "test-cluster").path)
     }
 
     // MARK: preview (WP5 §3.3 — the surface that makes the rest reviewable)
@@ -1231,7 +1242,7 @@ struct ClusterCLIRunnerTests {
 
         try seedControllerJob(harness)
         await harness.shell.on("tail", exit: 0, lines: ["line one", "line two"])
-        let recorder = ActivationRecorder()
+        let recorder = LineRecorder()
         let tailed = await harness.runner.run(invocation(harness, .controllerLogs)) {
             recorder.record($0)
         }
@@ -1266,8 +1277,7 @@ struct ClusterCLIRunnerTests {
         await scriptHealthySite(harness)
         try seedControllerJob(harness)
 
-        let outcome = await harness.runner.run(
-            invocation(harness, .connect, activateInApp: true))
+        let outcome = await harness.runner.run(invocation(harness, .connect))
         #expect(outcome.exitCode == 0)
         #expect(outcome.envelope.endpoint == "http://127.0.0.1:8712")
         #expect(outcome.envelope.tokenAvailable == true)
@@ -1275,8 +1285,6 @@ struct ClusterCLIRunnerTests {
         // One registration, updated in place.
         let stored = try #require(try harness.repository.site(id: "test-cluster"))
         #expect(stored.lastEndpoint == "http://127.0.0.1:8712")
-        #expect(harness.activations.endpoints == ["http://127.0.0.1:8712"])
-        #expect(outcome.envelope.message.contains("Phase D"))
         // The imported token never appears in the document.
         #expect(!(try outcome.envelope.jsonText()).contains(Self.secretToken))
     }
@@ -1411,7 +1419,8 @@ struct ClusterCLIRunnerTests {
         let path = harness.root.appending(component: "loginless.json")
         try slurmProfile().encoded().write(to: path)
         let imported = await harness.runner.run(
-            ClusterCLIInvocation(verb: .sitesImport, positional: path.path))
+            ClusterCLIInvocation(
+                verb: .sitesImport, force: true, positional: path.path))
         #expect(imported.exitCode == 0)
         #expect(imported.envelope.message.contains("WARNING"))
         #expect(imported.envelope.message.contains("~/.ssh/config"))
@@ -1521,7 +1530,7 @@ struct ClusterRemoteSiteResolutionTests {
             .appending(components: "steerlab-remote-site", "\(name)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let repository = ClusterSiteRepository(
-            fileURL: root.appending(component: "cluster-sites.json"),
+            directory: root.appending(component: "cluster-sites"),
             legacyRegistryData: { nil })
         let profile = ClusterSiteProfile(
             name: "Test Cluster",
@@ -1623,13 +1632,4 @@ struct ClusterRemoteSiteResolutionTests {
         }
     }
 
-    /// `--activate-in-app` writes the app's own persisted server-URL key. The
-    /// runner mirrors the spelling because `ClusterConnectionStore` is
-    /// main-actor isolated; if the app ever renames it, this fails.
-    @MainActor
-    @Test func theActivationKeyMatchesTheAppsOwnPreference() {
-        #expect(
-            ClusterCLIRunner.appServerURLDefaultsKey
-                == ClusterConnectionStore.serverURLDefaultsKey)
-    }
 }

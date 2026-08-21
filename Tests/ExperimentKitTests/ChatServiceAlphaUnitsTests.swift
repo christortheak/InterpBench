@@ -45,7 +45,7 @@ struct ChatServiceAlphaUnitsTests {
         // The unit mode is not persisted across launches, so the property
         // default IS the fresh-session behavior.
         let service = ChatService(
-            cluster: ClusterConnectionStore(defaults: try freshDefaults("fresh")))
+            cluster: clusterStore(defaults: try freshDefaults("fresh")))
         #expect(service.alphaInNormUnits)
     }
 

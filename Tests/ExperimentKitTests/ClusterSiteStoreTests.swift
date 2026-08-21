@@ -39,12 +39,16 @@ struct ClusterSiteStoreTests {
             """
         defaults.set(Data(legacyJSON.utf8), forKey: ClusterConnectionStore.serversDefaultsKey)
 
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         #expect(store.servers.count == 1)
         let entry = try #require(store.servers.first)
         #expect(entry.name == "gpu-a")
-        #expect(entry.site == nil)  // storage untouched until the user edits the site
+        // Since the canonical registry holds PROFILES, the direct-transport
+        // view a URL-only entry always presented is now materialized rather
+        // than synthesized on every read. Same site, same keying — the entry
+        // simply says out loud what it was.
         let site = entry.resolvedSite
+        #expect(entry.site == site)
         let url = try #require(URL(string: "http://gpu-a:8080"))
         #expect(site.transport == .direct(baseURL: url))
         #expect(site.topology == .externalServer)
@@ -62,7 +66,7 @@ struct ClusterSiteStoreTests {
 
     @Test func sshSitePersistsAndKeysItsTokenByRemoteIdentity() throws {
         let defaults = try freshDefaults("ssh-persist")
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         let entry = store.addSite(.exampleCluster)
         let preferred = try #require(ClusterSiteProfile.exampleCluster.preferredLocalPort)
         #expect(entry.urlString == "http://127.0.0.1:\(preferred)")
@@ -70,7 +74,7 @@ struct ClusterSiteStoreTests {
             ClusterConnectionStore.tokenKey(forEntry: entry) == "slurm.example.edu:8080")
 
         // The profile round-trips through UserDefaults persistence.
-        let reloaded = ClusterConnectionStore(defaults: defaults)
+        let reloaded = clusterStore(defaults: defaults)
         #expect(reloaded.servers.first?.site == ClusterSiteProfile.exampleCluster)
         #expect(reloaded.sites.first == ClusterSiteProfile.exampleCluster)
 
@@ -86,7 +90,7 @@ struct ClusterSiteStoreTests {
     }
 
     @Test func noteTunnelLocalPortIgnoresDirectAndLocalWorkspaces() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("note-port"))
+        let store = clusterStore(defaults: try freshDefaults("note-port"))
         let direct = store.addSite(.gpuWorkstation)
         store.activeWorkspace = .server(direct.id)
         store.noteTunnelLocalPort(9999)
@@ -97,7 +101,7 @@ struct ClusterSiteStoreTests {
     }
 
     @Test func addSiteDedupesByRemoteIdentityAndKeepsCustomNames() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("dedupe"))
+        let store = clusterStore(defaults: try freshDefaults("dedupe"))
         // An IMPORTED site (WP5 §4.2: real sites arrive as JSON now, not as
         // shipped presets) added twice is one entry — remote identity, not the
         // tunnel-local URL label, is the key.
@@ -119,7 +123,7 @@ struct ClusterSiteStoreTests {
     /// them the same site and adding one would silently overwrite the other —
     /// `registryIdentity` keys hostless templates by name for exactly this.
     @Test func theTwoHostlessSlurmTemplatesAreDistinctRegistryEntries() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("templates"))
+        let store = clusterStore(defaults: try freshDefaults("templates"))
         store.addPreset(.genericSlurm)
         store.addPreset(.genericSlurmModules)
         #expect(store.servers.count == 2)
@@ -132,7 +136,7 @@ struct ClusterSiteStoreTests {
 
     @Test func twoSSHSitesSharingALocalLabelNeverMerge() throws {
         let defaults = try freshDefaults("no-merge")
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         let a = store.addSite(sshProfile(named: "A", host: "a.test"))
         let b = store.addSite(sshProfile(named: "B", host: "b.test"))
         // Force both entries onto the same tunnel-local URL label.
@@ -140,7 +144,7 @@ struct ClusterSiteStoreTests {
         store.updateServerURL(id: b.id, urlString: "http://127.0.0.1:9000")
         #expect(store.servers.count == 2)
         // The load-time dedupe keys by remote identity, not the local label.
-        let reloaded = ClusterConnectionStore(defaults: defaults)
+        let reloaded = clusterStore(defaults: defaults)
         #expect(reloaded.servers.count == 2)
         // And a plain direct add at that URL is a third, distinct endpoint.
         let direct = store.addServer(name: "", urlString: "http://127.0.0.1:9000")
@@ -149,7 +153,7 @@ struct ClusterSiteStoreTests {
     }
 
     @Test func directSiteURLEditKeepsTheProfileInSync() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("direct-sync"))
+        let store = clusterStore(defaults: try freshDefaults("direct-sync"))
         let entry = store.addSite(.gpuWorkstation)
         store.updateServerURL(id: entry.id, urlString: "http://10.0.0.5:8080")
         let site = try #require(store.server(id: entry.id)?.site)
@@ -160,7 +164,7 @@ struct ClusterSiteStoreTests {
     }
 
     @Test func updateSiteReplacesTheProfileAndResetsActiveConnectionState() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("update-site"))
+        let store = clusterStore(defaults: try freshDefaults("update-site"))
         let entry = store.addSite(.gpuWorkstation)
         store.activeWorkspace = .server(entry.id)
         store.status = "connected"
@@ -179,9 +183,11 @@ struct ClusterSiteStoreTests {
     // MARK: Import / export
 
     @Test func importAndExportRoundTripThroughTheStore() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("import-export"))
+        let store = clusterStore(defaults: try freshDefaults("import-export"))
         let data = try ClusterSiteProfile.exampleCluster.encoded()
-        let entry = try store.importSite(from: data)
+        // The fixture's ssh destination carries no `user@`, which every import
+        // path now surfaces at import time (§3.9.8) rather than at Duo.
+        let entry = try store.importSite(from: data, acknowledgingWarnings: true)
         #expect(entry.resolvedSite == ClusterSiteProfile.exampleCluster)
         let exported = try #require(try store.exportSite(id: entry.id))
         #expect(try ClusterSiteProfile.decode(from: exported) == ClusterSiteProfile.exampleCluster)
@@ -194,7 +200,7 @@ struct ClusterSiteStoreTests {
     }
 
     @Test func importRefusesGarbageAndNewerSchemas() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("import-refuse"))
+        let store = clusterStore(defaults: try freshDefaults("import-refuse"))
         #expect(throws: (any Error).self) {
             try store.importSite(from: Data("not json".utf8))
         }

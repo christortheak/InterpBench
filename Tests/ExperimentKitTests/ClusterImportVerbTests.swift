@@ -126,7 +126,7 @@ struct ClusterImportRunnerTests {
             .appending(component: "steerlab-import-verb-\(label)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let repository = ClusterSiteRepository(
-            fileURL: root.appending(component: "cluster-sites.json"),
+            directory: root.appending(component: "cluster-sites"),
             legacyRegistryData: { nil })
         _ = try repository.upsert(profile: profile())
         let runner = ClusterCLIRunner(
@@ -141,7 +141,7 @@ struct ClusterImportRunnerTests {
 
     private func siteID(_ harness: Harness) throws -> String {
         let repository = ClusterSiteRepository(
-            fileURL: harness.root.appending(component: "cluster-sites.json"),
+            directory: harness.root.appending(component: "cluster-sites"),
             legacyRegistryData: { nil })
         return try #require(repository.sites().first).id
     }

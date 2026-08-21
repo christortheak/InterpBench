@@ -31,7 +31,7 @@ struct SeededTurnTests {
     private func serverWorkspaceService(
         _ name: String, capabilities: ClusterCapabilities?
     ) throws -> ChatService {
-        let store = ClusterConnectionStore(defaults: try freshDefaults(name))
+        let store = clusterStore(defaults: try freshDefaults(name))
         let entry = store.addServer(name: "test", urlString: "http://127.0.0.1:8080")
         store.activeWorkspace = .server(entry.id)
         store.capabilities = capabilities
@@ -110,7 +110,7 @@ struct SeededTurnTests {
         // Local workspace, nothing loaded: loading clears the transcript, so
         // an earlier seed would silently vanish — refuse instead.
         let service = ChatService(
-            cluster: ClusterConnectionStore(defaults: try freshDefaults("local")))
+            cluster: clusterStore(defaults: try freshDefaults("local")))
         #expect(service.seedUnavailableReason?.contains("load a model") == true)
         service.seedAssistantTurn("planted")
         #expect(service.transcript.isEmpty)
@@ -449,7 +449,7 @@ struct SeededTurnTests {
 
     @Test func localSeedUserTurnRequiresALoadedModel() throws {
         let service = ChatService(
-            cluster: ClusterConnectionStore(defaults: try freshDefaults("seed-user-local")))
+            cluster: clusterStore(defaults: try freshDefaults("seed-user-local")))
         #expect(service.seedUserUnavailableReason?.contains("load a model") == true)
         service.seedUserTurn("hello")
         #expect(service.transcript.isEmpty)
@@ -603,7 +603,7 @@ struct SeededTurnTests {
 
     @Test func unavailableRestartDoesNotDiscardTheExistingBranch() throws {
         let service = ChatService(
-            cluster: ClusterConnectionStore(defaults: try freshDefaults("edit-restart-refused")))
+            cluster: clusterStore(defaults: try freshDefaults("edit-restart-refused")))
         service.transcript = [
             .init(role: .user, text: "original question"),
             .init(role: .assistant, text: "existing answer"),

@@ -305,7 +305,7 @@ struct ClusterTunnelTests {
         let defaults = try! #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
 
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         let site = sshSite(host: "user@hpc.example.edu")
         let entry = store.addSite(site)
         store.activeWorkspace = .server(entry.id)
@@ -337,7 +337,7 @@ struct ClusterTunnelTests {
         let suite = "ClusterTunnelTests.retry.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         let entry = store.addSite(sshSite())
         store.activeWorkspace = .server(entry.id)
         let runner = StubTunnelRunner()

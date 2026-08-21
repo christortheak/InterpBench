@@ -186,7 +186,8 @@ steerlab init                      # or: steerlab init --home /path/to/SteerLab
 ~/SteerLab/
 ├── Workspaces/          study workspaces, one folder each, each its own git repo
 │   └── register-pilot/  one study's data
-├── Sites/               your PRIVATE site library
+├── Sites/               your PRIVATE site registry
+│   └── cluster-sites/   one JSON file per site — the app AND the CLI read this
 ├── SteerLab.app/        the app, and the CLI it carries in Contents/Helpers/
 └── <checkout>/          the code checkout (this repository), under any name
 ```
@@ -199,13 +200,38 @@ does not change how a workspace root is resolved. The checkout's folder name is 
 lands under whatever name you gave it, and `init` finds it by content rather
 than by name.
 
-`Sites/` is yours and is left **empty**, so `git clone <your-private-repo> Sites`
-works into it; drop site-profile JSONs there otherwise. Keeping site
-configuration there rather than inside a study workspace is what stops it
-travelling with a workspace you share. Today it is layout only — nothing
-resolves against it yet, and the live site registry the CLI reads is still
-`~/Library/Application Support/SteerLab/cluster-sites.json`, which
-`steerlab cluster sites import <profile.json>` writes into.
+`Sites/` is yours and is left **empty** by `init`, so
+`git clone <your-private-repo> Sites` works into it. Keeping site configuration
+there rather than inside a study workspace is what stops it travelling with a
+workspace you share.
+
+Inside it, `Sites/cluster-sites/` is the **canonical cluster-site registry** —
+one pretty-printed JSON file per site, named by the site's id, and the single
+store both clients use. The app edits those files; `steerlab cluster sites
+import <profile.json>` writes into the same directory; `steerlab cluster sites
+list` reads it. **You sync it**: `Sites/` is normally a private git repository,
+and git is how your sites reach your other machines. SteerLab never runs git —
+its writes leave the tree dirty and committing/pushing is always your act. The
+directory also works perfectly well as a plain folder with no git at all.
+
+Three things stay out of it, deliberately:
+
+* **Secrets** — bearer tokens, the Hugging Face token — live in this Mac's
+  Keychain, never in the registry. That is why a new machine prompts you once
+  after a pull, and it is a feature: a credential committed to a repository is
+  a credential in every clone of it, forever.
+* **Connection state** — the endpoint a tunnel landed on, the last server build
+  — is per machine, in
+  `~/Library/Application Support/SteerLab/site-runtime.json`. Connecting and
+  disconnecting therefore never dirties your registry.
+* **Study data** — workspaces still never contain site profiles.
+
+The first time a new build runs it absorbs the two old stores (the app's
+saved-servers preference and
+`~/Library/Application Support/SteerLab/cluster-sites.json`) into
+`Sites/cluster-sites/` and says what it moved. A file already in the registry
+always wins; nothing is overwritten. After that the old stores are read-only
+history that nothing writes to.
 
 Any layout works; the resolution order for "which workspace am I in" is
 `STEERLAB_WORKSPACE`, then `--workspace`, then the choice the app has persisted.

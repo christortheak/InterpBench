@@ -837,6 +837,24 @@ public enum ClusterLifecycleError: Error, LocalizedError, Equatable {
     /// attempts before anyone suspected the registry.
     case sshLoginDropped(
         siteID: String, host: String, expectedUser: String, source: String)
+    /// An import would replace a site file that is already in the canonical
+    /// Sites registry. Silence is never right here: the registry is a git
+    /// repository the researcher syncs between machines, and a clobbered
+    /// profile is a conflict they would discover at connect time.
+    case siteFileExists(siteID: String, path: String)
+    /// A would-be Sites file carries a key the registry may never hold — a
+    /// credential (those live in the Keychain, per machine) or a runtime fact
+    /// (those live in the per-machine runtime cache). Enforced at the write,
+    /// not merely documented, because the Sites directory is SHARED.
+    case siteFileWouldLeak(siteID: String, keys: [String])
+    /// An import carries an ssh destination with NO `user@` half and nothing
+    /// anywhere contradicts it. Legal — `~/.ssh/config` can supply `User` —
+    /// but it is also exactly what an accidentally login-less profile looks
+    /// like, and the failure it causes arrives at Duo, hours later, reading as
+    /// "asks for my password, then tells me to enroll in 2FA". So an
+    /// interactive import says it AT IMPORT TIME and waits to be told to
+    /// proceed; the CLI says it in the outcome message.
+    case sshLoginMissing(host: String, note: String)
 
     public var code: String {
         switch self {
@@ -848,6 +866,9 @@ public enum ClusterLifecycleError: Error, LocalizedError, Equatable {
         case .storeUnwritable: "storeUnwritable"
         case .controllerAdoptionUnverified: "controllerAdoptionUnverified"
         case .sshLoginDropped: "sshLoginDropped"
+        case .siteFileExists: "siteFileExists"
+        case .siteFileWouldLeak: "siteFileWouldLeak"
+        case .sshLoginMissing: "sshLoginMissing"
         }
     }
 
@@ -878,6 +899,18 @@ public enum ClusterLifecycleError: Error, LocalizedError, Equatable {
                 + "'\(expectedUser)' (\(source)) — `ssh \(host)` would "
                 + "authenticate as the LOCAL account, which an SSO cluster "
                 + "reports as an unenrolled user; the registry write is refused"
+        case .siteFileExists(let siteID, let path):
+            "the site registry already holds '\(siteID)' (\(path)) — importing "
+                + "over it would discard a profile you may be syncing between "
+                + "machines; re-run with --force to replace it deliberately"
+        case .siteFileWouldLeak(let siteID, let keys):
+            "refusing to write site '\(siteID)': the document carries "
+                + "\(keys.joined(separator: ", ")), which the shared Sites "
+                + "registry never holds — credentials live in the Keychain "
+                + "(per machine) and connection state in the per-machine "
+                + "runtime cache"
+        case .sshLoginMissing(_, let note):
+            note
         }
     }
 }

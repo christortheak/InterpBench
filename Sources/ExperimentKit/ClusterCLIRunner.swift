@@ -57,8 +57,6 @@ public struct ClusterCLIRunner: Sendable {
     private let authenticationLauncher: any ClusterAuthenticationLauncher
     private let logStreamer: any ClusterLogStreamer
     private let now: @Sendable () -> Date
-    /// Where `--activate-in-app` writes the app's persisted server-URL choice.
-    private let activationSink: @Sendable (String) -> Void
     /// Cadence and budget for following a submitted bootstrap job. Each probe
     /// is its own short command; tests set the delay to `.zero`.
     private let bootstrapPollDelay: Duration
@@ -81,10 +79,6 @@ public struct ClusterCLIRunner: Sendable {
             TerminalAuthenticationLauncher(),
         logStreamer: any ClusterLogStreamer = ProvisionLogStreamer(),
         now: @escaping @Sendable () -> Date = Date.init,
-        activationSink: @escaping @Sendable (String) -> Void = { endpoint in
-            UserDefaults.standard.set(
-                endpoint, forKey: ClusterCLIRunner.appServerURLDefaultsKey)
-        },
         bootstrapPollDelay: Duration = .seconds(15),
         bootstrapPollLimit: Int = 480,
         workspaceImportEngine:
@@ -101,7 +95,6 @@ public struct ClusterCLIRunner: Sendable {
         self.authenticationLauncher = authenticationLauncher
         self.logStreamer = logStreamer
         self.now = now
-        self.activationSink = activationSink
         self.bootstrapPollDelay = bootstrapPollDelay
         self.bootstrapPollLimit = bootstrapPollLimit
     }
@@ -109,12 +102,6 @@ public struct ClusterCLIRunner: Sendable {
     /// How long an opened authentication Terminal counts as "already open", so
     /// repeated `auth open` calls report it instead of spawning windows (§6.2).
     public static let authenticationAttemptWindow: TimeInterval = 120
-
-    /// The app's persisted server-URL preference, which `--activate-in-app`
-    /// writes. Mirrored here rather than referenced because
-    /// `ClusterConnectionStore` is main-actor isolated and this default runs in
-    /// a `Sendable` closure; a test asserts the two spellings agree.
-    public nonisolated static let appServerURLDefaultsKey = "SteerLabClusterServerURL"
 
     // MARK: Entry point
 
@@ -137,6 +124,15 @@ public struct ClusterCLIRunner: Sendable {
                 envelope: ClusterCLIEnvelope(
                     verb: invocation.verb.displayName, state: .ready,
                     message: invocation.verb.helpText, observedAt: now()))
+        }
+        // Absorbing the legacy stores happens at most once per machine and is
+        // never silent: what moved, and what was left alone because the
+        // canonical registry already held it, goes out on the diagnostic
+        // channel before any verb runs (`emit` is stdout in human mode and
+        // stderr in JSON mode, so the one-document invariant survives).
+        if let summary = (try? repository.migrateLegacyStoresIfNeeded(now: now()))?
+            .summary {
+            emit("site registry: \(summary)")
         }
         do {
             return ClusterCLIOutcome(envelope: try await dispatch(invocation, emit: emit))
@@ -180,7 +176,19 @@ public struct ClusterCLIRunner: Sendable {
             "re-run `cluster bootstrap plan --site <id>` and pass the printed "
                 + "--plan-hash"
         case .storeUnwritable:
-            "check permissions on ~/Library/Application Support/SteerLab"
+            "check permissions on the SteerLab home's Sites/cluster-sites "
+                + "directory and on ~/Library/Application Support/SteerLab"
+        case .siteFileExists:
+            "re-run with --force to replace the saved site, or edit the "
+                + "profile's name so it imports as a new one"
+        case .sshLoginMissing(let host, _):
+            "set the profile's transport.ssh.host to 'user@\(host)', or import "
+                + "it as-is if this site really authenticates through a `User` "
+                + "entry in ~/.ssh/config"
+        case .siteFileWouldLeak:
+            "remove those keys from the profile JSON — credentials belong in "
+                + "the Keychain (`cluster connect` imports the bearer token) "
+                + "and connection state is per machine"
         case .controllerAdoptionUnverified(_, _):
             "confirm the job id with `squeue` on the cluster, or start a fresh "
                 + "controller with `cluster controller start --site <id>`"
@@ -191,7 +199,7 @@ public struct ClusterCLIRunner: Sendable {
                 + "edit, `cluster sites import site.json`). If this site really "
                 + "authenticates through a `User` entry in ~/.ssh/config, "
                 + "delete the stored site first (app → cluster settings, or "
-                + "remove it from cluster-sites.json) and import the "
+                + "remove its file from the Sites registry) and import the "
                 + "login-less profile as a new one"
         }
     }
@@ -338,9 +346,18 @@ public struct ClusterCLIRunner: Sendable {
 
     private func sitesList(_ invocation: ClusterCLIInvocation) throws -> ClusterCLIEnvelope {
         let sites = try repository.sites()
+        // A file the registry could not read is a site that would otherwise
+        // have vanished in silence. Leniency, then the report.
+        let unreadable = repository.unreadableFiles()
         var envelope = ClusterCLIEnvelope(
-            verb: invocation.verb.displayName, state: .ready,
-            message: "\(sites.count) saved cluster site(s)", observedAt: now())
+            verb: invocation.verb.displayName, state: unreadable.isEmpty ? .ready : .degraded,
+            message: "\(sites.count) saved cluster site(s) in "
+                + repository.directoryURL.path
+                + (unreadable.isEmpty
+                    ? ""
+                    : " — \(unreadable.count) unreadable file(s): "
+                        + unreadable.joined(separator: "; ")),
+            observedAt: now())
         envelope.sites = sites.map(summary(of:))
         return envelope
     }
@@ -367,8 +384,10 @@ public struct ClusterCLIRunner: Sendable {
         }
         // The PROFILE only (§6.1): no credentials, and no ephemeral tunnel
         // detail — `lastEndpoint`, the local forward port, and the token key
-        // live on the record, never in the shareable document.
-        let data = try site.profile.encoded()
+        // are runtime facts about THIS Mac, never part of the shareable
+        // document. The same sanitizer guards the canonical registry files, so
+        // an export and a Sites file can never disagree about what is shareable.
+        let data = try ClusterSiteSanitizer.encodedExport(for: site)
         let url = URL(filePath: outPath)
         try data.write(to: url, options: .atomic)
         var envelope = self.envelope(
@@ -385,22 +404,32 @@ public struct ClusterCLIRunner: Sendable {
             throw ClusterCLIError.missingArgument(
                 verb: invocation.verb, what: "a profile JSON path")
         }
-        let profile = try ClusterSiteProfile.decode(from: Data(contentsOf: URL(filePath: path)))
-        // Upsert dedupes by canonical remote identity, so re-importing a
-        // profile refreshes the site instead of forking the registry — and
+        let data = try Data(contentsOf: URL(filePath: path))
+        // ONE import entry point for every client (the app's menu, the wizard,
+        // and here), so the validations below cannot be true of one and not
+        // another. `importProfile` refuses to clobber a site the canonical
+        // registry already holds unless `--force`: the registry is a git
+        // repository the researcher syncs, and a replaced profile is a
+        // conflict discovered at connect time.
+        //
+        // Its `upsert` dedupes by canonical remote identity, so a forced
+        // re-import refreshes the site instead of forking the registry — and
         // that same canonical identity ignores the ssh `user@` half, which is
         // how a login-less profile once replaced a login-carrying one in
         // silence (open-issues §17). The write refuses when a KNOWN login
         // would be dropped; a site with no login anywhere is legal and warns
         // here, in the message, so it is visible in both output modes.
         var loginWarnings: [String] = []
-        let record = try repository.upsert(
-            profile: profile, now: now(), warn: { loginWarnings.append($0) })
+        let record = try repository.importProfile(
+            from: data, force: invocation.force, now: now(),
+            warn: { loginWarnings.append($0) })
         var envelope = ClusterCLIEnvelope(
             verb: invocation.verb.displayName, state: .ready,
-            message: "imported '\(record.displayName)' as site \(record.id)"
+            message: "imported '\(record.displayName)' as site \(record.id) in "
+                + repository.directoryURL.path
                 + loginWarnings.map { " — WARNING: \($0)" }.joined(),
             changed: true, observedAt: now())
+        envelope.outputPath = repository.fileURL(forSite: record.id).path
         envelope.siteID = record.id
         envelope.siteName = record.displayName
         envelope.sites = [summary(of: record)]
@@ -1339,15 +1368,11 @@ public struct ClusterCLIRunner: Sendable {
         // than being silently performed.
         let result = try await coordinator(invocation, site: site).ensure(
             siteReference: site.id, target: .connected, permissions: [])
-        var envelope = ClusterCLIEnvelope.lifecycle(verb: invocation.verb, result: result)
-        if invocation.activateInApp, let endpoint = result.endpoint,
-            result.state == .ready
-        {
-            activationSink(endpoint)
-            envelope.message += " — recorded as the app's persisted server choice "
-                + "(a RUNNING app converges in Phase D)"
-        }
-        return envelope
+        // There is no `--activate-in-app` any more, and nothing replaces it:
+        // both clients read the same Sites registry, so a connection the CLI
+        // established is already the app's too — activation stopped being a
+        // separate step when the two stores became one.
+        return ClusterCLIEnvelope.lifecycle(verb: invocation.verb, result: result)
     }
 
     private func disconnect(

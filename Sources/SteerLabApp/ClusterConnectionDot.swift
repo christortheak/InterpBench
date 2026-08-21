@@ -33,6 +33,9 @@ struct ClusterConnectionDot: View {
     @State private var exportDocument: SiteProfileJSONDocument?
     @State private var exportFilename = "cluster-site"
     @State private var importError: String?
+    /// A pending import the researcher has to answer for: a login-less ssh
+    /// destination, or a site the registry already holds.
+    @State private var importConfirmation: SiteImportConfirmation?
     @State private var siteEditTarget: SiteEditTarget?
     @State private var hfTokenTarget: SiteEditTarget?
     @State private var showingSetupWizard = false
@@ -202,6 +205,31 @@ struct ClusterConnectionDot: View {
             "Site Import", isPresented: importErrorPresented,
             actions: { Button("OK") { importError = nil } },
             message: { Text(importError ?? "") })
+        .alert(
+            "Site Import", isPresented: importConfirmationPresented,
+            presenting: importConfirmation
+        ) { pending in
+            Button(pending.proceedTitle) {
+                importConfirmation = nil
+                performImport(
+                    pending.data, force: pending.force,
+                    acknowledgingWarnings: pending.acknowledgingWarnings)
+            }
+            Button("Cancel", role: .cancel) { importConfirmation = nil }
+        } message: { pending in
+            Text(pending.message)
+        }
+        // Registry edits made elsewhere — by `steerlab-cli`, by a git pull on
+        // another machine's work, or in an editor — are picked up when the
+        // researcher comes back to the app and when this menu opens. A file
+        // watcher is deliberately not here: a pull that rewrites the directory
+        // must not race a panel someone is typing into.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.didBecomeActiveNotification)
+        ) { _ in
+            cluster.reloadSitesFromDisk()
+        }
         .sheet(item: $siteEditTarget) { target in
             // Full WS1 site editor (transport/topology/scheduler/constraints
             // + live env preview) — logic in SiteEditorModel (ExperimentKit).
@@ -412,14 +440,50 @@ struct ClusterConnectionDot: View {
         case .success(let url):
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            do {
-                let data = try Data(contentsOf: url)
-                let entry = try cluster.importSite(from: data)
-                cluster.activeWorkspace = .server(entry.id)
-                connect()
-            } catch {
+            guard let data = try? Data(contentsOf: url) else {
+                importError = "could not read \(url.lastPathComponent)"
+                return
+            }
+            performImport(data)
+        }
+    }
+
+    /// Copy a profile into the canonical Sites registry.
+    ///
+    /// Import now MEANS "put this file in `Sites/cluster-sites/`", through the
+    /// same repository entry point `steerlab-cli cluster sites import` uses —
+    /// so the app runs the same validations, and the two clients cannot
+    /// disagree about what a legal site is. Two of those validations are
+    /// questions rather than refusals, and each gets its own confirmation:
+    /// a login-less ssh destination (legal via `~/.ssh/config`, and also
+    /// exactly what an accidental drop looks like) and a site the registry
+    /// already holds (never replaced in silence — the registry is a git
+    /// repository the researcher syncs).
+    private func performImport(
+        _ data: Data, force: Bool = false, acknowledgingWarnings: Bool = false
+    ) {
+        do {
+            let entry = try cluster.importSite(
+                from: data, force: force,
+                acknowledgingWarnings: acknowledgingWarnings)
+            cluster.activeWorkspace = .server(entry.id)
+            connect()
+        } catch let error as ClusterLifecycleError {
+            switch error {
+            case .sshLoginMissing, .siteFileExists:
+                importConfirmation = SiteImportConfirmation(
+                    data: data,
+                    message: error.errorDescription ?? error.code,
+                    proceedTitle: error.code == "siteFileExists"
+                        ? "Replace" : "Import Anyway",
+                    force: force || error.code == "siteFileExists",
+                    acknowledgingWarnings: acknowledgingWarnings
+                        || error.code == "sshLoginMissing")
+            default:
                 importError = "could not import site: \(error.localizedDescription)"
             }
+        } catch {
+            importError = "could not import site: \(error.localizedDescription)"
         }
     }
 
@@ -462,6 +526,22 @@ struct ClusterConnectionDot: View {
             get: { importError != nil },
             set: { if !$0 { importError = nil } })
     }
+
+    private var importConfirmationPresented: Binding<Bool> {
+        Binding(
+            get: { importConfirmation != nil },
+            set: { if !$0 { importConfirmation = nil } })
+    }
+}
+
+/// One import waiting on the researcher's answer.
+struct SiteImportConfirmation: Identifiable {
+    let id = UUID()
+    let data: Data
+    let message: String
+    let proceedTitle: String
+    let force: Bool
+    let acknowledgingWarnings: Bool
 }
 
 /// Minimal JSON wrapper for `fileExporter` — the bytes come straight from

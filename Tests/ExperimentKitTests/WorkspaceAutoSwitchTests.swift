@@ -45,7 +45,7 @@ struct WorkspaceAutoSwitchTests {
         _ name: String, servedRoot: String? = "/served/elsewhere",
         connected: Bool = true
     ) throws -> ClusterConnectionStore {
-        let store = ClusterConnectionStore(defaults: try freshDefaults(name))
+        let store = clusterStore(defaults: try freshDefaults(name))
         store.notices = freshNotices(name)
         let entry = store.addServer(
             name: "loopback", urlString: "http://127.0.0.1:8080")
@@ -286,7 +286,7 @@ struct WorkspaceAutoSwitchTests {
     }
 
     @Test func localWorkspaceIsANoOp() async throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("local"))
+        let store = clusterStore(defaults: try freshDefaults("local"))
         store.notices = freshNotices("local")
         let probe = SyncProbe()
         store.workspaceSyncSwitchOverride = { root in
@@ -301,7 +301,7 @@ struct WorkspaceAutoSwitchTests {
     // MARK: Affordance gating (remote servers stay explicit)
 
     @Test func sshServerNeverAutoSwitches() async throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("ssh"))
+        let store = clusterStore(defaults: try freshDefaults("ssh"))
         store.notices = freshNotices("ssh")
         let entry = store.addSite(
             ClusterSiteProfile(
@@ -335,8 +335,7 @@ struct WorkspaceAutoSwitchTests {
     }
 
     @Test func directRemoteHostNeverAutoSwitches() async throws {
-        let store = ClusterConnectionStore(
-            defaults: try freshDefaults("direct-remote"))
+        let store = clusterStore(defaults: try freshDefaults("direct-remote"))
         store.notices = freshNotices("direct-remote")
         let entry = store.addServer(name: "gpu", urlString: "http://gpu-node:8080")
         store.activeWorkspace = .server(entry.id)

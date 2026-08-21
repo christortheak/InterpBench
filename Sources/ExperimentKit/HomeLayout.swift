@@ -12,7 +12,7 @@ import Foundation
 //
 //     ~/SteerLab/
 //     ├── Workspaces/     study workspaces, one folder each, each its own repo
-//     ├── Sites/          the user's PRIVATE site library
+//     ├── Sites/          the user's PRIVATE site registry
 //     └── <checkout>/     the code checkout, under whatever name it was cloned
 //
 // This type is the mechanism behind it, in two halves so the app can share the
@@ -39,11 +39,20 @@ import Foundation
 //      researcher whose workspaces live somewhere else entirely keeps working
 //      exactly as before.
 //
-// `Sites/` is LAYOUT ONLY today. Nothing resolves against it: the live,
-// non-secret site registry is still `ClusterSupportPaths.sitesFile` in
-// Application Support, and profiles enter it through `cluster sites import`.
-// Making the folder a first-class site library is a later work item, and until
-// it lands nothing here — or in the docs — may claim otherwise.
+// `Sites/` is FIRST-CLASS (maintainer ruling, 2026-08-21). It is no longer a
+// named-but-unused folder: `Sites/cluster-sites/` is THE canonical site
+// registry for both the app and the CLI — one human-editable JSON file per
+// site, resolved through `clusterSitesDirectory` below. Researchers work on
+// several machines and keep `Sites/` as a private git repository, so git is
+// the sync mechanism and UserDefaults has no future.
+//
+// Two properties of that follow from the list above rather than contradicting
+// it. `Sites/` still STAYS EMPTY at materialization — `apply` creates the
+// folder and nothing inside it, so `git clone <repo> Sites` still works; the
+// `cluster-sites/` subdirectory is created lazily by the first WRITE, which is
+// a researcher's own act. And nothing here runs git: the registry works as a
+// plain directory, app and CLI writes simply leave the tree dirty, and
+// committing is always the researcher's step.
 // =============================================================================
 
 /// The home folder's structure: what it should contain, what it does contain,
@@ -55,10 +64,15 @@ public enum HomeLayout {
     /// Study workspaces, one folder each, each its own git repository.
     public static let workspacesDirectoryName = "Workspaces"
 
-    /// The user's private site library — cluster-site profile JSONs, presets,
-    /// private operations notes. Typically a clone of a private repository,
-    /// which is why nothing is ever written INTO it here.
+    /// The user's private site library — the canonical cluster-site registry,
+    /// presets, private operations notes. Typically a clone of a private
+    /// repository, which is why `apply` never writes anything INTO it: the
+    /// registry subdirectory is born at the first site write.
     public static let sitesDirectoryName = "Sites"
+
+    /// The canonical cluster-site registry, inside `Sites/`: one JSON file per
+    /// site, named by the site's stable id.
+    public static let clusterSitesDirectoryName = "cluster-sites"
 
     /// The directories `apply` materializes, in reading order.
     public static let directoryNames = [workspacesDirectoryName, sitesDirectoryName]
@@ -70,24 +84,49 @@ public enum HomeLayout {
         case workspacesDirectoryName:
             return "study workspaces, one folder each, each its own git repository"
         case sitesDirectoryName:
-            return "your private site library — cluster-site profiles, presets, ops notes"
+            return "your private site registry — cluster-site profiles, presets, ops notes"
         default:
             return ""
         }
     }
 
-    /// The one sentence about `Sites/` that has to travel with the layout: it
+    /// The one paragraph about `Sites/` that has to travel with the layout: it
     /// is yours, it is private, it stays empty here so a clone can land in it,
-    /// and site configuration does not belong in a workspace that gets shared.
+    /// the app and the CLI both READ AND WRITE the registry inside it, git is
+    /// how it reaches your other machines, and secrets never enter it.
     public static let sitesExplanation =
-        "Sites/ is your private site library — clone your site repository into "
-        + "it or drop site-profile JSONs in; keep site configuration out of "
-        + "workspaces you share."
+        "Sites/ is your private site registry — clone your site repository into "
+        + "it, and both the app and steerlab-cli read and write "
+        + "Sites/cluster-sites/<site-id>.json there. SteerLab never runs git: "
+        + "its writes leave the tree dirty and committing/pushing is yours. "
+        + "Tokens, keys, and passwords are never written into it — they stay in "
+        + "this Mac's Keychain, so a new machine re-prompts once. Keep site "
+        + "configuration out of workspaces you share."
+
+    /// Test seam: when set, `defaultHome` — and therefore the canonical site
+    /// registry — lives here instead of `~/SteerLab`. `nonisolated(unsafe)` is
+    /// justified exactly as `ClusterSupportPaths.rootOverride` is: it is
+    /// written by tests only, before the stores it scopes are touched. No test
+    /// may ever leave it pointing at the researcher's real home.
+    nonisolated(unsafe) public static var homeOverride: URL?
 
     /// `~/SteerLab`. The default home, and the only path this type invents.
     public static var defaultHome: URL {
-        URL(filePath: NSHomeDirectory())
+        if let homeOverride { return homeOverride.standardizedFileURL }
+        return URL(filePath: NSHomeDirectory())
             .appending(component: "SteerLab").standardizedFileURL
+    }
+
+    /// `~/SteerLab/Sites` — the private site library.
+    public static var sitesDirectory: URL {
+        defaultHome.appending(component: sitesDirectoryName)
+    }
+
+    /// `~/SteerLab/Sites/cluster-sites` — THE canonical site registry both
+    /// clients read and write. Created lazily by the first write; a plain
+    /// directory works, git is optional and never invoked.
+    public static var clusterSitesDirectory: URL {
+        sitesDirectory.appending(component: clusterSitesDirectoryName)
     }
 
     // MARK: Checkout detection

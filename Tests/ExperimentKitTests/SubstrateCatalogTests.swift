@@ -205,7 +205,7 @@ struct SubstrateCatalogTests {
     // MARK: Workspace scoping
 
     @Test func localInstalledModelsComeFromTheAppModelList() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("local-models"))
+        let store = clusterStore(defaults: try freshDefaults("local-models"))
         let catalog = SubstrateCatalog(store: store)
         let models = catalog.installedModels(for: .local)
         #expect(models == ChatService.availableModels.map(\.id))
@@ -216,7 +216,7 @@ struct SubstrateCatalogTests {
     /// on a fresh Mac every tier is offerable and none is installed, which is
     /// exactly the distinction the Playground's Load gate rests on.
     @Test func localAvailabilityComesFromTheCacheScan() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("local-availability"))
+        let store = clusterStore(defaults: try freshDefaults("local-availability"))
         let tier = ChatService.availableModels[0].id
         let catalog = SubstrateCatalog(store: store, localCacheScan: { [tier] })
 
@@ -232,7 +232,7 @@ struct SubstrateCatalogTests {
     /// A model installed by slug joins the SAME offerable list the builders
     /// read — appended after the pinned tiers, never a second registry.
     @Test func slugInstalledModelJoinsTheOfferableList() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("local-extras"))
+        let store = clusterStore(defaults: try freshDefaults("local-extras"))
         let tier = ChatService.availableModels[0].id
         let catalog = SubstrateCatalog(
             store: store,
@@ -249,7 +249,7 @@ struct SubstrateCatalogTests {
     }
 
     @Test func serverInstalledModelsReadActiveRemoteStateOnly() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("server-models"))
+        let store = clusterStore(defaults: try freshDefaults("server-models"))
         let a = store.addServer(name: "A", urlString: "http://gpu-a:8080")
         let b = store.addServer(name: "B", urlString: "http://gpu-b:8080")
         let catalog = SubstrateCatalog(store: store)

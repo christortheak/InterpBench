@@ -112,7 +112,6 @@ public enum CLIFlagVocabulary {
     /// One line per flag. Imperative, and about the effect rather than the
     /// history.
     private static let purposes: [String: String] = [
-        "--activate-in-app": "Also point the app at the connected endpoint.",
         "--agent": "The promoted agent the policy perturbs.",
         "--agent-name": "Name the minted variant artifact.",
         "--allow-bootstrap": "Authorize the bootstrap step to run.",
@@ -233,6 +232,8 @@ public enum CLIFlagVocabulary {
         "remote import --out": "Download into this directory (default .steerlab-downloads).",
         "docs cli-reference --path": "The document to read or rewrite.",
         "cluster sites export --out": "Write the profile to this file.",
+        "cluster sites import --force":
+            "Replace a site the registry already holds (default: refuse).",
         "cluster import --dry-run":
             "Print the classification, what would transfer, and the "
             + "purge-eligibility report; transfer and write nothing.",

@@ -163,7 +163,7 @@ struct ConceptPromptWorkflowTests {
         let suite = "steerlab.tests.concept-prompts.\(name)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
-        return ChatService(cluster: ClusterConnectionStore(defaults: defaults))
+        return ChatService(cluster: clusterStore(defaults: defaults))
     }
 
     private func liveLogCount(_ service: ChatService, containing needle: String) -> Int {

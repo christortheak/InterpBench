@@ -1,5 +1,6 @@
 import ExperimentKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// WS5.3 "Set Up Cluster…" wizard: a veneer over `ClusterProvisioner`
 /// (ExperimentKit), which owns the step machine, every composed command, the
@@ -17,6 +18,8 @@ struct ClusterSetupWizard: View {
     @State private var currentStep: ProvisionStep = .site
     @State private var selectedEntryID: ClusterConnectionStore.ServerEntry.ID?
     @State private var showingNewSiteEditor = false
+    @State private var showingSiteImporter = false
+    @State private var siteImportConfirmation: SiteImportConfirmation?
     @State private var editingEntry: SiteEditTarget?
     @State private var stepError: String?
 
@@ -33,7 +36,14 @@ struct ClusterSetupWizard: View {
             footer
         }
         .frame(minWidth: 880, idealWidth: 940, minHeight: 620, idealHeight: 700)
-        .onAppear { installConnectHandler() }
+        .onAppear {
+            installConnectHandler()
+            // Opening the wizard is one of the two moments the app re-reads
+            // the canonical registry (the other is becoming active), so a site
+            // added by `steerlab-cli` or pulled from another machine is on the
+            // picker without a relaunch.
+            cluster.reloadSitesFromDisk()
+        }
         .task(id: authPollKey) { await pollAuthentication() }
         .sheet(isPresented: $showingNewSiteEditor) {
             ClusterSiteEditor(
@@ -50,6 +60,79 @@ struct ClusterSetupWizard: View {
                     provisioner.selectSite(entry.resolvedSite)
                 })
         }
+        .fileImporter(
+            isPresented: $showingSiteImporter, allowedContentTypes: [.json]
+        ) { result in
+            handleSiteImport(result)
+        }
+        .alert(
+            "Site Import", isPresented: siteImportConfirmationPresented,
+            presenting: siteImportConfirmation
+        ) { pending in
+            Button(pending.proceedTitle) {
+                siteImportConfirmation = nil
+                importSite(
+                    pending.data, force: pending.force,
+                    acknowledgingWarnings: pending.acknowledgingWarnings)
+            }
+            Button("Cancel", role: .cancel) { siteImportConfirmation = nil }
+        } message: { pending in
+            Text(pending.message)
+        }
+    }
+
+    // MARK: Site import
+
+    private func handleSiteImport(_ result: Result<URL, Error>) {
+        switch result {
+        case .failure(let error):
+            stepError = error.localizedDescription
+        case .success(let url):
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url) else {
+                stepError = "could not read \(url.lastPathComponent)"
+                return
+            }
+            importSite(data)
+        }
+    }
+
+    /// The connection dot's import path, reached from the wizard: same
+    /// repository entry point, same two confirmations (a login-less ssh
+    /// destination, and a site the registry already holds).
+    private func importSite(
+        _ data: Data, force: Bool = false, acknowledgingWarnings: Bool = false
+    ) {
+        do {
+            let entry = try cluster.importSite(
+                from: data, force: force,
+                acknowledgingWarnings: acknowledgingWarnings)
+            selectedEntryID = entry.id
+            provisioner.selectSite(entry.resolvedSite)
+        } catch let error as ClusterLifecycleError {
+            switch error {
+            case .sshLoginMissing, .siteFileExists:
+                siteImportConfirmation = SiteImportConfirmation(
+                    data: data,
+                    message: error.errorDescription ?? error.code,
+                    proceedTitle: error.code == "siteFileExists"
+                        ? "Replace" : "Import Anyway",
+                    force: force || error.code == "siteFileExists",
+                    acknowledgingWarnings: acknowledgingWarnings
+                        || error.code == "sshLoginMissing")
+            default:
+                stepError = "could not import site: \(error.localizedDescription)"
+            }
+        } catch {
+            stepError = "could not import site: \(error.localizedDescription)"
+        }
+    }
+
+    private var siteImportConfirmationPresented: Binding<Bool> {
+        Binding(
+            get: { siteImportConfirmation != nil },
+            set: { if !$0 { siteImportConfirmation = nil } })
     }
 
     // MARK: Steps rail
@@ -215,6 +298,17 @@ struct ClusterSetupWizard: View {
             HStack {
                 Button("New Site…") { showingNewSiteEditor = true }
                     .controlSize(.small)
+                // WP5 §4.2: a real site arrives as JSON, so the wizard's first
+                // step has to be able to accept one. Same canonical registry,
+                // same validations, same refusals as the connection dot's
+                // menu item and `steerlab-cli cluster sites import` — one
+                // import path, three affordances.
+                Button("Import Site JSON…") { showingSiteImporter = true }
+                    .controlSize(.small)
+                    .help(
+                        "copy a profile into your Sites registry "
+                            + "(\(HomeLayout.clusterSitesDirectory.path)); "
+                            + "credentials stay in this Mac's Keychain")
                 Button("Edit Selected…") {
                     editingEntry = selectedEntryID.map { SiteEditTarget(id: $0) }
                 }

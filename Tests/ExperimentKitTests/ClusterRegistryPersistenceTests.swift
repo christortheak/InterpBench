@@ -84,7 +84,7 @@ struct ClusterRegistryPersistenceTests {
             try JSONEncoder().encode([scarred]),
             forKey: ClusterConnectionStore.serversDefaultsKey)
 
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
 
         #expect(store.servers.count == 1)
         #expect(store.servers.first?.name == "Example HPC")
@@ -101,12 +101,12 @@ struct ClusterRegistryPersistenceTests {
 
     @Test func editedSiteSurvivesRelaunchByteForByte() throws {
         let defaults = try freshDefaults("roundtrip")
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         let entry = store.addSite(.exampleCluster)
         store.updateSite(id: entry.id, profile: editedExampleCluster())
         store.activeWorkspace = .server(entry.id)
 
-        let reloaded = ClusterConnectionStore(defaults: defaults)
+        let reloaded = clusterStore(defaults: defaults)
         #expect(reloaded.servers.count == 1)
         let survivor = try #require(reloaded.servers.first)
         #expect(survivor.id == entry.id)
@@ -142,7 +142,7 @@ struct ClusterRegistryPersistenceTests {
             """
         defaults.set(Data(olderJSON.utf8), forKey: ClusterConnectionStore.serversDefaultsKey)
 
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         #expect(store.servers.count == 2)
         let example = try #require(store.servers.first)
         #expect(example.name == "Example HPC")
@@ -187,7 +187,7 @@ struct ClusterRegistryPersistenceTests {
             try JSONSerialization.data(withJSONObject: array),
             forKey: ClusterConnectionStore.serversDefaultsKey)
 
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         #expect(store.servers.count == 2)
         #expect(store.servers.map(\.name) == ["gpu-a", "Example HPC"])
         #expect(store.servers.last?.site == editedExampleCluster())
@@ -208,7 +208,7 @@ struct ClusterRegistryPersistenceTests {
     /// configured entry rather than fork the registry.
     @Test func editedTemplateEntryCountsAsThePresetAndIsNeverClobbered() throws {
         let defaults = try freshDefaults("preset-presence")
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         let entry = store.addSite(.genericSlurm)
         store.updateSite(id: entry.id, profile: configuredGenericSlurm())
 
@@ -243,7 +243,7 @@ struct ClusterRegistryPersistenceTests {
             ClusterConnectionStore.encodeWorkspace(.server(presetShaped.id)),
             forKey: ClusterConnectionStore.activeWorkspaceDefaultsKey)
 
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         #expect(store.servers.count == 1)
         let survivor = try #require(store.servers.first)
         #expect(survivor.id == edited.id)

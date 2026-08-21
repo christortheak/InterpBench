@@ -159,7 +159,7 @@ struct WorkbenchViewerTranscriptTests {
         let suite = "steerlab.tests.viewer-hygiene.\(name)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
-        return ChatService(cluster: ClusterConnectionStore(defaults: defaults))
+        return ChatService(cluster: clusterStore(defaults: defaults))
     }
 
     /// The reported leak: a build started in Data streamed into the shared

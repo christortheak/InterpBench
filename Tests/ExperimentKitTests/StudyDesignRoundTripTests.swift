@@ -83,7 +83,7 @@ import Testing
     private func makeHostedService(root: URL, suite: String) throws -> ChatService {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
-        let service = ChatService(cluster: ClusterConnectionStore(defaults: defaults))
+        let service = ChatService(cluster: clusterStore(defaults: defaults))
         service.experiments.notices = PanelNotices(
             fileURL: root.appending(component: "notices.jsonl"))
         service.experiments.refresh()

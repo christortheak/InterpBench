@@ -66,7 +66,7 @@ struct LocalModelInstallTests {
     /// model that is not in the cache reports instead of starting a download,
     /// and leaves the load state alone.
     @Test func loadModelRefusesInsteadOfDownloading() async throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("load-gate"))
+        let store = clusterStore(defaults: try freshDefaults("load-gate"))
         let catalog = SubstrateCatalog(store: store, localCacheScan: { [] })
         let service = ChatService(cluster: store, catalog: catalog)
         service.selectedModelID = "vendor-a/model-small-4bit"

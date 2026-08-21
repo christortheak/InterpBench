@@ -112,7 +112,10 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
         case .push: flags = ["--dry-run"]
         case .importRuns: flags = ["--dry-run"]
         case .controllerLogs: flags = ["--follow"]
-        case .connect: flags = ["--activate-in-app"]
+        // `sites import --force`: replace a site the canonical registry
+        // already holds. Never the default — see `ClusterSiteRepository.
+        // importProfile`.
+        case .sitesImport: flags = ["--force"]
         // §1 field report (2026-08-20): the render half of `controller start`,
         // on its own. THE re-render command every other surface names.
         case .controllerStart: flags = ["--render-only"]
@@ -440,7 +443,8 @@ public struct ClusterCLIInvocation: Sendable, Equatable {
     public var redact: Bool
     public var dryRun: Bool
     public var follow: Bool
-    public var activateInApp: Bool
+    /// `sites import --force`: replace the saved site instead of refusing.
+    public var force: Bool
     /// `controller start --render-only`: refresh the RENDERED controller
     /// script from the current template and stop before `sbatch`
     /// (open-issues §1 field report, 2026-08-20). The repair for a site whose
@@ -473,7 +477,7 @@ public struct ClusterCLIInvocation: Sendable, Equatable {
         redact: Bool = false,
         dryRun: Bool = false,
         follow: Bool = false,
-        activateInApp: Bool = false,
+        force: Bool = false,
         renderOnly: Bool = false,
         planHash: String? = nil,
         jobID: String? = nil,
@@ -494,7 +498,7 @@ public struct ClusterCLIInvocation: Sendable, Equatable {
         self.redact = redact
         self.dryRun = dryRun
         self.follow = follow
-        self.activateInApp = activateInApp
+        self.force = force
         self.renderOnly = renderOnly
         self.planHash = planHash
         self.jobID = jobID
@@ -691,7 +695,7 @@ public enum ClusterCLIParser {
                 case "--redact": invocation.redact = true
                 case "--dry-run": invocation.dryRun = true
                 case "--follow": invocation.follow = true
-                case "--activate-in-app": invocation.activateInApp = true
+                case "--force": invocation.force = true
                 case "--render-only": invocation.renderOnly = true
                 case "--allow-push": invocation.permissions.insert(.push)
                 case "--allow-bootstrap": invocation.permissions.insert(.bootstrap)

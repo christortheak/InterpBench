@@ -2,6 +2,58 @@ import Foundation
 
 @testable import ExperimentKit
 
+// =============================================================================
+// Hermetic site-registry fixtures.
+//
+// The canonical registry is `~/SteerLab/Sites/cluster-sites` — a directory in
+// the researcher's own git repository. NO test may go near it, so every test
+// registry here is a fresh temp directory, with its per-machine sidecars
+// (runtime cache, legacy fallback) beside it rather than in Application
+// Support. `ClusterSiteRepository` derives those sidecars from any
+// non-canonical directory, so naming the directory is the whole ceremony.
+// =============================================================================
+
+/// A registry in a fresh temp directory. `legacyRegistryData` seeds the
+/// one-time UserDefaults migration; the default is "there is no legacy store".
+func temporarySiteRegistry(
+    _ name: String,
+    legacyRegistryData: @escaping @Sendable () -> Data? = { nil }
+) -> ClusterSiteRepository {
+    let home = FileManager.default.temporaryDirectory
+        .appending(components: "steerlab-test-sites", "\(name)-\(UUID().uuidString)")
+    return ClusterSiteRepository(
+        directory: home.appending(component: "cluster-sites"),
+        legacyRegistryData: legacyRegistryData)
+}
+
+/// A `ClusterConnectionStore` whose site registry is a temp directory that
+/// TRAVELS WITH ITS DEFAULTS SUITE — so a second store built from the same
+/// suite is a relaunch of the same app (it re-reads the same registry), and a
+/// suite whose persistent domain was just cleared gets a brand-new one.
+///
+/// The legacy-migration source is that same suite, which is how the tests that
+/// seed `SteerLabClusterServers` still exercise the migration.
+@MainActor
+func clusterStore(defaults: UserDefaults) -> ClusterConnectionStore {
+    let key = "SteerLabTestSitesHome"
+    let home: URL
+    if let path = defaults.string(forKey: key) {
+        home = URL(filePath: path)
+    } else {
+        home = FileManager.default.temporaryDirectory
+            .appending(components: "steerlab-test-sites", UUID().uuidString)
+        defaults.set(home.path, forKey: key)
+    }
+    // Captured eagerly: `UserDefaults` is not `Sendable`, and the migration
+    // reads the legacy payload once, at construction.
+    let legacyPayload = defaults.data(forKey: ClusterConnectionStore.serversDefaultsKey)
+    return ClusterConnectionStore(
+        defaults: defaults,
+        siteRegistry: ClusterSiteRepository(
+            directory: home.appending(component: "cluster-sites"),
+            legacyRegistryData: { legacyPayload }))
+}
+
 /// A complete, FICTIONAL cluster site for tests that need a rich SSH profile.
 ///
 /// Until WP5 Step 12 these tests reached for the shipped institutional preset —

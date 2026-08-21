@@ -33,7 +33,7 @@ struct ClusterConnectionStoreTests {
     }
 
     @Test func defaultsWhenNothingPersisted() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("empty"))
+        let store = clusterStore(defaults: try freshDefaults("empty"))
         #expect(store.servers.isEmpty)
         #expect(store.activeWorkspace == .local)
         #expect(store.computeTarget == .local)
@@ -43,14 +43,22 @@ struct ClusterConnectionStoreTests {
 
     @Test func registryRoundTripsAcrossInstances() throws {
         let defaults = try freshDefaults("registry-roundtrip")
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         let a = store.addServer(name: "Cluster A", urlString: "http://gpu-a:8080")
         let b = store.addServer(name: "", urlString: "http://gpu-b:8443")
         #expect(b.name == "gpu-b:8443")  // empty name defaults to host label
         store.activeWorkspace = .server(b.id)
 
-        let reloaded = ClusterConnectionStore(defaults: defaults)
-        #expect(reloaded.servers == [a, b])
+        let reloaded = clusterStore(defaults: defaults)
+        // Identity, order, and labels survive the round trip through the
+        // canonical registry. Entries do NOT come back byte-identical: a
+        // registry file holds a PROFILE, so a URL-only entry reads back as the
+        // direct-transport site it always was (`resolvedSite`) rather than as
+        // `site == nil`.
+        #expect(reloaded.servers.map(\.id) == [a.id, b.id])
+        #expect(reloaded.servers.map(\.name) == [a.name, b.name])
+        #expect(reloaded.servers.map(\.urlString) == [a.urlString, b.urlString])
+        #expect(reloaded.servers.map(\.resolvedSite) == [a.resolvedSite, b.resolvedSite])
         #expect(reloaded.activeWorkspace == .server(b.id))
         #expect(reloaded.computeTarget == .server)
         #expect(reloaded.serverURL == "http://gpu-b:8443")
@@ -59,7 +67,7 @@ struct ClusterConnectionStoreTests {
     }
 
     @Test func addServerReusesSameEndpoint() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("dedupe-add"))
+        let store = clusterStore(defaults: try freshDefaults("dedupe-add"))
         let first = store.addServer(name: "localhost", urlString: "http://127.0.0.1:8080")
         let second = store.addServer(name: "", urlString: " http://127.0.0.1:8080 ")
         let third = store.addServer(name: "", urlString: "127.0.0.1:8080")
@@ -82,8 +90,11 @@ struct ClusterConnectionStoreTests {
             ClusterConnectionStore.encodeWorkspace(.server(b.id)),
             forKey: ClusterConnectionStore.activeWorkspaceDefaultsKey)
 
-        let store = ClusterConnectionStore(defaults: defaults)
-        #expect(store.servers == [a])
+        let store = clusterStore(defaults: defaults)
+        #expect(store.servers.map(\.id) == [a.id])
+        #expect(store.servers.map(\.name) == [a.name])
+        // The loser's UUID still resolves: the migration recorded it as an
+        // alias, so the researcher's active server survives the collapse.
         #expect(store.activeWorkspace == .server(a.id))
     }
 
@@ -92,7 +103,7 @@ struct ClusterConnectionStoreTests {
         defaults.set("http://gpu-node:8443", forKey: ClusterConnectionStore.serverURLDefaultsKey)
         defaults.set("Server", forKey: ClusterConnectionStore.computeTargetDefaultsKey)
 
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         #expect(store.servers.count == 1)
         let entry = try #require(store.servers.first)
         #expect(entry.urlString == "http://gpu-node:8443")
@@ -103,8 +114,9 @@ struct ClusterConnectionStoreTests {
         // Migration is one-shot: the new schema is stamped, so a reload no
         // longer consults the legacy keys.
         defaults.removeObject(forKey: ClusterConnectionStore.serverURLDefaultsKey)
-        let reloaded = ClusterConnectionStore(defaults: defaults)
-        #expect(reloaded.servers == [entry])
+        let reloaded = clusterStore(defaults: defaults)
+        #expect(reloaded.servers.map(\.id) == [entry.id])
+        #expect(reloaded.servers.map(\.urlString) == [entry.urlString])
         #expect(reloaded.activeWorkspace == .server(entry.id))
     }
 
@@ -113,7 +125,7 @@ struct ClusterConnectionStoreTests {
         defaults.set("http://gpu-node:8443", forKey: ClusterConnectionStore.serverURLDefaultsKey)
         defaults.set("Local", forKey: ClusterConnectionStore.computeTargetDefaultsKey)
 
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         #expect(store.servers.count == 1)
         #expect(store.activeWorkspace == .local)
         #expect(store.computeTarget == .local)
@@ -121,20 +133,21 @@ struct ClusterConnectionStoreTests {
 
     @Test func persistedWorkspaceNamingAMissingServerFallsBackToLocal() throws {
         let defaults = try freshDefaults("stale-workspace")
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         let entry = store.addServer(name: "A", urlString: "http://gpu-a:8080")
         store.activeWorkspace = .server(entry.id)
-        // Simulate the entry disappearing while the workspace string survives.
-        defaults.set(
-            try JSONEncoder().encode([ClusterConnectionStore.ServerEntry]()),
-            forKey: ClusterConnectionStore.serversDefaultsKey)
+        // The site leaves the registry — deleted on another machine and
+        // pulled, say — while the app's persisted workspace string survives.
+        let siteID = try #require(entry.siteID)
+        try store.siteRegistry.remove(id: siteID)
 
-        let reloaded = ClusterConnectionStore(defaults: defaults)
+        let reloaded = clusterStore(defaults: defaults)
+        #expect(reloaded.servers.isEmpty)
         #expect(reloaded.activeWorkspace == .local)
     }
 
     @Test func switchingWorkspaceResetsConnectionStateButKeepsJobCounts() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("switch-reset"))
+        let store = clusterStore(defaults: try freshDefaults("switch-reset"))
         let entry = store.addServer(name: "A", urlString: "http://gpu-a:8080")
         store.activeWorkspace = .server(entry.id)
         store.status = "connected"
@@ -159,7 +172,7 @@ struct ClusterConnectionStoreTests {
     }
 
     @Test func jobsBadgeFormatting() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("badge"))
+        let store = clusterStore(defaults: try freshDefaults("badge"))
         let entry = store.addServer(name: "A", urlString: "http://gpu-a:8080")
         #expect(store.runningJobsBadge(for: entry.id) == nil)  // never checked
         store.activeWorkspace = .server(entry.id)
@@ -171,7 +184,7 @@ struct ClusterConnectionStoreTests {
     }
 
     @Test func computeTargetCompatibilityAccessor() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("compat"))
+        let store = clusterStore(defaults: try freshDefaults("compat"))
         // No servers: selecting .server has nothing to activate.
         store.computeTarget = .server
         #expect(store.activeWorkspace == .local)
@@ -190,7 +203,7 @@ struct ClusterConnectionStoreTests {
     }
 
     @Test func renameAndUpdateURL() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("rename"))
+        let store = clusterStore(defaults: try freshDefaults("rename"))
         let entry = store.addServer(name: "A", urlString: "http://gpu-a:8080")
         store.renameServer(id: entry.id, to: "Big Cluster")
         #expect(store.server(id: entry.id)?.name == "Big Cluster")
@@ -206,7 +219,7 @@ struct ClusterConnectionStoreTests {
     }
 
     @Test func removingActiveServerFallsBackToLocal() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("remove"))
+        let store = clusterStore(defaults: try freshDefaults("remove"))
         let entry = store.addServer(
             name: "A", urlString: "http://steerlab-tests-nonexistent-host:8080")
         store.activeWorkspace = .server(entry.id)
@@ -217,7 +230,7 @@ struct ClusterConnectionStoreTests {
     }
 
     @Test func tokenKeyFollowsActiveServer() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("token-key"))
+        let store = clusterStore(defaults: try freshDefaults("token-key"))
         let a = store.addServer(name: "A", urlString: "http://localhost:8000")
         let b = store.addServer(name: "B", urlString: "https://ood.test")
         store.activeWorkspace = .server(a.id)
@@ -227,7 +240,7 @@ struct ClusterConnectionStoreTests {
     }
 
     @Test func clientRequiresParseableURL() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("client"))
+        let store = clusterStore(defaults: try freshDefaults("client"))
         let entry = store.addServer(name: "A", urlString: "")
         store.activeWorkspace = .server(entry.id)
         #expect(store.client == nil)
@@ -273,7 +286,7 @@ struct ClusterConnectionStoreTests {
     // MARK: Serving-root surfacing + the one artifact-list scoping rule
 
     @Test func servingRootAndScopingConveniencesFollowTheReportedRoot() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("serving-root"))
+        let store = clusterStore(defaults: try freshDefaults("serving-root"))
         // Local workspace: no server scope, no banner, local-only lists.
         #expect(store.activeServerServingRoot == nil)
         #expect(store.artifactListPresentation == .localOnly)
@@ -389,7 +402,7 @@ struct ClusterConnectionStoreTests {
     }
 
     @Test func switchAffordanceIsCapabilityGated() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("switch-gate"))
+        let store = clusterStore(defaults: try freshDefaults("switch-gate"))
         let entry = store.addServer(name: "local", urlString: "http://127.0.0.1:8080")
         store.activeWorkspace = .server(entry.id)
         store.remoteInfo = RemoteServerInfo(
@@ -419,7 +432,7 @@ struct ClusterConnectionStoreTests {
     }
 
     @Test func switchAffordanceOffersOnlyServerSideRootsForSSHSites() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("switch-ssh"))
+        let store = clusterStore(defaults: try freshDefaults("switch-ssh"))
         var site = ClusterSiteProfile(
             name: "cluster",
             transport: .ssh(
@@ -453,7 +466,7 @@ struct ClusterConnectionStoreTests {
 
     @Test func recentServerRootsPersistPerServerAndCapAndDedupe() throws {
         let defaults = try freshDefaults("switch-recents")
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         let a = store.addServer(name: "a", urlString: "http://gpu-a:8080")
         let b = store.addServer(name: "b", urlString: "http://gpu-b:8080")
 
@@ -471,7 +484,7 @@ struct ClusterConnectionStoreTests {
         #expect(recents.first == "/ws/n11")
 
         // Persistence across store instances (same defaults suite).
-        let reloaded = ClusterConnectionStore(defaults: defaults)
+        let reloaded = clusterStore(defaults: defaults)
         #expect(reloaded.recentServerWorkspaceRoots(for: a) == ["/ws/one", "/ws/two"])
     }
 
@@ -480,7 +493,7 @@ struct ClusterConnectionStoreTests {
         // root becomes the pairing truth, lands in recents, and registered
         // server-scope invalidations fire (SubstrateCatalog registers its
         // remote-vector refetch through this same hook).
-        let store = ClusterConnectionStore(defaults: try freshDefaults("switch-apply"))
+        let store = clusterStore(defaults: try freshDefaults("switch-apply"))
         let entry = store.addServer(name: "local", urlString: "http://127.0.0.1:8080")
         store.activeWorkspace = .server(entry.id)
         store.remoteInfo = RemoteServerInfo(

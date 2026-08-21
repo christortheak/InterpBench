@@ -42,7 +42,6 @@ struct ClusterLifecycleStorageTests {
 
     @Test func migratesTheLegacyUserDefaultsRegistryExactlyOnce() throws {
         let directory = try temporaryDirectory("migrate")
-        let file = directory.appending(component: "cluster-sites.json")
         // Exactly what older builds persisted: a URL-only legacy entry plus a
         // site-carrying entry.
         let legacy = [
@@ -54,25 +53,35 @@ struct ClusterLifecycleStorageTests {
         ]
         let payload = try JSONEncoder().encode(legacy)
         let repository = ClusterSiteRepository(
-            fileURL: file, legacyRegistryData: { payload })
+            directory: directory.appending(component: "cluster-sites"),
+            legacyRegistryData: { payload })
 
         let document = try repository.load()
-        #expect(document.schemaVersion == ClusterSiteRegistryDocument.currentSchemaVersion)
         #expect(document.migratedFromUserDefaultsAt != nil)
         #expect(document.sites.count == 2)
+        // Reading order survives the move into a directory: sites come back
+        // in the order they were saved, not alphabetically.
         #expect(document.sites.map(\.id) == ["gpu-a", "example-hpc"])
         #expect(document.sites.map(\.legacyEntryID) == legacy.map { Optional($0.id) })
         // The SSH site's ephemeral tunnel URL is NOT adopted as an endpoint —
         // it is a local label, not a durable fact about the site.
         #expect(document.sites.last?.lastEndpoint == nil)
         #expect(document.sites.first?.lastEndpoint == "http://gpu-a:8080")
-        #expect(FileManager.default.fileExists(atPath: file.path))
+        // One file per site, named by its id.
+        for id in ["gpu-a", "example-hpc"] {
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: repository.fileURL(forSite: id).path))
+        }
 
-        // Second load reads the FILE; the legacy payload is never consulted
-        // again (a re-migration would resurrect deleted sites).
+        // Second load reads the DIRECTORY; the legacy payload is never
+        // consulted again (a re-migration would resurrect deleted sites).
         try repository.remove(id: "gpu-a")
         let reloaded = try repository.load()
         #expect(reloaded.sites.map(\.id) == ["example-hpc"])
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: repository.fileURL(forSite: "gpu-a").path))
     }
 
     @Test func migrationDedupesByCanonicalRemoteIdentity() throws {
@@ -89,7 +98,7 @@ struct ClusterLifecycleStorageTests {
         ]
         let payload = try JSONEncoder().encode(legacy)
         let repository = ClusterSiteRepository(
-            fileURL: directory.appending(component: "sites.json"),
+            directory: directory.appending(component: "cluster-sites"),
             legacyRegistryData: { payload })
 
         let sites = try repository.sites()
@@ -118,7 +127,7 @@ struct ClusterLifecycleStorageTests {
         ]
         let payload = try JSONEncoder().encode(legacy)
         let repository = ClusterSiteRepository(
-            fileURL: directory.appending(component: "sites.json"),
+            directory: directory.appending(component: "cluster-sites"),
             legacyRegistryData: { payload })
 
         let sites = try repository.sites()
@@ -129,7 +138,7 @@ struct ClusterLifecycleStorageTests {
     @Test func migrationOfAnAbsentLegacyRegistryYieldsAnEmptyDocument() throws {
         let directory = try temporaryDirectory("migrate-empty")
         let repository = ClusterSiteRepository(
-            fileURL: directory.appending(component: "sites.json"),
+            directory: directory.appending(component: "cluster-sites"),
             legacyRegistryData: { nil })
         let document = try repository.load()
         #expect(document.sites.isEmpty)
@@ -141,7 +150,7 @@ struct ClusterLifecycleStorageTests {
     @Test func upsertRoundTripsAndKeepsTheIDStableAcrossProfileEdits() throws {
         let directory = try temporaryDirectory("roundtrip")
         let repository = ClusterSiteRepository(
-            fileURL: directory.appending(component: "sites.json"),
+            directory: directory.appending(component: "cluster-sites"),
             legacyRegistryData: { nil })
 
         let created = try repository.upsert(profile: sshProfile(named: "Example HPC", host: "cluster.test"))
@@ -159,7 +168,7 @@ struct ClusterLifecycleStorageTests {
 
         // The file is the truth: a second repository over the same URL sees it.
         let reader = ClusterSiteRepository(
-            fileURL: repository.fileURL, legacyRegistryData: { nil })
+            directory: repository.directoryURL, legacyRegistryData: { nil })
         let stored = try #require(try reader.site(id: "example-hpc"))
         #expect(stored.profile == edited)
         #expect(stored.profile.constraints.storageRoots["archive"] == "/project/lab")
@@ -168,7 +177,7 @@ struct ClusterLifecycleStorageTests {
     @Test func distinctSitesGetDistinctStableIDsAndAreNeverMerged() throws {
         let directory = try temporaryDirectory("distinct")
         let repository = ClusterSiteRepository(
-            fileURL: directory.appending(component: "sites.json"),
+            directory: directory.appending(component: "cluster-sites"),
             legacyRegistryData: { nil })
         let a = try repository.upsert(profile: sshProfile(named: "Cluster", host: "a.test"))
         let b = try repository.upsert(profile: sshProfile(named: "Cluster", host: "b.test"))
@@ -181,7 +190,7 @@ struct ClusterLifecycleStorageTests {
     @Test func resolveAcceptsIDsAndUnambiguousNamesOnly() throws {
         let directory = try temporaryDirectory("resolve")
         let repository = ClusterSiteRepository(
-            fileURL: directory.appending(component: "sites.json"),
+            directory: directory.appending(component: "cluster-sites"),
             legacyRegistryData: { nil })
         _ = try repository.upsert(profile: sshProfile(named: "Bench", host: "a.test"))
         // A unique display name resolves (case-insensitively) as a convenience.
@@ -201,7 +210,7 @@ struct ClusterLifecycleStorageTests {
     @Test func noteConnectionRecordsEndpointAndBuildOnly() throws {
         let directory = try temporaryDirectory("note-connection")
         let repository = ClusterSiteRepository(
-            fileURL: directory.appending(component: "sites.json"),
+            directory: directory.appending(component: "cluster-sites"),
             legacyRegistryData: { nil })
         let site = try repository.upsert(profile: sshProfile(named: "Cluster", host: "a.test"))
         _ = try repository.noteConnection(
@@ -214,39 +223,54 @@ struct ClusterLifecycleStorageTests {
         // any token-shaped field except the site's DECLARED token-file PATH
         // (schema 2, `environment.tokenFilePath`), which is an indirection.
         #expect(stored.tokenKey == "a.test:8080")
-        let bytes = try String(contentsOf: repository.fileURL, encoding: .utf8)
+        let bytes = try String(
+            contentsOf: repository.fileURL(forSite: site.id), encoding: .utf8)
         #expect(
             !ClusterProfileTokenScrub.withoutDeclaredTokenPath(bytes).lowercased()
                 .contains("token"))
     }
 
     @Test func aCorruptRecordCostsOnlyItself() throws {
-        let directory = try temporaryDirectory("corrupt")
-        let file = directory.appending(component: "sites.json")
-        let json = """
-            {"schemaVersion": 1,
-             "sites": [
-               {"id": "good", "displayName": "Good", "createdAt": "2026-08-11T00:00:00Z",
-                "updatedAt": "2026-08-11T00:00:00Z",
-                "profile": {"schemaVersion": 1, "name": "Good",
-                            "transport": {"kind": "ssh", "host": "good.test"}}},
-               {"id": "broken", "displayName": "Broken", "createdAt": "2026-08-11T00:00:00Z",
-                "updatedAt": "2026-08-11T00:00:00Z",
-                "profile": {"schemaVersion": 1, "name": "Broken",
-                            "transport": {"kind": "carrier-pigeon"}}}
-             ]}
-            """
-        try Data(json.utf8).write(to: file)
-        let repository = ClusterSiteRepository(fileURL: file, legacyRegistryData: { nil })
+        let directory = try temporaryDirectory("corrupt").appending(
+            component: "cluster-sites")
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true)
+        // A registry file is a bare profile — the same document `sites
+        // export` writes.
+        func writeSite(_ id: String, transport: String) throws {
+            let json = """
+                {"schemaVersion": 1, "name": "\(id)", "transport": \(transport)}
+                """
+            try Data(json.utf8).write(to: directory.appending(component: "\(id).json"))
+        }
+        try writeSite("good", transport: #"{"kind": "ssh", "host": "good.test"}"#)
+        try writeSite("broken", transport: #"{"kind": "carrier-pigeon"}"#)
+        let repository = ClusterSiteRepository(
+            directory: directory, legacyRegistryData: { nil })
         #expect(try repository.sites().map(\.id) == ["good"])
+        // Lenient, never silent: the unreadable file is reported by name so a
+        // site cannot disappear without anyone being told.
+        #expect(repository.unreadableFiles().count == 1)
+        #expect(repository.unreadableFiles()[0].hasPrefix("broken.json:"))
     }
 
-    @Test func aNewerSchemaRefusesRatherThanSilentlyDowngrading() throws {
-        let directory = try temporaryDirectory("newer-schema")
-        let file = directory.appending(component: "sites.json")
-        try Data(#"{"schemaVersion": 99, "sites": []}"#.utf8).write(to: file)
-        let repository = ClusterSiteRepository(fileURL: file, legacyRegistryData: { nil })
-        #expect(throws: (any Error).self) { try repository.load() }
+    @Test func aNewerSchemaIsSkippedAndReportedRatherThanDowngraded() throws {
+        let directory = try temporaryDirectory("newer-schema").appending(
+            component: "cluster-sites")
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true)
+        try Data(
+            #"{"schemaVersion": 99, "name": "future", "transport": {"kind": "ssh", "host": "h"}}"#
+                .utf8
+        ).write(to: directory.appending(component: "future.json"))
+        let repository = ClusterSiteRepository(
+            directory: directory, legacyRegistryData: { nil })
+        // A file this build cannot understand is never DOWNGRADED — it is left
+        // exactly as it is, excluded from the registry, and named in the
+        // report both clients surface.
+        #expect(try repository.sites().isEmpty)
+        #expect(repository.unreadableFiles().count == 1)
+        #expect(repository.unreadableFiles()[0].hasPrefix("future.json:"))
     }
 
     // MARK: Operation store — records

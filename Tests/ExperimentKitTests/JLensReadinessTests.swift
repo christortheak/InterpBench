@@ -369,7 +369,7 @@ struct AdapterCatalogCompositionTests {
     private func service(catalogJSON: String) -> (ChatService, UserDefaults, String) {
         let suite = "AdapterCatalogComposition.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        let store = ClusterConnectionStore(defaults: defaults)
+        let store = clusterStore(defaults: defaults)
         StubProtocol.body = Data(catalogJSON.utf8)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubProtocol.self]

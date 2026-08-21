@@ -135,7 +135,7 @@ struct WorkspaceScopingTests {
     }
 
     @Test func serverWorkspaceRoutesToExistingEndpoints() throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults("routes"))
+        let store = clusterStore(defaults: try freshDefaults("routes"))
         let entry = store.addServer(name: "gpu-a", urlString: "http://gpu-a:8080")
         let workspace = ClusterConnectionStore.Workspace.server(entry.id)
 
@@ -161,7 +161,7 @@ struct WorkspaceScopingTests {
     @Test func missingServerBackingIsHonestlyLocalOnly() throws {
         // Neutral-PC builds have no client-wired server backing: the route
         // must say so (disabled with a caption), never pretend to run remotely.
-        let store = ClusterConnectionStore(defaults: try freshDefaults("local-only"))
+        let store = clusterStore(defaults: try freshDefaults("local-only"))
         let entry = store.addServer(name: "gpu-a", urlString: "http://gpu-a:8080")
         let workspace = ClusterConnectionStore.Workspace.server(entry.id)
 

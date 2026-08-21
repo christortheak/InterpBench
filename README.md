@@ -125,7 +125,8 @@ steerlab init                      # or: steerlab init --home /path/to/SteerLab
 ```text
 ~/SteerLab/
 ├── Workspaces/     study workspaces, one folder each, each its own git repo
-├── Sites/          your PRIVATE site library (cluster-site profiles, presets)
+├── Sites/          your PRIVATE site registry (cluster-site profiles, presets)
+│   └── cluster-sites/  one JSON file per site — the app AND the CLI read this
 ├── SteerLab.app/   the app, and the CLI it carries
 └── <checkout>/     this repository — any folder name; detected by content
 ```
@@ -136,6 +137,20 @@ anything, creates no workspace, and does not change how a workspace root is
 resolved. `Sites/` is deliberately left empty so you can `git clone` your own
 private site repository into it — keeping site configuration out of workspaces
 you share.
+
+`Sites/cluster-sites/` is the **canonical cluster-site registry**: one
+human-editable, pretty-printed JSON file per site, and the single store the app
+and `steerlab cluster` both read and write. Add a site in the app and the file
+appears there; `git commit && git push` and your other Mac has it after a pull.
+SteerLab never runs git for you — its writes just leave the tree dirty, and
+committing is your step.
+
+**Tokens, keys, and passwords are never written into `Sites/`.** They live in
+this Mac's Keychain, so the registry is safe to keep in a private repository
+and a new machine prompts you once. Connection state (tunnel endpoints, last
+server build) is per-machine too, in
+`~/Library/Application Support/SteerLab/site-runtime.json` — so connecting and
+disconnecting never dirties the registry.
 
 Then create a workspace — a plain folder holding `prompts/`, `experiments/`, and
 `runs/`, its own git repository, seeded with templates and its own

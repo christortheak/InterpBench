@@ -53,7 +53,7 @@ struct ClusterSSHLoginGuardTests {
 
     private func repository(_ name: String) throws -> ClusterSiteRepository {
         ClusterSiteRepository(
-            fileURL: try temporaryDirectory(name).appending(component: "sites.json"),
+            directory: try temporaryDirectory(name).appending(component: "cluster-sites"),
             legacyRegistryData: { nil })
     }
 
@@ -226,11 +226,12 @@ struct ClusterSSHLoginGuardTests {
         // Read back through a SECOND repository over the same file: the JSON
         // on disk carries the login, not just the in-memory value.
         let reader = ClusterSiteRepository(
-            fileURL: repository.fileURL, legacyRegistryData: { nil })
+            directory: repository.directoryURL, legacyRegistryData: { nil })
         let stored = try #require(try reader.site(id: created.id))
         #expect(storedHost(stored) == "alice@login.test")
         #expect(stored.profile.environment.transferHost == "alice@xfer.test")
-        let text = try String(contentsOf: repository.fileURL, encoding: .utf8)
+        let text = try String(
+            contentsOf: repository.fileURL(forSite: created.id), encoding: .utf8)
         #expect(text.contains("alice@login.test"))
     }
 
@@ -268,7 +269,7 @@ struct ClusterSSHLoginGuardTests {
         ]
         let payload = try JSONEncoder().encode(legacy)
         let repository = ClusterSiteRepository(
-            fileURL: directory.appending(component: "sites.json"),
+            directory: directory.appending(component: "cluster-sites"),
             legacyRegistryData: { payload })
 
         let sites = try repository.sites()
@@ -292,7 +293,7 @@ struct ClusterSSHLoginGuardTests {
         ]
         let payload = try JSONEncoder().encode(legacy)
         let repository = ClusterSiteRepository(
-            fileURL: directory.appending(component: "sites.json"),
+            directory: directory.appending(component: "cluster-sites"),
             legacyRegistryData: { payload })
         #expect(try repository.sites().first?.profile == configured)
     }
@@ -308,8 +309,7 @@ struct ClusterSSHLoginGuardTests {
 
     @MainActor
     @Test func theAppsImportOverRefusesTheSameDrop() throws {
-        let store = ClusterConnectionStore(
-            defaults: try freshDefaults("import-over"))
+        let store = clusterStore(defaults: try freshDefaults("import-over"))
         _ = store.addSite(profile(host: "alice@login.test"))
         let loginless = try profile(host: "login.test").encoded()
         #expect(throws: ClusterLifecycleError.self) {
@@ -322,10 +322,21 @@ struct ClusterSSHLoginGuardTests {
         }
         #expect(host == "alice@login.test")
 
-        // The same import into a registry that never knew a login is legal.
-        let fresh = ClusterConnectionStore(
-            defaults: try freshDefaults("import-fresh"))
-        _ = try fresh.importSite(from: loginless)
+        // Into a registry that never knew a login the same profile is LEGAL
+        // (`~/.ssh/config` can supply `User`) — but the app now says so at
+        // IMPORT time rather than letting the researcher discover it at Duo
+        // (live finding, 2026-08-21). It asks; it does not forbid.
+        let fresh = clusterStore(defaults: try freshDefaults("import-fresh"))
+        do {
+            _ = try fresh.importSite(from: loginless)
+            Issue.record("expected the login-less import to be surfaced")
+        } catch let error as ClusterLifecycleError {
+            #expect(error.code == "sshLoginMissing")
+            #expect(error.errorDescription?.contains("user@login.test") == true)
+        }
+        #expect(fresh.servers.isEmpty)
+        // Acknowledged, it imports.
+        _ = try fresh.importSite(from: loginless, acknowledgingWarnings: true)
         #expect(fresh.servers.count == 1)
     }
 }

@@ -513,7 +513,7 @@ struct ClientTunnelRoutingTests {
     }
 
     @Test func clientPrefersALiveTunnelForTheActiveSSHSite() async throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults())
+        let store = clusterStore(defaults: try freshDefaults())
         let entry = store.addSite(sshSite)
         store.activeWorkspace = .server(entry.id)
 
@@ -539,7 +539,7 @@ struct ClientTunnelRoutingTests {
     }
 
     @Test func aTunnelForAnotherSiteNeverHijacksTheClient() async throws {
-        let store = ClusterConnectionStore(defaults: try freshDefaults())
+        let store = clusterStore(defaults: try freshDefaults())
         let entry = store.addServer(name: "box", urlString: "http://gpu-a:8080")
         store.activeWorkspace = .server(entry.id)
 

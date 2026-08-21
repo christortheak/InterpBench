@@ -472,7 +472,8 @@ and is handed to an agent as a unit:
 ```text
 ~/SteerLab/
 ├── Workspaces/     study workspaces, one folder each, each its own git repo
-├── Sites/          your PRIVATE site library (cluster-site profiles, presets)
+├── Sites/          your PRIVATE site registry (cluster-site profiles, presets)
+│   └── cluster-sites/   one JSON file per site — the app AND the CLI read this
 └── <checkout>/     the code checkout — any folder name; detected by content
 ```
 
@@ -486,13 +487,17 @@ create a workspace, and **does not touch workspace resolution**: no
 `STEERLAB_WORKSPACE`, no persisted preference, no override. The chain in §2.1 is
 what it always was.
 
-`Sites/` is deliberately left EMPTY — it is normally a clone of your own private
-site repository, and `git clone <repo> Sites` refuses a non-empty target. Today
-it is layout only: nothing resolves against it, the live non-secret site
-registry is still `~/Library/Application Support/SteerLab/cluster-sites.json`,
-and profiles enter it through `cluster sites import` (§3.9). Keeping site
-configuration there rather than in a workspace is what stops it travelling with
-a workspace you share.
+`Sites/` is deliberately left EMPTY by `init` — it is normally a clone of your
+own private site repository, and `git clone <repo> Sites` refuses a non-empty
+target. Inside it, `Sites/cluster-sites/` is THE canonical cluster-site
+registry (§3.9.6): one JSON file per site, read and written by the app and by
+`cluster sites import`/`list`, created at the first write. **You sync it** —
+git is how your sites reach your other machines, and SteerLab never runs git:
+its writes leave the tree dirty and committing is your act. Tokens, keys, and
+passwords never enter it (Keychain, per machine); connection state never enters
+it either (`site-runtime.json`, per machine). Keeping site configuration there
+rather than in a workspace is what stops it travelling with a workspace you
+share.
 
 The report also names any code checkout it finds in the home, detected by
 CONTENT (a directory holding both `Package.swift` and `Server/steerlab_server/`)
@@ -1210,7 +1215,7 @@ structurally by walking the JSON's keys.
 steerlab-cli cluster sites list [--help] [--json]
 steerlab-cli cluster sites show [--help] [--json] --site <id>
 steerlab-cli cluster sites export [--help] [--json] [--out <file>] --site <id>
-steerlab-cli cluster sites import <profile.json> [--help] [--json]
+steerlab-cli cluster sites import <profile.json> [--force] [--help] [--json]
 steerlab-cli cluster preview [--help] [--job-class <class>] [--json] --site <id>
 steerlab-cli cluster status [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--refresh] [--remote-repo <path>] --site <id> [--squeue <command>]
 steerlab-cli cluster diagnose [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--redact] [--remote-repo <path>] --site <id> [--squeue <command>]
@@ -1231,7 +1236,7 @@ steerlab-cli cluster controller adopt [--bootstrap-partition <partition>] [--env
 steerlab-cli cluster tunnel open [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--remote-repo <path>] --site <id> [--squeue <command>]
 steerlab-cli cluster tunnel status [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--remote-repo <path>] --site <id> [--squeue <command>]
 steerlab-cli cluster tunnel close [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--remote-repo <path>] --site <id> [--squeue <command>]
-steerlab-cli cluster connect [--activate-in-app] [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--remote-repo <path>] --site <id> [--squeue <command>]
+steerlab-cli cluster connect [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--remote-repo <path>] --site <id> [--squeue <command>]
 steerlab-cli cluster disconnect [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--remote-repo <path>] --site <id> [--squeue <command>]
 steerlab-cli cluster import [--dry-run] [--help] [--json] [--since <date>] --site <id>
 steerlab-cli cluster plan [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--remote-repo <path>] --site <id> [--squeue <command>] [--target <rung>]
@@ -1277,8 +1282,8 @@ Every verb above also accepts `--json` and `--help`. `--site <id>` is required w
 |---|---|
 | `sites list` | Every saved site: id, display name, transport, topology/scheduler, last endpoint, token **presence**. No `--site`. |
 | `sites show` | One site's registry record. Does not probe. |
-| `sites export` | Writes the **profile only** — no credentials, no `lastEndpoint`, no local forward port. |
-| `sites import` | Upserts by canonical remote identity, so re-importing refreshes rather than forking the registry. No `--site`. **This is how a real site arrives** (WP5 §4.2, 2026-08-17): the shipped presets are neutral templates only — `Generic Slurm cluster (conda)`, `Generic Slurm cluster (module Python)`, `GPU workstation` — and no institution's hostname, partitions, QOS limits, or storage layout is in the tree. Keep your site's profile JSON in the WORKSPACE (git-versioned beside the study data) and import it here. `prompts/fixtures/cluster-site-profile/example-slurm-site.json` is a complete fictional profile to copy; `preview --site <id>` shows what any of them will actually run. |
+| `sites export` | Writes the **profile only** — no credentials, no `lastEndpoint`, no local forward port. The same sanitizer guards the registry's own files, so an export and a `Sites/` file can never disagree about what is shareable. |
+| `sites import` | Copies a profile into the canonical registry (`~/SteerLab/Sites/cluster-sites/<site-id>.json`), which the app reads and writes too. Refuses to replace a site the registry already holds unless `--force`; with `--force` it dedupes by canonical remote identity, so a re-import refreshes the site instead of forking the registry. Runs the ssh-login validation at import time (§3.9.8), and is the SAME entry point the app's "Import Site JSON…" and the setup wizard use. No `--site`. **This is how a real site arrives** (WP5 §4.2, 2026-08-17): the shipped presets are neutral templates only — `Generic Slurm cluster (conda)`, `Generic Slurm cluster (module Python)`, `GPU workstation` — and no institution's hostname, partitions, QOS limits, or storage layout is in the tree. Keep your site's profile JSON in `Sites/` (a private git repository, which is how it reaches your other machines) — never in a workspace you share. `prompts/fixtures/cluster-site-profile/example-slurm-site.json` is a complete fictional profile to copy; `preview --site <id>` shows what any of them will actually run. |
 | `preview` | **WP5 §3.3** — read the complete generated environment and scheduler commands BEFORE anything runs: the rendered env file verbatim, the `#SBATCH` block per job class (`study`, `controller`, `setup`, `gpu-session`; `--job-class` narrows that pane only), the scheduler binaries, the GPU vocabulary + VRAM table, and every fact the profile did **not** state. Offline and read-only — it renders the saved profile and runs no command. States which **DefaultSet** applied (`legacyV1` for a schema-1 profile, whose unstated fields take today's `bootstrap.sh`/`executors.py` constants; `neutralV2` otherwise) and the profile's `schemaVersion`. Rejects the configuration overrides below: an override is not profile data. The bearer token appears only as the `$(cat …)` path indirection the env file itself carries. |
 | `status` | Read-only per-layer report. `--refresh` additionally runs the read-only remote `profile validate` (otherwise reported `notRun`). |
 | `diagnose` | `status` plus the auth command, the controller log path, and the last 5 durable operation records. `--redact` strips usernames and home paths for a shareable report. |
@@ -1299,7 +1304,7 @@ Every verb above also accepts `--json` and `--help`. `--site <id>` is required w
 | `tunnel open` | Installs or **adopts** the local forward. Refuses when the controller has published no trustworthy node record. |
 | `tunnel status` | absent / up / stale / conflicted. |
 | `tunnel close` | Cancels SteerLab's exact forward only. |
-| `connect` | `ensure --target connected` with **no** mutation authority: opens/adopts the tunnel, imports the token into the Keychain, proves endpoint identity, and updates the one saved registration. See §3.9.6 for `--activate-in-app`. |
+| `connect` | `ensure --target connected` with **no** mutation authority: opens/adopts the tunnel, imports the token into the Keychain, proves endpoint identity, and updates the one saved registration (in this machine's runtime cache — never in the shared registry; see §3.9.6). |
 | `disconnect` | Closes the forward and clears the registered endpoint. **Leaves the Keychain token alone** — it is the user's credential for a server that is still there. |
 | `import` | Brings run directories home under `WorkspaceImportPolicy` and is **runs-only by decision** (open-issues §8 residual (a), 2026-08-20): it never writes `experiments/`. It verifies by content (byte drift refuses; nothing is ever overwritten), reports purge ELIGIBILITY without deleting anything, and — since 2026-08-20 — compares every imported run's `experiment.json` snapshot against the live workspace manifest and prints an **AUTHORING DIVERGENCE** section (envelope `degraded`, exit 13, `importSummary.authoringDivergences`) for any study whose live copy holds fewer concepts/conditions than its own run evidence: cluster-side authoring that never came home. Adopting the snapshot into `experiments/` stays a deliberate hand edit on a DRAFT, followed by `experiment verify`. |
 | `plan` | Pure observation + planning. Executes nothing. |
@@ -1506,17 +1511,41 @@ Adoption is verified, never taken on trust. It refuses (`failed`, exit 70, code
 A queued job is adoptable — recording it is exactly what stops a later `ensure`
 submitting a second one.
 
-#### 3.9.6 `connect --activate-in-app` and Phase D
+#### 3.9.6 One registry, three kinds of fact
 
-`connect` updates the **shared file registry**
-(`~/Library/Application Support/SteerLab/cluster-sites.json`), which the app and
-CLI both read. `--activate-in-app` additionally writes the app's persisted
-server-URL preference.
+Since 2026-08-21 there is exactly one cluster-site store, and both clients read
+and write it:
 
-**A *running* app does not converge on either until Phase D** (wizard
-convergence, deferred). Today: quit and reopen the app, or select
-the server in its own UI. The reverse direction already works — a forward or
-token the app created is adopted by the CLI rather than duplicated.
+```text
+~/SteerLab/Sites/cluster-sites/<site-id>.json    the PROFILE — shared, git-syncable
+<Keychain, service SteerLabCluster>              SECRETS — per machine, never in a file
+~/Library/Application Support/SteerLab/site-runtime.json
+                                                 RUNTIME — per machine (endpoint, build)
+```
+
+The registry is a plain directory: one pretty-printed, stable-key-ordered JSON
+file per site, safe to read, hand-edit, and diff. `Sites/` is normally a private
+git repository, because git is how a researcher's sites reach their other
+machines — but **SteerLab never runs git**. Its writes leave the tree dirty;
+committing and pushing are yours. The directory works with no git at all.
+
+`connect` records the endpoint and server build it reached in the **runtime**
+file, never in `Sites/`, so a connect/disconnect cycle leaves the registry
+byte-identical and your `git status` clean.
+
+There is no `--activate-in-app`, and nothing replaces it: activation stopped
+being a separate step when the two stores became one. A site the CLI added is
+the app's site. A *running* app re-reads the registry when it becomes active
+and when the cluster UI opens, so a `steerlab cluster sites import` in a
+terminal shows up by clicking back into the app.
+
+On its first run a new build absorbs the two legacy stores — the app's
+`SteerLabClusterServers` preference and the old
+`~/Library/Application Support/SteerLab/cluster-sites.json` — into the registry
+and reports what it moved on stderr. A file already in the registry always
+wins; nothing is overwritten, and collisions are named. Afterwards the legacy
+stores are read-only history that nothing writes to. The Keychain is untouched:
+the same service and account keys keep working.
 
 #### 3.9.7 `controller start --render-only` — THE re-render command
 
@@ -1550,6 +1579,24 @@ write); read-only flows report and name this command instead.
 and has no trap; re-rendering fixes the *next* generation. Cycle the controller
 once (let it expire, or `controller stop` then `controller start`) and every
 generation after that self-chains.
+
+#### 3.9.8 The ssh-login check every import runs
+
+`ClusterSiteRepository` is the one import entry point, so `sites import`, the
+app's **Import Site JSON…**, and the setup wizard's import button all apply the
+same rules — the app used to decode the JSON itself and skip them, and a
+profile whose ssh destination had no `user@` login was accepted in silence and
+first failed hours later at Duo (live finding, 2026-08-21).
+
+* A destination that would **drop a known login** is refused outright
+  (`sshLoginDropped`): the canonical identity ignores the `user@` half, so a
+  login-less profile otherwise lands on the login-carrying entry and replaces
+  it.
+* A site with **no login anywhere** is legal — `~/.ssh/config` may supply
+  `User` — so it is surfaced rather than forbidden. `sites import` accepts it
+  and puts `WARNING: …` in the outcome message; the app asks before saving it.
+  A bare `environment.transferHost` is fine (it inherits the login); a transfer
+  host naming a *different* user is still a refusal.
 
 ### 3.10 `serve`
 

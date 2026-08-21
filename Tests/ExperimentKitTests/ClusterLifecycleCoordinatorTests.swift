@@ -213,7 +213,7 @@ struct ClusterLifecycleCoordinatorTests {
                 component: ClusterProvisioner.deploymentManifestFileName))
 
         let repository = ClusterSiteRepository(
-            fileURL: root.appending(component: "cluster-sites.json"),
+            directory: root.appending(component: "cluster-sites"),
             legacyRegistryData: { nil })
         _ = try repository.upsert(profile: profile ?? slurmProfile())
 

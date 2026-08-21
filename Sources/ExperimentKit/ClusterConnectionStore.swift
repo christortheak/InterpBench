@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Observation
 
@@ -33,6 +34,11 @@ public final class ClusterConnectionStore {
     /// `tokenKey(forEntry:)`).
     public struct ServerEntry: Codable, Sendable, Identifiable, Hashable {
         public var id: UUID
+        /// The canonical registry's id for this site — the basename of its
+        /// file in `Sites/cluster-sites/`. Optional only so a registry
+        /// persisted before the canonical directory existed keeps decoding;
+        /// every entry the store creates carries one.
+        public var siteID: String?
         public var name: String
         /// The URL HTTP actually targets: the server itself for direct
         /// transport, or the tunnel's 127.0.0.1:<localPort> label for SSH
@@ -46,9 +52,10 @@ public final class ClusterConnectionStore {
 
         public init(
             id: UUID = UUID(), name: String, urlString: String,
-            site: ClusterSiteProfile? = nil
+            site: ClusterSiteProfile? = nil, siteID: String? = nil
         ) {
             self.id = id
+            self.siteID = siteID
             self.name = name
             self.urlString = urlString
             self.site = site
@@ -96,9 +103,13 @@ public final class ClusterConnectionStore {
 
     // MARK: Persistence keys
 
-    /// `nonisolated`: the shared `ClusterSiteRepository` migration (a
-    /// headless, non-main-actor path) reads the legacy registry under this
-    /// exact key — a key string is immutable data, not main-actor state.
+    /// LEGACY. The app's saved-server registry used to live under this
+    /// UserDefaults key; since 2026-08-21 the canonical registry is
+    /// `Sites/cluster-sites/` and this key is read exactly once, by the
+    /// repository's migration, and never written again.
+    ///
+    /// `nonisolated`: that migration is a headless, non-main-actor path — a
+    /// key string is immutable data, not main-actor state.
     public nonisolated static let serversDefaultsKey = "SteerLabClusterServers"
     /// The app's own defaults domain, for OTHER processes (the CLI) reading
     /// the legacy registry during site-repository migration. Dev builds
@@ -125,11 +136,28 @@ public final class ClusterConnectionStore {
     // MARK: State
 
     /// Saved servers, in user order. Manage through `addServer` /
-    /// `renameServer` / `updateServerURL` / `removeServer`; persisted to
-    /// UserDefaults as JSON.
+    /// `renameServer` / `updateServerURL` / `removeServer`; persisted to the
+    /// canonical site registry (`Sites/cluster-sites/<site-id>.json`), which
+    /// `steerlab-cli` reads and writes through the same repository type.
     public private(set) var servers: [ServerEntry] {
         didSet { persistServers() }
     }
+
+    /// True while `reloadSitesFromDisk` is rebuilding `servers` from the
+    /// registry, so the rebuild does not immediately write back what it just
+    /// read.
+    private var isReloadingFromDisk = false
+
+    /// What the last legacy-store migration on this machine did, if anything.
+    /// Surfaced by the app rather than swallowed — a registry that moved
+    /// itself in silence is a registry nobody trusts.
+    public private(set) var siteMigrationSummary: String?
+
+    /// Files in `Sites/cluster-sites/` this build could not read, as
+    /// `<name>: <reason>`. The registry stays lenient — one broken file must
+    /// never cost the others — but never silent: a site that vanished quietly
+    /// is worse than one that failed loudly.
+    public private(set) var siteRegistryProblems: [String] = []
 
     /// The active workspace. Switching resets the connection state (it
     /// belongs to the active server) but keeps per-server job counts, and is
@@ -213,32 +241,46 @@ public final class ClusterConnectionStore {
 
     private let defaults: UserDefaults
 
-    public init(defaults: UserDefaults = .standard) {
+    /// THE site registry — the same directory-backed repository
+    /// `steerlab-cli` uses. The app no longer keeps a registry of its own:
+    /// UserDefaults holds only what is genuinely per-machine UI preference
+    /// (which workspace is active, per-site toggles, recent serving roots).
+    public let siteRegistry: ClusterSiteRepository
+
+    public init(
+        defaults: UserDefaults = .standard,
+        siteRegistry: ClusterSiteRepository = ClusterSiteRepository()
+    ) {
+        var seededFromLegacyPreference = false
         self.defaults = defaults
-        if let data = defaults.data(forKey: Self.serversDefaultsKey),
-            let decoded = Self.decodeServersLeniently(from: data)
-        {
-            let deduplicated = Self.deduplicatedServersWithAliases(decoded)
-            // Heal names eaten by earlier registry churn: an entry whose
-            // stored name is just its (ephemeral, tunnel-local) host label
-            // while its site profile carries a real name adopts the site's.
-            self.servers = deduplicated.servers.map { entry in
-                var entry = entry
-                let siteName =
-                    entry.site?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if !siteName.isEmpty,
-                    entry.name.isEmpty || entry.name == entry.hostLabel
-                {
-                    entry.name = siteName
+        self.siteRegistry = siteRegistry
+        // Absorb the legacy stores (this app's UserDefaults registry and the
+        // CLI's old cluster-sites.json) at most once per machine, loudly.
+        let migration = try? siteRegistry.migrateLegacyStoresIfNeeded()
+        self.siteMigrationSummary = migration?.summary
+        self.siteRegistryProblems = siteRegistry.unreadableFiles()
+        let records = (try? siteRegistry.load().sites) ?? []
+        if !records.isEmpty {
+            let deduplicated = Self.deduplicatedServersWithAliases(
+                records.map(Self.entry(for:)))
+            self.servers = deduplicated.servers
+            // Aliases recorded when a MIGRATION collapsed two legacy entries
+            // count too: the persisted workspace names a UUID, and the
+            // researcher's active server must survive the collapse.
+            var aliases = deduplicated.aliases
+            for record in records {
+                let owner = record.legacyEntryID
+                    ?? Self.entryID(forSiteID: record.id)
+                for alias in record.aliasEntryIDs {
+                    aliases[alias] = aliases[owner] ?? owner
                 }
-                return entry
             }
             let persistedWorkspace = defaults.string(forKey: Self.activeWorkspaceDefaultsKey)
             let parsedWorkspace = Self.parseWorkspace(
                 persistedWorkspace, servers: deduplicated.servers)
             if parsedWorkspace == .local,
                 let aliasID = Self.serverID(fromWorkspaceString: persistedWorkspace),
-                let retainedID = deduplicated.aliases[aliasID]
+                let retainedID = aliases[aliasID]
             {
                 self.activeWorkspace = .server(retainedID)
             } else {
@@ -252,9 +294,12 @@ public final class ClusterConnectionStore {
             // old compute-target selection as the active workspace. The
             // Keychain token needs no migration — it is already keyed by
             // host:port.
-            let entry = ServerEntry(
+            var entry = ServerEntry(
                 name: Self.hostLabel(forURLString: legacyURL), urlString: legacyURL)
+            entry.siteID = ClusterSiteRepository.uniqueID(
+                preferred: nil, profile: entry.resolvedSite, taken: [])
             self.servers = [entry]
+            seededFromLegacyPreference = true
             let legacyTarget =
                 defaults.string(forKey: Self.computeTargetDefaultsKey)
                     .flatMap(ComputeTarget.init(rawValue:)) ?? .local
@@ -264,9 +309,13 @@ public final class ClusterConnectionStore {
             self.activeWorkspace = .local
         }
         if case .server(let id) = activeWorkspace { lastActiveServerID = id }
-        // didSet does not fire during init: stamp the new schema explicitly so
-        // the legacy keys are consulted exactly once.
-        persistServers()
+        // didSet does not fire during init, so the legacy single-URL branch
+        // materializes its synthesized entry here — and ONLY it. Launching
+        // must never rewrite the registry it just read: the files are a git
+        // repository the researcher reads and hand-edits, and an app that
+        // reformatted them on every launch would put noise in their diffs
+        // before they had done anything.
+        if seededFromLegacyPreference { persistServers() }
         persistWorkspace()
         // GPU-session wiring: the controller reads the ACTIVE server's client
         // and the last-fetched capability verdict through these closures, so
@@ -310,17 +359,24 @@ public final class ClusterConnectionStore {
             }
             return servers[existingIndex]
         }
-        let entry = ServerEntry(
+        var entry = ServerEntry(
             name: trimmedName.isEmpty ? Self.hostLabel(forURLString: trimmedURL) : trimmedName,
             urlString: trimmedURL)
+        entry.siteID = mintedSiteID(for: entry.resolvedSite)
         servers.append(entry)
         return entry
     }
 
+    /// Rename a saved server. The name lands on the site PROFILE too — a
+    /// registry file is a bare profile, so the profile's name is where both
+    /// clients read a site's label from, and a rename that only moved the
+    /// app's own copy would not survive the next save.
     public func renameServer(id: ServerEntry.ID, to name: String) {
         guard let index = servers.firstIndex(where: { $0.id == id }) else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        servers[index].name = trimmed.isEmpty ? servers[index].hostLabel : trimmed
+        let resolved = trimmed.isEmpty ? servers[index].hostLabel : trimmed
+        servers[index].name = resolved
+        if servers[index].site != nil { servers[index].site?.name = resolved }
     }
 
     public func updateServerURL(id: ServerEntry.ID, urlString: String) {
@@ -434,6 +490,12 @@ public final class ClusterConnectionStore {
         }) {
             let keptName = servers[index].name
             let wasDefaultName = keptName.isEmpty || keptName == servers[index].hostLabel
+            var profile = profile
+            // A registry file is a bare profile, so the site's NAME is the
+            // profile's name. Re-registering a preset over an entry the
+            // researcher renamed therefore has to carry the custom name into
+            // the profile, or saving would quietly rename their cluster back.
+            if !wasDefaultName { profile.name = keptName }
             servers[index].site = profile
             if wasDefaultName, !profile.name.isEmpty {
                 servers[index].name = profile.name
@@ -446,7 +508,9 @@ public final class ClusterConnectionStore {
         let seedURL = Self.seedURLString(for: profile)
         let name =
             profile.name.isEmpty ? Self.hostLabel(forURLString: seedURL) : profile.name
-        let entry = ServerEntry(name: name, urlString: seedURL, site: profile)
+        let entry = ServerEntry(
+            name: name, urlString: seedURL, site: profile,
+            siteID: mintedSiteID(for: profile))
         servers.append(entry)
         return entry
     }
@@ -471,38 +535,69 @@ public final class ClusterConnectionStore {
         }
     }
 
-    /// Decode a shared site-profile JSON (schema-checked) and register it.
+    /// Decode a shared site-profile JSON (schema-checked) and copy it into the
+    /// canonical registry.
     ///
-    /// Import-over is the app twin of `cluster sites import`, and it refuses
-    /// on the same finding (open-issues §17): the canonical identity ignores
-    /// the ssh `user@` half, so a login-less profile lands on the
-    /// login-carrying entry and replaces it — after which `ssh <host>`
-    /// authenticates as the local account. `addSite` itself stays silent
-    /// because its other callers (presets, a freshly built profile from the
-    /// editor) carry no stored login to lose; `addPreset` already refuses to
-    /// clobber an edited entry.
+    /// THE app-side import — the connection dot's "Import Site JSON…" and the
+    /// setup wizard's button both land here, and it runs exactly the
+    /// validations `cluster sites import` runs, because both now go through
+    /// `ClusterSiteRepository.importProfile`. Before 2026-08-21 the app
+    /// decoded the JSON itself and skipped them, so a profile whose ssh
+    /// destination had no `user@` login was accepted in silence and first
+    /// failed at Duo, hours later, as "asks for my password, then tells me to
+    /// enroll in 2FA".
+    ///
+    /// Three refusals, all AT IMPORT TIME:
+    ///
+    ///   * a KNOWN login would be dropped → `sshLoginDropped` (open-issues
+    ///     §17: the canonical identity ignores the `user@` half, so a
+    ///     login-less profile otherwise lands on the login-carrying entry and
+    ///     replaces it);
+    ///   * no login anywhere → `sshLoginMissing`, which is legal (a `User` in
+    ///     `~/.ssh/config` can supply it) and therefore asks rather than
+    ///     forbids — pass `acknowledgingWarnings` to proceed;
+    ///   * the registry already holds this site → `siteFileExists`, because
+    ///     the registry is a git repository the researcher syncs — pass
+    ///     `force` to replace it deliberately.
     @discardableResult
-    public func importSite(from data: Data) throws -> ServerEntry {
+    public func importSite(
+        from data: Data, force: Bool = false, acknowledgingWarnings: Bool = false
+    ) throws -> ServerEntry {
         let profile = try ClusterSiteProfile.decode(from: data)
-        let key = Self.canonicalKey(Self.registryKey(forProfile: profile))
-        let existing = servers.first {
-            Self.canonicalKey(Self.registryKey(forEntry: $0)) == key
-        }?.site
-        if case .refuse(let user, let host, let source) =
-            ClusterSiteRepository.sshLoginFinding(
-                incoming: profile, existing: existing) {
-            throw ClusterLifecycleError.sshLoginDropped(
-                siteID: profile.name.isEmpty ? host : profile.name,
-                host: host, expectedUser: user, source: source)
+        var warnings: [String] = []
+        let record = try siteRegistry.importProfile(
+            profile, force: force, warn: { warnings.append($0) })
+        if !acknowledgingWarnings, let note = warnings.first {
+            // Undo before refusing: the researcher has not accepted this
+            // profile yet, and a half-imported site in the shared registry is
+            // worse than none.
+            try? siteRegistry.remove(id: record.id)
+            let host: String
+            if case .ssh(let destination, _, _, _) = profile.transport {
+                host = destination
+            } else {
+                host = record.displayName
+            }
+            throw ClusterLifecycleError.sshLoginMissing(host: host, note: note)
+        }
+        reloadSitesFromDisk()
+        if let entry = servers.first(where: { $0.siteID == record.id }) {
+            return entry
         }
         return addSite(profile)
     }
 
-    /// A saved entry's site as shareable JSON (sorted keys, pretty printed);
-    /// nil when the id names no entry.
+    /// A saved entry's site as shareable JSON (sorted keys, pretty printed,
+    /// trailing newline); nil when the id names no entry. Same sanitizer the
+    /// registry files go through, so an export and a Sites file can never
+    /// disagree about what is shareable.
     public func exportSite(id: ServerEntry.ID) throws -> Data? {
         guard let entry = server(id: id) else { return nil }
-        return try entry.resolvedSite.encoded()
+        return try ClusterSiteSanitizer.encodedExport(
+            for: ClusterSiteRecord(
+                id: entry.siteID ?? entry.id.uuidString,
+                displayName: entry.displayName,
+                profile: entry.resolvedSite))
     }
 
     /// Register one of the shipped presets. NEVER clobbers an edited site:
@@ -765,9 +860,9 @@ public final class ClusterConnectionStore {
     /// the copy that loses. Between two entries of the same shape the one that
     /// carries an ssh LOGIN wins (open-issues §17: array order used to decide,
     /// so a bare-host duplicate could silently swallow the `user@host` entry
-    /// this registry authenticates with — and the one-time migration into
-    /// `cluster-sites.json` runs through here); otherwise the first wins, as
-    /// before.
+    /// this registry authenticates with — and the one-time migration into the
+    /// canonical Sites registry runs through here); otherwise the first wins,
+    /// as before.
     nonisolated static func deduplicatedServersWithAliases(_ servers: [ServerEntry])
         -> (servers: [ServerEntry], aliases: [ServerEntry.ID: ServerEntry.ID])
     {
@@ -1582,9 +1677,112 @@ public final class ClusterConnectionStore {
 
     // MARK: Persistence
 
+    /// One registry record as a saved entry.
+    ///
+    /// The entry's UUID is the app's own handle (the persisted
+    /// active-workspace selection names it), so it must be STABLE across
+    /// launches without living in the shared registry: a migrated site keeps
+    /// the UUID the runtime cache remembers, and anything else derives one
+    /// deterministically from the site id.
+    nonisolated static func entry(for record: ClusterSiteRecord) -> ServerEntry {
+        let seed = seedURLString(for: record.profile)
+        let url =
+            record.profile.isSSHTransport ? (record.lastEndpoint ?? seed) : seed
+        var name = record.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let siteName = record.profile.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Heal names eaten by earlier registry churn: a label that is just the
+        // (ephemeral, tunnel-local) host adopts the profile's real name. The
+        // researcher must never have to recognize their cluster by its port.
+        if !siteName.isEmpty, name.isEmpty || name == hostLabel(forURLString: url) {
+            name = siteName
+        }
+        return ServerEntry(
+            id: record.legacyEntryID ?? entryID(forSiteID: record.id),
+            name: name.isEmpty ? record.id : name,
+            urlString: url,
+            site: record.profile,
+            siteID: record.id)
+    }
+
+    /// A stable UUID for a site id — the same site always presents the same
+    /// handle to the app, with nothing written down to make it so.
+    nonisolated static func entryID(forSiteID siteID: String) -> UUID {
+        let digest = SHA256.hash(data: Data(siteID.utf8))
+        var bytes = Array(digest.prefix(16))
+        // Stamp the version/variant nibbles so the value is a well-formed
+        // UUID rather than 16 arbitrary bytes wearing the type.
+        bytes[6] = (bytes[6] & 0x0F) | 0x50
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5],
+            bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+
+    /// Mint a registry id for a site the app just created, unique against the
+    /// ids already in this registry.
+    private func mintedSiteID(for profile: ClusterSiteProfile) -> String {
+        ClusterSiteRepository.uniqueID(
+            preferred: nil, profile: profile,
+            taken: Set(servers.compactMap(\.siteID)))
+    }
+
+    /// Write the whole registry through the shared repository: profiles to
+    /// `Sites/cluster-sites/`, runtime facts to this machine's cache. Files
+    /// whose bytes would not change are not touched at all, so a connect
+    /// cycle leaves the researcher's git tree clean.
     private func persistServers() {
-        if let data = try? JSONEncoder().encode(servers) {
-            defaults.set(data, forKey: Self.serversDefaultsKey)
+        guard !isReloadingFromDisk else { return }
+        var taken: Set<String> = []
+        var records: [ClusterSiteRecord] = []
+        for entry in servers {
+            let profile = entry.resolvedSite
+            var id = entry.siteID ?? ClusterSiteRepository.uniqueID(
+                preferred: nil, profile: profile, taken: taken)
+            if taken.contains(id) {
+                id = ClusterSiteRepository.uniqueID(
+                    preferred: id, profile: profile, taken: taken)
+            }
+            taken.insert(id)
+            records.append(
+                ClusterSiteRecord(
+                    id: id,
+                    displayName: entry.displayName,
+                    profile: profile,
+                    legacyEntryID: entry.id,
+                    lastEndpoint: entry.urlString,
+                    createdAt: Date(),
+                    updatedAt: Date()))
+        }
+        do {
+            try siteRegistry.write(ClusterSiteRegistryDocument(sites: records))
+        } catch {
+            // The registry is a plain directory the researcher owns — it can
+            // be read-only, or mid-`git checkout`. Say so; never crash, and
+            // never silently drop the edit.
+            status = "could not save the site registry: \(error.localizedDescription)"
+        }
+    }
+
+    /// Re-read the canonical registry, adopting edits made by `steerlab-cli`,
+    /// by another machine through git, or by hand in an editor.
+    ///
+    /// The app calls this at the moments a researcher would expect it to
+    /// notice — becoming active, and opening the cluster UI — rather than
+    /// watching the filesystem: a pull that rewrites the directory mid-edit
+    /// should not race the panel the researcher is typing into.
+    public func reloadSitesFromDisk() {
+        guard let records = try? siteRegistry.load().sites else { return }
+        siteRegistryProblems = siteRegistry.unreadableFiles()
+        let rebuilt = Self.deduplicatedServersWithAliases(
+            records.map(Self.entry(for:))).servers
+        guard rebuilt != servers else { return }
+        isReloadingFromDisk = true
+        servers = rebuilt
+        isReloadingFromDisk = false
+        if case .server(let id) = activeWorkspace,
+            !servers.contains(where: { $0.id == id }) {
+            activeWorkspace = .local
         }
     }
 
