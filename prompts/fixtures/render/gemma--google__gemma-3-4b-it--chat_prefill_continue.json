@@ -1,0 +1,59 @@
+{
+  "bosCount": 1,
+  "bosTokenID": 2,
+  "case": "chat_prefill_continue",
+  "family": "gemma",
+  "generator": {
+    "engine": "python-hf",
+    "generatedOn": "2026-07-13",
+    "script": "prompts/fixtures/render/generate.py",
+    "tokenizerClass": "GemmaTokenizer",
+    "transformersVersion": "5.12.1"
+  },
+  "inputs": {
+    "api": "render_messages",
+    "continueFinalMessage": true,
+    "messages": [
+      {
+        "content": "Decide the case and explain briefly.",
+        "role": "user"
+      },
+      {
+        "content": "The court holds that the appeal",
+        "role": "assistant",
+        "seeded": true
+      }
+    ],
+    "promptMode": "chatAssistant",
+    "qwenThinkingEnabled": false,
+    "systemPrompt": null
+  },
+  "modelID": "google/gemma-3-4b-it",
+  "promptTokenCount": 23,
+  "rendered": "<bos><start_of_turn>user\nDecide the case and explain briefly.<end_of_turn>\n<start_of_turn>model\nThe court holds that the appeal",
+  "tokenIDs": [
+    2,
+    105,
+    2364,
+    107,
+    8724,
+    754,
+    506,
+    1624,
+    532,
+    8082,
+    21485,
+    236761,
+    106,
+    107,
+    105,
+    4368,
+    107,
+    818,
+    4054,
+    9258,
+    600,
+    506,
+    12056
+  ]
+}

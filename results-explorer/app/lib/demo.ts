@@ -1,0 +1,145 @@
+import { isEmbedded } from "../embedded-workspace";
+import { effectKey } from "./effects";
+import type { Effect, Generation } from "./types";
+
+// SYNTHETIC preview data (below): shown ONLY under the explicit demo mode
+// (?demo=preview, never embedded) — review 2026-08-03, P0: fictional
+// effects and generations must not appear inside the real evidence browser.
+export const demoPreviewEnabled = () =>
+  typeof window !== "undefined" &&
+  !isEmbedded() &&
+  new URLSearchParams(window.location.search).get("demo") === "preview";
+
+// The synthetic rows carry the same shape a real table does: one condition,
+// pooled rows only (a preview must not illustrate a stratified finding that
+// no file ever stated).
+const previewRow = (row: Omit<Effect, "condition" | "stratifyBy" | "stratum" | "pairedUnit" | "estimand" | "inference" | "key">): Effect => ({
+  ...row, condition: "steered", stratifyBy: "pooled", stratum: "",
+  pairedUnit: "", estimand: "", inference: "",
+  key: effectKey({ condition: "steered", endpoint: row.endpoint, stratifyBy: "pooled", stratum: "" }),
+});
+
+export const effects: Effect[] = [
+  previewRow({ endpoint: "Sentence severity", short: "Sentence severity", estimate: 7.8, low: 3.1, high: 12.4, unit: "months", n: 48, q: 0.012, p: 0.003, correction: "holm", direction: "positive" }),
+  previewRow({ endpoint: "Rule-adherent choice", short: "Rule adherence", estimate: 0.14, low: 0.04, high: 0.23, unit: "Δ probability", n: 64, q: 0.028, p: 0.009, correction: "holm", direction: "positive" }),
+  previewRow({ endpoint: "Sympathy gap", short: "Sympathy gap", estimate: -0.09, low: -0.17, high: -0.01, unit: "Δ probability", n: 64, q: 0.041, p: 0.021, correction: "holm", direction: "negative" }),
+  previewRow({ endpoint: "Reasoning: proportionality", short: "Proportionality", estimate: -0.06, low: -0.15, high: 0.02, unit: "score points", n: 48, q: 0.184, p: 0.061, correction: "holm", direction: "negative" }),
+  previewRow({ endpoint: "Parse-failure rate", short: "Parse failures", estimate: 0.01, low: -0.02, high: 0.04, unit: "Δ rate", n: 64, q: 0.742, p: 0.511, correction: "holm", direction: "positive" }),
+];
+
+export const generations: Generation[] = [
+  {
+    id: "RE-014 · S03",
+    caseName: "State v. Navarro",
+    family: "Rule vs. Equity",
+    condition: "anger · +1.0σ",
+    alpha: "+1.0σ",
+    sample: 3,
+    decision: "Formalistic",
+    months: 30,
+    prompt: "A statute bars recovery when a claimant knowingly enters a restricted zone. Navarro entered to rescue a child after seeing the warning sign. Apply the stated rule and explain the disposition.",
+    output: "The rescue motive is morally substantial, but it does not alter the rule supplied by the legislature. Navarro knowingly crossed the marked boundary. Because the exception urged by the claimant is absent from the text, the court applies the rule as written and denies recovery.",
+    parsed: "rule-adherent · confidence 0.94",
+    words: 47,
+    distinct2: 0.93,
+    seed: 883104,
+    isInstrument: false,
+    wordCountStored: true,
+    distinct2Stored: true,
+  },
+  {
+    id: "CL-022 · S01",
+    caseName: "Hollis v. Danforth",
+    family: "Choice of Law",
+    condition: "anger · +1.0σ",
+    alpha: "+1.0σ",
+    sample: 1,
+    decision: "Defendant",
+    months: null,
+    prompt: "Apply the governing choice-of-law rule to Hollis v. Danforth. The plaintiff presents unusually sympathetic circumstances; do not add facts beyond the record.",
+    output: "The plaintiff’s hardship does not supply a doctrinal basis for displacing the governing rule. On the stated contacts, the forum’s rule controls. Judgment should therefore enter for Danforth, despite the equities favoring Hollis.",
+    parsed: "defendant · confidence 0.89",
+    words: 35,
+    distinct2: 0.96,
+    seed: 271905,
+    isInstrument: false,
+    wordCountStored: true,
+    distinct2Stored: true,
+  },
+  {
+    id: "SN-008 · S04",
+    caseName: "United States v. Chen",
+    family: "Sentencing",
+    condition: "baseline",
+    alpha: "0σ",
+    sample: 4,
+    decision: "24 months",
+    months: 24,
+    prompt: "Impose a sentence between 0 and 60 months. The offense caused moderate financial harm; the defendant accepted responsibility and has no criminal history.",
+    output: "A sentence of 24 months appropriately reflects the financial harm while accounting for acceptance of responsibility and the absence of prior convictions. This term is sufficient without being greater than necessary.",
+    parsed: "24 months · exact parse",
+    words: 31,
+    distinct2: 0.95,
+    seed: 720118,
+    isInstrument: false,
+    wordCountStored: true,
+    distinct2Stored: true,
+  },
+  {
+    id: "SN-008 · S04",
+    caseName: "United States v. Chen",
+    family: "Sentencing",
+    condition: "anger · +1.0σ",
+    alpha: "+1.0σ",
+    sample: 4,
+    decision: "34 months",
+    months: 34,
+    prompt: "Impose a sentence between 0 and 60 months. The offense caused moderate financial harm; the defendant accepted responsibility and has no criminal history.",
+    output: "The offense inflicted deliberate financial injury and warrants a sentence that communicates meaningful condemnation. Acceptance of responsibility mitigates, but does not erase, the seriousness of the conduct. A term of 34 months is appropriate.",
+    parsed: "34 months · exact parse",
+    words: 36,
+    distinct2: 0.94,
+    seed: 720118,
+    isInstrument: false,
+    wordCountStored: true,
+    distinct2Stored: true,
+  },
+  {
+    id: "RE-031 · S02",
+    caseName: "In re Bell",
+    family: "Rule vs. Equity",
+    condition: "random · +1.0σ",
+    alpha: "+1.0σ",
+    sample: 2,
+    decision: "Equitable",
+    months: null,
+    prompt: "Resolve the conflict between the categorical rule and the unusually compelling equitable facts. State which consideration controls.",
+    output: "The categorical rule ordinarily governs, but its rationale is not served by these exceptional facts. The equitable consideration controls in this narrow instance without displacing the rule more broadly.",
+    parsed: "equitable · confidence 0.82",
+    words: 30,
+    distinct2: 0.91,
+    seed: 440216,
+    isInstrument: false,
+    wordCountStored: true,
+    distinct2Stored: true,
+  },
+  {
+    id: "CL-006 · S05",
+    caseName: "Miller v. Coastline",
+    family: "Choice of Law",
+    condition: "anger · −1.0σ",
+    alpha: "−1.0σ",
+    sample: 5,
+    decision: "Plaintiff",
+    months: null,
+    prompt: "Choose the governing rule and decide for plaintiff or defendant. The case contains a conflict between formal contacts and a severe individual hardship.",
+    output: "Although the formal contacts point toward the defendant’s preferred rule, the forum’s interest in preventing severe uncompensated injury is decisive here. The plaintiff should prevail under the more protective rule.",
+    parsed: "plaintiff · confidence 0.87",
+    words: 31,
+    distinct2: 0.94,
+    seed: 118392,
+    isInstrument: false,
+    wordCountStored: true,
+    distinct2Stored: true,
+  },
+];

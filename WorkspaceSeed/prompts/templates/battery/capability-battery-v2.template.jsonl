@@ -1,0 +1,14 @@
+{"batteryFormat": 2, "scoring": "choiceProbability", "promptMode": "chatAssistant", "maxTokens": 24, "description": "TEMPLATE — capability battery, repaired format. Copy into your WORKSPACE prompts/batteries/, replace every item, lint it, then pin it. The items below are EXAMPLES of the format, not a study-ready battery: item authoring is a study-design decision (how hard, which capabilities, how many). Lint it with: steerlab-server battery lint prompts/batteries/<yours>.jsonl"}
+{"id": "arith-sum", "prompt": "What is 17 + 26?", "answer": "43", "options": ["43", "33", "44", "36"]}
+{"id": "arith-product", "prompt": "What is 9 times 8?", "answer": "72", "options": ["72", "63", "81", "78"]}
+{"id": "seq-next", "prompt": "Continue the sequence: 2, 4, 6, 8, ...", "answer": "10", "options": ["10", "12", "9", "16"]}
+{"id": "magnitude", "prompt": "Which number is larger, 0.7 or 0.07? Answer 0.7, 0.07, or equal.", "answer": "0.7", "options": ["0.7", "0.07", "equal"]}
+{"id": "geo-capital", "prompt": "What is the capital of France?", "answer": "Paris", "options": ["Paris", "Lyon", "Marseille", "Bordeaux"]}
+{"id": "sci-mixing", "prompt": "What color results from mixing blue and yellow paint?", "answer": "green", "options": ["green", "purple", "orange", "brown"]}
+{"id": "cal-weekday", "prompt": "Which day of the week comes immediately after Tuesday?", "answer": "Wednesday", "options": ["Wednesday", "Monday", "Thursday", "Sunday"]}
+{"id": "logic-subset", "prompt": "Is every rectangle a square? Answer yes, no, or sometimes.", "answer": "no", "options": ["no", "yes", "sometimes"]}
+{"id": "logic-superset", "prompt": "Is every square a rectangle? Answer yes, no, or sometimes.", "answer": "yes", "options": ["yes", "no", "sometimes"]}
+{"id": "sci-boiling", "prompt": "At sea level, water boils at how many degrees Celsius?", "answer": "100", "options": ["100", "212", "50", "0"]}
+{"id": "str-reverse", "prompt": "The word 'cat' spelled backwards is which of these?", "answer": "tac", "options": ["tac", "cta", "act", "atc"]}
+{"id": "sort-alpha", "prompt": "Which word comes first in alphabetical order?", "answer": "apple", "options": ["apple", "lemon", "orange", "pear"]}
+{"id": "gen-free-example", "prompt": "Reply with exactly the token OKAY and nothing else.", "answer": "okay", "scoring": "generatedText", "grading": "token_exact", "note": "ESCAPE HATCH, shown for completeness. generatedText items generate and text-match, so they remain length- and format-sensitive; lint flags this one on purpose. Use it only for a capability that genuinely cannot be posed as a choice, and expect to defend it in the methods note."}

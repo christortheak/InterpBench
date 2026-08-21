@@ -1,0 +1,64 @@
+/* Response-coding view styles (Phase 2). The shell, pin grid, alert cards
+   and .jv-table come from judged.css (imported alongside this file) and
+   globals.css; only coding-specific pieces live here: the field matrix
+   cells, the code chips, the split panes, and the word-count grid. */
+
+.coding-view .field-schema { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.coding-view .field-schema ul { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
+.coding-view .field-schema li { border-left: 2px solid var(--blue); padding-left: 9px; }
+.coding-view .field-schema strong { display: block; font: 11px var(--mono); }
+.coding-view .field-schema span { color: var(--muted); font-size: 10px; }
+
+/* --- the fields x condition matrix ----------------------------------- */
+.coding-matrix th, .coding-matrix td { vertical-align: top; }
+.coding-matrix thead th { text-align: right; font-size: 8px; line-height: 1.5; }
+.coding-matrix thead th small { display: block; font: 8px var(--mono); font-weight: 400; text-transform: none; letter-spacing: 0; }
+.coding-matrix tbody th strong { display: block; font: 11px var(--mono); }
+.coding-matrix tbody th small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
+.coding-matrix tbody td strong { display: block; font: 500 19px var(--serif); }
+.coding-matrix tbody td small { display: block; margin-top: 3px; color: var(--muted); font: 9px var(--mono); }
+.coding-matrix .count-list { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.coding-matrix .count-list em { font-style: normal; font: 10px var(--mono); color: var(--muted); }
+.coding-matrix .count-list b { color: var(--ink); font-size: 11px; }
+.coding-matrix .wordcount-row th, .coding-matrix .wordcount-row td { border-top: 1px solid var(--line-dark); }
+.coding-view .pair-cell { text-align: left; font-size: 10px; }
+
+/* --- code chips ------------------------------------------------------ */
+.codes-block { padding: 20px 0; border-bottom: 1px solid var(--line); }
+.codes-block > .section-number { display: block; }
+.code-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-dark); border-radius: 3px; padding: 5px 8px; background: var(--card); font: 10px var(--mono); }
+.chip b { color: var(--muted); font-weight: 700; }
+.chip-boolean { border-color: var(--blue); background: var(--blue-soft); }
+.chip-number { border-color: var(--green); background: var(--green-soft); }
+.chip-string { border-color: var(--amber); background: var(--amber-soft); }
+.chip-null, .chip-missing { color: var(--muted); background: #f2f1ea; }
+.brief-reason { margin: 13px 0 0; font: 13px/1.6 var(--serif); }
+
+.coding-reader-card .section-header p { margin: 6px 0 0; max-width: 620px; color: var(--muted); font-size: 11px; }
+.coding-view .reader-shell { margin-top: 18px; height: auto; min-height: 0; max-height: 760px; }
+.coding-view .record-detail { max-height: 760px; }
+.coding-view .records { overflow-y: auto; }
+.coding-view .reader-filters { display: grid; gap: 8px; }
+.coding-view .value-filter { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.coding-view .value-filter select { border: 1px solid var(--line); background: white; padding: 7px 9px; color: var(--ink); font-size: 9px; }
+.coding-view .value-filter select:disabled { color: var(--muted); background: #f2f1ea; }
+
+/* --- coder splits ---------------------------------------------------- */
+.split-codings { display: grid; gap: 10px; margin-top: 16px; }
+.split-coding { border: 1px solid var(--line); border-left: 3px solid var(--amber); padding: 12px 14px; }
+.split-coding > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.split-coding strong { font-size: 12px; }
+.split-coding p { margin: 9px 0 0; font: 13px/1.55 var(--serif); }
+
+/* --- word counts ----------------------------------------------------- */
+.wordcount-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 18px; }
+.wordcount-grid article { border: 1px solid var(--line); padding: 13px 14px; }
+.wordcount-grid > article > header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.wordcount-grid strong { font: 500 15px var(--serif); }
+.wordcount-grid header span { display: block; color: var(--muted); font-size: 9px; }
+.wordcount-means { display: flex; gap: 14px; text-align: right; }
+.wordcount-means strong { font: 500 17px var(--serif); }
+
+/* Export buttons in the aggregate and reader section headers. */
+.coding-view .section-header .secondary { padding: 9px 12px; font-size: 10px; }

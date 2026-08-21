@@ -1,0 +1,10 @@
+# Known-and-accepted public-scan findings — each line `<path> :: <check>`.
+# Every entry is a deliberate artifact with a reason; a line that stops
+# matching is reported stale so this file cannot rot.
+#
+# The three fake API tokens below are FIXTURES: the cluster secret-hygiene
+# tests assert that sk-shaped strings are detected, refused from bundles,
+# and never echoed — they need a realistic-looking token to fail on.
+Tests/ExperimentKitTests/ClusterCLITests.swift :: secret
+Tests/ExperimentKitTests/ClusterLifecycleCoordinatorTests.swift :: secret
+Tests/ExperimentKitTests/ClusterProvisioningOperationsTests.swift :: secret

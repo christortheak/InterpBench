@@ -1,0 +1,5 @@
+{
+  "rubric": "---\nmode: perResponseCoding\nfield: mentionsLegalRule boolean\nfield: mentionsEquity boolean\nfield: severity integer optional\nfield: stance enum(legalist|equitable|mixed)\n---\n# Example coding rubric (golden fixture)\n\n- mentionsLegalRule \u2014 true iff the response mentions the legal rule stated\n  in the vignette.\n- mentionsEquity \u2014 true iff the response refers to fairness, justice,\n  reasonableness, or hardship considerations.\n- severity \u2014 sentence severity on the vignette's stated 1-9 scale, when a\n  sentence is imposed.\n- stance \u2014 the dominant reasoning stance of the response.\n",
+  "response": "The gift was irrevocable under the stated rule. However, fairness \nto the donor also matters here.\n",
+  "taskPrompt": "Decide the appeal and give reasons.\n"
+}

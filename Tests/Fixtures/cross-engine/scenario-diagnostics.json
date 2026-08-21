@@ -1,0 +1,606 @@
+[
+  {
+    "input": {
+      "labels": [
+        true,
+        true,
+        false,
+        false
+      ],
+      "projections": [
+        2.0,
+        1.5,
+        -1.5,
+        -2.0
+      ],
+      "threshold": 0.0
+    },
+    "label": "separated",
+    "report": {
+      "accuracy": 1.0,
+      "auc": 1.0,
+      "balancedAccuracy": 1.0,
+      "classCounts": {
+        "negative": 2,
+        "positive": 2
+      },
+      "classMeans": {
+        "negative": -1.0,
+        "positive": 1.0
+      },
+      "confusion": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 2,
+        "tp": 2
+      },
+      "directionNorm": 1.0,
+      "heldOutCalibration": {
+        "accuracy": 1.0,
+        "balancedAccuracy": 1.0,
+        "classMeans": {
+          "negative": -1.75,
+          "positive": 1.75
+        },
+        "confusion": {
+          "fn": 0,
+          "fp": 0,
+          "tn": 2,
+          "tp": 2
+        },
+        "threshold": 0.0
+      },
+      "layer": 3,
+      "naiveItemLevelInterval95": [
+        0.5101091635454027,
+        1.0
+      ],
+      "oneSidedPredictions": false,
+      "rows": [
+        {
+          "correct": true,
+          "id": "s0",
+          "index": 0,
+          "label": true,
+          "margin": 2.0,
+          "predicted": true,
+          "projection": 2.0,
+          "rowHash": "0ef7920d5eb3a92924663ea6f788511a97be3905e1cb7d785258ee09dc6357be"
+        },
+        {
+          "correct": true,
+          "id": "s1",
+          "index": 1,
+          "label": true,
+          "margin": 1.5,
+          "predicted": true,
+          "projection": 1.5,
+          "rowHash": "2f531e3339e8e3a31c5120e42adbd9f14953c352897654f9324c98406eb12d72"
+        },
+        {
+          "correct": true,
+          "id": "s2",
+          "index": 2,
+          "label": false,
+          "margin": -1.5,
+          "predicted": false,
+          "projection": -1.5,
+          "rowHash": "85392d9b30578de9508dfad82dd57490d5ff18d4246223f228b76535440a0b8d"
+        },
+        {
+          "correct": true,
+          "id": "s3",
+          "index": 3,
+          "label": false,
+          "margin": -2.0,
+          "predicted": false,
+          "projection": -2.0,
+          "rowHash": "aca8dd30f8c908f9431f51040b73e728c64fb9cba905c5f5fefc49a28b7f5ed2"
+        }
+      ],
+      "scenarioCount": 4,
+      "sensitivity": 1.0,
+      "specificity": 1.0,
+      "threshold": 0.0
+    }
+  },
+  {
+    "input": {
+      "labels": [
+        true,
+        true,
+        false,
+        false
+      ],
+      "projections": [
+        2.0,
+        1.5,
+        -1.5,
+        -2.0
+      ],
+      "threshold": 5.0
+    },
+    "label": "ranked-but-misthresholded",
+    "report": {
+      "accuracy": 0.5,
+      "auc": 1.0,
+      "balancedAccuracy": 0.5,
+      "classCounts": {
+        "negative": 2,
+        "positive": 2
+      },
+      "classMeans": {
+        "negative": -1.0,
+        "positive": 1.0
+      },
+      "confusion": {
+        "fn": 2,
+        "fp": 0,
+        "tn": 2,
+        "tp": 0
+      },
+      "directionNorm": 1.0,
+      "heldOutCalibration": {
+        "accuracy": 1.0,
+        "balancedAccuracy": 1.0,
+        "classMeans": {
+          "negative": -1.75,
+          "positive": 1.75
+        },
+        "confusion": {
+          "fn": 0,
+          "fp": 0,
+          "tn": 2,
+          "tp": 2
+        },
+        "threshold": 0.0
+      },
+      "layer": 3,
+      "naiveItemLevelInterval95": [
+        0.15003898915214947,
+        0.8499610108478506
+      ],
+      "oneSidedPredictions": true,
+      "rows": [
+        {
+          "correct": false,
+          "id": "s0",
+          "index": 0,
+          "label": true,
+          "margin": -3.0,
+          "predicted": false,
+          "projection": 2.0,
+          "rowHash": "0ef7920d5eb3a92924663ea6f788511a97be3905e1cb7d785258ee09dc6357be"
+        },
+        {
+          "correct": false,
+          "id": "s1",
+          "index": 1,
+          "label": true,
+          "margin": -3.5,
+          "predicted": false,
+          "projection": 1.5,
+          "rowHash": "2f531e3339e8e3a31c5120e42adbd9f14953c352897654f9324c98406eb12d72"
+        },
+        {
+          "correct": true,
+          "id": "s2",
+          "index": 2,
+          "label": false,
+          "margin": -6.5,
+          "predicted": false,
+          "projection": -1.5,
+          "rowHash": "85392d9b30578de9508dfad82dd57490d5ff18d4246223f228b76535440a0b8d"
+        },
+        {
+          "correct": true,
+          "id": "s3",
+          "index": 3,
+          "label": false,
+          "margin": -7.0,
+          "predicted": false,
+          "projection": -2.0,
+          "rowHash": "aca8dd30f8c908f9431f51040b73e728c64fb9cba905c5f5fefc49a28b7f5ed2"
+        }
+      ],
+      "scenarioCount": 4,
+      "sensitivity": 0.0,
+      "specificity": 1.0,
+      "threshold": 5.0
+    }
+  },
+  {
+    "input": {
+      "labels": [
+        true,
+        true,
+        false,
+        false
+      ],
+      "projections": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "threshold": 1.0
+    },
+    "label": "all-ties",
+    "report": {
+      "accuracy": 0.5,
+      "auc": 0.5,
+      "balancedAccuracy": 0.5,
+      "classCounts": {
+        "negative": 2,
+        "positive": 2
+      },
+      "classMeans": {
+        "negative": -1.0,
+        "positive": 1.0
+      },
+      "confusion": {
+        "fn": 2,
+        "fp": 0,
+        "tn": 2,
+        "tp": 0
+      },
+      "directionNorm": 1.0,
+      "heldOutCalibration": {
+        "accuracy": 0.5,
+        "balancedAccuracy": 0.5,
+        "classMeans": {
+          "negative": 1.0,
+          "positive": 1.0
+        },
+        "confusion": {
+          "fn": 2,
+          "fp": 0,
+          "tn": 2,
+          "tp": 0
+        },
+        "threshold": 1.0
+      },
+      "layer": 3,
+      "naiveItemLevelInterval95": [
+        0.15003898915214947,
+        0.8499610108478506
+      ],
+      "oneSidedPredictions": true,
+      "rows": [
+        {
+          "correct": false,
+          "id": "s0",
+          "index": 0,
+          "label": true,
+          "margin": 0.0,
+          "predicted": false,
+          "projection": 1.0,
+          "rowHash": "0ef7920d5eb3a92924663ea6f788511a97be3905e1cb7d785258ee09dc6357be"
+        },
+        {
+          "correct": false,
+          "id": "s1",
+          "index": 1,
+          "label": true,
+          "margin": 0.0,
+          "predicted": false,
+          "projection": 1.0,
+          "rowHash": "2f531e3339e8e3a31c5120e42adbd9f14953c352897654f9324c98406eb12d72"
+        },
+        {
+          "correct": true,
+          "id": "s2",
+          "index": 2,
+          "label": false,
+          "margin": 0.0,
+          "predicted": false,
+          "projection": 1.0,
+          "rowHash": "85392d9b30578de9508dfad82dd57490d5ff18d4246223f228b76535440a0b8d"
+        },
+        {
+          "correct": true,
+          "id": "s3",
+          "index": 3,
+          "label": false,
+          "margin": 0.0,
+          "predicted": false,
+          "projection": 1.0,
+          "rowHash": "aca8dd30f8c908f9431f51040b73e728c64fb9cba905c5f5fefc49a28b7f5ed2"
+        }
+      ],
+      "scenarioCount": 4,
+      "sensitivity": 0.0,
+      "specificity": 1.0,
+      "threshold": 1.0
+    }
+  },
+  {
+    "input": {
+      "labels": [
+        true,
+        true,
+        true
+      ],
+      "projections": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "threshold": 0.0
+    },
+    "label": "single-class",
+    "report": {
+      "accuracy": 1.0,
+      "auc": null,
+      "balancedAccuracy": null,
+      "classCounts": {
+        "negative": 0,
+        "positive": 3
+      },
+      "classMeans": {
+        "negative": -1.0,
+        "positive": 1.0
+      },
+      "confusion": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 0,
+        "tp": 3
+      },
+      "directionNorm": 1.0,
+      "heldOutCalibration": null,
+      "layer": 3,
+      "naiveItemLevelInterval95": [
+        0.4385029682449546,
+        1.0
+      ],
+      "oneSidedPredictions": true,
+      "rows": [
+        {
+          "correct": true,
+          "id": "s0",
+          "index": 0,
+          "label": true,
+          "margin": 1.0,
+          "predicted": true,
+          "projection": 1.0,
+          "rowHash": "0ef7920d5eb3a92924663ea6f788511a97be3905e1cb7d785258ee09dc6357be"
+        },
+        {
+          "correct": true,
+          "id": "s1",
+          "index": 1,
+          "label": true,
+          "margin": 2.0,
+          "predicted": true,
+          "projection": 2.0,
+          "rowHash": "2f531e3339e8e3a31c5120e42adbd9f14953c352897654f9324c98406eb12d72"
+        },
+        {
+          "correct": true,
+          "id": "s2",
+          "index": 2,
+          "label": true,
+          "margin": 3.0,
+          "predicted": true,
+          "projection": 3.0,
+          "rowHash": "e5e63eec1c59a1e1201b88080447963ca880147d35b852dbb0c217c57d02d417"
+        }
+      ],
+      "scenarioCount": 3,
+      "sensitivity": 1.0,
+      "specificity": null,
+      "threshold": 0.0
+    }
+  },
+  {
+    "input": {
+      "labels": [
+        true,
+        true,
+        false,
+        false
+      ],
+      "projections": [
+        -2.0,
+        -1.5,
+        1.5,
+        2.0
+      ],
+      "threshold": 0.0
+    },
+    "label": "inverted",
+    "report": {
+      "accuracy": 0.0,
+      "auc": 0.0,
+      "balancedAccuracy": 0.0,
+      "classCounts": {
+        "negative": 2,
+        "positive": 2
+      },
+      "classMeans": {
+        "negative": -1.0,
+        "positive": 1.0
+      },
+      "confusion": {
+        "fn": 2,
+        "fp": 2,
+        "tn": 0,
+        "tp": 0
+      },
+      "directionNorm": 1.0,
+      "heldOutCalibration": {
+        "accuracy": 0.0,
+        "balancedAccuracy": 0.0,
+        "classMeans": {
+          "negative": 1.75,
+          "positive": -1.75
+        },
+        "confusion": {
+          "fn": 2,
+          "fp": 2,
+          "tn": 0,
+          "tp": 0
+        },
+        "threshold": 0.0
+      },
+      "layer": 3,
+      "naiveItemLevelInterval95": [
+        0.0,
+        0.4898908364545973
+      ],
+      "oneSidedPredictions": false,
+      "rows": [
+        {
+          "correct": false,
+          "id": "s0",
+          "index": 0,
+          "label": true,
+          "margin": -2.0,
+          "predicted": false,
+          "projection": -2.0,
+          "rowHash": "0ef7920d5eb3a92924663ea6f788511a97be3905e1cb7d785258ee09dc6357be"
+        },
+        {
+          "correct": false,
+          "id": "s1",
+          "index": 1,
+          "label": true,
+          "margin": -1.5,
+          "predicted": false,
+          "projection": -1.5,
+          "rowHash": "2f531e3339e8e3a31c5120e42adbd9f14953c352897654f9324c98406eb12d72"
+        },
+        {
+          "correct": false,
+          "id": "s2",
+          "index": 2,
+          "label": false,
+          "margin": 1.5,
+          "predicted": true,
+          "projection": 1.5,
+          "rowHash": "85392d9b30578de9508dfad82dd57490d5ff18d4246223f228b76535440a0b8d"
+        },
+        {
+          "correct": false,
+          "id": "s3",
+          "index": 3,
+          "label": false,
+          "margin": 2.0,
+          "predicted": true,
+          "projection": 2.0,
+          "rowHash": "aca8dd30f8c908f9431f51040b73e728c64fb9cba905c5f5fefc49a28b7f5ed2"
+        }
+      ],
+      "scenarioCount": 4,
+      "sensitivity": 0.0,
+      "specificity": 0.0,
+      "threshold": 0.0
+    }
+  },
+  {
+    "input": {
+      "labels": [
+        true,
+        true,
+        false,
+        false
+      ],
+      "projections": [
+        1.0,
+        2.0,
+        -1.0,
+        -2.0
+      ],
+      "threshold": 0.0
+    },
+    "label": "perfect-small-n",
+    "report": {
+      "accuracy": 1.0,
+      "auc": 1.0,
+      "balancedAccuracy": 1.0,
+      "classCounts": {
+        "negative": 2,
+        "positive": 2
+      },
+      "classMeans": {
+        "negative": -1.0,
+        "positive": 1.0
+      },
+      "confusion": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 2,
+        "tp": 2
+      },
+      "directionNorm": 1.0,
+      "heldOutCalibration": {
+        "accuracy": 1.0,
+        "balancedAccuracy": 1.0,
+        "classMeans": {
+          "negative": -1.5,
+          "positive": 1.5
+        },
+        "confusion": {
+          "fn": 0,
+          "fp": 0,
+          "tn": 2,
+          "tp": 2
+        },
+        "threshold": 0.0
+      },
+      "layer": 3,
+      "naiveItemLevelInterval95": [
+        0.5101091635454027,
+        1.0
+      ],
+      "oneSidedPredictions": false,
+      "rows": [
+        {
+          "correct": true,
+          "id": "s0",
+          "index": 0,
+          "label": true,
+          "margin": 1.0,
+          "predicted": true,
+          "projection": 1.0,
+          "rowHash": "0ef7920d5eb3a92924663ea6f788511a97be3905e1cb7d785258ee09dc6357be"
+        },
+        {
+          "correct": true,
+          "id": "s1",
+          "index": 1,
+          "label": true,
+          "margin": 2.0,
+          "predicted": true,
+          "projection": 2.0,
+          "rowHash": "2f531e3339e8e3a31c5120e42adbd9f14953c352897654f9324c98406eb12d72"
+        },
+        {
+          "correct": true,
+          "id": "s2",
+          "index": 2,
+          "label": false,
+          "margin": -1.0,
+          "predicted": false,
+          "projection": -1.0,
+          "rowHash": "85392d9b30578de9508dfad82dd57490d5ff18d4246223f228b76535440a0b8d"
+        },
+        {
+          "correct": true,
+          "id": "s3",
+          "index": 3,
+          "label": false,
+          "margin": -2.0,
+          "predicted": false,
+          "projection": -2.0,
+          "rowHash": "aca8dd30f8c908f9431f51040b73e728c64fb9cba905c5f5fefc49a28b7f5ed2"
+        }
+      ],
+      "scenarioCount": 4,
+      "sensitivity": 1.0,
+      "specificity": 1.0,
+      "threshold": 0.0
+    }
+  }
+]

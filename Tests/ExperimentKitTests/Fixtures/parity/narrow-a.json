@@ -1,0 +1,17 @@
+{
+  "concept": "parity-narrow-a",
+  "extractionDate": "2026-07-12T00:00:00Z",
+  "hiddenSize": 4,
+  "layerCount": 4,
+  "modelID": "steerlab/parity-fixture",
+  "normsPerLayer": [
+    5.477225575051661,
+    7.3484692283495345,
+    9.273618495495704,
+    11.224972160321824
+  ],
+  "recipeName": "hand-authored cross-engine parity fixture (WS7.3)",
+  "schemaVersion": 2,
+  "stimulusSetHash": "parity-fixture-v1",
+  "substrate": "swift-mlx"
+}

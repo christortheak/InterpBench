@@ -1,0 +1,17 @@
+{"batteryFormat": 2, "scoring": "choiceProbability", "promptMode": "chatAssistant", "maxTokens": 24, "description": "Sixteen worked-example capability probes — arithmetic, recall, logic, and instruction constraints — read as answer-token choices."}
+{"id": "starter-01", "prompt": "What is 24 + 58?", "answer": "82", "options": ["72", "82", "92"]}
+{"id": "starter-02", "prompt": "What is 144 divided by 12?", "answer": "12", "options": ["11", "12", "14"]}
+{"id": "starter-03", "prompt": "A train leaves at 9:20 and arrives at 10:05. How many minutes is the trip?", "answer": "45", "options": ["35", "45", "85"]}
+{"id": "starter-04", "prompt": "What is 7 squared minus 9?", "answer": "40", "options": ["40", "49", "58"]}
+{"id": "starter-05", "prompt": "How many days are in September?", "answer": "30", "options": ["28", "30", "31"]}
+{"id": "starter-06", "prompt": "What is the capital of Japan?", "answer": "Tokyo", "options": ["Tokyo", "Osaka", "Kyoto"]}
+{"id": "starter-07", "prompt": "Which planet is known as the red planet?", "answer": "Mars", "options": ["Mars", "Venus", "Saturn"]}
+{"id": "starter-08", "prompt": "What is the chemical formula for water?", "answer": "H2O", "options": ["H2O", "CO2", "NaCl"]}
+{"id": "starter-09", "prompt": "On which continent is Egypt located?", "answer": "Africa", "options": ["Africa", "Europe", "Asia"]}
+{"id": "starter-10", "prompt": "Is 51 a prime number?", "answer": "No", "options": ["Yes", "No", "Maybe"]}
+{"id": "starter-11", "prompt": "At sea level, at what temperature in degrees Celsius does water boil?", "answer": "100", "options": ["37", "50", "100"]}
+{"id": "starter-12", "prompt": "Which is longer, a week or eight days?", "answer": "Eight days", "options": ["Eight days", "A week", "They tie"]}
+{"id": "starter-13", "prompt": "A rule says to repeat the phrase 'the quick brown fox'. Which candidate obeys it?", "answer": "the quick brown fox", "options": ["the quick brown fox", "the quick brown ox", "a quick brown fox"]}
+{"id": "starter-14", "prompt": "A rule says to list the colors red, green, blue in reverse order. Which candidate obeys it?", "answer": "blue, green, red", "options": ["blue, green, red", "green, blue, red", "red, green, blue"]}
+{"id": "starter-15", "prompt": "What is the word 'form' spelled backwards?", "answer": "mrof", "options": ["mrof", "mfor", "orfm"]}
+{"id": "starter-16", "prompt": "A rule says to greet Ada in the format 'Hello, NAME!'. Which candidate obeys it?", "answer": "Hello, Ada!", "options": ["Hello, Ada!", "Hi, Ada!", "Hello there Ada"]}

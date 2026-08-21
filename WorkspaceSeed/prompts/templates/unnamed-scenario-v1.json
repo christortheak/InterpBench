@@ -1,0 +1,7 @@
+{
+  "id": "unnamed-scenario-v1",
+  "conceptSlot": false,
+  "text": "Consider the following scenario:\nScenario: {{stimulus}}\nThe intensity of the described state is",
+  "latToken": "final",
+  "divergence": "unnamed-clean-room"
+}

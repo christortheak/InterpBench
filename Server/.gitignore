@@ -1,0 +1,16 @@
+# Local Python venv (bridged to the existing torch install; kept out of iCloud
+# sync via the .nosync suffix).
+.venv.nosync/
+*.nosync/
+
+# Byte-compiled / build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Run outputs live in the project-root runs/ (already gitignored there), never
+# under Server/. This guards against a stray STEERLAB_ROOT pointing here.
+runs/

@@ -1,0 +1,23 @@
+{
+  "changed" : true,
+  "engine" : "swift-mlx",
+  "message" : "pinned task prompts prompts/cases/demo-items.jsonl @ 1bd44b1d6cc1… (2 item(s))",
+  "nextAction" : {
+    "missingPermissionFlags" : [
+
+    ],
+    "requiresHuman" : false,
+    "verb" : "experiment declare-condition demo <condition> --slots <concept>:<layer>:<alpha>"
+  },
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "result" : {
+    "experiment" : "demo",
+    "itemCount" : 2,
+    "taskPromptsFile" : "prompts/cases/demo-items.jsonl",
+    "taskPromptsHash" : "1bd44b1d6cc1a7de2f9e402b88e40c0746fee7152cf998ea60aa081faae030ea"
+  },
+  "schemaVersion" : 1,
+  "state" : "ready",
+  "verb" : "experiment pin-prompts",
+  "workspace" : "<workspace>"
+}

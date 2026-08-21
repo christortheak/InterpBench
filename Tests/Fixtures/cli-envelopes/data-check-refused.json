@@ -1,0 +1,130 @@
+{
+  "changed" : false,
+  "engine" : "swift-mlx",
+  "error" : {
+    "code" : "dataReadiness",
+    "gate" : "dataReadiness",
+    "gates" : [
+      "dataReadiness"
+    ],
+    "reason" : "2 blocking data requirements for 'demo'",
+    "repairAction" : "author the files named by result.blockers[].path, then steerlab-cli data check demo"
+  },
+  "message" : "2 blocking data requirements for 'demo'",
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "result" : {
+    "blockers" : [
+      {
+        "detail" : "never-named validation.jsonl is required before validate can gate freeze — scenarios must evoke the concept without naming it",
+        "id" : "concept:french:validation",
+        "kind" : "conceptValidation",
+        "path" : "prompts/concepts/french/validation.jsonl",
+        "status" : "missing",
+        "templateID" : "validation",
+        "title" : "validation set — french"
+      },
+      {
+        "detail" : "no task-prompts file declared — a measured study needs a pinned prompt set (frozen studies refuse to run without one); author the file at this path, then 'steerlab-cli experiment pin-prompts demo <path>'",
+        "id" : "taskPrompts",
+        "kind" : "taskPrompts",
+        "path" : "prompts/tasks/demo-prompts.jsonl",
+        "status" : "missing",
+        "templateID" : "task-prompts-choice",
+        "title" : "task prompts"
+      }
+    ],
+    "counts" : {
+      "invalid" : 0,
+      "missing" : 2,
+      "optional" : 4,
+      "partial" : 0,
+      "present" : 3
+    },
+    "experiment" : "demo",
+    "items" : [
+      {
+        "detail" : "never-named validation.jsonl is required before validate can gate freeze — scenarios must evoke the concept without naming it",
+        "id" : "concept:french:validation",
+        "kind" : "conceptValidation",
+        "path" : "prompts/concepts/french/validation.jsonl",
+        "status" : "missing",
+        "templateID" : "validation",
+        "title" : "validation set — french"
+      },
+      {
+        "detail" : "no task-prompts file declared — a measured study needs a pinned prompt set (frozen studies refuse to run without one); author the file at this path, then 'steerlab-cli experiment pin-prompts demo <path>'",
+        "id" : "taskPrompts",
+        "kind" : "taskPrompts",
+        "path" : "prompts/tasks/demo-prompts.jsonl",
+        "status" : "missing",
+        "templateID" : "task-prompts-choice",
+        "title" : "task prompts"
+      },
+      {
+        "detail" : "paired stimulus set loads (20 + 20 rows); the pinned recipe re-derives the vector from it",
+        "id" : "concept:french:stimuli",
+        "kind" : "conceptStimuli",
+        "path" : "prompts/concepts/french/positive.jsonl (+ negative.jsonl)",
+        "status" : "present",
+        "title" : "stimuli — french"
+      },
+      {
+        "detail" : "36 marker words — drives marker-density diagnostics",
+        "id" : "concept:french:markers",
+        "kind" : "conceptMarkers",
+        "path" : "prompts/concepts/french/markers.json",
+        "status" : "present",
+        "templateID" : "markers",
+        "title" : "markers — french"
+      },
+      {
+        "detail" : "present — the fixed denominator that makes α comparable across concepts",
+        "id" : "neutralCorpus",
+        "kind" : "neutralCorpus",
+        "path" : "prompts/neutral/corpus.jsonl",
+        "status" : "present",
+        "title" : "neutral corpus"
+      },
+      {
+        "detail" : "human-baseline CSV — required only for human-anchored (R) claims; without it results stay model-internal",
+        "id" : "humanBaseline",
+        "kind" : "humanBaseline",
+        "path" : "prompts/baselines/demo-human-baseline.csv",
+        "status" : "optional",
+        "templateID" : "human-baseline",
+        "title" : "human-baseline CSV"
+      },
+      {
+        "detail" : "reasoning-style taxonomy — required for reasoning-style claims (rs_<feature> metrics + effect sizes); without it style is measured only by marker density and the judge",
+        "id" : "reasoningStyleTaxonomy",
+        "kind" : "reasoningStyleTaxonomy",
+        "path" : "prompts/taxonomies/demo-reasoning-style.json",
+        "status" : "optional",
+        "templateID" : "reasoning-style",
+        "title" : "reasoning-style taxonomy"
+      },
+      {
+        "detail" : "required for evidence-grade variant/sweep gates — pin one from prompts/batteries/ (e.g. basic.jsonl)",
+        "id" : "capabilityBattery",
+        "kind" : "capabilityBattery",
+        "path" : "prompts/batteries/",
+        "status" : "optional",
+        "title" : "capability battery"
+      },
+      {
+        "detail" : "no J-lens readout declared — without one a run records no readout at all. Authored on the SERVER (Gemma-only, server-only); this engine renders and carries the block, it never produces one.",
+        "id" : "jlensReadout",
+        "kind" : "jlensReadout",
+        "path" : "experiments/demo/experiment.json",
+        "status" : "optional",
+        "title" : "J-lens readout"
+      }
+    ],
+    "ready" : false,
+    "summary" : "3 present · 0 partial · 2 missing · 4 optional"
+  },
+  "schemaVersion" : 1,
+  "state" : "refused",
+  "verb" : "data check",
+  "workspace" : "<workspace>"
+}

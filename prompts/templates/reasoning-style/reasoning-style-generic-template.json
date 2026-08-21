@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "name": "generic-reasoning-style-template-v1",
+  "features": [
+    {
+      "id": "hedging",
+      "title": "Hedging language",
+      "kind": "wordList",
+      "patterns": ["perhaps", "might", "may", "possibly", "arguably", "seems", "appears", "suggests", "likely", "unclear", "uncertain"],
+      "normalize": "per1kWords"
+    },
+    {
+      "id": "certainty",
+      "title": "Certainty language",
+      "kind": "wordList",
+      "patterns": ["clearly", "certainly", "undoubtedly", "obviously", "definitely", "must", "always", "never", "plainly"],
+      "normalize": "per1kWords"
+    },
+    {
+      "id": "ruleApplication",
+      "title": "Rule-application language",
+      "kind": "wordList",
+      "patterns": ["rule", "rules", "principle", "criterion", "criteria", "requirement", "requires", "applies", "governs", "therefore", "follows that", "under the"],
+      "normalize": "per1kWords"
+    },
+    {
+      "id": "consequence",
+      "title": "Consequence and outcome language",
+      "kind": "wordList",
+      "patterns": ["consequence", "consequences", "outcome", "outcomes", "result", "results", "effect", "effects", "impact", "leads to", "causes", "benefit", "harm", "cost"],
+      "normalize": "per1kWords"
+    },
+    {
+      "id": "authorityCitation",
+      "title": "Appeals to authority or sources",
+      "kind": "wordList",
+      "patterns": ["according to", "cited", "cites", "source", "sources", "authority", "authorities", "established", "documented", "research shows", "experts"],
+      "normalize": "per1kWords"
+    },
+    {
+      "id": "firstPersonStance",
+      "title": "First-person stance",
+      "kind": "wordList",
+      "patterns": ["i", "my", "me", "i believe", "i think", "in my view", "my opinion"],
+      "normalize": "per1kWords"
+    }
+  ]
+}

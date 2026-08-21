@@ -1,0 +1,128 @@
+/* Workspace-triage styles (upgrade plan Phase 1). Scoped to the triage view
+   and to the status dot the run picker shares with it; everything else
+   reuses the house card/section classes in globals.css. */
+
+/* --- status dots -------------------------------------------------------
+   The picker's `.run-status-dot` was hardcoded green — every run read as
+   healthy. These modifiers colour it from the run's real StatusInfo. */
+.run-status-dot.state-completed { background: var(--green); }
+.run-status-dot.state-failed { background: var(--orange); }
+.run-status-dot.state-cancelled { background: var(--amber); }
+.run-status-dot.state-partial { background: var(--amber); }
+.run-status-dot.state-not-stamped { background: var(--line-dark); }
+.run-status-dot.state-inProgress { background: var(--blue); animation: triage-pulse 1.6s ease-in-out infinite; }
+@keyframes triage-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .28; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .run-status-dot.state-inProgress { animation: none; }
+}
+
+/* Chain children sit under the run they consumed, in the picker. */
+.run-picker-list button.chain-child { padding-left: 30px; }
+.run-picker-list button.chain-child::before {
+  content: "↳"; position: absolute; left: 13px; color: var(--muted); font: 10px var(--mono);
+}
+.run-picker-list button { position: relative; }
+.run-picker-group-label {
+  display: block; padding: 14px 14px 5px; color: var(--muted);
+  font: 600 9px var(--mono); letter-spacing: .1em; text-transform: uppercase;
+}
+
+/* The nav's escape hatch. `.sidebar nav button` already gives it the house
+   layout; this only makes it read as secondary to the sections above it. */
+.sidebar nav button.nav-show-all { margin-top: 8px; border-top: 1px solid #2a3532; border-radius: 0; padding-top: 13px; }
+.sidebar nav button.nav-show-all strong { font-size: 11px; font-weight: 500; color: #8b948f; }
+.sidebar nav button.nav-show-all:hover strong { color: white; }
+
+/* --- triage page -------------------------------------------------------- */
+.triage-summary {
+  display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 22px;
+}
+.triage-summary > span {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 11px; border: 1px solid var(--line); background: var(--card);
+  font: 10px var(--mono); color: var(--muted);
+}
+.triage-summary strong { color: var(--ink); font: 600 11px var(--mono); }
+
+.triage-group { margin-bottom: 26px; }
+.triage-group > header {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--line-dark); margin-bottom: 10px;
+}
+.triage-group > header h2 { font: 500 20px/1.15 var(--serif); letter-spacing: -.02em; margin: 0; }
+.triage-group > header span { color: var(--muted); font: 10px var(--mono); }
+
+.triage-run {
+  border: 1px solid var(--line); background: var(--card);
+  padding: 12px 14px; margin-bottom: 7px;
+}
+.triage-run.is-child { margin-left: 26px; position: relative; }
+.triage-run.is-child::before {
+  content: "↳"; position: absolute; left: -18px; top: 13px;
+  color: var(--muted); font: 11px var(--mono);
+}
+.triage-run.needs-attention { border-left: 3px solid var(--orange); }
+
+.triage-run-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.triage-run-head button.triage-open {
+  background: none; border: 0; padding: 0; cursor: pointer; text-align: left;
+  font: 600 11px var(--mono); color: var(--ink); text-decoration: underline;
+  text-decoration-color: var(--line-dark); text-underline-offset: 3px;
+}
+.triage-run-head button.triage-open:hover { text-decoration-color: var(--blue); color: var(--blue); }
+.triage-kind { color: var(--muted); font: 9px var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.triage-when { margin-left: auto; color: var(--muted); font: 9px var(--mono); }
+.triage-new {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--blue);
+  display: inline-block; flex: 0 0 auto;
+}
+.triage-state { font: 9px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+.triage-headline { margin: 7px 0 0; color: var(--ink); font: 12px/1.45 var(--sans); }
+.triage-headline em { color: var(--muted); font-style: normal; }
+
+.triage-error {
+  margin-top: 8px; padding: 8px 10px; background: #f7ece7; border-left: 2px solid var(--orange);
+  font: 10px/1.45 var(--mono); color: #7a3a22;
+  overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+  -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+}
+.triage-retry { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font: 9px var(--mono); }
+.triage-retry button {
+  background: none; border: 0; padding: 0; cursor: pointer; color: var(--blue);
+  font: 9px var(--mono); text-decoration: underline; text-underline-offset: 2px;
+}
+
+.triage-chain { margin-top: 8px; color: var(--muted); font: 9px var(--mono); }
+.triage-chain button {
+  background: none; border: 0; padding: 0; cursor: pointer; color: var(--blue);
+  font: 9px var(--mono); text-decoration: underline; text-underline-offset: 2px;
+}
+.triage-chain button:disabled { color: var(--muted); cursor: default; text-decoration: none; }
+
+.triage-rail { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 9px; }
+.triage-rail > i { color: var(--line-dark); font-style: normal; }
+.triage-rail button, .triage-rail span.rail-stage {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--line-dark); background: var(--paper);
+  padding: 4px 8px; font: 9px var(--mono); color: var(--ink);
+}
+.triage-rail button { cursor: pointer; }
+.triage-rail button:hover { border-color: var(--blue); color: var(--blue); }
+.triage-rail span.rail-stage { color: var(--muted); }
+.triage-rail .rail-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--line-dark); }
+.triage-rail .rail-dot.state-completed { background: var(--green); }
+.triage-rail .rail-dot.state-failed { background: var(--orange); }
+.triage-rail .rail-dot.state-inProgress { background: var(--blue); }
+
+.triage-empty { color: var(--muted); font: 12px var(--sans); padding: 18px 0; }
+
+/* Completion attributed to the stage's summary artifact rather than a
+   stamped run-status.json. Same dot colour as any other completed run — the
+   attribution is a label, not a lesser state. */
+.triage-attribution {
+  color: var(--muted); font: 9px var(--mono);
+  border: 1px solid var(--line-dark); padding: 1px 5px;
+}
+.triage-summary .triage-export { margin-left: auto; padding: 7px 11px; font-size: 10px; }

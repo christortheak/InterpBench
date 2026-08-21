@@ -1,0 +1,308 @@
+"""Resident model registry for the server API.
+
+The native Swift app can load models on demand inside one process. The server
+needs one extra layer: a model requested by an agent, judge, or endpoint may be
+different from the current UI-selected model. This registry keeps independently
+loaded model slots on available devices when possible, and falls back to LRU
+eviction/reload when the serving budget is one model.
+
+Locking contract (live 2026-07-17): a model load takes MINUTES, and the
+registry lock must never be held across one. Holding it starved every reader —
+/api/capabilities (the GPU-session controller's health probe) and /api/state
+blocked behind the load, so the controller read a hard-working worker as
+unreachable and demoted the session to "Starting" for the whole load. Loads now
+reserve a placeholder slot under the registry lock, run ``model_loader.load``
+outside it (serialized against OTHER loads by a dedicated load lock — one big
+weight copy at a time), and publish the model under the lock afterward.
+Readers (``snapshots``, ``any_busy``, ``residency``) answer instantly
+throughout; concurrent requests for the same model wait on the slot's ready
+event and share the one load.
+"""
+
+from __future__ import annotations
+
+import gc
+import os
+import threading
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import Iterator
+
+import torch
+
+from ..steering import model_loader
+
+
+@dataclass
+class ModelSlot:
+    key: tuple[str, str | None, str, str]
+    # None while the load is in flight (a reserved "loading" placeholder);
+    # published under the registry lock once model_loader.load returns.
+    model: model_loader.SteeredModel | None
+    device: str
+    dtype: str
+    loaded_at: float
+    last_used: float
+    lock: threading.Lock
+    # Set once the slot holds a usable model OR its load failed (in which case
+    # the slot has been removed from the registry) — waiters re-check and retry.
+    ready: threading.Event = field(default_factory=threading.Event)
+
+    @property
+    def loading(self) -> bool:
+        return self.model is None
+
+    def snapshot(self) -> dict:
+        if self.model is None:
+            return {
+                "modelID": self.key[0],
+                "revision": self.key[1],
+                "device": self.device,
+                "dtype": self.dtype,
+                "numLayers": None,
+                "hiddenSize": None,
+                "contextWindow": None,
+                # A loading slot IS busy: generations against it will queue.
+                "busy": True,
+                "loading": True,
+                "loadedAt": None,
+                "lastUsed": self.last_used,
+            }
+        return {
+            "modelID": self.model.model_id,
+            "revision": self.model.revision,
+            "device": self.device,
+            # Prefer the dtype the model ACTUALLY runs in (stamped at load);
+            # fall back to the requested string (often "auto") for wrappers
+            # that predate the stamp.
+            "dtype": getattr(self.model, "dtype", None) or self.dtype,
+            "numLayers": self.model.num_layers,
+            "hiddenSize": self.model.hidden_size,
+            "contextWindow": self.model.context_window,
+            "busy": self.lock.locked(),
+            "loading": False,
+            "loadedAt": self.loaded_at,
+            "lastUsed": self.last_used,
+        }
+
+
+class ModelRegistry:
+    """Load/reuse models across devices with conservative eviction.
+
+    Defaults:
+    - CUDA server: one resident model per CUDA device.
+    - MPS/CPU server: one resident model total.
+
+    Override with ``STEERLAB_MAX_LOADED_MODELS`` when you deliberately want more
+    or fewer resident slots.
+    """
+
+    def __init__(self):
+        self._slots: dict[tuple[str, str | None, str, str], ModelSlot] = {}
+        self._lock = threading.RLock()
+        # Serializes the loads themselves (one multi-GB weight copy at a
+        # time), NEVER readers — held only outside self._lock.
+        self._load_lock = threading.Lock()
+        self._devices = model_loader.available_devices()
+        cuda_devices = [d for d in self._devices if d.startswith("cuda")]
+        default_max = len(cuda_devices) if cuda_devices else 1
+        self.max_loaded = max(1, int(os.environ.get("STEERLAB_MAX_LOADED_MODELS", default_max)))
+
+    @property
+    def devices(self) -> list[str]:
+        return list(self._devices)
+
+    def snapshots(self) -> list[dict]:
+        with self._lock:
+            return [slot.snapshot() for slot in self._slots.values()]
+
+    def any_busy(self) -> bool:
+        with self._lock:
+            return any(slot.lock.locked() or slot.loading
+                       for slot in self._slots.values())
+
+    def residency(self, model_id: str, revision: str | None = None, *,
+                  dtype: str = "auto", device: str | None = None) -> str | None:
+        """``"ready"`` / ``"loading"`` / None for the slot this request would
+        reuse. Never blocks, never loads — the honesty seam the streaming chat
+        routes use to warn the client BEFORE a silent in-stream cold load."""
+        with self._lock:
+            slot = self._matching_slot(model_id, revision, dtype, device)
+        if slot is None:
+            return None
+        return "loading" if slot.loading else "ready"
+
+    def unload(self, model_id: str, revision: str | None = None) -> int:
+        with self._lock:
+            keys = [
+                key for key, slot in self._slots.items()
+                # A loading placeholder is never evicted mid-copy: the load
+                # thread would publish into a dangling slot.
+                if not slot.loading
+                and slot.model.model_id == model_id
+                and (revision is None or slot.model.revision == revision)
+                and not slot.lock.locked()
+            ]
+            for key in keys:
+                self._evict(key)
+            return len(keys)
+
+    def unload_all(self) -> int:
+        with self._lock:
+            keys = [key for key, slot in self._slots.items()
+                    if not slot.loading and not slot.lock.locked()]
+            for key in keys:
+                self._evict(key)
+            return len(keys)
+
+    def _matching_slot(self, model_id: str, revision: str | None,
+                       dtype: str, device: str | None) -> ModelSlot | None:
+        """Reuse scan (registry lock held by the caller). Ready slots match a
+        revisionless request only when they were themselves loaded
+        revisionless; loading placeholders match on their requested key, so a
+        second request for an in-flight model waits instead of double-loading."""
+        for slot in self._slots.values():
+            if slot.loading:
+                revision_matches = slot.key[1] == revision
+                slot_id = slot.key[0]
+            else:
+                slot_id = slot.model.model_id
+                revision_matches = (
+                    slot.model.revision == revision if revision is not None
+                    else slot.key[1] is None)
+            if (slot_id == model_id and revision_matches
+                    and slot.dtype == (dtype or "auto")
+                    and (not device or device == "auto" or slot.device == device)):
+                return slot
+        return None
+
+    def get_or_load(self, model_id: str, revision: str | None = None, *,
+                    dtype: str = "auto", device: str | None = None) -> ModelSlot:
+        while True:
+            created: ModelSlot | None = None
+            with self._lock:
+                slot = self._matching_slot(model_id, revision, dtype, device)
+                if slot is None:
+                    target_device = self._choose_device(device)
+                    key = (model_id, revision, dtype or "auto", target_device)
+                    slot = self._slots.get(key)
+                    if slot is None:
+                        self._make_room(target_device)
+                        now = time.time()
+                        created = ModelSlot(
+                            key=key, model=None, device=target_device,
+                            dtype=dtype or "auto", loaded_at=now,
+                            last_used=now, lock=threading.Lock())
+                        self._slots[key] = created
+
+            if created is None:
+                # Wait for a concurrent load OUTSIDE the registry lock (a
+                # ready slot's event is already set — this returns at once).
+                slot.ready.wait()
+                if slot.model is None:
+                    # That load failed and the placeholder was removed; retry
+                    # from the top (this caller may become the new loader).
+                    continue
+                with self._lock:
+                    slot.last_used = time.time()
+                return slot
+
+            try:
+                with self._load_lock:
+                    model = model_loader.load(
+                        model_id, revision=revision, dtype=dtype,
+                        device=created.device)
+            except BaseException:
+                with self._lock:
+                    self._slots.pop(created.key, None)
+                created.ready.set()  # waiters re-check, see the removal, retry
+                # A failed CUDA load can strand partially-moved weights on
+                # the device (live 2026-07-18: a 12B OOM left ~21 GiB of
+                # debris that OOM'd the NEXT model's first generation) —
+                # sweep before surfacing the failure.
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                raise
+            with self._lock:
+                created.model = model
+                now = time.time()
+                created.loaded_at = now
+                created.last_used = now
+            created.ready.set()
+            return created
+
+    @contextmanager
+    def acquire(self, model_id: str, revision: str | None = None, *,
+                dtype: str = "auto", device: str | None = None) -> Iterator[model_loader.SteeredModel]:
+        while True:
+            slot = self.get_or_load(model_id, revision, dtype=dtype, device=device)
+            slot.lock.acquire()
+            # Eviction race (engineer review 2026-07-17): unload/_make_room
+            # skip only LOCKED slots, so between get_or_load returning and
+            # our lock landing the slot can be evicted (model dropped). Verify
+            # it is still the registered slot before using it; reload if not.
+            with self._lock:
+                current = (self._slots.get(slot.key) is slot
+                           and slot.model is not None)
+            if current:
+                break
+            slot.lock.release()
+        try:
+            slot.last_used = time.time()
+            yield slot.model
+        finally:
+            slot.last_used = time.time()
+            slot.lock.release()
+
+    def _choose_device(self, requested: str | None) -> str:
+        if requested and requested != "auto":
+            return requested
+        cuda_devices = [d for d in self._devices if d.startswith("cuda")]
+        if cuda_devices:
+            loaded_by_device = {d: 0 for d in cuda_devices}
+            for slot in self._slots.values():
+                if slot.device in loaded_by_device:
+                    loaded_by_device[slot.device] += 1
+            return min(cuda_devices, key=lambda d: loaded_by_device[d])
+        return self._devices[0] if self._devices else "cpu"
+
+    def _make_room(self, target_device: str) -> None:
+        if len(self._slots) < self.max_loaded:
+            return
+        candidates = [slot for slot in self._slots.values()
+                      if not slot.lock.locked() and not slot.loading]
+        if not candidates:
+            busy = ", ".join(sorted(
+                s.key[0] if s.loading else s.model.model_id
+                for s in self._slots.values()))
+            raise model_loader.ModelLoadError(
+                f"cannot load another model: every resident model slot is busy "
+                f"({busy}). A slot is held for the duration of any in-flight "
+                "generation, running job, or model load (chat, extraction, "
+                "sweep, study, judging); retry when it finishes or cancel the "
+                f"work holding it. This server keeps up to {self.max_loaded} "
+                "resident model(s) — raise STEERLAB_MAX_LOADED_MODELS for "
+                "more capacity.")
+        # Prefer evicting a model from the target device; otherwise evict global LRU.
+        same_device = [slot for slot in candidates if slot.device == target_device]
+        victim = min(same_device or candidates, key=lambda s: s.last_used)
+        self._evict(victim.key)
+
+    def _evict(self, key: tuple[str, str | None, str, str]) -> None:
+        slot = self._slots.pop(key, None)
+        if slot is None:
+            return
+        # Drop the reference by ASSIGNMENT, not `del`: stale slot handles held
+        # by a racing acquire() must read a clean None (→ retry), never raise
+        # AttributeError on a deleted dataclass field.
+        slot.model = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if slot.device == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+            try:
+                torch.mps.empty_cache()
+            except Exception:  # pragma: no cover - best-effort cache trim
+                pass

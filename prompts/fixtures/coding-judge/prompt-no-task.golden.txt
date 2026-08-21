@@ -1,0 +1,24 @@
+You are a blinded coder annotating ONE model response to a task prompt. Do not infer or guess which experimental condition produced the response; code only what the response text contains.
+
+Coding rubric:
+# Example coding rubric (golden fixture)
+
+- mentionsLegalRule — true iff the response mentions the legal rule stated
+  in the vignette.
+- mentionsEquity — true iff the response refers to fairness, justice,
+  reasonableness, or hardship considerations.
+- severity — sentence severity on the vignette's stated 1-9 scale, when a
+  sentence is imposed.
+- stance — the dominant reasoning stance of the response.
+
+Code these fields:
+- mentionsLegalRule (boolean)
+- mentionsEquity (boolean)
+- severity (integer; optional — null allowed)
+- stance (one of: legalist | equitable | mixed)
+
+=== Response ===
+The gift was irrevocable under the stated rule. However, fairness 
+to the donor also matters here.
+
+Return JSON only: {"codes": {"<field>": <value>, ...}, "brief_reason": "at most two sentences"}. Every listed field must appear in "codes" with a value of its declared type. Use null only for a field marked optional, and only when the response text cannot settle it. Never code information the response does not contain, and keep "brief_reason" to at most two sentences — never an essay.

@@ -1,0 +1,148 @@
+{
+  "agents": [
+    {
+      "baseModelID": "fixture/model",
+      "id": "ava",
+      "name": "Ava",
+      "role": "a reviewer",
+      "systemPrompt": "",
+      "variantArtifactHash": null,
+      "variantArtifactPath": null
+    },
+    {
+      "baseModelID": "fixture/model",
+      "id": "ben",
+      "name": "Ben",
+      "systemPrompt": "",
+      "variantArtifactHash": null,
+      "variantArtifactPath": null
+    },
+    {
+      "baseModelID": "fixture/model",
+      "id": "cal",
+      "name": "Cal",
+      "systemPrompt": "",
+      "variantArtifactHash": null,
+      "variantArtifactPath": null
+    }
+  ],
+  "baseModelID": "fixture/model",
+  "description": "Cross-engine renderer fixture for panel turn contracts.",
+  "maxTokens": 256,
+  "name": "Panel render fixture",
+  "schemaVersion": 2,
+  "sharedMaterials": "MATERIAL TEXT",
+  "temperature": 0.0,
+  "turns": [
+    {
+      "id": "t1_ava",
+      "includeScenarioMaterials": true,
+      "includeSpeakerContext": true,
+      "maxTokens": null,
+      "outputLabel": "t1_ava",
+      "promptTemplate": "Write your first draft. {{scenario.materials}}",
+      "routedAgentIDs": [],
+      "routing": "all",
+      "speakerAgentID": "ava",
+      "title": "First draft \u2014 Ava"
+    },
+    {
+      "id": "t1_ben",
+      "includeScenarioMaterials": true,
+      "includeSpeakerContext": true,
+      "maxTokens": null,
+      "outputLabel": "t1_ben",
+      "promptTemplate": "Write your first draft, {{agent.name}}.",
+      "routedAgentIDs": [],
+      "routing": "all",
+      "speakerAgentID": "ben",
+      "title": "First draft \u2014 Ben"
+    },
+    {
+      "contract": {
+        "format": "Use exactly this format and nothing else:\nVerdict: yes OR no",
+        "inputs": [
+          "t1_ava",
+          "t1_ben"
+        ],
+        "materialsTitle": "SHARED MATERIALS",
+        "ownVoice": true,
+        "stage": "The group has exchanged first drafts and you are now writing your response.",
+        "task": "Write a response memo to your colleagues."
+      },
+      "id": "t2_ava",
+      "includeScenarioMaterials": true,
+      "includeSpeakerContext": false,
+      "maxTokens": null,
+      "outputLabel": "t2_ava",
+      "promptTemplate": "",
+      "routedAgentIDs": [],
+      "routing": "all",
+      "speakerAgentID": "ava",
+      "title": "Response \u2014 Ava"
+    },
+    {
+      "id": "t3_ava",
+      "includeScenarioMaterials": false,
+      "includeSpeakerContext": true,
+      "maxTokens": null,
+      "outputLabel": "t3_ava",
+      "promptTemplate": "Recap the exchange, {{agent.name}}.\n\n{{agent.context}}",
+      "routedAgentIDs": [],
+      "routing": "all",
+      "speakerAgentID": "ava",
+      "title": "Recap \u2014 Ava"
+    },
+    {
+      "contract": {
+        "format": "Use exactly this format and nothing else:\nVerdict: yes OR no",
+        "inputs": [
+          "t3_ava"
+        ],
+        "materialsTitle": "SHARED MATERIALS",
+        "ownVoice": true,
+        "stage": "",
+        "task": "State your final position."
+      },
+      "endpoint": {
+        "kind": "choice",
+        "marker": "Verdict:",
+        "name": "verdict",
+        "vocabulary": [
+          "yes",
+          "no"
+        ]
+      },
+      "id": "t4_ben",
+      "includeScenarioMaterials": false,
+      "includeSpeakerContext": true,
+      "maxTokens": 64,
+      "outputLabel": "t4_ben",
+      "promptTemplate": "",
+      "routedAgentIDs": [],
+      "routing": "all",
+      "speakerAgentID": "ben",
+      "title": "Final position \u2014 Ben"
+    },
+    {
+      "contract": {
+        "format": "",
+        "inputs": [],
+        "materialsTitle": "THE RECORD",
+        "ownVoice": false,
+        "stage": "Every draft is in.",
+        "task": "File a neutral summary for {{scenario.name}}."
+      },
+      "id": "t5_cal",
+      "includeScenarioMaterials": true,
+      "includeSpeakerContext": false,
+      "maxTokens": null,
+      "outputLabel": "t5_cal",
+      "promptTemplate": "",
+      "routedAgentIDs": [],
+      "routing": "none",
+      "speakerAgentID": "cal",
+      "title": "Clerk's note \u2014 Cal"
+    }
+  ]
+}

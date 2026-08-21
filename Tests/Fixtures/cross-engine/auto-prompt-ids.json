@@ -1,0 +1,17 @@
+{
+  "ids": [
+    "prompt-1",
+    "prompt-2",
+    "named",
+    "prompt-4"
+  ],
+  "lines": [
+    "{\"text\": \"first\"}",
+    "",
+    "{\"text\": \"second\"}",
+    "{\"id\": \"named\", \"text\": \"third\"}",
+    "",
+    "{\"text\": \"fourth\"}"
+  ],
+  "note": "auto-generated promptIDs must be identical on both engines \u2014 paired statistics key on this value"
+}

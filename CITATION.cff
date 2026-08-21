@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: "If you use SteerLab in your research, please cite it as below."
+title: SteerLab
+abstract: >-
+  A concept-steering workbench for open-weight language models: extract named
+  concept directions from a model's residual stream, inject them during
+  generation at a measured strength, and measure how the outputs move. Two
+  independent engines — Swift/MLX on Apple silicon and Python/PyTorch on CUDA
+  — share one artifact model, with a hash-pinned, one-way freeze lifecycle so
+  that experimental settings are fixed before behavior is measured.
+type: software
+authors:
+  # Named authors can be added here as `- family-names: … / given-names: …`.
+  - name: "The SteerLab Authors"
+license: Apache-2.0
+keywords:
+  - activation steering
+  - interpretability
+  - representation engineering
+  - large language models
+  - reproducibility
+# Fill these in when the repository is public and the first version is tagged:
+# repository-code: "https://…"
+# url: "https://…"
+# version: "…"
+# date-released: 2026-01-01
+preferred-citation:
+  type: software
+  title: SteerLab
+  authors:
+    - name: "The SteerLab Authors"
+  year: 2026
+  license: Apache-2.0

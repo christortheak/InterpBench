@@ -1,0 +1,27 @@
+{
+  "changed": false,
+  "engine": "python-hf-transformers",
+  "error": {
+    "code": "pinDrift",
+    "gate": "pinDrift",
+    "gates": [
+      "pinDrift"
+    ],
+    "reason": "1 pinned input(s) of 'demo' no longer match their hashes",
+    "repairAction": "steerlab-server experiment verify demo (names every drifted pin) ; then restore the named files, or author the manifest's replacement on the Mac (steerlab-cli experiment duplicate demo demo-v2) and re-pin"
+  },
+  "message": "1 pinned input(s) of 'demo' no longer match their hashes",
+  "observedAt": "1970-01-01T00:16:40Z",
+  "result": {
+    "experiment": "demo",
+    "status": "draft",
+    "verified": false,
+    "violations": [
+      "concept 'french' stimuli changed since pinning (have 00797498c715\u2026, pinned 4c072659bd86\u2026)"
+    ]
+  },
+  "schemaVersion": 1,
+  "state": "refused",
+  "verb": "experiment verify",
+  "workspace": "<workspace>"
+}

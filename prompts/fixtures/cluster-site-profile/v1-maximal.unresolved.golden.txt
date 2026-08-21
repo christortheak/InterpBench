@@ -1,0 +1,8 @@
+STEERLAB_PREFIX	no environment.envPrefix — using $HOME/envs/steerlab
+STEERLAB_SLURM_WALLTIME	no scheduler.jobDefaults.walltime — using bootstrap.sh's, clamped to the default partition's cap
+STEERLAB_SLURM_MEMORY	no scheduler.jobDefaults.memory — using 80G
+STEERLAB_LOGIN_NODE_PATTERNS	no policy.loginNodes — using bootstrap.sh's ^ss-sub guard and its allocation requirement
+HF_HUB_OFFLINE	hubOfflineMode is auto — using bootstrap.sh's unconditional offline
+STEERLAB_HOUSEKEEPING_ROLES	no storage.scannedRoles — housekeeping reports workspace, metadata and hfCache only; a declared archive or asset tier is never inspected
+STEERLAB_QUOTA_COMMAND	no storage.quotaCommand — housekeeping reports whole-filesystem df numbers only, which on a quota'd filesystem overstate the headroom
+STEERLAB_PRESTAGE_MIN_FREE_GB	no storage.prestageMinFreeGB — bootstrap.sh's built-in pre-stage floor applies, and its refusal names one institution's filesystem

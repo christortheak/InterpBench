@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "name": "Example HPC (v2 neutral)",
+  "notes": "FICTIONAL site that declares almost nothing under a v2 stamp. The render must therefore state almost nothing: no legacy constant may leak in through a default (WP5 §2.0 rule 3). This is the declare-or-omit half of the contract.",
+  "transport": {
+    "kind": "ssh",
+    "host": "slurm.example.edu",
+    "remotePort": 8080,
+    "vpnExpected": false
+  },
+  "topology": "daemonInJob",
+  "scheduler": {
+    "kind": "slurm",
+    "slurm": {}
+  },
+  "constraints": {
+    "computeEgress": "unknown"
+  }
+}

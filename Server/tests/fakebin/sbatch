@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""Fake sbatch for scheduler tests.
+
+Environment protocol:
+- FAKE_SLURM_LOG:    directory; argv is appended to <dir>/sbatch.calls
+- FAKE_SLURM_JOB_ID: the job id to print (default 12345)
+- FAKE_SBATCH_FAIL:  when set, print it on stderr and exit 1
+- FAKE_SBATCH_FAIL_AFTER: integer N; the first N calls succeed, later calls
+  fail (mid-fan-out failure tests). Requires FAKE_SLURM_LOG for the count.
+"""
+import os
+import sys
+
+
+def main() -> int:
+    log_dir = os.environ.get("FAKE_SLURM_LOG")
+    call_number = 1
+    if log_dir:
+        with open(os.path.join(log_dir, "sbatch.calls"), "a", encoding="utf-8") as fh:
+            fh.write(" ".join(sys.argv[1:]) + "\n")
+        # The submit-time cwd becomes the job's default working directory —
+        # tests assert it is the bundle dir (submit-from-/scratch semantics).
+        with open(os.path.join(log_dir, "sbatch-cwd.calls"), "a", encoding="utf-8") as fh:
+            fh.write(os.getcwd() + "\n")
+        with open(os.path.join(log_dir, "sbatch.calls"), encoding="utf-8") as fh:
+            call_number = len(fh.read().splitlines())
+    failure = os.environ.get("FAKE_SBATCH_FAIL")
+    if failure:
+        sys.stderr.write(failure + "\n")
+        return 1
+    fail_after = os.environ.get("FAKE_SBATCH_FAIL_AFTER")
+    if fail_after and call_number > int(fail_after):
+        sys.stderr.write("sbatch: error: fake quota exceeded\n")
+        return 1
+    print("Submitted batch job " + os.environ.get("FAKE_SLURM_JOB_ID", "12345"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

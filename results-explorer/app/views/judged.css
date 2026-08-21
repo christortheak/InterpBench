@@ -1,0 +1,137 @@
+/* Judged-evaluation view styles (Phase 2). Only genuinely new pieces live
+   here: the shell reuses globals.css (card, section-header, reader-shell,
+   record-list, record-detail, artifact-empty, text-block, badge, table-note).
+   The generic evidence table (.jv-table), the pin grid, and the alert cards
+   are shared with the response-coding view, which imports this file too. */
+
+.judged-view section.card + section.card,
+.coding-view section.card + section.card { margin-top: 18px; }
+
+.judged-view .provenance-legend,
+.coding-view .provenance-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 0 0 18px; color: var(--muted); font-size: 10px; }
+
+/* --- alert cards ---------------------------------------------------- */
+.judged-alert { display: flex; gap: 14px; align-items: flex-start; padding: 16px 18px; }
+.judged-alert > span { width: 22px; height: 22px; flex: none; display: grid; place-items: center; border-radius: 50%; font: 12px var(--serif); }
+.judged-alert strong { display: block; font-size: 12px; }
+.judged-alert p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.judged-alert code { font: 10px var(--mono); overflow-wrap: anywhere; }
+.judged-alert button { margin-top: 8px; }
+.alert-failed { border-color: var(--orange); }
+.alert-failed > span { border: 1px solid var(--orange); color: var(--orange); }
+.alert-warn > span { border: 1px solid var(--amber); color: var(--amber); }
+.alert-note > span { border: 1px solid var(--line-dark); color: var(--muted); }
+
+/* --- pins ------------------------------------------------------------ */
+.pin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1px; margin: 18px 0 0; background: var(--line); border: 1px solid var(--line); }
+.pin-grid > div { background: var(--card); padding: 11px 13px; }
+.pin-grid dt { color: var(--muted); font-size: 8px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+.pin-grid dd { margin: 5px 0 0; font-size: 11px; overflow-wrap: anywhere; }
+.pin-grid code { font: 10px var(--mono); }
+
+.source-run-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding: 12px 13px; border: 1px solid var(--line); background: #f6f5f0; }
+.source-run-row span { display: block; color: var(--muted); font-size: 8px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+.source-run-row strong { font: 11px var(--mono); overflow-wrap: anywhere; }
+.source-run-row p { margin: 0; max-width: 460px; font-size: 10px; }
+.source-actions { display: flex; gap: 8px; }
+.source-actions button { padding: 8px 11px; font-size: 10px; }
+
+.judge-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 14px; }
+.judge-card { border: 1px solid var(--line); padding: 12px 13px; }
+.judge-card > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.judge-card strong { font: 500 15px var(--serif); }
+.judge-card dl { margin: 9px 0 0; display: grid; gap: 6px; }
+.judge-card dt { color: var(--muted); font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
+.judge-card dd { margin: 2px 0 0; font-size: 10px; overflow-wrap: anywhere; }
+.judge-card code { font: 9px var(--mono); }
+
+/* --- the shared evidence table -------------------------------------- */
+.jv-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 11px; }
+.jv-table th, .jv-table td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: right; }
+.jv-table thead th { position: sticky; top: 0; background: #efeee8; color: var(--muted); font-size: 8px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; text-align: right; }
+.jv-table thead th:first-child, .jv-table tbody th { text-align: left; }
+.jv-table tbody th { font-weight: 600; }
+.jv-table tbody tr:hover { background: #f6f5f0; }
+.jv-table .anchor-column { background: #f2f1ea; }
+.jv-table .badge { margin-left: 6px; vertical-align: middle; }
+.jv-table-scroll { overflow-x: auto; }
+
+.sub-head { margin: 22px 0 0; font: 500 15px var(--serif); }
+
+/* --- tallies --------------------------------------------------------- */
+.tally-block { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.tally-block:first-of-type { border-top: 0; }
+.tally-block > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.tally-block > header > div { display: flex; align-items: center; gap: 8px; }
+.tally-block > header strong { font: 500 17px var(--serif); }
+.tally-block > header span { color: var(--muted); font: 9px var(--mono); }
+.tally-bar { display: flex; height: 12px; margin: 10px 0; background: #ecece7; overflow: hidden; }
+.tally-bar i { display: block; height: 100%; }
+.seg-baseline { background: #8d9891; }
+.seg-tie { background: #d5d4cc; }
+.seg-variant { background: var(--blue); }
+.tally-numbers { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.tally-numbers span { display: block; color: var(--muted); font-size: 8px; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; }
+.tally-numbers strong { font: 500 22px var(--serif); }
+.structured-summaries { margin-top: 10px; }
+.structured-summaries summary { color: var(--muted); font-size: 10px; cursor: pointer; }
+.structured-summaries pre, .verdict pre { margin: 8px 0 0; padding: 10px; background: #f2f1ea; border: 1px solid var(--line); font: 9px/1.5 var(--mono); overflow-x: auto; }
+
+/* --- disagreement browser ------------------------------------------- */
+.disagreement-card .section-header p { margin: 6px 0 0; max-width: 620px; color: var(--muted); font-size: 11px; }
+.disagree-filters { display: flex; gap: 8px; }
+.disagree-filters select { border: 1px solid var(--line); background: white; padding: 7px 9px; color: var(--ink); font-size: 9px; }
+.disagreement-card .reader-shell { margin-top: 18px; height: auto; min-height: 0; max-height: 760px; }
+.disagreement-card .record-list { min-height: 0; }
+.disagreement-card .records { overflow-y: auto; }
+.disagreement-card .record-detail { max-height: 760px; }
+
+.verdicts { display: grid; gap: 10px; margin: 18px 0 0; }
+.verdict { border: 1px solid var(--line); border-left-width: 3px; padding: 12px 14px; }
+.verdict > header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.verdict strong { display: block; font-size: 12px; }
+.verdict header span { display: block; color: var(--muted); font-size: 9px; }
+.verdict-outcome { text-align: right; }
+.verdict-outcome strong { font: 500 15px var(--serif); }
+.verdict p { margin: 9px 0 0; font: 13px/1.55 var(--serif); }
+.verdict em { color: var(--amber); font-style: italic; }
+.verdict footer { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 9px; color: var(--muted); font: 9px var(--mono); }
+.verdict details summary { color: var(--muted); font-size: 9px; cursor: pointer; margin-top: 8px; }
+.verdict-variant { border-left-color: var(--blue); }
+.verdict-baseline { border-left-color: #8d9891; }
+.verdict-tie { border-left-color: var(--amber); }
+.verdict-unknown { border-left-color: var(--line-dark); }
+
+.side-by-side { margin-top: 20px; }
+.side-by-side > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.response-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.response-pair article { border: 1px solid var(--line); padding: 12px 14px; }
+.response-pair > header { display: flex; }
+.response-pair article > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.response-pair article > header span { display: block; color: var(--muted); font-size: 8px; font-weight: 750; letter-spacing: .1em; }
+.response-pair article > header strong { display: block; margin-top: 3px; font-size: 10px; }
+.response-pair article > header small { color: var(--muted); font: 9px var(--mono); }
+.response-pair p { margin: 10px 0 0; font: 13px/1.6 var(--serif); white-space: pre-wrap; }
+.response-pair footer { margin-top: 10px; color: var(--muted); font: 9px var(--mono); }
+.response-baseline { background: #f6f5f0; }
+.response-variant { border-color: var(--blue); background: var(--blue-soft); }
+
+.warn-text { color: var(--amber); }
+
+/* --- confidence distribution ---------------------------------------- */
+.confidence-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-top: 18px; }
+.confidence-grid article { border: 1px solid var(--line); padding: 12px 13px; }
+.confidence-grid header { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
+.confidence-grid header strong { font: 500 14px var(--serif); }
+.confidence-grid header span { color: var(--muted); font: 9px var(--mono); }
+.histogram { display: grid; grid-template-columns: repeat(10, 1fr); align-items: end; gap: 3px; height: 92px; }
+.histogram > div { display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }
+.histogram i { display: block; min-height: 1px; background: var(--blue); }
+.histogram span { margin-top: 4px; color: var(--muted); font: 7px var(--mono); text-align: center; }
+
+@media (max-width: 1180px) {
+  .response-pair { grid-template-columns: 1fr; }
+}
+
+/* The split browser's filter row gained an export button. */
+.disagree-filters .secondary { padding: 9px 12px; font-size: 10px; }

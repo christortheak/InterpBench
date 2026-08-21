@@ -1,0 +1,17 @@
+{
+  "changed": false,
+  "engine": "python-hf-transformers",
+  "message": "OK \u2014 all pinned inputs verified",
+  "observedAt": "1970-01-01T00:16:40Z",
+  "result": {
+    "experiment": "demo",
+    "experimentHash": "f69550efc0aaeee6144b0af1c75c2131142cff6d15f156de10462269414157c1",
+    "status": "draft",
+    "verified": true,
+    "violations": []
+  },
+  "schemaVersion": 1,
+  "state": "ready",
+  "verb": "experiment verify",
+  "workspace": "<workspace>"
+}

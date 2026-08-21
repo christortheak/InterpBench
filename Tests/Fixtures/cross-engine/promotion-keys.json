@@ -1,0 +1,182 @@
+[
+  {
+    "input": {
+      "agentName": "pw-agent",
+      "concept": "practicalwisdom",
+      "experiment": "virtue-extraction-study",
+      "experimentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "promotedBy": "criterion",
+      "sweepRun": "20260726T162230362-exp-pw-sweep",
+      "vectorArtifactHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "vectorArtifactID": "runs/20260726T000001000-extract/practicalwisdom",
+      "winningCell": {
+        "alpha": 0.4,
+        "layer": 41
+      }
+    },
+    "key": "bf8e15fccc3bafdce12d37a9a825c7c8a2c78f163bbe2b785c3ec1db1e67818c",
+    "label": "plain"
+  },
+  {
+    "input": {
+      "agentName": "pw-agent",
+      "concept": "practicalwisdom",
+      "experiment": "virtue-extraction-study",
+      "experimentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "promotedBy": "criterion",
+      "sweepRun": "20260726T162230362-exp-pw-sweep",
+      "vectorArtifactHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "vectorArtifactID": "runs/20260726T000001000-extract/practicalwisdom",
+      "winningCell": {
+        "alpha": 0.05,
+        "layer": 41
+      }
+    },
+    "key": "338425ae7cf765b5224334702f24d8a3d0bb7689130724dbba9876ebcbe2ff60",
+    "label": "two-places"
+  },
+  {
+    "input": {
+      "agentName": "pw-agent",
+      "concept": "practicalwisdom",
+      "experiment": "virtue-extraction-study",
+      "experimentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "promotedBy": "criterion",
+      "sweepRun": "20260726T162230362-exp-pw-sweep",
+      "vectorArtifactHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "vectorArtifactID": "runs/20260726T000001000-extract/practicalwisdom",
+      "winningCell": {
+        "alpha": 0.30000000000000004,
+        "layer": 41
+      }
+    },
+    "key": "3cb4ab268a889c893df387e30a66bb91ac9e7684d695119730bd16ff58094cb5",
+    "label": "long-expansion"
+  },
+  {
+    "input": {
+      "agentName": "pw-agent",
+      "concept": "practicalwisdom",
+      "experiment": "virtue-extraction-study",
+      "experimentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "promotedBy": "criterion",
+      "sweepRun": "20260726T162230362-exp-pw-sweep",
+      "vectorArtifactHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "vectorArtifactID": "runs/20260726T000001000-extract/practicalwisdom",
+      "winningCell": {
+        "alpha": 1.0,
+        "layer": 41
+      }
+    },
+    "key": "ec99d1e70cdc07d76de8abbf856693e7833765e4b25079f119a9b7884223f49a",
+    "label": "integral"
+  },
+  {
+    "input": {
+      "agentName": "pw-agent",
+      "concept": "practicalwisdom",
+      "experiment": "virtue-extraction-study",
+      "experimentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "promotedBy": "criterion",
+      "sweepRun": "20260726T162230362-exp-pw-sweep",
+      "vectorArtifactHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "vectorArtifactID": "runs/20260726T000001000-extract/practicalwisdom",
+      "winningCell": {
+        "alpha": 1e-05,
+        "layer": 41
+      }
+    },
+    "key": "46b402a0ee8e125aab2cb0a185fb5c55730b4c7f7299bd9ca91e2655b824a1e2",
+    "label": "small-exponent"
+  },
+  {
+    "input": {
+      "agentName": "pw-agent",
+      "concept": "practicalwisdom",
+      "experiment": "virtue-extraction-study",
+      "experimentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "promotedBy": "criterion",
+      "sweepRun": "20260726T162230362-exp-pw-sweep",
+      "vectorArtifactHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "vectorArtifactID": "runs/20260726T000001000-extract/practicalwisdom",
+      "winningCell": {
+        "alpha": -0.35,
+        "layer": 41
+      }
+    },
+    "key": "83025f64f829738f3ce81cc47cc5851f0e15a80e8a318e764d3f2d8d946bcfb7",
+    "label": "negative"
+  },
+  {
+    "input": {
+      "agentName": "hand-agent",
+      "concept": "fear",
+      "experiment": "e",
+      "experimentHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "promotedBy": "manualOverride",
+      "sweepRun": null,
+      "vectorArtifactHash": null,
+      "vectorArtifactID": "runs/x/fear",
+      "winningCell": {
+        "alpha": 0.4,
+        "layer": 3
+      }
+    },
+    "key": "60790d89cef24f34d5ee79ab1f0c1bd61e0b2116290f77507c00b5a77f7c3f27",
+    "label": "no-sweep-run"
+  },
+  {
+    "input": {
+      "agentName": "sagesse-pratique-agent",
+      "concept": "r\u00e9silience",
+      "experiment": "\u00e9tude-vertu",
+      "experimentHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "promotedBy": "criterion",
+      "sweepRun": "20260727T000000000-exp-vertu-sweep",
+      "vectorArtifactHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "vectorArtifactID": "runs/20260727T000001000-extract/r\u00e9silience",
+      "winningCell": {
+        "alpha": 0.4,
+        "layer": 21
+      }
+    },
+    "key": "0a0927300ebd2ba159f0bd9b80d670aa7cacd6b15af89a31db6715afa23e9a6a",
+    "label": "non-ascii-accent"
+  },
+  {
+    "input": {
+      "agentName": "l\u2019agent",
+      "concept": "judge\u2019s-temperament",
+      "experiment": "\u00e9tude-vertu",
+      "experimentHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "promotedBy": "criterion",
+      "sweepRun": "20260727T000000000-exp-vertu-sweep",
+      "vectorArtifactHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "vectorArtifactID": "runs/20260727T000001000-extract/judge\u2019s-temperament",
+      "winningCell": {
+        "alpha": 0.4,
+        "layer": 21
+      }
+    },
+    "key": "7af3448ccd1cebeb2d48f9ecb6911f4a5a4334d08fc8a3855e1b2e7575ca7dcb",
+    "label": "non-ascii-smart-quote"
+  },
+  {
+    "input": {
+      "agentName": "\u52c7\u6c17-agent",
+      "concept": "\u52c7\u6c17",
+      "experiment": "\u00e9tude-vertu",
+      "experimentHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "promotedBy": "criterion",
+      "sweepRun": "20260727T000000000-exp-vertu-sweep",
+      "vectorArtifactHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "vectorArtifactID": "runs/20260727T000001000-extract/\u52c7\u6c17",
+      "winningCell": {
+        "alpha": 0.4,
+        "layer": 21
+      }
+    },
+    "key": "72d73d43578528f0fa0efbd837bf5bd08de97d3456ce85f2351e83761f5e5a4f",
+    "label": "non-ascii-cjk"
+  }
+]

@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "steerlab-server"
+version = "0.9.0"
+description = "PyTorch/HF parallel to SteerLab's MLX steering engine, for remote-cluster activation-steering experiments."
+readme = "README.md"
+requires-python = ">=3.10"
+# Concept-agnostic steering core + experiment orchestration + a thin HTTP service.
+# Mirrors the on-disk artifact contracts of the Swift/MLX app so vectors,
+# manifests, and run directories interoperate. See README.md.
+dependencies = [
+    "torch>=2.2",
+    "transformers>=4.44",
+    "accelerate>=0.30",
+    "safetensors>=0.4",
+    "numpy>=1.26",
+    "huggingface_hub>=0.24",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+# Heavy/risky parity pieces (Phase 3) and the test suite are split out so the
+# pure-CPU core can be installed and tested without dragging in everything.
+lora = ["peft>=0.11", "pypdf>=4.2"]
+# Needed only for Gemma Scope SAE ANALYSIS (experiment/gemma_scope.py analyze);
+# the module imports without it and everything else runs sae-lens-free.
+gemmascope = ["sae-lens>=5.0"]
+# Anthropic's Jacobian-lens reference package, pinned by COMMIT: it is not
+# published on PyPI, so the only stable identity is the git sha. The J-lens
+# backend imports it lazily and tests run against a stub, so the server
+# installs and runs fine without this extra.
+#
+# DELIBERATELY NOT IN `all`, unlike every other extra. Two reasons, both about
+# not changing a node's substrate as a side effect of a routine bootstrap:
+#   1. jlens floors transformers>=5.5, while this server's own floor is >=4.44.
+#      Folding it into `all` would silently raise the effective floor on every
+#      bootstrapped node, including re-bootstraps of nodes with studies in
+#      flight.
+#   2. It installs from a git URL, so it needs github.com egress — a network
+#      requirement the other extras do not impose.
+# Opt in explicitly: `bootstrap.sh --with-jlens`, or pip install -e
+# "Server[jlens]". See docs/GEMMA3-27B-JLENS-VECTORS-AND-ONLINE-READOUT-PLAN.md
+# §11.0.
+jlens = [
+    "jlens @ git+https://github.com/anthropics/jacobian-lens@581d398613e5602a5af361e1c34d3a92ea82ba8e",
+]
+test = ["pytest>=8.0"]
+# Dev-only TOOLING, never a runtime dependency and deliberately not in `all`:
+# `uv` is the resolver that generates the committed per-platform locks
+# (requirements-macos-arm64.lock / requirements-linux-x86_64.lock) via
+# Server/scripts/update-locks.sh. A cluster node never needs it — it INSTALLS
+# from the locks, it does not produce them. Range-pinned because the resolver
+# is part of the lock's provenance: a different major could resolve differently
+# from the same pyproject.
+dev = ["uv>=0.12.5,<0.13"]
+all = ["peft>=0.11", "pypdf>=4.2", "sae-lens>=5.0", "pytest>=8.0"]
+
+# NOTE ON FLOORS vs LOCKS (WP6 R1, 2026-08-18). The `dependencies` above are
+# FLOORS — the right contract for a library, the wrong one for an instrument:
+# two sites can satisfy them with different torch/transformers and produce
+# different numbers. The exact-version contract lives in the two committed
+# platform locks; every run's config.json then stamps the versions that were
+# ACTUALLY imported (`pythonEnvironment`), so a reader checks the record rather
+# than trusting the lock was honored. Do not tighten these floors to "fix"
+# reproducibility — that is the locks' job, and floors that move break
+# already-provisioned nodes.
+
+[project.scripts]
+steerlab-server = "steerlab_server.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["steerlab_server*"]
+
+[tool.setuptools.package-data]
+"steerlab_server.api" = ["static/*"]
+# The qualification prompt fixtures ship with the ENGINE, not the workspace:
+# `jlens qualify` is an instrument self-test, and inputs that varied per
+# workspace would make two workspaces' qualifications incomparable.
+"steerlab_server.jlens" = ["fixtures/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

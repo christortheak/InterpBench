@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "name": "structural-reasoning-style-template-v1",
+  "features": [
+    {
+      "id": "enumeration",
+      "title": "Enumerated argument steps",
+      "kind": "regex",
+      "patterns": ["\\b(?:first|second|third|fourth|finally|lastly)\\b", "\\b\\d+\\."],
+      "normalize": "rawCount"
+    },
+    {
+      "id": "conditionals",
+      "title": "Conditional constructions",
+      "kind": "regex",
+      "patterns": ["\\bif\\b[^.!?]*\\bthen\\b", "\\bunless\\b", "\\bprovided that\\b", "\\bonly if\\b"],
+      "normalize": "perSentence"
+    },
+    {
+      "id": "questions",
+      "title": "Question marks",
+      "kind": "regex",
+      "patterns": ["\\?"],
+      "normalize": "perSentence"
+    },
+    {
+      "id": "contrast",
+      "title": "Contrastive connectives",
+      "kind": "regex",
+      "patterns": ["\\bhowever\\b", "\\bon the other hand\\b", "\\bnevertheless\\b", "\\bby contrast\\b", "\\byet\\b"],
+      "normalize": "per1kWords"
+    }
+  ]
+}

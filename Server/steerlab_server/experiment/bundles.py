@@ -1,0 +1,1431 @@
+"""Run-bundle and evidence-bundle packaging.
+
+Run bundles are the handoff unit for remote compute: a manifest plus the files
+it pins. Evidence bundles are the return unit: one immutable run directory plus
+a hash manifest so local clients can import and verify results.
+"""
+
+from __future__ import annotations
+
+import glob
+import hashlib
+import json
+import os
+import re
+import sys
+import tarfile
+import time
+import traceback
+from dataclasses import dataclass
+from typing import Iterable
+
+from . import experiment_store, paths
+from . import resume as resume_mod
+from . import run_status
+from .manifest import Manifest
+
+
+BUNDLE_SCHEMA = 1
+
+
+class BundleError(Exception):
+    pass
+
+
+@dataclass
+class BundleEntry:
+    path: str
+    sha256: str
+    bytes: int
+
+    def to_dict(self) -> dict:
+        return {"path": self.path, "sha256": self.sha256, "bytes": self.bytes}
+
+
+def package_experiment(name: str, *, output_path: str | None = None,
+                       root: str | None = None) -> dict:
+    manifest = Manifest.load(name, root)
+    base = paths.project_root() if root is None else root
+    files = _experiment_files(manifest, base, root)
+    if output_path is None:
+        out_dir = paths.make_unique_run_directory(f"bundle-{name}", root)
+        output_path = os.path.join(out_dir, f"{name}.run-bundle.tar.gz")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    meta = {
+        "schemaVersion": BUNDLE_SCHEMA,
+        "kind": "runBundle",
+        "createdAt": time.time(),
+        "experiment": name,
+        "experimentContentHash": manifest.content_hash(),
+        "validationScopeHash": manifest.validation_scope_hash(),
+        "rootRelative": True,
+        "verificationViolations": manifest.verify(root),
+        "entries": [],
+    }
+    with tarfile.open(output_path, "w:gz") as tar:
+        entries = _add_files(tar, files)
+        meta["entries"] = [entry.to_dict() for entry in entries]
+        _add_json(tar, "steerlab-bundle.json", meta)
+    meta["bundlePath"] = output_path
+    meta["bundleSha256"] = sha256_file(output_path)
+    return meta
+
+
+def _pipeline_evidence_directories(run_dir: str):
+    """Stage run directories a pipeline ledger references — the ACTUAL
+    evidence (vectors, validation report, sweep results, generations,
+    judgments, analysis) lives in SIBLING run dirs; the pipeline dir holds
+    only the ledger and pointers, so packaging it alone would ship
+    references to absolute cluster paths and nothing they name (engineer
+    review 2026-07-18, second round). Promote's variant artifacts are
+    included via their run directories too.
+
+    Returns ``(directories, missing, disposition)`` or None when the dir
+    holds no pipeline ledger. CONTAINMENT (third round): only directories
+    under the same runs root as the pipeline dir are followed — a tampered
+    ledger must not make packaging traverse arbitrary readable paths; an
+    out-of-root or absent reference lands in ``missing`` (the caller
+    decides whether that refuses or is stamped incomplete)."""
+    ledger_path = os.path.join(run_dir, "pipeline.json")
+    if not os.path.isfile(ledger_path):
+        return None
+    try:
+        with open(ledger_path, encoding="utf-8") as handle:
+            ledger = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        return [], [f"pipeline.json is unreadable ({type(exc).__name__})"], None
+    if not isinstance(ledger, dict):
+        return [], ["pipeline.json is not an object"], None
+    runs_root = os.path.realpath(os.path.dirname(run_dir.rstrip(os.sep)))
+    directories: list[str] = []
+    missing: list[str] = []
+    seen: set[str] = set()
+
+    def _add(candidate, what: str) -> None:
+        if not isinstance(candidate, str) or not candidate:
+            return
+        resolved = os.path.realpath(candidate)
+        if not resolved.startswith(runs_root + os.sep):
+            missing.append(f"{what}: '{candidate}' is outside the runs root")
+            return
+        if not os.path.isdir(resolved):
+            missing.append(f"{what}: '{candidate}' not found")
+            return
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        directories.append(resolved)
+
+    for stage, entry in (ledger.get("stageResults") or {}).items():
+        entry = entry if isinstance(entry, dict) else {}
+        _add(entry.get("runDirectory"), f"stage '{stage}'")
+        for concept, pin in (entry.get("concepts") or {}).items():
+            # Full pin dicts ({path, hash, sweepRun, winningCell}) since
+            # the fourth review round; bare path strings on older ledgers.
+            artifact_path = (pin.get("path") if isinstance(pin, dict)
+                             else pin)
+            if isinstance(artifact_path, str) and artifact_path:
+                _add(os.path.dirname(artifact_path),
+                     f"promoted agent '{concept}'")
+    return directories, missing, ledger.get("disposition")
+
+
+def _portable_pipeline_ledger(run_dir: str) -> dict | None:
+    """A PORTABLE projection of the pipeline ledger for the evidence bundle
+    (stage 5, engineer review 2026-07-18 third round): the on-disk ledger
+    references absolute cluster paths, which are meaningless after import
+    to the Mac. This projection references everything by imported RUN ID
+    (the ``runs/<id>/`` prefix the bundle itself uses) and keeps the
+    original paths as provenance. The on-disk ledger is never rewritten —
+    the run directory is immutable."""
+    ledger_path = os.path.join(run_dir, "pipeline.json")
+    if not os.path.isfile(ledger_path):
+        return None
+    try:
+        with open(ledger_path, encoding="utf-8") as handle:
+            ledger = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(ledger, dict):
+        return None
+    stage_runs: dict = {}
+    original_paths: dict = {}
+    promoted: dict = {}
+    for stage, entry in (ledger.get("stageResults") or {}).items():
+        entry = entry if isinstance(entry, dict) else {}
+        stage_dir = entry.get("runDirectory")
+        if isinstance(stage_dir, str) and stage_dir:
+            stage_runs[stage] = os.path.basename(stage_dir.rstrip(os.sep))
+            original_paths[stage] = stage_dir
+        for concept, pin in (entry.get("concepts") or {}).items():
+            path = pin.get("path") if isinstance(pin, dict) else pin
+            if not isinstance(path, str) or not path:
+                continue
+            record = {
+                "runID": os.path.basename(os.path.dirname(path)),
+                "artifact": os.path.basename(path)}
+            if isinstance(pin, dict):
+                for key in ("hash", "sweepRun", "winningCell"):
+                    if pin.get(key) is not None:
+                        record[key] = pin[key]
+            promoted[concept] = record
+            original_paths[f"agent:{concept}"] = path
+    stage_results = ledger.get("stageResults") or {}
+    stage_status = {
+        stage: ((stage_results.get(stage) or {}).get("status") or "pending")
+        for stage in (ledger.get("stages") or [])}
+    portable: dict = {
+        "schema": 1,
+        "kind": "pipelinePortable",
+        "experiment": ledger.get("experiment"),
+        "experimentHash": ledger.get("experimentHash"),
+        "ledgerSchema": ledger.get("schema"),
+        "disposition": ledger.get("disposition"),
+        "updatedAt": ledger.get("updatedAt"),
+        "manifestStatus": ledger.get("manifestStatus"),
+        "stages": ledger.get("stages") or [],
+        "stageStatus": stage_status,
+        "stageRuns": stage_runs,
+        "originalPaths": original_paths,
+    }
+    if promoted:
+        portable["promotedAgents"] = promoted
+    if isinstance(ledger.get("parked"), dict):
+        # The orphan stamp travels with the evidence (2026-08-06): an
+        # imported dead chain should still say WHY it stopped where it did.
+        portable["parked"] = ledger["parked"]
+    if isinstance(ledger.get("epochDriftAtContinuation"), list) \
+            and ledger["epochDriftAtContinuation"]:
+        portable["epochDriftAtContinuation"] = \
+            ledger["epochDriftAtContinuation"]
+    if isinstance(ledger.get("abort"), dict):
+        # Portable means PORTABLE (sixth round): the abort's evidence
+        # reference becomes an imported run ID like everything else; the
+        # cluster path survives only under originalPaths.
+        abort = dict(ledger["abort"])
+        evidence_dir = abort.pop("evidenceRunDirectory", None)
+        if isinstance(evidence_dir, str) and evidence_dir:
+            abort["evidenceRunID"] = os.path.basename(
+                evidence_dir.rstrip(os.sep))
+            original_paths["abort"] = evidence_dir
+        portable["abort"] = abort
+    return portable
+
+
+def _jlens_trace_problem(run_directory: str) -> str | None:
+    """``None`` when there is no trace or the trace is whole.
+
+    Absent is fine — most runs declare no readout. Present-but-incomplete is
+    not, because the trace is measurement evidence and a partial one cannot be
+    told from a whole one by looking at the file.
+    """
+    try:
+        from ..jlens.trace import read_summary
+    except Exception:  # noqa: BLE001 - the bundler must never fail on this
+        return None
+    try:
+        summary = read_summary(run_directory)
+    except Exception:  # noqa: BLE001
+        return None
+    if summary is None or summary.get("complete"):
+        return None
+    return (f"J-lens trace in '{os.path.basename(run_directory)}' is "
+            f"incomplete ({summary.get('incompleteRecords')} of "
+            f"{summary.get('traceRows')} record(s)) — not usable as a readout")
+
+
+#: What a pipeline run directory holds at BIRTH (`_write_config_snapshot`
+#: + the ledger) plus the abort record a stopped chain may add. Anything
+#: outside this set is evidence, and evidence always packages.
+_PIPELINE_SEED_FILES = frozenset({
+    "config.json", "experiment.json", "experiment-hash.txt", "task.txt",
+    "pipeline.json", "pipeline-abort.json",
+})
+
+
+def failure_record_skip(run_directory: str) -> dict | None:
+    """A structured SKIP for a pipeline directory that is a failure record
+    with nothing to bundle — or ``None`` when normal packaging (including
+    its loud refusals) should proceed.
+
+    The 2026-08-11 factorial-memo-study import: a pipeline continuation REFUSED
+    at start, leaving a chain directory holding only the seed snapshot and
+    the ledger ({config, experiment, experiment-hash, pipeline, task} — no
+    run-status.json, no stage outputs), and the app's bulk import died
+    wholesale trying to make an evidence bundle out of it. Such a
+    directory is not a packaging error — it is a failure RECORD whose
+    evidence never existed. The evidence route answers with this skip so
+    an importer can note it and keep going.
+
+    Deliberately narrow; everything else stays on the loud path:
+
+    - no ledger, or an unreadable/foreign-shaped one → ``None`` (a corrupt
+      file on an otherwise-real run must stay an error, never a skip);
+    - any file beyond the seed/ledger set → ``None`` — run-status.json
+      included: a run that STARTED has partial-retention, not a skip;
+    - any ledger-named stage directory still on disk → ``None`` (that
+      evidence must come home);
+    - a terminal disposition → ``None``: a COMPLETED chain missing its
+      evidence is the existing refusal, and an ABORTED chain's abort
+      record is a scientific determination worth bundling.
+    """
+    run_dir = os.path.realpath(run_directory)
+    ledger_path = os.path.join(run_dir, "pipeline.json")
+    try:
+        with open(ledger_path, encoding="utf-8") as handle:
+            ledger = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(ledger, dict) or ledger.get("disposition") is not None:
+        return None
+    for dirpath, _dirs, filenames in os.walk(run_dir):
+        for name in filenames:
+            if name.endswith(".evidence-bundle.tar.gz"):
+                continue  # a prior bundle is not evidence of this run
+            if dirpath != run_dir or name not in _PIPELINE_SEED_FILES:
+                return None
+    info = _pipeline_evidence_directories(run_dir)
+    directories, missing, _disposition = info if info is not None \
+        else ([], [], None)
+    if directories:
+        return None
+    reason = ("pipeline failure record with no stage outputs — nothing to "
+              "bundle beyond the ledger snapshot")
+    parked = ledger.get("parked")
+    if isinstance(parked, dict) and parked.get("reason"):
+        reason += f"; parked: {parked['reason']}"
+    if missing:
+        reason += "; unreachable stage evidence: " + "; ".join(missing)
+    return {
+        "skipped": True,
+        "kind": "evidenceSkip",
+        "runID": os.path.basename(run_dir.rstrip(os.sep)),
+        "runDirectory": run_dir,
+        "reason": reason,
+    }
+
+
+def package_evidence(run_directory: str, *, output_path: str | None = None,
+                     root: str | None = None, failure: dict | None = None,
+                     extra_files: list[tuple[str, str]] | None = None,
+                     extra_run_directories: list[str] | None = None) -> dict:
+    """Package a run directory as a hash-pinned evidence bundle.
+
+    ``failure`` (retention 2026-07-24) marks this as a PARTIAL bundle: the
+    stage did not complete, the bundle is stamped ``evidenceComplete:
+    false`` with the failure recorded, and the completeness refusal below is
+    skipped — refusing to package a failure is exactly the behaviour that
+    stranded data on the cluster. The filename carries ``.partial`` while
+    keeping the ``.evidence-bundle.tar.gz`` suffix, so every existing
+    scanner and importer still finds it and the tier is still obvious in a
+    directory listing.
+
+    ``extra_files`` are ``(source_path, archive_name)`` members from outside
+    the run directory — scheduler logs and job records, which live beside
+    the submission rather than in the run.
+
+    ``extra_run_directories`` are additional run directories to walk as if
+    the ledger had named them. A pipeline STAGE that died mid-flight is
+    typically absent from `pipeline.json` — it never completed, so nothing
+    recorded it — yet its partial output is exactly what a researcher
+    needs. Naming it here keeps the chain root authoritative (it still
+    contributes the ledger and every completed stage) without losing the
+    stage that failed.
+    """
+    run_dir = os.path.realpath(run_directory)
+    if not os.path.isdir(run_dir):
+        raise BundleError(f"run directory not found: {run_directory}")
+    run_id = os.path.basename(run_dir.rstrip(os.sep))
+    if output_path is None:
+        infix = ".partial" if failure else ""
+        output_path = os.path.join(
+            run_dir, f"{run_id}{infix}.evidence-bundle.tar.gz")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    pipeline_info = _pipeline_evidence_directories(run_dir)
+    stage_directories: list[str] = []
+    missing_evidence: list[str] = []
+    if pipeline_info is not None:
+        stage_directories, missing_evidence, disposition = pipeline_info
+        if missing_evidence and disposition == "completed" and not failure:
+            # A COMPLETED chain's evidence bundle must be complete — a
+            # nominally successful bundle silently missing its validation,
+            # sweep, generations, or judgments is worse than a refusal.
+            raise BundleError(
+                "pipeline evidence incomplete — refusing to package a "
+                "completed chain without: " + "; ".join(missing_evidence))
+    # CONTAINMENT, same rule `_pipeline_evidence_directories` already
+    # enforces on ledger-named stages (external review round 3, finding 5):
+    # an evidence packager must not be talked into walking arbitrary
+    # readable paths. Today's only caller passes an internally-derived
+    # directory, so this is not reachable from the UI — but a packager that
+    # is safe only because of who happens to call it is one call site away
+    # from not being safe. Fails CLOSED: an out-of-root directory is
+    # skipped, never packaged.
+    runs_root = os.path.realpath(os.path.dirname(run_dir.rstrip(os.sep)))
+    already = {os.path.realpath(d) for d in [run_dir, *stage_directories]}
+    for extra in extra_run_directories or []:
+        resolved = os.path.realpath(extra)
+        if not resolved.startswith(runs_root + os.sep):
+            missing_evidence.append(
+                f"failed stage: '{extra}' is outside the runs root")
+            continue
+        if os.path.isdir(resolved) and resolved not in already:
+            stage_directories.append(resolved)
+            already.add(resolved)
+    # A J-lens trace travels automatically (the walk below takes the whole run
+    # directory), but a bundle that stamps evidenceComplete over a TRUNCATED
+    # readout would assert something false about its own contents. An
+    # incomplete trace is recorded as missing evidence, exactly like a missing
+    # stage, so the completeness marker stays honest.
+    for source_dir in [run_dir, *stage_directories]:
+        problem = _jlens_trace_problem(source_dir)
+        if problem:
+            missing_evidence.append(problem)
+
+    files = []
+    for source_dir in [run_dir, *stage_directories]:
+        source_id = os.path.basename(source_dir.rstrip(os.sep))
+        for dirpath, _dirs, filenames in os.walk(source_dir):
+            for name in filenames:
+                path = os.path.join(dirpath, name)
+                if os.path.realpath(path) == os.path.realpath(output_path):
+                    continue
+                if name.endswith(".evidence-bundle.tar.gz"):
+                    continue  # never nest a stage's own prior bundle
+                files.append((path, os.path.join(
+                    "runs", source_id, os.path.relpath(path, source_dir))))
+    for source_path, archive_name in (extra_files or []):
+        if os.path.isfile(source_path):
+            files.append((source_path, archive_name))
+    meta = {
+        "schemaVersion": BUNDLE_SCHEMA,
+        "kind": "evidenceBundle",
+        "createdAt": time.time(),
+        "runID": run_id,
+        "runDirectory": run_dir,
+        "entries": [],
+    }
+    if failure:
+        # The tier marker. A partial bundle may be inspected, retried, and
+        # cited as a FAILURE record; it must never satisfy a
+        # completed-stage or evidence-grade gate, and every reader decides
+        # that from these two keys rather than from the filename.
+        meta["evidenceComplete"] = False
+        meta["failure"] = failure
+    # DECLARE every sibling directory that was packed, pipeline or not.
+    #
+    # This key used to be written only for pipeline bundles, so a bundle
+    # carrying `extra_run_directories` outside a chain packed those bytes,
+    # hashed them into `entries`, and never named them — and the Swift
+    # importer moves only the primary run plus DECLARED siblings. The data
+    # travelled inside an archive that called itself complete and was then
+    # discarded on arrival. Today's only caller is a pipeline stage partial,
+    # where the key happened to be written anyway; the docstring's promise
+    # ("as if the ledger had named them") is now kept for every caller.
+    if stage_directories:
+        meta["pipelineStageDirectories"] = [
+            os.path.basename(d.rstrip(os.sep)) for d in stage_directories]
+    portable_ledger = None
+    if pipeline_info is not None:
+        # Honest incompleteness (aborted/interrupted chains only — a
+        # completed chain with missing evidence refused above): what could
+        # not be packaged is NAMED, never silently absent. A failure bundle
+        # stays incomplete regardless: a chain that died can have every
+        # stage directory it reached and still not be a finished chain.
+        meta["evidenceComplete"] = not missing_evidence and not failure
+        if missing_evidence:
+            meta["missingEvidence"] = missing_evidence
+        portable_ledger = _portable_pipeline_ledger(run_dir)
+        if portable_ledger is not None:
+            meta["pipelinePortable"] = "steerlab-pipeline.json"
+            # Hash-pinned like every other member (sixth round — an
+            # unverifiable member fails both importers): the digest is over
+            # exactly the bytes _add_json writes.
+            meta["pipelinePortableSha256"] = hashlib.sha256(
+                json.dumps(portable_ledger, indent=2,
+                           sort_keys=True).encode("utf-8")).hexdigest()
+    with tarfile.open(output_path, "w:gz") as tar:
+        entries = _add_files(tar, files)
+        meta["entries"] = [entry.to_dict() for entry in entries]
+        if portable_ledger is not None:
+            _add_json(tar, "steerlab-pipeline.json", portable_ledger)
+        _add_json(tar, "steerlab-evidence.json", meta)
+    meta["bundlePath"] = output_path
+    meta["bundleSha256"] = sha256_file(output_path)
+    return meta
+
+
+def inspect_bundle(bundle_path: str) -> dict:
+    with tarfile.open(bundle_path, "r:gz") as tar:
+        for candidate in ("steerlab-bundle.json", "steerlab-evidence.json"):
+            try:
+                member = tar.getmember(candidate)
+            except KeyError:
+                continue
+            with tar.extractfile(member) as handle:
+                if handle is None:
+                    break
+                data = json.loads(handle.read().decode("utf-8"))
+                data["bundlePath"] = bundle_path
+                data["bundleSha256"] = sha256_file(bundle_path)
+                return data
+    raise BundleError("not a SteerLab bundle")
+
+
+def _is_manifest_path(dest: str, target: str) -> bool:
+    """Both manifest layouts: experiments/<name>/experiment.json AND the
+    legacy flat file experiments/<name>.json — a bundle must not dodge the
+    frozen guard by shipping the flat form."""
+    if os.path.basename(dest) == "experiment.json":
+        return True
+    experiments = os.path.join(target, "experiments")
+    return (os.path.dirname(dest) == experiments and dest.endswith(".json"))
+
+
+def _is_frozen_manifest(path: str) -> bool:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle).get("status") == "frozen"
+    except (OSError, ValueError):
+        return False
+
+
+def _clears_every_arm(path: str, payload: bytes) -> bool:
+    """True when ``payload`` would take the DRAFT manifest at ``path`` from
+    holding a measured surface to holding none (open-issues §8).
+
+    Unreadable on either side answers False: an unparseable member is the
+    per-entry hash check's business, and an unparseable file on disk has no
+    arms this can claim to protect."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            existing = json.load(handle)
+        incoming = json.loads(payload.decode("utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return False
+    if not isinstance(existing, dict) or not isinstance(incoming, dict):
+        return False
+    if existing.get("status") != "draft":
+        return False
+    return experiment_store._clears_every_arm(existing, incoming)
+
+
+def _check_bundle_closure(meta: dict, members) -> None:
+    """Pre-extraction COMPLETENESS proof (eighth round): per-member hash
+    checks verify what is present, but only a closure check catches what
+    was REMOVED — a bundle whose declared entry (or declared portable
+    ledger) is simply absent would otherwise import "successfully" while
+    silently missing evidence. Every declared path must appear exactly
+    once; a stamped portable pin requires its member."""
+    counts: dict[str, int] = {}
+    for member in members:
+        if member.isfile():
+            counts[member.name] = counts.get(member.name, 0) + 1
+    declared = [str(entry.get("path") or "")
+                for entry in meta.get("entries", [])]
+    if len(set(declared)) != len(declared):
+        raise BundleError(
+            "bundle metadata declares duplicate entry paths — refusing an "
+            "ambiguous bundle")
+    missing = [path for path in declared if counts.get(path, 0) == 0]
+    if missing:
+        raise BundleError(
+            "bundle is missing declared member(s): "
+            + ", ".join(sorted(missing)[:5])
+            + (" …" if len(missing) > 5 else "")
+            + " — refusing an incomplete bundle")
+    duplicated = [path for path in declared if counts.get(path, 0) > 1]
+    if duplicated:
+        raise BundleError(
+            "bundle carries duplicate member(s): "
+            + ", ".join(sorted(duplicated)[:5])
+            + " — refusing an ambiguous bundle")
+    if meta.get("pipelinePortableSha256") \
+            and counts.get("steerlab-pipeline.json", 0) != 1:
+        raise BundleError(
+            "bundle metadata pins a portable pipeline ledger the bundle "
+            "does not carry (exactly once) — refusing an incomplete bundle")
+
+
+def import_bundle(bundle_path: str, *, target_root: str | None = None,
+                  allow_overwrite: bool = False) -> dict:
+    target = os.path.realpath(target_root or paths.project_root())
+    meta = inspect_bundle(bundle_path)
+    extracted: list[str] = []
+    portable_payload: bytes | None = None
+    with tarfile.open(bundle_path, "r:gz") as tar:
+        _check_bundle_closure(meta, tar.getmembers())
+        for member in tar.getmembers():
+            if member.isdir() or member.name in {"steerlab-bundle.json", "steerlab-evidence.json"}:
+                continue
+            if member.name == "steerlab-pipeline.json":
+                # The portable pipeline ledger: pin REQUIRED (seventh
+                # round — an unpinned member is unverifiable), verified,
+                # and RETAINED inside the imported pipeline run dir after
+                # extraction so local readers resolve stage references
+                # without cluster paths.
+                expected = meta.get("pipelinePortableSha256")
+                source = tar.extractfile(member)
+                payload = source.read() if source is not None else b""
+                if not expected:
+                    raise BundleError(
+                        "portable pipeline ledger carries no hash pin — "
+                        "refusing an unverifiable bundle")
+                if hashlib.sha256(payload).hexdigest() != expected:
+                    raise BundleError(
+                        "portable pipeline ledger failed its hash pin — "
+                        "refusing a tampered bundle")
+                portable_payload = payload
+                continue
+            basename = os.path.basename(member.name)
+            if basename.startswith("._") or basename == ".DS_Store":
+                # macOS tar resource-fork metadata — never workspace data,
+                # and never listed in the hash entries. Skip, don't refuse:
+                # bundles packed by older Swift builds carry these.
+                continue
+            # Every imported file must be hash-verifiable: a member the
+            # bundle's entry list does not name would otherwise land in the
+            # workspace unchecked (parallel to the Swift evidence importer's
+            # ensureAllVerified).
+            if _entry_hash(meta, member.name) is None:
+                raise BundleError(
+                    f"bundle member not listed in the bundle's hash entries "
+                    f"(unverifiable): {member.name}")
+            dest = os.path.realpath(os.path.join(target, member.name))
+            if os.path.commonpath([target, dest]) != target:
+                raise BundleError(f"bundle member escapes target root: {member.name}")
+            source = tar.extractfile(member)
+            if source is None:
+                continue
+            with source:
+                payload = source.read()
+            # The integrity check runs on the IN-MEMORY payload, BEFORE any
+            # disk mutation (2026-08-04 shard race): the old order wrote
+            # dest and then re-hashed it from disk — but concurrent shard
+            # jobs of one submission extract the same bundle into the same
+            # workspace, so another shard's in-progress (identical) rewrite
+            # could be read torn, refusing a perfectly good bundle after
+            # 3 seconds ("hash mismatch after extracting …"). Hashing the
+            # payload verifies what the tar actually carried — the tamper
+            # firewall this check exists for — and cannot race.
+            expected = _entry_hash(meta, member.name)
+            if expected and hashlib.sha256(payload).hexdigest() != expected:
+                raise BundleError(f"hash mismatch after extracting {member.name}")
+            if os.path.exists(dest):
+                if not allow_overwrite:
+                    raise BundleError(f"refusing to overwrite existing file: {member.name}")
+                # Circularity firewall: never silently replace a FROZEN manifest
+                # with different content, even when allow_overwrite is set (which
+                # bundle-execute does for run artifacts). Re-importing the identical
+                # frozen manifest is fine; changed content is a freeze/verify
+                # violation surfaced as an error, not a silent stomp.
+                if _is_manifest_path(dest, target) and _is_frozen_manifest(dest):
+                    with open(dest, "rb") as existing:
+                        if existing.read() != payload:
+                            raise BundleError(
+                                f"refusing to overwrite frozen manifest {member.name} with "
+                                "different content (freeze firewall)")
+                # The same firewall one tier down, for DRAFTS (open-issues §8):
+                # a bundle carrying a skeleton manifest must not silently take
+                # a draft that has since gained concepts and conditions to
+                # both-empty. `_is_frozen_manifest` is False for a draft, so
+                # the check above never saw this; the arms simply vanished and
+                # only the run directory's snapshot remembered them.
+                if _is_manifest_path(dest, target) and _clears_every_arm(dest, payload):
+                    raise BundleError(
+                        f"refusing to overwrite draft manifest {member.name} with a "
+                        "document that has no concepts and no conditions — the "
+                        "workspace copy holds arms this bundle does not (import "
+                        "into a clean target root, or duplicate the workspace "
+                        "study before re-importing)")
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            # Atomic landing (same incident): a plain open(dest, "wb")
+            # truncates in place, so a concurrent extractor — or a running
+            # shard READING this artifact — could observe a torn file.
+            # Temp-in-same-directory + os.replace means every observer sees
+            # either the old complete file or the new complete file (which,
+            # for sibling shards of one submission, are the same bytes).
+            temp = f"{dest}.extract-{os.getpid()}.tmp"
+            try:
+                with open(temp, "wb") as handle:
+                    handle.write(payload)
+                os.replace(temp, dest)
+            except BaseException:
+                try:
+                    os.remove(temp)
+                except OSError:
+                    pass
+                raise
+            extracted.append(member.name)
+    # Retain the (verified) portable ledger inside the imported pipeline
+    # run dir — parallel to the Swift importer — so local readers resolve
+    # stage references by run ID, never by cluster path.
+    if portable_payload is not None:
+        run_id = str(meta.get("runID") or "")
+        run_dir = os.path.join(target, "runs", run_id)
+        if run_id and os.path.isdir(run_dir):
+            local = os.path.join(run_dir, "pipeline-portable.json")
+            if not os.path.exists(local):
+                with open(local, "wb") as handle:
+                    handle.write(portable_payload)
+                extracted.append(f"runs/{run_id}/pipeline-portable.json")
+    result = {"bundle": meta, "targetRoot": target, "extracted": extracted}
+    if meta.get("kind") == "evidenceBundle":
+        # The adoption reconciliation the Swift auto-import always ran and
+        # this raw path historically skipped (the 2026-08-06 replication-run
+        # recovery): a run whose server-side verb auto-pinned the model
+        # revision must offer that pin to the same-named local draft, or the
+        # next analyze/evaluate refuses on an epoch diff the researcher
+        # never authored. Loud in the RESULT, never a refusal — importing
+        # evidence into a workspace with no matching experiment stays legal.
+        from . import experiment_store
+        run_id = str(meta.get("runID") or "")
+        primary = os.path.join(target, "runs", run_id)
+        if run_id and os.path.isdir(primary):
+            result["revisionAdoption"] = \
+                experiment_store.adopt_evidence_revision(primary, target)
+    return result
+
+
+def _partial_directory_for(verb: str, name: str, target_root: str,
+                           started: float) -> str | None:
+    """Best-effort recovery of a run directory a failing stage did not name.
+
+    ``run`` and ``evaluate`` report their directory (a callback and an
+    exception attribute respectively). ``extract``, ``validate``, and
+    ``sweep`` do not, so a failure there had nothing to package — the exact
+    hole this closes.
+
+    Matching is deliberately strict, because packaging the WRONG run would
+    be worse than packaging none: the directory must carry this
+    experiment-and-verb slug AND have been created after this job started,
+    and if more than one candidate qualifies we refuse to guess rather than
+    pick one. A concurrent job in the same root is the case that would make
+    a guess wrong, and it is exactly the case that produces two candidates.
+    """
+    runs_root = os.path.join(target_root, "runs")
+    if not os.path.isdir(runs_root):
+        return None
+    prefix = f"exp-{name}-{verb}"
+    candidates = []
+    for entry in os.listdir(runs_root):
+        # `<stamp>-exp-<name>-<verb>` plus shard/suffix variants.
+        if not _matches_slug_component(entry, prefix):
+            continue
+        path = os.path.join(runs_root, entry)
+        if not os.path.isdir(path):
+            continue
+        try:
+            if os.stat(path).st_ctime + 1.0 < started:
+                continue  # predates this job (1s slack for clock coarseness)
+        except OSError:
+            continue
+        candidates.append(path)
+    if len(candidates) != 1:
+        return None
+    return candidates[0]
+
+
+#: The ONLY components that may follow a run-directory slug. Anything else
+#: means the slug is a prefix of a DIFFERENT name, not this one's suffix.
+#:
+#: - a collision counter (``paths.make_unique_run_directory`` appends ``-2``,
+#:   ``-3``, … when a stamp repeats)
+#: - a shard token. ``tasks`` writes ``shard<i>of<n>`` (one component); the
+#:   split ``shard-<i>`` spelling is accepted too, since a bare ``shard``
+#:   plus a digits component reads the same way and existing coverage
+#:   asserts it. Both are safe: what made the old rule dangerous was
+#:   admitting WORDS (``run``, ``evaluate``, ``thing``) that continue another
+#:   experiment's name, not admitting a second shard spelling.
+_RUN_DIRECTORY_SUFFIX_COMPONENT = re.compile(r"\A(?:\d+|shard\d*(?:of\d+)?)\Z")
+
+
+def _matches_slug_component(entry: str, prefix: str) -> bool:
+    """Whether a run-directory name IS this slug, allowing only the known
+    suffixes.
+
+    Plain substring matching marked FOREIGN directories: experiment ``a`` +
+    verb ``run`` (slug ``exp-a-run``) substring-matched experiment
+    ``a-runner``'s directories, and when that wrong directory was the single
+    candidate it was partial-marked — a WRITE into another experiment's run
+    directory — and packaged as this experiment's evidence.
+
+    A hyphen boundary alone does NOT close that hole (2026-07-27): the hyphen
+    after the slug can just as easily continue another experiment's NAME.
+    Experiment ``a`` matched ``…-exp-a-run-run`` (experiment ``a-run``, verb
+    ``run``), ``…-exp-a-run-evaluate`` (experiment ``a-run``, verb
+    ``evaluate``), and ``…-exp-a-run-thing-run`` (experiment
+    ``a-run-thing``) — the same cross-experiment write, through a narrower
+    door. So the tail after the slug must be EMPTY or consist only of known
+    suffix components; an unrecognised component means a different name.
+
+    This is the rule Swift's ``SweepRunCatalog.directoryNameMatches`` already
+    applied (slug at the end, or slug + ``-`` + an all-digits tail); the
+    engines now agree.
+    """
+    index = entry.find(prefix)
+    while index != -1:
+        end = index + len(prefix)
+        if index == 0 or entry[index - 1] == "-":
+            tail = entry[end:]
+            if not tail:
+                return True
+            if tail[0] == "-" and all(
+                    _RUN_DIRECTORY_SUFFIX_COMPONENT.match(component)
+                    for component in tail[1:].split("-")):
+                return True
+        index = entry.find(prefix, index + 1)
+    return False
+
+
+#: Verb names that can appear as the trailing token of a run-directory slug.
+_RUN_DIRECTORY_STAGES = (
+    "extract", "validate", "sweep", "run", "evaluate", "analyze", "pipeline")
+
+
+def _stage_of_run_directory(directory: str, fallback: str) -> str:
+    """The stage a run directory belongs to, from its own name.
+
+    A pipeline's failing STAGE directory should say which stage it was, not
+    "pipeline" — the chain root is the one that is a pipeline. Falls back to
+    the caller's verb whenever the name carries no known stage token (shard
+    suffixes, collision suffixes, anything unrecognised).
+
+    Stage tokens match at hyphen-COMPONENT boundaries, scanning from the
+    END: directory names are ``<stamp>-exp-<name>-<verb>[-<suffix>…]``, so
+    the last stage-word component is the verb, while an experiment NAME that
+    happens to contain a stage word (``my-run-thing``) sits earlier and must
+    not claim the stage (the old substring scan reported ``run`` for
+    ``…-exp-my-run-thing-evaluate``).
+    """
+    base = os.path.basename(directory.rstrip(os.sep))
+    for component in reversed(base.split("-")):
+        if component in _RUN_DIRECTORY_STAGES:
+            return component
+    return fallback
+
+
+def experiment_name_of_run_directory(directory: str, fallback_verb: str) -> str:
+    """The EXPERIMENT a run directory belongs to, from its own name.
+
+    Both failure-retention call sites derived this by hand, identically, and
+    identically wrong (2026-07-27):
+
+        name = os.path.basename(directory).split("-exp-")[-1]
+        name = name.rsplit(f"-{verb}", 1)[0] if verb in name else name
+
+    That trims the verb only when the CALLER's verb happens to be the
+    directory's stage. It is not, whenever a job's kind differs from the stage
+    that failed — a ``pipeline`` job whose ``run`` stage dies hands over
+    ``…-exp-a-run`` with verb ``pipeline``, so the name came out ``a-run``.
+    Then ``_mark_partial_run`` stamps that into the failure record's
+    ``experiment`` field, and the job result offers the researcher a targeted
+    retry naming an experiment that does not exist. ``split("-exp-")[-1]`` also
+    truncates any name that itself contains the delimiter.
+
+    Derived structurally instead, from ``<stamp>-exp-<name>-<stage>[-<suffix>…]``:
+    the FIRST ``-exp-`` is the real boundary (a timestamp cannot contain it),
+    known trailing suffix components come off, and a trailing STAGE token comes
+    off. Same source of truth as `_stage_of_run_directory`, which already
+    derives the stage from the directory rather than trusting the caller.
+
+    Falls back to the historical verb-trim when the trailing component is not a
+    recognised stage, so an unfamiliar directory shape is never read worse than
+    before.
+    """
+    base = os.path.basename(directory.rstrip(os.sep))
+    marker = "-exp-"
+    index = base.find(marker)
+    if index == -1:
+        return base
+    remainder = base[index + len(marker):]
+    components = remainder.split("-")
+    # Suffixes first: the stage token sits UNDER them.
+    while len(components) > 1 and _RUN_DIRECTORY_SUFFIX_COMPONENT.match(
+            components[-1]):
+        components.pop()
+    if len(components) > 1 and components[-1] in _RUN_DIRECTORY_STAGES:
+        return "-".join(components[:-1])
+    suffix = f"-{fallback_verb}"
+    return (remainder.rsplit(suffix, 1)[0] if suffix in remainder
+            else remainder)
+
+
+def _mark_partial_run(directory: str, *, verb: str, name: str,
+                      exc: BaseException) -> None:
+    """Stamp a failure record onto a run directory that has none.
+
+    Stages with something specific to say write their own status (evaluate
+    names which judges completed and which did not). This is the floor for
+    every other verb: without it a failed `run`'s partial generations would
+    come home looking like an ordinary, citable run directory — data with
+    no account of itself, which is worse than data plus a refusal.
+
+    Never overwrites an existing status: the stage's own account is always
+    the better one.
+    """
+    # A stage's own status wins; a TORN one does not — replacing an
+    # unreadable file with a real failure record is strictly better than
+    # leaving a directory that can only be read as "something died here".
+    if run_status.has_readable_status(directory):
+        return
+    stage = _stage_of_run_directory(directory, verb)
+    status = run_status.RunStatus(
+        directory, stage=stage, experiment=name,
+        item_label="record" if stage in ("run", "sweep") else "artifact")
+    try:
+        status.item_count = _generation_count(directory) or 0
+    except Exception:  # noqa: BLE001 - a count is a nicety, not the record
+        pass
+    status.fail(exc)
+
+
+def _diagnostic_files(record_path: str | None) -> list[tuple[str, str]]:
+    """Scheduler logs and job bookkeeping to carry home with a failure.
+
+    These live beside the SUBMISSION, not in the run directory, so nothing
+    would otherwise package them — and on a failed job they are usually the
+    most informative thing on the cluster (the traceback, the OOM, the
+    module-load error). Returns ``(source, archive_name)`` pairs under
+    ``diagnostics/``.
+
+    Best-effort and read-only: a job whose scheduler wrote its logs
+    elsewhere simply contributes fewer members, which is a smaller bundle,
+    never a failed one."""
+    if not record_path:
+        return []
+    directory = os.path.dirname(os.path.abspath(record_path))
+    if not os.path.isdir(directory):
+        return []
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    job_id = os.environ.get("SLURM_JOB_ID") or ""
+    patterns = [f"slurm-{job_id}.*"] if job_id else []
+    # The unqualified globs also catch sibling shards' logs, which is what
+    # you want when diagnosing a fan-out: the shard that failed is rarely
+    # the one that explains why.
+    patterns += ["slurm-*.out", "slurm-*.err", "*.resume"]
+    for pattern in patterns:
+        for path in sorted(glob.glob(os.path.join(directory, pattern))):
+            real = os.path.realpath(path)
+            if real in seen or not os.path.isfile(real):
+                continue
+            seen.add(real)
+            found.append((path, os.path.join("diagnostics",
+                                             os.path.basename(path))))
+    return found
+
+
+def execute_run_bundle(bundle_path: str, *, verb: str, target_root: str | None = None,
+                       dtype: str = "auto", device: str | None = None,
+                       prompts_path: str | None = None, source_path: str | None = None,
+                       package_evidence_on_complete: bool = True,
+                       record_path: str | None = None,
+                       checkpoint: "resume_mod.CheckpointFlag | None" = None,
+                       shard: str | None = None,
+                       resume_from: str | None = None) -> dict:
+    """Import a run bundle, execute one experiment verb, and package evidence.
+
+    This is intended as the Slurm child-process entry point. It deliberately
+    uses the same task functions as the normal CLI so batch jobs and interactive
+    jobs produce identical run artifacts.
+
+    Reliability contract (WS2): when ``record_path`` names this job's child
+    record, a resume POINTER lives beside it (``<job>.resume``). On start the
+    pointer is consulted — a checkpointed, incomplete run of this same job is
+    CONTINUED record-by-record; a completed run is returned idempotently (the
+    Slurm requeue re-executes the identical sbatch script, so both cases are
+    normal, not errors); anything else starts fresh, as before. ``checkpoint``
+    (the headless CLI's SIGUSR1/SIGTERM flag) makes the study loop park the run
+    and raise ``CheckpointRequested``, which is re-raised here after the child
+    record is stamped ``checkpointed`` — the caller exits 85.
+    """
+    # Tee this child's stdout into a bounded buffer so the durable record can
+    # carry it home. The record's `logs` key existed from day one and was
+    # never populated: on a local run the parent's job log captures the
+    # streamed lines, but on Slurm the record file IS what comes home — a
+    # 144-turn run's per-turn progress and memory-probe readings otherwise
+    # live only in a scheduler .out file that evidence packaging may or may
+    # not find. Line-buffered writes pass straight through to the real
+    # stdout, so parent streaming is unchanged.
+    captured_lines: list[str] = []
+    sys.stdout = _TeeStdout(sys.stdout, captured_lines)
+    try:
+        return _execute_run_bundle_inner(
+            bundle_path, verb=verb, target_root=target_root, dtype=dtype,
+            device=device, prompts_path=prompts_path, source_path=source_path,
+            package_evidence_on_complete=package_evidence_on_complete,
+            record_path=record_path, checkpoint=checkpoint, shard=shard,
+            resume_from=resume_from, captured_logs=captured_lines)
+    finally:
+        sys.stdout = sys.stdout.wrapped  # type: ignore[union-attr]
+
+
+class _TeeStdout:
+    """Pass-through stdout that keeps the most recent lines (bounded)."""
+
+    #: Same bound as the parent job manager's in-memory deque.
+    LIMIT = 2000
+
+    def __init__(self, wrapped, sink: list[str]):
+        self.wrapped = wrapped
+        self._sink = sink
+        self._partial = ""
+
+    def write(self, text: str) -> int:
+        result = self.wrapped.write(text)
+        self._partial += text
+        *complete, self._partial = self._partial.split("\n")
+        self._sink.extend(complete)
+        if len(self._sink) > self.LIMIT:
+            del self._sink[:len(self._sink) - self.LIMIT]
+        return result if isinstance(result, int) else len(text)
+
+    def flush(self) -> None:
+        self.wrapped.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.wrapped, name)
+
+
+def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
+                              target_root: str | None, dtype: str,
+                              device: str | None, prompts_path: str | None,
+                              source_path: str | None,
+                              package_evidence_on_complete: bool,
+                              record_path: str | None,
+                              checkpoint: "resume_mod.CheckpointFlag | None",
+                              shard: str | None, resume_from: str | None,
+                              captured_logs: list[str]) -> dict:
+    meta = inspect_bundle(bundle_path)
+    if meta.get("kind") != "runBundle":
+        raise BundleError("bundle execute requires a runBundle")
+    # Shard filter (multi-GPU fan-out): only the run verb has the
+    # per-record-independent record set the shard partition is defined over.
+    shard_spec = None
+    if shard is not None:
+        from . import sharding as sharding_mod
+        if verb != "run":
+            raise BundleError(
+                f"--shard applies to the 'run' verb only (got {verb!r}) — "
+                "other verbs have no independent per-record record set to "
+                "partition")
+        shard_spec = sharding_mod.parse_shard(shard)
+    target = os.path.realpath(target_root or paths.project_root())
+    imported = import_bundle(bundle_path, target_root=target, allow_overwrite=True)
+    name = meta["experiment"]
+
+    from . import tasks
+    from .manifest import Manifest
+
+    started = time.time()
+    run_directory: str | None = None
+    status = "succeeded"
+    error: str | None = None
+    result: dict = {
+        "experiment": name,
+        "verb": verb,
+        "targetRoot": target,
+        "imported": imported,
+        "startedAt": started,
+    }
+    if shard_spec is not None:
+        result["shard"] = {"index": shard_spec.index,
+                          "count": shard_spec.count}
+
+    # Scope the retention context to THIS unit of work. Without a reset a
+    # second execute in the same process would inherit the first's
+    # directory and package the wrong run — worse than packaging none.
+    run_directory_token = run_status.current_run_directory.set(None)
+    pointer_path = (resume_mod.pointer_path_for_record(record_path)
+                    if record_path else None)
+    resume_dir: str | None = None
+    complete_dir: str | None = None
+    if verb in ("run", "sweep") and pointer_path is not None:
+        # Sweeps checkpoint/resume too (2026-08-03: a walltime-killed sweep
+        # lost ~20 minutes of finished cells) — same pointer contract, with
+        # recommendations.json as the sweep's completion marker.
+        disposition, pointed = resume_mod.resolve_pointer(pointer_path, verb=verb)
+        if disposition == "resume":
+            resume_dir = pointed
+            result["resumedFrom"] = pointed
+        elif disposition == "complete":
+            complete_dir = pointed
+            result["alreadyComplete"] = True
+    resume_pipeline_dir: str | None = None
+    if verb == "pipeline" and pointer_path is not None:
+        # Pipeline resume classification is the LEDGER's job (pipeline.json:
+        # completed stages skip; a completed/aborted disposition returns
+        # idempotently — an aborted chain is a recorded scientific stop that
+        # a requeue must NOT re-run). The pointer only remembers which
+        # directory this job started.
+        pointer = resume_mod.read_pointer(pointer_path) or {}
+        pointed = pointer.get("runDirectory")
+        if (pointer.get("verb") == verb and pointed
+                and os.path.isdir(pointed)):
+            resume_pipeline_dir = pointed
+            result["resumedFrom"] = pointed
+
+    # The directory a stage created, captured the moment it exists rather
+    # than on return: a run that fails midway never reaches the assignment
+    # of ``run_directory``, and its partial evidence would otherwise be
+    # unreachable from the failure path (retention 2026-07-24).
+    created_directory: list[str] = []
+
+    def _note_run_directory(created: str) -> None:
+        # Persist the run-dir pointer the moment the directory exists, so a
+        # requeued re-execution of this same script finds it. Best-effort: a
+        # pointer write failure must not kill the run, only its resumability.
+        created_directory.append(created)
+        if pointer_path is None:
+            return  # retention-only caller: nothing to make resumable
+        try:
+            resume_mod.write_pointer(pointer_path, created, verb=verb,
+                                     experiment=name)
+        except OSError as exc:
+            result["pointerError"] = f"{type(exc).__name__}: {exc}"
+
+    try:
+        if verb == "verify":
+            result["violations"] = Manifest.load(name, target).verify(target)
+        elif verb == "extract":
+            run_directory = tasks.extract(name, target, dtype, device)
+        elif verb == "validate":
+            run_directory = tasks.validate(name, target, dtype, device)
+        elif verb == "sweep":
+            if complete_dir is not None:
+                run_directory = complete_dir
+            else:
+                run_directory = tasks.sweep(
+                    name, target, dtype, device,
+                    checkpoint=checkpoint, run_directory=resume_dir,
+                    on_run_directory=_note_run_directory)
+        elif verb == "run":
+            if complete_dir is not None:
+                run_directory = complete_dir
+            else:
+                run_directory = tasks.run(
+                    name, prompts_path, target, dtype, device,
+                    checkpoint=checkpoint, run_directory=resume_dir,
+                    on_run_directory=_note_run_directory,
+                    shard=shard_spec)
+        elif verb == "evaluate":
+            # `resume_from` completes a FAILED evaluation by judging only
+            # the cells it never decided (2026-07-24). Plumbed here so the
+            # retry is reachable from the app and the cluster, not just the
+            # CLI — the affordance that told a researcher a partial was
+            # "retryable" previously had nothing behind it.
+            run_directory = tasks.evaluate(name, target, source_path,
+                                           resume_from=resume_from)
+        elif verb == "analyze":
+            # Statistics-only pass over a prior run (no model load). The
+            # epoch and measurement-drift guards live inside tasks.analyze
+            # itself — same enforcement as the direct API/CLI paths. The
+            # source run threads exactly as evaluate's (--source /
+            # sourcePath); absent, the newest completed run is analyzed.
+            run_directory = tasks.analyze(name, target, source_path)
+        elif verb == "pipeline":
+            run_directory = tasks.pipeline(
+                name, target, dtype, device, checkpoint=checkpoint,
+                pipeline_run_directory=resume_pipeline_dir,
+                on_pipeline_directory=_note_run_directory)
+        else:
+            raise BundleError(f"unsupported bundled experiment verb {verb!r}")
+        if run_directory:
+            result["runDirectory"] = run_directory
+            if verb == "pipeline":
+                # Judge fan-out handshake (2026-07-23): a pipeline whose
+                # evaluate stage emitted packets for local judge workers
+                # STOPPED at that stage — the child record carries the
+                # fan-out request so the controller submits one worker per
+                # distinct judge model, and NO evidence is packaged (the
+                # pipeline is not finished; a bundle here would look
+                # imported while judgments are still pending).
+                request = tasks.read_judge_fanout_request(run_directory)
+                if request is not None and _pipeline_awaits_judgment(
+                        run_directory):
+                    result["awaitingJudgeFanout"] = request
+            if package_evidence_on_complete \
+                    and "awaitingJudgeFanout" not in result:
+                result["evidenceBundle"] = package_evidence(run_directory)
+    except resume_mod.CheckpointRequested as exc:
+        # Not a failure: the run is durably parked and resumable. The child
+        # record says so, and the exception continues to the exit-85 path.
+        status = "checkpointed"
+        run_directory = exc.run_directory
+        result["runDirectory"] = exc.run_directory
+        result["resumeState"] = {"completedRecords": exc.completed_records,
+                                 "reason": exc.reason}
+        # Marked as CHECKPOINTED, never failed (2026-07-24): it is still
+        # incomplete, so no evidence gate may take it, but calling a
+        # working requeue a failure would train the researcher to ignore
+        # the marker that actually matters.
+        try:
+            if not run_status.has_readable_status(exc.run_directory):
+                parked = run_status.RunStatus(
+                    exc.run_directory, stage=verb, experiment=name,
+                    item_label="record")
+                parked.item_count = exc.completed_records or 0
+                parked.checkpointed(reason=exc.reason)
+        except Exception:  # noqa: BLE001 - never break a working requeue
+            pass
+        raise
+    except Exception as exc:  # noqa: BLE001 - recorded for child-job reconciliation
+        status = "failed"
+        error = f"{type(exc).__name__}: {exc}"
+        result["error"] = error
+        # Retention (2026-07-24): the failure stands, but whatever the stage
+        # actually produced comes HOME. Previously this path recorded the
+        # error and re-raised, so a failed job left its generations,
+        # judgments, and logs reachable only over SSH — "the data still
+        # exists somewhere under /scratch" was the retention policy.
+        # REPORTED beats OBSERVED (external review round 2, finding 4).
+        #
+        # `created_directory` is what the verb itself declared through its
+        # callback; for a pipeline that is the chain ROOT. The exception
+        # attribute and the context variable observe whichever directory
+        # was created most recently — the failing STAGE. A stage directory
+        # is more specific but far less complete: only the root carries
+        # `pipeline.json`, and only from the root does `package_evidence`
+        # follow the ledger to every stage. Packaging the stage alone ships
+        # the evaluate partial and silently drops the generations, which
+        # are the expensive output and the whole point of retention.
+        observed = run_status.partial_run_directory(exc)
+        # Verbs that never report their directory (extract, validate,
+        # sweep) fall back to a strict slug+time match, or None when that
+        # would be a guess.
+        reported = created_directory[-1] if created_directory else None
+        stage_partial: str | None = None
+        if verb == "pipeline" and reported:
+            partial = reported
+            if observed and os.path.realpath(observed) != os.path.realpath(reported):
+                stage_partial = observed
+        else:
+            partial = (observed or reported
+                       or _partial_directory_for(verb, name, target, started))
+        # Mark BEFORE packaging, so the bundle carries failure records
+        # rather than unexplained directories. The failing STAGE gets its
+        # own marker (that is where the specifics are), and the chain root
+        # gets one too — otherwise an imported pipeline root reads as
+        # unannotated, i.e. citable. Best-effort: never let a marker's
+        # failure mask the run's.
+        for directory in filter(None, (stage_partial, partial)):
+            try:
+                _mark_partial_run(directory, verb=verb, name=name, exc=exc)
+            except Exception:  # noqa: BLE001
+                pass
+        if package_evidence_on_complete and partial:
+            try:
+                result["evidenceBundle"] = package_evidence(
+                    partial,
+                    failure={"error": error,
+                             "errorType": type(exc).__name__,
+                             "verb": verb, "experiment": name,
+                             "traceback": traceback.format_exc()},
+                    extra_files=_diagnostic_files(record_path),
+                    # A pipeline stage that died is usually absent from the
+                    # ledger — nothing recorded a stage that never finished
+                    # — so name it explicitly or its partial output is lost
+                    # even though the chain root was packaged.
+                    extra_run_directories=[stage_partial] if stage_partial else None)
+                result["partialEvidence"] = True
+                # What a client needs to offer a targeted RETRY, at the
+                # RESULT root where the app reads it. Without these the
+                # retry affordance could never appear on a bundled/Slurm
+                # job — which is the case where redoing a judged evaluate
+                # is most expensive.
+                result["experiment"] = name
+                result["verb"] = verb
+                result["partialRunID"] = os.path.basename(
+                    (stage_partial or partial).rstrip(os.sep))
+            except Exception as pack_exc:  # noqa: BLE001
+                # A packaging failure must never replace the real error —
+                # the researcher would debug the packager instead of the
+                # run. It is recorded and the original exception continues.
+                result["evidencePackagingError"] = \
+                    f"{type(pack_exc).__name__}: {pack_exc}"
+        raise
+    finally:
+        run_status.current_run_directory.reset(run_directory_token)
+        result["finishedAt"] = time.time()
+        if record_path:
+            write_child_record(record_path, kind=f"bundle-execute:{verb}",
+                               status=status, result=result, error=error,
+                               # The teed child stdout (bounded): per-turn
+                               # progress and memory-probe lines survive in
+                               # the record that comes home from Slurm.
+                               logs=list(captured_logs),
+                               elapsed_seconds=time.time() - started,
+                               record_count=_generation_count(run_directory))
+    return result
+
+
+def _pipeline_awaits_judgment(pipeline_directory: str) -> bool:
+    """Whether the pipeline ledger's evaluate stage is still awaiting
+    judgments — a completed/adopted evaluate must NOT re-trigger the
+    fan-out on a resumed continuation."""
+    try:
+        with open(os.path.join(pipeline_directory, "pipeline.json"),
+                  encoding="utf-8") as handle:
+            ledger = json.load(handle)
+    except (OSError, ValueError):
+        return False
+    stage = (ledger.get("stageResults") or {}).get("evaluate") or {}
+    return stage.get("status") == "awaitingJudgment"
+
+
+def _generation_count(run_directory: str | None) -> int | None:
+    """Cheap record count for the child record: lines in generations.jsonl."""
+    if not run_directory:
+        return None
+    path = os.path.join(run_directory, "generations.jsonl")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "rb") as handle:
+            return sum(1 for line in handle if line.strip())
+    except OSError:
+        return None
+
+
+def write_child_record(record_path: str, *, kind: str, status: str,
+                       result: dict | None = None, error: str | None = None,
+                       logs: list[str] | None = None,
+                       elapsed_seconds: float | None = None,
+                       record_count: int | None = None) -> None:
+    os.makedirs(os.path.dirname(record_path), exist_ok=True)
+    payload = {
+        "schemaVersion": 1,
+        "id": os.environ.get("STEERLAB_JOB_ID") or os.path.splitext(os.path.basename(record_path))[0],
+        "kind": kind,
+        "status": status,
+        "executor": "slurm" if os.environ.get("SLURM_JOB_ID") else "local",
+        "executorJobID": os.environ.get("SLURM_JOB_ID"),
+        "finishedAt": time.time(),
+        "result": result,
+        "error": error,
+        "logs": logs or [],
+    }
+    # Throughput/provenance fields (WS2 contract): stamped when cheaply known,
+    # never fabricated — the reconciler folds them into the job result.
+    if elapsed_seconds is not None:
+        payload["elapsedSeconds"] = float(elapsed_seconds)
+    if record_count is not None:
+        payload["recordCount"] = int(record_count)
+    with open(record_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+
+
+# Engine-default input paths, read at execute time when the manifest declares
+# no replacement. MUST match tasks.sweep / battery.DEFAULT_BATTERY_FILE.
+_DEFAULT_DEV_PROMPTS_FILE = "prompts/dev/dev-prompts.jsonl"
+
+
+def _experiment_files(manifest: Manifest, base: str, root: str | None) -> list[tuple[str, str]]:
+    """Every file a run bundle must carry: the manifest plus the WHOLE pin
+    surface, derived mechanically from the same enumeration the freeze
+    cleanliness gate and pinned/ snapshot use
+    (``experiment_store.pinned_input_entries``) — a pin kind added there is
+    packed here automatically, never hand-listed. A REQUIRED pinned input
+    missing on disk fails packaging loudly (a bundle that silently lacks a
+    pinned input only fails child-side, hours later, on the cluster)."""
+    out: list[tuple[str, str]] = []
+    exp_path = experiment_store._path(manifest.name, root)  # same canonical path as authoring
+    out.append((exp_path, os.path.relpath(exp_path, base)))
+
+    for entry in experiment_store.pinned_input_entries(manifest.raw, root):
+        rel = os.path.relpath(entry.path, base)
+        if not os.path.exists(entry.path):
+            if entry.required:
+                raise BundleError(
+                    f"cannot package '{manifest.name}': pinned input missing "
+                    f"— {entry.label} at {rel}")
+            continue
+        if rel.startswith(".."):
+            raise BundleError(
+                f"cannot package '{manifest.name}': pinned input outside the "
+                f"workspace cannot be bundled — {entry.label} at {entry.path}")
+        if os.path.isdir(entry.path):
+            out.extend(_walk(entry.path, rel))
+        else:
+            out.append((entry.path, rel))
+
+    # Implicit engine defaults (not manifest-declared, read at execute time):
+    # packed when present so the bundle stays executable for every verb on
+    # the remote engine. Optional by definition — a missing default is the
+    # remote engine's ordinary refusal, not a packaging failure.
+    defaults: list[str] = []
+    sweep = manifest.raw.get("sweep") if isinstance(manifest.raw.get("sweep"), dict) else {}
+    if not manifest.raw.get("capabilityBatteryFile"):
+        from . import battery as battery_mod
+        defaults.append(battery_mod.DEFAULT_BATTERY_FILE)
+    if not sweep.get("devPromptsFile"):
+        defaults.append(_DEFAULT_DEV_PROMPTS_FILE)
+    if not sweep.get("batteryFile"):
+        from . import battery as battery_mod
+        defaults.append(battery_mod.DEFAULT_BATTERY_FILE)
+    for rel in defaults:
+        path = os.path.join(base, rel)
+        if os.path.exists(path):
+            out.append((path, rel))
+    return _dedupe_existing(out)
+
+
+def _walk(directory: str, rel_base: str) -> Iterable[tuple[str, str]]:
+    if not os.path.isdir(directory):
+        return []
+    out = []
+    for dirpath, _dirs, filenames in os.walk(directory):
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            rel = os.path.join(rel_base, os.path.relpath(path, directory))
+            out.append((path, rel))
+    return out
+
+
+def _dedupe_existing(files: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+    for path, rel in files:
+        real = os.path.realpath(path)
+        if real in seen or not os.path.exists(real) or os.path.isdir(real):
+            continue
+        seen.add(real)
+        out.append((real, rel))
+    return out
+
+
+def _add_files(tar: tarfile.TarFile, files: Iterable[tuple[str, str]]) -> list[BundleEntry]:
+    entries: list[BundleEntry] = []
+    for path, rel in files:
+        rel = rel.replace(os.sep, "/")
+        tar.add(path, arcname=rel, recursive=False)
+        entries.append(BundleEntry(path=rel, sha256=sha256_file(path),
+                                   bytes=os.path.getsize(path)))
+    return entries
+
+
+def _add_json(tar: tarfile.TarFile, arcname: str, payload: dict) -> None:
+    data = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
+    info = tarfile.TarInfo(arcname)
+    info.size = len(data)
+    info.mtime = time.time()
+    import io
+    tar.addfile(info, io.BytesIO(data))
+
+
+def _entry_hash(meta: dict, path: str) -> str | None:
+    for entry in meta.get("entries", []):
+        if entry.get("path") == path:
+            return entry.get("sha256")
+    return None
+
+
+def sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()

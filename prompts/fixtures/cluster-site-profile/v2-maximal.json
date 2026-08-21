@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 2,
+  "name": "Example HPC (v2 maximal)",
+  "notes": "FICTIONAL site stating every schema-2 key, so a decoder that drops or renames one fails the key-list assertion. Not a plausible site: the values are chosen to be distinguishable, not coherent. No institutional identifiers.",
+  "bootstrapPath": "Server/scripts/bootstrap.sh",
+  "transport": {
+    "kind": "ssh",
+    "host": "slurm.example.edu",
+    "proxyJump": "bastion.example.edu",
+    "remotePort": 9090,
+    "vpnExpected": true
+  },
+  "topology": "daemonInJob",
+  "scheduler": {
+    "kind": "slurm",
+    "slurm": {
+      "partitions": [
+        {
+          "name": "gpu_p",
+          "maxWalltimeHours": 168,
+          "allowedGPUTypes": ["A100", "H100"],
+          "qos": "gpu_qos"
+        },
+        {
+          "name": "batch",
+          "maxWalltimeHours": 48,
+          "allowedGPUTypes": [],
+          "qos": null
+        }
+      ],
+      "gpuTypes": ["A100", "H100"],
+      "gpuVRAMGB": { "A100": 80, "H100": 80 },
+      "defaultGres": "gpu:A100:1",
+      "defaultPartition": "gpu_p",
+      "accountRequired": true,
+      "account": "example-lab",
+      "billedAllocations": true,
+      "maxParallelGPUJobs": 15,
+      "gpus": [
+        { "name": "A100", "vramGB": 80, "computeCapability": "sm_80" },
+        { "name": "H100", "vramGB": 80, "computeCapability": "sm_90" }
+      ],
+      "qos": "normal",
+      "constraints": ["hasgpu", "ib"],
+      "reservation": "maint-window",
+      "extraSbatch": ["--exclusive"],
+      "requiredHeaders": ["partition", "mem", "ntasks"],
+      "commands": {
+        "submit": "sbatch-wrap",
+        "query": "sq",
+        "accounting": "sacct-wrap",
+        "cancel": "scancel-wrap"
+      },
+      "jobDefaults": { "memory": "120G", "walltime": "12:00:00", "cpusPerTask": 8 },
+      "interruption": {
+        "requeue": true,
+        "autoResubmit": true,
+        "autoResubmitLimit": 3,
+        "signalSeconds": 300,
+        "signalTarget": "batch-forward",
+        "exportMode": "all"
+      },
+      "submitFromBundleDirectory": false,
+      "jobNamePrefix": "steerlab-x",
+      "limits": { "maxSubmittedJobs": 20, "maxRunningJobs": 8, "maxParallelGPUJobs": 15 },
+      "accountingVisibilityGraceSeconds": 900,
+      "controllerJob": {
+        "partition": "batch",
+        "cpusPerTask": 2,
+        "memory": "24G",
+        "walltime": "48:00:00",
+        "gres": null,
+        "port": 9090,
+        "idleMinutes": null,
+        "extraSbatch": ["--nice=100"]
+      },
+      "setupJob": {
+        "partition": "batch",
+        "cpusPerTask": 6,
+        "memory": "32G",
+        "walltime": "03:00:00",
+        "gres": null,
+        "port": null,
+        "idleMinutes": null,
+        "extraSbatch": ["--hint=nomultithread"]
+      },
+      "gpuSession": {
+        "partition": "gpu_p",
+        "cpusPerTask": 8,
+        "memory": "96G",
+        "walltime": "04:00:00",
+        "gres": "gpu:H100:1",
+        "port": 10000,
+        "idleMinutes": 45,
+        "extraSbatch": ["--nice=100"]
+      }
+    }
+  },
+  "constraints": {
+    "computeEgress": "no",
+    "storageRoots": {
+      "workspace": "/scratch/researcher/workspace",
+      "hfCache": "/work/examplelab/hf-cache",
+      "archive": "/project/examplelab/archive",
+      "metadata": "~/.steerlab-meta",
+      "run": "/scratch/researcher/workspace/runs",
+      "asset": "/work/examplelab/assets",
+      "nodeCache": "/lscratch/cache"
+    },
+    "purgeDays": 45,
+    "purgeWarnDays": 35,
+    "maintenanceSource": "https://status.example.edu",
+    "storage": {
+      "nodeStageDirTemplate": "/tmp/$SLURM_JOB_ID",
+      "nodeScratchGres": "lscratch:100",
+      "hubOfflineMode": "online",
+      "metadataRequiresLocalFilesystem": true,
+      "scanFileCap": 25000,
+      "freeSpaceWarnGB": 10,
+      "freeSpaceFailGB": 1,
+      "calendarStaleDays": 30,
+      "quotaCommand": "lfs quota -u $USER /scratch",
+      "scannedRoles": ["workspace", "metadata", "hfCache", "archive"],
+      "prestageMinFreeGB": 8
+    }
+  },
+  "environment": {
+    "moduleSystem": "lmod",
+    "moduleInitScript": "/etc/profile.d/modules.sh",
+    "modules": ["Miniforge3", "CUDA/12.8"],
+    "pythonProvider": "venv",
+    "pythonVersion": "3.13",
+    "envPrefix": "~/envs/site",
+    "condaProfileScript": "~/miniforge3/etc/profile.d/conda.sh",
+    "condaEnvName": "steerlab",
+    "venvPath": "~/envs/site",
+    "pythonExecutable": "~/envs/site/bin/python",
+    "torchIndexURL": "https://download.pytorch.org/whl/cu128",
+    "torchVariant": "cu128",
+    "serverExtras": ["lora", "test"],
+    "envFilePath": "$HOME/site.env",
+    "tokenFilePath": "~/.site-token",
+    "remoteRepoPath": "~/src/steerlab",
+    "interactiveAllocationCommand": "salloc -c 4 --mem 16g --time 2:00:00",
+    "transferHost": "xfer.example.edu",
+    "sshControlPersist": "4h"
+  },
+  "policy": {
+    "loginNodes": {
+      "hostnamePatterns": ["^login", "^submit"],
+      "allowCompute": false,
+      "requireAllocation": true
+    },
+    "maintenance": {
+      "calendarPath": "~/.steerlab/maintenance.json",
+      "sourceURL": "https://status.example.edu/feed.json",
+      "sourceNote": "announced on the users list"
+    },
+    "transferMethod": "globus",
+    "externalServiceEgress": "no",
+    "bindOverride": "127.0.0.1",
+    "authModeOverride": "token"
+  }
+}

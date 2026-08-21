@@ -1,0 +1,30 @@
+{
+  "bosCount": 1,
+  "bosTokenID": 2,
+  "case": "raw_completion",
+  "family": "gemma",
+  "generator": {
+    "engine": "python-hf",
+    "generatedOn": "2026-07-06",
+    "script": "prompts/fixtures/render/generate.py",
+    "tokenizerClass": "GemmaTokenizer",
+    "transformersVersion": "5.12.1"
+  },
+  "inputs": {
+    "api": "render",
+    "prompt": "The court held that",
+    "promptMode": "rawCompletion",
+    "qwenThinkingEnabled": false,
+    "systemPrompt": null
+  },
+  "modelID": "google/gemma-3-4b-it",
+  "promptTokenCount": 5,
+  "rendered": "The court held that",
+  "tokenIDs": [
+    2,
+    818,
+    4054,
+    4247,
+    600
+  ]
+}

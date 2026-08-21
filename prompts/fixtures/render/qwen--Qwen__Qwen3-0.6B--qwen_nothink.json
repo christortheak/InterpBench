@@ -1,0 +1,48 @@
+{
+  "bosCount": 0,
+  "bosTokenID": null,
+  "case": "qwen_nothink",
+  "family": "qwen",
+  "generator": {
+    "engine": "python-hf",
+    "generatedOn": "2026-07-06",
+    "script": "prompts/fixtures/render/generate.py",
+    "tokenizerClass": "Qwen2Tokenizer",
+    "transformersVersion": "5.12.1"
+  },
+  "inputs": {
+    "api": "render",
+    "prompt": "Was the evidence admissible? Answer yes or no.",
+    "promptMode": "chatAssistant",
+    "qwenThinkingEnabled": false,
+    "systemPrompt": null
+  },
+  "modelID": "Qwen/Qwen3-0.6B",
+  "promptTokenCount": 23,
+  "rendered": "<|im_start|>user\nWas the evidence admissible? Answer yes or no.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+  "tokenIDs": [
+    151644,
+    872,
+    198,
+    26034,
+    279,
+    5904,
+    993,
+    44064,
+    30,
+    21806,
+    9834,
+    476,
+    902,
+    13,
+    151645,
+    198,
+    151644,
+    77091,
+    198,
+    151667,
+    271,
+    151668,
+    271
+  ]
+}

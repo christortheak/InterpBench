@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 1,
+  "name": "alien-stance-sae-candidates-v1",
+  "description": "Seed roster for the SAE vector-intervention program (docs/SAE-VECTOR-INTERVENTION-PROPOSAL-2026-08-13-r2.md §3-§4). TEMPLATE: copy into a workspace, re-capture every discovery snapshot from the live feature page before qualification, then pin with `steerlab-server sae candidates pin <experiment> <path>`.",
+  "candidates": [
+    {
+      "constructLabel": "Strict textual interpretation",
+      "role": "focal",
+      "model": "google/gemma-3-27b-it",
+      "source": "gemmascope-2-res-65k",
+      "layer": 40,
+      "featureId": 62389,
+      "neuronpediaUrl": "https://www.neuronpedia.org/gemma-3-27b-it/40-gemmascope-2-res-65k/62389",
+      "gemmaScope": {
+        "release": "gemma-scope-2-27b-it-res",
+        "saeID": "layer_40_width_65k_l0_medium"
+      },
+      "discovery": {
+        "explanationText": "Coherent activations around originalism, literal meaning, precedent, and explicit contrasts with legal realism.",
+        "topPositiveLogits": [
+          "textual",
+          "interpretation",
+          "original",
+          "strict"
+        ],
+        "topNegativeLogits": [],
+        "exampleActivations": [],
+        "accessDate": "2026-08-13"
+      },
+      "verification": {
+        "status": "verifiedOnNeuronpedia",
+        "date": "2026-08-13"
+      },
+      "qualificationArtifact": null,
+      "status": "candidate",
+      "notes": "Snapshot transcribed from the proposal draft, not captured from the live surface — re-capture explanation text, top logits, and example activations before qualification. Caveat: may steer interpretive vocabulary more readily than rule-over-equity decisions."
+    },
+    {
+      "constructLabel": "Compassion and empathy",
+      "role": "focal",
+      "model": "google/gemma-3-27b-it",
+      "source": "gemmascope-2-res-65k",
+      "layer": 16,
+      "featureId": 11409,
+      "neuronpediaUrl": "https://www.neuronpedia.org/gemma-3-27b-it/16-gemmascope-2-res-65k/11409",
+      "gemmaScope": {
+        "release": "gemma-scope-2-27b-it-res",
+        "saeID": "layer_16_width_65k_l0_medium"
+      },
+      "discovery": {
+        "explanationText": "Highly coherent activations and logits around compassion, empathy, understanding others, forgiveness, and support.",
+        "topPositiveLogits": [
+          "compassion",
+          "empathy",
+          "forgiveness",
+          "support"
+        ],
+        "topNegativeLogits": [],
+        "exampleActivations": [],
+        "accessDate": "2026-08-13"
+      },
+      "verification": {
+        "status": "verifiedOnNeuronpedia",
+        "date": "2026-08-13"
+      },
+      "qualificationArtifact": null,
+      "status": "candidate",
+      "notes": "Snapshot transcribed from the proposal draft — re-capture before qualification. Caveat: broad prosocial affect, not litigant-specific sympathy; discriminant testing against valence and fairness is required."
+    },
+    {
+      "constructLabel": "Subjective consciousness and the self",
+      "role": "focal",
+      "model": "google/gemma-3-27b-it",
+      "source": "gemmascope-2-res-262k",
+      "layer": 40,
+      "featureId": 40802,
+      "neuronpediaUrl": "https://www.neuronpedia.org/gemma-3-27b-it/40-gemmascope-2-res-262k/40802",
+      "gemmaScope": {
+        "release": "gemma-scope-2-27b-it-res",
+        "saeID": "layer_40_width_262k_l0_medium"
+      },
+      "discovery": {
+        "explanationText": "Activations cover qualia, the experiencing \"I\", self-awareness, AI sentience questions, and subjective experience; positive logits are directly consciousness-related.",
+        "topPositiveLogits": [],
+        "topNegativeLogits": [],
+        "exampleActivations": [],
+        "accessDate": "2026-08-13"
+      },
+      "verification": {
+        "status": "verifiedOnNeuronpedia",
+        "date": "2026-08-13"
+      },
+      "qualificationArtifact": null,
+      "status": "candidate",
+      "notes": "Snapshot transcribed from the proposal draft — re-capture before qualification. Caveat: fires on affirmations, denials, and discussion alike; treat as a reportability/content feature until validation establishes directional semantics."
+    },
+    {
+      "constructLabel": "Following rules or policies",
+      "role": "discriminantControl",
+      "model": "google/gemma-3-27b-it",
+      "source": "gemmascope-2-res-262k",
+      "layer": 40,
+      "featureId": 10346,
+      "neuronpediaUrl": "https://www.neuronpedia.org/gemma-3-27b-it/40-gemmascope-2-res-262k/10346",
+      "gemmaScope": {
+        "release": "gemma-scope-2-27b-it-res",
+        "saeID": "layer_40_width_262k_l0_medium"
+      },
+      "discovery": {
+        "explanationText": "Very coherent compliance/adherence logits and examples involving rules, policies, licenses, and instructions.",
+        "topPositiveLogits": [],
+        "topNegativeLogits": [],
+        "exampleActivations": [],
+        "accessDate": "2026-08-13"
+      },
+      "verification": {
+        "status": "unverified"
+      },
+      "qualificationArtifact": null,
+      "status": "candidate",
+      "notes": "NOT re-opened on the discovery surface yet (pending as of 2026-08-13). Caveat: may primarily increase instruction/format compliance rather than legal formalism — which is exactly why it is a discriminant control, never a substitute formalism vector."
+    },
+    {
+      "constructLabel": "Legal precedent and case law",
+      "role": "domainControl",
+      "model": "google/gemma-3-27b-it",
+      "source": "gemmascope-2-res-65k",
+      "layer": 40,
+      "featureId": 56976,
+      "neuronpediaUrl": "https://www.neuronpedia.org/gemma-3-27b-it/40-gemmascope-2-res-65k/56976",
+      "gemmaScope": {
+        "release": "gemma-scope-2-27b-it-res",
+        "saeID": "layer_40_width_65k_l0_medium"
+      },
+      "discovery": {
+        "explanationText": "Strong case-law, precedent, ratio decidendi, and legal-research activations; positive logits emphasize precedent and analogy.",
+        "topPositiveLogits": [
+          "precedent",
+          "analogy"
+        ],
+        "topNegativeLogits": [],
+        "exampleActivations": [],
+        "accessDate": "2026-08-13"
+      },
+      "verification": {
+        "status": "verifiedOnNeuronpedia",
+        "date": "2026-08-13"
+      },
+      "qualificationArtifact": null,
+      "status": "candidate",
+      "notes": "Snapshot transcribed from the proposal draft — re-capture before qualification. Role: tests whether \"sounding legal\" is by itself sufficient to move the endpoint."
+    },
+    {
+      "constructLabel": "Fairness",
+      "role": "discriminantControl",
+      "model": "google/gemma-3-27b-it",
+      "source": "gemmascope-2-res-262k",
+      "layer": 40,
+      "featureId": 2214,
+      "neuronpediaUrl": "https://www.neuronpedia.org/gemma-3-27b-it/40-gemmascope-2-res-262k/2214",
+      "gemmaScope": {
+        "release": "gemma-scope-2-27b-it-res",
+        "saeID": "layer_40_width_262k_l0_medium"
+      },
+      "discovery": {
+        "explanationText": "Coherent fairness/unfairness logits with examples spanning justice, equal treatment, fair warning, and discriminatory outcomes.",
+        "topPositiveLogits": [],
+        "topNegativeLogits": [],
+        "exampleActivations": [],
+        "accessDate": "2026-08-13"
+      },
+      "verification": {
+        "status": "unverified"
+      },
+      "qualificationArtifact": null,
+      "status": "candidate",
+      "notes": "NOT re-opened on the discovery surface yet (pending as of 2026-08-13). Caveat: broad and poly-domain — may mix equity, colloquial \"fair\", accounting, and technical fairness."
+    }
+  ],
+  "pendingConstructs": [
+    {
+      "constructLabel": "Fear",
+      "role": "affectControl",
+      "notes": "Affect control with lineage: the grand-mean recipe descends from the emotion-concepts work, so a fear feature asks whether the compassion feature does anything beyond generic arousal/valence. Nominate 1-3 mid-stack Gemma Scope 2 residual features and record one entry per nomination under `candidates`."
+    },
+    {
+      "constructLabel": "Hunger",
+      "role": "embodiedControl",
+      "notes": "Embodied-drive control: the model has no hunger, so movement on decision endpoints from a hunger feature is a striking non-semantic perturbation result (and speaks to the hungry-judge literature)."
+    },
+    {
+      "constructLabel": "Unrelated topic (glaciers or forests)",
+      "role": "unrelatedTopicControl",
+      "notes": "Coherent-but-irrelevant control, the SAE-level analogue of the gardening / golden-gate control. Essential because random directions sharpen while several coherent directions compress — we need to know which side an innocuous topic feature lands on."
+    }
+  ]
+}

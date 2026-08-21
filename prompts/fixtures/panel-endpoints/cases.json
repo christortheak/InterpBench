@@ -1,0 +1,130 @@
+{
+  "cases": [
+    {
+      "name": "clean choice parse",
+      "endpoint": "vote",
+      "text": "I have reviewed the record with care.\n\nVote: affirm\n\nMy reasons follow.",
+      "expected": {
+        "unparsed": false,
+        "choice": "affirm"
+      }
+    },
+    {
+      "name": "marker absent",
+      "endpoint": "vote",
+      "text": "I would affirm the judgment below, but I never labelled the line.",
+      "expected": {
+        "unparsed": true
+      }
+    },
+    {
+      "name": "vocabulary member inside a longer word does not match",
+      "endpoint": "vote",
+      "text": "Vote: reaffirmed on other grounds, as this panel held before.",
+      "expected": {
+        "unparsed": true
+      }
+    },
+    {
+      "name": "value beyond the 80-character window",
+      "endpoint": "vote",
+      "text": "Vote:I will state it below, after I have summarized the parties' contentions and the record in full: affirm",
+      "expected": {
+        "unparsed": true
+      }
+    },
+    {
+      "name": "only the first marker is scanned",
+      "endpoint": "vote",
+      "text": "Vote:I will state it below, after I have summarized the parties' contentions and the record in full: \nVote: affirm",
+      "expected": {
+        "unparsed": true
+      }
+    },
+    {
+      "name": "first marker wins when both parse",
+      "endpoint": "vote",
+      "text": "Vote: vacate, subject to what follows.\nVote: affirm",
+      "expected": {
+        "unparsed": false,
+        "choice": "vacate"
+      }
+    },
+    {
+      "name": "earliest position wins, not declaration order",
+      "endpoint": "vote",
+      "text": "Vote: remand, though the panel could as easily affirm.",
+      "expected": {
+        "unparsed": false,
+        "choice": "remand"
+      }
+    },
+    {
+      "name": "mixed case marker and value",
+      "endpoint": "vote",
+      "text": "vOtE: ReVeRsE — the judgment below cannot stand.",
+      "expected": {
+        "unparsed": false,
+        "choice": "reverse"
+      }
+    },
+    {
+      "name": "clean number parse",
+      "endpoint": "months",
+      "text": "Sentence: 24 months, to run concurrently.",
+      "expected": {
+        "unparsed": false,
+        "number": 24
+      }
+    },
+    {
+      "name": "number with a fraction",
+      "endpoint": "months",
+      "text": "Sentence: 18.5 months on count one.",
+      "expected": {
+        "unparsed": false,
+        "number": 18.5
+      }
+    },
+    {
+      "name": "number above the declared maximum",
+      "endpoint": "months",
+      "text": "Sentence: 900 months, beyond the declared statutory maximum.",
+      "expected": {
+        "unparsed": true
+      }
+    },
+    {
+      "name": "signed number below the declared minimum",
+      "endpoint": "months",
+      "text": "Sentence: -6 months of credit for time served.",
+      "expected": {
+        "unparsed": true
+      }
+    },
+    {
+      "name": "no number in the window",
+      "endpoint": "months",
+      "text": "Sentence: none — I would impose no custodial term at all.",
+      "expected": {
+        "unparsed": true
+      }
+    },
+    {
+      "name": "number beyond the 80-character window",
+      "endpoint": "months",
+      "text": "Sentence:I will state it below, after I have summarized the parties' contentions and the record in full: 24",
+      "expected": {
+        "unparsed": true
+      }
+    },
+    {
+      "name": "number clipped by the window edge is not truncated",
+      "endpoint": "months",
+      "text": "Sentence:after weighing every aggravating and mitigating factor in the record I impose 600 months",
+      "expected": {
+        "unparsed": true
+      }
+    }
+  ]
+}

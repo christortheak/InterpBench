@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 2,
+  "name": "Example Slurm site",
+  "notes": "FICTIONAL but COHERENT: a plausible production Slurm cluster with every schema-2 fact a real site would state, and none it would not. Unlike v2-maximal.json — which sets every key to a distinguishable value so a decoder that drops one fails loudly, and is deliberately not a plausible site — this profile is the WORKED EXAMPLE: copy it, change the names, and you have a site. WP5 4.2 (DECIDED 2026-08-17) keeps real site configuration out of this repo, so this is what the public tree offers instead. Two things are deliberately left UNDECLARED, because a real profile should not assert what its author does not know: scheduler.account (accountRequired is false; set both if sbatch rejects jobs without --account) and constraints.storageRoots.archive (a lab allocation nobody can guess).",
+  "transport": {
+    "kind": "ssh",
+    "host": "slurm.example.edu",
+    "remotePort": 8080,
+    "vpnExpected": true
+  },
+  "topology": "daemonInJob",
+  "scheduler": {
+    "kind": "slurm",
+    "slurm": {
+      "partitions": [
+        { "name": "gpu_p", "maxWalltimeHours": 168 },
+        { "name": "gpu_long_p", "maxWalltimeHours": 720 },
+        { "name": "batch", "maxWalltimeHours": 168 },
+        { "name": "inter_p", "maxWalltimeHours": 48 }
+      ],
+      "gpus": [
+        { "name": "A100", "vramGB": 80, "computeCapability": "sm_80" },
+        { "name": "H100", "vramGB": 80, "computeCapability": "sm_90" },
+        { "name": "L4", "vramGB": 24, "computeCapability": "sm_89" }
+      ],
+      "defaultGres": "gpu:A100:1",
+      "defaultPartition": "gpu_p",
+      "accountRequired": false,
+      "billedAllocations": false,
+      "requiredHeaders": ["partition", "mem", "ntasks"],
+      "commands": {
+        "submit": "sbatch",
+        "query": "squeue",
+        "accounting": "sacct",
+        "cancel": "scancel"
+      },
+      "jobDefaults": { "memory": "80G", "walltime": "24:00:00", "cpusPerTask": 4 },
+      "interruption": {
+        "requeue": true,
+        "autoResubmit": false,
+        "autoResubmitLimit": 5,
+        "signalSeconds": 600,
+        "signalTarget": "step",
+        "exportMode": "none"
+      },
+      "submitFromBundleDirectory": true,
+      "jobNamePrefix": "steerlab",
+      "limits": { "maxSubmittedJobs": 20, "maxRunningJobs": 8, "maxParallelGPUJobs": 15 },
+      "accountingVisibilityGraceSeconds": 600,
+      "controllerJob": { "cpusPerTask": 1, "memory": "16G", "port": 8080 },
+      "setupJob": { "cpusPerTask": 4, "memory": "16G", "walltime": "02:00:00" },
+      "gpuSession": {
+        "cpusPerTask": 8,
+        "memory": "64G",
+        "walltime": "02:00:00",
+        "gres": "gpu:A100:1",
+        "idleMinutes": 30
+      }
+    }
+  },
+  "constraints": {
+    "computeEgress": "yes",
+    "storageRoots": {
+      "workspace": "/scratch/${USER:-$(id -un)}/steerlab-workspace",
+      "run": "/scratch/${USER:-$(id -un)}/steerlab-workspace/runs",
+      "hfCache": "/work/examplelab/hf-cache",
+      "metadata": "$HOME/.steerlab"
+    },
+    "purgeDays": 30,
+    "purgeWarnDays": 20,
+    "storage": {
+      "nodeStageDirTemplate": "/lscratch/$SLURM_JOB_ID",
+      "nodeScratchGres": "lscratch:100",
+      "hubOfflineMode": "offline",
+      "metadataRequiresLocalFilesystem": true,
+      "prestageMinFreeGB": 8
+    }
+  },
+  "environment": {
+    "moduleSystem": "lmod",
+    "modules": ["Miniforge3"],
+    "pythonProvider": "conda",
+    "pythonVersion": "3.12",
+    "envPrefix": "$HOME/envs/steerlab",
+    "torchIndexURL": "https://download.pytorch.org/whl/cu128",
+    "torchVariant": "cu128",
+    "serverExtras": ["all"],
+    "envFilePath": "$HOME/steerlab-cluster.env",
+    "tokenFilePath": "$HOME/.steerlab-token",
+    "remoteRepoPath": "$HOME/steerlab",
+    "interactiveAllocationCommand": "salloc -c 4 --mem 16g --time 2:00:00",
+    "transferHost": "xfer.example.edu"
+  },
+  "policy": {
+    "loginNodes": {
+      "hostnamePatterns": ["^login", "^submit"],
+      "allowCompute": false,
+      "requireAllocation": true
+    },
+    "maintenance": { "calendarPath": "$HOME/.steerlab/maintenance.json" },
+    "externalServiceEgress": "no"
+  }
+}

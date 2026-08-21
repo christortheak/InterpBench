@@ -1,0 +1,54 @@
+{
+  "artifact": {
+    "adapters": [
+      {
+        "adapterDirectory": "adapters/sympathy-lora",
+        "adapterHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "configHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    ],
+    "alphaInNormUnits": true,
+    "bandWidth": 1,
+    "baseModelID": "google/gemma-3-27b-it",
+    "baseRevision": "005ad3404e59",
+    "createdAt": "2026-08-16T00:00:00Z",
+    "injections": [],
+    "name": "sympathy-lora-agent",
+    "neutralPCBasisPath": null,
+    "promptMode": "chatAssistant",
+    "qwenThinkingEnabled": false,
+    "schemaVersion": 1,
+    "systemPrompt": null,
+    "temperature": 0.0
+  },
+  "note": "produced by Server model_variant.from_dict + save_variant over the driver's POST body \u2014 do not hand-edit; regenerate with scripts/regenerate-cross-engine-fixtures.py",
+  "variantConditions": [
+    {
+      "artifact": {
+        "adapters": [
+          {
+            "adapterDirectory": "adapters/sympathy-lora",
+            "adapterHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "configHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          }
+        ],
+        "alphaInNormUnits": true,
+        "bandWidth": 1,
+        "baseModelID": "google/gemma-3-27b-it",
+        "baseRevision": "005ad3404e59",
+        "createdAt": "2026-08-16T00:00:00Z",
+        "injections": [],
+        "name": "sympathy-lora-agent",
+        "neutralPCBasisPath": null,
+        "promptMode": "chatAssistant",
+        "qwenThinkingEnabled": false,
+        "schemaVersion": 1,
+        "systemPrompt": null,
+        "temperature": 0.0
+      },
+      "artifactHash": "a4e8bad221ed1022c3dc6b14a4402ff638be23d9ce016c9fb0f95a1a03e14273",
+      "artifactPath": "runs/20260816T000000000-variant-sympathy-lora-agent/sympathy-lora-agent.json",
+      "name": "sympathy-agent"
+    }
+  ]
+}

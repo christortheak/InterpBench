@@ -1,0 +1,2 @@
+STEERLAB_HOUSEKEEPING_ROLES	no storage.scannedRoles — housekeeping reports workspace, metadata and hfCache only; a declared archive or asset tier is never inspected
+STEERLAB_QUOTA_COMMAND	no storage.quotaCommand — housekeeping reports whole-filesystem df numbers only, which on a quota'd filesystem overstate the headroom

@@ -1,0 +1,8 @@
+Shared scenario materials:
+MATERIAL TEXT
+
+Visible prior context:
+[t1_ava] First draft — Ava — Ava
+AVA DRAFT.
+
+Write your first draft, Ben.

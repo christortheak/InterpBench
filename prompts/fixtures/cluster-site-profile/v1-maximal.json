@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "name": "Example HPC (v1)",
+  "notes": "FICTIONAL site. A profile as it would have been authored under schema 1: only v1 keys, so every schema-2 fact falls back to the renderer's legacy (bootstrap.sh / executors.py) constants. No institutional identifiers — slurm.example.edu is not a real host.",
+  "bootstrapPath": "Server/scripts/bootstrap.sh",
+  "transport": {
+    "kind": "ssh",
+    "host": "slurm.example.edu",
+    "proxyJump": "bastion.example.edu",
+    "remotePort": 8080,
+    "vpnExpected": true
+  },
+  "topology": "daemonInJob",
+  "scheduler": {
+    "kind": "slurm",
+    "slurm": {
+      "partitions": [
+        { "name": "gpu_p", "maxWalltimeHours": 168 },
+        { "name": "gpu_long_p", "maxWalltimeHours": 720 },
+        { "name": "batch", "maxWalltimeHours": 168 },
+        { "name": "inter_p", "maxWalltimeHours": 48 }
+      ],
+      "gpuTypes": ["A100", "H100", "L4"],
+      "gpuVRAMGB": { "A100": 80, "H100": 80, "L4": 24 },
+      "defaultGres": "gpu:A100:1",
+      "defaultPartition": "gpu_p",
+      "accountRequired": false,
+      "billedAllocations": false,
+      "maxParallelGPUJobs": 15
+    }
+  },
+  "constraints": {
+    "computeEgress": "yes",
+    "storageRoots": {
+      "workspace": "/scratch/researcher/steerlab-workspace",
+      "hfCache": "/work/examplelab/hf-cache",
+      "archive": "/project/examplelab",
+      "metadata": "~/.steerlab"
+    },
+    "purgeDays": 30,
+    "purgeWarnDays": 20,
+    "maintenanceSource": "https://status.example.edu"
+  }
+}

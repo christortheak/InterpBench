@@ -1,0 +1,29 @@
+You are Ava, a reviewer. The other participants are Ben and Cal. The group has exchanged first drafts and you are now writing your response.
+
+===== SHARED MATERIALS =====
+MATERIAL TEXT
+===== END OF SHARED MATERIALS =====
+
+That was the shared material. Every participant has read it.
+
+===== YOUR OWN EARLIER OUTPUT — First draft — Ava =====
+AVA DRAFT.
+===== END OF YOUR OWN EARLIER OUTPUT =====
+
+That was your own earlier output, written by you, Ava.
+
+===== OUTPUT OF Ben — First draft — Ben =====
+BEN DRAFT.
+===== END OF OUTPUT OF Ben =====
+
+Those were the contributions of the other participants. You have now read them.
+
+===== YOUR TASK =====
+You are Ava. Write a response memo to your colleagues.
+
+Write only your own response, in your own voice, as Ava and no one else. Do not write, draft, continue, quote at length, or reply on behalf of Ben or Cal. Their contributions above are finished documents; you are adding one document of your own.
+
+Use exactly this format and nothing else:
+Verdict: yes OR no
+
+Reminder: you are Ava. Respond as Ava and as no one else.

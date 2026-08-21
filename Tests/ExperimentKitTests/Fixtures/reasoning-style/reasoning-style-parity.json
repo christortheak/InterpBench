@@ -1,0 +1,274 @@
+{
+  "comment": "Cross-engine reasoning-style scoring fixture. Both engines (Swift ReasoningStyleTests / Python test_reasoning_style.py) must reproduce these exact values: rawCount exactly, ratios to 1e-9. Texts and patterns deliberately mix precomposed and decomposed accents (NFC pin), Greek sigma casing (per-scalar lowercase pin), \\n vs \\r around '.' (unix-lines pin), a trailing-newline '$' case, and an empty-match advancement case. Byte-identical copies live in Tests/ExperimentKitTests/Fixtures/reasoning-style/ and Server/tests/fixtures/reasoning-style/.",
+  "taxonomy": {
+    "schemaVersion": 1,
+    "name": "parity-fixture-v2",
+    "features": [
+      {
+        "id": "hedge",
+        "title": "Hedging terms",
+        "kind": "wordList",
+        "patterns": [
+          "might",
+          "perhaps",
+          "on the other hand"
+        ],
+        "normalize": "per1kWords"
+      },
+      {
+        "id": "certainty",
+        "title": "Certainty terms",
+        "kind": "wordList",
+        "patterns": [
+          "clearly",
+          "must"
+        ],
+        "normalize": "perSentence"
+      },
+      {
+        "id": "enumeration",
+        "title": "Enumeration markers",
+        "kind": "regex",
+        "patterns": [
+          "\\b(?:first|second|third)\\b",
+          "\\b\\d+\\."
+        ],
+        "normalize": "rawCount"
+      },
+      {
+        "id": "question",
+        "title": "Question marks",
+        "kind": "regex",
+        "patterns": [
+          "\\?"
+        ],
+        "normalize": "perSentence"
+      },
+      {
+        "id": "accentTerms",
+        "title": "Accented word-list terms",
+        "kind": "wordList",
+        "patterns": [
+          "d\u00e9cid\u00e9",
+          "caf\u00e9 au lait",
+          "\u03bb\u03bf\u03b3\u03bf\u03c3"
+        ],
+        "normalize": "rawCount"
+      },
+      {
+        "id": "accentBoundary",
+        "title": "\\b around a non-ASCII word (pattern stored DECOMPOSED)",
+        "kind": "regex",
+        "patterns": [
+          "\\bde\u0301cide\u0301\\b"
+        ],
+        "normalize": "rawCount"
+      },
+      {
+        "id": "grammarMix",
+        "title": "Anchor/group/class/quantifier coverage",
+        "kind": "regex",
+        "patterns": [
+          "^(?:the|a)\\b",
+          "[aeiou]{2,}",
+          "colou?r"
+        ],
+        "normalize": "rawCount"
+      },
+      {
+        "id": "dotSpan",
+        "title": "'.' must not match a newline",
+        "kind": "regex",
+        "patterns": [
+          "a.b"
+        ],
+        "normalize": "rawCount"
+      },
+      {
+        "id": "endAnchor",
+        "title": "'$' end anchor",
+        "kind": "regex",
+        "patterns": [
+          "end$"
+        ],
+        "normalize": "rawCount"
+      },
+      {
+        "id": "emptyRepeat",
+        "title": "Empty-match advancement",
+        "kind": "regex",
+        "patterns": [
+          "(?:ab)*"
+        ],
+        "normalize": "rawCount"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "text": "First, it might rain. Second, we must go! Perhaps not? CLEARLY so.",
+      "expected": {
+        "hedge": 166.66666666666666,
+        "certainty": 0.5,
+        "enumeration": 2.0,
+        "question": 0.25,
+        "accentTerms": 0.0,
+        "accentBoundary": 0.0,
+        "grammarMix": 2.0,
+        "dotSpan": 0.0,
+        "endAnchor": 0.0,
+        "emptyRepeat": 67.0
+      }
+    },
+    {
+      "text": "",
+      "expected": {
+        "hedge": 0.0,
+        "certainty": 0.0,
+        "enumeration": 0.0,
+        "question": 0.0,
+        "accentTerms": 0.0,
+        "accentBoundary": 0.0,
+        "grammarMix": 0.0,
+        "dotSpan": 0.0,
+        "endAnchor": 0.0,
+        "emptyRepeat": 1.0
+      }
+    },
+    {
+      "text": "no punctuation here on the other hand we wait",
+      "expected": {
+        "hedge": 111.11111111111111,
+        "certainty": 0.0,
+        "enumeration": 0.0,
+        "question": 0.0,
+        "accentTerms": 0.0,
+        "accentBoundary": 0.0,
+        "grammarMix": 3.0,
+        "dotSpan": 0.0,
+        "endAnchor": 0.0,
+        "emptyRepeat": 46.0
+      }
+    },
+    {
+      "text": "Numbers: 1. do this 2. do that? First things first.",
+      "expected": {
+        "hedge": 0.0,
+        "certainty": 0.0,
+        "enumeration": 4.0,
+        "question": 0.25,
+        "accentTerms": 0.0,
+        "accentBoundary": 0.0,
+        "grammarMix": 0.0,
+        "dotSpan": 0.0,
+        "endAnchor": 0.0,
+        "emptyRepeat": 52.0
+      }
+    },
+    {
+      "text": "We must, we MUST! Why? Why not?",
+      "expected": {
+        "hedge": 0.0,
+        "certainty": 0.6666666666666666,
+        "enumeration": 0.0,
+        "question": 0.6666666666666666,
+        "accentTerms": 0.0,
+        "accentBoundary": 0.0,
+        "grammarMix": 0.0,
+        "dotSpan": 0.0,
+        "endAnchor": 0.0,
+        "emptyRepeat": 32.0
+      }
+    },
+    {
+      "text": "Il a de\u0301cide\u0301 hier, puis d\u00e9cid\u00e9 encore. Un cafe\u0301 au lait? DE\u0301CIDE\u0301 !",
+      "expected": {
+        "hedge": 0.0,
+        "certainty": 0.0,
+        "enumeration": 0.0,
+        "question": 0.3333333333333333,
+        "accentTerms": 4.0,
+        "accentBoundary": 3.0,
+        "grammarMix": 4.0,
+        "dotSpan": 0.0,
+        "endAnchor": 0.0,
+        "emptyRepeat": 64.0
+      }
+    },
+    {
+      "text": "\u039b\u039f\u0393\u039f\u03a3 and \u03bb\u03cc\u03b3\u03bf\u03c2.",
+      "expected": {
+        "hedge": 0.0,
+        "certainty": 0.0,
+        "enumeration": 0.0,
+        "question": 0.0,
+        "accentTerms": 1.0,
+        "accentBoundary": 0.0,
+        "grammarMix": 0.0,
+        "dotSpan": 0.0,
+        "endAnchor": 0.0,
+        "emptyRepeat": 17.0
+      }
+    },
+    {
+      "text": "a\nb a\rb axb a b",
+      "expected": {
+        "hedge": 0.0,
+        "certainty": 0.0,
+        "enumeration": 0.0,
+        "question": 0.0,
+        "accentTerms": 0.0,
+        "accentBoundary": 0.0,
+        "grammarMix": 1.0,
+        "dotSpan": 3.0,
+        "endAnchor": 0.0,
+        "emptyRepeat": 16.0
+      }
+    },
+    {
+      "text": "the end\nthe end\n",
+      "expected": {
+        "hedge": 0.0,
+        "certainty": 0.0,
+        "enumeration": 0.0,
+        "question": 0.0,
+        "accentTerms": 0.0,
+        "accentBoundary": 0.0,
+        "grammarMix": 1.0,
+        "dotSpan": 0.0,
+        "endAnchor": 1.0,
+        "emptyRepeat": 17.0
+      }
+    },
+    {
+      "text": "abab x",
+      "expected": {
+        "hedge": 0.0,
+        "certainty": 0.0,
+        "enumeration": 0.0,
+        "question": 0.0,
+        "accentTerms": 0.0,
+        "accentBoundary": 0.0,
+        "grammarMix": 0.0,
+        "dotSpan": 0.0,
+        "endAnchor": 0.0,
+        "emptyRepeat": 4.0
+      }
+    },
+    {
+      "text": "The colour of a queue.",
+      "expected": {
+        "hedge": 0.0,
+        "certainty": 0.0,
+        "enumeration": 0.0,
+        "question": 0.0,
+        "accentTerms": 0.0,
+        "accentBoundary": 0.0,
+        "grammarMix": 4.0,
+        "dotSpan": 0.0,
+        "endAnchor": 0.0,
+        "emptyRepeat": 23.0
+      }
+    }
+  ]
+}

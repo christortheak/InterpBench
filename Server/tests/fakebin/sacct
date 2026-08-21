@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""Fake sacct for scheduler tests.
+
+Reads FAKE_SLURM_STATE_FILE (JSON: {job_id: {"state": str, "exit": str}}) and
+prints ``State|ExitCode`` rows for ``-j <id>`` in ``-P`` (pipe) format, twice —
+mimicking real sacct's job row + batch-step row. A missing/empty state prints
+nothing (the caller then falls back to squeue).
+"""
+import json
+import os
+import sys
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    job_id = None
+    for index, arg in enumerate(args):
+        if arg == "-j" and index + 1 < len(args):
+            job_id = args[index + 1]
+    log_dir = os.environ.get("FAKE_SLURM_LOG")
+    if log_dir:
+        with open(os.path.join(log_dir, "sacct.calls"), "a", encoding="utf-8") as fh:
+            fh.write(" ".join(args) + "\n")
+    if os.environ.get("FAKE_SACCT_FAIL"):
+        # Simulated scheduler-query failure (2026-07-17 session-stop
+        # edge): the command itself errors, saying nothing about the job.
+        print(os.environ["FAKE_SACCT_FAIL"], file=sys.stderr)
+        return 1
+    state_file = os.environ.get("FAKE_SLURM_STATE_FILE")
+    if not state_file or not os.path.exists(state_file) or job_id is None:
+        return 0
+    with open(state_file, encoding="utf-8") as fh:
+        table = json.load(fh)
+    entry = table.get(job_id) or {}
+    state = entry.get("state")
+    if not state:
+        return 0
+    exit_code = entry.get("exit", "0:0")
+    print(f"{state}|{exit_code}")
+    print(f"{state}|{exit_code}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

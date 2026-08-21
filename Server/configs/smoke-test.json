@@ -1,0 +1,11 @@
+{
+  "task": "smoke-test",
+  "models": [
+    { "family": "qwen3", "id": "Qwen/Qwen3-4B" }
+  ],
+  "prompt": "Tell me about your day.",
+  "maxTokens": 32,
+  "alpha": 8.0,
+  "seed": 1234,
+  "dtype": "bfloat16"
+}

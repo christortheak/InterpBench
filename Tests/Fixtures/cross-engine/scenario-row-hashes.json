@@ -1,0 +1,122 @@
+[
+  {
+    "expresses": true,
+    "label": "ascii-pos",
+    "rowHash": "54728d17006b0f107f5a6b77dd10a1dbd019e2ff44c16ef2c4f9d76aa59584f5",
+    "text": "a plain sentence"
+  },
+  {
+    "expresses": false,
+    "label": "ascii-neg",
+    "rowHash": "632cd5cc6336fba045f340c2fdc10db81ac0ca3a93e68f9f122c6274af6a5ba8",
+    "text": "a plain sentence"
+  },
+  {
+    "expresses": true,
+    "label": "accented-pos",
+    "rowHash": "b6151979c0b29bfaeb05f20acd6e3212174e00b84588001e5b93ebacbb754141",
+    "text": "the caf\u00e9 was closed"
+  },
+  {
+    "expresses": false,
+    "label": "accented-neg",
+    "rowHash": "2d19324675613c4d3b1ba013e661e78ba784149e27c054dc6df4e08481997ba5",
+    "text": "the caf\u00e9 was closed"
+  },
+  {
+    "expresses": true,
+    "label": "smart-quotes-pos",
+    "rowHash": "95ab13b2a9e35f5d94b45ad580014d16625cbbc6c8da5f93b3330810ee7a0aaa",
+    "text": "she said \u2018no\u2019 \u2014 firmly"
+  },
+  {
+    "expresses": false,
+    "label": "smart-quotes-neg",
+    "rowHash": "69e9f0ffa8b7bee869fc14c67e89a2da1d109898c30fe072616463624ac132d4",
+    "text": "she said \u2018no\u2019 \u2014 firmly"
+  },
+  {
+    "expresses": true,
+    "label": "tab-pos",
+    "rowHash": "073ae02e3b0a6af10ad7ec5f0286a4011198723a5b8a075cf2044fc240e82816",
+    "text": "before\tafter"
+  },
+  {
+    "expresses": false,
+    "label": "tab-neg",
+    "rowHash": "191cfb5aacd3e6ed36b26199f57060872e8230bd6993c1aff529394fcbf8a656",
+    "text": "before\tafter"
+  },
+  {
+    "expresses": true,
+    "label": "carriage-return-pos",
+    "rowHash": "2b6a9c53ba52c8438fcc9a52508485b300a75085e603742c1673b7db6be4dfb9",
+    "text": "before\rafter"
+  },
+  {
+    "expresses": false,
+    "label": "carriage-return-neg",
+    "rowHash": "a7b3198e6d5f86282ad760441e6d6167e8bba502708549c64a0ca48fe186b955",
+    "text": "before\rafter"
+  },
+  {
+    "expresses": true,
+    "label": "newline-pos",
+    "rowHash": "7dab42cf2d2c2dffc9741475ce68b3efc66b84e551ef6244551b9c3cc385616b",
+    "text": "before\nafter"
+  },
+  {
+    "expresses": false,
+    "label": "newline-neg",
+    "rowHash": "bdc9e685c83f358f3abfb7dcd3a449c4ff09daa380696b17e49a2f77efda6045",
+    "text": "before\nafter"
+  },
+  {
+    "expresses": true,
+    "label": "backslash-and-quote-pos",
+    "rowHash": "0d5f71394d449dda8da7b7b7af690e6d41441d4bd84ced8a0a66c812bcc86a6d",
+    "text": "a \\ b \" c"
+  },
+  {
+    "expresses": false,
+    "label": "backslash-and-quote-neg",
+    "rowHash": "b9a486044dd2b6d4083b04922d3359fa1fdd6a744015daeda7b57b1543a2ca49",
+    "text": "a \\ b \" c"
+  },
+  {
+    "expresses": true,
+    "label": "control-char-pos",
+    "rowHash": "1cb1bb5f9fa522f181a91a013918351d44fe1b23e061ab26db7818acac1c4c1c",
+    "text": "bell\u0007here"
+  },
+  {
+    "expresses": false,
+    "label": "control-char-neg",
+    "rowHash": "e0435262ee7b87435600b73a63507f9ea06facde720635d26f2229603ef15d4c",
+    "text": "bell\u0007here"
+  },
+  {
+    "expresses": true,
+    "label": "astral-pos",
+    "rowHash": "ae45f334dd2b2dee4b7d9528cda2ddce23381aa2e092b6a8056f668535562249",
+    "text": "emoji \ud83d\ude00 here"
+  },
+  {
+    "expresses": false,
+    "label": "astral-neg",
+    "rowHash": "89f61183324cce6db071f709ac157bdab71268cc87a27563939d4192bd7bf448",
+    "text": "emoji \ud83d\ude00 here"
+  },
+  {
+    "expresses": true,
+    "label": "cjk-pos",
+    "rowHash": "56420ea0207fbc72f433fcb5da03820b73c36f69b0c80a3eea188bb231c15078",
+    "text": "\u53f8\u6cd5\u7f8e\u5fb7"
+  },
+  {
+    "expresses": false,
+    "label": "cjk-neg",
+    "rowHash": "09398065ab4c2a13ecf97e24b2a13f362cd2ed0831cf25f4892d93ea989b34bc",
+    "text": "\u53f8\u6cd5\u7f8e\u5fb7"
+  }
+]

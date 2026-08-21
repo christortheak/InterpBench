@@ -1,0 +1,15 @@
+{
+  "changed" : false,
+  "engine" : "swift-mlx",
+  "error" : {
+    "code" : "unknownFlag",
+    "reason" : "experiment list does not accept --bogus",
+    "repairAction" : "experiment list accepts: --help --json --out"
+  },
+  "message" : "experiment list does not accept --bogus",
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "schemaVersion" : 1,
+  "state" : "blocked",
+  "verb" : "experiment list",
+  "workspace" : "<workspace>"
+}

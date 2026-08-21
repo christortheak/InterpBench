@@ -1,0 +1,117 @@
+{
+  "description": "Cross-engine contract for scripted-transcript validation messages. Each case runs the transcript schema validator first; when that passes and a modelID is given, the family chat-template constraint validator runs. `expect` is the EXACT first violation message (null = valid). Both engines' tests replay every case: Swift ExperimentTasks.transcriptSchemaViolation / transcriptFamilyViolation (Tests/ExperimentKitTests/TranscriptStudyTests.swift), Python prompt_render.transcript_schema_violation / transcript_family_violation (Server/tests/test_transcript_study.py). A message change must land in BOTH engines and in this file, consciously.",
+  "cases": [
+    {
+      "name": "empty-transcript",
+      "itemID": "v-empty",
+      "modelID": "Qwen/Qwen3-14B-MLX-8bit",
+      "transcript": [],
+      "expect": "item 'v-empty': transcript is empty — a scripted transcript needs at least a final user turn"
+    },
+    {
+      "name": "unknown-role",
+      "itemID": "v-role",
+      "modelID": "Qwen/Qwen3-14B-MLX-8bit",
+      "transcript": [
+        {"role": "tool", "content": "ran the search"},
+        {"role": "user", "content": "What did you find?"}
+      ],
+      "expect": "item 'v-role': transcript turn 1 has role 'tool' — allowed roles are system, user, assistant"
+    },
+    {
+      "name": "empty-content",
+      "itemID": "v-content",
+      "modelID": "Qwen/Qwen3-14B-MLX-8bit",
+      "transcript": [
+        {"role": "user", "content": "Name a color."},
+        {"role": "assistant", "content": "   "},
+        {"role": "user", "content": "Well?"}
+      ],
+      "expect": "item 'v-content': transcript turn 2 has empty content"
+    },
+    {
+      "name": "system-not-first",
+      "itemID": "v-system",
+      "modelID": "Qwen/Qwen3-14B-MLX-8bit",
+      "transcript": [
+        {"role": "user", "content": "Name a color."},
+        {"role": "system", "content": "Answer tersely."},
+        {"role": "user", "content": "Well?"}
+      ],
+      "expect": "item 'v-system': transcript may carry at most one system turn, and it must be first"
+    },
+    {
+      "name": "two-system-turns",
+      "itemID": "v-two-system",
+      "modelID": "Qwen/Qwen3-14B-MLX-8bit",
+      "transcript": [
+        {"role": "system", "content": "Answer tersely."},
+        {"role": "system", "content": "Answer verbosely."},
+        {"role": "user", "content": "Name a color."}
+      ],
+      "expect": "item 'v-two-system': transcript may carry at most one system turn, and it must be first"
+    },
+    {
+      "name": "trailing-assistant",
+      "itemID": "v-prefill",
+      "modelID": "Qwen/Qwen3-14B-MLX-8bit",
+      "transcript": [
+        {"role": "user", "content": "Name a color."},
+        {"role": "assistant", "content": "Blue, definitely"}
+      ],
+      "expect": "item 'v-prefill': transcript ends with an assistant turn — generation produces the assistant's reply to a final user turn; assistant-prefix continuation is out of scope for scripted-transcript studies (v1)"
+    },
+    {
+      "name": "system-only",
+      "itemID": "v-system-only",
+      "modelID": "Qwen/Qwen3-14B-MLX-8bit",
+      "transcript": [
+        {"role": "system", "content": "Answer tersely."}
+      ],
+      "expect": "item 'v-system-only': transcript must end with a user turn (generation produces the assistant's reply to it)"
+    },
+    {
+      "name": "gemma-assistant-first",
+      "itemID": "v-gemma-lead",
+      "modelID": "mlx-community/gemma-3-12b-it-8bit",
+      "transcript": [
+        {"role": "assistant", "content": "I have already reviewed the record."},
+        {"role": "user", "content": "Then state the holding."}
+      ],
+      "expect": "item 'v-gemma-lead': gemma-3's chat template requires the conversation to start with a user turn — this transcript starts with an assistant turn"
+    },
+    {
+      "name": "gemma-consecutive-user",
+      "itemID": "v-gemma-alt",
+      "modelID": "mlx-community/gemma-3-12b-it-8bit",
+      "transcript": [
+        {"role": "system", "content": "Answer tersely."},
+        {"role": "user", "content": "Name a color."},
+        {"role": "user", "content": "Any color."}
+      ],
+      "expect": "item 'v-gemma-alt': gemma-3's chat template requires strict user/assistant alternation — transcript turns 2 and 3 are consecutive user turns"
+    },
+    {
+      "name": "qwen-assistant-first-permitted",
+      "itemID": "v-qwen-lead",
+      "modelID": "Qwen/Qwen3-14B-MLX-8bit",
+      "transcript": [
+        {"role": "assistant", "content": "I have already reviewed the record."},
+        {"role": "user", "content": "Then state the holding."}
+      ],
+      "expect": null
+    },
+    {
+      "name": "gemma-valid-with-system",
+      "itemID": "v-gemma-ok",
+      "modelID": "mlx-community/gemma-3-12b-it-8bit",
+      "transcript": [
+        {"role": "system", "content": "You answer questions about your own prior statements."},
+        {"role": "user", "content": "Name a color, and nothing else."},
+        {"role": "assistant", "content": "I would rather not name a color."},
+        {"role": "user", "content": "Did you just refuse? Answer yes or no."}
+      ],
+      "expect": null
+    }
+  ]
+}

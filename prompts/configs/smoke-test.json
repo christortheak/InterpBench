@@ -1,0 +1,10 @@
+{
+  "models": [
+    { "family": "qwen3", "id": "Qwen/Qwen3-4B-MLX-4bit" },
+    { "family": "gemma3", "id": "mlx-community/gemma-3-4b-it-4bit" }
+  ],
+  "prompt": "In two or three sentences, describe what a public library looks like.",
+  "maxTokens": 60,
+  "alpha": 6,
+  "seed": 20260609
+}

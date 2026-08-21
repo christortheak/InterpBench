@@ -1,0 +1,31 @@
+{
+  "changed" : true,
+  "engine" : "swift-mlx",
+  "message" : "pinned french @ 9711fc1dd6a1… (20+20 stimuli, meanDifference, last token)",
+  "nextAction" : {
+    "missingPermissionFlags" : [
+
+    ],
+    "requiresHuman" : false,
+    "verb" : "experiment validate demo"
+  },
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "result" : {
+    "experiment" : "demo",
+    "neutralCorpusHash" : "252a00e477ffd11b651cfd625cdeedb8c67afbb13a0bc41d2016fb6e25660db1",
+    "pinned" : [
+      {
+        "concept" : "french",
+        "method" : "meanDifference",
+        "negativeCount" : 20,
+        "positiveCount" : 20,
+        "readingPosition" : "last token",
+        "stimulusSetHash" : "9711fc1dd6a12a339c175189a62cd5d189d017d0e3e855143512d0967805af7a"
+      }
+    ]
+  },
+  "schemaVersion" : 1,
+  "state" : "ready",
+  "verb" : "experiment attach",
+  "workspace" : "<workspace>"
+}

@@ -1,0 +1,51 @@
+{
+  "bosCount": 0,
+  "bosTokenID": null,
+  "case": "reader_scaffold",
+  "family": "qwen",
+  "generator": {
+    "engine": "python-hf",
+    "generatedOn": "2026-07-06",
+    "script": "prompts/fixtures/render/generate.py",
+    "tokenizerClass": "Qwen2Tokenizer",
+    "transformersVersion": "5.12.1"
+  },
+  "inputs": {
+    "api": "render_reader",
+    "text": "Consider the fairness of the following decision.\n\nThe defendant's sentence was doubled on appeal without new findings.\n\nThe amount of fairness in that decision is",
+    "tokenization": "add_special_tokens=True (extractor default)"
+  },
+  "modelID": "Qwen/Qwen3-0.6B",
+  "promptTokenCount": 28,
+  "rendered": "Consider the fairness of the following decision.\n\nThe defendant's sentence was doubled on appeal without new findings.\n\nThe amount of fairness in that decision is",
+  "tokenIDs": [
+    37175,
+    279,
+    50741,
+    315,
+    279,
+    2701,
+    5480,
+    382,
+    785,
+    25799,
+    594,
+    11652,
+    572,
+    34617,
+    389,
+    14303,
+    2041,
+    501,
+    14613,
+    382,
+    785,
+    3311,
+    315,
+    50741,
+    304,
+    429,
+    5480,
+    374
+  ]
+}

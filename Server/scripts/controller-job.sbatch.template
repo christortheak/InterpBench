@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# steerlab-render-stamp: template=controller-job.sbatch.template sha256=@TEMPLATE_SHA256@ renderedAt=@RENDERED_AT@ source=@SOURCE_REVISION@
+#
+# RENDER PROVENANCE — the line above is the artifact's own answer to "which
+# template am I?" (open-issues §1 field report, 2026-08-20). It is filled in
+# when this template is RENDERED into $STEERLAB_METADATA_ROOT/
+# controller-job.sbatch; `sha256` is the SHA-256 of the TEMPLATE FILE'S BYTES
+# (placeholders and all), which is the invariant every staleness check
+# recomputes. In an UNRENDERED template the three @…@ placeholders stand.
+#
+#   Why it exists: serverd 47564632 ran the 2026-08-18 template-side chain fix
+#   for 24 h and never chained, because it was launched by the runner's
+#   standing ritual — `sbatch ~/.steerlab/controller-job.sbatch` — over a
+#   rendered copy dated Aug 17, from the dead-toggle era. Deploys rsync CODE;
+#   they did not re-render this artifact, and nothing could see the gap.
+#
+#   RE-RENDER (the one command every surface names):
+#       steerlab-cli cluster controller start --site <site> --render-only
+#
+# SteerLab controller job — "daemon-in-a-job" topology (TURNKEY-CLUSTER-PLAN
+# WS1 topology 2, provisioned by WS5).
+#
+# WHAT THIS IS
+#   A 1-core CPU job that runs the SteerLab FastAPI daemon on a compute node,
+#   for sites that do not tolerate a resident daemon on login nodes. It writes
+#   the node's hostname to $STEERLAB_METADATA_ROOT/serverd.host so the app can
+#   discover where to point its tunnel, then execs the server.
+#
+# HOW TO USE
+#   1. Render it. The app (or `steerlab-cli cluster`) does this for you — see
+#      THE #SBATCH BLOCK below for what rendering adds and how to do it by hand.
+#   2. sbatch controller-job.sbatch
+#   3. From the Mac:  ssh -J <login-host> -N -L 8080:<node>:8080 <login-host>
+#      (the app's Tunnel Manager automates this; <node> comes from serverd.host)
+#
+# THE #SBATCH BLOCK IS RENDERED, NOT AUTHORED (WP5 Step 9, audit G6)
+#   This file is the controller's shell BODY and carries no scheduler
+#   directives of its own. Job name, partition, account, QOS, walltime, cores,
+#   memory and anything `scheduler.controllerJob.extraSbatch` adds are composed
+#   from the SITE PROFILE by the header renderer both engines share, and are
+#   written directly under the shebang above when the file is rendered — so
+#   what this job asks the scheduler for is the site's declared facts, not
+#   constants living in a script. Read them before they run with:
+#       steerlab-cli cluster preview --site <id> --job-class controller
+#   --output/--error are NOT site facts (they name a caller-created directory)
+#   and the render command appends them itself, pointing at the workspace runs/
+#   dir — job data never lands in /home, and #SBATCH lines cannot expand
+#   variables, so that path is spelled out at render time.
+#   BY HAND: paste that preview's block plus those two log lines under the
+#   shebang, then substitute @PYTHON@ and @PORT@ below. A hand render cannot
+#   honestly fill the render stamp (it is a hash of these bytes plus the
+#   deploying revision), so leave the three @…@ stamp placeholders standing —
+#   they read as "unstamped" everywhere, which is the truth — and re-render
+#   properly with the command above before the next controller cycle.
+#
+# THE BIND DECISION (deliberate — read before "fixing" it)
+#   An `ssh -L` tunnel through the login node connects to the COMPUTE NODE'S
+#   EXTERNAL interface, not its loopback: `-L 8080:<node>:8080` makes sshd on
+#   the LOGIN node dial <node>:8080 over the cluster network. A server bound
+#   to 127.0.0.1 on the compute node would refuse that dial and the topology
+#   would not work at all. So this script binds 0.0.0.0 — and compensates:
+#     * it REFUSES to start unless STEERLAB_AUTH_TOKEN is non-empty, and
+#     * it forces STEERLAB_AUTH_MODE=token, which makes the middleware demand
+#       the bearer token on EVERY /api route (not only privileged ones), so
+#       other users on the cluster network get 401s, not an open instrument.
+#   `profile validate` surfaces the non-loopback bind as a warning for this
+#   batch+token topology (a failure otherwise) — that warning is expected.
+#   The login-node-daemon topology (topology 1) keeps the loopback default.
+#
+# AUTO-RESUBMIT CHAIN (rewritten 2026-08-18 — open-issues §1)
+#   HISTORY. This used to queue `sbatch --dependency=afterany:$SLURM_JOB_ID $0`
+#   at start, gated on STEERLAB_CONTROLLER_RESUBMIT=1. It never fired in
+#   practice — nothing in the site profile or bootstrap.sh ever set that
+#   variable (WP5 audit a10 called the toggle inert), and controller job
+#   47463858 duly hit TIMEOUT on 2026-08-15 with no successor. It was also the
+#   wrong shape: `afterany` chains after an OPERATOR CANCEL too, and the queued
+#   successor sits in the queue for the whole 24 h, spending one of the site's
+#   per-user queued-job slots (some Slurm sites cap these at ~20).
+#
+#   NOW. The rendered #SBATCH block carries `--signal=B:USR1@N` (N =
+#   `scheduler.slurm.interruption.signalSeconds`, default 600), exactly the
+#   pre-expiry hook the study jobs use. `B:` is load-bearing: it confines the
+#   signal to THIS shell. A step-targeted USR1 would land on the Python server,
+#   which installs no handler for it and would simply die. The shell traps USR1
+#   and calls chain_successor(), which submits ONE successor job and returns;
+#   this job then serves out the rest of its walltime and exits normally, and
+#   the successor's boot-time reconciliation picks up everything in flight.
+#
+#   WHY USR1 AND NOT TERM. `scancel` sends TERM (then KILL); Slurm's `--signal`
+#   pre-expiry warning sends USR1. Trapping USR1 only is therefore the
+#   discriminator the operator needs: a deliberate `scancel` ends the chain,
+#   walltime expiry continues it. (`scancel -s USR1` would chain — an explicit
+#   act, not the default.) Belt and braces: a `serverd.no-chain` marker file in
+#   $STEERLAB_METADATA_ROOT vetoes chaining, and STEERLAB_CONTROLLER_RESUBMIT=0
+#   disables it outright — set that on billed allocations, where the app should
+#   start/stop the controller per work session instead.
+#
+#   IDEMPOTENCE. chain_successor() is safe to call any number of times: it
+#   records the successor in $STEERLAB_METADATA_ROOT/serverd.chain.json and
+#   refuses a second submission for the same job, and it asks squeue whether a
+#   controller job other than this one is already PENDING or RUNNING under the
+#   job name before submitting anything. A submission failure (queue cap, held
+#   account) is logged LOUDLY on stderr and leaves no marker, so the operator's
+#   interim rule — cycle serverd by hand before expiry — still applies.
+#
+# The canonical site env (written by bootstrap.sh): profile, executor, roots,
+# Slurm defaults, HF cache, and STEERLAB_AUTH_TOKEN.
+STEERLAB_ENV_FILE="${STEERLAB_ENV_FILE:-$HOME/steerlab-cluster.env}"
+if [ -f "$STEERLAB_ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$STEERLAB_ENV_FILE"
+else
+  echo "controller-job: $STEERLAB_ENV_FILE not found — run bootstrap.sh first" >&2
+  exit 64
+fi
+
+# Refusals BEFORE any socket opens (see THE BIND DECISION above).
+if [ "${STEERLAB_SERVER_PROFILE:-}" != "cluster" ]; then
+  echo "controller-job: refusing to start — STEERLAB_SERVER_PROFILE must be" >&2
+  echo "  'cluster' for the daemon-in-a-job topology (got: '${STEERLAB_SERVER_PROFILE:-<unset>}')." >&2
+  exit 64
+fi
+if [ -z "${STEERLAB_AUTH_TOKEN:-}" ]; then
+  echo "controller-job: refusing to bind 0.0.0.0 without STEERLAB_AUTH_TOKEN." >&2
+  echo "  Generate one:  umask 077 && openssl rand -hex 32 > ~/.steerlab-token" >&2
+  echo "  and export STEERLAB_AUTH_TOKEN in $STEERLAB_ENV_FILE (bootstrap.sh does this)." >&2
+  exit 64
+fi
+
+export STEERLAB_AUTH_MODE=token
+export STEERLAB_LAUNCH_TOPOLOGY=batch
+export STEERLAB_BIND=0.0.0.0
+PORT="${STEERLAB_CONTROLLER_PORT:-@PORT@}"
+
+# Advertise this daemon's node for the app-side Tunnel Manager.
+export STEERLAB_METADATA_ROOT="${STEERLAB_METADATA_ROOT:-$HOME/.steerlab}"
+mkdir -p "$STEERLAB_METADATA_ROOT"
+hostname > "$STEERLAB_METADATA_ROOT/serverd.host"
+echo "controller-job: serving on $(hostname):$PORT (recorded in $STEERLAB_METADATA_ROOT/serverd.host)"
+
+# --- pre-expiry successor chain (see AUTO-RESUBMIT CHAIN above) --------------
+# The RENDERED file is what a successor must re-submit: it carries the #SBATCH
+# block. `$0` is Slurm's spool copy, which is fine at submit time but says
+# nothing about where the real script lives, so prefer the rendered path.
+STEERLAB_CONTROLLER_SCRIPT="${STEERLAB_METADATA_ROOT}/controller-job.sbatch"
+[ -f "$STEERLAB_CONTROLLER_SCRIPT" ] || STEERLAB_CONTROLLER_SCRIPT="$0"
+STEERLAB_CHAIN_MARKER="${STEERLAB_METADATA_ROOT}/serverd.chain.json"
+STEERLAB_NO_CHAIN_MARKER="${STEERLAB_METADATA_ROOT}/serverd.no-chain"
+
+controller_log() { echo "controller-job: $*"; }
+
+# Lineage: the predecessor stamped serverd.chain.json naming US as its
+# successor, so this generation knows its own index with no env plumbing (the
+# successor is submitted --export=NONE deliberately — see chain_successor).
+STEERLAB_CHAIN_INDEX=0
+if [ -n "${SLURM_JOB_ID:-}" ] && [ -f "$STEERLAB_CHAIN_MARKER" ] \
+  && grep -q "\"successor\": \"${SLURM_JOB_ID}\"" "$STEERLAB_CHAIN_MARKER" 2>/dev/null; then
+  STEERLAB_CHAIN_INDEX="$(sed -n 's/.*"chainIndex": *\([0-9][0-9]*\).*/\1/p' \
+    "$STEERLAB_CHAIN_MARKER" | head -n 1)"
+  STEERLAB_CHAIN_INDEX="${STEERLAB_CHAIN_INDEX:-0}"
+  controller_log "chained successor at chain index $STEERLAB_CHAIN_INDEX (lineage: $STEERLAB_CHAIN_MARKER)"
+fi
+
+# True when a controller job that is NOT this one is already PENDING or RUNNING
+# under our job name: a successor exists already (a second USR1, a legacy
+# afterany successor, an operator-started controller) and we must not add one.
+# A squeue failure is NOT an answer — fall through to the marker guard rather
+# than skipping a needed successor.
+successor_already_queued() {
+  [ -n "${SLURM_JOB_NAME:-}" ] || return 1
+  _ids="$(squeue -h -u "${USER:-$(id -un 2>/dev/null)}" -n "$SLURM_JOB_NAME" \
+    -t PENDING,RUNNING -o '%i' 2>/dev/null)" || return 1
+  for _id in $_ids; do
+    _id="${_id%%.*}"; _id="${_id%%_*}"
+    [ "$_id" = "${SLURM_JOB_ID:-}" ] || return 0
+  done
+  return 1
+}
+
+# Idempotent: safe to call any number of times, submits at most one successor
+# per generation. Returns 0 always — a failed chain must not take the running
+# daemon down with it.
+chain_successor() {
+  controller_log "pre-expiry signal received at $(date -Is) (job ${SLURM_JOB_ID:-?})"
+  if [ "${STEERLAB_CONTROLLER_RESUBMIT:-1}" != "1" ]; then
+    controller_log "chaining disabled (STEERLAB_CONTROLLER_RESUBMIT=${STEERLAB_CONTROLLER_RESUBMIT:-1}) — no successor"
+    return 0
+  fi
+  if [ -f "$STEERLAB_NO_CHAIN_MARKER" ]; then
+    controller_log "chaining vetoed by $STEERLAB_NO_CHAIN_MARKER — no successor"
+    return 0
+  fi
+  if [ -f "$STEERLAB_CHAIN_MARKER" ] \
+    && grep -q "\"predecessor\": \"${SLURM_JOB_ID:-}\"" "$STEERLAB_CHAIN_MARKER" 2>/dev/null; then
+    controller_log "successor already submitted for job ${SLURM_JOB_ID:-?} — no-op"
+    return 0
+  fi
+  if successor_already_queued; then
+    controller_log "another '${SLURM_JOB_NAME}' job is already queued or running — no successor"
+    return 0
+  fi
+  _next=$(( STEERLAB_CHAIN_INDEX + 1 ))
+  # --export=NONE on purpose: this shell's environment carries the SLURM_*
+  # variables of the CURRENT allocation, and those OUTRANK the successor's own
+  # #SBATCH directives (command line > environment > directives). Inheriting
+  # them would silently re-shape the successor's resources. The template
+  # rebuilds everything it needs from $STEERLAB_ENV_FILE anyway, and lineage
+  # travels in serverd.chain.json rather than in the environment.
+  _out="$(sbatch --export=NONE "$STEERLAB_CONTROLLER_SCRIPT" 2>&1)"
+  _status=$?
+  if [ "$_status" -ne 0 ]; then
+    echo "controller-job: WARNING: could not queue successor (sbatch exit $_status): $_out" >&2
+    echo "controller-job: WARNING: this daemon ends at walltime with NO successor —" >&2
+    echo "controller-job: WARNING: start one by hand (steerlab-cli cluster controller start)." >&2
+    echo "controller-job: WARNING: a full submit queue is the usual cause; check squeue." >&2
+    return 0
+  fi
+  _successor="$(printf '%s\n' "$_out" \
+    | sed -n 's/.*Submitted batch job \([0-9][0-9]*\).*/\1/p' | head -n 1)"
+  printf '{"predecessor": "%s", "successor": "%s", "chainIndex": %s, "submittedAt": "%s", "script": "%s"}\n' \
+    "${SLURM_JOB_ID:-}" "${_successor:-unknown}" "$_next" "$(date -Is)" \
+    "$STEERLAB_CONTROLLER_SCRIPT" > "$STEERLAB_CHAIN_MARKER"
+  controller_log "successor queued: job ${_successor:-unknown} (chain index $_next, predecessor ${SLURM_JOB_ID:-?}); lineage in $STEERLAB_CHAIN_MARKER"
+  controller_log "this job now serves out its remaining walltime; the successor reconciles at boot"
+  return 0
+}
+
+# The CHAIN MARKER the server reads at boot. It lives here, beside the trap,
+# because it is a claim about THIS template — the file that carries the chain —
+# and it is rendered from this template's own content hash. A controller
+# launched from a pre-chain rendered script exports nothing, and the server
+# then says so loudly at boot instead of quietly serving a generation that
+# cannot chain (open-issues §1 field report, 2026-08-20). The value is
+# `template-<sha256 of the template bytes>` so a boot-time reader can also tell
+# "rendered from a DIFFERENT template" from "rendered from this one".
+export STEERLAB_CONTROLLER_CHAIN="template-@TEMPLATE_SHA256@"
+
+# USR1 ONLY. `scancel` sends TERM — a deliberate cancel must not chain.
+trap chain_successor USR1
+
+# The controller is a submit/poll instrument: it must never load models into
+# this 1-core allocation — studies go through sbatch child jobs.
+#
+# NOT `exec`: an exec'd process replaces this shell and no trap can fire, which
+# is why the walltime hook has to run the server as a child and wait on it.
+"@PYTHON@" -m steerlab_server.cli serve --port "$PORT" &
+STEERLAB_SERVER_PID=$!
+# A trapped signal interrupts the `wait` builtin with 128+sig; re-wait while
+# the server is still alive so this job's recorded ExitCode is the SERVER's.
+wait "$STEERLAB_SERVER_PID"
+STEERLAB_SERVER_STATUS=$?
+while [ "$STEERLAB_SERVER_STATUS" -ge 128 ] && kill -0 "$STEERLAB_SERVER_PID" 2>/dev/null; do
+  wait "$STEERLAB_SERVER_PID"
+  STEERLAB_SERVER_STATUS=$?
+done
+controller_log "server exited with status ${STEERLAB_SERVER_STATUS} at $(date -Is)"
+exit "$STEERLAB_SERVER_STATUS"

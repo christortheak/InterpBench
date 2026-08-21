@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the Developer ID (NOT App Store, NOT sandboxed) SteerLab
+  build.
+
+  THE SET IS DELIBERATELY EMPTY. That is a measured result, not an
+  unfinished file.
+
+  (Note for editors: XML comments may not contain a doubled hyphen, so
+  command-line flags are named without their leading dashes below.)
+
+  ── The WP2 spike (2026-08-20) ────────────────────────────────────────────
+  Question: does MLX inference survive the HARDENED RUNTIME that
+  notarization requires? The worry was Metal shader loading under library
+  validation, and any JIT-like allowance MLX might need.
+
+  Method: the installed CLI tree (~/.local/libexec/steerlab — one Mach-O
+  plus a colocated mlx.metallib) was copied to scratch, signed inside-out
+  with the hardened runtime enabled (codesign's `options runtime`) and NO
+  entitlements at all, and run headless against
+  prompts/configs/smoke-test.json with no DYLD_* environment at all.
+
+  Result: PASSED on both signing identities that exist without an Apple
+  Developer account handy —
+    * "Apple Development" (real certificate, real team id), and
+    * ad-hoc (`codesign -s -`), which is what build-app.sh defaults to.
+  Both models completed: Qwen3-4B-MLX-4bit and gemma-3-4b-it-4bit, hooks
+  firing 2196x / 2074x across 61 passes, steered output plainly different
+  from baseline.
+
+  Two controls establish that the pass is real rather than vacuous:
+
+    1. GPU actually ran. Renaming the colocated mlx.metallib made the same
+       binary die with "MLX error: Failed to load the default metallib".
+       There is no CPU fallback, so a completed generation is proof the
+       Metal path executed.
+
+    2. Hardened-runtime enforcement was actually live. With
+       DYLD_INSERT_LIBRARIES pointed at a signed probe dylib, an otherwise
+       identical copy signed WITHOUT the hardened runtime loaded the probe
+       ("DYLD_INSERT_LIBRARIES PROBE LOADED"); the hardened copy silently
+       refused it. The restriction was therefore being enforced during the
+       passing smoke run.
+
+  ── Why no entitlement is needed (mechanism, not luck) ───────────────────
+  * Library validation never engages: the executable statically links the
+    entire package graph, MLX included. The signed tree contains exactly ONE
+    Mach-O and zero @rpath dylibs, so there is no third-party library for
+    dyld to validate or reject.
+  * `com.apple.security.cs.disable-library-validation` — NOT NEEDED, and
+    not merely unused: there is nothing to disable validation FOR. Adding it
+    would widen the attack surface of a notarized binary for no benefit.
+  * `com.apple.security.cs.allow-jit` — NOT NEEDED. MLX's Metal kernels are
+    compiled ahead of time into mlx.metallib, which is loaded as DATA
+    through the Metal API, not mapped as executable pages by dyld. No MAP_JIT
+    request occurs, and no MAP_JIT failure appeared in the passing run.
+  * `com.apple.security.cs.allow-unsigned-executable-memory` and
+    `...disable-executable-page-protection` — NOT NEEDED, same reason, and
+    both materially weaken the hardened runtime.
+
+  ── If a future failure ever demands one ─────────────────────────────────
+  Add the SINGLE entitlement the observed failure names, with the Console or
+  crash-log line quoted here as evidence, and re-run the spike. Do not add
+  a speculative set. build-app.sh passes this file to codesign only when it
+  declares at least one key; while it stays empty the binary is signed with
+  the hardened runtime and no entitlement blob at all, which is the
+  strongest posture and the one that notarizes most cleanly.
+-->
+<plist version="1.0">
+<dict/>
+</plist>

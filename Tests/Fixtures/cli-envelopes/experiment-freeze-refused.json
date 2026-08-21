@@ -1,0 +1,19 @@
+{
+  "changed" : false,
+  "engine" : "swift-mlx",
+  "error" : {
+    "code" : "freezeGateFailed",
+    "gate" : "validateEvidence",
+    "gates" : [
+      "validateEvidence"
+    ],
+    "reason" : "cannot freeze 'demo': no validate run matches its exact pins (model+revision, concepts, neutral corpus) on the run substrate swift-mlx. Run 'steerlab-cli experiment validate demo' first, or freeze --force to record an unvalidated experiment",
+    "repairAction" : "Run 'steerlab-cli experiment validate demo' first, or freeze --force to record an unvalidated experiment"
+  },
+  "message" : "cannot freeze 'demo': no validate run matches its exact pins (model+revision, concepts, neutral corpus) on the run substrate swift-mlx. Run 'steerlab-cli experiment validate demo' first, or freeze --force to record an unvalidated experiment",
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "schemaVersion" : 1,
+  "state" : "refused",
+  "verb" : "experiment freeze",
+  "workspace" : "<workspace>"
+}

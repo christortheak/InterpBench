@@ -1,0 +1,98 @@
+[
+  {
+    "depthFraction": 0.6721311475409836,
+    "input": {
+      "condition_layer": 7,
+      "declared_fraction": null,
+      "declared_layer": 41,
+      "layer_count": 62
+    },
+    "label": "declared-index",
+    "layer": 41,
+    "source": "declaredIndex"
+  },
+  {
+    "depthFraction": 0.6557377049180327,
+    "input": {
+      "condition_layer": 7,
+      "declared_fraction": 0.66,
+      "declared_layer": null,
+      "layer_count": 62
+    },
+    "label": "declared-fraction",
+    "layer": 40,
+    "source": "declaredFraction"
+  },
+  {
+    "depthFraction": 0.11475409836065574,
+    "input": {
+      "condition_layer": 7,
+      "declared_fraction": null,
+      "declared_layer": null,
+      "layer_count": 62
+    },
+    "label": "legacy-condition",
+    "layer": 7,
+    "source": "steeringCondition"
+  },
+  {
+    "depthFraction": 0.5081967213114754,
+    "input": {
+      "condition_layer": null,
+      "declared_fraction": null,
+      "declared_layer": null,
+      "layer_count": 62
+    },
+    "label": "legacy-mid-network",
+    "layer": 31,
+    "source": "midNetwork"
+  },
+  {
+    "depthFraction": 1.0,
+    "input": {
+      "condition_layer": null,
+      "declared_fraction": null,
+      "declared_layer": 999,
+      "layer_count": 62
+    },
+    "label": "index-above-depth",
+    "layer": 61,
+    "source": "declaredIndex"
+  },
+  {
+    "depthFraction": 1.0,
+    "input": {
+      "condition_layer": null,
+      "declared_fraction": 1.0,
+      "declared_layer": null,
+      "layer_count": 62
+    },
+    "label": "fraction-one",
+    "layer": 61,
+    "source": "declaredFraction"
+  },
+  {
+    "depthFraction": 0.0,
+    "input": {
+      "condition_layer": null,
+      "declared_fraction": 0.0,
+      "declared_layer": null,
+      "layer_count": 62
+    },
+    "label": "fraction-zero",
+    "layer": 0,
+    "source": "declaredFraction"
+  },
+  {
+    "depthFraction": 0.0,
+    "input": {
+      "condition_layer": null,
+      "declared_fraction": 0.5,
+      "declared_layer": null,
+      "layer_count": 1
+    },
+    "label": "single-layer-model",
+    "layer": 0,
+    "source": "declaredFraction"
+  }
+]

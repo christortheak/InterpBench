@@ -1,0 +1,77 @@
+/* Capability-battery and analyze-output views (upgrade plan Phase 5 — the
+   ported native-only sections). Everything else reuses the house card,
+   reader-shell, and .jv-table classes. .jv-table itself lives in judged.css,
+   so the views import judged.css alongside this sheet, exactly as the
+   coding view does. */
+
+.analysis-view .provenance-legend { margin-bottom: 22px; }
+
+.analysis-note, .analysis-warn {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 0 0 16px; padding: 9px 12px;
+  border: 1px solid var(--line); background: var(--card);
+  font: 10px/1.5 var(--mono); color: var(--muted);
+}
+.analysis-warn { border-left: 2px solid var(--amber); background: var(--amber-soft); color: #6c4a12; }
+.analysis-warn strong { color: #6c4a12; }
+.analysis-note > span { display: block; }
+
+.analysis-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.analysis-filters select {
+  border: 1px solid var(--line-dark); background: var(--card);
+  padding: 9px 10px; font: 10px var(--mono); color: var(--ink);
+}
+.analysis-filters .secondary { padding: 9px 12px; font-size: 10px; }
+
+/* --- battery ------------------------------------------------------------ */
+.battery-strip {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  gap: 10px; margin-top: 14px;
+}
+.battery-cell { border: 1px solid var(--line); background: var(--card); padding: 12px 13px; }
+.battery-cell.is-baseline { background: #f2f1ea; }
+.battery-cell > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.battery-cell > header strong {
+  font: 600 10px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.battery-cell > b { display: block; margin: 9px 0 2px; font: 500 27px var(--serif); }
+.battery-cell-source { display: block; color: var(--muted); font: 9px var(--mono); }
+.battery-bar { height: 5px; background: #e6e6df; margin: 10px 0 9px; }
+.battery-bar i { display: block; height: 100%; background: var(--green); }
+.battery-cell dl {
+  display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; margin: 0;
+  font: 9px var(--mono); color: var(--muted);
+}
+.battery-cell dt { display: flex; align-items: center; gap: 5px; }
+.battery-cell dd { margin: 0; color: var(--ink); text-align: right; }
+.battery-cell .badge { font-size: 7px; }
+
+/* --- residual table ----------------------------------------------------- */
+.residual-table td, .residual-table th { vertical-align: top; }
+.residual-table .numeric-cell { font: 10px var(--mono); text-align: right; }
+.residual-table .is-headline { background: #f2f1ea; font-weight: 700; }
+.residual-table .region-cell { text-align: left; }
+.residual-table .region-cell small {
+  display: block; margin-top: 4px; max-width: 260px;
+  color: var(--muted); font: 9px/1.4 var(--sans);
+}
+
+/* --- promoted movers ---------------------------------------------------- */
+.mover-list { display: grid; gap: 8px; margin-top: 14px; }
+.mover { border: 1px solid var(--line); background: var(--card); padding: 12px 14px; }
+.mover.is-promoted { border-left: 3px solid var(--green); }
+.mover.is-rejected { border-left: 3px solid var(--line-dark); }
+.mover > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.mover > header strong { font: 600 12px var(--mono); }
+.mover > header span { display: block; margin-top: 3px; color: var(--muted); font: 9px var(--mono); }
+.mover dl {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px 14px; margin: 11px 0 0;
+}
+.mover dl > div { min-width: 0; }
+.mover dt { color: var(--muted); font: 8px var(--mono); letter-spacing: .07em; text-transform: uppercase; }
+.mover dd { margin: 3px 0 0; font: 10px var(--mono); }
+.mover-reasons {
+  margin: 11px 0 0; padding-top: 9px; border-top: 1px solid var(--line);
+  color: var(--muted); font: 10px/1.5 var(--sans);
+}

@@ -1,0 +1,11 @@
+{"batteryFormat": 2, "scoring": "choiceProbability", "promptMode": "chatAssistant", "maxTokens": 24, "description": "Ten short arithmetic, recall, and everyday-reasoning probes read as answer-token choices."}
+{"id": "basic-01", "prompt": "What is 17 + 26?", "answer": "43", "options": ["41", "42", "43"]}
+{"id": "basic-02", "prompt": "What is the capital of France?", "answer": "Paris", "options": ["Paris", "Madrid", "Lisbon"]}
+{"id": "basic-03", "prompt": "What is the word 'cat' spelled backwards?", "answer": "tac", "options": ["tac", "cta", "atc"]}
+{"id": "basic-04", "prompt": "What is 9 times 8?", "answer": "72", "options": ["63", "72", "81"]}
+{"id": "basic-05", "prompt": "Which number is larger, 0.7 or 0.07?", "answer": "0.7", "options": ["0.7", "0.07", "0.007"]}
+{"id": "basic-06", "prompt": "Which day of the week comes immediately after Tuesday?", "answer": "Wednesday", "options": ["Wednesday", "Thursday", "Saturday"]}
+{"id": "basic-07", "prompt": "How many legs does a spider have?", "answer": "8", "options": ["6", "8", "10"]}
+{"id": "basic-08", "prompt": "Which number continues the sequence 2, 4, 6, 8?", "answer": "10", "options": ["9", "10", "12"]}
+{"id": "basic-09", "prompt": "Which color results from mixing blue and yellow paint?", "answer": "green", "options": ["green", "purple", "orange"]}
+{"id": "basic-10", "prompt": "A train leaves at 3:00 PM and the trip takes two hours. When does it arrive?", "answer": "5:00 PM", "options": ["4:00 PM", "5:00 PM", "6:00 PM"]}

@@ -1,0 +1,93 @@
+# CI skeleton (WP10 R0): the release repository proves, on hardware that is
+# not ours, that the shipped tree stands on its own — the Python suite from
+# the committed platform lock, the Results Explorer built from source, and the
+# public-tier release scan.
+#
+# Single-sourced in the research tree and carried to the release tree by the
+# allowlist export; the `if:` guards keep it inert on the research repository
+# (whose tree would rightly fail the public scan — study material lives
+# there on purpose until the upstream flip).
+#
+# Deliberately absent for now: a macOS/Swift lane (the project builds against
+# a beta Xcode that GitHub's runners do not carry — WP10/R2 revisits when the
+# toolchain settles), and any GPU work (the suite is hermetic and CPU-clean;
+# model-cache-dependent tests skip themselves).
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python-suite:
+    if: github.event.repository.name == 'InterpBench'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install engine (CPU torch + locked dependencies)
+        working-directory: Server
+        # Same shape as scripts/bootstrap.sh: torch is substrate-owned (CPU
+        # wheel here — no GPU on the runner), everything else pinned exactly
+        # by the committed Linux lock.
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          grep -vE '^(torch|triton|pytorch-triton|nvidia-)' \
+            requirements-linux-x86_64.lock > /tmp/ci-lock.txt
+          pip install -r /tmp/ci-lock.txt
+          pip install -e ".[all]"
+      - name: Run the server suite
+        working-directory: Server
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: python -m pytest -q
+
+  results-explorer:
+    # The canonical results surface builds from source in the release tree —
+    # its committed `web/results-explorer/` build output does NOT ship, so
+    # "can a cold clone produce it?" is a release-boundary question, not a
+    # convenience. Lint + unit tests + build: the standing lint findings were
+    # cleaned up (2026-08-19), so the lane now holds that line rather than
+    # letting errors creep back in. `--max-warnings` is deliberately NOT set:
+    # the residual warnings are exhaustive-deps advisories on effects that
+    # intentionally key on `run?.key`, and failing on them would only invite
+    # blanket disables.
+    if: github.event.repository.name == 'InterpBench'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: results-explorer/package-lock.json
+      - name: Install (locked)
+        working-directory: results-explorer
+        run: npm ci
+      - name: Lint
+        working-directory: results-explorer
+        run: npm run lint
+      - name: Unit suite
+        working-directory: results-explorer
+        run: npm test
+      - name: Embedded build (the app's WKWebView bundle)
+        working-directory: results-explorer
+        run: npm run build:embed
+
+  public-scan:
+    if: github.event.repository.name == 'InterpBench'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Public-tier release scan
+        run: python scripts/ci/public_scan.py

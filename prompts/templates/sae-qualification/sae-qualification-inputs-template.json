@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "notes": "TEMPLATE for `steerlab-server sae qualification record --inputs <this> --artifact runs/<run>/<name>`. Copy into the study WORKSPACE and replace every value. Constructs, metric names, and thresholds are DATA: nothing in the engine knows what a good number is here, and no verdict is computed from these rows — `decision` is the researcher's, recorded with its rationale. The engine checks shape, dose-grid coverage, and that `feature` matches the cited artifact's own gemmascopeSource (the decoderRowHash above all). Keys are CLOSED; `artifact`, `recordedAt`, `recordedBy`, and `substrate` are stamped by the verb and must NOT appear here.",
+  "feature": {
+    "feature": 62389,
+    "layer": 40,
+    "decoderRowHash": "sha256:REPLACE-WITH-THE-ARTIFACT-SIDECAR-gemmascopeSource-decoderRowHash"
+  },
+  "doseGrid": [0.04, 0.08, 0.12],
+  "signs": ["positive", "negative"],
+  "constructProbe": {
+    "metric": "held-out construct endorsement rate (never-named scenarios)",
+    "higherIsBetter": true,
+    "heldOutSetHash": "sha256 of the held-out probe file",
+    "notes": "The construct measure, on data the feature was never chosen against.",
+    "results": [
+      {"dose": 0.04, "sign": "positive", "value": 0.0, "direction": "increase", "n": 0, "ciLower": 0.0, "ciUpper": 0.0, "run": "runs/<qualification-run>"},
+      {"dose": 0.04, "sign": "negative", "value": 0.0, "direction": "decrease", "n": 0, "run": "runs/<qualification-run>"},
+      {"dose": 0.08, "sign": "positive", "value": 0.0, "direction": "increase", "n": 0, "run": "runs/<qualification-run>"},
+      {"dose": 0.08, "sign": "negative", "value": 0.0, "direction": "decrease", "n": 0, "run": "runs/<qualification-run>"},
+      {"dose": 0.12, "sign": "positive", "value": 0.0, "direction": "increase", "n": 0, "run": "runs/<qualification-run>"},
+      {"dose": 0.12, "sign": "negative", "value": 0.0, "direction": "decrease", "n": 0, "run": "runs/<qualification-run>"},
+      {"dose": 0.0, "sign": "baseline", "value": 0.0, "direction": "none", "n": 0, "run": "runs/<qualification-run>"}
+    ]
+  },
+  "lexicalLeakage": {
+    "metric": "rate of the feature label and its closest lexical synonyms",
+    "higherIsBetter": false,
+    "notes": "The effect must not be exhausted by repeating the label.",
+    "results": [
+      {"dose": 0.08, "sign": "positive", "value": 0.0, "run": "runs/<qualification-run>"},
+      {"dose": 0.12, "sign": "positive", "value": 0.0, "run": "runs/<qualification-run>"}
+    ]
+  },
+  "discriminantControls": [
+    {
+      "construct": "the neighbouring construct that must NOT move",
+      "metric": "held-out endorsement rate for that construct",
+      "notes": "An empty discriminantControls array is the way to say none were run.",
+      "results": [
+        {"dose": 0.08, "sign": "positive", "value": 0.0, "run": "runs/<qualification-run>"}
+      ]
+    }
+  ],
+  "coherenceGate": {
+    "metric": "distinct-2 + instruction-format compliance + missingness",
+    "threshold": 0.45,
+    "passed": true,
+    "notes": "No coherence collapse, no format collapse, no dose-dependent missingness at the selected dose.",
+    "results": [
+      {"dose": 0.12, "sign": "positive", "value": 0.0, "run": "runs/<qualification-run>"}
+    ]
+  },
+  "doseResponse": {
+    "monotone": true,
+    "signSymmetric": true,
+    "spearmanRho": 0.0,
+    "summary": "Directionally stable across the ladder and separated from matched-norm random at the middle and high doses."
+  },
+  "decision": {
+    "decision": "accept",
+    "rationale": "REPLACE — say what the numbers showed and which gate was closest to failing.",
+    "date": "2026-01-01",
+    "decidedBy": "initials or name"
+  },
+  "evidenceRuns": [
+    {"path": "runs/<qualification-run>", "label": "study-a", "describes": "dose ladder, both signs, matched-norm random controls"}
+  ]
+}

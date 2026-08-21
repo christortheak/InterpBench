@@ -1,0 +1,204 @@
+[
+  {
+    "input": [
+      {
+        "A": -1.0,
+        "B": -1.5
+      },
+      {
+        "A": -2.0,
+        "B": -2.2
+      },
+      {
+        "A": -3.0,
+        "B": -3.1
+      }
+    ],
+    "label": "near-boundary",
+    "report": {
+      "bandsVersion": "d3-2026-07-26",
+      "clampEpsilon": 1e-12,
+      "clampedItems": 0,
+      "interpretation": "median joint-logprob margin 0.20 nats over 3 scored items",
+      "itemsBeyondBand": {
+        "above10Nats": 0,
+        "above1Nats": 0,
+        "above2.5Nats": 0,
+        "above5Nats": 0
+      },
+      "marginBands": [
+        1.0,
+        2.5,
+        5.0,
+        10.0
+      ],
+      "marginMax": 0.5,
+      "marginMean": 0.2666666666666668,
+      "marginMedian": 0.20000000000000018,
+      "marginMin": 0.10000000000000009,
+      "marginP25": 0.15000000000000013,
+      "marginP75": 0.3500000000000001,
+      "scoredItems": 3
+    }
+  },
+  {
+    "input": [
+      {
+        "A": -1.0,
+        "B": -21.0
+      },
+      {
+        "A": -2.0,
+        "B": -25.0
+      },
+      {
+        "A": -1.5,
+        "B": -30.0
+      }
+    ],
+    "label": "far-from-boundary",
+    "report": {
+      "bandsVersion": "d3-2026-07-26",
+      "clampEpsilon": 1e-12,
+      "clampedItems": 1,
+      "interpretation": "median joint-logprob margin 23.00 nats over 3 scored items; 3 items sit more than 10 nats from the decision boundary, where the FLIP RATE has poor sensitivity \u2014 an intervention can move the log-odds a long way without flipping any item. Read the continuous log-odds shift, not the flip rate; the instrument has not saturated; 1 item produced a probability at the 1e-12 clamp, so their log-odds is a clamp ARTEFACT rather than a measurement \u2014 this is true numerical saturation and those items carry no usable magnitude",
+      "itemsBeyondBand": {
+        "above10Nats": 3,
+        "above1Nats": 3,
+        "above2.5Nats": 3,
+        "above5Nats": 3
+      },
+      "marginBands": [
+        1.0,
+        2.5,
+        5.0,
+        10.0
+      ],
+      "marginMax": 28.5,
+      "marginMean": 23.833333333333332,
+      "marginMedian": 23.0,
+      "marginMin": 20.0,
+      "marginP25": 21.5,
+      "marginP75": 25.75,
+      "scoredItems": 3
+    }
+  },
+  {
+    "input": [
+      {
+        "A": -1.0,
+        "B": -2.0
+      },
+      {
+        "A": -1.0,
+        "B": -3.0
+      },
+      {
+        "A": -1.0,
+        "B": -5.0
+      },
+      {
+        "A": -1.0,
+        "B": -9.0
+      }
+    ],
+    "label": "even-length",
+    "report": {
+      "bandsVersion": "d3-2026-07-26",
+      "clampEpsilon": 1e-12,
+      "clampedItems": 0,
+      "interpretation": "median joint-logprob margin 3.00 nats over 4 scored items",
+      "itemsBeyondBand": {
+        "above10Nats": 0,
+        "above1Nats": 3,
+        "above2.5Nats": 2,
+        "above5Nats": 1
+      },
+      "marginBands": [
+        1.0,
+        2.5,
+        5.0,
+        10.0
+      ],
+      "marginMax": 8.0,
+      "marginMean": 3.75,
+      "marginMedian": 3.0,
+      "marginMin": 1.0,
+      "marginP25": 1.75,
+      "marginP75": 5.0,
+      "scoredItems": 4
+    }
+  },
+  {
+    "input": [
+      {
+        "A": 0.0,
+        "B": -100.0
+      },
+      {
+        "A": 0.0,
+        "B": -0.5
+      }
+    ],
+    "label": "clamped",
+    "report": {
+      "bandsVersion": "d3-2026-07-26",
+      "clampEpsilon": 1e-12,
+      "clampedItems": 1,
+      "interpretation": "median joint-logprob margin 50.25 nats over 2 scored items; 1 item sit more than 10 nats from the decision boundary, where the FLIP RATE has poor sensitivity \u2014 an intervention can move the log-odds a long way without flipping any item. Read the continuous log-odds shift, not the flip rate; the instrument has not saturated; 1 item produced a probability at the 1e-12 clamp, so their log-odds is a clamp ARTEFACT rather than a measurement \u2014 this is true numerical saturation and those items carry no usable magnitude",
+      "itemsBeyondBand": {
+        "above10Nats": 1,
+        "above1Nats": 1,
+        "above2.5Nats": 1,
+        "above5Nats": 1
+      },
+      "marginBands": [
+        1.0,
+        2.5,
+        5.0,
+        10.0
+      ],
+      "marginMax": 100.0,
+      "marginMean": 50.25,
+      "marginMedian": 50.25,
+      "marginMin": 0.5,
+      "marginP25": 25.375,
+      "marginP75": 75.125,
+      "scoredItems": 2
+    }
+  },
+  {
+    "input": [
+      {
+        "A": -1.0
+      }
+    ],
+    "label": "single-option",
+    "report": {
+      "bandsVersion": "d3-2026-07-26",
+      "clampEpsilon": 1e-12,
+      "marginBands": [
+        1.0,
+        2.5,
+        5.0,
+        10.0
+      ],
+      "scoredItems": 0
+    }
+  },
+  {
+    "input": [],
+    "label": "no-records",
+    "report": {
+      "bandsVersion": "d3-2026-07-26",
+      "clampEpsilon": 1e-12,
+      "marginBands": [
+        1.0,
+        2.5,
+        5.0,
+        10.0
+      ],
+      "scoredItems": 0
+    }
+  }
+]

@@ -1,0 +1,38 @@
+.DS_Store
+/.build
+# All *.nosync scratch (SwiftPM/DerivedData/venv plus per-agent build dirs) —
+# iCloud-excluded build state, never committed. The anchored entries below are
+# kept for history; the pattern covers them and any future .nosync dir.
+*.nosync
+/.build.nosync
+/.deriveddata.nosync
+/.venv.nosync
+/.swiftpm
+/runs/
+xcuserdata/
+DerivedData/
+.netrc
+*.profraw
+
+# Server durable job store (SQLite) — runtime state, never committed.
+.steerlab/
+
+# One-click local-server pidfile (scripts/start-local-server.sh) — runtime
+# adoption record at the workspace root, never committed.
+.steerlab-local-server.pid
+
+# Researcher-specific study data (case families, items, human-baseline
+# worksheets, scoring notes). This repo's prompts/ is seed/template data and
+# test fixtures only — study data belongs in a WORKSPACE, where freeze can
+# pin and auto-commit it. Third-party paper full-texts are also never
+# committed (copyright + history bloat); keep local-only names in
+# .git/info/exclude.
+/prompts/studies/
+# Deploy-written build identity (rsync deploys carry no .git; see build_identity.py)
+Server/steerlab_server/BUILD_COMMIT
+# Home-layout workspaces (decision 8): SteerLab's home folder holds
+# Workspaces/ BESIDE the checkout, so these never appear inside the repo —
+# this ignore is the belt-and-suspenders for a hand-created nested one, and
+# the public scanner tier refuses any tracked path beneath them.
+Workspaces/
+workspaces/

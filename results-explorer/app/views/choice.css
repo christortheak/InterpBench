@@ -1,0 +1,138 @@
+/* Choice-instrument view (upgrade plan Phase 3). Imported by
+   views/ChoiceInstrument.tsx and views/Generations.tsx — the instrument
+   record detail block is shared between the two surfaces. Palette and type
+   tokens come from globals.css; nothing here restyles a shared class. */
+
+.choice-view .provenance-legend { margin-bottom: 22px; }
+
+/* Per-condition rollups — every value stored in report.json. */
+.choice-rollups { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-bottom: 26px; }
+.choice-rollup { background: var(--card); border: 1px solid var(--line); padding: 15px 16px; }
+.choice-rollup.is-baseline { border-left: 3px solid var(--ink); }
+.choice-rollup > span { display: block; font: 700 9px var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); overflow-wrap: anywhere; }
+.choice-rollup > strong { display: block; font: 500 30px var(--serif); margin: 8px 0 2px; }
+.choice-rollup > strong small { font-size: 12px; color: var(--muted); font-family: var(--sans); margin-left: 5px; }
+.choice-rollup dl { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; margin: 9px 0 0; font-size: 10px; }
+.choice-rollup dt { color: var(--muted); }
+.choice-rollup dd { margin: 0; font-family: var(--mono); font-size: 10px; }
+
+/* Threshold control + table. */
+.choice-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.choice-controls label { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted); }
+.choice-controls input { width: 74px; border: 1px solid var(--line-dark); background: white; padding: 6px 8px; font: 11px var(--mono); border-radius: 4px; }
+.choice-note { color: var(--muted); font: 12px/1.5 var(--serif); margin: 10px 0 0; display: flex; gap: 7px; align-items: baseline; flex-wrap: wrap; }
+
+.choice-table-card { padding: 22px 24px 26px; margin-bottom: 26px; }
+.choice-table-scroll { overflow-x: auto; margin-top: 18px; }
+.choice-table { width: 100%; min-width: 640px; border-collapse: collapse; }
+.choice-table thead th { text-align: left; padding: 0 10px 10px; border-bottom: 1px solid var(--line-dark); vertical-align: bottom; }
+.choice-table thead .choice-condition-name { display: block; font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
+.choice-table thead small { display: flex; align-items: center; gap: 5px; margin-top: 4px; color: var(--muted); font: 9px var(--sans); letter-spacing: .06em; text-transform: uppercase; }
+.choice-group-row th { padding: 14px 10px 5px; border: 0; text-align: left; }
+.choice-group-row span { font: 600 10px var(--mono); color: #4d5752; letter-spacing: .02em; }
+.choice-group-row .badge { margin-left: 7px; vertical-align: 1px; }
+.choice-item-cell { padding: 8px 10px; border-top: 1px solid var(--line); text-align: left; font-weight: 400; vertical-align: top; }
+.choice-item-cell strong { display: block; font: 600 11px var(--mono); overflow-wrap: anywhere; }
+.choice-item-cell span { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; }
+.choice-order { display: inline-block; margin-right: 6px; padding: 1px 4px; border: 1px solid var(--line-dark); border-radius: 3px; font: 700 8px var(--sans); color: var(--muted); letter-spacing: .05em; text-transform: uppercase; }
+.choice-cell { padding: 8px 10px; border-top: 1px solid var(--line); vertical-align: top; white-space: nowrap; }
+.choice-cell > strong { display: block; font: 12px var(--mono); }
+.choice-delta { display: block; margin-top: 2px; font: 10px var(--mono); color: var(--blue); }
+.choice-delta.is-flat { color: var(--muted); }
+.choice-selected { display: block; margin-top: 2px; font-size: 9px; color: var(--muted); }
+.choice-missing { color: var(--muted); font: 12px var(--mono); }
+
+/* Saturated rows are muted, never hidden: the reading is real, it simply
+   has no headroom. */
+.choice-row.is-saturated .choice-item-cell, .choice-row.is-saturated .choice-cell { opacity: .45; }
+.choice-row.is-saturated .choice-item-cell strong { font-weight: 400; }
+.choice-row.is-boundary .choice-item-cell { box-shadow: inset 3px 0 0 var(--blue); }
+.choice-row.is-boundary .choice-item-cell strong { color: var(--blue); }
+
+/* A flip is the loudest thing on the page. */
+.choice-cell.is-flip { background: #fdefe9; box-shadow: inset 0 0 0 1px var(--orange); }
+.choice-cell.is-flip > strong { color: var(--orange); }
+.choice-flip-mark { display: block; margin-top: 3px; font: 700 9px var(--sans); letter-spacing: .05em; color: var(--orange); font-style: normal; }
+.choice-row.is-saturated .choice-cell.is-flip { opacity: 1; }
+
+/* Δ dot strips. */
+.choice-strips { display: grid; gap: 14px; margin-top: 16px; }
+.choice-strip { display: grid; grid-template-columns: minmax(120px, 190px) minmax(0, 1fr) 74px; gap: 14px; align-items: center; }
+.choice-strip-label strong { display: block; font-size: 11px; overflow-wrap: anywhere; }
+.choice-strip-label span { color: var(--muted); font-size: 9px; }
+.choice-strip-track { position: relative; height: 30px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #f7f6f0; }
+.choice-strip-zero { position: absolute; top: 0; bottom: 0; width: 1px; background: #a3aaa6; }
+.choice-dot { position: absolute; top: 50%; width: 9px; height: 9px; margin: -5px 0 0 -5px; border-radius: 50%; background: var(--blue); opacity: .75; }
+.choice-dot.is-flip { background: var(--orange); opacity: 1; box-shadow: 0 0 0 3px #d65f3830; }
+.choice-strip-value { font: 10px var(--mono); color: var(--muted); text-align: right; }
+.choice-scale { display: flex; justify-content: space-between; font: 9px var(--mono); color: var(--muted); margin-top: 5px; }
+
+/* Counterbalance panel. */
+.choice-pairs { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 18px; }
+.choice-pair { border: 1px solid var(--line); background: var(--card); padding: 14px 15px; }
+.choice-pair.is-artifact { border-color: var(--amber); background: #fdf8ee; }
+.choice-pair > header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 9px; }
+.choice-pair > header strong { font: 600 11px var(--mono); overflow-wrap: anywhere; }
+.choice-pair table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.choice-pair th { text-align: left; font: 700 8px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding-bottom: 4px; }
+.choice-pair td { padding: 4px 0; border-top: 1px solid var(--line); font-family: var(--mono); overflow-wrap: anywhere; }
+.choice-pair td:first-child { font-family: var(--sans); padding-right: 8px; }
+.choice-pair .is-inconsistent { color: var(--amber); font-weight: 700; }
+
+/* Flip list. */
+.choice-flips { display: grid; gap: 10px; margin-top: 16px; }
+.choice-flip-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; border: 1px solid var(--line); border-left: 3px solid var(--orange); background: var(--card); padding: 12px 14px; }
+.choice-flip-row strong { display: block; font: 600 11px var(--mono); overflow-wrap: anywhere; }
+.choice-flip-row p { margin: 3px 0 0; color: var(--muted); font-size: 10px; }
+.choice-flip-row b { color: var(--orange); font-weight: 700; }
+.choice-flip-row button { border: 1px solid var(--line-dark); background: white; padding: 8px 11px; font-size: 10px; font-weight: 650; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.choice-flip-row button:hover { border-color: var(--blue); color: var(--blue); }
+
+.choice-section { margin-bottom: 26px; padding: 22px 24px 26px; }
+.choice-section > header p { margin: 6px 0 0; color: var(--muted); font: 13px/1.5 var(--serif); max-width: 640px; }
+
+/* Instrument record detail — shared with the generations reader. */
+.instrument-detail { margin-top: 14px; border: 1px solid var(--line); background: var(--card); padding: 16px 18px; }
+.instrument-detail > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.instrument-detail > header span { font: 750 9px var(--sans); letter-spacing: .13em; text-transform: uppercase; color: var(--muted); }
+.instrument-option-scroll { overflow-x: auto; }
+.instrument-option-table { width: 100%; min-width: 460px; border-collapse: collapse; font: 10px var(--mono); }
+.instrument-option-table th { text-align: right; font: 700 8px var(--sans); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); padding: 0 6px 5px; }
+.instrument-option-table th:first-child { text-align: left; }
+.instrument-option-table td { text-align: right; padding: 6px; border-top: 1px solid var(--line); white-space: nowrap; }
+.instrument-option-table td:first-child { text-align: left; font-family: var(--sans); font-weight: 650; }
+.instrument-option-table tr.is-selected td { background: var(--blue-soft); }
+.instrument-option-table .option-flags { display: inline-flex; gap: 4px; margin-left: 6px; }
+.instrument-option-table .option-flags i { font-style: normal; font: 700 8px var(--sans); letter-spacing: .05em; text-transform: uppercase; color: var(--blue); }
+.instrument-option-table .option-flags i.is-target { color: var(--green); }
+.instrument-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 16px; margin-top: 14px; }
+.instrument-facts > div > span { display: block; font: 700 8px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.instrument-facts > div > strong { display: block; font: 11px var(--mono); margin-top: 3px; overflow-wrap: anywhere; }
+
+/* Baseline juxtapose (generations reader). */
+.juxtapose { margin-top: 14px; }
+.juxtapose-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.juxtapose-head span { font: 750 9px var(--sans); letter-spacing: .13em; text-transform: uppercase; color: var(--muted); }
+.juxtapose-head button { border: 1px solid var(--line-dark); background: var(--card); padding: 7px 10px; font-size: 10px; font-weight: 650; border-radius: 4px; cursor: pointer; }
+.juxtapose-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 12px; }
+.juxtapose-column { border: 1px solid var(--line); background: var(--card); padding: 14px 15px; min-width: 0; }
+.juxtapose-column > header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.juxtapose-column > header strong { font-size: 11px; overflow-wrap: anywhere; }
+.juxtapose-column p { margin: 0; font: 13px/1.6 var(--serif); white-space: pre-wrap; overflow-wrap: anywhere; }
+.juxtapose-column footer { margin-top: 9px; color: var(--muted); font-size: 9px; }
+.juxtapose-column .instrument-detail { margin-top: 0; border: 0; padding: 0; background: transparent; }
+.pair-callout .pair-actions { display: flex; gap: 7px; }
+
+@media (max-width: 1080px) {
+  .juxtapose-grid { grid-template-columns: minmax(0, 1fr); }
+  .choice-strip { grid-template-columns: minmax(90px, 130px) minmax(0, 1fr) 60px; }
+}
+
+/* Engine-computed deltas (choice-deltas.json — stored, CI included). */
+.engine-deltas-card { margin-bottom: 14px; }
+.engine-deltas-grid { display: flex; flex-wrap: wrap; gap: 14px; }
+.engine-deltas-grid > div { display: flex; flex-direction: column; gap: 2px; min-width: 150px; }
+.engine-deltas-grid > div > span { font-size: 12px; color: var(--muted, #666); }
+.engine-deltas-grid > div > strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.engine-deltas-grid > div > small { font-size: 11px; color: var(--muted, #666); }
+.engine-deltas-note { margin-top: 10px; font-size: 11.5px; color: var(--muted, #666); }

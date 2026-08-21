@@ -1,0 +1,22 @@
+{
+  "changed" : true,
+  "engine" : "swift-mlx",
+  "message" : "created workspace at <workspace>/ws",
+  "nextAction" : {
+    "detail" : "run with --workspace <workspace>/ws, or export STEERLAB_WORKSPACE=<workspace>/ws",
+    "missingPermissionFlags" : [
+
+    ],
+    "requiresHuman" : false,
+    "verb" : "experiment create <name> --model <id>"
+  },
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "result" : {
+    "seededFrom" : "<checkout>/WorkspaceSeed",
+    "workspace" : "<workspace>/ws"
+  },
+  "schemaVersion" : 1,
+  "state" : "ready",
+  "verb" : "workspace init",
+  "workspace" : "<workspace>/ws"
+}

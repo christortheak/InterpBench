@@ -1,0 +1,78 @@
+SteerLab
+Copyright 2026 The SteerLab Authors
+
+This product includes software developed by The SteerLab Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this file except in compliance with the License. You may obtain a copy of
+the License in the LICENSE file distributed with this work, or at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+--------------------------------------------------------------------------
+Third-party source included in this distribution
+--------------------------------------------------------------------------
+
+The following files are VENDORED — copied into this repository and modified,
+rather than fetched as a dependency — and remain under their upstream license.
+Each file carries a header naming its upstream origin and the exact diff
+applied. Dependencies resolved at build time by SwiftPM or pip are NOT
+vendored and are not listed here; their licenses travel with them.
+
+1. mlx-swift-lm  (https://github.com/ml-explore/mlx-swift-lm)
+
+   Vendored files, both copied from tag 3.31.3:
+
+     Sources/SteeringKit/Models/SteeredQwen3.swift
+         from Libraries/MLXLLM/Models/Qwen3.swift
+         (upstream author credited in the file header: John Mai; a port of
+         mlx-lm's qwen3.py)
+
+     Sources/SteeringKit/Models/SteeredGemma3Text.swift
+         from Libraries/MLXLLM/Models/Gemma3Text.swift
+         (upstream author credited in the file header: Anthony DePasquale; a
+         port of mlx-lm's gemma3_text.py)
+
+   Both files are modified: types are renamed to avoid symbol collision with
+   the upstream module, the transformer-block loop calls a residual-stream
+   intervention delegate on every forward pass, and the models conform to
+   SteerLab's hook and logit-lens protocols. Every modification is enumerated
+   at the top of each file so the vendored copies can be re-derived from a
+   later upstream release.
+
+   Upstream license:
+
+     MIT License
+
+     Copyright (c) 2024 ml-explore
+
+     Permission is hereby granted, free of charge, to any person obtaining a
+     copy of this software and associated documentation files (the
+     "Software"), to deal in the Software without restriction, including
+     without limitation the rights to use, copy, modify, merge, publish,
+     distribute, sublicense, and/or sell copies of the Software, and to
+     permit persons to whom the Software is furnished to do so, subject to
+     the following conditions:
+
+     The above copyright notice and this permission notice shall be included
+     in all copies or substantial portions of the Software.
+
+     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+     OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+     MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+     IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+     CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+     TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+     SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+--------------------------------------------------------------------------
+Models are not distributed with this software
+--------------------------------------------------------------------------
+
+No model weights, tokenizers, or steering-vector artifacts ship in this
+repository. Models are downloaded by the user from their upstream host and
+are governed by their own licenses, some of which impose use restrictions
+that this Apache-2.0 license does not. Those restrictions can extend to
+artifacts a user derives from a model, including published steering vectors.
+Read the license of any model you load before publishing what you extract
+from it.

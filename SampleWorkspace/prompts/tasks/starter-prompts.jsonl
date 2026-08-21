@@ -1,0 +1,16 @@
+{"id": "choice-01", "prompt": "A package must arrive within two days. Standard shipping takes five days and costs 5; express takes two days and costs 15. The only requirement is on-time arrival. Which option do you choose? Answer with exactly one word: standard or express.", "options": ["standard", "express"], "target": "express"}
+{"id": "choice-02", "prompt": "A laptop battery is at 15 percent and the next outlet is four hours away. You can dim the screen now or keep full brightness. Which choice keeps the laptop running longer? Answer with exactly one word: dim or bright.", "options": ["dim", "bright"], "target": "dim"}
+{"id": "choice-03", "prompt": "A recipe serves four and you are cooking for eight. Should the ingredient amounts be doubled or halved? Answer with exactly one word: doubled or halved.", "options": ["doubled", "halved"], "target": "doubled"}
+{"id": "choice-04", "prompt": "Rain is forecast at 90 percent this afternoon. You are leaving now and returning tonight. Do you take an umbrella? Answer with exactly one word: yes or no.", "options": ["yes", "no"], "target": "yes"}
+{"id": "choice-05", "prompt": "A plant labeled full sun is wilting on a shaded windowsill. Should it be moved to a sunnier spot or a darker one? Answer with exactly one word: sunnier or darker.", "options": ["sunnier", "darker"], "target": "sunnier"}
+{"id": "choice-06", "prompt": "Two routes reach the station: the bridge takes 12 minutes, the tunnel takes 20. You have 15 minutes. Which route do you take? Answer with exactly one word: bridge or tunnel.", "options": ["bridge", "tunnel"], "target": "bridge"}
+{"id": "choice-07", "prompt": "A meeting invitation conflicts with an appointment you cannot move. Do you accept or decline the meeting? Answer with exactly one word: accept or decline.", "options": ["accept", "decline"], "target": "decline"}
+{"id": "choice-08", "prompt": "The freezer door was left open overnight and the food has fully thawed and warmed. Is the ice cream still safe to refreeze and serve? Answer with exactly one word: yes or no.", "options": ["yes", "no"], "target": "no"}
+{"id": "advice-01", "prompt": "A friend has two job offers: one pays more, the other has a shorter commute and better colleagues. Write three questions that would help them decide."}
+{"id": "advice-02", "prompt": "Suggest a simple weekly routine for someone who wants to start exercising but has only 20 minutes a day."}
+{"id": "write-01", "prompt": "Write a short paragraph welcoming new members to a neighborhood gardening club."}
+{"id": "write-02", "prompt": "Draft a two-paragraph note asking a landlord to repair a leaking kitchen faucet."}
+{"id": "write-03", "prompt": "Describe a reliable morning routine for getting two children ready for school on time."}
+{"id": "decide-01", "prompt": "You are planning a team offsite for twelve people with a modest budget. Propose two venue options and recommend one."}
+{"id": "explain-01", "prompt": "Explain to a new cook why resting meat after roasting matters, in plain language."}
+{"id": "plan-01", "prompt": "Outline a three-step plan for decluttering a small apartment over one weekend."}

@@ -1,0 +1,30 @@
+# --- study ---
+#SBATCH --job-name=steerlab
+#SBATCH --time=04:00:00
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --export=NONE
+#SBATCH --signal=USR1@600
+
+# --- controller ---
+#SBATCH --job-name=steerlab-serverd
+#SBATCH --partition=batch
+#SBATCH --time=24:00:00
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=16G
+#SBATCH --signal=B:USR1@600
+
+# --- setup ---
+#SBATCH --job-name=steerlab-bootstrap
+#SBATCH --partition=batch
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH --export=NONE
+
+# --- gpuSession ---
+#SBATCH --job-name=steerlab-gpu-session
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --export=NONE

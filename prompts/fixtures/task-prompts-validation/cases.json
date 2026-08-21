@@ -1,0 +1,50 @@
+{
+  "description": "Cross-engine contract for task-prompts LOAD validation beyond the transcript schema (currently: the duplicate item-id refusal). Each case's `jsonl` lines are the file's raw JSONL rows, fed to the engine's task-prompt loader; `expect` is the EXACT refusal message (null = the file loads). Item numbers in messages are 1-based ordinals in the parsed item list, identical on both engines. Both engines' tests replay every case: Swift ExperimentTasks.parseTaskPrompts (Tests/ExperimentKitTests/TaskPromptDuplicateIDTests.swift), Python tasks._load_prompts (Server/tests/test_task_prompt_ids.py). A message change must land in BOTH engines and in this file, consciously. Cases use explicit ids only: auto-numbering conventions differ across engines (Swift 'prompt-<ordinal>' 1-based vs server 'prompt-<line index>' 0-based), so explicit/auto collisions are engine-local behavior, not contract.",
+  "cases": [
+    {
+      "name": "duplicate-explicit-id",
+      "jsonl": [
+        "{\"id\": \"case-a\", \"prompt\": \"First framing of the question.\"}",
+        "{\"id\": \"case-b\", \"prompt\": \"A different item.\", \"options\": [\"yes\", \"no\"], \"target\": \"yes\"}",
+        "{\"id\": \"case-a\", \"prompt\": \"Repeat framing under the same id.\"}"
+      ],
+      "expect": "task prompts: duplicate item id 'case-a' (items 1 and 3) — ids must be unique for pairing and reporting"
+    },
+    {
+      "name": "first-duplicate-pair-wins",
+      "jsonl": [
+        "{\"id\": \"k1\", \"prompt\": \"Item one.\"}",
+        "{\"id\": \"dup\", \"prompt\": \"Item two.\"}",
+        "{\"id\": \"k3\", \"prompt\": \"Item three.\"}",
+        "{\"id\": \"k1\", \"prompt\": \"Item four repeats item one's id.\"}",
+        "{\"id\": \"dup\", \"prompt\": \"Item five repeats item two's id.\"}"
+      ],
+      "expect": "task prompts: duplicate item id 'k1' (items 1 and 4) — ids must be unique for pairing and reporting"
+    },
+    {
+      "name": "duplicate-transcript-item-id",
+      "jsonl": [
+        "{\"id\": \"m1\", \"transcript\": [{\"role\": \"user\", \"content\": \"Name a color.\"}]}",
+        "{\"id\": \"m1\", \"transcript\": [{\"role\": \"user\", \"content\": \"Name a shape.\"}]}"
+      ],
+      "expect": "task prompts: duplicate item id 'm1' (items 1 and 2) — ids must be unique for pairing and reporting"
+    },
+    {
+      "name": "duplicate-id-refuses-before-transcript-schema",
+      "jsonl": [
+        "{\"id\": \"m1\", \"prompt\": \"Plain item.\"}",
+        "{\"id\": \"m1\", \"transcript\": []}"
+      ],
+      "expect": "task prompts: duplicate item id 'm1' (items 1 and 2) — ids must be unique for pairing and reporting"
+    },
+    {
+      "name": "unique-ids-valid",
+      "jsonl": [
+        "{\"id\": \"case-a\", \"prompt\": \"First item.\"}",
+        "{\"id\": \"case-b\", \"prompt\": \"Second item.\", \"options\": [\"yes\", \"no\"]}",
+        "{\"prompt\": \"Third item, auto-numbered id.\"}"
+      ],
+      "expect": null
+    }
+  ]
+}

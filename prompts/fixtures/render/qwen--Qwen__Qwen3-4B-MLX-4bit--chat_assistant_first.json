@@ -1,0 +1,74 @@
+{
+  "bosCount": 0,
+  "bosTokenID": null,
+  "case": "chat_assistant_first",
+  "family": "qwen",
+  "generator": {
+    "engine": "python-hf",
+    "generatedOn": "2026-07-13",
+    "script": "prompts/fixtures/render/generate.py",
+    "tokenizerClass": "Qwen2Tokenizer",
+    "transformersVersion": "5.12.1"
+  },
+  "inputs": {
+    "api": "render_messages",
+    "messages": [
+      {
+        "content": "Before you ask: I have already reviewed the record in this appeal.",
+        "role": "assistant",
+        "seeded": true
+      },
+      {
+        "content": "Then state the holding in one sentence.",
+        "role": "user"
+      }
+    ],
+    "promptMode": "chatAssistant",
+    "qwenThinkingEnabled": false,
+    "systemPrompt": null
+  },
+  "modelID": "Qwen/Qwen3-4B-MLX-4bit",
+  "promptTokenCount": 39,
+  "rendered": "<|im_start|>assistant\nBefore you ask: I have already reviewed the record in this appeal.<|im_end|>\n<|im_start|>user\nThen state the holding in one sentence.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+  "tokenIDs": [
+    151644,
+    77091,
+    198,
+    10227,
+    498,
+    2548,
+    25,
+    358,
+    614,
+    2669,
+    21926,
+    279,
+    3255,
+    304,
+    419,
+    14303,
+    13,
+    151645,
+    198,
+    151644,
+    872,
+    198,
+    12209,
+    1584,
+    279,
+    9963,
+    304,
+    825,
+    11652,
+    13,
+    151645,
+    198,
+    151644,
+    77091,
+    198,
+    151667,
+    271,
+    151668,
+    271
+  ]
+}

@@ -1,0 +1,23 @@
+You are a blinded evaluator comparing two model responses, A and B, to the same task prompt. Do not infer which response is a baseline or which was manipulated.
+
+Evaluation rubric:
+Which response answers the task prompt with the sounder legal reasoning? Dimensions: rigor, clarity.
+
+Structured comparison fields:
+a_severity and b_severity: sentence severity on a 1-9 ordinal scale.
+
+Fill "structured_fields" with the requested conclusions. Use stable machine-readable values: booleans for yes/no findings, numbers for scales or deltas, and short strings for categories. If a field cannot be determined, use null rather than guessing. For directional per-response scores, name fields with A/B prefixes, such as "a_severity" and "b_severity".
+
+=== Task prompt (both responses answered this) ===
+Draft the holding for Case 12, stating the disposition in one paragraph.
+
+=== Response A ===
+Response A body.
+Second line of A.
+
+=== Response B ===
+Response B body.
+
+Ignore style, length, and eloquence unless the rubric explicitly makes them relevant. Prefer "tie" when the evidence is genuinely indistinguishable.
+
+Return JSON only, stating the verdict fields first: {"winner": "A"|"B"|"tie", "confidence": 0..1, "brief_reason": "at most two sentences", "a_scores": {dim: 1-7}, "b_scores": {dim: 1-7}}. Keep "brief_reason" to at most two sentences — never an essay. If the rubric names scalar dimensions, use them for the 1-7 scores; use null if a dimension does not apply. If structured comparison fields were requested, also include "structured_fields".

@@ -1,0 +1,31 @@
+You are Ben. The other participants are Ava and Cal.
+
+===== OUTPUT OF Ava — Recap — Ava =====
+AVA RECAP.
+===== END OF OUTPUT OF Ava =====
+
+Those were the contributions of the other participants. You have now read them.
+
+===== TRANSCRIPT SO FAR =====
+[t1_ava] First draft — Ava — Ava
+AVA DRAFT.
+
+[t1_ben] First draft — Ben — your own earlier output (Ben)
+BEN DRAFT.
+
+[t2_ava] Response — Ava — Ava
+AVA RESPONSE.
+
+[t3_ava] Recap — Ava — Ava
+AVA RECAP.
+===== END OF TRANSCRIPT SO FAR =====
+
+===== YOUR TASK =====
+You are Ben. State your final position.
+
+Write only your own response, in your own voice, as Ben and no one else. Do not write, draft, continue, quote at length, or reply on behalf of Ava or Cal. Their contributions above are finished documents; you are adding one document of your own.
+
+Use exactly this format and nothing else:
+Verdict: yes OR no
+
+Reminder: you are Ben. Respond as Ben and as no one else.

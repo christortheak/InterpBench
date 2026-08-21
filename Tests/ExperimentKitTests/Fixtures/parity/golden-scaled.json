@@ -1,0 +1,52 @@
+{
+  "artifactA": {
+    "hiddenSize": 8,
+    "layerCount": 4,
+    "name": "scaled-a"
+  },
+  "artifactB": {
+    "hiddenSize": 8,
+    "layerCount": 4,
+    "name": "scaled-b"
+  },
+  "comparedLayerCount": 4,
+  "layerCountMismatch": false,
+  "pass": true,
+  "perLayer": [
+    {
+      "cosine": 0.9999999999999999,
+      "layer": 0,
+      "normA": 14.2828568570857,
+      "normB": 28.5657137141714,
+      "normRatio": 2.0
+    },
+    {
+      "cosine": 0.9999999999999999,
+      "layer": 1,
+      "normA": 28.5657137141714,
+      "normB": 57.1314274283428,
+      "normRatio": 2.0
+    },
+    {
+      "cosine": 1.0,
+      "layer": 2,
+      "normA": 42.8485705712571,
+      "normB": 85.6971411425142,
+      "normRatio": 2.0
+    },
+    {
+      "cosine": 0.9999999999999999,
+      "layer": 3,
+      "normA": 57.1314274283428,
+      "normB": 114.2628548566856,
+      "normRatio": 2.0
+    }
+  ],
+  "summary": {
+    "meanCosine": 1.0,
+    "meanNormRatio": 2.0,
+    "minCosine": 0.9999999999999999,
+    "skippedZeroNormLayers": 0
+  },
+  "threshold": 0.98
+}

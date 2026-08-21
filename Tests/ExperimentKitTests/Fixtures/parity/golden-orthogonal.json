@@ -1,0 +1,52 @@
+{
+  "artifactA": {
+    "hiddenSize": 8,
+    "layerCount": 4,
+    "name": "orthogonal-a"
+  },
+  "artifactB": {
+    "hiddenSize": 8,
+    "layerCount": 4,
+    "name": "orthogonal-b"
+  },
+  "comparedLayerCount": 4,
+  "layerCountMismatch": false,
+  "pass": false,
+  "perLayer": [
+    {
+      "cosine": 0.0,
+      "layer": 0,
+      "normA": 1.0,
+      "normB": 1.0,
+      "normRatio": 1.0
+    },
+    {
+      "cosine": 0.0,
+      "layer": 1,
+      "normA": 2.0,
+      "normB": 2.0,
+      "normRatio": 1.0
+    },
+    {
+      "cosine": 0.0,
+      "layer": 2,
+      "normA": 3.0,
+      "normB": 3.0,
+      "normRatio": 1.0
+    },
+    {
+      "cosine": 0.0,
+      "layer": 3,
+      "normA": 4.0,
+      "normB": 4.0,
+      "normRatio": 1.0
+    }
+  ],
+  "summary": {
+    "meanCosine": 0.0,
+    "meanNormRatio": 1.0,
+    "minCosine": 0.0,
+    "skippedZeroNormLayers": 0
+  },
+  "threshold": 0.98
+}

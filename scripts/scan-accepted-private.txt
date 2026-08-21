@@ -1,0 +1,18 @@
+# Known-and-accepted PRIVATE-tier scan findings — `<file> :: <check>` lines.
+# Every entry is a deliberate guard artifact; a line that stops matching is
+# reported stale so this baseline cannot rot. Anything NOT listed here makes
+# the scanner exit 1, which is what lets `export && scan && commit` halt on a
+# real leak (added 2026-08-19 after a real username crossed through a
+# printing-but-not-gating scan).
+#
+# In-test negative assertions and guard vocabularies (each deliberately
+# carries denylist terms so the neutrality gates cannot pass vacuously):
+Server/tests/test_bootstrap_script.py :: denylist
+Tests/ExperimentKitTests/AgentContractTests.swift :: denylist
+Tests/ExperimentKitTests/ClusterEnvironmentRendererTests.swift :: denylist
+Tests/ExperimentKitTests/ClusterSiteProfileTests.swift :: denylist
+#
+# The three fake sk- tokens the secret-hygiene tests use as fixtures:
+Tests/ExperimentKitTests/ClusterCLITests.swift :: secret
+Tests/ExperimentKitTests/ClusterLifecycleCoordinatorTests.swift :: secret
+Tests/ExperimentKitTests/ClusterProvisioningOperationsTests.swift :: secret

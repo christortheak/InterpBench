@@ -1,0 +1,321 @@
+#!/bin/zsh
+# Install `steerlab` (the Swift CLI) so it works from a clean shell, with no
+# checkout, no `DYLD_FRAMEWORK_PATH`, and no sudo — WP0-AGENT-SURFACE-AUDIT §6,
+# §7 step 12.
+#
+#   usage: install-cli.sh [--prefix <dir>] [--from-products <dir>]
+#                         [--no-build] [--verify] [--dry-run]
+#
+# What the binary actually needs (measured, audit §6.1): the executable
+# statically links the WHOLE package graph — MLX included — and carries zero
+# `@rpath` dylibs, so the only runtime dependency is the Metal shader library,
+# and only for GPU verbs. MLX probes a COLOCATED `mlx.metallib` before any
+# bundle lookup, which is why this layout needs no environment at all:
+#
+#   <prefix>/bin/steerlab                  shim — exec's the real binary
+#   <prefix>/bin/steerlab-server           shim → the venv console script
+#   <prefix>/libexec/steerlab/
+#       steerlab-cli                       the binary, absolute LC_RPATH stripped
+#       mlx.metallib                       <- mlx-swift_Cmlx.bundle/…/default.metallib
+#       swift-transformers_Hub.bundle/     tokenizer fallback configs
+#       swift-crypto_Crypto.bundle/
+#       resource-manifest.json             written by `steerlab install stamp`
+#
+# The shim is a SHIM, not a symlink, on purpose: MLX resolves the shader
+# library against the real binary's directory, and a symlink in `bin/` would
+# make that directory `bin/`.
+#
+# Re-runnable. Everything expensive happens in a staging directory —
+# copy, rpath strip, ad-hoc re-sign, self-test, stamp — and the live tree is
+# swapped in only once all of it has passed, so an interrupted or failing
+# install leaves the previous install (and its shim) exactly as it was.
+#
+# Exit codes: 0 installed (or verified) · 2 usage · 3 build failed ·
+#             4 build products incomplete · 5 an absolute build-machine rpath
+#             survived · 6 the installed tree failed verification
+set -euo pipefail
+
+SCRIPT_DIR="${0:A:h}"
+PROJECT_ROOT="${SCRIPT_DIR:h}"
+
+PREFIX="$HOME/.local"
+PRODUCTS=""
+BUILD=1
+VERIFY_ONLY=0
+DRY_RUN=0
+
+while (( $# > 0 )); do
+  case "$1" in
+    --prefix)
+      [[ $# -ge 2 ]] || { echo "--prefix requires a directory path"; exit 2 }
+      PREFIX="${2:A}"; shift 2 ;;
+    --from-products)
+      [[ $# -ge 2 ]] || { echo "--from-products requires a directory path"; exit 2 }
+      PRODUCTS="${2:A}"; BUILD=0; shift 2 ;;
+    --no-build)
+      BUILD=0; shift ;;
+    --verify)
+      VERIFY_ONLY=1; shift ;;
+    --dry-run)
+      DRY_RUN=1; shift ;;
+    -h|--help)
+      echo "usage: install-cli.sh [--prefix <dir>] [--from-products <dir>] [--no-build] [--verify] [--dry-run]"
+      exit 0 ;;
+    *)
+      echo "unknown argument: $1"
+      echo "usage: install-cli.sh [--prefix <dir>] [--from-products <dir>] [--no-build] [--verify] [--dry-run]"
+      exit 2 ;;
+  esac
+done
+
+# No sudo, and nothing outside the user's own home this step. `/usr/local` is
+# WP2's prompt, not R1's default.
+if [[ "$PREFIX" != "$HOME"/* && "$PREFIX" != "${TMPDIR:A}"* && "$PREFIX" != /tmp/* && "$PREFIX" != /private/tmp/* ]]; then
+  echo "install-cli.sh installs under your home directory only (got $PREFIX)."
+  echo "Nothing here needs sudo; /usr/local is a later step."
+  exit 2
+fi
+
+BIN_DIR="$PREFIX/bin"
+LIBEXEC="$PREFIX/libexec/steerlab"
+BINARY_NAME="steerlab-cli"
+
+# Where the installed binary is exercised during the install: a directory with
+# nothing to do with the checkout, which is the condition under test, but a
+# WRITABLE one — the Debug build carries LLVM coverage instrumentation and
+# writes `default.profraw` into its cwd, so running it from `/` produces a
+# stream of profile-writer errors that look like install failures and are not.
+NEUTRAL_CWD="${TMPDIR:-/tmp}"
+
+# ── --verify: check the live install and say nothing else ─────────────────
+if (( VERIFY_ONLY )); then
+  if [[ ! -x "$LIBEXEC/$BINARY_NAME" ]]; then
+    echo "nothing installed at $LIBEXEC — run install-cli.sh first"
+    exit 6
+  fi
+  # The installed binary is the ONE hasher (ExperimentKit's ResourceManifest);
+  # this script never re-derives SHA-256 in shell.
+  if ! "$LIBEXEC/$BINARY_NAME" install verify; then
+    exit 6
+  fi
+  "$LIBEXEC/$BINARY_NAME" install version
+  exit 0
+fi
+
+# ── Build (or accept an existing products directory) ──────────────────────
+if (( BUILD )); then
+  # This project needs Xcode 27, and `xcode-select` may point at a 26.x
+  # install; SwiftPM cannot build the Metal shaders at all (CLAUDE.md).
+  if [[ -z "${DEVELOPER_DIR:-}" && -d /Applications/Xcode-beta.app ]]; then
+    export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
+  fi
+  echo "Building $BINARY_NAME (xcodebuild — SwiftPM cannot build the Metal shaders)…"
+  if ! xcodebuild build -skipMacroValidation -scheme steerlab-cli \
+      -destination 'platform=macOS' \
+      -derivedDataPath "$PROJECT_ROOT/.deriveddata.nosync" >/dev/null; then
+    echo "the build failed — rerun the xcodebuild line above to see why"
+    exit 3
+  fi
+  PRODUCTS="$PROJECT_ROOT/.deriveddata.nosync/Build/Products/Debug"
+fi
+
+if [[ -z "$PRODUCTS" ]]; then
+  PRODUCTS="$PROJECT_ROOT/.deriveddata.nosync/Build/Products/Debug"
+fi
+
+# ── Inventory: what the products directory must contain ───────────────────
+SOURCE_BINARY="$PRODUCTS/$BINARY_NAME"
+SOURCE_METALLIB="$PRODUCTS/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"
+
+if [[ ! -x "$SOURCE_BINARY" ]]; then
+  echo "no built $BINARY_NAME at $SOURCE_BINARY."
+  echo "Build it first, or pass --from-products <dir>."
+  exit 4
+fi
+if [[ ! -f "$SOURCE_METALLIB" ]]; then
+  echo "no Metal shader library at $SOURCE_METALLIB."
+  echo "Only Xcode produces mlx-swift_Cmlx.bundle; a SwiftPM build cannot."
+  exit 4
+fi
+
+# Resource bundles that exist beside the binary and are small enough to carry
+# unconditionally. Absent ones are skipped silently — the binary declares no
+# SwiftPM resources of its own, so nothing here is load-bearing today.
+RESOURCE_BUNDLES=(swift-transformers_Hub.bundle swift-crypto_Crypto.bundle)
+
+if (( DRY_RUN )); then
+  echo "would install from $PRODUCTS"
+  echo "  $SOURCE_BINARY  ->  $LIBEXEC/$BINARY_NAME"
+  echo "  $SOURCE_METALLIB  ->  $LIBEXEC/mlx.metallib"
+  for bundle in "${RESOURCE_BUNDLES[@]}"; do
+    [[ -d "$PRODUCTS/$bundle" ]] && echo "  $PRODUCTS/$bundle  ->  $LIBEXEC/$bundle"
+  done
+  echo "  shim  ->  $BIN_DIR/steerlab"
+  exit 0
+fi
+
+# ── Stage ─────────────────────────────────────────────────────────────────
+STAGING="$PREFIX/libexec/.steerlab-staging.$$"
+# Where the outgoing install is parked during the swap. Named here so the trap
+# can put it back: if anything kills the script between the two renames, the
+# previous install is restored rather than lost, which is the whole point of
+# staging.
+PREVIOUS="$PREFIX/libexec/.steerlab-previous.$$"
+cleanup() {
+  rm -rf "$STAGING"
+  if [[ -d "$PREVIOUS" ]]; then
+    echo "restoring the previous install at $LIBEXEC"
+    rm -rf "$LIBEXEC"
+    mv "$PREVIOUS" "$LIBEXEC" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
+mkdir -p "$STAGING" "$BIN_DIR"
+cp "$SOURCE_BINARY" "$STAGING/$BINARY_NAME"
+chmod +x "$STAGING/$BINARY_NAME"
+cp "$SOURCE_METALLIB" "$STAGING/mlx.metallib"
+for bundle in "${RESOURCE_BUNDLES[@]}"; do
+  [[ -d "$PRODUCTS/$bundle" ]] && cp -R "$PRODUCTS/$bundle" "$STAGING/$bundle"
+done
+
+# ── Strip the build machine out of the binary ─────────────────────────────
+# The linker bakes an absolute LC_RPATH into the maintainer's DerivedData
+# directory. Nothing resolves through it (there are no @rpath dylibs), but it
+# is a personal-path leak the release scanner cannot see — scan_release_tree.py
+# matches `/Users/<name>` in TEXT, never inside a Mach-O.
+echo "Stripping absolute rpaths…"
+
+# One rpath per line, whole path preserved. `$2` would not do: the leaked path
+# on this project contains spaces ("…/Library/Mobile Documents/…"), which is
+# precisely the shape that made the first attempt at this delete the wrong
+# string. `otool` prints `         path <p> (offset N)`.
+absolute_rpaths() {
+  otool -l "$1" | awk '
+    /LC_RPATH/ { in_rpath = 1; next }
+    in_rpath && /^ *path / {
+      sub(/^ *path /, "")
+      sub(/ \(offset [0-9]+\)$/, "")
+      if (substr($0, 1, 1) == "/") print
+      in_rpath = 0
+    }'
+}
+
+leaked_rpaths=$(absolute_rpaths "$STAGING/$BINARY_NAME")
+if [[ -n "$leaked_rpaths" ]]; then
+  print -r -- "$leaked_rpaths" | while IFS= read -r rpath; do
+    [[ -z "$rpath" ]] && continue
+    print -r -- "  delete_rpath $rpath"
+    install_name_tool -delete_rpath "$rpath" "$STAGING/$BINARY_NAME"
+  done
+  # install_name_tool invalidates the signature, and arm64 refuses to exec an
+  # unsigned-but-modified Mach-O. Ad-hoc re-sign is enough for a local install;
+  # real signing and notarization are WP2.
+  codesign --force --sign - "$STAGING/$BINARY_NAME" >/dev/null 2>&1 || true
+fi
+
+# The gate, not a hope: nothing absolute may survive.
+if [[ -n "$(absolute_rpaths "$STAGING/$BINARY_NAME")" ]]; then
+  echo "an absolute LC_RPATH survived the strip — refusing to install."
+  otool -l "$STAGING/$BINARY_NAME" | grep -A2 LC_RPATH
+  exit 5
+fi
+
+# What the strip CANNOT reach, reported rather than hidden: assertion and
+# `#filePath` literals are compiled into the text segment by the Swift and C++
+# front ends and can only be removed at build time (`-file-prefix-map`). One of
+# them is load-bearing — CodeResources derives the developer checkout root from
+# its own `#filePath` — so this is a finding for the release step, not a defect
+# to paper over here.
+leaked=$(strings -a "$STAGING/$BINARY_NAME" 2>/dev/null | grep -c "^/Users/" || true)
+if (( leaked > 0 )); then
+  echo "  note: $leaked absolute build-machine path string(s) remain in the text"
+  echo "        segment (compiled-in #filePath / assertion literals, not rpaths)."
+  echo "        Removing them needs -file-prefix-map at build time; one of them"
+  echo "        is CodeResources' own checkout-root signal. Tracked for WP2."
+fi
+
+# ── Self-test the staged copy, before anything live is touched ────────────
+# Run it the way a caller will: no DYLD_FRAMEWORK_PATH, from a directory that
+# has nothing to do with the checkout.
+if ! (cd "$NEUTRAL_CWD" && env -u DYLD_FRAMEWORK_PATH "$STAGING/$BINARY_NAME" --version >/dev/null); then
+  echo "the staged binary would not run — leaving the existing install alone"
+  exit 4
+fi
+
+# ── Stamp the tree (the ONE hasher: ExperimentKit's ResourceManifest) ─────
+REVISION=""
+if command -v git >/dev/null 2>&1; then
+  REVISION=$(git -C "$PROJECT_ROOT" rev-parse --short=8 HEAD 2>/dev/null || true)
+fi
+if [[ -n "$REVISION" ]]; then
+  (cd "$NEUTRAL_CWD" && env -u DYLD_FRAMEWORK_PATH "$STAGING/$BINARY_NAME" install stamp --revision "$REVISION")
+else
+  (cd "$NEUTRAL_CWD" && env -u DYLD_FRAMEWORK_PATH "$STAGING/$BINARY_NAME" install stamp)
+fi
+
+# ── Swap ──────────────────────────────────────────────────────────────────
+# The window in which nothing is installed is two renames wide, both on the
+# same filesystem, and the shim is written only after it closes. A failure
+# anywhere before this point has touched nothing live at all.
+mkdir -p "${LIBEXEC:h}"
+if [[ -d "$LIBEXEC" ]]; then
+  mv "$LIBEXEC" "$PREVIOUS"
+fi
+mv "$STAGING" "$LIBEXEC"
+rm -rf "$PREVIOUS"
+
+# ── Shims ─────────────────────────────────────────────────────────────────
+# `${0:A:h}` resolves symlinks, so the shim finds its own real directory even
+# when someone links it onto another PATH entry.
+cat > "$BIN_DIR/steerlab" <<'SHIM'
+#!/bin/zsh
+# Generated by scripts/install-cli.sh. A shim rather than a symlink: MLX
+# resolves its colocated mlx.metallib against the REAL binary's directory.
+exec "${0:A:h}/../libexec/steerlab/steerlab-cli" "$@"
+SHIM
+chmod +x "$BIN_DIR/steerlab"
+
+SERVER_CONSOLE_SCRIPT="$PROJECT_ROOT/Server/.venv.nosync/bin/steerlab-server"
+if [[ -x "$SERVER_CONSOLE_SCRIPT" ]]; then
+  # The Python side stays an editable checkout at R1 (audit §6.2), so its shim
+  # points at the venv's console script rather than copying anything. The
+  # console script is under-exercised — essentially the whole tree invokes the
+  # module form — so putting it on PATH is also a cheap smoke test of it.
+  cat > "$BIN_DIR/steerlab-server" <<SHIM
+#!/bin/zsh
+# Generated by scripts/install-cli.sh. The Python engine is an editable
+# checkout at R1; this shim runs its console script.
+exec "$SERVER_CONSOLE_SCRIPT" "\$@"
+SHIM
+  chmod +x "$BIN_DIR/steerlab-server"
+else
+  echo "  note: no Python venv at $SERVER_CONSOLE_SCRIPT — steerlab-server shim skipped."
+  echo "        Create it with scripts/start-local-server.sh, then rerun."
+fi
+
+# ── Report ────────────────────────────────────────────────────────────────
+echo
+if ! (cd "$NEUTRAL_CWD" && env -u DYLD_FRAMEWORK_PATH "$LIBEXEC/$BINARY_NAME" install verify); then
+  echo "the installed tree does not match its own manifest — reinstall"
+  exit 6
+fi
+echo
+(cd "$NEUTRAL_CWD" && env -u DYLD_FRAMEWORK_PATH "$BIN_DIR/steerlab" --version)
+echo
+case ":$PATH:" in
+  *":$BIN_DIR:"*) echo "steerlab is on your PATH." ;;
+  *) echo "Add $BIN_DIR to your PATH: export PATH=\"$BIN_DIR:\$PATH\"" ;;
+esac
+echo
+echo "Heads up: macOS keychain access is granted per BINARY IDENTITY, and the"
+echo "installed binary is a different identity from the one you have been"
+echo "running out of the build directory. Depending on how your stored secrets"
+echo "were created, the first verb that USES one — \`cluster connect\`,"
+echo "\`cluster ensure\`, \`remote … --site\` — may ask for your Mac password ONCE,"
+echo "at a prompt only you can answer. Run one such verb interactively before"
+echo "pointing an agent at this install; an unattended caller would simply wait."
+echo "Until the binary is signed with a stable designated requirement (WP2),"
+echo "each reinstall can re-prompt. Read-only listing verbs (\`cluster sites"
+echo "list/show\`) never prompt: they report \`tokenAvailable\` from an"
+echo "attribute-only keychain query and never read the secret."

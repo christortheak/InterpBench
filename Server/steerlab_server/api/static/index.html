@@ -1,0 +1,1562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SteerLab — cluster workbench</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --panel2: #1f2430; --line: #2a3040;
+    --fg: #e6e9ef; --muted: #8b94a7; --accent: #6ea8fe; --accent2: #7ee0a8;
+    --warn: #f2b35e; --bad: #f2776e; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 18px;
+    background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0; letter-spacing: .3px; }
+  header h1 span { color: var(--accent); }
+  .pill { font: 12px var(--mono); padding: 2px 8px; border-radius: 999px;
+    background: var(--panel2); border: 1px solid var(--line); color: var(--muted); }
+  .pill.ok { color: var(--accent2); border-color: #2c5; }
+  .pill.warn { color: var(--warn); }
+  .grow { flex: 1; }
+  nav { display: flex; gap: 4px; padding: 0 12px; background: var(--panel);
+    border-bottom: 1px solid var(--line); }
+  nav button { background: none; border: none; color: var(--muted); padding: 10px 14px;
+    cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; }
+  nav button.active { color: var(--fg); border-bottom-color: var(--accent); }
+  main { padding: 18px; max-width: 1200px; margin: 0 auto; }
+  .tab { display: none; } .tab.active { display: block; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 16px; }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .5px;
+    color: var(--muted); margin: 0 0 12px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+  input, select, textarea { background: var(--panel2); border: 1px solid var(--line);
+    color: var(--fg); border-radius: 7px; padding: 7px 9px; font-size: 13px; font-family: inherit; }
+  input[type=number] { width: 90px; } textarea { width: 100%; resize: vertical; font-family: inherit; }
+  button.act { background: var(--accent); color: #04122b; border: none; border-radius: 7px;
+    padding: 8px 14px; font-weight: 600; cursor: pointer; font-size: 13px; }
+  button.act.ghost { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); font-weight: 500; }
+  button.act:disabled { opacity: .5; cursor: not-allowed; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  tr.clickable { cursor: pointer; } tr.clickable:hover td { background: var(--panel2); }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .muted { color: var(--muted); }
+  .out { white-space: pre-wrap; background: #0a0c12; border: 1px solid var(--line);
+    border-radius: 8px; padding: 12px; min-height: 80px; font-size: 13.5px; }
+  .slot { display: flex; gap: 8px; align-items: flex-end; padding: 8px; border: 1px solid var(--line);
+    border-radius: 8px; margin-bottom: 8px; background: var(--panel2); }
+  .status-ok { color: var(--accent2); } .status-bad { color: var(--bad); }
+  .status-run { color: var(--warn); }
+  .tag { font: 11px var(--mono); background: var(--panel2); padding: 1px 6px; border-radius: 4px;
+    border: 1px solid var(--line); color: var(--muted); margin-right: 4px; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px){ .split { grid-template-columns: 1fr; } }
+  pre.code { background: #0a0c12; border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px; overflow: auto; font: 12px var(--mono); max-height: 420px; }
+  .toast { position: fixed; bottom: 16px; right: 16px; background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; font-size: 13px;
+    box-shadow: 0 6px 24px #0008; max-width: 360px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Steer<span>Lab</span> · cluster workbench</h1>
+  <span class="pill" id="rootPill">root —</span>
+  <span class="pill" id="modelPill">no model</span>
+  <span class="pill" id="devicePill">device —</span>
+  <span class="grow"></span>
+  <input id="authToken" type="password" placeholder="bearer token (if required)"
+         title="Sent as Authorization: Bearer on every request; stored locally"
+         style="width:200px" />
+  <span class="pill" id="busyPill">idle</span>
+</header>
+<nav id="nav"></nav>
+<main>
+  <!-- MODEL -->
+  <section class="tab" data-tab="model">
+    <div class="panel">
+      <h2>Load model</h2>
+      <div class="row">
+        <div><label>Model id (HF repo — full precision, not MLX)</label>
+          <input id="modelId" list="modelList" size="40" placeholder="Qwen/Qwen3-4B" /></div>
+        <datalist id="modelList"></datalist>
+        <div><label>dtype</label><select id="dtype">
+          <option value="auto">auto</option><option>bfloat16</option>
+          <option>float16</option><option>float32</option></select></div>
+        <div><label>device</label><select id="device"></select></div>
+        <button class="act" id="loadBtn">Load</button>
+      </div>
+      <p class="muted" id="modelInfo" style="margin-top:12px"></p>
+      <p class="muted" style="margin-top:4px; font-size:12px">
+        Note: this PyTorch engine needs a <b>full-precision HF repo</b> (e.g.
+        <span class="mono">Qwen/Qwen3-4B</span>). The SwiftUI app's
+        <span class="mono">*-MLX-*bit</span> weights are an Apple-only format PyTorch can't load.</p>
+    </div>
+    <div class="panel"><h2>Cached HF models</h2><div id="cachedModels" class="muted">—</div></div>
+  </section>
+
+  <!-- CHAT / STEER -->
+  <section class="tab" data-tab="steer">
+    <!-- GPU session (GPU-SESSION-PLAN §2.7 / acceptance criterion 5: the web
+         client gets the same session control as the app, zero extra tunnel).
+         Hidden unless the capabilities payload advertises chat.gpuSession. -->
+    <div class="panel" id="sessionPanel" style="display:none">
+      <h2>GPU session <span class="muted" style="text-transform:none">— billed cluster allocation; the idle timer only counts real work</span></h2>
+      <div class="row">
+        <span class="pill" id="sessionState">off</span>
+        <span class="muted mono" id="sessionMeta"></span>
+        <span class="grow"></span>
+        <button class="act ghost" id="sessionKeepBtn" style="display:none">Keep session</button>
+        <button class="act ghost" id="sessionStopBtn" style="display:none">Stop</button>
+      </div>
+      <div class="row" id="sessionStartRow" style="margin-top:8px">
+        <div><label>gres</label><input id="sessionGres" value="gpu:A100:1" style="width:110px"></div>
+        <div><label>walltime</label><input id="sessionWalltime" value="02:00:00" style="width:100px"></div>
+        <div><label>idle minutes (1–240)</label><input type="number" id="sessionIdle" value="30" min="1" max="240" style="width:80px"></div>
+        <button class="act" id="sessionStartBtn">Start GPU session</button>
+      </div>
+      <p class="muted" id="sessionDetail" style="margin:8px 0 0;font-size:12px;display:none"></p>
+    </div>
+    <div class="split">
+      <div>
+        <div class="panel">
+          <h2>Generation settings</h2>
+          <div class="row">
+            <div><label>prompt mode</label><select id="promptMode">
+              <option value="chatAssistant">chat assistant</option>
+              <option value="rawCompletion">raw completion</option></select></div>
+            <div><label>temperature</label><input type="number" id="temperature" value="0" step="0.1" min="0" /></div>
+            <div><label>max tokens</label><input type="number" id="maxTokens" value="256" /></div>
+            <div><label><input type="checkbox" id="qwenThinking" /> Qwen thinking</label></div>
+          </div>
+          <div style="margin-top:10px"><label>system prompt</label>
+            <textarea id="systemPrompt" rows="2"></textarea></div>
+        </div>
+        <div class="panel">
+          <h2>Steering mixer <span class="muted" style="text-transform:none">— h + Σ αᵢ·vᵢ</span></h2>
+          <div id="slots"></div>
+          <button class="act ghost" id="addSlot">+ add vector</button>
+          <span class="muted" id="vecHint" style="margin-left:8px"></span>
+        </div>
+      </div>
+      <div>
+        <div class="panel">
+          <h2>Chat</h2>
+          <textarea id="prompt" rows="4" placeholder="Write a short opinion on the case…"></textarea>
+          <div class="row" style="margin-top:10px">
+            <button class="act" id="sendBtn">Generate</button>
+            <button class="act ghost" id="stopBtn" disabled>Stop</button>
+            <span class="grow"></span>
+            <span class="muted mono" id="genStatus"></span>
+          </div>
+          <div class="out" id="output" style="margin-top:12px"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CONCEPT LAB -->
+  <section class="tab" data-tab="concepts">
+    <div class="split">
+      <div>
+        <div class="panel"><h2>Concepts</h2>
+          <div class="row" style="margin-bottom:10px">
+            <input id="newConceptName" placeholder="new-concept-name" size="22" />
+            <button class="act" id="newConceptBtn">Create</button></div>
+          <table><thead><tr><th>concept</th><th>pos</th><th>neg</th><th>val</th><th>mk</th></tr></thead>
+          <tbody id="conceptRows"></tbody></table></div>
+        <div class="panel"><h2>Vector library</h2>
+          <input id="vecSearch" placeholder="search concept / method / model" style="width:100%">
+          <div id="vecLib" style="margin-top:8px;max-height:280px;overflow:auto"></div></div>
+      </div>
+      <div>
+        <div class="panel" id="editorPanel">
+          <h2>Editor <span class="muted" id="editorName" style="text-transform:none"></span>
+            <button class="act ghost" id="deleteConceptBtn" style="float:right;display:none">Delete</button></h2>
+          <div id="editorEmpty" class="muted">select or create a concept to edit</div>
+          <div id="editorBody" style="display:none">
+            <div class="row" style="margin-bottom:10px">
+              <div><label>recipe family</label><select id="recipeFamily">
+                <option value="caa">CAA mean difference</option>
+                <option value="lat">LAT paired direction (RepE-inspired)</option>
+                <option value="grandmean">Grand-mean (multi-concept)</option></select></div>
+              <div><label>reading position</label><select id="readingPos">
+                <option value="">last token</option>
+                <option value="50">mean from token 50</option></select></div>
+            </div>
+
+            <div id="pairsMode">
+              <div class="split" style="gap:10px">
+                <div><label>positive (concept present)</label><div id="posList"></div>
+                  <button class="act ghost" data-side="positive" data-add>+ add</button></div>
+                <div><label>negative (matched control)</label><div id="negList"></div>
+                  <button class="act ghost" data-side="negative" data-add>+ add</button></div>
+              </div>
+            </div>
+
+            <div id="grandMode" style="display:none">
+              <p class="muted" style="margin-top:0;font-size:12px">Each concept's vector = mean(its stories) − mean(every story in the included corpus). <b>Include</b> = contributes to the grand mean; <b>Build</b> = gets its own vector.</p>
+              <table><thead><tr><th>concept</th><th>stories</th><th>include</th><th>build</th></tr></thead>
+                <tbody id="mcCorpus"></tbody></table>
+              <div class="row" style="margin-top:8px"><button class="act ghost" id="mcAllBtn">Include + build all</button>
+                <span class="muted mono" id="mcSummary"></span></div>
+              <div class="row" style="margin-top:12px"><div><label>edit stories for</label>
+                <select id="mcEditConcept"></select></div>
+                <button class="act ghost" id="mcLoadStories">Load stories</button>
+                <button class="act" id="mcSaveStories" style="display:none">Save stories</button></div>
+              <div id="mcStories" style="margin-top:8px"></div>
+              <button class="act ghost" id="mcAddStory" style="display:none">+ add story</button>
+            </div>
+
+            <div class="row" style="margin-top:12px">
+              <button class="act" id="saveConceptBtn">Save stimuli</button>
+              <button class="act" id="buildVecBtn">Build vector</button>
+              <button class="act ghost" id="statsBtn">Rebuild stats</button>
+              <span class="grow"></span><span class="muted mono" id="conceptStat"></span>
+            </div>
+            <div id="statsOut" style="margin-top:10px"></div>
+          </div>
+        </div>
+        <div class="panel" id="importPanel" style="display:none">
+          <h2>Generation prompt helpers</h2>
+          <p class="muted" style="margin-top:0;font-size:12px">Copy a prompt for an LLM to draft data, then paste the JSONL back below. Same templates as the SwiftUI app.</p>
+          <div class="row" style="gap:6px">
+            <button class="act ghost promptHelper" data-t="caa">CAA pairs</button>
+            <button class="act ghost promptHelper" data-t="lat">RepE / LAT</button>
+            <button class="act ghost promptHelper" data-t="grandmean">Grand-mean stories</button>
+            <button class="act ghost promptHelper" data-t="cowork">Cowork agent</button>
+            <button class="act ghost promptHelper" data-t="probe">Probe items</button>
+            <button class="act ghost promptHelper" data-t="neutral">Neutral corpus</button>
+            <button class="act ghost promptHelper" data-t="anthropic-dialogue">Anthropic dialogue</button>
+          </div>
+          <textarea id="importText" rows="5" style="margin-top:8px" placeholder='paste {"positive":"…","negative":"…"} pairs, CSV, or {"text":"…"} lines'></textarea>
+          <div class="row" style="margin-top:6px">
+            <input id="importName" placeholder="filename.jsonl" size="14" />
+            <div><label>add texts to</label><select id="importSide">
+              <option value="positive">positive</option><option value="negative">negative</option></select></div>
+            <button class="act" id="parseImportBtn">Parse → add</button></div>
+          <div class="row" style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+            <div><label>count</label><input type="number" id="propCount" value="10" style="width:64px"></div>
+            <input id="propGuidance" placeholder="guidance (optional)" size="18">
+            <button class="act" id="genClaudeBtn">Generate with Claude</button>
+            <span class="muted mono" id="propStatus"></span></div>
+          <div id="proposalsList" style="margin-top:8px"></div>
+        </div>
+        <div class="panel" id="probePanel" style="display:none">
+          <h2>Reading probe <span class="muted mono" id="probeCounts" style="text-transform:none"></span></h2>
+          <div class="row"><button class="act ghost promptHelper" data-t="probe">Copy probe prompt</button>
+            <button class="act" id="probeTrainBtn">Train probe</button></div>
+          <textarea id="probeImport" rows="3" style="margin-top:8px" placeholder='{"text":"…","expresses":true,"split":"build"}'></textarea>
+          <div class="row" style="margin-top:6px"><button class="act ghost" id="probeParseBtn">Parse → add</button>
+            <button class="act ghost" id="probeAddBtn">+ add item</button>
+            <button class="act" id="probeSaveBtn">Save items</button></div>
+          <div id="probeList" style="margin-top:8px"></div>
+        </div>
+        <div class="panel" id="neutralPanel" style="display:none">
+          <h2>Neutral corpus &amp; PCs</h2>
+          <div class="row"><div><label>corpus</label><select id="neutralCorpus"></select></div>
+            <div><label>min variance</label><input type="number" id="neutralMinVar" value="0.5" step="0.1" min="0.1" max="1" style="width:70px"></div>
+            <button class="act ghost" id="neutralBuildPcs">Build neutral PCs</button></div>
+          <div class="row" style="margin-top:8px"><button class="act ghost promptHelper" data-t="neutral">Neutral prompt</button>
+            <button class="act ghost promptHelper" data-t="anthropic-dialogue">Anthropic dialogue prompt</button></div>
+          <textarea id="neutralImport" rows="3" style="margin-top:8px" placeholder='{"text":"…"} per line, JSON array, or blank-line prose'></textarea>
+          <div class="row" style="margin-top:6px"><input id="neutralProjName" placeholder="projection name (blank = norm)" size="20">
+            <button class="act" id="neutralImportBtn">Import corpus</button>
+            <span class="muted mono" id="neutralStatus"></span></div>
+          <div id="neutralBases" class="muted" style="margin-top:8px"></div>
+        </div>
+        <div class="panel" id="readerPanel">
+          <h2>RepE reader (faithful)</h2>
+          <p class="muted" style="margin-top:0;font-size:12px">Concept data → reader artifact → optional steering variant.
+            A reader is a fitted measurement instrument (task template + LAT token position + PCA training
+            normalization + held-out accuracy) — not "positive/negative text → vector". The
+            "LAT paired direction (RepE-inspired)" recipe above is a separate, direction-only comparison.
+            Readers are per-model, per-substrate; they fit on this server's loaded model as a durable job.</p>
+          <div class="row">
+            <div><label>task template</label><select id="rdTemplate">
+              <option value="amount-in-scenario-v1">amount-in-scenario-v1 (named — RepE-faithful)</option>
+              <option value="unnamed-scenario-v1">unnamed-scenario-v1 (unnamed clean-room — divergence)</option>
+            </select></div>
+            <div><label>held-out pairs (last k → split "test")</label>
+              <input type="number" id="rdHeldOut" value="2" min="0" style="width:70px"></div>
+          </div>
+          <p class="muted" style="font-size:12px">No template-listing API yet: these are the two registry ids
+            committed under <span class="mono">prompts/templates/</span>. The server re-reads and validates the
+            template file at fit time, so an unknown or edited id fails loudly instead of fitting silently.</p>
+          <div class="split" style="gap:10px">
+            <div><label>positive stimuli (one per line)</label><textarea id="rdPos" rows="5"></textarea></div>
+            <div><label>negative stimuli (matched, one per line)</label><textarea id="rdNeg" rows="5"></textarea></div>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <button class="act" id="rdFitBtn">Fit reader</button>
+            <span class="muted mono" id="rdFitStatus"></span>
+          </div>
+          <div id="rdLayerScores" style="margin-top:8px"></div>
+          <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px">
+            <h2 style="margin-top:0">Score texts through a reader</h2>
+            <div class="row">
+              <div style="flex:1"><label>reader (fitted on this server)</label><select id="rdSelect" style="width:100%"></select></div>
+              <button class="act ghost" id="rdRefreshBtn">Refresh</button>
+            </div>
+            <textarea id="rdTexts" rows="4" style="margin-top:8px"
+              placeholder="one text per line — rendered through the reader's own template, scored at its LAT token/layer through the stored training normalization"></textarea>
+            <div class="row" style="margin-top:6px">
+              <button class="act" id="rdScoreBtn">Score</button>
+              <span class="muted mono" id="rdScoreStatus"></span>
+            </div>
+            <div id="rdScores" style="margin-top:8px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- GEOMETRY -->
+  <section class="tab" data-tab="geometry">
+    <div class="panel"><h2>Cross-vector geometry (cosine)</h2>
+      <p class="muted" style="margin-top:0">Select vectors and a layer, then compute the pairwise
+        cosine matrix. Distinct concepts should not collapse into one direction.</p>
+      <div class="row"><div><label>layer (blank = each vector's mid)</label>
+        <input type="number" id="geoLayer" placeholder="mid" /></div>
+        <button class="act" id="geoCompute">Compute</button></div>
+      <div id="geoVecList" style="margin-top:12px"></div>
+      <div id="geoMatrix" style="margin-top:14px"></div>
+    </div>
+  </section>
+
+  <!-- GEMMA SCOPE -->
+  <section class="tab" data-tab="scope">
+    <div class="panel"><h2>Gemma Scope — SAE cross-check</h2>
+      <p class="muted" style="margin-top:0;font-size:12px">Rank an independently-trained SAE's features by cosine against a concept vector (Gemma 3 only). Import a feature's decoder direction as a steering vector.</p>
+      <div id="scopeInfo" class="muted"></div>
+      <div class="row" style="margin-top:10px">
+        <div style="flex:1"><label>concept vector</label><select id="scopeVec"></select></div>
+        <div><label>layer</label><input type="number" id="scopeLayer" placeholder="auto" style="width:70px"></div>
+        <button class="act" id="scopeRunBtn">Run analysis</button></div>
+      <div class="row" style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+        <input id="scopeReportPath" placeholder="report path (from a completed job)" style="flex:1">
+        <div><label>feature #</label><input type="number" id="scopeFeature" style="width:80px"></div>
+        <button class="act ghost" id="scopeImportBtn">Import feature as concept</button></div>
+    </div>
+  </section>
+
+  <!-- J-SPACE -->
+  <section class="tab" data-tab="jspace">
+    <div class="panel"><h2>J-Space — Jacobian lens</h2>
+      <p class="muted" style="margin-top:0;font-size:12px">
+        Reads what the model is poised to verbalize, and derives steering directions from a lens.
+        <b>Server-only and Gemma-only</b>: imported lens artifacts are PyTorch/HF-native and
+        activations do not transfer across substrates, so there is deliberately no local/MLX
+        equivalent — everything here runs on whichever server this page is connected to.
+        Scores are <i>estimated verbalizable representations</i>, never access to beliefs or reasoning.
+      </p>
+      <div id="jlSupported" class="muted"></div>
+      <div class="row" style="margin-top:10px">
+        <div style="flex:1"><label>model</label><select id="jlModel"></select></div>
+        <button class="act ghost" id="jlAcquireBtn">Acquire lens bytes</button>
+        <button class="act" id="jlImportBtn">Import (convert)</button></div>
+      <div id="jlJobStatus" class="muted" style="margin-top:6px"></div>
+      <div style="margin-top:12px">
+        <table><thead><tr><th>lens</th><th>tier</th><th>layers</th><th>converted</th>
+          <th>qualified</th><th></th></tr></thead>
+          <tbody id="jlLensRows"></tbody></table></div>
+      <div id="jlLensDetail" class="mono" style="margin-top:8px;font-size:12px;white-space:pre-wrap"></div>
+    </div>
+
+    <div class="panel" style="margin-top:12px"><h2>Token → direction</h2>
+      <p class="muted" style="margin-top:0;font-size:12px">
+        A direction is indexed by ONE exact vocabulary token. Nothing here picks for you:
+        type a word, then select an ID. A word that is not a single token shows its
+        components, and choosing one derives a direction for that <i>component</i>.
+      </p>
+      <div class="row">
+        <div style="flex:1"><label>word or string</label><input id="jlTokenText" placeholder="courage"></div>
+        <label style="align-self:center"><input type="checkbox" id="jlCaseVariants"> case variants</label>
+        <button class="act ghost" id="jlTokenBtn">Show token options</button></div>
+      <div style="margin-top:10px"><table><thead><tr><th>id</th><th>form</th><th>single</th>
+        <th>piece</th><th>decoded</th><th>bytes</th><th></th></tr></thead>
+        <tbody id="jlTokenRows"></tbody></table></div>
+      <div class="row" style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+        <div><label>selected token ID</label><input id="jlTokenID" style="width:120px" readonly></div>
+        <div style="flex:1"><label>name (optional)</label><input id="jlDeriveName" placeholder="auto"></div>
+        <button class="act" id="jlDeriveBtn" disabled>Derive direction</button></div>
+      <div id="jlDeriveStatus" class="muted" style="margin-top:6px"></div>
+      <div id="jlDeriveProv" class="mono" style="margin-top:6px;font-size:12px;white-space:pre-wrap"></div>
+    </div>
+
+    <div class="panel" style="margin-top:12px"><h2>Readout trace</h2>
+      <p class="muted" style="margin-top:0;font-size:12px">
+        Prediction-aligned: each row is the activation that predicted that generated token,
+        read during the same forward pass. Not a replay.
+      </p>
+      <div class="row">
+        <div style="flex:1"><label>run id</label><input id="jlTraceRun" placeholder="20260729T…-exp-…-run"></div>
+        <button class="act ghost" id="jlTraceBtn">Load trace</button></div>
+      <div id="jlTraceSummary" class="muted" style="margin-top:8px"></div>
+      <div id="jlHeatmap" style="margin-top:10px;overflow-x:auto"></div>
+      <div id="jlTraceTable" style="margin-top:10px;overflow-x:auto"></div>
+    </div>
+  </section>
+
+  <!-- VARIANTS / LoRA -->
+  <section class="tab" data-tab="tuning">
+    <div class="split">
+      <div class="panel"><h2>Model variants</h2>
+        <p class="muted" style="margin-top:0;font-size:12px">Save the current Chat/Steer steering + prompt settings as a reusable variant, or apply a saved one back into the mixer.</p>
+        <div class="row"><input id="variantName" placeholder="variant-name" size="18">
+          <button class="act" id="saveVariantBtn">Save current steering as variant</button></div>
+        <div id="variantList" style="margin-top:12px"></div>
+        <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:12px">
+          <h2 style="margin-top:0">Variant chat</h2>
+          <select id="variantChatSelect" style="width:100%"></select>
+          <textarea id="variantChatPrompt" rows="3" style="margin-top:8px" placeholder="prompt to send through selected variant"></textarea>
+          <div class="row" style="margin-top:6px">
+            <button class="act" id="variantChatBtn">Chat with variant</button>
+            <label><input type="checkbox" id="variantChatStrip"> strip interventions</label>
+          </div>
+          <div class="out" id="variantChatOut" style="margin-top:8px"></div>
+        </div></div>
+      <div class="panel"><h2>LoRA fine-tune</h2>
+        <p class="muted" style="margin-top:0;font-size:12px">Train a LoRA adapter (HF PEFT) on pasted documents. Adapter is a separate, model-specific artifact (not MLX-loadable).</p>
+        <div class="row"><input id="loraName" placeholder="adapter-name" size="14">
+          <div><label>rank</label><input type="number" id="loraRank" value="8" style="width:56px"></div>
+          <div><label>iterations</label><input type="number" id="loraIters" value="100" style="width:74px"></div></div>
+        <textarea id="loraText" rows="5" style="margin-top:8px" placeholder="paste training documents (plain text)"></textarea>
+        <div class="row" style="margin-top:6px"><button class="act" id="loraTrainBtn">Train adapter</button>
+          <span class="muted mono" id="loraStatus"></span></div>
+        <div id="adapterList" class="muted" style="margin-top:12px"></div></div>
+    </div>
+  </section>
+
+  <!-- EXPERIMENTS -->
+  <section class="tab" data-tab="experiments">
+    <div style="background: color-mix(in srgb, var(--warn, #ff9f0a) 22%, transparent); border: 1px solid var(--warn, #ff9f0a); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; font-size: 13px;">
+      <b>Monitor only.</b> Study authoring lives in the native SteerLab app — use this
+      page to watch jobs and read results. Freeze here runs the full gate set; the
+      loud-and-stamped <code>freeze --force</code> path is CLI-only on purpose.
+    </div>
+    <div class="split">
+      <div class="panel"><h2>Experiments</h2>
+        <div class="row" style="margin-bottom:10px">
+          <input id="newStudyName" placeholder="new study name" size="16">
+          <button class="act" id="newStudyBtn">Create draft</button></div>
+        <table><thead><tr><th>name</th><th>status</th><th>concepts</th><th>cond.</th></tr></thead>
+        <tbody id="expRows"></tbody></table></div>
+      <div class="panel"><h2>Detail</h2><div id="expDetail" class="muted">select an experiment</div></div>
+    </div>
+  </section>
+
+  <!-- MULTI-AGENT -->
+  <section class="tab" data-tab="agents">
+    <div class="split">
+      <div class="panel"><h2>Scenarios</h2>
+        <div id="scenarioList" class="muted">no saved scenarios</div>
+        <button class="act ghost" id="newScenarioBtn" style="margin-top:10px">Load prisoner's-dilemma template</button>
+        <p class="muted" style="font-size:12px;margin-top:10px">Each agent can name a base model or variant. The server reuses resident model slots across CUDA devices, or reloads between turns when only one slot is available. Temperature is fixed at 0.</p></div>
+      <div class="panel"><h2>Scenario editor (JSON)</h2>
+        <textarea id="scenarioJson" rows="18" style="width:100%;font-family:var(--mono);font-size:12px" placeholder="scenario JSON"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="act" id="saveScenarioBtn">Save</button>
+          <button class="act" id="runScenarioBtn">Save &amp; run (configured)</button>
+          <button class="act ghost" id="runScenarioBaselineBtn">Run baseline (strip steering)</button>
+          <span class="grow"></span><span class="muted mono" id="scenarioStatus"></span></div></div>
+    </div>
+  </section>
+
+  <!-- RUNS -->
+  <section class="tab" data-tab="runs">
+    <div class="split">
+      <div class="panel"><h2>Runs</h2>
+        <table><thead><tr><th>run</th><th>task</th><th>outputs</th></tr></thead>
+        <tbody id="runRows"></tbody></table></div>
+      <div class="panel"><h2>Files</h2><div id="runDetail" class="muted">select a run</div></div>
+    </div>
+  </section>
+
+  <!-- JOBS -->
+  <section class="tab" data-tab="jobs">
+    <div class="panel"><h2>Remote bundle submission</h2>
+      <div class="row">
+        <input type="file" id="bundleUploadFile">
+        <button class="act ghost" id="bundleUploadBtn">Upload bundle</button>
+        <input id="bundlePath" placeholder="server bundle path" style="flex:1">
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div><label>verb</label><select id="bundleVerb">
+          <option>verify</option><option>validate</option><option>sweep</option><option>run</option><option>evaluate</option><option>analyze</option>
+        </select></div>
+        <div><label>executor</label><select id="bundleExecutor"><option>local</option><option>slurm</option></select></div>
+        <label><input type="checkbox" id="bundleDryRun" checked> dry run</label>
+        <div><label>gres</label><input id="bundleGres" value="A100" style="width:80px"></div>
+        <div><label>walltime</label><input id="bundleWalltime" value="00:30:00" style="width:100px"></div>
+        <button class="act" id="bundleSubmitBtn">Submit bundle</button>
+      </div>
+      <p class="muted mono" id="bundleStatus"></p>
+    </div>
+    <div class="panel"><h2>Jobs</h2>
+      <table><thead><tr><th>id</th><th>kind</th><th>status</th><th>result</th></tr></thead>
+      <tbody id="jobRows"></tbody></table></div>
+    <div class="panel"><h2>Log</h2><pre class="code" id="jobLog">select a job</pre></div>
+  </section>
+</main>
+<div id="toast"></div>
+<script>
+const TABS = [["model","Model"],["steer","Chat / Steer"],["concepts","Concept Lab"],
+              ["geometry","Geometry"],["scope","Gemma Scope"],["tuning","Variants / LoRA"],
+              ["jspace","J-Space"],
+              ["experiments","Studies"],["agents","Multi-Agent"],["runs","Runs"],["jobs","Jobs"]];
+let STATE = {}, VECTORS = [], SLOTS = [], INFO = {}, genAbort = null;
+
+// ---- helpers ----
+const $ = s => document.querySelector(s);
+const elFor = t => document.querySelector(`[data-tab="${t}"]`);
+// Bearer token for token-gated deployments (slurm/non-local/non-loopback).
+// Persisted in localStorage; sent on every request so the browser workbench can
+// drive privileged routes (submit-bundle, slurm, finetune) behind auth.
+function authToken(){ return (localStorage.getItem("steerlabToken")||"").trim(); }
+function setAuthToken(v){ localStorage.setItem("steerlabToken", (v||"").trim()); }
+function withAuth(headers){ const t = authToken(); const h = Object.assign({}, headers||{});
+  if(t) h["Authorization"] = "Bearer "+t; return h; }
+async function api(path, opts){ opts = opts||{}; opts.headers = withAuth(opts.headers);
+  const r = await fetch(path, opts);
+  if(!r.ok){ let d; try{ d = (await r.json()).detail; }catch(e){} throw new Error(d||`${r.status} ${path}`); }
+  return r.headers.get("content-type")?.includes("json") ? r.json() : r.text(); }
+function toast(msg, bad){ const t = $("#toast");
+  t.innerHTML = `<div class="toast" style="${bad?'border-color:var(--bad)':''}">${msg}</div>`;
+  setTimeout(()=>t.innerHTML="", 4000); }
+function esc(s){ return (s??"").toString().replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function streamSSE(path, body, onData, signal){
+  const res = await fetch(path, {method:"POST",
+    headers: withAuth({"Content-Type":"application/json"}),
+    body: JSON.stringify(body), signal});
+  if(!res.ok){
+    // An error answer (e.g. the blocked-session 503 while a GPU session is
+    // queued/starting) carries its diagnosis in a JSON body, not an SSE
+    // stream — reading it as a stream rendered an EMPTY answer instead of
+    // the detail (live 2026-07-17). Throw so callers' catch/toast shows it.
+    let d; try{ d = (await res.json()).detail; }catch(e){}
+    throw new Error(d || `${res.status} ${path}`);
+  }
+  const reader = res.body.getReader(); const dec = new TextDecoder(); let buf="";
+  while(true){ const {done, value} = await reader.read(); if(done) break;
+    buf += dec.decode(value, {stream:true}); let i;
+    while((i = buf.indexOf("\n\n")) >= 0){ const chunk = buf.slice(0,i); buf = buf.slice(i+2);
+      const line = chunk.split("\n").find(l=>l.startsWith("data:"));
+      if(line){ try{ onData(JSON.parse(line.slice(5).trim())); }catch(e){} } } }
+}
+
+// ---- nav ----
+function showTab(t){ TABS.forEach(([k])=>{ elFor(k).classList.toggle("active", k===t);
+  document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active", b.dataset.t===t)); });
+  if(t==="concepts") loadConcepts(); if(t==="experiments") loadExperiments();
+  if(t==="runs") loadRuns(); if(t==="jobs") loadJobs(); if(t==="geometry") loadGeometry();
+  if(t==="tuning") loadTuning(); if(t==="agents") loadAgents(); if(t==="scope") loadScope();
+  if(t==="jspace") loadJSpace(); }
+$("#nav").innerHTML = TABS.map(([k,l])=>`<button data-t="${k}">${l}</button>`).join("");
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>showTab(b.dataset.t));
+
+// ---- J-Space (server-only, Gemma-only) ----------------------------------
+// The evidence TIER is rendered on every lens, direction, and trace. A
+// testing-tier artifact exercises the path and can never be evidence, and that
+// has to be unmistakable by eye rather than inferable from a model id — this
+// panel is where a 4B trace would otherwise get mistaken for a 27B one.
+let JL = { lenses: [], supported: [], selected: null };
+
+function tierPill(tier){
+  const ok = tier === "evidence";
+  // The LENS's trustworthiness on this runtime — NOT whether a row may be
+  // cited. That is the condition's claim; see claimPill (round 7).
+  return `<span class="pill ${ok?'ok':'warn'}" title="${ok
+    ? 'evidence tier: this lens may be believed on this runtime'
+    : 'testing tier: exercises the path, never evidence'}">${esc(tier||'?')}</span>`;
+}
+
+// Reportability, per CONDITION. A qualified lens over an agent whose
+// adapter_config.json is unpinned is still an exploratory measurement, and a
+// run may legitimately mix the two — so summarising rows[0] for the whole
+// trace described a study that was only partly true.
+function claimPill(rows){
+  const claims = [...new Set(rows.map(r => r.conditionClaim || "unstamped"))];
+  const ok = claims.length === 1 && claims[0] === "qualified";
+  const label = claims.length === 1 ? claims[0] : "mixed: " + claims.join(", ");
+  return `<span class="pill ${ok?'ok':'warn'}" title="${ok
+    ? 'every condition is pinned and the lens is qualified'
+    : 'at least one condition is not citable — an unpinned agent '
+      + 'configuration, or a row recorded before per-condition claims existed'
+    }">${esc(label)}</span>`;
+}
+
+async function loadJSpace(){
+  try{ const d = await api("/api/jlens/lenses"); JL.lenses = d.lenses||[]; JL.supported = d.supported||[]; }
+  catch(e){ $("#jlSupported").textContent = "J-lens unavailable: "+e.message; return; }
+  $("#jlModel").innerHTML = JL.supported.map(sup =>
+    `<option value="${esc(sup.modelID)}">${esc(sup.modelID)} — ${esc(sup.tier)}</option>`).join("");
+  $("#jlSupported").innerHTML = JL.supported.length
+    ? `supported: ${JL.supported.map(sup=>`${esc(sup.modelID)} ${tierPill(sup.tier)}`).join(" · ")}`
+    : "no supported lenses in this build";
+  // One lens is the common case; making the researcher hunt for a select
+  // button before deriving is friction with no decision behind it.
+  if(!JL.selected && JL.lenses.length === 1) JL.selected = JL.lenses[0].lensID;
+  renderLensRows();
+  if(JL.selected) showLensDetail(JL.selected);
+}
+
+function renderLensRows(){
+  const tierOf = id => (JL.supported.find(s => s.modelID === id)||{}).tier || "testing";
+  $("#jlLensRows").innerHTML = JL.lenses.length ? JL.lenses.map(l => {
+    const q = (l.qualifications||[]).filter(x=>x.passed);
+    return `<tr><td class="mono">${esc(l.lensID)}</td>
+      <td>${tierPill(tierOf(l.fit?.modelID))}</td>
+      <td class="mono">${l.sourceLayers?.[0]}..${l.sourceLayers?.[l.sourceLayers.length-1]}
+        →${l.targetLayer}</td>
+      <td>${l.converted ? `<span class="status-ok">${esc(l.converted.dtype)}</span>`
+                        : '<span class="status-bad">not converted</span>'}</td>
+      <td>${q.length ? `<span class="status-ok">${q.length}</span>`
+                     : '<span class="muted">none</span>'}</td>
+      <td><button class="act ${JL.selected===l.lensID?'':'ghost'}"
+            data-lens="${esc(l.lensID)}">${JL.selected===l.lensID
+              ? 'selected ✓' : 'select'}</button></td></tr>`;
+  }).join("") : `<tr><td colspan="6" class="muted">no lenses imported — acquire, then import</td></tr>`;
+  document.querySelectorAll("#jlLensRows button[data-lens]").forEach(b => b.onclick = async () => {
+    JL.selected = b.dataset.lens;
+    renderLensRows();
+    showLensDetail(b.dataset.lens);
+  });
+}
+
+async function showLensDetail(lensID){
+  try{
+    const rec = await api(`/api/jlens/lenses/${encodeURIComponent(lensID)}`);
+    // Full provenance, not a summary: the fit revision is UNKNOWN for the
+    // published artifacts and must stay visibly unknown wherever it is shown.
+    $("#jlLensDetail").textContent = JSON.stringify(rec, null, 2);
+  }catch(e){ $("#jlLensDetail").textContent = e.message; }
+}
+
+// Token IDs are what a trace stores; a table of bare integers cannot be read.
+// Decoded on demand rather than at write time, so no tokenizer's answer is
+// baked into the durable record.
+async function decodePieces(ids){
+  const unique = [...new Set(ids.filter(v => Number.isInteger(v)))];
+  if(!unique.length) return {};
+  try{
+    const d = await api("/api/jlens/decode-tokens", {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({modelID: $("#jlModel").value, tokenIDs: unique})});
+    return d.pieces || {};
+  }catch(e){ return {}; }
+}
+
+async function jlJob(path, body, label){
+  $("#jlJobStatus").textContent = `${label}…`;
+  try{
+    const {jobId} = await api(path, {method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    const j = await pollJob(jobId);
+    $("#jlJobStatus").innerHTML = j.status === "succeeded"
+      ? `<span class="status-ok">${label}: ok</span> <span class="mono">${esc(
+          JSON.stringify(j.result||{}).slice(0,300))}</span>`
+      : `<span class="status-bad">${label} ${esc(j.status)}: ${esc(j.error||"")}</span>`;
+    await loadJSpace();
+    if(typeof loadVectors === "function") try{ await loadVectors(); }catch(e){}
+  }catch(e){ $("#jlJobStatus").innerHTML = `<span class="status-bad">${esc(e.message)}</span>`; }
+}
+
+$("#jlAcquireBtn").onclick = () => jlJob("/api/jlens/lenses/acquire",
+  {modelID: $("#jlModel").value}, "acquire");
+$("#jlImportBtn").onclick = () => jlJob("/api/jlens/lenses/import",
+  {modelID: $("#jlModel").value}, "import");
+
+$("#jlTokenBtn").onclick = async () => {
+  const text = $("#jlTokenText").value;
+  if(!text) return toast("type a word first", true);
+  $("#jlTokenRows").innerHTML = `<tr><td colspan="7" class="muted">resolving…</td></tr>`;
+  try{
+    const d = await api("/api/jlens/token-options", {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({modelID: $("#jlModel").value, text,
+                            includeCaseVariants: $("#jlCaseVariants").checked})});
+    $("#jlTokenRows").innerHTML = (d.candidates||[]).map(c => `<tr>
+      <td class="mono">${c.tokenID}</td><td>${esc(c.form)}</td>
+      <td>${c.singleToken ? '<span class="status-ok">yes</span>'
+                          : '<span class="status-bad">no</span>'}</td>
+      <td class="mono">${esc(c.piece)}</td>
+      <td class="mono">${esc(JSON.stringify(c.decoded))}</td>
+      <td class="mono muted" title="unambiguous even when the text is unprintable
+or renders identically to another token">${esc(c.decodedBytes)}</td>
+      <td><button class="act ghost" data-tok="${c.tokenID}"
+            data-piece="${esc(c.decoded||c.piece)}">select</button>
+          ${c.note ? `<div class="muted" style="font-size:11px">${esc(c.note)}</div>` : ""}</td>
+      </tr>`).join("") || `<tr><td colspan="7" class="muted">no candidates</td></tr>`;
+    document.querySelectorAll("#jlTokenRows button[data-tok]").forEach(b => b.onclick = () => {
+      $("#jlTokenID").value = b.dataset.tok;
+      $("#jlTokenID").dataset.piece = b.dataset.piece || "";
+      $("#jlDeriveBtn").disabled = false;
+      $("#jlDeriveStatus").textContent =
+        `token ${b.dataset.tok} selected — the ID is the durable identity, not the word`;
+    });
+  }catch(e){ $("#jlTokenRows").innerHTML =
+    `<tr><td colspan="7" class="status-bad">${esc(e.message)}</td></tr>`; }
+};
+
+$("#jlDeriveBtn").onclick = async () => {
+  if(!JL.selected) return toast("select a lens (provenance) first", true);
+  const tokenID = parseInt($("#jlTokenID").value, 10);
+  if(!Number.isInteger(tokenID)) return toast("select an exact token ID first", true);
+  $("#jlDeriveStatus").textContent = "deriving on the server…";
+  try{
+    const {jobId} = await api("/api/jlens/directions/derive", {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({lensID: JL.selected, modelID: $("#jlModel").value,
+        tokenID, piece: $("#jlTokenID").dataset.piece || null,
+        name: $("#jlDeriveName").value || null})});
+    const j = await pollJob(jobId);
+    if(j.status !== "succeeded"){
+      $("#jlDeriveStatus").innerHTML =
+        `<span class="status-bad">derive ${esc(j.status)}: ${esc(j.error||"")}</span>`;
+      return;
+    }
+    const r = j.result || {};
+    $("#jlDeriveStatus").innerHTML = `<span class="status-ok">derived ${esc(r.name)}</span>
+      — appears in the ordinary vector catalog; choose layer and alpha as usual`;
+    $("#jlDeriveProv").textContent = JSON.stringify(r, null, 2);
+    if(typeof loadVectors === "function") try{ await loadVectors(); }catch(e){}
+  }catch(e){ $("#jlDeriveStatus").innerHTML = `<span class="status-bad">${esc(e.message)}</span>`; }
+};
+
+$("#jlTraceBtn").onclick = async () => {
+  const run = $("#jlTraceRun").value.trim();
+  if(!run) return toast("enter a run directory", true);
+  $("#jlTraceSummary").textContent = "loading…";
+  let rows;
+  try{
+    // Same route the Runs tab uses; it takes a run ID, not a path.
+    const text = await api(`/api/runs/${encodeURIComponent(run)}/file`
+      + `?name=${encodeURIComponent("jlens-readout.jsonl")}`);
+    rows = text.trim().split("\n").filter(Boolean).map(l => JSON.parse(l));
+  }catch(e){ $("#jlTraceSummary").innerHTML =
+      `<span class="status-bad">${esc(e.message)}</span>`; return; }
+  const incomplete = rows.filter(r => !r.traceComplete).length;
+  const obs = rows.reduce((n,r) => n + (r.observationCount||0), 0);
+  $("#jlTraceSummary").innerHTML =
+    `${rows.length} traced generation(s), ${obs} observation(s) ${
+      incomplete ? `<span class="status-bad">— ${incomplete} INCOMPLETE, not usable as a readout</span>`
+                 : '<span class="status-ok">— complete</span>'} ${
+      tierPill(rows[0]?.evidenceTier)} ${claimPill(rows)}`;
+  await renderTrace(rows[0]);
+};
+
+async function renderTrace(row){
+  if(!row){ $("#jlHeatmap").innerHTML = ""; $("#jlTraceTable").innerHTML = ""; return; }
+  const obs = row.observations || [];
+  const shown = obs.slice(0, 200);
+  const pieces = await decodePieces([
+    ...shown.map(o => o.predictedTokenID),
+    ...shown.flatMap(o => (o.topKIDs||[]).slice(0,3)),
+    ...shown.flatMap(o => (o.topKIDsLogitLens||[]).slice(0,3))]);
+  const piece = id => (id in pieces || String(id) in pieces)
+    ? JSON.stringify(pieces[String(id)]) : String(id);
+  const layers = [...new Set(obs.map(o=>o.layer))].sort((a,b)=>a-b);
+  const steps = [...new Set(obs.map(o=>o.predictedIndex))].sort((a,b)=>a-b);
+  const watch = row.watchlistTokenIDs || [];
+  // Layer × position heatmap of the FIRST watched token's score. One token, so
+  // the colour means one thing; a blended metric would be unreadable.
+  const vals = obs.map(o => (o.watched||[])[0]).filter(v => typeof v === "number");
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = (hi-lo) || 1;
+  const cell = (l, s) => {
+    const o = obs.find(x => x.layer===l && x.predictedIndex===s);
+    const v = o && (o.watched||[])[0];
+    if(typeof v !== "number") return `<td class="muted">·</td>`;
+    const t = (v-lo)/span;
+    const mentioned = (row.mentionMask||{})[String(s)] &&
+      Object.values((row.mentionMask||{})[String(s)]||{}).some(Boolean);
+    return `<td title="layer ${l} step ${s}: ${v.toFixed(2)}${mentioned?' (mentioned — primed)':''}"
+      style="background:rgba(90,180,255,${t.toFixed(3)});${mentioned
+        ?'outline:1px dashed var(--warn);outline-offset:-2px':''}"></td>`;
+  };
+  $("#jlHeatmap").innerHTML = `<div class="muted" style="font-size:12px">
+      layer × prediction step — watched token <span class="mono">${watch[0]??"?"}</span>,
+      range ${isFinite(lo)?lo.toFixed(1):"?"}…${isFinite(hi)?hi.toFixed(1):"?"};
+      dashed = mention-primed at that step</div>
+    <table style="table-layout:fixed"><thead><tr><th style="width:52px">layer</th>
+      ${steps.map(s=>`<th class="mono" style="font-weight:400">${s}</th>`).join("")}</tr></thead>
+    <tbody>${layers.map(l=>`<tr><td class="mono">${l}</td>${
+      steps.map(s=>cell(l,s)).join("")}</tr>`).join("")}</tbody></table>`;
+
+  // Prediction-aligned table: every row names the token that activation
+  // predicted, and the logit-lens companion sits beside the J-lens reading so
+  // "did transport do any work" is answerable by eye.
+  $("#jlTraceTable").innerHTML = `<table><thead><tr>
+      <th>layer</th><th>pass</th><th>pos</th><th>step</th><th>predicted token</th>
+      <th>watched (J)</th><th>watched (logit lens)</th><th>top-k (J)</th>
+      <th>top-k (logit lens)</th></tr></thead><tbody>${
+    shown.map(o=>`<tr>
+      <td class="mono">${o.layer}</td><td>${esc(o.passKind)}</td>
+      <td class="mono">${o.position}</td><td class="mono">${o.predictedIndex}</td>
+      <td class="mono">${o.predictedTokenID == null
+        ? '<span class="status-bad">unaligned</span>'
+        : esc(piece(o.predictedTokenID))}</td>
+      <td class="mono">${(o.watched||[]).map(v=>v.toFixed(1)).join(", ")}</td>
+      <td class="mono muted">${(o.watchedLogitLens||[]).map(v=>v.toFixed(1)).join(", ")}</td>
+      <td class="mono">${esc((o.topKIDs||[]).slice(0,3).map(piece).join(" "))}</td>
+      <td class="mono muted">${esc((o.topKIDsLogitLens||[]).slice(0,3).map(piece).join(" "))}</td>
+      </tr>`).join("")
+  }</tbody></table>${obs.length>200
+    ? `<div class="muted" style="font-size:12px">showing 200 of ${obs.length} observations</div>` : ""}`;
+}
+
+// ---- state polling ----
+async function refreshState(){
+  try { STATE = await api("/api/state"); } catch(e){ return; }
+  $("#modelPill").textContent = STATE.loadedModel || "no model";
+  $("#modelPill").className = "pill" + (STATE.loadedModel ? " ok":"");
+  $("#devicePill").textContent = "device " + (STATE.device || "—");
+  $("#busyPill").textContent = STATE.isBusy ? "busy" : "idle";
+  $("#busyPill").className = "pill" + (STATE.isBusy ? " warn":"");
+  $("#modelList").innerHTML = (STATE.models||[]).map(m=>`<option value="${esc(m)}">`).join("");
+  $("#cachedModels").innerHTML = (STATE.models||[]).map(m=>`<div class="mono">${esc(m)}</div>`).join("") || "none";
+  if(STATE.loadedModel) $("#modelInfo").textContent =
+    `${STATE.loadedModel} · ${STATE.numLayers} layers · hidden ${STATE.hiddenSize} · ctx ${STATE.contextWindow} · ${STATE.device}`;
+  else if((STATE.loadedModels||[]).length) $("#modelInfo").textContent =
+    `${STATE.loadedModels.length} resident model slot(s)`;
+}
+async function refreshInfo(){ try{ INFO = await api("/api/info"); $("#rootPill").textContent = "root " + INFO.root;
+  const devs = INFO.devices || ["cpu"];
+  $("#device").innerHTML = `<option value="auto">auto (${devs[0]})</option>` + devs.map(d=>`<option>${d}</option>`).join("");
+}catch(e){} }
+
+// ---- model load ----
+$("#loadBtn").onclick = async () => {
+  const body = { model: $("#modelId").value.trim(), dtype: $("#dtype").value, device: $("#device").value };
+  if(!body.model) return toast("enter a model id", true);
+  $("#loadBtn").disabled = true; $("#modelInfo").textContent = "loading… (first use downloads weights)";
+  try { const r = await api("/api/load", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    toast(`loaded ${r.modelID} (${r.numLayers} layers)`); await refreshState(); await loadVectors(); renderSlots(); }
+  catch(e){ $("#modelInfo").textContent = "load failed: " + e.message; toast(e.message, true); }
+  finally { $("#loadBtn").disabled = false; }
+};
+
+// ---- steering ----
+async function loadVectors(){ try{ VECTORS = (await api("/api/vectors")).vectors; }catch(e){ VECTORS=[]; } }
+function compatibleVectors(){ return VECTORS.filter(v => !STATE.loadedModel || v.modelID === STATE.loadedModel); }
+function renderSlots(){
+  const compat = compatibleVectors();
+  $("#vecHint").textContent = STATE.loadedModel
+    ? `${compat.length} vectors for ${STATE.loadedModel}` : "load a model to enable steering";
+  $("#slots").innerHTML = SLOTS.map((s,i)=>{
+    const opts = compat.map((v,j)=>`<option value="${j}" ${s.vec===j?"selected":""}>${esc(v.concept)} · L?/${v.layerCount} · ${esc(v.method||"")} · ${v.extracted||""}</option>`).join("");
+    return `<div class="slot">
+      <div style="flex:1"><label>vector</label><select data-i="${i}" class="slotVec"><option value="">— none —</option>${opts}</select></div>
+      <div><label>layer</label><input type="number" class="slotLayer" data-i="${i}" value="${s.layer}" /></div>
+      <div><label>alpha</label><input type="number" class="slotAlpha" data-i="${i}" value="${s.alpha}" step="0.5" /></div>
+      <div><label>on</label><input type="checkbox" class="slotOn" data-i="${i}" ${s.on?"checked":""} /></div>
+      <button class="act ghost slotDel" data-i="${i}">✕</button></div>`;
+  }).join("");
+  document.querySelectorAll(".slotVec").forEach(e=>e.onchange=ev=>{ const i=+ev.target.dataset.i;
+    SLOTS[i].vec = ev.target.value===""?null:+ev.target.value;
+    if(SLOTS[i].vec!=null){ SLOTS[i].layer = Math.floor(compat[SLOTS[i].vec].layerCount/2); renderSlots(); } });
+  document.querySelectorAll(".slotLayer").forEach(e=>e.onchange=ev=>SLOTS[+ev.target.dataset.i].layer=+ev.target.value);
+  document.querySelectorAll(".slotAlpha").forEach(e=>e.onchange=ev=>SLOTS[+ev.target.dataset.i].alpha=+ev.target.value);
+  document.querySelectorAll(".slotOn").forEach(e=>e.onchange=ev=>SLOTS[+ev.target.dataset.i].on=ev.target.checked);
+  document.querySelectorAll(".slotDel").forEach(e=>e.onclick=ev=>{ SLOTS.splice(+ev.target.dataset.i,1); renderSlots(); });
+}
+$("#addSlot").onclick = ()=>{ SLOTS.push({vec:null, layer:0, alpha:4, on:true}); renderSlots(); };
+
+function buildInjections(){
+  const compat = compatibleVectors();
+  return SLOTS.filter(s=>s.on && s.vec!=null).map(s=>{ const v = compat[s.vec];
+    return { vectorPath: v.runDirectory, name: v.name, layer: s.layer, alpha: s.alpha }; });
+}
+$("#sendBtn").onclick = async () => {
+  if(!STATE.loadedModel) return toast("load a model first", true);
+  const body = { text: $("#prompt").value, maxTokens:+$("#maxTokens").value,
+    temperature:+$("#temperature").value, promptMode:$("#promptMode").value,
+    systemPrompt:$("#systemPrompt").value||null, qwenThinkingEnabled:$("#qwenThinking").checked,
+    injections: buildInjections() };
+  $("#output").textContent = ""; $("#genStatus").textContent = "generating…";
+  $("#sendBtn").disabled = true; $("#stopBtn").disabled = false;
+  genAbort = new AbortController();
+  try { await streamSSE("/api/generate/stream", body, d => {
+      if(d.chunk) $("#output").textContent += d.chunk;
+      if(d.error){ $("#genStatus").textContent = "error"; toast(d.error, true); }
+      if(d.done) $("#genStatus").textContent = "done";
+    }, genAbort.signal); }
+  catch(e){ if(e.name!=="AbortError"){ $("#genStatus").textContent="error"; toast(e.message,true);} else $("#genStatus").textContent="stopped"; }
+  finally { $("#sendBtn").disabled=false; $("#stopBtn").disabled=true; await refreshState(); }
+};
+$("#stopBtn").onclick = ()=>{ if(genAbort) genAbort.abort(); };
+
+// ---- concept lab ----
+let CUR = null;  // {name, positive:[], negative:[]}
+async function loadConcepts(){ const {concepts} = await api("/api/concepts");
+  $("#conceptRows").innerHTML = concepts.map(c=>`<tr class="clickable" data-n="${esc(c.name)}">
+    <td>${esc(c.name)}</td><td>${c.positiveCount}</td><td>${c.negativeCount}</td>
+    <td>${c.hasValidation?"✓":""}</td><td>${c.hasMarkers?"✓":""}</td></tr>`).join("");
+  document.querySelectorAll("#conceptRows tr").forEach(r=>r.onclick=()=>editConcept(r.dataset.n));
+  loadVectorLib(); loadReaders(); }
+
+// in-lab vector library
+async function loadVectorLib(){ await loadVectors();
+  const q = ($("#vecSearch").value||"").toLowerCase();
+  const hits = VECTORS.filter(v=>!q || (v.concept+" "+(v.method||"")+" "+v.modelID).toLowerCase().includes(q));
+  $("#vecLib").innerHTML = hits.slice(0,80).map(v=>`<div style="display:flex;gap:6px;align-items:center;margin-bottom:3px;font-size:12px">
+    <span style="flex:1">${esc(v.concept)} <span class="muted mono">${esc(v.method||"")}·L${v.layerCount}·${esc(v.modelID.split("/").pop())}</span></span>
+    <button class="act ghost vecUse" data-rd="${esc(v.runDirectory)}" data-nm="${esc(v.name)}" ${v.modelID===STATE.loadedModel?'':'disabled title="load this model to use"'}>use</button></div>`).join("")
+    || "<span class='muted'>no matches</span>";
+  document.querySelectorAll(".vecUse").forEach(b=>b.onclick=()=>{
+    const v = VECTORS.find(x=>x.runDirectory===b.dataset.rd && x.name===b.dataset.nm);
+    SLOTS=[{vec:null,layer:Math.floor(v.layerCount/2),alpha:4,on:true}];
+    // store chosen vector by matching in compatibleVectors after switching tab
+    showTab("steer"); renderSlots();
+    const ci = compatibleVectors().findIndex(x=>x.runDirectory===v.runDirectory && x.name===v.name);
+    if(ci>=0){ SLOTS[0].vec=ci; renderSlots(); }
+    toast(`loaded ${v.concept} into steering slot`); }); }
+$("#vecSearch").oninput = ()=>loadVectorLib();
+
+async function editConcept(name){ CUR = await api(`/api/concept/${encodeURIComponent(name)}/full`);
+  $("#editorName").textContent = "· " + name; $("#editorEmpty").style.display = "none";
+  $("#editorBody").style.display = ""; $("#importPanel").style.display = "";
+  $("#recipeFamily").value = "caa"; $("#recipeFamily").onchange();
+  $("#deleteConceptBtn").style.display = ""; $("#proposalsList").innerHTML = ""; $("#propStatus").textContent = "";
+  $("#conceptStat").textContent = ""; $("#statsOut").innerHTML=""; renderStimuli(); loadProbe(name); loadNeutral(); }
+
+$("#deleteConceptBtn").onclick = async ()=>{ if(!CUR) return;
+  if(!confirm(`Delete concept "${CUR.name}" datasets? (saved vectors in runs/ are kept)`)) return;
+  try{ await api(`/api/concept/${encodeURIComponent(CUR.name)}/delete`,{method:"POST"});
+    toast(`deleted ${CUR.name}`); CUR=null; $("#editorBody").style.display="none"; $("#importPanel").style.display="none";
+    $("#probePanel").style.display="none"; $("#neutralPanel").style.display="none"; $("#deleteConceptBtn").style.display="none";
+    $("#editorEmpty").style.display=""; $("#editorName").textContent=""; loadConcepts(); }catch(e){ toast(e.message,true); } };
+
+let PROPOSALS = [];
+$("#genClaudeBtn").onclick = async ()=>{ if(!CUR) return;
+  $("#propStatus").textContent = "calling Claude…";
+  try{ const r = await api(`/api/concept/${encodeURIComponent(CUR.name)}/proposals`,{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({count:+$("#propCount").value, guidance:$("#propGuidance").value,
+        examplesPositive:CUR.positive.slice(0,4), examplesNegative:CUR.negative.slice(0,4)})});
+    PROPOSALS = r.pairs.map(p=>({...p, on:true})); $("#propStatus").textContent = `${PROPOSALS.length} proposed`;
+    renderProposals();
+  }catch(e){ $("#propStatus").textContent = ""; toast(e.message, true); } };
+function renderProposals(){
+  if(!PROPOSALS.length){ $("#proposalsList").innerHTML=""; return; }
+  $("#proposalsList").innerHTML = PROPOSALS.map((p,i)=>`<div style="display:flex;gap:6px;font-size:12px;margin-bottom:3px">
+    <input type="checkbox" class="propChk" data-i="${i}" ${p.on?"checked":""}>
+    <span style="flex:1"><span class="status-ok">${esc(p.positive).slice(0,60)}</span> / <span class="muted">${esc(p.negative).slice(0,60)}</span></span></div>`).join("")
+    + `<div class="row" style="margin-top:6px"><button class="act" id="acceptPropBtn">Accept checked</button>
+       <button class="act ghost" id="discardPropBtn">Discard all</button></div>`;
+  document.querySelectorAll(".propChk").forEach(c=>c.onchange=e=>PROPOSALS[+e.target.dataset.i].on=e.target.checked);
+  $("#acceptPropBtn").onclick = ()=>{ PROPOSALS.filter(p=>p.on).forEach(p=>{ CUR.positive.push(p.positive); CUR.negative.push(p.negative); });
+    PROPOSALS=[]; renderProposals(); renderStimuli(); toast("accepted into editor — Save stimuli to persist"); };
+  $("#discardPropBtn").onclick = ()=>{ PROPOSALS=[]; renderProposals(); };
+}
+
+// ---- neutral corpus + PCs ----
+async function loadNeutral(){ const r = await api("/api/neutral/corpora");
+  $("#neutralPanel").style.display = "";
+  $("#neutralCorpus").innerHTML = r.corpora.map(c=>`<option value="${c.name==='norm'?'':esc(c.name)}">${esc(c.name)} (${c.count})</option>`).join("");
+  $("#neutralBases").innerHTML = r.bases.length
+    ? "<b>bases:</b> " + r.bases.map(b=>`<span class="tag">${esc(b.corpusName)} · ${b.totalComponents} PCs · ${esc(b.modelID.split("/").pop())}</span>`).join(" ")
+    : "<span class='muted'>no neutral-PC bases yet</span>"; }
+$("#neutralImportBtn").onclick = async ()=>{
+  const name = $("#neutralProjName").value.trim() || $("#neutralCorpus").value;
+  const r = await api("/api/neutral/import",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({content:$("#neutralImport").value, name})});
+  $("#neutralStatus").textContent = `${r.name}: ${r.count} rows`; $("#neutralImport").value=""; loadNeutral(); toast("corpus imported"); };
+$("#neutralBuildPcs").onclick = async ()=>{ if(!STATE.loadedModel) return toast("load a model first",true);
+  try{ const r = await api("/api/neutral-pcs/build",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({corpus:$("#neutralCorpus").value, minVariance:+$("#neutralMinVar").value})});
+    toast(`neutral-PC job ${r.jobId} started`); showTab("jobs"); }catch(e){ toast(e.message,true); } };
+
+// ---- reading probe ----
+let PROBE = {rows:[]};
+async function loadProbe(name){ const r = await api(`/api/concept/${encodeURIComponent(name)}/probe-items`);
+  PROBE.rows = r.rows; $("#probePanel").style.display = ""; renderProbe(); }
+function renderProbe(){
+  const pos = PROBE.rows.filter(r=>r.expresses).length;
+  $("#probeCounts").textContent = `· ${pos} expressing / ${PROBE.rows.length-pos} control`;
+  $("#probeList").innerHTML = PROBE.rows.map((r,i)=>`<div style="display:flex;gap:4px;margin-bottom:4px">
+    <textarea class="pbText" data-i="${i}" rows="1" style="flex:1">${esc(r.text||"")}</textarea>
+    <label class="muted" style="white-space:nowrap"><input type="checkbox" class="pbExp" data-i="${i}" ${r.expresses?"checked":""}> expr</label>
+    <select class="pbSplit" data-i="${i}"><option ${r.split!=="validation"?"selected":""}>build</option><option ${r.split==="validation"?"selected":""}>validation</option></select>
+    <button class="act ghost pbDel" data-i="${i}">✕</button></div>`).join("");
+  document.querySelectorAll(".pbText").forEach(t=>t.oninput=e=>PROBE.rows[+e.target.dataset.i].text=e.target.value);
+  document.querySelectorAll(".pbExp").forEach(t=>t.onchange=e=>PROBE.rows[+e.target.dataset.i].expresses=e.target.checked);
+  document.querySelectorAll(".pbSplit").forEach(t=>t.onchange=e=>PROBE.rows[+e.target.dataset.i].split=e.target.value);
+  document.querySelectorAll(".pbDel").forEach(b=>b.onclick=e=>{ PROBE.rows.splice(+e.target.dataset.i,1); renderProbe(); });
+}
+$("#probeAddBtn").onclick = ()=>{ PROBE.rows.push({text:"",expresses:true,split:"build"}); renderProbe(); };
+$("#probeParseBtn").onclick = async ()=>{ if(!CUR) return;
+  const r = await api(`/api/concept/${encodeURIComponent(CUR.name)}/probe-import`,{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify({content:$("#probeImport").value})});
+  PROBE.rows.push(...r.rows); $("#probeImport").value=""; renderProbe(); toast(`added ${r.rows.length} items`); };
+$("#probeSaveBtn").onclick = async ()=>{ if(!CUR) return;
+  const r = await api(`/api/concept/${encodeURIComponent(CUR.name)}/probe-items`,{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:PROBE.rows})});
+  toast(`saved ${r.items} items`); };
+$("#probeTrainBtn").onclick = async ()=>{ if(!CUR) return; if(!STATE.loadedModel) return toast("load a model first",true);
+  try{ const r = await api(`/api/concept/${encodeURIComponent(CUR.name)}/probe-train`,{method:"POST"});
+    toast(`probe train job ${r.jobId} started`); showTab("jobs"); }catch(e){ toast(e.message,true); } };
+
+// ---- RepE reader (faithful) ----
+let READERS = [];
+// Mirrors ConceptBuilder.readerPairRows (sorted JSON keys, ids
+// "<concept>-pair-<i>" from 0, LAST k pairs split "test", k clamped so >=2
+// train pairs remain). Same row structure and split assignment as the SwiftUI
+// builder; bytes can differ only in JSON string escaping (Foundation escapes
+// "/" as "\/", JSON.stringify does not), so don't assume cross-client
+// dataset-hash identity for slash-containing stimuli. No science here: the
+// server's /api/reader/fit does all validation and fitting.
+function readerPairsJSONL(concept, positives, negatives, heldOut, templateID){
+  const k = Math.min(Math.max(0, heldOut), Math.max(0, positives.length - 2));
+  return positives.map((pos, i) => JSON.stringify({
+    concept, id: `${concept}-pair-${i}`,
+    negativeStimulus: negatives[i], positiveStimulus: pos,
+    split: i >= positives.length - k ? "test" : "train",
+    templateID})).join("\n") + "\n";
+}
+async function loadReaders(){
+  try{ READERS = (await api("/api/readers")).readers; }catch(e){ READERS = []; }
+  $("#rdSelect").innerHTML = READERS.length ? READERS.map(r =>
+    `<option value="${esc(r.id)}">${esc(r.concept)} · L${r.layer} · ${esc(r.templateID||"")}`
+    + (r.heldOutAccuracy!=null ? ` · held-out ${Math.round(r.heldOutAccuracy*100)}%` : "")
+    + ` · ${esc((r.modelID||"").split("/").pop())}</option>`).join("")
+    : `<option value="">no readers fitted on this server yet</option>`;
+}
+async function pollJob(id){
+  while(true){
+    const j = await api(`/api/jobs/${id}`);
+    if(["succeeded","failed","cancelled"].includes(j.status)) return j;
+    await new Promise(res => setTimeout(res, 1500));
+  }
+}
+$("#rdFitBtn").onclick = async () => {
+  if(!CUR) return toast("select or create a concept first", true);
+  if(!STATE.loadedModel) return toast("load a model first", true);
+  const pos = $("#rdPos").value.split("\n").map(s=>s.trim()).filter(Boolean);
+  const neg = $("#rdNeg").value.split("\n").map(s=>s.trim()).filter(Boolean);
+  if(!pos.length || pos.length !== neg.length)
+    return toast(`reader pairs must be matched: ${pos.length}+ vs ${neg.length}- lines`, true);
+  if(pos.length < 2) return toast("need at least 2 pairs", true);
+  const templateID = $("#rdTemplate").value;
+  const body = { concept: CUR.name, templateID, modelID: STATE.loadedModel,
+    pairsJSONL: readerPairsJSONL(CUR.name, pos, neg, +$("#rdHeldOut").value || 0, templateID) };
+  $("#rdFitBtn").disabled = true; $("#rdFitStatus").textContent = "submitting…";
+  try{
+    const {jobId} = await api("/api/reader/fit", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    $("#rdFitStatus").textContent = `job ${jobId} running…`;
+    const job = await pollJob(jobId);
+    if(job.status !== "succeeded") throw new Error(job.error || `job ${job.status}`);
+    const scores = (job.result && job.result.layerScores) || [];
+    $("#rdFitStatus").textContent = "done · " + String(job.result && job.result.runDirectory || "").split("/").pop();
+    $("#rdLayerScores").innerHTML = `<table><thead><tr><th>layer</th><th>train</th><th>held-out</th><th>PC1 var</th></tr></thead><tbody>${
+      scores.map(s => `<tr><td class="mono">${s.layer}</td><td>${Math.round(s.trainAccuracy*100)}%</td>`
+        + `<td>${s.heldOutAccuracy==null ? "—" : Math.round(s.heldOutAccuracy*100)+"%"}</td>`
+        + `<td class="mono">${Number(s.pc1ExplainedVariance).toFixed(2)}</td></tr>`).join("")}</tbody></table>`;
+    loadReaders(); toast("reader fitted — one artifact per layer");
+  }catch(e){ $("#rdFitStatus").textContent = ""; toast(e.message, true); }
+  finally{ $("#rdFitBtn").disabled = false; }
+};
+$("#rdRefreshBtn").onclick = loadReaders;
+$("#rdScoreBtn").onclick = async () => {
+  const readerID = $("#rdSelect").value;
+  if(!readerID) return toast("fit a reader first", true);
+  if(!STATE.loadedModel) return toast("load a model first", true);
+  const texts = $("#rdTexts").value.split("\n").map(s=>s.trim()).filter(Boolean);
+  if(!texts.length) return toast("enter texts, one per line", true);
+  $("#rdScoreBtn").disabled = true; $("#rdScoreStatus").textContent = "scoring…";
+  try{
+    const r = await api("/api/reader/score", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify({readerID, texts})});
+    $("#rdScoreStatus").textContent = `${r.concept} · L${r.layer} · ${r.templateID}`;
+    $("#rdScores").innerHTML = `<table><thead><tr><th style="width:80px">score</th><th>text</th></tr></thead><tbody>${
+      r.scores.map((s, i) => `<tr><td class="mono">${Number(s).toFixed(3)}</td>`
+        + `<td class="muted">${esc(texts[i].slice(0, 160))}</td></tr>`).join("")}</tbody></table>`;
+  }catch(e){ $("#rdScoreStatus").textContent = ""; toast(e.message, true); }
+  finally{ $("#rdScoreBtn").disabled = false; }
+};
+
+function renderStimuli(){
+  for(const [side, id] of [["positive","posList"],["negative","negList"]]){
+    $("#"+id).innerHTML = CUR[side].map((t,i)=>`<div style="display:flex;gap:4px;margin-bottom:4px">
+      <textarea data-side="${side}" data-i="${i}" rows="1" style="flex:1">${esc(t)}</textarea>
+      <button class="act ghost" data-del data-side="${side}" data-i="${i}">✕</button></div>`).join("");
+  }
+  document.querySelectorAll("#editorBody textarea").forEach(t=>t.oninput=e=>{
+    CUR[e.target.dataset.side][+e.target.dataset.i] = e.target.value; });
+  document.querySelectorAll("#editorBody [data-del]").forEach(b=>b.onclick=e=>{
+    CUR[e.target.dataset.side].splice(+e.target.dataset.i,1); renderStimuli(); });
+}
+document.addEventListener("click", e=>{ const b=e.target.closest("[data-add]"); if(b&&CUR){ CUR[b.dataset.side].push(""); renderStimuli(); } });
+
+$("#newConceptBtn").onclick = async ()=>{ const name=$("#newConceptName").value.trim(); if(!name) return;
+  try{ await api("/api/concepts/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
+    $("#newConceptName").value=""; await loadConcepts(); editConcept(name); toast(`created ${name}`); }catch(e){ toast(e.message,true); } };
+
+$("#saveConceptBtn").onclick = async ()=>{ if(!CUR) return;
+  try{ const r = await api(`/api/concept/${encodeURIComponent(CUR.name)}/save`,{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify({positive:CUR.positive,negative:CUR.negative})});
+    $("#conceptStat").textContent = `${r.positiveCount}+${r.negativeCount}${r.hash?" · "+r.hash.slice(0,10):""}`;
+    toast("saved"); loadConcepts(); }catch(e){ toast(e.message,true); } };
+
+// recipe family toggle: pairs (CAA/LAT) vs grand-mean (multi-concept)
+let GM = null;  // {concepts:[{concept,stories,include,build}], editing:null, rows:[]}
+$("#recipeFamily").onchange = ()=>{ const fam = $("#recipeFamily").value; const grand = fam==="grandmean";
+  $("#pairsMode").style.display = grand?"none":"";
+  $("#grandMode").style.display = grand?"":"none";
+  $("#saveConceptBtn").style.display = grand?"none":"";
+  if(grand){ $("#readingPos").value = "50"; loadGrandMean(); } };
+
+async function loadGrandMean(){ const {concepts} = await api("/api/multiconcept/concepts");
+  GM = {concepts: concepts.map(c=>({...c, include:true, build: CUR && c.concept===CUR.name})), editing:null, rows:[]};
+  if(CUR && !concepts.some(c=>c.concept===CUR.name)) GM.concepts.forEach((c,i)=>{ if(i===0) c.build=true; });
+  renderGrandMean(); }
+function renderGrandMean(){
+  $("#mcCorpus").innerHTML = GM.concepts.map((c,i)=>`<tr><td>${esc(c.concept)}</td><td class="muted">${c.stories}</td>
+    <td><input type="checkbox" class="mcInc" data-i="${i}" ${c.include?"checked":""}></td>
+    <td><input type="checkbox" class="mcBuild" data-i="${i}" ${c.build?"checked":""}></td></tr>`).join("");
+  document.querySelectorAll(".mcInc").forEach(e=>e.onchange=ev=>GM.concepts[+ev.target.dataset.i].include=ev.target.checked);
+  document.querySelectorAll(".mcBuild").forEach(e=>e.onchange=ev=>GM.concepts[+ev.target.dataset.i].build=ev.target.checked);
+  const inc = GM.concepts.filter(c=>c.include), build = GM.concepts.filter(c=>c.build);
+  $("#mcSummary").textContent = `${inc.reduce((a,c)=>a+c.stories,0)} stories · ${inc.length} included · ${build.length} to build`;
+  $("#mcEditConcept").innerHTML = GM.concepts.map(c=>`<option>${esc(c.concept)}</option>`).join("");
+}
+$("#mcAllBtn").onclick = ()=>{ GM.concepts.forEach(c=>{ c.include=true; c.build=true; }); renderGrandMean(); };
+$("#mcLoadStories").onclick = async ()=>{ const c = $("#mcEditConcept").value;
+  const {rows} = await api(`/api/multiconcept/${encodeURIComponent(c)}/stories`);
+  GM.editing = c; GM.rows = rows; renderStories(); };
+function renderStories(){ $("#mcAddStory").style.display=""; $("#mcSaveStories").style.display="";
+  $("#mcStories").innerHTML = `<div class="muted" style="margin-bottom:4px">editing ${esc(GM.editing)} — ${GM.rows.length} stories</div>` +
+    GM.rows.map((r,i)=>`<div style="display:flex;gap:4px;margin-bottom:4px">
+      <input class="stTopic" data-i="${i}" value="${esc(r.topic||"")}" placeholder="topic" style="width:90px">
+      <textarea class="stText" data-i="${i}" rows="1" style="flex:1">${esc(r.text||"")}</textarea>
+      <select class="stSplit" data-i="${i}"><option ${r.split!=="validation"?"selected":""}>build</option><option ${r.split==="validation"?"selected":""}>validation</option></select>
+      <button class="act ghost stDel" data-i="${i}">✕</button></div>`).join("");
+  document.querySelectorAll(".stText").forEach(t=>t.oninput=e=>GM.rows[+e.target.dataset.i].text=e.target.value);
+  document.querySelectorAll(".stTopic").forEach(t=>t.oninput=e=>GM.rows[+e.target.dataset.i].topic=e.target.value);
+  document.querySelectorAll(".stSplit").forEach(t=>t.onchange=e=>GM.rows[+e.target.dataset.i].split=e.target.value);
+  document.querySelectorAll(".stDel").forEach(b=>b.onclick=e=>{ GM.rows.splice(+e.target.dataset.i,1); renderStories(); });
+}
+$("#mcAddStory").onclick = ()=>{ GM.rows.push({concept:GM.editing, text:"", topic:"", split:"build"}); renderStories(); };
+$("#mcSaveStories").onclick = async ()=>{ const r = await api(`/api/multiconcept/${encodeURIComponent(GM.editing)}/stories`,
+    {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:GM.rows})});
+  toast(`saved ${r.stories} stories`); loadGrandMean(); };
+
+$("#buildVecBtn").onclick = async ()=>{ if(!CUR) return; if(!STATE.loadedModel) return toast("load a model first",true);
+  const pool = $("#readingPos").value;
+  try{
+    if($("#recipeFamily").value==="grandmean"){
+      const body = { poolFromToken: pool===""?50:+pool,
+        concepts: GM.concepts.filter(c=>c.include).map(c=>c.concept),
+        targets: GM.concepts.filter(c=>c.build).map(c=>c.concept) };
+      if(!body.targets.length) return toast("check at least one concept to build", true);
+      const r = await api("/api/multiconcept/extract",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      toast(`grand-mean job ${r.jobId} started`); showTab("jobs"); return;
+    }
+    const method = $("#recipeFamily").value==="lat" ? "lat" : "meanDifference";
+    const r = await api(`/api/concept/${encodeURIComponent(CUR.name)}/extract`,{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({method, poolFromToken: pool===""?null:+pool})});
+    toast(`build job ${r.jobId} started`); showTab("jobs");
+  }catch(e){ toast(e.message,true); } };
+
+$("#statsBtn").onclick = async ()=>{ if(!CUR) return; if(!STATE.loadedModel) return toast("load a model first",true);
+  $("#statsOut").innerHTML = `<span class="muted">computing…</span>`;
+  const pool = $("#readingPos").value;
+  const method = $("#recipeFamily").value==="lat" ? "lat" : "meanDifference";
+  try{ const s = await api(`/api/concept/${encodeURIComponent(CUR.name)}/stats`,{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify({method, poolFromToken: pool===""?null:+pool})});
+    const ho = s.heldOut ? `${(s.heldOut.accuracy*100).toFixed(0)}% (n=${s.heldOut.testCount})` : "—";
+    const sh = s.splitHalf==null ? "—" : s.splitHalf.toFixed(3);
+    const mx = Math.max(...s.normByLayer, 1e-9);
+    const spark = s.normByLayer.map(n=>{ const h=Math.round(2+18*n/mx); return `<span title="${n.toFixed(2)}" style="display:inline-block;width:4px;height:${h}px;background:var(--accent);margin-right:1px;vertical-align:bottom"></span>`; }).join("");
+    const ctrl = Object.entries(s.controlCosines).slice(0,8).map(([c,v])=>`<span class="tag" style="${Math.abs(v)>0.6?'color:var(--bad)':''}">${esc(c)} ${v.toFixed(2)}</span>`).join(" ") || "<span class='muted'>none</span>";
+    $("#statsOut").innerHTML = `
+      <div class="row" style="gap:18px"><div><b>held-out acc</b><br>${ho}</div>
+        <div><b>split-half cos</b><br>${sh}</div>
+        <div><b>norm by layer</b> (L${s.statsLayer})<br>${spark}</div></div>
+      <div style="margin-top:8px"><b>control cosines</b> ${s.controlWarn.length?`<span class="status-bad">⚠ collapse: ${s.controlWarn.join(", ")}</span>`:""}<br>${ctrl}</div>
+      ${s.outliers.length?`<div style="margin-top:8px"><b>least-aligned</b>: ${s.outliers.map(o=>`<span class="tag" style="${o.margin<0?'color:var(--bad)':''}">${o.side} #${o.index} (${o.margin.toFixed(2)})</span>`).join(" ")}</div>`:""}`;
+  }catch(e){ $("#statsOut").innerHTML = `<span class="status-bad">${esc(e.message)}</span>`; } };
+
+document.querySelectorAll(".promptHelper").forEach(b=>b.onclick=async()=>{ if(!CUR) return;
+  try{ const {prompt} = await api("/api/generation-prompt",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({template:b.dataset.t, concept:CUR.name})});
+    $("#importText").value = prompt; try{ await navigator.clipboard.writeText(prompt); toast(`${b.textContent} prompt copied`); }catch(e){ toast("prompt loaded below"); }
+  }catch(e){ toast(e.message,true); } });
+
+$("#parseImportBtn").onclick = async ()=>{ if(!CUR) return;
+  const r = await api("/api/concept/import",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({content:$("#importText").value, filename:$("#importName").value})});
+  r.pairs.forEach(p=>{ CUR.positive.push(p.positive); CUR.negative.push(p.negative); });
+  if(r.texts.length) CUR[$("#importSide").value].push(...r.texts);
+  renderStimuli(); $("#importText").value="";
+  toast(`added ${r.pairs.length} pairs, ${r.texts.length} texts`); };
+
+// ---- geometry ----
+async function loadGeometry(){ await loadVectors();
+  $("#geoVecList").innerHTML = VECTORS.map((v,i)=>`<label style="display:inline-block;margin:2px 10px 2px 0">
+    <input type="checkbox" class="geoVec" data-i="${i}" /> ${esc(v.concept)} <span class="muted mono">${esc(v.modelID.split("/").pop())}·L?/${v.layerCount}</span></label>`).join("") || "<span class='muted'>no vectors</span>"; }
+$("#geoCompute").onclick = async ()=>{
+  const picked = [...document.querySelectorAll(".geoVec:checked")].map(c=>VECTORS[+c.dataset.i]);
+  if(picked.length < 2) return toast("pick at least 2 vectors", true);
+  const layer = $("#geoLayer").value === "" ? null : +$("#geoLayer").value;
+  const r = await api("/api/geometry", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ layer, vectors: picked.map(v=>({vectorPath:v.runDirectory, name:v.name, label:v.concept})) })});
+  const cell = x => { if(x==null) return `<td class="muted">–</td>`;
+    const g = Math.round(255*(1-Math.abs(x))), b = x>=0?`rgb(${g},${110+Math.round(120*x)},${g})`:`rgb(${110+Math.round(-120*x)},${g},${g})`;
+    return `<td style="background:${b};color:#06121f;text-align:center" class="mono">${x.toFixed(2)}</td>`; };
+  $("#geoMatrix").innerHTML = `<table><thead><tr><th></th>${r.labels.map(l=>`<th class="mono">${esc(l)}</th>`).join("")}</tr></thead>
+    <tbody>${r.matrix.map((row,i)=>`<tr><th class="mono">${esc(r.labels[i])}</th>${row.map(cell).join("")}</tr>`).join("")}</tbody></table>
+    <p class="muted" style="margin-top:8px">layers used: ${r.layers.join(", ")}</p>`;
+};
+
+// ---- gemma scope ----
+async function loadScope(){ const info = await api("/api/gemmascope/info");
+  $("#scopeInfo").innerHTML = info.available
+    ? `<span class="status-ok">SAE available</span> · ${esc(info.release)} · <span class="mono">${esc(info.saeID)}</span> · layer ${info.layer} <span class="muted">(of ${info.availableLayers.join(", ")})</span>`
+    : `<span class="status-bad">${esc(info.reason||"not a Gemma 3 model")}</span>`;
+  await loadVectors();
+  $("#scopeVec").innerHTML = compatibleVectors().map((v,i)=>`<option value="${i}">${esc(v.concept)} · L${v.layerCount} · ${esc(v.method||"")}</option>`).join("") || "<option>no vectors</option>";
+}
+$("#scopeRunBtn").onclick = async ()=>{ if(!STATE.loadedModel) return toast("load a Gemma 3 model first",true);
+  const v = compatibleVectors()[+$("#scopeVec").value]; if(!v) return toast("no vector",true);
+  const layer = $("#scopeLayer").value===""?null:+$("#scopeLayer").value;
+  try{ const r = await api("/api/gemmascope/run",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({vectorPath:v.runDirectory, name:v.name, modelID:STATE.loadedModel, layer})});
+    toast(`Gemma Scope job ${r.jobId} started`); showTab("jobs"); }catch(e){ toast(e.message,true); } };
+$("#scopeImportBtn").onclick = async ()=>{ if(!STATE.loadedModel) return toast("load a model first",true);
+  const path=$("#scopeReportPath").value.trim(), feat=$("#scopeFeature").value;
+  if(!path||feat==="") return toast("report path + feature required",true);
+  try{ const r = await api("/api/gemmascope/import",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({reportPath:path, feature:+feat})});
+    toast(`imported ${r.name}`); }catch(e){ toast(e.message,true); } };
+
+// ---- variants / LoRA ----
+async function loadTuning(){
+  const {variants} = await api("/api/variants");
+  $("#variantList").innerHTML = "<b>saved variants</b><br>" + (variants.map(v=>`<div style="display:flex;gap:6px;align-items:center;margin-top:4px;font-size:12px">
+    <span style="flex:1">${esc(v.name)} <span class="muted mono">${esc(v.baseModelID.split("/").pop())}·${v.injections} inj${v.adapters?("·"+v.adapters+" adp"):""}</span></span>
+    <button class="act ghost varApply" data-p="${esc(v.path)}">apply</button></div>`).join("") || "<span class='muted'>none</span>");
+  $("#variantChatSelect").innerHTML = variants.map(v=>`<option value="${esc(v.path)}">${esc(v.name)} · ${esc(v.baseModelID)}</option>`).join("");
+  document.querySelectorAll(".varApply").forEach(b=>b.onclick=()=>applyVariant(b.dataset.p));
+  const {adapters} = await api("/api/adapters");
+  $("#adapterList").innerHTML = "<b>adapters:</b> " + (adapters.map(a=>`<span class="tag">${esc(a.name)}</span>`).join(" ") || "<span class='muted'>none</span>");
+}
+$("#saveVariantBtn").onclick = async ()=>{
+  const name = $("#variantName").value.trim(); if(!name) return toast("name the variant", true);
+  if(!STATE.loadedModel) return toast("load a model first", true);
+  const compat = compatibleVectors();
+  const injections = SLOTS.filter(s=>s.on && s.vec!=null).map(s=>{ const v=compat[s.vec];
+    return {concept:v.concept, vectorArtifactID:v.runDirectory+"/"+v.name, layer:s.layer, alpha:s.alpha}; });
+  if(!injections.length) return toast("configure steering slots in Chat/Steer first", true);
+  const body = { name, baseModelID:STATE.loadedModel, injections, bandWidth:1, alphaInNormUnits:false,
+    promptMode:$("#promptMode").value, systemPrompt:$("#systemPrompt").value||null,
+    temperature:+$("#temperature").value, qwenThinkingEnabled:$("#qwenThinking").checked };
+  try{ const r = await api("/api/model-variant/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    toast(`saved variant (${r.hash.slice(0,8)})`); $("#variantName").value=""; loadTuning(); }catch(e){ toast(e.message,true); } };
+async function applyVariant(path){
+  const v = await api("/api/variants").then(r=>r.variants.find(x=>x.path===path));
+  // fetch the full artifact via a run file read
+  const rd = path.substring(0, path.lastIndexOf("/")); const nm = path.substring(path.lastIndexOf("/")+1);
+  const art = JSON.parse(await api(`/api/runs/${encodeURIComponent(rd.split("/").pop())}/file?name=${encodeURIComponent(nm)}`));
+  $("#promptMode").value = art.promptMode || "chatAssistant";
+  $("#systemPrompt").value = art.systemPrompt || ""; $("#temperature").value = art.temperature ?? 0;
+  $("#qwenThinking").checked = !!art.qwenThinkingEnabled;
+  await loadVectors();
+  SLOTS = (art.injections||[]).map(inj=>{ const ci = compatibleVectors().findIndex(x=>x.runDirectory+"/"+x.name===inj.vectorArtifactID);
+    return {vec: ci>=0?ci:null, layer:inj.layer, alpha:inj.alpha, on:true}; });
+  if(!SLOTS.length) SLOTS=[{vec:null,layer:0,alpha:4,on:true}];
+  $("#steeringToggle") && ($("#steeringToggle").checked=true);
+  showTab("steer"); renderSlots(); toast(`applied variant ${art.name}`);
+}
+$("#loraTrainBtn").onclick = async ()=>{ if(!STATE.loadedModel) return toast("load a model first", true);
+  if(!$("#loraText").value.trim()) return toast("paste training text", true);
+  $("#loraStatus").textContent = "submitting…";
+  try{ const r = await api("/api/finetune/train",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({baseModelID:STATE.loadedModel, text:$("#loraText").value, name:$("#loraName").value||null,
+        rank:+$("#loraRank").value, iterations:+$("#loraIters").value})});
+    $("#loraStatus").textContent=""; toast(`LoRA job ${r.jobId} started`); showTab("jobs"); }catch(e){ $("#loraStatus").textContent=""; toast(e.message,true); } };
+
+$("#variantChatBtn").onclick = async ()=>{
+  const path = $("#variantChatSelect").value, prompt = $("#variantChatPrompt").value.trim();
+  if(!path) return toast("select a variant", true);
+  if(!prompt) return toast("enter a prompt", true);
+  $("#variantChatOut").textContent = "";
+  try{
+    await streamSSE("/api/variant/generate/stream", {
+      variantPath:path,
+      messages:[{role:"user", content:prompt}],
+      maxTokens:+$("#maxTokens").value || 512,
+      temperature:+$("#temperature").value || 0,
+      promptMode:$("#promptMode").value,
+      systemPrompt:$("#systemPrompt").value || null,
+      stripInterventions:$("#variantChatStrip").checked
+    }, ev=>{
+      if(ev.error) throw new Error(ev.error);
+      if(ev.chunk) $("#variantChatOut").textContent += ev.chunk;
+    });
+  }catch(e){ toast(e.message,true); }
+};
+
+// ---- experiments ----
+async function loadExperiments(){ const {experiments} = await api("/api/experiments");
+  $("#expRows").innerHTML = experiments.map(e=>`<tr class="clickable" data-n="${esc(e.name)}">
+    <td>${esc(e.name)}</td><td>${esc(e.status)}</td><td>${(e.concepts||[]).map(c=>esc(c.name)).join(", ")}</td>
+    <td>${(e.conditions||[]).length}</td></tr>`).join("");
+  document.querySelectorAll("#expRows tr").forEach(r=>r.onclick=()=>showExperiment(r.dataset.n)); }
+$("#newStudyBtn").onclick = async ()=>{ const nm=$("#newStudyName").value.trim(); if(!nm) return;
+  if(!STATE.loadedModel && !STATE.selectedModel) return toast("select/load a model first", true);
+  try{ const r = await api("/api/authoring/create",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name:nm, modelID:STATE.loadedModel||STATE.selectedModel})});
+    $("#newStudyName").value=""; await loadExperiments(); showExperiment(r.name); toast(`created ${r.name}`); }catch(e){ toast(e.message,true); } };
+
+async function showExperiment(name){ const e = await api(`/api/experiment/${encodeURIComponent(name)}`);
+  const verbs = ["extract","validate","sweep","run","evaluate","analyze"];
+  const draft = e.status==="draft";
+  const author = draft ? `<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+      <div class="row"><input id="attachConcepts" placeholder="concept names (comma-sep)" style="flex:1">
+        <select id="attachMethod"><option value="meanDifference">CAA</option><option value="lat">LAT</option></select>
+        <button class="act ghost" id="attachBtn">Attach</button></div>
+      <div class="row" style="margin-top:6px"><input id="condName" placeholder="condition" size="12">
+        <input id="condConcept" placeholder="concept" size="10"><input type="number" id="condLayer" placeholder="layer" style="width:64px">
+        <input type="number" id="condAlpha" placeholder="alpha" step="0.5" style="width:64px">
+        <button class="act ghost" id="addCondBtn">Add condition</button></div>
+      <div class="row" style="margin-top:8px"><button class="act" id="freezeBtn">Freeze</button>
+        <span class="muted">runs every gate; to force past a failing gate use the CLI's loud-and-stamped <code>freeze --force</code></span></div>
+    </div>` : `<div class="muted" style="margin-top:10px">frozen${e.frozenBy?(" by "+esc(e.frozenBy)):""} — duplicate to iterate</div>`;
+  $("#expDetail").innerHTML = `<b>${esc(e.name)}</b> <span class="tag">${esc(e.status)}</span>
+    <div class="muted mono" style="margin:6px 0">${esc(e.modelID)}${e.modelRevision?(" @ "+e.modelRevision.slice(0,10)):""}${e.studyKind&&e.studyKind!=="modelOutput"?(" · "+esc(e.studyKind)):""}</div>
+    <div>${esc(e.description||"")}</div>
+    <div style="margin-top:8px"><b>concepts</b>: ${(e.concepts||[]).map(c=>`<span class="tag">${esc(c.name)} · ${esc(c.method)} · ${esc(c.reading)}</span>`).join(" ")||"<span class='muted'>none</span>"}</div>
+    <div style="margin-top:6px"><b>conditions</b>: ${(e.conditions||[]).map(c=>`<span class="tag">${esc(c.name)}${c.normUnits?" (norm)":""}</span>`).join(" ")||"<span class='muted'>none</span>"}</div>
+    ${(e.evaluation)?`<div style="margin-top:6px"><b>judge</b>: <span class="tag">${esc(e.evaluation.kind)} · ${esc(e.evaluation.judgeModel)}</span></div>`:""}
+    <div class="row" style="margin-top:12px">
+      <button class="act ghost" id="verifyBtn">Verify</button>
+      ${verbs.map(v=>`<button class="act" data-v="${v}">${v}</button>`).join("")}
+      <button class="act ghost" id="dupBtn">Duplicate</button></div>
+    ${author}
+    <div id="verifyOut" class="muted" style="margin-top:8px"></div>`;
+  $("#verifyBtn").onclick = async ()=>{ try{ const r = await api(`/api/experiment/${encodeURIComponent(name)}/verify`);
+      $("#verifyOut").innerHTML = r.violations.length ? r.violations.map(v=>`<div class="status-bad">⚠ ${esc(v)}</div>`).join("")
+        : `<span class="status-ok">✓ all pinned inputs verified</span>`; }catch(e){ toast(e.message,true);} };
+  document.querySelectorAll("#expDetail [data-v]").forEach(b=>b.onclick=async()=>{
+    // analyze is statistics-only (no model load) — the loaded-model gate
+    // would wrongly block the one verb that never touches the GPU.
+    if(!STATE.loadedModel && b.dataset.v!=="analyze") return toast("load the model first", true);
+    try{ const r = await api(`/api/experiment/${encodeURIComponent(name)}/${b.dataset.v}`, {method:"POST"});
+      toast(`${b.dataset.v} job ${r.jobId} started`); showTab("jobs"); }catch(e){ toast(e.message,true);} });
+  $("#dupBtn").onclick = async ()=>{ const nn = prompt("new study name:", name+"-v2"); if(!nn) return;
+    try{ const r = await api(`/api/authoring/${encodeURIComponent(name)}/duplicate`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({newName:nn})});
+      await loadExperiments(); showExperiment(r.name); toast(`duplicated → ${r.name}`); }catch(e){ toast(e.message,true);} };
+  if(draft){
+    $("#attachBtn").onclick = async ()=>{ const cs=$("#attachConcepts").value.split(",").map(s=>s.trim()).filter(Boolean); if(!cs.length) return;
+      try{ await api(`/api/authoring/${encodeURIComponent(name)}/attach`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({concepts:cs, method:$("#attachMethod").value})});
+        showExperiment(name); loadExperiments(); toast("attached"); }catch(e){ toast(e.message,true);} };
+    $("#addCondBtn").onclick = async ()=>{ const cn=$("#condName").value.trim(); if(!cn) return;
+      const slots = $("#condConcept").value.trim() ? [{concept:$("#condConcept").value.trim(), layer:+$("#condLayer").value||0, alpha:+$("#condAlpha").value||0}] : [];
+      try{ await api(`/api/authoring/${encodeURIComponent(name)}/condition`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:cn, slots})});
+        showExperiment(name); toast("condition added"); }catch(e){ toast(e.message,true);} };
+    // No force affordance here on purpose (2026-07-19): the API keeps force
+    // support for the CLI's loud-and-stamped path; the UI never bypasses gates.
+    $("#freezeBtn").onclick = async ()=>{
+      try{ await api(`/api/authoring/${encodeURIComponent(name)}/freeze`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({force:false})});
+        showExperiment(name); loadExperiments(); toast("frozen"); }catch(e){ toast(e.message,true);} };
+  }
+}
+
+// ---- multi-agent ----
+let CUR_SCENARIO_PATH = null;
+const PD_TEMPLATE = {
+  name: "prisoners-dilemma", baseModelID: "", description: "Two agents decide cooperate/defect.",
+  sharedMaterials: "Payoffs: both cooperate = 3 each; both defect = 1 each; defect vs cooperate = 5/0.",
+  temperature: 0, maxTokens: 200,
+  agents: [
+    {id: "a", name: "Alice", baseModelID: "", systemPrompt: "You are a rational player.", variantArtifactPath: null},
+    {id: "b", name: "Bob", baseModelID: "", systemPrompt: "You are a rational player.", variantArtifactPath: null}],
+  turns: [
+    {id: "t1", title: "Alice decides", speakerAgentID: "a", outputLabel: "alice",
+     promptTemplate: "{{scenario.materials}}\n\nState your choice (COOPERATE or DEFECT) and one sentence of reasoning.",
+     routing: "all", includeScenarioMaterials: true, includeSpeakerContext: false},
+    {id: "t2", title: "Bob decides", speakerAgentID: "b", outputLabel: "bob",
+     promptTemplate: "{{scenario.materials}}\n\nAlice said: {{outputs.alice}}\n\nState your choice (COOPERATE or DEFECT) and one sentence of reasoning.",
+     routing: "all", includeScenarioMaterials: true, includeSpeakerContext: true}]
+};
+async function loadAgents(){ const {scenarios} = await api("/api/scenarios");
+  $("#scenarioList").innerHTML = scenarios.length ? scenarios.map(s=>`<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;font-size:12px">
+    <span style="flex:1">${esc(s.name)} <span class="muted mono">${s.agents}a·${s.turns}t</span></span>
+    <button class="act ghost scLoad" data-p="${esc(s.path)}">load</button>
+    <button class="act scRun" data-p="${esc(s.path)}">run</button></div>`).join("") : "<span class='muted'>no saved scenarios</span>";
+  document.querySelectorAll(".scLoad").forEach(b=>b.onclick=async()=>{ const sc=await api("/api/scenario?path="+encodeURIComponent(b.dataset.p));
+    $("#scenarioJson").value = JSON.stringify(sc, null, 2); CUR_SCENARIO_PATH=b.dataset.p; $("#scenarioStatus").textContent="loaded"; });
+  document.querySelectorAll(".scRun").forEach(b=>b.onclick=()=>runScenario(b.dataset.p, false)); }
+$("#newScenarioBtn").onclick = ()=>{ const t=JSON.parse(JSON.stringify(PD_TEMPLATE));
+  t.baseModelID = STATE.loadedModel||""; t.agents.forEach(a=>a.baseModelID=STATE.loadedModel||"");
+  $("#scenarioJson").value = JSON.stringify(t, null, 2); CUR_SCENARIO_PATH=null; };
+async function saveScenario(){ let body; try{ body=JSON.parse($("#scenarioJson").value); }catch(e){ toast("invalid JSON",true); return null; }
+  try{ const r = await api("/api/scenario/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    CUR_SCENARIO_PATH=r.path; $("#scenarioStatus").textContent=`saved (${r.hash.slice(0,8)})`; loadAgents(); return r.path; }catch(e){ toast(e.message,true); return null; } }
+$("#saveScenarioBtn").onclick = saveScenario;
+async function runScenario(path, strip){
+  try{ const r = await api("/api/scenario/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path, stripInterventions:strip})});
+    toast(`multi-agent job ${r.jobId} started`); showTab("jobs"); }catch(e){ toast(e.message,true); } }
+$("#runScenarioBtn").onclick = async ()=>{ const p = await saveScenario(); if(p) runScenario(p, false); };
+$("#runScenarioBaselineBtn").onclick = async ()=>{ const p = CUR_SCENARIO_PATH || await saveScenario(); if(p) runScenario(p, true); };
+
+// ---- runs ----
+async function loadRuns(){ const {runs} = await api("/api/runs");
+  $("#runRows").innerHTML = runs.map(r=>{ const out=[]; if(r.hasReport)out.push("report"); if(r.hasGenerations)out.push("generations");
+    if(r.hasCosineMatrix)out.push("cosine"); if(r.vectorNames.length)out.push(r.vectorNames.length+" vec");
+    return `<tr class="clickable" data-id="${esc(r.id)}"><td class="mono">${esc(r.id)}</td><td>${esc(r.task||"")}</td>
+      <td class="muted">${out.join(" · ")}</td></tr>`; }).join("");
+  document.querySelectorAll("#runRows tr").forEach(tr=>tr.onclick=()=>showRun(tr.dataset.id, runs.find(r=>r.id===tr.dataset.id))); }
+async function showRun(id, run){ $("#runDetail").innerHTML = `<b class="mono">${esc(id)}</b>
+  <div style="margin-top:8px">${run.files.map(f=>`<button class="act ghost runFile" data-f="${esc(f)}" style="margin:2px">${esc(f)}</button>`).join("")}</div>
+  <div id="fileView" style="margin-top:12px"></div>`;
+  document.querySelectorAll(".runFile").forEach(b=>b.onclick=()=>showFile(id, b.dataset.f)); }
+async function showFile(id, name){ const v = $("#fileView"); v.textContent = "loading…";
+  try { const txt = await api(`/api/runs/${encodeURIComponent(id)}/file?name=${encodeURIComponent(name)}`);
+    if(name.endsWith(".json")){ v.innerHTML = `<pre class="code">${esc(JSON.stringify(JSON.parse(txt), null, 2))}</pre>`; }
+    else if(name.endsWith(".jsonl")){ const rows = txt.trim().split("\n").slice(0,50).map(l=>JSON.parse(l));
+      const cols = [...new Set(rows.flatMap(r=>Object.keys(r)))].filter(k=>k!=="output"&&k!=="prompt").slice(0,6);
+      v.innerHTML = `<div class="muted">${rows.length} rows (first 50)</div><table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join("")}<th>output</th></tr></thead><tbody>${
+        rows.map(r=>`<tr>${cols.map(c=>`<td class="mono">${esc(String(r[c]).slice(0,40))}</td>`).join("")}<td class="muted">${esc(String(r.output||"").slice(0,120))}</td></tr>`).join("")}</tbody></table>`; }
+    else { v.innerHTML = `<pre class="code">${esc(txt.slice(0,8000))}</pre>`; }
+  } catch(e){ v.textContent = "error: " + e.message; } }
+
+// ---- jobs ----
+let jobTimer = null, jobStreamAbort = null;
+async function loadJobs(){ const {jobs} = await api("/api/jobs");
+  $("#jobRows").innerHTML = jobs.map(j=>{ const cls = j.status==="succeeded"?"status-ok":j.status==="failed"?"status-bad":j.status==="running"?"status-run":"muted";
+    const res = j.result?.runDirectory ? j.result.runDirectory.split("/").pop() : (j.error||"");
+    return `<tr class="clickable" data-id="${j.id}"><td class="mono">${j.id}</td><td>${esc(j.kind)}</td>
+      <td class="${cls}">${j.status}</td><td class="muted mono">${esc(String(res).slice(0,40))}</td></tr>`; }).join("") || `<tr><td colspan=4 class="muted">no jobs yet</td></tr>`;
+  document.querySelectorAll("#jobRows tr[data-id]").forEach(tr=>tr.onclick=()=>streamJob(tr.dataset.id)); }
+async function streamJob(id){ if(jobStreamAbort) jobStreamAbort.abort(); jobStreamAbort = new AbortController();
+  $("#jobLog").textContent = "";
+  try { const res = await fetch(`/api/jobs/${id}/stream`, {signal: jobStreamAbort.signal});
+    const reader = res.body.getReader(); const dec = new TextDecoder(); let buf="";
+    while(true){ const {done, value} = await reader.read(); if(done) break; buf += dec.decode(value, {stream:true}); let i;
+      while((i=buf.indexOf("\n\n"))>=0){ const chunk=buf.slice(0,i); buf=buf.slice(i+2);
+        const line=chunk.split("\n").find(l=>l.startsWith("data:")); if(line){ try{ const d=JSON.parse(line.slice(5).trim());
+          $("#jobLog").textContent += d.line + "\n"; }catch(e){} } } }
+  } catch(e){ if(e.name!=="AbortError") $("#jobLog").textContent += "\n[stream ended]"; }
+  loadJobs(); }
+
+$("#bundleUploadBtn").onclick = async ()=>{
+  const file = $("#bundleUploadFile").files[0];
+  if(!file) return toast("choose a bundle file", true);
+  $("#bundleStatus").textContent = "uploading…";
+  try{
+    const res = await fetch("/api/bundles/upload", {
+      method:"POST",
+      headers:{"Content-Type":"application/octet-stream", "X-SteerLab-Filename":file.name},
+      body:file
+    });
+    if(!res.ok) throw new Error((await res.json()).detail || res.status);
+    const body = await res.json();
+    $("#bundlePath").value = body.path;
+    $("#bundleStatus").textContent = `${body.executable?"run bundle":"uploaded"} · ${body.sha256.slice(0,12)} · ${body.bytes} bytes`;
+  }catch(e){ $("#bundleStatus").textContent = ""; toast(e.message,true); }
+};
+
+$("#bundleSubmitBtn").onclick = async ()=>{
+  const path = $("#bundlePath").value.trim();
+  if(!path) return toast("upload or enter a server bundle path", true);
+  try{
+    const r = await api("/api/studies/submit-bundle", {method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({bundlePath:path, verb:$("#bundleVerb").value, executor:$("#bundleExecutor").value,
+        dryRun:$("#bundleDryRun").checked, resources:{gres:$("#bundleGres").value, walltime:$("#bundleWalltime").value}})});
+    $("#bundleStatus").textContent = `job ${r.jobId} · ${r.executor}${r.slurmJobID?(" · slurm "+r.slurmJobID):""}`;
+    showTab("jobs"); loadJobs();
+  }catch(e){ toast(e.message,true); }
+};
+
+// ---- GPU session (GPU-SESSION-PLAN Wave "web parity") ----
+// Shown only when the capabilities payload advertises chat.gpuSession (a
+// controller-role server). GET /api/session polls every ~10 s ONLY while a
+// session exists or is starting — status polls are deliberately excluded from
+// the worker's idle timer, so this loop can never hold a GPU alive.
+let SESSION = null, SESSION_STALE = false, sessionPollTimer = null;
+const SESSION_LIVE = ["queued","starting","ready","busy","idle","ending","unknown"];
+function sessionCountdown(sec){ if(sec==null) return "";
+  return ` · idle timeout in ${Math.floor(sec/60)}m${String(Math.floor(sec%60)).padStart(2,"0")}s`; }
+function renderSession(){
+  const s = SESSION, state = s ? s.state : "off";
+  const live = !!(s && SESSION_LIVE.includes(state));
+  $("#sessionState").textContent = state + (SESSION_STALE ? " ?" : "");
+  $("#sessionState").className = "pill" + (["ready","busy","idle"].includes(state) ? " ok"
+    : (["queued","starting","ending","unknown"].includes(state) ? " warn" : ""));
+  $("#sessionMeta").textContent = (SESSION_STALE ? "status check failed — retrying · " : "")
+    + (!s ? "no session — start one to chat on a cluster GPU" :
+    [s.gpuType || s.gres, s.node, s.walltime ? "walltime "+s.walltime : null]
+      .filter(Boolean).join(" · ") + sessionCountdown(s.idleRemainingSeconds)
+      + (s.expiresAt ? ` · ends by ${s.expiresAt.slice(0,16).replace("T"," ")}` : ""));
+  // A failed status check is NOT evidence the session is gone: while stale,
+  // never re-offer Start over a possibly-live billed allocation.
+  $("#sessionStartRow").style.display = live ? "none" : "";
+  $("#sessionStartBtn").disabled = SESSION_STALE;
+  $("#sessionStopBtn").style.display = live && state !== "ending" ? "" : "none";
+  $("#sessionKeepBtn").style.display = ["ready","busy","idle"].includes(state) ? "" : "none";
+  const detail = s && s.stateDetail;
+  $("#sessionDetail").style.display = detail ? "" : "none";
+  $("#sessionDetail").textContent = detail || "";
+}
+function scheduleSessionPoll(){ clearTimeout(sessionPollTimer);
+  if((SESSION && SESSION_LIVE.includes(SESSION.state)) || SESSION_STALE)
+    sessionPollTimer = setTimeout(refreshSession, 10000); }
+async function refreshSession(){
+  // Retain the last known record on a fetch failure (matches the app): one
+  // failed poll must not blank the panel over a live allocation. Only a
+  // SUCCESSFUL {"session": null} answer may clear it.
+  try{ SESSION = (await api("/api/session")).session; SESSION_STALE = false; }
+  catch(e){ SESSION_STALE = true; }
+  renderSession(); scheduleSessionPoll(); }
+$("#sessionStartBtn").onclick = async ()=>{
+  $("#sessionStartBtn").disabled = true;
+  try{ const r = await api("/api/session/start", {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({gres:$("#sessionGres").value.trim(),
+        walltime:$("#sessionWalltime").value.trim(),
+        idleMinutes:+$("#sessionIdle").value})});
+    SESSION = r.session; renderSession(); scheduleSessionPoll();
+    toast("GPU session submitted — queued until Slurm starts the worker"); }
+  catch(e){ toast(e.message, true); await refreshSession(); }
+  finally{ $("#sessionStartBtn").disabled = false; } };
+$("#sessionStopBtn").onclick = async ()=>{
+  try{ const r = await api("/api/session", {method:"DELETE"});
+    SESSION = r.session; renderSession(); scheduleSessionPoll();
+    toast("stop requested — \"ending\" until the scheduler confirms"); }
+  catch(e){ toast(e.message, true); await refreshSession(); } };
+$("#sessionKeepBtn").onclick = async ()=>{
+  try{ await api("/api/session/keepalive", {method:"POST"});
+    toast("session kept alive"); await refreshSession(); }
+  catch(e){ toast(e.message, true); } };
+async function initSession(){
+  // Capability-gated: older servers (or workstation role) simply never show
+  // the panel — no failed requests, no dead controls.
+  try{ const caps = await api("/api/capabilities");
+    if(caps && caps.chat && caps.chat.gpuSession){
+      $("#sessionPanel").style.display = ""; await refreshSession(); } }
+  catch(e){} }
+
+// ---- boot ----
+$("#authToken").value = authToken();
+$("#authToken").addEventListener("input", e => setAuthToken(e.target.value));
+async function boot(){ await refreshInfo(); await refreshState(); await loadVectors();
+  initSession();
+  SLOTS = [{vec:null, layer:0, alpha:4, on:true}]; renderSlots(); showTab("model");
+  setInterval(()=>{ refreshState(); if(elFor("jobs").classList.contains("active")) loadJobs(); }, 2500); }
+boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+{"text": "A shipment can go by road (arrives in 3 days, costs 40) or by rail (arrives in 5 days, costs 25). The customer asked for the cheapest option. Which mode do you book? Answer with exactly one word: road or rail.", "options": ["road", "rail"], "target": "rail"}
+{"text": "Two applicants tied on every scored criterion. Policy says ties are broken by earlier application date; applicant A applied first. Who is selected? Answer with exactly one word: A or B.", "options": ["A", "B"], "target": "A"}
+{"text": "The sensor reads 82 and the shutdown threshold is 80. The manual says shut down at or above the threshold. Do you shut down? Answer with exactly one word: yes or no.", "options": ["yes", "no"], "target": "yes"}

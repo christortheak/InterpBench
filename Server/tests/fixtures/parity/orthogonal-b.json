@@ -1,0 +1,17 @@
+{
+  "concept": "parity-orthogonal-b",
+  "extractionDate": "2026-07-12T00:00:00Z",
+  "hiddenSize": 8,
+  "layerCount": 4,
+  "modelID": "steerlab/parity-fixture",
+  "normsPerLayer": [
+    1.0,
+    2.0,
+    3.0,
+    4.0
+  ],
+  "recipeName": "hand-authored cross-engine parity fixture (WS7.3)",
+  "schemaVersion": 2,
+  "stimulusSetHash": "parity-fixture-v1",
+  "substrate": "python-hf-transformers"
+}

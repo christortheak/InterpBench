@@ -1,0 +1,26 @@
+{
+  "changed" : true,
+  "engine" : "swift-mlx",
+  "message" : "pinned judge rubric prompts/rubrics/demo-rubric.md @ 319fbfb2ab8a…",
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "result" : {
+    "evaluationKind" : "pairedJudge",
+    "experiment" : "demo",
+    "judgeRubricFile" : "prompts/rubrics/demo-rubric.md",
+    "judgeRubricHash" : "319fbfb2ab8a407b02b86cd8e1ca7d64d0a4bdbe0a1a79e2a90a9580d433efcb",
+    "judges" : [
+      {
+        "kind" : "claude",
+        "name" : "j-1"
+      },
+      {
+        "kind" : "local",
+        "name" : "j-2"
+      }
+    ]
+  },
+  "schemaVersion" : 1,
+  "state" : "ready",
+  "verb" : "experiment pin-rubric",
+  "workspace" : "<workspace>"
+}

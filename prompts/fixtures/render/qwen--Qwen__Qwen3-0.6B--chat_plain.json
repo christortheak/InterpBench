@@ -1,0 +1,49 @@
+{
+  "bosCount": 0,
+  "bosTokenID": null,
+  "case": "chat_plain",
+  "family": "qwen",
+  "generator": {
+    "engine": "python-hf",
+    "generatedOn": "2026-07-06",
+    "script": "prompts/fixtures/render/generate.py",
+    "tokenizerClass": "Qwen2Tokenizer",
+    "transformersVersion": "5.12.1"
+  },
+  "inputs": {
+    "api": "render",
+    "prompt": "Decide the case and state the holding in one sentence.",
+    "promptMode": "chatAssistant",
+    "qwenThinkingEnabled": false,
+    "systemPrompt": null
+  },
+  "modelID": "Qwen/Qwen3-0.6B",
+  "promptTokenCount": 24,
+  "rendered": "<|im_start|>user\nDecide the case and state the holding in one sentence.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+  "tokenIDs": [
+    151644,
+    872,
+    198,
+    4900,
+    577,
+    279,
+    1142,
+    323,
+    1584,
+    279,
+    9963,
+    304,
+    825,
+    11652,
+    13,
+    151645,
+    198,
+    151644,
+    77091,
+    198,
+    151667,
+    271,
+    151668,
+    271
+  ]
+}

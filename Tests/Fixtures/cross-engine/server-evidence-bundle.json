@@ -1,0 +1,13 @@
+{
+  "agentFileName": "seam-fear-agent.json",
+  "agentName": "seam-fear-agent",
+  "agentRunSuffix": "-variant-seam-fear-agent",
+  "archive": "server-evidence-bundle.tar.gz",
+  "bundleSha256": "eb551338ab6bee44e19946806b079f5baa1a267f4ec68f257f3ec15a06d992fe",
+  "experimentHash": "c7bf3a0cf2e671f1d3aff0986295e1b93b33c0e48dfa6660fd838b6bd021d9b4",
+  "extractRun": "20260726T000001000-extract",
+  "note": "produced by Server bundles.package_evidence \u2014 do not hand-edit; regenerate with scripts/regenerate-cross-engine-fixtures.py",
+  "stimulusSetHash": "f25dec7e5bb1c2cdc71c4838726982b923436d96b1cf7e9c9292be1a4bb85865",
+  "sweepRun": "20260726T000002000-exp-seam-sweep",
+  "vectorArtifactID": "runs/20260726T000001000-extract/fear"
+}

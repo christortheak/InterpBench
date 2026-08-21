@@ -1,0 +1,58 @@
+{
+  "cases": {
+    "grandMean": {
+      "canonicalJSON": "{\"concept\":\"fear\",\"extractionMethod\":\"emotionGrandMean\",\"grandMeanPopulation\":[[\"anger\",\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"],[\"fear\",\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"],[\"joy\",\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]],\"methodParameters\":null,\"modelID\":\"test/model\",\"neutralProjection\":{\"basisHash\":null,\"count\":3,\"explainedVariance\":null,\"mode\":\"legacyPooled\"},\"normCorpusHash\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"readingPosition\":{\"mode\":\"meanFromToken\",\"parameter\":50},\"residualNormSource\":\"neutral-corpus\",\"revision\":\"abc123\",\"schema\":1,\"stimulusSetHash\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"}",
+      "components": {
+        "concept": "fear",
+        "extractionMethod": "emotionGrandMean",
+        "grandMeanPopulation": [
+          [
+            "joy",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ],
+          [
+            "fear",
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          ],
+          [
+            "anger",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ]
+        ],
+        "modelID": "test/model",
+        "normCorpusHash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "projectionBasisHash": null,
+        "projectionCount": 3,
+        "projectionExplainedVariance": null,
+        "projectionMode": "legacyPooled",
+        "readingPositionMode": "meanFromToken",
+        "readingPositionParameter": 50,
+        "residualNormSource": "neutral-corpus",
+        "revision": "abc123",
+        "stimulusSetHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "sha256": "c898705d18fe0ccd40b360465f75c9104c82e6e0c620cbda2210cd6b570197ff"
+    },
+    "paired": {
+      "canonicalJSON": "{\"concept\":\"french\",\"extractionMethod\":\"meanDifference\",\"grandMeanPopulation\":null,\"methodParameters\":null,\"modelID\":\"mlx-community/gemma-3-4b-it-4bit\",\"neutralProjection\":{\"basisHash\":null,\"count\":null,\"explainedVariance\":null,\"mode\":\"none\"},\"normCorpusHash\":null,\"readingPosition\":{\"mode\":\"lastToken\",\"parameter\":null},\"residualNormSource\":\"extraction-stimuli\",\"revision\":null,\"schema\":1,\"stimulusSetHash\":\"1111111111111111111111111111111111111111111111111111111111111111\"}",
+      "components": {
+        "concept": "french",
+        "extractionMethod": "meanDifference",
+        "grandMeanPopulation": null,
+        "modelID": "mlx-community/gemma-3-4b-it-4bit",
+        "normCorpusHash": null,
+        "projectionBasisHash": null,
+        "projectionCount": null,
+        "projectionExplainedVariance": null,
+        "projectionMode": "none",
+        "readingPositionMode": "lastToken",
+        "readingPositionParameter": null,
+        "residualNormSource": "extraction-stimuli",
+        "revision": null,
+        "stimulusSetHash": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "sha256": "0b03a5cc3b4307cd1a4be5bc9eac697cfe65f78167726d0e0c725972b7916122"
+    }
+  },
+  "description": "Cross-engine golden fixture for the canonical full-recipe identity (RecipeIdentity.swift / recipe_identity.py). Both engines must reproduce canonicalJSON BYTE-IDENTICALLY and sha256 exactly from components. The grandMean case exercises a >=3-member population (deliberately listed unsorted here - canonicalization must sort it), pooled reading, legacy pooled projection, and a neutral-corpus norm denominator; the paired case exercises explicit nulls everywhere."
+}

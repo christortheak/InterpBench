@@ -1,0 +1,13 @@
+{
+  "task": "toy-concept",
+  "models": [
+    { "family": "qwen3", "id": "Qwen/Qwen3-4B" }
+  ],
+  "conceptDirectory": "../prompts/concepts/french",
+  "prompt": "Tell me about your morning routine.",
+  "maxTokens": 48,
+  "layerFractions": [0.4, 0.5, 0.6],
+  "alphas": [4.0, 8.0],
+  "seed": 1234,
+  "dtype": "bfloat16"
+}

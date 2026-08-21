@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Fake squeue for scheduler tests.
+
+Two query shapes:
+
+- ``-j <id>``  prints the ``queue`` field of that job's entry in
+  FAKE_SLURM_STATE_FILE (the %T state of a queued/running job), and nothing
+  for jobs squeue would no longer show.
+- ``-n <name>`` (name lookup, used by the controller job's successor-chain
+  guard) prints the newline-separated contents of FAKE_SQUEUE_NAMED — the job
+  ids currently queued or running under that name — and nothing when unset.
+"""
+import json
+import os
+import sys
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    job_id = None
+    job_name = None
+    for index, arg in enumerate(args):
+        if arg == "-j" and index + 1 < len(args):
+            job_id = args[index + 1]
+        if arg in ("-n", "--name") and index + 1 < len(args):
+            job_name = args[index + 1]
+    log_dir = os.environ.get("FAKE_SLURM_LOG")
+    if log_dir:
+        with open(os.path.join(log_dir, "squeue.calls"), "a", encoding="utf-8") as fh:
+            fh.write(" ".join(args) + "\n")
+    if os.environ.get("FAKE_SQUEUE_FAIL"):
+        # Simulated scheduler-query failure (2026-07-17 session-stop
+        # edge): the command itself errors, saying nothing about the job.
+        print(os.environ["FAKE_SQUEUE_FAIL"], file=sys.stderr)
+        return 1
+    if job_name is not None:
+        for line in os.environ.get("FAKE_SQUEUE_NAMED", "").split("\n"):
+            if line.strip():
+                print(line.strip())
+        return 0
+    state_file = os.environ.get("FAKE_SLURM_STATE_FILE")
+    if not state_file or not os.path.exists(state_file) or job_id is None:
+        return 0
+    with open(state_file, encoding="utf-8") as fh:
+        table = json.load(fh)
+    queue_state = (table.get(job_id) or {}).get("queue")
+    if queue_state:
+        print(queue_state)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

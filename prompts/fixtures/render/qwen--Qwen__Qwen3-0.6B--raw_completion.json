@@ -1,0 +1,33 @@
+{
+  "bosCount": 0,
+  "bosTokenID": null,
+  "case": "raw_completion",
+  "family": "qwen",
+  "generator": {
+    "engine": "python-hf",
+    "generatedOn": "2026-07-06",
+    "script": "prompts/fixtures/render/generate.py",
+    "tokenizerClass": "Qwen2Tokenizer",
+    "transformersVersion": "5.12.1"
+  },
+  "inputs": {
+    "api": "render",
+    "prompt": "The court held that",
+    "promptMode": "rawCompletion",
+    "qwenThinkingEnabled": false,
+    "systemPrompt": null
+  },
+  "modelID": "Qwen/Qwen3-0.6B",
+  "promptTokenCount": 8,
+  "rendered": "The court held that /no_think",
+  "tokenIDs": [
+    785,
+    5473,
+    5644,
+    429,
+    608,
+    2152,
+    5854,
+    766
+  ]
+}

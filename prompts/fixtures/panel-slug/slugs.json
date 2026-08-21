@@ -1,0 +1,25 @@
+{
+  "_comment": [
+    "Cross-engine fixture for the ONE panel/artifact filename slug rule.",
+    "Swift: ExperimentStore.canonicalSlug. Python: experiment_store._slugify.",
+    "Both engines write panel scripts into prompts/panels/, so a disagreement",
+    "here yields two files for one panel on a case-sensitive filesystem and a",
+    "silent cross-engine overwrite on a case-insensitive one (macOS default).",
+    "Tests on BOTH engines read this file; add a case here, not to one suite."
+  ],
+  "cases": [
+    { "name": "Judicial Panel", "slug": "judicial-panel" },
+    { "name": "judicial-panel", "slug": "judicial-panel" },
+    { "name": "JUDICIAL PANEL", "slug": "judicial-panel" },
+    { "name": "Judicial: Panel", "slug": "judicial-panel" },
+    { "name": "Judicial   Panel", "slug": "judicial-panel" },
+    { "name": "  Judicial Panel  ", "slug": "judicial-panel" },
+    { "name": "my_panel", "slug": "my-panel" },
+    { "name": "panel--with---runs", "slug": "panel-with-runs" },
+    { "name": "-leading-and-trailing-", "slug": "leading-and-trailing" },
+    { "name": "Case 3 (Sentencing)", "slug": "case-3-sentencing" },
+    { "name": "R = delta_model - delta_human", "slug": "r-delta-model-delta-human" },
+    { "name": "!!!", "slug": "unnamed" },
+    { "name": "", "slug": "unnamed" }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-roster-v1",
+  "description": "Minimal valid roster: one focal entry with a full discovery snapshot, one control entry with none, one pending slot.",
+  "candidates": [
+    {
+      "constructLabel": "Strict textual interpretation",
+      "role": "focal",
+      "model": "google/gemma-3-27b-it",
+      "source": "gemmascope-2-res-65k",
+      "layer": 40,
+      "featureId": 62389,
+      "neuronpediaUrl": "https://www.neuronpedia.org/gemma-3-27b-it/40-gemmascope-2-res-65k/62389",
+      "discovery": {
+        "explanationText": "Originalism, literal meaning, precedent, contrasts with legal realism.",
+        "topPositiveLogits": ["textual", "interpretation", "original", "strict"],
+        "topNegativeLogits": ["equitable"],
+        "exampleActivations": ["the plain text of the statute controls"],
+        "accessDate": "2026-08-13"
+      },
+      "verification": {"status": "verifiedOnNeuronpedia", "date": "2026-08-13"},
+      "qualificationArtifact": null,
+      "status": "candidate",
+      "notes": "Fixture entry."
+    },
+    {
+      "constructLabel": "Legal precedent and case law",
+      "role": "domainControl",
+      "model": "google/gemma-3-27b-it",
+      "source": "gemmascope-2-res-65k",
+      "layer": 40,
+      "featureId": 56976,
+      "neuronpediaUrl": "https://www.neuronpedia.org/gemma-3-27b-it/40-gemmascope-2-res-65k/56976",
+      "verification": {"status": "unverified"},
+      "status": "candidate"
+    }
+  ],
+  "pendingConstructs": [
+    {
+      "constructLabel": "Hunger",
+      "role": "embodiedControl",
+      "notes": "Embodied-drive control; no feature nominated yet."
+    }
+  ]
+}

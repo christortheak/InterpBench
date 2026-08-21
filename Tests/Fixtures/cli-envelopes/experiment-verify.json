@@ -1,0 +1,19 @@
+{
+  "changed" : false,
+  "engine" : "swift-mlx",
+  "message" : "OK [draft] — all pinned inputs verified",
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "result" : {
+    "experiment" : "demo",
+    "experimentHash" : "890e62f6be46e1066f847c445d76dce19c5c458a8c91f7f2dfbbd275d069ed4d",
+    "status" : "draft",
+    "verified" : true,
+    "violations" : [
+
+    ]
+  },
+  "schemaVersion" : 1,
+  "state" : "ready",
+  "verb" : "experiment verify",
+  "workspace" : "<workspace>"
+}

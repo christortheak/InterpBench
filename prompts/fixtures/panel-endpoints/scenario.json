@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "name": "panel-endpoints-fixture",
+  "description": "Cross-engine golden fixture for the Wave-2 declared-turn-endpoint contract. One choice endpoint and one number endpoint; both engines' tests parse cases.json against these declarations and must agree exactly.",
+  "baseModelID": "fixture/model",
+  "sharedMaterials": "",
+  "temperature": 0,
+  "maxTokens": 256,
+  "agents": [
+    {
+      "id": "judge-a",
+      "name": "Judge A",
+      "baseModelID": "fixture/model",
+      "systemPrompt": ""
+    }
+  ],
+  "turns": [
+    {
+      "id": "turn-vote",
+      "title": "Tentative vote",
+      "speakerAgentID": "judge-a",
+      "promptTemplate": "State your tentative vote on its own line, exactly as 'Vote: affirm', 'Vote: reverse', 'Vote: vacate', or 'Vote: remand'. Then give your reasons.",
+      "outputLabel": "tentative_vote",
+      "routing": "all",
+      "routedAgentIDs": [],
+      "includeScenarioMaterials": true,
+      "includeSpeakerContext": true,
+      "maxTokens": 256,
+      "endpoint": {
+        "name": "vote",
+        "kind": "choice",
+        "marker": "Vote:",
+        "vocabulary": ["affirm", "reverse", "vacate", "remand"]
+      }
+    },
+    {
+      "id": "turn-sentence",
+      "title": "Sentence",
+      "speakerAgentID": "judge-a",
+      "promptTemplate": "State the sentence you would impose in months on its own line, exactly as 'Sentence: 24'. Then give your reasons.",
+      "outputLabel": "sentence",
+      "routing": "all",
+      "routedAgentIDs": [],
+      "includeScenarioMaterials": true,
+      "includeSpeakerContext": true,
+      "maxTokens": 256,
+      "endpoint": {
+        "name": "months",
+        "kind": "number",
+        "marker": "Sentence:",
+        "min": 0,
+        "max": 600
+      }
+    }
+  ]
+}

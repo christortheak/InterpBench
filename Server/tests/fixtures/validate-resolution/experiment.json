@@ -1,0 +1,93 @@
+{
+  "name": "validate-resolution",
+  "experimentDescription": "Cross-engine fixture for open-issues §21: how validate resolves a concept's method, its data identity, and whether it owes a held-out probe at all. Hand-authored; the hashes are synthetic placeholders, never read.",
+  "createdAt": "2026-08-20T00:00:00Z",
+  "modelID": "test/model",
+  "status": "draft",
+  "concepts": [
+    {
+      "name": "tidiness",
+      "stimulusSetHash": "0000000000000000000000000000000000000000000000000000000000000001",
+      "options": { "method": "emotionGrandMean", "readingPosition": { "lastToken": {} } },
+      "validationHash": "0000000000000000000000000000000000000000000000000000000000000011"
+    },
+    {
+      "name": "tidiness-gm",
+      "stimulusSetHash": "0000000000000000000000000000000000000000000000000000000000000001",
+      "options": { "method": "pinnedArtifact", "readingPosition": { "lastToken": {} } },
+      "validationHash": "0000000000000000000000000000000000000000000000000000000000000011",
+      "vectorArtifact": {
+        "path": "runs/20260820T000000000-fixture/tidiness-gm",
+        "sha256TensorHash": "0000000000000000000000000000000000000000000000000000000000000021",
+        "sha256SidecarHash": "0000000000000000000000000000000000000000000000000000000000000022",
+        "sourceMethod": "emotionGrandMean",
+        "sourceConcept": "tidiness",
+        "residualNormSource": "neutral-corpus"
+      }
+    },
+    {
+      "name": "stillness-pair",
+      "stimulusSetHash": "0000000000000000000000000000000000000000000000000000000000000002",
+      "options": { "method": "pinnedArtifact", "readingPosition": { "lastToken": {} } },
+      "validationHash": "0000000000000000000000000000000000000000000000000000000000000012",
+      "vectorArtifact": {
+        "path": "runs/20260820T000000000-fixture/stillness-pair",
+        "sha256TensorHash": "0000000000000000000000000000000000000000000000000000000000000031",
+        "sha256SidecarHash": "0000000000000000000000000000000000000000000000000000000000000032",
+        "sourceMethod": "meanDifference",
+        "sourceConcept": "stillness",
+        "residualNormSource": "neutral-corpus"
+      }
+    },
+    {
+      "name": "drifting-optvec",
+      "stimulusSetHash": "optvec:0000000000000000000000000000000000000000000000000000000000000003",
+      "options": { "method": "pinnedArtifact", "readingPosition": { "lastToken": {} } },
+      "validationHash": null,
+      "vectorArtifact": {
+        "path": "runs/20260820T000000000-fixture/drifting-optvec",
+        "sha256TensorHash": "0000000000000000000000000000000000000000000000000000000000000041",
+        "sha256SidecarHash": "0000000000000000000000000000000000000000000000000000000000000042",
+        "sourceMethod": "optvec",
+        "sourceConcept": "drifting-optvec",
+        "residualNormSource": "neutral-token-bank"
+      }
+    },
+    {
+      "name": "dictionary-row",
+      "stimulusSetHash": "gemmascope:fixture-release:fixture-sae:7",
+      "options": { "method": "pinnedArtifact", "readingPosition": { "lastToken": {} } },
+      "validationHash": null,
+      "vectorArtifact": {
+        "path": "runs/20260820T000000000-fixture/dictionary-row",
+        "sha256TensorHash": "0000000000000000000000000000000000000000000000000000000000000051",
+        "sha256SidecarHash": "0000000000000000000000000000000000000000000000000000000000000052",
+        "sourceMethod": "gemmaScopeSAE",
+        "sourceConcept": "dictionary-row",
+        "residualNormSource": "neutral-token-bank"
+      }
+    },
+    {
+      "name": "undeclared-semantics",
+      "stimulusSetHash": "0000000000000000000000000000000000000000000000000000000000000004",
+      "options": { "method": "pinnedArtifact", "readingPosition": { "lastToken": {} } },
+      "validationHash": null,
+      "vectorArtifact": {
+        "path": "runs/20260820T000000000-fixture/undeclared-semantics",
+        "sha256TensorHash": "0000000000000000000000000000000000000000000000000000000000000061",
+        "sha256SidecarHash": "0000000000000000000000000000000000000000000000000000000000000062",
+        "sourceMethod": "pinnedArtifact",
+        "sourceConcept": "undeclared-semantics",
+        "residualNormSource": "neutral-corpus"
+      }
+    }
+  ],
+  "grandMeanCorpus": {
+    "concepts": ["tidiness", "plainness"],
+    "hashes": {
+      "tidiness": "0000000000000000000000000000000000000000000000000000000000000001",
+      "plainness": "0000000000000000000000000000000000000000000000000000000000000005"
+    }
+  },
+  "conditions": []
+}

@@ -1,0 +1,87 @@
+[
+  {
+    "label": "sweep-band-fractions",
+    "input": {
+      "declared_layers": null,
+      "declared_fractions": [0.5, 0.6, 0.7, 0.8],
+      "declared_layer": null,
+      "declared_fraction": null,
+      "condition_layer": 7,
+      "layer_count": 62
+    },
+    "expect": [
+      {"layer": 31, "source": "declaredFraction"},
+      {"layer": 37, "source": "declaredFraction"},
+      {"layer": 43, "source": "declaredFraction"},
+      {"layer": 49, "source": "declaredFraction"}
+    ]
+  },
+  {
+    "label": "declared-index-list",
+    "input": {
+      "declared_layers": [21, 40],
+      "declared_fractions": null,
+      "declared_layer": null,
+      "declared_fraction": null,
+      "condition_layer": null,
+      "layer_count": 62
+    },
+    "expect": [
+      {"layer": 21, "source": "declaredIndex"},
+      {"layer": 40, "source": "declaredIndex"}
+    ]
+  },
+  {
+    "label": "scalar-fallback-is-a-one-element-list",
+    "input": {
+      "declared_layers": null,
+      "declared_fractions": null,
+      "declared_layer": null,
+      "declared_fraction": null,
+      "condition_layer": 7,
+      "layer_count": 62
+    },
+    "expect": [
+      {"layer": 7, "source": "steeringCondition"}
+    ]
+  },
+  {
+    "label": "fraction-one-clamps-in-a-list-too",
+    "input": {
+      "declared_layers": null,
+      "declared_fractions": [0.5, 1.0],
+      "declared_layer": null,
+      "declared_fraction": null,
+      "condition_layer": null,
+      "layer_count": 62
+    },
+    "expect": [
+      {"layer": 31, "source": "declaredFraction"},
+      {"layer": 61, "source": "declaredFraction"}
+    ]
+  },
+  {
+    "label": "resolved-collision-refuses",
+    "input": {
+      "declared_layers": null,
+      "declared_fractions": [0.6, 0.61],
+      "declared_layer": null,
+      "declared_fraction": null,
+      "condition_layer": null,
+      "layer_count": 62
+    },
+    "refusal": "both resolve to layer 37"
+  },
+  {
+    "label": "out-of-range-index-in-a-list-refuses",
+    "input": {
+      "declared_layers": [100],
+      "declared_fractions": null,
+      "declared_layer": null,
+      "declared_fraction": null,
+      "condition_layer": null,
+      "layer_count": 62
+    },
+    "refusal": "not silently clamped"
+  }
+]

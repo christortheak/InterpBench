@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Fake scancel for scheduler tests: records the cancelled job ids.
+
+Environment protocol:
+- FAKE_SLURM_LOG:     directory; argv is appended to <dir>/scancel.calls
+- FAKE_SCANCEL_FAIL:  when set, print it on stderr and exit 1 — callers must
+  treat the cancellation as NOT having happened (live shakedown 2026-07-16:
+  a stop that ignores scancel's exit code hides a billed orphan).
+"""
+import os
+import sys
+
+
+def main() -> int:
+    log_dir = os.environ.get("FAKE_SLURM_LOG")
+    if log_dir:
+        with open(os.path.join(log_dir, "scancel.calls"), "a", encoding="utf-8") as fh:
+            fh.write(" ".join(sys.argv[1:]) + "\n")
+    failure = os.environ.get("FAKE_SCANCEL_FAIL")
+    if failure:
+        sys.stderr.write(failure + "\n")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

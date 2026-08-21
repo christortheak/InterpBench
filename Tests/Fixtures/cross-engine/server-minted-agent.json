@@ -1,0 +1,42 @@
+{
+  "artifact": {
+    "adapters": [],
+    "alphaInNormUnits": true,
+    "bandWidth": 1,
+    "baseModelID": "mlx-community/gemma-3-27b-it-8bit",
+    "baseRevision": "cccccccccccccccccccccccccccccccccccccccc",
+    "createdAt": "2026-07-26T00:00:00Z",
+    "injections": [
+      {
+        "alpha": 0.1,
+        "concept": "neuroticism",
+        "layer": 41,
+        "vectorArtifactID": "runs/20260726T000001000-extract/neuroticism"
+      }
+    ],
+    "name": "neuroticism-agent",
+    "neutralPCBasisPath": null,
+    "promotion": {
+      "appVersion": "steerlab-server (fixture)",
+      "experiment": "bigfive-study",
+      "experimentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "promotedAt": "2026-07-26T00:00:00Z",
+      "promotedBy": "criterion",
+      "substrate": "python-hf-transformers",
+      "winningCell": {
+        "alpha": 0.1,
+        "layer": 41
+      }
+    },
+    "promptMode": "chatAssistant",
+    "qwenThinkingEnabled": false,
+    "schemaVersion": 1,
+    "systemPrompt": "",
+    "temperature": 0.0
+  },
+  "artifactFileName": "neuroticism-agent.json",
+  "configRunType": "variant-save",
+  "note": "produced by Server model_variant.save_variant \u2014 do not hand-edit; regenerate with scripts/regenerate-cross-engine-fixtures.py",
+  "runDirectoryStampLength": 18,
+  "runDirectorySuffix": "-variant-neuroticism-agent"
+}

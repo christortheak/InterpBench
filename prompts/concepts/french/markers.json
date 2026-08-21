@@ -1,0 +1,8 @@
+{
+  "words": ["le", "la", "les", "un", "une", "des", "du", "de", "et", "est",
+            "dans", "que", "qui", "je", "tu", "il", "elle", "nous", "vous",
+            "ne", "pas", "pour", "avec", "sur", "mais", "plus", "très",
+            "être", "avoir", "fait", "comme", "tout", "bien", "aussi",
+            "votre", "mon"],
+  "characters": "àâäéèêëîïôöùûüçœÀÂÉÈÊËÎÏÔÙÛÇŒ"
+}

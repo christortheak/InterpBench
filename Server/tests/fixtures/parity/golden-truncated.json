@@ -1,0 +1,45 @@
+{
+  "artifactA": {
+    "hiddenSize": 8,
+    "layerCount": 3,
+    "name": "truncated-a"
+  },
+  "artifactB": {
+    "hiddenSize": 8,
+    "layerCount": 4,
+    "name": "identical-b"
+  },
+  "comparedLayerCount": 3,
+  "layerCountMismatch": true,
+  "pass": true,
+  "perLayer": [
+    {
+      "cosine": 0.9999999999999999,
+      "layer": 0,
+      "normA": 14.2828568570857,
+      "normB": 14.2828568570857,
+      "normRatio": 1.0
+    },
+    {
+      "cosine": 1.0,
+      "layer": 1,
+      "normA": 16.852299546352718,
+      "normB": 16.852299546352718,
+      "normRatio": 1.0
+    },
+    {
+      "cosine": 1.0000000000000002,
+      "layer": 2,
+      "normA": 19.493588689617926,
+      "normB": 19.493588689617926,
+      "normRatio": 1.0
+    }
+  ],
+  "summary": {
+    "meanCosine": 1.0,
+    "meanNormRatio": 1.0,
+    "minCosine": 0.9999999999999999,
+    "skippedZeroNormLayers": 0
+  },
+  "threshold": 0.98
+}
