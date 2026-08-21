@@ -1,5 +1,13 @@
 # SteerLab
 
+> **Pre-release research software.** SteerLab is under active development and
+> has so far run in earnest on a small number of installations — the authors'
+> Macs and one Slurm cluster. It is still being adapted to other machines and
+> sites: expect rough edges away from the paved path, read refusals before
+> working around them, and pin your own dependency versions if you compare
+> results across installations. Interfaces on the study path are versioned
+> and change additively, but nothing here is 1.0.
+
 SteerLab is a concept-steering workbench for open-weight language models. It
 does three things, and everything else in the repository exists to make those
 three trustworthy:
@@ -20,6 +28,44 @@ The steering core is concept-agnostic. Concepts, stimulus sets, task prompts,
 rubrics, and taxonomies are *data* you author in a workspace; no concept is
 named in the engine. If a change to the core would not work equally for an
 arbitrary concept, it is a bug.
+
+## Guiding philosophy
+
+Three commitments shape everything else in the design:
+
+- **You control it locally — by hand or by LLM.** Your machine owns the
+  workspace: the study definitions, the pinned inputs, the accepted evidence,
+  the git history. Compute may happen elsewhere — a local GPU, a Python server,
+  a Slurm cluster — but a compute site is a place runs execute, never the
+  authority on what the study *is*. And "you" includes an agent acting for
+  you: the macOS app and the command lines drive the same engine, every verb
+  on the study path speaks `--json` with typed refusals and stable exit codes,
+  and each workspace is born with an `AGENTS.md` written for exactly that
+  hand-off. Point a coding agent at it and the instrument is as drivable by an
+  LLM as by a person at the keyboard.
+
+- **The agent is the unit of study.** The thing SteerLab builds, compares, and
+  measures is a configured *agent*: a base model plus a chosen combination of
+  interventions — activation-vector injections and fine-tuned adapters —
+  though the workhorse case is a single vector at a single layer and strength.
+  The vectors themselves can be derived many ways (contrastive activation
+  addition, a grand-mean contrast, PCA-based readings of difference vectors,
+  linear probes) or imported from external interpretability work, including
+  sparse-autoencoder feature directions (e.g. Gemma Scope) and Jacobian-lens
+  vectors — all landing in the same artifact model with the same provenance.
+  In the app these configurations accumulate in a variant library and can be
+  promoted to named agents; a study is then a *comparison between agents* —
+  an agent against its paired unsteered baseline, agents against each other
+  under identical conditions, or agents placed together in multi-agent
+  scenarios to see how induced dispositions propagate through interaction.
+
+- **Rigor is structural, not aspirational.** The discipline is built into the
+  artifact lifecycle rather than left to good intentions: inputs pinned by
+  hash, gates that refuse rather than warn, a one-way freeze that fixes every
+  setting *before* behavior is measured, held-out validation for every vector,
+  matched-norm random controls, and doses reported in comparable units. The
+  section below on why a stranger can trust a result is the concrete form of
+  this commitment.
 
 ## Two engines, one artifact model
 
