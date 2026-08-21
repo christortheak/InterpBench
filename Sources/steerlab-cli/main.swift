@@ -7,6 +7,19 @@ import SteeringKit
 // reproducibility). Configs carry a "task" field; smoke-test is the default
 // for configs that predate it.
 
+// The SAME claim `SteerLabApp.init` makes, for the SAME reason: this binary
+// also ships inside SteerLab.app (Contents/Helpers/steerlab-cli, staged by
+// scripts/build-app.sh), and a copy running out of a bundle is a distributed
+// build whatever happens to exist at the compiled-in source path of the
+// machine that assembled it. Without this, the bundled helper would silently
+// stay in DEVELOPER mode on the maintainer's own Mac — resolving families out
+// of that checkout instead of failing closed on one packaging forgot.
+// A CLI installed by scripts/install-cli.sh is not in a bundle and is
+// untouched.
+if CodeResources.enclosingAppBundle != nil {
+    CodeResources.releaseModeAsserted = true
+}
+
 var arguments = CommandLine.arguments
 
 // Global --workspace <path>: applied before ANY verb runs (workspace-root

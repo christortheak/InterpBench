@@ -149,6 +149,16 @@ extension CheckoutDependency {
             bucket: .developerOnly,
             withoutACheckout:
                 "unset for the SwiftPM dev executable — developer mode, unchanged"),
+        .init(
+            file: "Sources/steerlab-cli/main.swift",
+            token: "releaseModeAsserted",
+            resolves:
+                "asserts release mode when the CLI runs from inside a bundle "
+                + "(Contents/Helpers), mirroring SteerLabApp.init — a bundled "
+                + "helper never falls back to the BUILD machine's checkout",
+            bucket: .developerOnly,
+            withoutACheckout:
+                "unset for the SwiftPM dev executable — developer mode, unchanged"),
 
         // ── Bucket A: shipped read-only bytes ─────────────────────────────
         .init(

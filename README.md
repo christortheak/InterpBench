@@ -43,8 +43,11 @@ sides.
 
 - Apple silicon Mac. Intel is not supported.
 - macOS 26.4 or later (the deployment floor; there is no fallback path).
-- Xcode 27 to build. SwiftPM alone cannot build the Metal shader library that
-  MLX needs, so `xcodebuild` is required for anything that touches the GPU.
+- Xcode 27 **only to build from source**. SteerLab.app carries the command
+  line it was built with, so installing the app needs no developer tools at
+  all. If you do build, it has to be `xcodebuild` rather than `swift build`:
+  SwiftPM alone cannot build the Metal shader library MLX needs, and nothing
+  that touches the GPU works without it.
 - Memory sized to the model tier you intend to run: roughly 3 GB for a 4-bit
   4B model, 13–16 GB at the 12–14B tier. Leave headroom for the KV cache and
   activations beyond the weights themselves.
@@ -63,6 +66,36 @@ licenses are your own to read — see NOTICE.
 
 ## Quickstart
 
+**If you have SteerLab.app, you already have the command line.** The app ships
+the CLI it was built from, inside the bundle at
+`Contents/Helpers/steerlab-cli`: the same binary the app itself calls into,
+signed with the bundle, carrying its own copy of the Metal shader library. So
+there is nothing to build and no Xcode involved — just give it a name on your
+`PATH`:
+
+```bash
+mkdir -p ~/.local/bin
+ln -s ~/SteerLab/SteerLab.app/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab-cli
+
+# `steerlab` is the shorter name the rest of these docs use, and the name
+# install-cli.sh's shim takes. TEMPORARY alias: the `steerlab` name is
+# reserved for a future cross-platform client, which will take it over —
+# `steerlab-cli` is this binary's durable name.
+ln -s ~/SteerLab/SteerLab.app/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab
+
+export PATH="$HOME/.local/bin:$PATH"
+steerlab --version    # the build, and where every shipped resource resolved
+steerlab --help
+```
+
+A symlink is enough: the binary resolves its shaders and the app's bundled
+resources against its real location, not the link's. Invoking it in place by
+full path works identically, and the path inside the bundle is the same
+wherever the app lives — `~/SteerLab`, `/Applications`, anywhere.
+
+**Building from source** is the developer path, and the only one that needs
+Xcode 27:
+
 ```bash
 git clone <this repository>
 cd <checkout>
@@ -78,11 +111,12 @@ steerlab --help
 ```
 
 If `xcode-select` points at an older Xcode, set `DEVELOPER_DIR` to your
-Xcode 27 installation before running the installer.
+Xcode 27 installation before running the installer. `scripts/build-app.sh`
+assembles the signed app from the same checkout, CLI included.
 
-Create the home layout — a `SteerLab/` folder holding your workspaces, your
-private site library, and this checkout as siblings, so one directory moves and
-backs up as a unit:
+Either way, create the home layout — a `SteerLab/` folder holding your
+workspaces, your private site library, and (if you have one) the checkout as
+siblings, so one directory moves and backs up as a unit:
 
 ```bash
 steerlab init                      # or: steerlab init --home /path/to/SteerLab
@@ -92,6 +126,7 @@ steerlab init                      # or: steerlab init --home /path/to/SteerLab
 ~/SteerLab/
 ├── Workspaces/     study workspaces, one folder each, each its own git repo
 ├── Sites/          your PRIVATE site library (cluster-site profiles, presets)
+├── SteerLab.app/   the app, and the CLI it carries
 └── <checkout>/     this repository — any folder name; detected by content
 ```
 
@@ -269,11 +304,12 @@ when you need it.
 
 This is a source release, an early one. What that means concretely:
 
-- You build the Swift CLI and app from this checkout with Xcode 27. There is
-  no signed, notarized application and no downloadable engine yet; both are
-  the next stage.
-- The macOS app runs through a developer launcher (`./scripts/run-app.sh`),
-  not an installer.
+- The app is the distribution: `scripts/build-app.sh` assembles, signs, and
+  packages SteerLab.app, and the CLI ships inside it, so an app install needs
+  no Xcode. Building either from this checkout still needs Xcode 27, and there
+  is no downloadable Python engine yet.
+- From a checkout, the macOS app runs through a developer launcher
+  (`./scripts/run-app.sh`) rather than the assembled bundle.
 - The Python engine is an editable install, and its dependencies declare
   version floors rather than a lockfile. Two sites can therefore resolve
   different `torch` and `transformers` versions; pin them yourself if you are

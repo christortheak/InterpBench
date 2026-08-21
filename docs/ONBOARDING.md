@@ -77,11 +77,13 @@ probes. [METHODS.md](METHODS.md) has the math and the literature behind each.
 ## 3. What you need
 
 **Swift engine and macOS app:** an Apple silicon Mac (Intel is not supported),
-macOS 26.4+, Xcode 27 to build. SwiftPM alone cannot build the Metal shader
-library MLX needs, so `xcodebuild` is required for anything touching the GPU
-(one time: `xcodebuild -downloadComponent MetalToolchain`). Size memory to your
-model tier: roughly 3 GB for a 4-bit 4B model, 13–16 GB at the 12–14B tier, plus
-headroom for the KV cache.
+macOS 26.4+. Xcode 27 only if you build from source — SteerLab.app carries the
+command line it was built with, so an app install needs no developer tools. If
+you do build, it has to be `xcodebuild` rather than `swift build`: SwiftPM
+alone cannot build the Metal shader library MLX needs, and nothing touching the
+GPU works without it (one time: `xcodebuild -downloadComponent MetalToolchain`).
+Size memory to your model tier: roughly 3 GB for a 4-bit 4B model, 13–16 GB at
+the 12–14B tier, plus headroom for the KV cache.
 
 **Python engine:** Linux with an NVIDIA CUDA GPU for real work; it also installs
 and runs on macOS for parity checks. Python 3.10+, 3.12 preferred.
@@ -95,6 +97,32 @@ of the model you use; see [NOTICE](../NOTICE).
 ---
 
 ## 4. Install
+
+**From the app (no Xcode).** SteerLab.app ships the CLI it was built from, at
+`Contents/Helpers/steerlab-cli` — the same binary the app calls into, signed
+with the bundle and carrying its own copy of the Metal shader library. Give it
+a name on your `PATH` and you are done:
+
+```bash
+mkdir -p ~/.local/bin
+ln -s ~/SteerLab/SteerLab.app/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab-cli
+ln -s ~/SteerLab/SteerLab.app/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab
+export PATH="$HOME/.local/bin:$PATH"
+steerlab --version
+```
+
+The two links are the same binary under both spellings — `steerlab-cli` is its
+own name and the one refusals use; `steerlab` is the shorter one the rest of
+these docs type, and a **temporary** alias: that name is reserved for a future
+cross-platform client, which will take it over when it ships. A symlink is enough: the binary resolves its shaders and the
+app's bundled resources against its real location inside the bundle, not the
+link's, and invoking it in place by full path is identical. `steerlab --version`
+prints where each shipped resource family resolved, which is the quick answer to
+"is this install intact"; the app's code signature is the integrity guarantee,
+and there is deliberately no writable manifest inside a signed bundle.
+
+**From source (the developer path).** Optional, and the only one that needs
+Xcode 27:
 
 ```bash
 git clone <this repository> && cd <checkout>
@@ -110,18 +138,21 @@ shim at `~/.local/bin/steerlab` — which is why the installed CLI needs no
 environment variables, unlike running out of a build directory. Set
 `DEVELOPER_DIR` first if `xcode-select` points at an older Xcode.
 `steerlab install verify` re-hashes the installed tree against its own manifest
-and answers "is what I am running what was installed".
+and answers "is what I am running what was installed". It replaces the shim at
+`~/.local/bin/steerlab`, so run it rather than the symlink above if you want
+both.
 
 One macOS wrinkle the installer warns about: keychain access is granted per
 binary identity, so the first verb that actually *uses* a stored credential may
 prompt once for your Mac password. Run one interactively before pointing an
 unattended agent at the install.
 
-`./scripts/run-app.sh` builds and launches the macOS app; there is no signed
-installer yet. The app is the richest surface for authoring concepts, watching a
-dose-response sweep, and chatting under steering, but everything that matters
-for a paper is reproducible through the CLI — the app calls into the same
-engine, never the reverse.
+`scripts/build-app.sh` assembles the signed app — CLI included — from the same
+checkout; `./scripts/run-app.sh` builds and launches it as a plain developer
+binary instead, without the bundle. The app is the richest surface for authoring
+concepts, watching a dose-response sweep, and chatting under steering, but
+everything that matters for a paper is reproducible through the CLI — the app
+calls into the same engine, never the reverse.
 
 **The Python engine:**
 
@@ -143,9 +174,9 @@ dying. Regeneration and the cluster's site-owned-torch exception are in
 also drops a `steerlab-server` shim on your PATH.
 
 **Where to put things.** A `SteerLab/` folder in your home directory holds your
-workspaces, your private site library, and this checkout as siblings, so one
-directory moves, backs up, and is handed to an agent as a unit. One command
-materializes it:
+workspaces, your private site library, the app, and — if you have one — the
+checkout as siblings, so one directory moves, backs up, and is handed to an
+agent as a unit. One command materializes it:
 
 ```bash
 steerlab init                      # or: steerlab init --home /path/to/SteerLab
@@ -156,14 +187,15 @@ steerlab init                      # or: steerlab init --home /path/to/SteerLab
 ├── Workspaces/          study workspaces, one folder each, each its own git repo
 │   └── register-pilot/  one study's data
 ├── Sites/               your PRIVATE site library
+├── SteerLab.app/        the app, and the CLI it carries in Contents/Helpers/
 └── <checkout>/          the code checkout (this repository), under any name
 ```
 
 `init` creates `Workspaces/` and `Sites/` when they are absent and reports what
 was already there, so running it twice is a no-op that says so. It never deletes
-or overwrites anything, and it deliberately does nothing else: it does not clone
-or create the checkout, does not create a workspace, and does not change how a
-workspace root is resolved. The checkout's folder name is not fixed — a clone
+or overwrites anything, and it deliberately does nothing else: it does not move
+the app, does not clone or create the checkout, does not create a workspace, and
+does not change how a workspace root is resolved. The checkout's folder name is not fixed — a clone
 lands under whatever name you gave it, and `init` finds it by content rather
 than by name.
 

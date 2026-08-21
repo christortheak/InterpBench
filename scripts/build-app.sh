@@ -95,6 +95,47 @@
 # has a one-word remedy rather than a debugging session.
 #
 # ─────────────────────────────────────────────────────────────────────────────
+# THE BUNDLED CLI (Contents/Helpers/steerlab-cli)
+#
+# The distribution promise is "no Xcode required", and until this step the
+# only way to get `steerlab-cli` was `install-cli.sh`, which builds it with
+# xcodebuild. So the app now CARRIES the release binary and the docs point at
+# it; install-cli.sh becomes the developer path, not the user path.
+#
+# Three facts shape the layout, and all three were measured:
+#
+#   * BUNDLE IDENTITY. CFBundle makes the enclosing .app the main bundle only
+#     for an executable in Contents/MacOS/. From Contents/Helpers/,
+#     `Bundle.main` is the HELPER'S OWN DIRECTORY, so nothing in
+#     Contents/Resources is reachable through it. `CodeResources
+#     .enclosingAppBundle` derives the .app from the layout instead and probes
+#     its Contents/Resources — that seam is what makes this location work, and
+#     `steerlab-cli install version` prints the family-by-family proof.
+#   * METAL. MLX probes a COLOCATED mlx.metallib before any bundle lookup
+#     (the mechanism install-cli.sh rests on), and the helper's bundle lookup
+#     lands in Contents/Helpers. So the shader library is colocated THERE —
+#     the one deliberate duplicate in this bundle, and the reason GPU verbs
+#     work from the bundled CLI with no environment at all.
+#   * SIGNING. A Mach-O under Contents/ is nested code: it is signed
+#     explicitly, before the outer app, with the same hardened-runtime flags
+#     as the main executable, or `--verify --deep --strict` fails on it.
+#
+# The documented way to reach it is a symlink on PATH, and BOTH halves of that
+# were measured rather than hoped for. MLX's colocated lookup asks `dladdr`,
+# which reports the RESOLVED path, so the shaders are found through a symlink
+# (install-cli.sh's shim-not-symlink rule is about its own `bin/` layout, and
+# is not evidence about this one). CFBundle, in the other direction, reports
+# the path the process was LAUNCHED with, so a symlink would otherwise make
+# `Bundle.main` the symlink's directory — `CodeResources.executableDirectory`
+# is what closes that, and VERIFY below exercises the symlink shape, not just
+# the direct one.
+#
+# The helper is NOT stamped with a resource-manifest.json: `install stamp`
+# WRITES beside the binary, and the first write into a signed bundle breaks
+# the seal. `install verify` is therefore an install-cli.sh answer; the
+# bundle's own integrity answer is its code signature.
+#
+# ─────────────────────────────────────────────────────────────────────────────
 # NOTARIZATION — WHAT THE RESEARCHER RUNS NEXT
 #
 # Not run here: it needs an Apple Developer account, a Developer ID
@@ -145,6 +186,11 @@ PACKAGE_ONLY=0
 
 SCHEME="SteerLabApp"
 EXECUTABLE="SteerLabApp"
+# The headless runner, shipped inside the bundle so app users need no Xcode —
+# see "THE BUNDLED CLI" in the header.
+CLI_SCHEME="steerlab-cli"
+CLI_EXECUTABLE="steerlab-cli"
+HELPERS_DIR_NAME="Helpers"
 APP_NAME="SteerLab.app"
 INSTALL_DIR="$HOME/SteerLab"
 
@@ -294,10 +340,20 @@ if [ "$DO_BUILD" -eq 1 ]; then
     -destination 'platform=macOS' -configuration Release \
     -derivedDataPath "$DERIVED" >/dev/null \
     || die "the build failed — rerun the xcodebuild line without >/dev/null to see why" 3
+
+  # The same derived-data directory, so the CLI links the module graph the app
+  # build already produced — this is a link step, not a second full build.
+  step "Building $CLI_SCHEME (Release) — the CLI the bundle carries"
+  xcodebuild build -skipMacroValidation -scheme "$CLI_SCHEME" \
+    -destination 'platform=macOS' -configuration Release \
+    -derivedDataPath "$DERIVED" >/dev/null \
+    || die "the $CLI_SCHEME build failed — rerun the xcodebuild line without >/dev/null to see why" 3
 fi
 
 PRODUCTS="$DERIVED/Build/Products/Release"
 [ -x "$PRODUCTS/$EXECUTABLE" ] || die "no built $EXECUTABLE at $PRODUCTS" 4
+[ -x "$PRODUCTS/$CLI_EXECUTABLE" ] \
+  || die "no built $CLI_EXECUTABLE at $PRODUCTS — the bundle ships it (drop --no-build, or build the $CLI_SCHEME scheme into this derived-data directory)" 4
 CMLX="$PRODUCTS/mlx-swift_Cmlx.bundle"
 METALLIB="$CMLX/Contents/Resources/default.metallib"
 [ -f "$METALLIB" ] || die "no Metal shader library at $METALLIB (only Xcode produces it)" 4
@@ -365,6 +421,26 @@ if [ "$COLOCATE" -eq 1 ]; then
   cp "$METALLIB" "$CONTENTS/MacOS/mlx.metallib" || die "could not colocate mlx.metallib"
   echo "  colocated Contents/MacOS/mlx.metallib"
 fi
+
+# ── The bundled CLI ──────────────────────────────────────────────────────────
+# See "THE BUNDLED CLI" in the header for why each of these three lands here
+# rather than being reached through Contents/Resources. The colocated
+# mlx.metallib is NOT optional the way --colocate-metallib is for the app: the
+# helper's own bundle lookup resolves to Contents/Helpers, so this copy is the
+# only thing a GPU verb can find.
+step "Staging $HELPERS_DIR_NAME/$CLI_EXECUTABLE (the CLI the app ships)"
+HELPERS="$CONTENTS/$HELPERS_DIR_NAME"
+mkdir -p "$HELPERS" || die "could not create $HELPERS"
+cp "$PRODUCTS/$CLI_EXECUTABLE" "$HELPERS/$CLI_EXECUTABLE" || die "could not copy $CLI_EXECUTABLE"
+chmod +x "$HELPERS/$CLI_EXECUTABLE"
+cp "$METALLIB" "$HELPERS/mlx.metallib" || die "could not colocate the helper's mlx.metallib"
+# Resolved through Bundle.main by the packages that own them, which for a
+# helper means "beside the helper" — the same set install-cli.sh carries, and
+# 40 KB between them.
+for bundle in swift-transformers_Hub.bundle swift-crypto_Crypto.bundle; do
+  [ -d "$PRODUCTS/$bundle" ] && cp -R "$PRODUCTS/$bundle" "$HELPERS/$bundle"
+done
+printf '  %-16s %s\n' "$HELPERS_DIR_NAME" "$(du -sh "$HELPERS" | cut -f1)"
 
 # CodeResources families. The names are the raw values of
 # CodeResources.Family and MUST match, because a packaged build resolves them
@@ -511,13 +587,29 @@ else
   echo "  entitlements: none (spike verdict — see app-bundle/SteerLab.entitlements)"
 fi
 
-# Inside-out: nested bundles first, the app last, so each seal covers
-# already-signed content.
-for nested in "$RES"/*.bundle; do
+# Inside-out: nested bundles first, then the nested CLI, the app last, so each
+# seal covers already-signed content.
+for nested in "$RES"/*.bundle "$HELPERS"/*.bundle; do
   [ -e "$nested" ] || continue
   codesign "${SIGN_ARGS[@]}" -s "$IDENTITY" "$nested" 2>&1 | sed 's/^/  /' \
     || die "signing $(basename "$nested") failed" 6
 done
+# EVERYTHING under Contents/Helpers is nested code as far as codesign is
+# concerned — `Helpers` is one of the directory names its built-in nested-code
+# rules name, alongside MacOS, Frameworks, PlugIns and XPCServices — so the
+# shader library needs its own signature too, and the outer signature refuses
+# ("code object is not signed at all") until it has one. Measured: that is
+# exactly how the first version of this step failed. `mlx.metallib` is a
+# MetalLib executable and signs as a generic code object; it must be signed
+# BEFORE the helper binary and the app, like any other nested content.
+codesign "${SIGN_ARGS[@]}" -s "$IDENTITY" "$HELPERS/mlx.metallib" 2>&1 | sed 's/^/  /' \
+  || die "signing the helper's mlx.metallib failed" 6
+# The helper itself: same SIGN_ARGS as the main executable — same hardened
+# runtime, same timestamp policy, same entitlements decision — because it is
+# the same program graph, statically linked, and a weaker posture on the
+# helper would be the bundle's weakest link.
+codesign "${SIGN_ARGS[@]}" -s "$IDENTITY" "$HELPERS/$CLI_EXECUTABLE" 2>&1 | sed 's/^/  /' \
+  || die "signing $CLI_EXECUTABLE failed" 6
 codesign "${SIGN_ARGS[@]}" -s "$IDENTITY" \
   --identifier "$BUNDLE_ID" "$APP" 2>&1 | sed 's/^/  /' \
   || die "signing the app failed" 6
@@ -535,6 +627,7 @@ rm -rf "$STAGE"
 APP="$APP_FINAL"
 CONTENTS="$APP/Contents"
 RES="$CONTENTS/Resources"
+HELPERS="$CONTENTS/$HELPERS_DIR_NAME"
 
 # ── Verify ───────────────────────────────────────────────────────────────────
 if [ "$DO_VERIFY" -eq 1 ]; then
@@ -545,6 +638,38 @@ if [ "$DO_VERIFY" -eq 1 ]; then
 
   echo "  linked libraries (must be system-only — the graph links statically):"
   otool -L "$CONTENTS/MacOS/$EXECUTABLE" | tail -n +2 | sed 's/^/    /'
+
+  # The bundled CLI, run the way a user's symlink runs it: from the bundle,
+  # with no DYLD_* environment and from a cwd that is not the checkout. This
+  # is the check that would have caught the Contents/Helpers bundle-identity
+  # problem (Bundle.main is the helper's own directory, not the .app), so it
+  # asserts on the OUTPUT rather than merely on the exit code — `install
+  # version` prints the family-by-family resolution and the Metal answer.
+  # Through a SYMLINK, because that is what the docs tell people to make —
+  # and it is the shape that fails differently from a direct invocation (see
+  # "THE BUNDLED CLI"). The link lives in a scratch directory that is thrown
+  # away; nothing is installed on this machine by verifying.
+  echo "  bundled CLI ($HELPERS_DIR_NAME/$CLI_EXECUTABLE, reached by symlink):"
+  CLI_LOG="$OUTPUT/cli-check.log"
+  CLI_LINK_DIR="${TMPDIR:-/tmp}/steerlab-cli-check.$$"
+  mkdir -p "$CLI_LINK_DIR" || die "could not create $CLI_LINK_DIR"
+  ln -sf "$HELPERS/$CLI_EXECUTABLE" "$CLI_LINK_DIR/$CLI_EXECUTABLE"
+  if ( cd / && env -u DYLD_FRAMEWORK_PATH -u DYLD_LIBRARY_PATH -u DYLD_INSERT_LIBRARIES \
+        "$CLI_LINK_DIR/$CLI_EXECUTABLE" --version >"$CLI_LOG" 2>&1 ); then
+    sed 's/^/    /' "$CLI_LOG"
+  else
+    sed 's/^/    /' "$CLI_LOG" >&2
+    rm -rf "$CLI_LINK_DIR"
+    die "the bundled $CLI_EXECUTABLE would not run out of the assembled bundle" 6
+  fi
+  rm -rf "$CLI_LINK_DIR"
+  if grep -q "PROBLEMS:" "$CLI_LOG"; then
+    die "the bundled $CLI_EXECUTABLE cannot resolve every resource family (see $CLI_LOG) — Contents/Resources is not reachable from Contents/$HELPERS_DIR_NAME" 6
+  fi
+  grep -q "release mode" "$CLI_LOG" \
+    || die "the bundled $CLI_EXECUTABLE did not assert release mode — it is resolving out of a checkout on this machine, which a user's Mac will not have" 6
+  grep -q "mlx.metallib colocated" "$CLI_LOG" \
+    || die "the bundled $CLI_EXECUTABLE found no colocated mlx.metallib — GPU verbs would refuse to load shaders" 6
 
   # Gatekeeper. An ad-hoc or Apple Development signature FAILS here and that
   # is the expected, correct answer before notarization — report it, never
@@ -603,6 +728,8 @@ fi
 echo
 echo "SteerLab.app ready: $APP"
 echo "  $(du -sh "$APP" | cut -f1) total"
+echo "  CLI: $APP/Contents/$HELPERS_DIR_NAME/$CLI_EXECUTABLE"
+echo "       ln -s \"$APP/Contents/$HELPERS_DIR_NAME/$CLI_EXECUTABLE\" ~/.local/bin/steerlab-cli"
 if [ "$IDENTITY" = "-" ]; then
   echo "  signed ad-hoc — fine for local use, NOT distributable."
   echo "  For a shippable build: --identity \"Developer ID Application: … (TEAMID)\","

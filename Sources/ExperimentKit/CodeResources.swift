@@ -191,9 +191,65 @@ public enum CodeResources {
 
     // MARK: Bundle lookup
 
-    /// Resource roots a release build may carry, probed in order. Today just
-    /// the main bundle; Phase B's app target (and any future SwiftPM
-    /// `resources:` declaration providing `Bundle.module`) extends this.
+    /// The directory the running executable ACTUALLY lives in, symlinks
+    /// resolved.
+    ///
+    /// `Bundle.main` is derived from the path the process was launched WITH,
+    /// not from the file it ended up executing, so a symlink on `PATH` — the
+    /// documented way to reach the CLI inside the app bundle — makes
+    /// `Bundle.main.bundleURL` the SYMLINK'S directory. Measured on this
+    /// machine, not assumed: `~/.local/bin/steerlab-cli ->
+    /// SteerLab.app/Contents/Helpers/steerlab-cli` reports `~/.local/bin`.
+    /// (MLX's own colocated-shader lookup is unaffected — it asks `dladdr`,
+    /// which reports the resolved path — which is why the symlink is a
+    /// supported shape at all.)
+    ///
+    /// Every layout question below is therefore asked of this, with
+    /// `Bundle.main` kept as the fallback for a process that has no
+    /// executable URL at all.
+    static var executableDirectory: URL? {
+        guard let executable = Bundle.main.executableURL?.resolvingSymlinksInPath()
+        else { return nil }
+        return executable.deletingLastPathComponent().standardizedFileURL
+    }
+
+    /// The `.app` this process is running out of, when there is one — whether
+    /// it is the app's own executable or a HELPER nested beside it.
+    ///
+    /// CFBundle recognizes exactly one shape: an executable in
+    /// `Contents/MacOS/` makes the enclosing `.app` the main bundle. A helper
+    /// tool at `SteerLab.app/Contents/Helpers/steerlab-cli` matches nothing,
+    /// so `Bundle.main` becomes THE HELPER'S OWN DIRECTORY and
+    /// `Bundle.main.resourceURL` is that same directory — the app's real
+    /// `Contents/Resources` is not reachable from it at all. Measured, not
+    /// assumed: one binary run from `Contents/MacOS/` reports the `.app`; the
+    /// same binary run from `Contents/Helpers/` reports `Contents/Helpers`.
+    ///
+    /// So the enclosing bundle is derived from the layout instead, and the two
+    /// consumers below (`bundleCandidates`, `executableHomeCandidates`) ask
+    /// this rather than testing `pathExtension == "app"` themselves.
+    public static var enclosingAppBundle: URL? {
+        var probes: [URL] = []
+        if let directory = executableDirectory { probes.append(directory) }
+        probes.append(Bundle.main.bundleURL.standardizedFileURL)
+        for probe in probes {
+            // The app's own executable: `Bundle.main.bundleURL` IS the .app.
+            if probe.pathExtension == "app" { return probe }
+            // A helper: …/SteerLab.app/Contents/<helper dir> → …/SteerLab.app
+            let contents = probe.deletingLastPathComponent()
+            guard contents.lastPathComponent == "Contents" else { continue }
+            let app = contents.deletingLastPathComponent()
+            if app.pathExtension == "app" { return app.standardizedFileURL }
+        }
+        return nil
+    }
+
+    /// Resource roots a release build may carry, probed in order: the main
+    /// bundle, then the real executable's own directory (which differs only
+    /// when the binary was reached through a symlink), then the enclosing
+    /// `.app`'s `Contents/Resources` when this process is a bundled helper. A
+    /// future SwiftPM `resources:` declaration providing `Bundle.module`
+    /// extends this again.
     static var bundleCandidates: [URL] {
         var candidates: [URL] = []
         if let override = bundleOverrideForTesting {
@@ -201,9 +257,22 @@ public enum CodeResources {
             // a staged bundle missing a family must behave exactly like a
             // damaged install, not fall through to this build's real bundle.
             candidates.append(override)
-        } else if let resources = Bundle.main.resourceURL {
-            candidates.append(resources)
+            return candidates
         }
+        func offer(_ url: URL?) {
+            guard let url = url?.standardizedFileURL, !candidates.contains(url)
+            else { return }
+            candidates.append(url)
+        }
+        offer(Bundle.main.resourceURL)
+        // A symlinked install: `resourceURL` above is the symlink's directory,
+        // so this is the one that finds anything colocated with the binary —
+        // an install-cli.sh tree's `resource-manifest.json` included.
+        offer(executableDirectory)
+        // The bundled `steerlab-cli` (Contents/Helpers/) — see
+        // `enclosingAppBundle`. LAST, so anything genuinely colocated with the
+        // helper still wins.
+        offer(enclosingAppBundle?.appending(path: "Contents/Resources"))
         return candidates
     }
 
@@ -379,13 +448,13 @@ public enum CodeResources {
     /// The home folders rules 2–3 search, in order and de-duplicated: the
     /// running `.app`'s parent directory, then `~/SteerLab`. A bare SwiftPM
     /// executable (the CLI, the dev app) contributes no bundle candidate —
-    /// rule 1 already covers it.
+    /// rule 1 already covers it. The bundled helper CLI resolves the SAME
+    /// parent the app does, through `enclosingAppBundle`.
     static var executableHomeCandidates: [URL] {
         if let override = executableHomesOverrideForTesting { return override }
         var candidates: [URL] = []
-        let bundleURL = Bundle.main.bundleURL.standardizedFileURL
-        if bundleURL.pathExtension == "app" {
-            candidates.append(bundleURL.deletingLastPathComponent())
+        if let app = enclosingAppBundle {
+            candidates.append(app.deletingLastPathComponent())
         }
         let home = HomeLayout.defaultHome
         if !candidates.contains(home) { candidates.append(home) }
