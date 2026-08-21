@@ -52,7 +52,8 @@ done
 if [[ ! -x "$PRODUCTS/steerlab-cli" ]]; then
   echo "no built steerlab-cli at $PRODUCTS/steerlab-cli."
   echo "Build it first: xcodebuild build -skipMacroValidation -scheme steerlab-cli \\"
-  echo "  -destination 'platform=macOS' -derivedDataPath .deriveddata.nosync"
+  echo "  -destination 'platform=macOS' CLANG_COVERAGE_MAPPING=NO \\"
+  echo "  -derivedDataPath .deriveddata.nosync"
   exit 2
 fi
 
@@ -63,8 +64,9 @@ trap cleanup EXIT
 PREFIX="$WORK/prefix"
 WORKSPACE="$WORK/workspace"
 # An unrelated working directory: not the checkout, not the install, not the
-# workspace. Writable, because the Debug build's coverage instrumentation
-# writes `default.profraw` into cwd and a read-only cwd turns that into noise
+# workspace. Writable, because a binary built before CLANG_COVERAGE_MAPPING=NO
+# landed (reachable via --from-products) carries coverage instrumentation that
+# writes `default.profraw` into cwd, and a read-only cwd turns that into noise
 # that reads like a failure.
 UNRELATED="$WORK/elsewhere"
 # A scratch HOME for every case that does not need the model cache. Two

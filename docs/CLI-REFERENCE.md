@@ -40,9 +40,12 @@ the known gaps and traps.
 ### 1.1 Invocation
 
 ```bash
-# Swift — build with xcodebuild first (SwiftPM cannot build the Metal shaders)
+# Swift — build with xcodebuild first (SwiftPM cannot build the Metal shaders).
+# CLANG_COVERAGE_MAPPING=NO: without it the auto-generated scheme instruments
+# even plain builds with coverage (the binary then sheds default.profraw files).
 xcodebuild build -skipMacroValidation -scheme steerlab-cli \
-  -destination 'platform=macOS' -derivedDataPath .deriveddata.nosync
+  -destination 'platform=macOS' CLANG_COVERAGE_MAPPING=NO \
+  -derivedDataPath .deriveddata.nosync
 DYLD_FRAMEWORK_PATH=.deriveddata.nosync/Build/Products/Debug \
   .deriveddata.nosync/Build/Products/Debug/steerlab-cli <verb> …
 

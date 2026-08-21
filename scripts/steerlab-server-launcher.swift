@@ -91,7 +91,12 @@ if let buildReason {
         xcodebuild,
         [
             "build", "-skipMacroValidation", "-scheme", "steerlab-cli",
-            "-destination", "platform=macOS,arch=arm64", "-derivedDataPath", derivedData.path,
+            "-destination", "platform=macOS,arch=arm64",
+            // The auto-generated scheme gathers coverage even for plain
+            // builds (the package has test targets); an instrumented CLI
+            // drops default.profraw into its cwd.
+            "CLANG_COVERAGE_MAPPING=NO",
+            "-derivedDataPath", derivedData.path,
         ],
         cwd: projectRoot)
     if build.status != 0 || !FileManager.default.isExecutableFile(atPath: cli.path) {

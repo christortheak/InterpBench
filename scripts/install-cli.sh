@@ -81,10 +81,12 @@ LIBEXEC="$PREFIX/libexec/steerlab"
 BINARY_NAME="steerlab-cli"
 
 # Where the installed binary is exercised during the install: a directory with
-# nothing to do with the checkout, which is the condition under test, but a
-# WRITABLE one — the Debug build carries LLVM coverage instrumentation and
-# writes `default.profraw` into its cwd, so running it from `/` produces a
-# stream of profile-writer errors that look like install failures and are not.
+# nothing to do with the checkout, which is the condition under test. Kept
+# WRITABLE as belt-and-braces: builds made before CLANG_COVERAGE_MAPPING=NO
+# landed (still reachable via --from-products / --no-build) carry LLVM
+# coverage instrumentation and write `default.profraw` into their cwd, so a
+# read-only cwd would turn them into a stream of profile-writer errors that
+# look like install failures and are not.
 NEUTRAL_CWD="${TMPDIR:-/tmp}"
 
 # ── --verify: check the live install and say nothing else ─────────────────
@@ -110,8 +112,13 @@ if (( BUILD )); then
     export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
   fi
   echo "Building $BINARY_NAME (xcodebuild — SwiftPM cannot build the Metal shaders)…"
+  # CLANG_COVERAGE_MAPPING=NO: the auto-generated scheme of a package with
+  # test targets gathers coverage even for plain `build` actions, which would
+  # instrument the installed binary (__llvm_prf sections + default.profraw
+  # droppings in its cwd). The test lane keeps its own coverage.
   if ! xcodebuild build -skipMacroValidation -scheme steerlab-cli \
       -destination 'platform=macOS' \
+      CLANG_COVERAGE_MAPPING=NO \
       -derivedDataPath "$PROJECT_ROOT/.deriveddata.nosync" >/dev/null; then
     echo "the build failed — rerun the xcodebuild line above to see why"
     exit 3
