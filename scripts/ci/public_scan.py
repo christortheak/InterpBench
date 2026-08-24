@@ -52,8 +52,11 @@ PATH_PATTERN = re.compile(
 # Adjacent-string split so this file's own bytes never carry the contiguous
 # token it hunts (the export-time scanner would flag the definition itself).
 ICLOUD_PATTERN = re.compile(r"com~apple~" r"CloudDocs")
+# `git@` is exempt: it is the well-known SSH user of every git host
+# (git@github.com:owner/repo.git — the scp-form remote URL the update
+# check parses), never a person's address.
 EMAIL_PATTERN = re.compile(
-    rf"\b(?!{_FAKE_USERS}@)[\w.+-]+@"
+    rf"\b(?!{_FAKE_USERS}@)(?!git@)[\w.+-]+@"
     r"(?!(?:[\w-]+\.)*(?:example|test|invalid|localhost)\b)"
     r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 
@@ -68,6 +71,13 @@ def tracked_files(root: str) -> list[str]:
     out = subprocess.run(
         ["git", "ls-files", "-z"], cwd=root, check=True,
         capture_output=True).stdout
+    # Untracked-but-not-ignored files too: a NEW file scans locally the
+    # same way it will scan in CI after it is committed. (Learned the hard
+    # way — two fresh files passed a local scan untracked, then failed the
+    # CI lane on the very next push.)
+    out += subprocess.run(
+        ["git", "ls-files", "-z", "--others", "--exclude-standard"],
+        cwd=root, check=True, capture_output=True).stdout
     return [p.decode("utf-8", "replace") for p in out.split(b"\0") if p]
 
 
