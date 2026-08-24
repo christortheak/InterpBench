@@ -79,11 +79,12 @@ the parity check.
 
 There is a **third** command line, new and not yet covered by the generated
 regions of this document: `steerlab`, a cross-platform Python client that
-**authors a local workspace** — `Server/steerlab_server/client_cli.py`,
-installed by the same package as `steerlab-server`. It is the Phase-1b
-deliverable of the portability program; `docs/PORTABILITY-CONTRACTS.md` §7 is
-its reference, and this note exists so a reader of *this* document is not left
-believing there are only two.
+**authors a local workspace** and **hands hash-pinned bundles to a runner** —
+`Server/steerlab_server/client_cli.py`, installed by the same package as
+`steerlab-server`. It is the Phase-1b + Phase-2 deliverable of the portability
+program; `docs/PORTABILITY-CONTRACTS.md` §7 and §8 are its reference, and this
+note exists so a reader of *this* document is not left believing there are only
+two.
 
 What it is, in one table:
 
@@ -91,7 +92,7 @@ What it is, in one table:
 |---|---|---|
 | authors a workspace | **yes**, the local one | no — Mac-authority refusals, unchanged |
 | loads a model / executes verbs | no | yes |
-| talks to a runner | no (Phase 2) | it *is* the runner |
+| talks to a runner | **yes** (`runner …`, Phase 2) | it *is* the runner |
 | needs torch | no (see the G7 caveat below) | yes |
 
 ```bash
@@ -113,16 +114,68 @@ same exit codes, same `error.code` / `error.repairAction`. Verb families:
 `experiment` (create, attach, declare-condition, remove-condition,
 set-protocol, pin-revision, set-style-taxonomy, pin-sae-candidates, duplicate,
 verify, freeze, list), `concept import`, `bundle` (package, inspect, import),
-plus `--version`. `steerlab <family> --help` prints the roster; the workspace
-comes from `--root` or `$STEERLAB_WORKSPACE` and there is **no default**.
+`runner` (below), plus `--version`. `steerlab <family> --help` prints the
+roster; the workspace comes from `--root` or `$STEERLAB_WORKSPACE` and there is
+**no default** — except for the `runner` family, which addresses a remote
+engine and names its local paths explicitly, so it runs without one (a named
+workspace is still honoured and still reported in the envelope).
 
-Two traps worth knowing before you rely on it:
+#### The `runner` family (Phase 2)
+
+Handing a frozen study to an engine and bringing the evidence home. Every verb
+takes `--runner <url>`; none of them authors anything.
+
+```bash
+export STEERLAB_RUNNER_TOKEN=…                # or: --token-file <path>
+steerlab runner capabilities --runner http://127.0.0.1:8080
+steerlab runner upload runs/…/study.run-bundle.tar.gz --runner <url>
+steerlab runner submit --runner <url> \
+    --bundle-path <the path upload printed> \
+    --bundle-sha  <the digest upload printed> \
+    --verb run [--executor local|slurm] [--target-root <dir>] [--dry-run]
+steerlab runner jobs [<job-id>] [--cancel] --runner <url>
+steerlab runner logs <job-id> [--follow] --runner <url>
+steerlab runner evidence <job-id> --out <file.tar.gz> --runner <url>
+steerlab bundle import <file.tar.gz> --sha256 <digest>   # the separate step
+```
+
+| verb | route(s) it speaks | notes |
+|---|---|---|
+| `runner capabilities` | `GET /api/info` (+ `GET /api/capabilities` as fallback) | the runner's `engineVersion`, its artifact root, its devices and capability snapshot. Warns when the runner's root looks like a source checkout |
+| `runner upload <bundle>` | `POST /api/bundles/upload` | streams the archive; **refuses** if the runner reports a different sha256 than the client computed. Prints the staged path and the digest — the two things `submit` wants |
+| `runner submit` | `POST /api/bundles/inspect`, then `POST /api/studies/submit-bundle` | `--bundle-sha` is checked against the runner's own inspect of `--bundle-path` **before** anything is submitted. Reports the job id, the runner's identity, and the digest |
+| `runner jobs [<id>]` | `GET /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel` | `--cancel` needs an id — this client will not cancel a runner's whole queue |
+| `runner logs <id>` | `GET /api/jobs/{id}` (`logTail`), `GET /api/jobs/{id}/stream` with `--follow` | the default is a **tail** and says so; `--follow` streams until the job is terminal |
+| `runner evidence <id> --out <file>` | `GET /api/bundles/download` | downloads to a temp path beside `--out` (`--temp` overrides), verifies the outer sha256 the job record reported, then moves. **Does not import** — it prints the exact `steerlab bundle import … --sha256 …` |
+
+Connection flags, identical on all six: `--runner <url>`, `--token-file
+<path>`, `--timeout <seconds>`, `--ca-bundle <path>`.
+
+Five traps worth knowing before you rely on it:
 
 - `declare-condition --alpha-units norm|raw` is **required**, baselines
   included — the same refusal, word for word, that the Mac gives (§3.3, G6).
 - `experiment verify` and `experiment freeze` still import torch today
   (gap **G7**), so a torch-free install can author and declare but not yet
   freeze. `pip install -e "Server[runner]"` closes it for now.
+- **There is no `--token` flag, on any runner verb, deliberately.** argv is
+  readable by every process on a shared login node. The token comes from
+  `$STEERLAB_RUNNER_TOKEN` or `--token-file <path>` (a path, not a secret), and
+  it is never written into the workspace or into any envelope — documents carry
+  only the presence boolean `tokenPresent`. Note the variable is the
+  **client's**, not the engine's `STEERLAB_AUTH_TOKEN`.
+- **`runner submit` is not idempotent — never retry it blindly.** It creates a
+  job and, on Slurm, spends an allocation. A timeout there means "run `runner
+  jobs`", not "submit again". Upload and evidence-download *are* safe to retry.
+  Nothing in this family retries anything on its own.
+- **`--out` on `runner evidence` (and on `bundle package`) is the verb's
+  argument, not the envelope's destination.** Every other verb uses `--out
+  <file>` to write the JSON document; on these two the declaration wins, so
+  `--out` names the archive. Get the document from stdout under `--json`.
+
+There is deliberately no composite "submit and wait" verb: upload → submit →
+poll → download → import are six explicit, separately refusable acts, and
+orchestrating them is a later phase (`PORTABILITY-CONTRACTS.md` §8.7).
 
 **Do not carry a `~/.local/bin/steerlab` symlink to the Swift CLI once you
 install this.** `AGENTS.md` step 1 calls that alias temporary and reserved for

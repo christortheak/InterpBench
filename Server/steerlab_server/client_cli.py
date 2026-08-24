@@ -11,11 +11,28 @@ A different entry point with a different responsibility from
   changes that: those refusals stay exactly as they are.
 * ``steerlab`` is the **client's** command line. It authors the LOCAL
   workspace it is pointed at — create, attach, declare an arm, freeze — on any
-  platform, with no model, no torch and no GPU. It never talks to a runner:
-  the authoring verbs take no server URL and there is structurally no flag on
-  them that could hold one (pinned by
+  platform, with no model, no torch and no GPU. The AUTHORING verbs take no
+  server URL and there is structurally no flag on them that could hold one
+  (pinned by
   ``tests/test_client_cli.py::test_no_authoring_verb_accepts_a_server_locator``).
-  Submitting to a remote runner is Phase 2 and is not in this module.
+
+**Phase 2 added the ``runner`` family** — and did it as a separate family for
+exactly that reason. Talking to a runner is now possible; talking to one
+*while authoring* still is not. ``runner`` uploads a hash-pinned bundle,
+submits it, watches the job, and brings the evidence home verified
+(:mod:`steerlab_server.client.runner` is the adapter; the routes it speaks are
+listed there). It authors nothing, and no authoring verb grew a locator flag
+to reach it.
+
+**The token discipline, because it is the part that is easy to get wrong.**
+A runner in token mode wants a bearer token. This client takes it from
+``$STEERLAB_RUNNER_TOKEN`` or ``--token-file <path>`` and from nowhere else —
+there is **no ``--token`` flag** and there will not be one: argv is readable by
+every process on the machine (``ps``), lands in shell history, and is copied
+into job records by well-meaning wrappers. It is never written into the
+workspace, and it never appears in an envelope, a log line, or an error
+message; the only thing any document says about it is the presence boolean
+``tokenPresent``.
 
 Phase 1a closed the gaps that made this possible (G1, G4, G6 —
 ``docs/PORTABILITY-CONTRACTS.md`` §5): a study authored **entirely** on this
@@ -84,6 +101,15 @@ ROLE = "client"
 #: envelope's ``workspace`` field reads ``paths.project_root()``.
 WORKSPACE_ENV = "STEERLAB_WORKSPACE"
 
+#: The environment variable the ``runner`` family reads the bearer token from
+#: when ``--token-file`` is absent. Deliberately NOT the engine's
+#: ``STEERLAB_AUTH_TOKEN``: a machine that runs both must be able to serve a
+#: local engine with one token and reach a remote runner with another, and an
+#: adapter that silently borrowed the local server's secret would send it to a
+#: host the operator never authorized. There is no ``--token`` flag — see the
+#: module docstring.
+RUNNER_TOKEN_ENV = "STEERLAB_RUNNER_TOKEN"
+
 
 # --- the declared verb surface -------------------------------------------------
 #
@@ -94,6 +120,12 @@ WORKSPACE_ENV = "STEERLAB_WORKSPACE"
 # cross-engine twin literal (`CLIEnvelopeParityTests` pins its exact fifteen
 # labels), and appending client verbs to it would assert the engine grew verbs
 # it does not have.
+
+#: The connection surface every ``runner`` verb shares. Declared once so all
+#: six spell it identically — a family where one verb says ``--token-file``
+#: and another says ``--tokenfile`` is a family nobody can use from memory.
+_RUNNER_FLAGS: frozenset = frozenset({"--runner", "--token-file", "--timeout",
+                                      "--ca-bundle"})
 
 CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     VerbSpec("experiment", "create", positional="<name>",
@@ -152,12 +184,77 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
              purpose="Verify a bundle and extract it into this workspace.",
              boolean_flags=frozenset({"--overwrite"}),
              value_flags=frozenset({"--target-root", "--sha256"})),
+
+    # --- runner (Phase 2) ---------------------------------------------------
+    #
+    # Every verb here takes `--runner <url>`; none of them authors anything.
+    # `_RUNNER_FLAGS` is the connection surface, identical on all six so a
+    # caller learns it once: WHERE (`--runner`), WHO (`--token-file`, or
+    # $STEERLAB_RUNNER_TOKEN), HOW LONG (`--timeout`), and WHAT TRUST
+    # (`--ca-bundle`). There is deliberately no flag that DISABLES TLS
+    # verification: the adapter supports it for a library caller who must,
+    # but turning off certificate checking should take more than one word on
+    # a command line.
+    VerbSpec("runner", "capabilities",
+             purpose="Ask a runner what it is and what it can execute.",
+             value_flags=_RUNNER_FLAGS,
+             required_flags=frozenset({"--runner"})),
+    VerbSpec("runner", "upload", positional="<bundle.tar.gz>",
+             purpose="Upload a run bundle to a runner and verify it arrived "
+                     "byte-identical.",
+             value_flags=_RUNNER_FLAGS,
+             required_flags=frozenset({"--runner"})),
+    VerbSpec("runner", "submit",
+             purpose="Submit an already-uploaded bundle to a runner for "
+                     "execution.",
+             boolean_flags=frozenset({"--dry-run", "--no-evidence"}),
+             value_flags=_RUNNER_FLAGS | frozenset({
+                 "--bundle-path", "--bundle-sha", "--verb", "--executor",
+                 "--target-root", "--dtype", "--device", "--parallel"}),
+             required_flags=frozenset({"--runner", "--bundle-path",
+                                       "--bundle-sha", "--verb"})),
+    VerbSpec("runner", "jobs", positional="[<job-id>]",
+             purpose="List a runner's jobs, read one, or cancel one.",
+             boolean_flags=frozenset({"--cancel"}),
+             value_flags=_RUNNER_FLAGS,
+             required_flags=frozenset({"--runner"})),
+    VerbSpec("runner", "logs", positional="<job-id>",
+             purpose="Read a job's log lines from a runner.",
+             boolean_flags=frozenset({"--follow"}),
+             value_flags=_RUNNER_FLAGS,
+             required_flags=frozenset({"--runner"})),
+    VerbSpec("runner", "evidence", positional="<job-id>",
+             purpose="Download a finished job's evidence bundle and verify "
+                     "its outer digest.",
+             value_flags=_RUNNER_FLAGS | frozenset({"--out", "--temp",
+                                                    "--max-bytes"}),
+             required_flags=frozenset({"--runner", "--out"})),
 )
 
 _SPECS_BY_LABEL = {spec.label: spec for spec in CLIENT_VERB_SPECS}
 
 #: Families this binary dispatches, in the order ``--help`` prints them.
-FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle")
+FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "runner")
+
+#: The families that AUTHOR — the Phase-1b surface. The structural contract
+#: "no authoring verb declares a flag that could hold a server locator" is
+#: iterated over exactly these
+#: (``test_client_cli.py::test_no_authoring_verb_accepts_a_server_locator``).
+#: ``runner`` is excluded because addressing a runner is its entire job; it is
+#: a SEPARATE family precisely so the exclusion is a line in a table rather
+#: than a judgement call about a flag name.
+AUTHORING_FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle")
+
+#: The family that talks to a runner and authors nothing.
+RUNNER_FAMILY = "runner"
+
+#: Families that run without a workspace when none is named. The runner verbs
+#: address a REMOTE engine and name their local paths explicitly (the bundle
+#: to upload, the file to download into), so demanding a workspace to ask a
+#: runner what it is would be ceremony. A workspace IS resolved when one is
+#: named, so the envelope's ``workspace`` field stays truthful and a relative
+#: path still means what it looks like.
+WORKSPACE_OPTIONAL_FAMILIES: frozenset = frozenset({RUNNER_FAMILY})
 
 #: The global flag that names the workspace. Declared here rather than on each
 #: spec because it is lifted before the family is chosen — every verb takes it,
@@ -171,23 +268,36 @@ METAVARS: dict = {
     "--alpha-units": "<norm|raw>",
     "--artifact": "<runs/<run>/<name>>",
     "--band-width": "<k>",
+    "--bundle-path": "<runner-side-path>",
+    "--bundle-sha": "<digest>",
+    "--ca-bundle": "<path>",
     "--corpus": "<a,b,c>",
     "--description": "<text>",
+    "--device": "<cuda|cpu|mps>",
+    "--dtype": "<auto|float16|bfloat16|float32>",
     "--eval-run": "<run-dir>",
+    "--executor": "<local|slurm>",
     "--file": "<path>",
+    "--max-bytes": "<n>",
     "--method": "<method>",
     "--model": "<id>",
     "--out": "<file>",
+    "--parallel": "<n>",
     "--pool-from": "<token-index>",
     "--reference": "<stories-concept>",
     "--revision": "<commit>",
     "--root": "<dir>",
+    "--runner": "<url>",
     "--set": "<key>=<json>",
     "--sha256": "<digest>",
     "--side": "<positive|negative>",
     "--slots": "<concept>:<layer>:<alpha>[,…]",
     "--source-concept": "<concept>",
     "--target-root": "<dir>",
+    "--temp": "<path>",
+    "--timeout": "<seconds>",
+    "--token-file": "<path>",
+    "--verb": "<run|sweep|validate|…>",
 }
 
 
@@ -216,6 +326,15 @@ USAGE_CODE = "usage"
 #: roster". Deliberately NOT the engine's `macAuthorityVerb` — that code means
 #: "the verb exists, elsewhere", and nothing here redirects.
 UNKNOWN_VERB_CODE = "unknownVerb"
+#: A ``runner`` verb needed something about the CONNECTION that was not
+#: supplied — no ``--runner``, an unreadable token file. Distinct from
+#: `usage` because the repair names an environment variable or a file rather
+#: than a flag value.
+RUNNER_USAGE_CODE = "runnerUsage"
+#: A finished job the client was asked for evidence from packaged none. Not
+#: `notFound` (the JOB was found) and not a failure (nothing broke): the run
+#: really has no bundle to bring home.
+NO_EVIDENCE_CODE = "evidenceNotPackaged"
 
 
 class ClientRefusal(Exception):
@@ -225,15 +344,24 @@ class ClientRefusal(Exception):
     :func:`_envelope_for_exception`; this is for the refusals that belong to
     the CLIENT — an unnamed workspace, a flag value outside its vocabulary —
     which have no module-level exception to carry them.
+
+    ``payload`` is the material of the envelope's ``result`` on a refusal. It
+    exists for the runner verbs, whose declines carry facts a caller acts on
+    (the two digests of a mismatch, which runner answered, the job id) — and
+    it is the reason :func:`_envelope_for_exception` needs no import from
+    :mod:`steerlab_server.client.runner`: the runner handler translates its
+    own exceptions into this one, so the authoring paths never pull httpx to
+    build a refusal document.
     """
 
     def __init__(self, *, code: str, reason: str, repair_action: str,
-                 state: str = "blocked") -> None:
+                 state: str = "blocked", payload: dict | None = None) -> None:
         super().__init__(reason)
         self.code = code
         self.reason = reason
         self.repair_action = repair_action
         self.state = state
+        self.payload = dict(payload or {})
 
 
 # --- parsing -------------------------------------------------------------------
@@ -326,7 +454,17 @@ def parse(family: str, args: list) -> Invocation:
             json_mode = True
             index += 1
             continue
-        if token == OUT_FLAG:
+        if token == OUT_FLAG and OUT_FLAG not in spec.value_flags:
+            # `--out` is the envelope's destination — EXCEPT on the two verbs
+            # that declare it as their own argument (`bundle package --out
+            # <archive>`, `runner evidence --out <file>`). Before this the
+            # global branch ran first unconditionally, so those verbs' `--out`
+            # never reached `invocation.flags` at all: the flag silently wrote
+            # the DOCUMENT to the path and the verb used its default output.
+            # A declared flag that quietly does something else is worse than a
+            # missing one, so the declaration wins. Those two verbs' envelope
+            # still travels on stdout under `--json`; they simply have no
+            # second spelling for "write the document to a file".
             if nxt is None or nxt.startswith("--"):
                 raise UsageError(f"{OUT_FLAG} (needs a file path)", spec.label,
                                  spec.declared_flags)
@@ -458,12 +596,17 @@ def help_text(family: str | None = None, verb: str | None = None) -> str:
         "",
         f"{PROGRAM} is the cross-platform CLIENT: it authors the LOCAL "
         "workspace it is",
-        "pointed at. It runs no model and submits to no runner. The engine's "
-        "command",
-        "line is `steerlab-server`.",
+        "pointed at, and hands hash-pinned bundles to a runner that executes "
+        "them.",
+        "It runs no model itself. The engine's command line is "
+        "`steerlab-server`.",
         "",
         f"The workspace comes from {ROOT_FLAG} <dir> or ${WORKSPACE_ENV}; "
         "there is no default.",
+        f"The {RUNNER_FAMILY} verbs take {'--runner'} <url> and read their "
+        f"bearer token from",
+        f"${RUNNER_TOKEN_ENV} or --token-file <path> — never from a flag "
+        "(argv is public).",
         "",
     ]
     for name in FAMILIES:
@@ -1041,7 +1184,402 @@ def _bundle(invocation: Invocation) -> CLIResult:
         repair_action=f"{PROGRAM} {spec.family} {HELP_FLAG}")
 
 
-HANDLERS = {"experiment": _experiment, "concept": _concept, "bundle": _bundle}
+# --- verbs: runner (Phase 2) ---------------------------------------------------
+
+
+def _runner_token(invocation: Invocation) -> str | None:
+    """The bearer token for this invocation, from a FILE or the environment.
+
+    Two sources, in that order, and no third. There is no ``--token`` flag:
+    argv is world-readable through ``ps`` on a shared login node, it lands in
+    shell history, and wrappers copy it into job records. ``--token-file``
+    keeps the secret in a file whose permissions the operator controls;
+    ``$STEERLAB_RUNNER_TOKEN`` keeps it in the process that already has it.
+
+    A world- or group-readable token file is announced on stderr and still
+    used — the same call the engine's serve-time posture makes
+    (``api/posture.hydrate_token``): refusing would strand a caller whose
+    umask is the problem, and saying nothing would let a readable secret stay
+    readable forever.
+    """
+    path = invocation.one("--token-file")
+    if path is None:
+        return (os.environ.get(RUNNER_TOKEN_ENV) or "").strip() or None
+    expanded = os.path.expanduser(path)
+    try:
+        with open(expanded, encoding="utf-8") as handle:
+            raw = handle.read()
+    except OSError as exc:
+        raise ClientRefusal(
+            code="notFound", state="notFound",
+            reason=f"could not read the token file {path!r}: {exc.strerror}",
+            repair_action=(
+                "point --token-file at a readable file holding ONLY the "
+                f"token, or drop the flag and export {RUNNER_TOKEN_ENV}. The "
+                "runner writes its own token to STEERLAB_AUTH_TOKEN_FILE "
+                "(default ~/.steerlab-token) on the SERVER — copy it from "
+                "there over a channel that is not this one.")) from None
+    token = raw.strip()
+    if not token:
+        raise ClientRefusal(
+            code=RUNNER_USAGE_CODE,
+            reason=f"the token file {path!r} is empty",
+            repair_action=("write the bearer token into it, or drop "
+                           f"--token-file and export {RUNNER_TOKEN_ENV}"))
+    try:
+        import stat
+        mode = stat.S_IMODE(os.stat(expanded).st_mode)
+        if mode & 0o077:
+            sys.stderr.write(
+                f"warning: token file {expanded} is mode {mode:04o} — other "
+                "users on this machine can read your bearer token "
+                f"(repair: chmod 600 {expanded})\n")
+    except OSError:      # pragma: no cover - stat succeeded to read it above
+        pass
+    return token
+
+
+def _runner_float(invocation: Invocation, flag: str, default: float) -> float:
+    raw = invocation.one(flag)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if value <= 0:
+        raise ClientRefusal(
+            code=USAGE_CODE,
+            reason=f"{flag} expects a positive number of seconds — got {raw!r}",
+            repair_action=f"{flag} 60")
+    return value
+
+
+def _runner_int(invocation: Invocation, flag: str,
+                default: int | None) -> int | None:
+    raw = invocation.one(flag)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ClientRefusal(
+            code=USAGE_CODE,
+            reason=f"{flag} expects an integer ≥ 1 — got {raw!r}",
+            repair_action=f"{flag} 1")
+    return value
+
+
+def _job_row(record: dict) -> dict:
+    """One listing row for one job. The full record is large (a capability
+    snapshot, a log tail, a whole result); a LIST wants the columns a caller
+    scans, and the single-job form still returns everything."""
+    return {"id": record.get("id"), "kind": record.get("kind"),
+            "status": record.get("status"), "executor": record.get("executor"),
+            "executorJobID": record.get("executorJobID"),
+            "createdAt": record.get("createdAt"),
+            "finishedAt": record.get("finishedAt"),
+            "cancellationRequested": record.get("cancellationRequested")}
+
+
+def _runner(invocation: Invocation) -> CLIResult:
+    """The runner verbs. Every call is a route that already exists in
+    ``api/routes.py``; :mod:`steerlab_server.client.runner` holds the mapping
+    and both integrity checks.
+
+    The one thing to know reading this function: **nothing here ever puts the
+    token in a document.** ``common`` below is what every payload starts from,
+    and the only thing it says about the credential is whether there was one.
+    """
+    from .client import runner as runner_api
+
+    spec = invocation.spec
+    base_url = invocation.one("--runner")
+    if not base_url:
+        raise ClientRefusal(
+            code=RUNNER_USAGE_CODE,
+            reason=f"{spec.label} needs --runner <url>: which engine?",
+            repair_action=(
+                f"{PROGRAM} {spec.family} {spec.verb} --runner "
+                "http://127.0.0.1:8080 …  (the port every `serve` surface "
+                "defaults to)"))
+
+    token = _runner_token(invocation)
+    ca_bundle = invocation.one("--ca-bundle")
+    client = runner_api.RunnerClient(
+        base_url=base_url, token=token,
+        timeout=_runner_float(invocation, "--timeout",
+                              runner_api.DEFAULT_TIMEOUT),
+        verify=ca_bundle if ca_bundle else True)
+    #: What EVERY runner payload starts from. Presence, never the value.
+    common = {"runner": client.base_url, "tokenPresent": client.has_token}
+    try:
+        return _runner_verb(client, invocation, common)
+    except runner_api.RunnerError as exc:
+        # Translated here rather than in `_envelope_for_exception` so the
+        # authoring paths never import this module (and therefore httpx) to
+        # build a refusal document — the light-import contract, §7.
+        raise ClientRefusal(
+            code=exc.code, reason=exc.reason,
+            repair_action=exc.repair_action, state=exc.state,
+            payload={**common, **exc.detail}) from exc
+    finally:
+        client.close()
+
+
+def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
+    spec = invocation.spec
+    verb = spec.verb
+    args = invocation.positionals
+
+    if verb == "capabilities":
+        document = client.info()
+        identity = client.identity(document)
+        # `/api/info` embeds the same snapshot `/api/capabilities` returns, so
+        # the common case is ONE request. The dedicated route is the fallback
+        # for a runner old enough (or proxied oddly enough) not to embed it.
+        capabilities = document.get("capabilities")
+        if not isinstance(capabilities, dict):
+            capabilities = client.capabilities()
+        line = (f"{identity.get('service')} "
+                f"{identity.get('engineVersion')} serving "
+                f"{identity.get('root')}")
+        print(line)
+        for note in ("devices", "loadedModels"):
+            value = document.get(note)
+            if value:
+                print(f"  {note}: {value}")
+        if identity.get("rootLooksLikeSourceCheckout"):
+            sys.stderr.write(
+                "warning: this runner's artifact root looks like the SteerLab "
+                "SOURCE CHECKOUT, not a data workspace — anything it writes "
+                "lands in the code repo\n")
+        return CLIResult(
+            message=line,
+            payload={**common, **identity,
+                     "devices": document.get("devices"),
+                     "loadedModels": document.get("loadedModels"),
+                     "capabilities": capabilities})
+
+    if verb == "upload":
+        _require(args, 1, spec)
+        document = client.upload_run_bundle(args[0])
+        meta = document.get("bundle") or {}
+        digest = document.get("localSha256")
+        line = (f"uploaded {document.get('filename')} "
+                f"({document.get('bytes')} bytes) — the runner reports the "
+                f"same sha256 {digest}")
+        print(line)
+        print(f"  staged at {document.get('path')}")
+        return CLIResult(
+            message=line, changed=True,
+            payload={**common,
+                     "bundle": document.get("filename"),
+                     "sha256": digest,
+                     "bytes": document.get("bytes"),
+                     "runnerPath": document.get("path"),
+                     "stagingDirectory": document.get("stagingDirectory"),
+                     "executable": document.get("executable"),
+                     "kind": meta.get("kind"),
+                     "experiment": meta.get("experiment"),
+                     "experimentContentHash": meta.get(
+                         "experimentContentHash")},
+            next_action=envelope.next_action(
+                f"runner submit --runner {client.base_url} --bundle-path "
+                f"{document.get('path')} --bundle-sha {digest} --verb run",
+                detail=("the staged path and the digest together name the "
+                        "bundle to execute; `--verb` chooses what to do with "
+                        "it")))
+
+    if verb == "submit":
+        remote_path = invocation.one("--bundle-path")
+        bundle_sha = (invocation.one("--bundle-sha") or "").strip().lower()
+        study_verb = invocation.one("--verb")
+        missing = [flag for flag, value in (("--bundle-path", remote_path),
+                                            ("--bundle-sha", bundle_sha),
+                                            ("--verb", study_verb))
+                   if not value]
+        if missing:
+            raise ClientRefusal(
+                code=USAGE_CODE,
+                reason=(f"runner submit needs {', '.join(missing)} — "
+                        "`runner upload` prints all three"),
+                repair_action=f"{PROGRAM} {synopsis(spec)}",
+                payload=dict(common))
+        # The runner's identity is read BEFORE the submit, deliberately: it is
+        # an idempotent GET, so a wrong URL or a dead tunnel fails here rather
+        # than after a job (and possibly a scheduler allocation) exists.
+        identity = client.identity()
+        submission = client.submit_uploaded_bundle(
+            remote_path=remote_path, expected_sha256=bundle_sha,
+            verb=study_verb, executor=invocation.one("--executor"),
+            target_root=invocation.one("--target-root"),
+            dry_run=invocation.has("--dry-run"),
+            dtype=invocation.one("--dtype"),
+            device=invocation.one("--device"),
+            package_evidence=not invocation.has("--no-evidence"),
+            parallel_jobs=_runner_int(invocation, "--parallel", 1) or 1)
+        run_bundle = submission.get("runBundle") or {}
+        job_id = submission.get("jobId")
+        line = (f"submitted {submission.get('experiment')!r} "
+                f"{submission.get('verb')} to {client.base_url} as job "
+                f"{job_id}"
+                + (" (dry run)" if submission.get("dryRun") else ""))
+        print(line)
+        return CLIResult(
+            message=line, changed=True,
+            payload={**common, "jobId": job_id,
+                     "experiment": submission.get("experiment"),
+                     "verb": submission.get("verb"),
+                     "executor": submission.get("executor"),
+                     "dryRun": submission.get("dryRun"),
+                     # FULL digest, and the runner's OWN reading of it — the
+                     # pre-check already compared it, and a document that
+                     # echoed only what the caller typed would prove nothing.
+                     "bundleSha256": run_bundle.get("bundleSha256"),
+                     "bundlePath": remote_path,
+                     "runnerIdentity": identity,
+                     "slurmJobID": submission.get("slurmJobID"),
+                     "shardJobIDs": submission.get("shardJobIDs"),
+                     "submissionDirectory": submission.get(
+                         "submissionDirectory"),
+                     "recordsDirectory": submission.get("recordsDirectory"),
+                     "preflight": submission.get("preflight")},
+            next_action=envelope.next_action(
+                f"runner jobs {job_id} --runner {client.base_url}",
+                detail="watch the job; `runner evidence` when it succeeds"))
+
+    if verb == "jobs":
+        cancelling = invocation.has("--cancel")
+        if not args:
+            if cancelling:
+                raise ClientRefusal(
+                    code=USAGE_CODE,
+                    reason="--cancel needs a job id — this client will not "
+                           "cancel a runner's whole queue",
+                    repair_action=f"{PROGRAM} runner jobs <job-id> --cancel "
+                                  f"--runner {client.base_url}",
+                    payload=dict(common))
+            records = client.jobs()
+            rows = [_job_row(record) for record in records]
+            for row in rows:
+                print(f"{row['id']}  [{row['status']}]  {row['kind']}  "
+                      f"executor={row['executor']}")
+            if not rows:
+                print("no jobs")
+            return CLIResult(
+                message=f"{len(rows)} job(s)" if rows else "no jobs",
+                payload={**common, "count": len(rows), "jobs": rows})
+
+        job_id = args[0]
+        cancelled = None
+        if cancelling:
+            cancelled = client.cancel_job(job_id)
+        record = client.job(job_id)
+        line = (f"{record.get('id')} [{record.get('status')}] "
+                f"{record.get('kind')}"
+                + (" — cancel requested" if cancelling else ""))
+        print(line)
+        return CLIResult(
+            message=line, changed=bool(cancelling),
+            payload={**common, "job": record,
+                     "cancelRequested": bool(cancelling),
+                     "cancelAccepted": bool((cancelled or {}).get("ok"))
+                     if cancelling else None})
+
+    if verb == "logs":
+        _require(args, 1, spec)
+        result = client.job_logs(args[0], follow=invocation.has("--follow"))
+        for line in result["lines"]:
+            print(line)
+        message = (f"{result['lineCount']} log line(s) for {args[0]} "
+                   f"[{result.get('status')}]")
+        if not result["complete"]:
+            sys.stderr.write(
+                "note: this is a TAIL, not the whole log — the runner caps it. "
+                f"`{PROGRAM} runner logs {args[0]} --follow --runner "
+                f"{client.base_url}` streams to the end.\n"
+                if not result["followed"] else
+                "note: the stream ended before the job did (read timeout or "
+                "line cap) — re-run to continue.\n")
+        return CLIResult(message=message, payload={**common, **result})
+
+    if verb == "evidence":
+        _require(args, 1, spec)
+        job_id = args[0]
+        destination = invocation.one("--out")
+        if not destination:
+            raise ClientRefusal(
+                code=USAGE_CODE,
+                reason="runner evidence needs --out <file>: where should the "
+                       "archive land?",
+                repair_action=f"{PROGRAM} {synopsis(spec)}",
+                payload=dict(common))
+        record = client.job(job_id)
+        reference = client.evidence_reference(job_id, record=record)
+        if reference is None:
+            raise ClientRefusal(
+                code=NO_EVIDENCE_CODE, state="refused",
+                reason=(f"job {job_id} [{record.get('status')}] carries no "
+                        "evidence bundle"),
+                repair_action=(
+                    "a job packages evidence when it COMPLETES with "
+                    "packageEvidence on — check the status first "
+                    f"(`{PROGRAM} runner jobs {job_id} --runner "
+                    f"{client.base_url}`). A submission made with "
+                    "--no-evidence never packages one, and a job that is "
+                    "still running has not got there yet."),
+                payload={**common, "jobId": job_id,
+                         "status": record.get("status")})
+        # The temp file lives BESIDE the destination by default, so the final
+        # move is a same-filesystem rename and never a copy that could be
+        # interrupted half way. `--temp` overrides it for a caller whose
+        # destination is on a small volume.
+        temp_path = invocation.one("--temp") or f"{destination}.partial"
+        downloaded = client.download_bundle(
+            remote_path=reference["bundlePath"],
+            expected_sha256=reference.get("bundleSha256") or "",
+            destination=destination, temp_path=temp_path,
+            max_bytes=_runner_int(invocation, "--max-bytes", None))
+        digest = downloaded["sha256"]
+        import_command = (f"{PROGRAM} bundle import {downloaded['path']} "
+                          f"--sha256 {digest}")
+        line = (f"downloaded {os.path.basename(downloaded['path'])} "
+                f"({downloaded['bytes']} bytes), outer digest verified: "
+                f"{digest}")
+        print(line)
+        # Said out loud on stdout as well as in the document: this verb
+        # deliberately does not import. Extraction is a separate act against a
+        # named workspace, and it is the act that can overwrite things.
+        print(f"  not imported — run: {import_command}")
+        return CLIResult(
+            message=line, changed=True,
+            payload={**common, "jobId": job_id,
+                     "path": downloaded["path"], "sha256": digest,
+                     "bytes": downloaded["bytes"],
+                     "runnerPath": downloaded["remotePath"],
+                     "verified": True, "imported": False,
+                     "importCommand": import_command,
+                     "experiment": reference.get("experiment"),
+                     "runDirectory": record.get("result", {}).get(
+                         "runDirectory") if isinstance(record.get("result"),
+                                                       dict) else None},
+            next_action=envelope.next_action(
+                f"bundle import {downloaded['path']} --sha256 {digest}",
+                detail=("verify-and-extract into a workspace — this verb "
+                        "downloaded and checked the outer digest but "
+                        "deliberately did not import; importing writes into a "
+                        "workspace and is a separate, named act")))
+
+    raise ClientRefusal(                       # pragma: no cover - unreachable
+        code=USAGE_CODE, reason=f"unhandled verb {spec.label!r}",
+        repair_action=f"{PROGRAM} {spec.family} {HELP_FLAG}")
+
+
+HANDLERS = {"experiment": _experiment, "concept": _concept, "bundle": _bundle,
+            "runner": _runner}
 
 
 # --- envelope construction -----------------------------------------------------
@@ -1083,7 +1621,8 @@ def _envelope_for_exception(label: str, exc: BaseException):
     if isinstance(exc, ClientRefusal):
         return envelope.refusal(
             label, code=exc.code, reason=exc.reason,
-            repair_action=exc.repair_action, state=exc.state)
+            repair_action=exc.repair_action, state=exc.state,
+            result=exc.payload or None)
 
     if isinstance(exc, UsageError):
         return envelope.refusal(
@@ -1280,8 +1819,22 @@ def main(argv: list | None = None) -> int:
         # The workspace is resolved INSIDE the try so its refusal travels in
         # the envelope like every other — an agent that asked for a document
         # must not get prose back on the one path it cannot parse.
-        resolve_workspace(explicit_root)
-        resolved = True
+        #
+        # The `runner` family is the one exception, and only to the REFUSAL:
+        # its verbs address a remote engine and name their local paths
+        # explicitly, so "which workspace?" is a question they do not ask. A
+        # workspace named through --root or $STEERLAB_WORKSPACE is still
+        # resolved (the envelope's `workspace` field then says which tree
+        # answered); only the "no workspace named" refusal is waived, and
+        # nothing else is — a --root pointing at a non-directory still
+        # refuses, on every family.
+        try:
+            resolve_workspace(explicit_root)
+            resolved = True
+        except ClientRefusal as workspace_exc:
+            if not (family in WORKSPACE_OPTIONAL_FAMILIES
+                    and workspace_exc.code == WORKSPACE_UNSET_CODE):
+                raise
         with envelope._StdoutToStderr() if invocation.json else _NullContext():
             outcome = HANDLERS[family](invocation)
         document = _envelope_for_result(label, outcome)

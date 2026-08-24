@@ -1,7 +1,7 @@
 # Portability Contracts
 
-**Phase-0 deliverable of the portability program**, extended by **Phase 1a**
-and **Phase 1b** (§7).
+**Phase-0 deliverable of the portability program**, extended by **Phase 1a**,
+**Phase 1b** (§7) and **Phase 2** (§8).
 Phase 0 changed no production behaviour: its entire output was this page plus
 the golden tests it indexes — a record of what the two engines promise each
 other, so a later phase that breaks one of those promises fails a test instead
@@ -401,6 +401,187 @@ guarantee currently stops.
 ### Phase 2
 
 The runner HTTP adapter: submitting a hash-pinned bundle to an engine and
-importing the evidence back. Nothing in this module anticipates it — the
-authoring verbs have no locator flag to grow into one, and adding a `submit`
-family is additive to a table, not a change to these verbs.
+bringing the evidence back. Nothing in this module anticipated it — the
+authoring verbs had no locator flag to grow into one, and adding a family was
+additive to a table, not a change to these verbs. **Delivered: §8.**
+
+---
+
+## 8. Phase 2 — the runner adapter
+
+Phase 1b's client authors a workspace and talks to nothing. Phase 2 is the
+other half of the three things the program's target must do (§0, items 2 and
+3): **submit a hash-pinned run bundle either engine produced**, and **import an
+evidence bundle with verification — and refuse a bad one.**
+
+Two files, one new family:
+
+- `Server/steerlab_server/client/runner.py` — the adapter (a new `client/`
+  package; nothing was moved into it).
+- `Server/steerlab_server/client_cli.py` — the `runner` verb family, added to
+  the declared table beside `experiment` / `concept` / `bundle`.
+- `Server/tests/test_client_runner.py` — the pins below.
+
+### 8.1 The adapter surface, and the routes it speaks
+
+Every route already existed. Nothing in this phase asked the engine for a new
+endpoint, a `v2` of an old one, or a shape it does not already return: the
+payload keys were transcribed out of `api/routes.py` and `api/submissions.py`.
+That is Phase 1b's discipline (“every call signature is transcribed from the
+HTTP route that already fronts it”) applied one layer out — an adapter that
+invents a wire format makes the engine's tests stop being the client's tests.
+
+| adapter method | route | what it sends / gets back |
+|---|---|---|
+| `info()` | `GET /api/info` | → `service`, `engineVersion`, `root`, `rootLooksLikeSourceCheckout`, `devices`, `loadedModels`, `capabilities`, `controllerChain` |
+| `capabilities()` | `GET /api/capabilities` | → the capability snapshot `info()` also embeds |
+| `upload_run_bundle(path)` | `POST /api/bundles/upload` | raw octet-stream body + `X-SteerLab-Filename`; → `path`, `filename`, `sha256`, `bytes`, `bundle` (inspected), `executable`, `stagingDirectory` |
+| `inspect_remote_bundle(p)` | `POST /api/bundles/inspect` | `{bundlePath}` → the bundle metadata + recomputed `bundleSha256` |
+| `submit_uploaded_bundle(…)` | `POST /api/studies/submit-bundle` | `{bundlePath, verb, executor, dryRun, targetRoot, dtype, device, promptsPath, sourcePath, packageEvidence, parallelJobs, force, resources, env}` → `StudySubmission.to_dict()` (`jobId`, `experiment`, `verb`, `executor`, `dryRun`, `runBundle`, `slurmBundle`, `slurmJobID`, `command`, `recordsDirectory`, `submissionDirectory`, `preflight`, `shardJobIDs`) |
+| `job(id)` | `GET /api/jobs/{id}` | → `Job.to_dict()` (incl. `status`, `result`, `logTail`) |
+| `jobs()` | `GET /api/jobs` | → `{jobs: […]}`, each with a tail |
+| `cancel_job(id)` | `POST /api/jobs/{id}/cancel` | → `{ok: true}`; a 502 means `scancel` did not confirm and is **not** swallowed |
+| `job_logs(id)` | `GET /api/jobs/{id}` | the `logTail` — bounded, returns at once |
+| `job_logs(id, follow=True)` | `GET /api/jobs/{id}/stream` | SSE, consumed until the runner closes it (terminal status, `prepared` included) |
+| `download_bundle(…)` | `GET /api/bundles/download?path=…` | streamed to a caller-supplied temp path, hashed as it arrives |
+
+Explicit constructor inputs, and no ambient configuration anywhere in the
+class: `base_url`, `token`, `timeout`, `verify` (TLS policy — `True`, a CA
+bundle path, or an `SSLContext`), plus an optional `http_client` seam and a
+`max_download_bytes` cap. A class that read the environment itself would make
+“which credential did this use?” unanswerable at the call site, which is the
+wrong property for the object that carries a bearer token.
+
+### 8.2 The two integrity checks
+
+These are why the adapter exists rather than a `curl` in a shell script.
+
+| Contract | Guarantees | Pinned by |
+|---|---|---|
+| **upload-digest-agreement** | The client hashes the file it sends; the route hashes the bytes it received. A disagreement is refused **before the staged path can be submitted**, naming both digests — a truncated or mangled upload must never become a submitted study, because everything downstream (the run's manifest snapshot, its evidence, its citation) inherits that bundle's identity. | `test_client_runner.py::test_an_upload_the_runner_hashes_differently_is_refused` |
+| **submit-identity-precheck** | `submit --bundle-sha` is checked against the runner's own `POST /api/bundles/inspect` of that path **before** anything is submitted; a mismatch creates no job. The extra round trip is deliberate: `inspect` is idempotent and free, `submit` is neither. | `test_submit_refuses_a_staged_path_that_is_not_the_pinned_bundle` (asserts the job count is unchanged) |
+| **evidence-outer-hash-pre-download** *(the client half of §3's `evidence-outer-hash-pre-extraction`)* | Downloads stream to a **caller-supplied temp path**, hashing and size-capping as the chunks arrive; the archive moves to its destination only after the digest matches what the runner reported out of band. A mismatch deletes the temp file and leaves the destination non-existent. Refuses rather than overwrites an existing destination. | `test_a_download_whose_digest_disagrees_writes_nothing_to_the_destination`, `test_a_download_over_the_size_limit_stops_mid_stream`, `test_a_download_refuses_to_overwrite_an_existing_destination`, `test_a_download_with_no_expected_digest_is_refused_outright` |
+| **download-is-not-import** | The adapter verifies and stops. `runner evidence` prints — and puts in `result.importCommand` and `nextAction` — the exact `steerlab bundle import <path> --sha256 <digest>`, and never runs it. Extraction writes into a workspace; that is a separate, named act. | `test_runner_evidence_verifies_downloads_and_names_the_import_command` |
+
+What the outer digest catches and the per-member checks cannot is
+**substitution**: a wholesale swapped archive is internally consistent. That is
+the same sentence G3 carries, now true on the client's side of the wire too.
+
+### 8.3 Retries and idempotency
+
+**No retry policy in this phase beyond idempotent GETs, and no automatic retry
+at all** — the adapter makes one attempt and reports what happened. What a
+caller may safely retry is stated so nobody has to guess:
+
+| call | retry? |
+|---|---|
+| `info`, `capabilities`, `job`, `jobs`, `job_logs`, `inspect` | plain reads — freely |
+| `upload_run_bundle` | **yes.** Each upload lands in its own server-minted staging directory, so a retry costs disk and produces a second path, never a second effect |
+| `download_bundle` | **yes.** A GET, and the write is temp → verify → move |
+| `cancel_job` | idempotent in effect; a 502 is a real state to report, not one to retry blindly |
+| `submit_uploaded_bundle` | **NO. Never automatically.** It creates a job and may spend a scheduler allocation. A timeout on submit is genuinely ambiguous — the job may exist — and the repair is to LOOK (`runner jobs`), not to submit again |
+
+### 8.4 Token discipline
+
+A runner in token mode wants a bearer token (`api/app.py`'s `auth_middleware`;
+`/api/bundles/upload`, `/api/bundles/download`, `/api/studies/submit-bundle`
+and every mutating route are in the privileged set). The client's rules:
+
+- **Two sources, no third:** `$STEERLAB_RUNNER_TOKEN` or `--token-file <path>`.
+- **There is no `--token` flag and there will not be one.** argv is readable by
+  every process on a shared login node (`ps`), lands in shell history, and gets
+  copied into job records by well-meaning wrappers. Pinned structurally by
+  `test_there_is_no_token_flag_on_any_runner_verb`, which iterates the declared
+  table: the only spelling containing “token” is `--token-file`, and it holds a
+  path.
+- **A client variable, not the engine's.** `STEERLAB_RUNNER_TOKEN`, never
+  `STEERLAB_AUTH_TOKEN`: a machine that runs both must be able to serve a local
+  engine with one secret and reach a remote runner with another, and an adapter
+  that borrowed the local server's token would send it to a host nobody
+  authorized.
+- **Never in the workspace, never in a document.** The only thing any envelope
+  says about the credential is the presence boolean `tokenPresent`. The token
+  rides an `Authorization` header, never a URL (`test_the_token_travels_only_as_an_authorization_header`),
+  and `RunnerClient.__repr__` renders `<present>`/`<absent>`.
+- **`scrub` on every raised sentence**, so an upstream string that happened to
+  contain the token comes out redacted — belt and braces for the failure nobody
+  predicted.
+- A world- or group-readable `--token-file` is **announced on stderr and still
+  used**, the same call `api/posture.hydrate_token` makes at serve time.
+
+Pinned end to end by
+`test_the_token_never_reaches_any_envelope_log_line_or_exception`, which drives
+one distinctive fake token through a success envelope, human stdout/stderr, a
+refusal document, a real download refusal with a payload, an HTTP 401, an
+unreachable runner, and the object's `repr` — and asserts the value appears in
+none of them.
+
+### 8.5 The wire, once, for real
+
+`test_the_adapter_works_against_a_real_server_over_tcp_in_token_mode` launches
+the genuine `steerlab-server serve` as a subprocess on a loopback ephemeral
+port with `STEERLAB_AUTH_MODE=token` and a minted `STEERLAB_AUTH_TOKEN_FILE`,
+then runs the adapter against it: info, capabilities, a **401 without the
+token**, a chunked upload with the digest agreed across the socket, a dry-run
+submit, job get/list, the log tail and the SSE follow (which terminates on its
+own, because `prepared` is terminal), and a streamed download verified byte for
+byte. Readiness is a polled deadline on `/api/info` with the subprocess watched
+for early exit — never a sleep — and teardown terminates then kills in a
+`finally`.
+
+Every other test in the file shares a process with the app, which is the right
+trade for the logic and cannot answer “does the token really travel as a
+header, and does a real HTTP parser accept the chunked body?” This one can.
+
+### 8.6 The light install, extended
+
+`httpx` joined `[project] dependencies` (the client set) and is imported
+**lazily, inside the runner verbs** — importing `client_cli` and running
+`--help` still pulls nothing third-party at all. It costs the resolution
+nothing: httpx and its whole required closure (`httpcore`, `h11`, `anyio`,
+`certifi`, `idna`) are already pinned in **both committed platform locks**,
+pulled in by `huggingface_hub`, so `uv pip compile --extra all` resolves the
+same package set and the locks did not move — asserted directly by
+`test_client_cli.py::test_the_new_client_dependency_was_already_in_the_locks`.
+
+`test_the_runner_family_stays_within_the_clients_light_import_set` runs
+`runner capabilities` against a dead port out of process and pins the import
+set. One wrinkle it records rather than hides: `httpx/__init__.py` reaches for
+its optional CLI dependencies if they happen to be installed
+(`try: from ._main import main`), so in a dev venv `import httpx` also shows
+click/rich/pygments. Those are the `httpx[cli]` extra, which a bare client
+install does not resolve — `test_httpx_needs_none_of_its_optional_cli_dependencies`
+blocks them on the meta-path and imports httpx anyway rather than taking that
+on trust.
+
+**G7 is untouched and still open.** The runner family does not reach
+`Manifest.verify`, so it does not pull torch; `experiment verify` / `freeze`
+still do, for the reason §5 gives.
+
+### 8.7 What Phase 2 deliberately did NOT do
+
+- **No composite `run --wait`.** Upload → submit → poll → download → import is
+  six explicit acts here, and each one is separately refusable. Orchestrating
+  them into one verb — with the waiting policy, the resume-after-disconnect
+  question, and the decision about when a client may import on its own — is
+  **Phase 5**, and it wants the pieces below it to be boring first.
+- **No auto-import.** See `download-is-not-import` above.
+- **No new or versioned endpoints, and no server behaviour change.** The engine
+  and `steerlab-server` are byte-identical after this phase.
+- **No authoring verb learned a locator.** `runner` is a separate family
+  precisely so §7's structural contract stays a line in a table rather than a
+  judgement call about a flag name — `runner submit` legitimately declares
+  `--executor`, and no authoring verb ever may
+  (`test_no_authoring_verb_accepts_a_server_locator`, now iterated over
+  `client_cli.AUTHORING_FAMILIES`).
+
+### 8.8 One repair made in passing
+
+`--out` was declared by `bundle package` **and** intercepted unconditionally as
+the envelope's destination by `client_cli.parse`, so `bundle package --out
+foo.tar.gz` silently wrote the *document* to that path and packaged the archive
+to its default location. Phase 2 needed `runner evidence --out <file>` to mean
+the file, so the parse now lets a verb's **declaration win** over the global
+flag. Those two verbs' envelopes still travel on stdout under `--json`; they
+simply have no second spelling for “write the document to a file”. Pinned by
+`test_client_runner.py::test_out_belongs_to_the_verb_that_declares_it`.

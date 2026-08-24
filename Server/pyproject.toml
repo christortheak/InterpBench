@@ -30,14 +30,29 @@ requires-python = ">=3.10"
 # running `--help`) imports none of torch/transformers/fastapi/uvicorn/peft/
 # sae_lens.
 #
-# WHAT IS IN THE CLIENT SET AND WHY. Both are real module-level imports on the
-# authoring path, measured rather than assumed: `numpy` (vector math in
-# `steering`, reached through `experiment_store`'s import graph) and
-# `safetensors` (`steering.vector_store` reads/writes the artifact format a
-# pinned-artifact attach hashes). Neither is heavy — pure wheels, no CUDA.
+# WHAT IS IN THE CLIENT SET AND WHY. All three are real imports on a client
+# path, measured rather than assumed: `numpy` (vector math in `steering`,
+# reached through `experiment_store`'s import graph), `safetensors`
+# (`steering.vector_store` reads/writes the artifact format a pinned-artifact
+# attach hashes), and — since Phase 2 — `httpx`, the HTTP client behind
+# `steerlab_server.client.runner` (the `runner` verb family: upload a bundle,
+# submit it, read jobs and logs, bring verified evidence home). All three are
+# pure wheels: no compiler, no CUDA.
+#
+# `httpx` COSTS THE RESOLUTION NOTHING. It and its whole closure (httpcore,
+# h11, anyio, sniffio, certifi, idna) are ALREADY pinned in both committed
+# platform locks — pulled in by `huggingface_hub` — at the same version this
+# floor admits, so `uv pip compile --extra all` resolves the same package set
+# it resolved before. Declaring it here only stops the client's HTTP stack
+# from being an accident of somebody else's dependency tree.
+#
+# It is imported LAZILY, inside the runner verbs, never at `client_cli` import
+# time: `--help` and every authoring verb still pull nothing third-party at
+# all (tests/test_client_cli.py::test_importing_the_client_pulls_no_heavy_dependency).
 dependencies = [
     "numpy>=1.26",
     "safetensors>=0.4",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]

@@ -576,12 +576,26 @@ _LOCATOR_WORDS = ("url", "uri", "host", "port", "server", "endpoint",
 def test_no_authoring_verb_accepts_a_server_locator():
     """CONTRACT: the client authors LOCALLY, structurally.
 
-    Phase 2 adds a runner adapter; until it does — and after it does, for
-    these verbs — there is no flag on an authoring verb that could hold a
-    server address. Enforced by iterating the declared table rather than by
-    reading the dispatch, so a verb added without a test is still covered.
+    Phase 2 added the runner adapter, and this contract survived it unchanged
+    in substance: there is still no flag on an AUTHORING verb that could hold
+    a server address. Talking to a runner is a separate family
+    (``client_cli.RUNNER_FAMILY``), which is why the exclusion below is a line
+    in a table rather than a judgement call about a flag name — `runner
+    submit` legitimately declares `--executor`, and no authoring verb ever
+    may.
+
+    Enforced by iterating the declared table rather than by reading the
+    dispatch, so a verb added without a test is still covered.
     """
-    for spec in client_cli.CLIENT_VERB_SPECS:
+    authoring = [spec for spec in client_cli.CLIENT_VERB_SPECS
+                 if spec.family in client_cli.AUTHORING_FAMILIES]
+    # The exclusion must not silently swallow the whole table.
+    assert client_cli.RUNNER_FAMILY not in client_cli.AUTHORING_FAMILIES
+    assert len(authoring) == len(client_cli.CLIENT_VERB_SPECS) - len(
+        [s for s in client_cli.CLIENT_VERB_SPECS
+         if s.family == client_cli.RUNNER_FAMILY])
+    assert len(authoring) >= 16
+    for spec in authoring:
         for flag in spec.declared_flags:
             lowered = flag.lower()
             for word in _LOCATOR_WORDS:
@@ -814,13 +828,41 @@ def test_the_runner_extra_carries_the_engine_stack_and_all_still_has_it():
     assert runner <= every, f"`all` lost: {sorted(runner - every)}"
     # The client's own set stays small and stays OUT of the runner extra —
     # a package in both would be a floor stated twice.
-    assert core == {"numpy", "safetensors"}
+    assert core == {"numpy", "safetensors", "httpx"}
     assert not (core & runner)
     # THE invariant that let the split land without touching the committed
-    # locks or the app's Local Engine flow: client + runner is exactly the
-    # dependency list that used to be `dependencies`, name for name. If this
-    # ever fails, `--extra all` resolves a different package set than it did
-    # before the split and the locks are stale.
+    # locks or the app's Local Engine flow: `--extra all` must resolve the
+    # SAME package set it resolved before. `httpx` joined `dependencies` in
+    # Phase 2 (the runner adapter's HTTP client) and does NOT break it: httpx
+    # and its whole closure are already pinned in both committed locks, pulled
+    # in by huggingface_hub, so the resolution is unchanged and only the
+    # lock's "# via" annotation gains a line at the next regeneration. That is
+    # asserted directly below rather than asserted by assertion.
     assert core | runner == {
-        "numpy", "safetensors", "torch", "transformers", "accelerate",
+        "numpy", "safetensors", "httpx", "torch", "transformers", "accelerate",
         "huggingface-hub", "fastapi", "uvicorn", "pydantic"}
+
+
+@pytest.mark.parametrize("lock", ("requirements-macos-arm64.lock",
+                                  "requirements-linux-x86_64.lock"))
+def test_the_new_client_dependency_was_already_in_the_locks(lock):
+    """Phase 2's one dependency change, checked where it could hurt.
+
+    Adding a name to `[project] dependencies` is only free when the committed
+    locks already pin it — otherwise every provisioned node's `pip install -r
+    <lock>` resolves a package set the pyproject no longer describes, and the
+    locks need regenerating (which needs `uv` and network egress). `httpx`
+    was already there, via huggingface_hub. So was every hop of its closure.
+    """
+    from steerlab_server import python_environment as pyenv
+
+    pins = pyenv.parse_lock(os.path.join(SERVER_DIR, lock))
+    # httpx's real requirement closure: anyio, certifi, httpcore, idna —
+    # and httpcore's h11. (`sniffio` was anyio's dependency once and is not
+    # any more, which is exactly why this list is read off `pip show` rather
+    # than remembered.)
+    for package in ("httpx", "httpcore", "h11", "anyio", "certifi", "idna"):
+        assert package in pins, (
+            f"{lock} does not pin {package} — adding httpx to the client's "
+            "dependencies is no longer free and the locks must be regenerated "
+            "(Server/scripts/update-locks.sh)")
