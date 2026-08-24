@@ -27,7 +27,8 @@ def test_create_attach_condition(tmp_path):
     # readingPosition is the Swift Codable enum shape so the Mac app can read it
     assert d["concepts"][0]["options"]["readingPosition"] == {"meanFromToken": {"_0": 50}}
     d = es.add_condition("my-study", {"name": "fear-L5", "slots": [
-        {"concept": "french", "layer": 5, "alpha": 2.0}], "bandWidth": 3}, root=root)
+        {"concept": "french", "layer": 5, "alpha": 2.0}], "bandWidth": 3,
+        "alphaInNormUnits": False}, root=root)
     assert d["conditions"][0]["name"] == "fear-L5"
 
 

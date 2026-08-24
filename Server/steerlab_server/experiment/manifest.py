@@ -244,6 +244,13 @@ class Condition:
     name: str
     slots: list[Slot] = field(default_factory=list)
     band_width: int = 1
+    #: False here and True in Swift's `Condition.init` — an IN-CODE default,
+    #: not a document one, and deliberately left alone by the Phase-1a G6
+    #: repair: the only production caller that omits it is the synthesized
+    #: slot-less baseline (`effective_conditions`), which carries no α for
+    #: the unit to apply to. Every condition READ from a document passes the
+    #: value explicitly (`from_dict`), and every NEW declaration must state it
+    #: (`experiment_store._condition_entry`).
     alpha_in_norm_units: bool = False
     # "randomMatchedNorm": each slot injects a deterministic random direction
     # norm-matched to the named concept's vector at that layer — the magnitude/
@@ -575,6 +582,17 @@ class Manifest:
                      for s in c.get("slots", [])]
             conditions.append(Condition(
                 name=c["name"], slots=slots, band_width=int(c.get("bandWidth", 1)),
+                # DELIBERATELY still False for a key-less condition (Phase-0
+                # gap G6, ``docs/PORTABILITY-CONTRACTS.md``). Declaring a NEW
+                # condition without the key is refused now
+                # (``experiment_store._condition_entry``), but READING one is
+                # not the same act: a manifest already pinned or frozen with a
+                # key-less condition was measured under THIS reading, and
+                # flipping it to True would silently reinterpret its doses —
+                # every α in that study would mean something else than it did
+                # when the study ran. ``freeze_advisories`` surfaces the
+                # ambiguity instead (the Mac engine cannot read such a
+                # condition at all, so the reading is engine-dependent).
                 alpha_in_norm_units=bool(c.get("alphaInNormUnits", False)),
                 control_type=c.get("controlType"),
                 neutral_pc_basis_path=c.get("neutralPCBasisPath"),

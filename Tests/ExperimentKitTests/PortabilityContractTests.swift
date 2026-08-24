@@ -5,15 +5,18 @@ import Testing
 
 @testable import ExperimentKit
 
-/// Phase-0 of the portability program: the cross-engine contracts a future
-/// cross-platform Python client will depend on, pinned as goldens — Swift half.
+/// The cross-engine contracts a future cross-platform Python client will
+/// depend on, pinned as goldens — Swift half. Phase 0 of the portability
+/// program wrote them; Phase 1a closed three of the gaps they recorded.
 ///
 /// The client the later phases build has to do three things the two engines
 /// already do to each other: **author a workspace this engine reads**,
 /// **submit a hash-pinned run bundle either engine produced**, and **import an
-/// evidence bundle with verification**. Nothing here changes behaviour; it
-/// records what today's behaviour IS, so a later phase that breaks one of
-/// these seams fails a test instead of failing in a workspace.
+/// evidence bundle with verification**. Phase 0 recorded what today's
+/// behaviour IS, so a later phase that breaks one of these seams fails a test
+/// instead of failing in a workspace; **Phase 1a** closed gaps G1, G4 and G6
+/// and turned their pins around — the tests that used to pin the breakage now
+/// pin the repair, and each says so where it stands.
 ///
 /// The idioms are the suite's existing ones, not new ones:
 ///
@@ -229,71 +232,108 @@ import Testing
         #expect(ExperimentStore.canonicalManifestBodyHash(reencoded) == firstHash)
     }
 
-    /// CONTRACT: condition-globals-are-required — a condition authored WITHOUT
-    /// `bandWidth`/`alphaInNormUnits` does not decode here at all.
+    /// CONTRACT: condition-globals-are-required (Phase-0 gaps G4 + G6, both
+    /// CLOSED by Phase 1a) — a condition authored WITHOUT
+    /// `bandWidth`/`alphaInNormUnits` is still refused here, and the refusal is
+    /// now TYPED: it names the arm, names the key, and carries a repair.
     ///
-    /// Found by this phase. The server never writes such a condition — its
-    /// `experiment_store._condition_entry` stamps both keys with defaults — so
-    /// today's traffic is safe. But nothing pinned that, and a cross-platform
-    /// client that builds a condition dictionary by hand (the obvious thing to
-    /// do: `{"name": …, "slots": […]}`) authors a manifest this engine refuses
-    /// to open, with a `keyNotFound` deep inside `conditions[0]` rather than a
-    /// typed refusal naming the problem. That is the exact failure shape of
-    /// open-issues #11 (the adapter entry with no `name`), one level over.
+    /// The server never writes such a condition — `_condition_entry` stamps
+    /// `bandWidth` and now REFUSES a declaration with no `alphaInNormUnits` —
+    /// so today's traffic is safe. But a cross-platform client that builds a
+    /// condition dictionary by hand (the obvious thing to do:
+    /// `{"name": …, "slots": […]}`) used to get a `keyNotFound` deep inside
+    /// `conditions[0]`: the exact failure shape of open-issues #11 (the
+    /// adapter entry with no `name`), one level over.
     ///
-    /// Pinned as it IS, deliberately: making the decoder tolerant would be a
-    /// behaviour change, and Phase 0 changes nothing. Recorded as a Phase-1
-    /// gap in docs/PORTABILITY-CONTRACTS.md.
-    @Test func aConditionWithoutItsGlobalsIsUnreadableHere() throws {
+    /// What did NOT change is the answer: the document is still refused. A
+    /// tolerant decoder would have had to invent an α unit, which is the one
+    /// thing G6 forbids.
+    @Test func aConditionWithoutItsGlobalsIsRefusedByName() throws {
         let fixture = try loadFixture("manifest-interop.json")
-        var draft = try #require(fixture["draft"] as? [String: Any])
+        let draft = try #require(fixture["draft"] as? [String: Any])
         let conditions = try #require(draft["conditions"] as? [[String: Any]])
         // The server's own conditions carry both globals…
         for condition in conditions {
             #expect(condition["bandWidth"] != nil)
             #expect(condition["alphaInNormUnits"] != nil)
         }
-        // …and stripping them makes the manifest unreadable here.
-        draft["conditions"] = conditions.map { condition -> [String: Any] in
-            var stripped = condition
-            stripped.removeValue(forKey: "bandWidth")
-            stripped.removeValue(forKey: "alphaInNormUnits")
-            return stripped
+
+        func decoding(without key: String) -> (any Error)? {
+            var stripped = draft
+            stripped["conditions"] = conditions.map { condition -> [String: Any] in
+                var without = condition
+                without.removeValue(forKey: key)
+                return without
+            }
+            do {
+                let data = try JSONSerialization.data(withJSONObject: stripped)
+                _ = try JSONDecoder().decode(ExperimentManifest.self, from: data)
+                return nil
+            } catch {
+                return error
+            }
         }
-        let data = try JSONSerialization.data(withJSONObject: draft)
-        #expect(throws: DecodingError.self) {
+
+        // The α unit: refused, and the refusal explains WHY a default would
+        // have been worse than a refusal.
+        let alpha = try #require(
+            decoding(without: "alphaInNormUnits") as? ExperimentError,
+            "a condition with no alphaInNormUnits is no longer a typed refusal")
+        #expect(alpha.reason.contains("'baseline'"))   // the arm, by name
+        #expect(alpha.reason.contains("alphaInNormUnits"))
+        let repair = try #require(alpha.malformedInvocation?.repairAction)
+        #expect(repair == ExperimentManifest.alphaUnitsRepairAction)
+        // Both spellings a caller can write the fix in.
+        #expect(repair.contains("\"alphaInNormUnits\""))
+        #expect(repair.contains("--alpha-units norm|raw"))
+
+        // And the same treatment for the other required global (G4).
+        let band = try #require(decoding(without: "bandWidth") as? ExperimentError)
+        #expect(band.reason.contains("'baseline'"))
+        #expect(band.reason.contains("bandWidth"))
+        #expect(band.malformedInvocation?.repairAction.isEmpty == false)
+
+        // A structurally broken condition — not a missing key — is typed too,
+        // rather than surfacing a raw `typeMismatch`.
+        var broken = draft
+        broken["conditions"] = [["name": "arm", "slots": "not-an-array"]]
+        let data = try JSONSerialization.data(withJSONObject: broken)
+        do {
             _ = try JSONDecoder().decode(ExperimentManifest.self, from: data)
+            Issue.record("a condition whose slots are a string decoded cleanly")
+        } catch let error as ExperimentError {
+            #expect(error.reason.contains("'arm'"))
+            #expect(error.malformedInvocation != nil)
+        } catch {
+            Issue.record("a malformed condition threw \(type(of: error)), not a typed refusal")
         }
     }
 
-    /// GAP (found by this phase, recorded not repaired): declaring a condition
-    /// without naming `alphaInNormUnits` yields TRUE here and FALSE on the
-    /// server.
+    /// CONTRACT: condition-alpha-units-explicit (Phase-0 gap G6, CLOSED by
+    /// Phase 1a) — a NEW condition declaration that does not name
+    /// `alphaInNormUnits` is refused on BOTH engines, with the SAME repair,
+    /// instead of silently defaulting to opposite values.
     ///
-    /// `Condition.init` defaults it to true;
-    /// `experiment_store._condition_entry` defaults it to False. Neither
-    /// engine reads the other's default — both always WRITE the key, so a
-    /// condition that has crossed the wire is unambiguous, which is why
-    /// nothing is broken today. But the same client call produces a different
-    /// study depending on which engine served it, and α units are not a
-    /// cosmetic setting.
+    /// The gap: `Condition.init` defaulted it to true and
+    /// `experiment_store._condition_entry` to False, so the same client call
+    /// authored a different study depending on which engine served it. Neither
+    /// engine reads the other's default, so nothing in flight was wrong — but
+    /// α units are dose semantics, and picking one default would have
+    /// reinterpreted every artifact authored under the other.
     ///
-    /// Pinned as it IS, on both sides, over the two committed fixtures. Server
-    /// twin: `test_the_condition_alpha_unit_default_diverges_from_swift`.
-    @Test func theConditionAlphaUnitDefaultDivergesFromTheServer() throws {
-        let local = ExperimentManifest.Condition(name: "arm", slots: [])
-        #expect(
-            local.alphaInNormUnits,
-            "this engine's condition default changed — the divergence with the server's `False` may be closed; re-check docs/PORTABILITY-CONTRACTS.md G6")
-        #expect(local.bandWidth == 1)   // this one DOES agree
-
-        // Visible in the committed bytes: the same two conditions, declared
-        // the same way through each engine's own store API.
+    /// The two committed fixtures used to SHOW the divergence (`false` in
+    /// `manifest-interop.json`, `true` in `swift-authored-manifest.json`, from
+    /// the same declaration); they now show explicit agreement, and the
+    /// server's own refusal text travels in the fixture so this engine can
+    /// check the two independently written repairs are the same sentence.
+    /// Server twin: `test_a_new_condition_that_declares_no_alpha_units_is_refused`.
+    @Test func theConditionAlphaUnitDeclarationIsExplicitOnBothEngines() throws {
+        // Both fixtures now carry an EXPLICIT, agreeing value.
         let python = try loadFixture("manifest-interop.json")
         for condition in try #require(
             (python["draft"] as? [String: Any])?["conditions"] as? [[String: Any]])
         {
-            #expect(condition["alphaInNormUnits"] as? Bool == false)
+            #expect(condition["alphaInNormUnits"] as? Bool == true)
         }
         let swift = try loadFixture("swift-authored-manifest.json")
         for condition in try #require(
@@ -301,6 +341,33 @@ import Testing
         {
             #expect(condition["alphaInNormUnits"] as? Bool == true)
         }
+
+        // The repair the SERVER hands a client is word-for-word this engine's
+        // — two independent literals, in the twin-literal idiom, so neither
+        // engine can quietly reword the instruction the other gives.
+        let policy = try #require(python["conditionAlphaUnits"] as? [String: Any])
+        #expect(
+            policy["repairAction"] as? String
+                == ExperimentManifest.alphaUnitsRepairAction,
+            "the two engines now hand a client different repairs for the same refusal")
+        let serverRefusal = try #require(policy["refusalOnNewDeclaration"] as? String)
+        #expect(serverRefusal.contains("alphaInNormUnits"))
+        #expect(serverRefusal.contains("condition 'arm-a'"))
+
+        // The legacy reading the server PRESERVES for a key-less condition
+        // already in a manifest: false, forever. This engine cannot read such
+        // a manifest at all (`aConditionWithoutItsGlobalsIsRefusedByName`),
+        // which is exactly why the reading is engine-dependent and the server
+        // advises rather than converting.
+        #expect(policy["legacyReadingHere"] as? Bool == false)
+
+        // In-process construction keeps its default — the project convention,
+        // and not a document-boundary declaration: a Swift caller states the
+        // unit in code, and the two boundaries a CLIENT reaches (the manifest
+        // document and `declare-condition`) both refuse silence.
+        let local = ExperimentManifest.Condition(name: "arm", slots: [])
+        #expect(local.alphaInNormUnits)
+        #expect(local.bandWidth == 1)   // this one always DID agree
     }
 
     /// CONTRACT: manifest-canonicalization — the identity of a study is what
@@ -356,10 +423,15 @@ import Testing
     /// Keys the Swift encoder ALWAYS writes and the server OMITS when they
     /// hold their (identical) default. Both engines default
     /// `multiAgentIncludeBaseline` to true and `recordTokenIDs` to false, so
-    /// no study is described differently — but the server-freeze check
-    /// compares parsed DOCUMENTS, and a key present on one side only is a
-    /// difference to a key-set comparison. Pinned so the day either engine
-    /// changes, this is revisited on purpose.
+    /// no study is described differently — but the server-freeze check used to
+    /// compare parsed DOCUMENTS key-set-wise, where a key present on one side
+    /// only is a difference. Phase 1a closed that (G1): the comparison drops
+    /// each of these when it is present AND at its default, on both sides.
+    ///
+    /// This literal is the twin of the production
+    /// `ExperimentStore.defaultElidedFreezeKeys`, kept separate on purpose
+    /// (the twin-literal idiom): a key added there must be added here, and the
+    /// server fixture must show that the server really elides it.
     static let keysSwiftAlwaysWrites = ["multiAgentIncludeBaseline", "recordTokenIDs"]
 
     /// Plants a server-frozen study (manifest + the server's exact
@@ -463,48 +535,66 @@ import Testing
         }
     }
 
-    /// GAP (found by this phase, recorded not repaired): a study authored
-    /// ENTIRELY on the server — which is exactly what a cross-platform client
-    /// would do — reads as "changed after freeze" here, though nothing
-    /// changed.
+    /// CONTRACT: server-authored-freeze (Phase-0 gap G1, CLOSED by Phase 1a) —
+    /// a study authored ENTIRELY on the server, which is exactly what a
+    /// cross-platform client does, verifies clean here.
     ///
-    /// The cause is presence, not meaning. The server omits
+    /// The gap was presence, not meaning. The server omits
     /// `multiAgentIncludeBaseline` and `recordTokenIDs` when they hold their
     /// defaults; this engine's encoder always writes them; and
-    /// `serverFreezeCanonicalViolations` compares the two parsed documents,
-    /// where a key on one side only is a difference. The default VALUES agree
-    /// on both engines, so the two documents describe the same study.
+    /// `serverFreezeCanonicalViolations` compared the two parsed documents,
+    /// where a key on one side only is a difference to a key-set comparison.
+    /// The default VALUES agree on both engines, so the two documents describe
+    /// the same study — and the refusal was the generic "changed after
+    /// freeze", naming no field, which reads as tampering.
     ///
-    /// It has stayed invisible because today's server-frozen studies were
-    /// authored on the Mac first, so their documents already carry both keys
-    /// (`aServerFrozenManifestVerifiesAgainstItsOwnCanonicalBytes`). Phase 0
-    /// changes nothing, so this pins the behaviour AS IT IS — including that
-    /// the refusal is the unhelpful generic one, with no named field. Closing
-    /// it is Phase-1 work; see docs/PORTABILITY-CONTRACTS.md.
-    @Test func aServerAuthoredFrozenManifestReadsAsDriftedHere() throws {
+    /// It stayed invisible because today's server-frozen studies were authored
+    /// on the Mac first, so their documents already carry both keys
+    /// (`aServerFrozenManifestVerifiesAgainstItsOwnCanonicalBytes`, which must
+    /// keep passing unchanged — the repair may not buy this half at that
+    /// half's expense).
+    ///
+    /// The repair is a DEFAULT-INSENSITIVE comparison over an enumerated key
+    /// set (`ExperimentStore.defaultElidedFreezeKeys`), not a change to what
+    /// either engine emits: emission alignment would leave every study already
+    /// frozen on the server still failing, and would move newly authored
+    /// server manifests' content hashes. Nothing this engine hashes, stamps or
+    /// displays moved — see `theRepairIsInvisibleToEveryHashAndFingerprint`.
+    @Test func aServerAuthoredFrozenManifestVerifiesHere() throws {
         let fixture = try loadFixture("manifest-interop.json")
         let frozen = try #require(fixture["frozen"] as? [String: Any])
         let canonical = try #require(fixture["freezeCanonical"] as? String)
         #expect(
             (fixture["keysSwiftAlwaysWritesAndThisEngineOmitsAtDefault"] as? [String])
                 == Self.keysSwiftAlwaysWrites)
-        // The server's own document really does omit them.
+        // The server's own document really does omit them — the premise the
+        // repair rests on. If the server starts writing them, this half stops
+        // testing anything and the elision list should be re-examined.
         for key in Self.keysSwiftAlwaysWrites {
             #expect(
                 frozen[key] == nil,
-                "the server now writes \(key) — this gap may be closed; re-check")
+                "the server now writes \(key) — re-check ExperimentStore.defaultElidedFreezeKeys")
         }
+        // …and the production elision list is exactly this set, at exactly the
+        // defaults BOTH engines apply (the twin-literal check).
+        #expect(
+            ExperimentStore.defaultElidedFreezeKeys.keys.sorted()
+                == Self.keysSwiftAlwaysWrites)
+        #expect(ExperimentStore.defaultElidedFreezeKeys["multiAgentIncludeBaseline"] == true)
+        #expect(ExperimentStore.defaultElidedFreezeKeys["recordTokenIDs"] == false)
 
         try withTempRoot { root in
             let manifest = try plantServerFrozen(
                 root, document: frozen, canonical: canonical)
 
-            // The bytes are intact: this is NOT tampering being caught.
+            // The bytes are intact: there was never tampering here to catch.
             #expect(
                 ExperimentStore.sha256Hex(Data(canonical.utf8))
                     == fixture["freezeHash"] as? String)
 
-            // The difference is exactly the two keys, and nothing else.
+            // The raw difference is still exactly the two keys, and nothing
+            // else — the repair narrows the COMPARISON, it does not make the
+            // documents identical.
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             let mine = try #require(
@@ -525,16 +615,111 @@ import Testing
                     "'\(key)' differs beyond the known gap")
             }
             // The two defaults this engine supplies are the server's defaults
-            // too, so the documents describe the SAME study.
+            // too, so the documents describe the SAME study…
             #expect(manifest.multiAgentIncludeBaseline == true)
             #expect(manifest.recordTokenIDs == false)
 
-            // And the current, unhelpful consequence.
+            // …and post-freeze verification now says so.
+            // (`freezeViolations` filters to the post-freeze check alone: the
+            // fixture's pinned INPUT files are not planted in this temp root,
+            // so `verify` legitimately reports those — the same scope
+            // `aServerFrozenManifestVerifiesAgainstItsOwnCanonicalBytes` uses.)
             #expect(
-                freezeViolations(manifest)
-                    == ["manifest content changed after freeze (hash mismatch)"],
-                "the server-authored freeze gap changed shape — re-read docs/PORTABILITY-CONTRACTS.md before adjusting this")
+                freezeViolations(manifest) == [],
+                "a study authored entirely on the server still reads as drifted here — G1 has regressed; re-read docs/PORTABILITY-CONTRACTS.md")
         }
+    }
+
+    /// The firewall the G1 repair must NOT have blunted: a real edit to a
+    /// server-frozen study is still refused, and now the refusal NAMES the
+    /// field instead of saying only that something changed.
+    ///
+    /// Both halves matter. An elided key at a NON-default value is a real
+    /// change (the server omits it only at its default, so its absence means
+    /// the default), and a field outside the elision list is untouched by the
+    /// repair.
+    @Test func aRealEditToAServerFrozenStudyIsStillRefusedAndNamed() throws {
+        let fixture = try loadFixture("manifest-interop.json")
+        let frozen = try #require(fixture["frozen"] as? [String: Any])
+        let canonical = try #require(fixture["freezeCanonical"] as? String)
+
+        // 1. An ordinary measured field.
+        try withTempRoot { root in
+            var manifest = try plantServerFrozen(
+                root, document: frozen, canonical: canonical)
+            manifest.temperature = 0.9
+            let violations = freezeViolations(manifest)
+            #expect(violations.count == 1)
+            #expect(
+                violations.first?.contains("manifest content changed after freeze") == true)
+            #expect(
+                violations.first?.contains("temperature") == true,
+                "the refusal does not name the differing field: \(violations)")
+        }
+
+        // 2. An ELIDED key at a non-default value — the case the repair must
+        //    keep refusing, or `recordTokenIDs: true` could be switched off
+        //    under a frozen study's own freeze hash.
+        try withTempRoot { root in
+            var manifest = try plantServerFrozen(
+                root, document: frozen, canonical: canonical)
+            manifest.recordTokenIDs = true
+            let violations = freezeViolations(manifest)
+            #expect(violations.count == 1)
+            #expect(
+                violations.first?.contains("recordTokenIDs") == true,
+                "a non-default value on an elided key was swallowed by the default-insensitive comparison: \(violations)")
+        }
+        try withTempRoot { root in
+            var manifest = try plantServerFrozen(
+                root, document: frozen, canonical: canonical)
+            manifest.multiAgentIncludeBaseline = false
+            #expect(
+                freezeViolations(manifest).first?
+                    .contains("multiAgentIncludeBaseline") == true,
+                "a non-default value on an elided key was swallowed")
+        }
+    }
+
+    /// The G1 repair changes exactly one comparison, and NOTHING that is
+    /// hashed, stamped, or shown.
+    ///
+    /// `comparableFreezeObject` also backs `canonicalManifestBodyHash` — a
+    /// fingerprint researchers read off the screen to confirm a server-only
+    /// copy against something real — and `compareManifestDocuments`, the
+    /// remote-freeze identity check. Normalizing defaults there would have
+    /// moved a displayed value for every existing manifest, so the
+    /// normalization lives in the freeze comparison alone. This pins that: the
+    /// two documents of the G1 fixture are NOT identical to the
+    /// document-comparison layer, and the body hash still moves with the two
+    /// keys.
+    @Test func theRepairIsInvisibleToEveryHashAndFingerprint() throws {
+        let fixture = try loadFixture("manifest-interop.json")
+        let frozen = try JSONSerialization.data(
+            withJSONObject: try #require(fixture["frozen"] as? [String: Any]))
+        let withDefaults = try JSONSerialization.data(
+            withJSONObject: try #require(
+                fixture["frozenWithSwiftDefaults"] as? [String: Any]))
+
+        // The document comparison still SEES the two keys (it is the identity
+        // check for a manifest on screen, not a freeze verification).
+        let comparison = ExperimentStore.compareManifestDocuments(
+            local: withDefaults, server: frozen)
+        guard case let .different(lines) = comparison else {
+            Issue.record(
+                "compareManifestDocuments now normalizes default-elided keys — that changes a displayed identity check, which the G1 repair deliberately did not touch: \(comparison)")
+            return
+        }
+        #expect(
+            lines == [
+                "multiAgentIncludeBaseline: local only",
+                "recordTokenIDs: local only",
+            ])
+
+        // And the displayed fingerprint still distinguishes them.
+        #expect(
+            ExperimentStore.canonicalManifestBodyHash(frozen)
+                != ExperimentStore.canonicalManifestBodyHash(withDefaults))
     }
 
     // MARK: - 2. Manifest interop, this engine → server

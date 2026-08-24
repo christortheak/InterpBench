@@ -3433,9 +3433,13 @@ def build_router(state: ServiceState) -> APIRouter:
             if not os.path.isabs(target):
                 target = state.resolver.resolve_workspace(target)
         try:
+            # `expectedSha256` (additive, G3): the out-of-band outer pin,
+            # verified BEFORE extraction. Absent = today's behaviour; the
+            # cross-platform client always sends it.
             return bundles.import_bundle(
                 bundle_path, target_root=target,
-                allow_overwrite=bool(body.get("allowOverwrite", False)))
+                allow_overwrite=bool(body.get("allowOverwrite", False)),
+                expected_sha256=body.get("expectedSha256"))
         except (OSError, bundles.BundleError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 

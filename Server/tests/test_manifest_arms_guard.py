@@ -35,7 +35,8 @@ def _armed_study(root, name="armed-study"):
     _concept(root)
     es.create(name, model_id="org/m", revision="abc", root=root)
     es.attach(name, ["fair"], root=root)
-    es.add_condition(name, {"name": "fair-L5", "slots": [
+    es.add_condition(name, {"name": "fair-L5", "alphaInNormUnits": False,
+                            "slots": [
         {"concept": "fair", "layer": 5, "alpha": 1.0}]}, root=root)
     return es.load_raw(name, root)
 
@@ -82,7 +83,8 @@ def test_bundle_import_cannot_stomp_a_draft_that_gained_arms(tmp_path):
     source = str(tmp_path / "source")
     _concept(source)
     es.create("shell-study", model_id="org/m", revision="abc", root=source)
-    es.add_condition("shell-study", {"name": "placeholder", "slots": []}, root=source)
+    es.add_condition("shell-study", {"name": "placeholder", "slots": [],
+                                     "alphaInNormUnits": False}, root=source)
     meta = bundles.package_experiment("shell-study", root=source)
     # Now strip the source manifest to a true shell and repackage it.
     shell = es.load_raw("shell-study", source)
@@ -96,7 +98,8 @@ def test_bundle_import_cannot_stomp_a_draft_that_gained_arms(tmp_path):
     # The target's copy is then attached to — the workspace moved on.
     _concept(target)
     es.attach("shell-study", ["fair"], root=target)
-    es.add_condition("shell-study", {"name": "fair-L5", "slots": [
+    es.add_condition("shell-study", {"name": "fair-L5", "alphaInNormUnits": False,
+                                     "slots": [
         {"concept": "fair", "layer": 5, "alpha": 1.0}]}, root=target)
 
     with pytest.raises(bundles.BundleError, match="no concepts and no conditions"):
@@ -160,7 +163,8 @@ def test_removing_the_last_condition_declares_its_intent(tmp_path):
     must keep working — it is a researcher deleting one arm they named."""
     root = str(tmp_path)
     es.create("one-arm", model_id="org/m", root=root)
-    es.add_condition("one-arm", {"name": "solo", "slots": []}, root=root)
+    es.add_condition("one-arm", {"name": "solo", "slots": [],
+                                "alphaInNormUnits": False}, root=root)
     d = es.remove_condition("one-arm", "solo", root=root)
     assert d["conditions"] == []
     assert es.load_raw("one-arm", root)["conditions"] == []

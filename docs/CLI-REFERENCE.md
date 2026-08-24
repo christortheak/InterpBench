@@ -550,7 +550,8 @@ Every verb above also accepts `--help` (print its arguments and run nothing), `-
 <!-- GENERATED:swift-experiment-authoring END -->
 
 Two spellings the synopsis above cannot show: `declare-condition … --baseline`
-takes no `--slots` (it is the explicit no-intervention arm), and
+takes no `--slots` (it is the explicit no-intervention arm) but still requires
+`--alpha-units`, and
 `set-sweep-selection … --objective ""` clears the declaration, after which the
 sweep resolves to the historical `markerDensity` rule.
 
@@ -611,7 +612,7 @@ manifest's own vocabulary; a multi-slot condition IS the linear mix
 | `--slots` | required unless `--baseline` | `<concept>:<layer>:<alpha>[:add\|ablate]`, comma-separated. α when steering, λ when ablating. An explicit `add` parses and is not written (manifest bytes are the content hash). Every named concept must already be attached. |
 | `--baseline` | off | Declares the no-intervention arm (no slots). Exclusive with `--slots`. |
 | `--band-width K` | 1 | Layers per slot. |
-| `--alpha-units norm\|raw` | `norm` | `norm` denominates α by the residual-stream norm at that layer on the pinned neutral corpus — what makes α comparable across concepts. |
+| `--alpha-units norm\|raw` | **required** (no default) | `norm` denominates α by the residual-stream norm at that layer on the pinned neutral corpus — what makes α comparable across concepts; `raw` is α as typed. Required on every arm, `--baseline` included: it used to default to `norm` here and to `raw` on the server engine, so the same undeclared arm authored a different study depending on which engine served it (portability gap G6). α units are dose semantics, so neither engine guesses. |
 | `--control` | none | `randomMatchedNorm` (steering) or `randomDirectionAblation` (ablation): the same slots with a deterministic random direction substituted. |
 
 **`set-style-taxonomy`** validates that the taxonomy file loads on this engine,
@@ -2214,6 +2215,7 @@ steerlab-server bundle run      <experiment> [--out path]
 steerlab-server bundle evidence <run-dir>    [--out path]
 steerlab-server bundle inspect  <bundle.tar.gz>
 steerlab-server bundle import   <bundle.tar.gz> [--target root] [--overwrite]
+                                [--sha256 <outer digest>]
 steerlab-server bundle execute  <bundle.tar.gz>
                                 --verb <verify|extract|validate|sweep|run|evaluate|analyze|pipeline>
                                 [--target root] [--shard k/K] [--dtype D] [--device DEV]
@@ -2232,6 +2234,13 @@ no `run-status.json`, no reachable stage outputs) it prints a structured skip
 **`inspect`** prints
 a bundle's manifest. **`import`** unpacks one into a target root, re-verifying
 pins and refusing to overwrite a frozen manifest unless `--overwrite`.
+`--sha256 <digest>` is the OUT-OF-BAND outer pin (the job record's
+`bundleSha256`, never a value read from inside the archive): supplied, it is
+checked **before the archive is opened at all**, and a mismatch names both
+hashes and extracts nothing. Omitted, the outer digest is the caller's
+responsibility — which is what it always was on this engine, and why the Mac
+had the check and the server did not (portability gap G3). The HTTP twin is
+`POST /api/bundles/import` with `expectedSha256`.
 
 **`execute`** is the Slurm child entry point: it imports the bundle and runs
 exactly one verb through the same task functions the interactive CLI uses, so

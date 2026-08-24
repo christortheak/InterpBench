@@ -950,13 +950,50 @@ def pin_sae_candidates(name: str, path: str, root: str | None = None) -> dict:
     return d
 
 
+#: The repair for a NEW condition declaration that names no ``alphaInNormUnits``
+#: — in BOTH spellings a caller can write it in, because the two authoring
+#: surfaces are the manifest document (this API, and the ``/api/authoring/
+#: {name}/condition`` route that fronts it) and the Mac CLI verb. Swift twin:
+#: ``ExperimentManifest.alphaUnitsRepairAction``
+#: (``Sources/ExperimentKit/ExperimentStore.swift``) — the same two spellings,
+#: written out independently so neither engine can quietly follow the other.
+ALPHA_UNITS_REPAIR = (
+    'declare the α units explicitly: add "alphaInNormUnits": true '
+    "(α in residual-stream-norm units — the project convention) or "
+    "false (raw α) to the condition, or declare the arm with "
+    "`steerlab-cli experiment declare-condition <study> <condition> "
+    "--slots <concept>:<layer>:<alpha> --alpha-units norm|raw`")
+
+
 def _condition_entry(condition: dict) -> dict:
+    """Project one DECLARED condition into the manifest's stored shape.
+
+    ``alphaInNormUnits`` is REQUIRED here (Phase-0 gap G6,
+    ``docs/PORTABILITY-CONTRACTS.md``). It used to default to ``False`` while
+    the Swift engine's ``Condition.init`` defaulted to ``true``, so the same
+    client call authored a different study depending on which engine served it
+    — and α units are dose semantics, not a display setting: the same α number
+    is a different intervention in each convention. Neither engine picks a
+    default now; both refuse a new declaration that does not say.
+
+    READING an existing manifest is untouched: ``Manifest.from_dict`` still
+    reads a legacy key-less condition as ``False``, which is the reading this
+    engine has always given it. Reinterpreting a frozen study's dose is the one
+    thing this repair must not do.
+    """
+    if "alphaInNormUnits" not in condition:
+        raise ExperimentStoreError(
+            f"condition {condition.get('name', '?')!r} declares no "
+            "'alphaInNormUnits', so the α it names has no unit — this engine "
+            "would read raw α and the Mac engine residual-norm units for the "
+            f"same document. {ALPHA_UNITS_REPAIR}",
+            repair=ALPHA_UNITS_REPAIR)
     entry = {
         "name": condition["name"],
         "slots": [{"concept": s["concept"], "layer": int(s["layer"]), "alpha": float(s["alpha"])}
                   for s in condition.get("slots", [])],
         "bandWidth": int(condition.get("bandWidth", 1)),
-        "alphaInNormUnits": bool(condition.get("alphaInNormUnits", False)),
+        "alphaInNormUnits": bool(condition["alphaInNormUnits"]),
     }
     # Sweep-selection provenance (cross-engine contract): the sweep stamps how
     # its `<concept>-recommended` cell was chosen — run, resolved criterion,
@@ -1670,6 +1707,25 @@ def freeze_advisories(d: dict, root: str | None = None) -> list[str]:
         advisories.append(
             "measurement-side inputs unpinned (markers/validation) — "
             "re-attach to pin")
+    # Legacy conditions carrying no `alphaInNormUnits` (Phase-0 gap G6). A NEW
+    # declaration without the key is refused (`_condition_entry`), but a
+    # document that already holds one still freezes — reinterpreting a dose
+    # nobody re-declared is exactly what this repair must not do. What it gets
+    # instead is the ambiguity said out loud, at the last moment the study can
+    # still be edited: this engine reads such a condition as RAW α, and the Mac
+    # engine refuses to open the manifest at all, so the study's dose semantics
+    # depend on which engine you ask.
+    keyless = [str(c.get("name", "?")) for c in d.get("conditions") or []
+               if isinstance(c, dict) and "alphaInNormUnits" not in c]
+    if keyless:
+        advisories.append(
+            "condition(s) " + ", ".join(f"'{name}'" for name in keyless)
+            + " declare no 'alphaInNormUnits': this engine reads them as RAW "
+            "α (the reading they were authored under, kept as it is), and the "
+            "Mac engine cannot read the manifest at all until the key is "
+            "present. Re-declare the arm to state the units — a frozen study "
+            "keeps whatever reading it was measured under, so this is worth "
+            "settling BEFORE the freeze, not after. " + ALPHA_UNITS_REPAIR)
     # F1: panel-script authoring problems that fail SILENTLY at run time —
     # duplicate output labels, and {{outputs.X}} references no earlier turn
     # produces. Advisory, not a gate: they make prompts quietly wrong rather

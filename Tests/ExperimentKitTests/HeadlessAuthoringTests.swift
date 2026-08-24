@@ -100,13 +100,19 @@ import Testing
             #expect(pinned.envelope.changed)
 
             let declared = await invoke(
-                ["declare-condition", "study", "french-hi", "--slots", "french:17:0.4"])
+                [
+                    "declare-condition", "study", "french-hi",
+                    "--slots", "french:17:0.4", "--alpha-units", "norm",
+                ])
             #expect(declared.exitCode == 0)
 
             // An explicit baseline, so the arm has something to pair against.
             #expect(
                 await invoke(
-                    ["declare-condition", "study", "baseline", "--baseline"]
+                    [
+                        "declare-condition", "study", "baseline",
+                        "--baseline", "--alpha-units", "norm",
+                    ]
                 ).exitCode == 0)
 
             // THE ASSERTION. The run loop's two silent-baseline refusals are
@@ -175,13 +181,19 @@ import Testing
                 to: root.appending(components: "prompts", "cases", "items.jsonl"))
             await invoke(["pin-prompts", "sealed", "prompts/cases/items.jsonl"])
             await invoke(
-                ["declare-condition", "sealed", "french-hi", "--slots", "french:17:0.4"])
+                [
+                    "declare-condition", "sealed", "french-hi",
+                    "--slots", "french:17:0.4", "--alpha-units", "norm",
+                ])
             #expect(await invoke(["freeze", "sealed", "--force"]).exitCode == 0)
 
             let attempts: [[String]] = [
                 ["pin-prompts", "sealed", "prompts/cases/items.jsonl"],
                 ["pin-rubric", "sealed", "prompts/rubrics/default-paired-v1.md"],
-                ["declare-condition", "sealed", "other", "--slots", "french:9:0.2"],
+                [
+                    "declare-condition", "sealed", "other", "--slots",
+                    "french:9:0.2", "--alpha-units", "norm",
+                ],
             ]
             for attempt in attempts {
                 let outcome = await invoke(attempt)
@@ -204,7 +216,10 @@ import Testing
         try await withTempRoot { _ in
             await invoke(["create", "loose", "--model", Self.model])
             let outcome = await invoke(
-                ["declare-condition", "loose", "ghost-hi", "--slots", "ghost:3:0.1"])
+                [
+                    "declare-condition", "loose", "ghost-hi",
+                    "--slots", "ghost:3:0.1", "--alpha-units", "norm",
+                ])
             #expect(outcome.exitCode != 0)
             #expect(outcome.failure?.reason.contains("not attached") == true)
             #expect(outcome.failure?.reason.contains("attach (pin) it first") == true)
@@ -269,6 +284,47 @@ import Testing
         }
     }
 
+    /// `--alpha-units` is REQUIRED, and a declaration without it is refused
+    /// with the repair — including for a baseline.
+    ///
+    /// Phase-0 gap G6 (`docs/PORTABILITY-CONTRACTS.md`): the flag used to
+    /// default to `norm` here while the server's `_condition_entry` defaulted
+    /// to raw α, so the same undeclared arm authored a different study
+    /// depending on which engine served it. α units are dose semantics — the
+    /// same number is a different intervention in each convention — so neither
+    /// engine guesses now. Server twin:
+    /// `test_a_new_condition_that_declares_no_alpha_units_is_refused`.
+    @Test func declaringAnArmWithoutItsAlphaUnitsIsRefused() async throws {
+        try await withTempRoot { _ in
+            await invoke(["create", "units", "--model", Self.model])
+            for attempt in [
+                ["declare-condition", "units", "arm", "--slots", "french:17:0.4"],
+                ["declare-condition", "units", "baseline", "--baseline"],
+            ] {
+                let outcome = await invoke(attempt)
+                #expect(outcome.exitCode != 0, "\(attempt[2]) was declared with no α unit")
+                #expect(
+                    outcome.failure?.reason.contains("--alpha-units norm|raw") == true,
+                    "the refusal does not name the flag: \(outcome.failure?.reason ?? "")")
+                let repair = outcome.failure?.repairAction ?? ""
+                #expect(repair == ExperimentManifest.alphaUnitsRepairAction)
+                // Both spellings: the manifest key and the CLI flag.
+                #expect(repair.contains("\"alphaInNormUnits\""))
+                #expect(repair.contains("--alpha-units norm|raw"))
+                // Nothing was written.
+                #expect((try? ExperimentStore.load(name: "units"))?.conditions == [])
+            }
+            // An out-of-vocabulary value is still its own refusal, naming the
+            // two legal values rather than the missing-flag repair.
+            let wrong = await invoke([
+                "declare-condition", "units", "arm", "--slots", "french:17:0.4",
+                "--alpha-units", "normal",
+            ])
+            #expect(wrong.exitCode != 0)
+            #expect(wrong.failure?.reason.contains("norm | raw") == true)
+        }
+    }
+
     @Test func anAblationSlotCarriesItsModeAndAnAddSlotDoesNot() throws {
         let ablate = try ExperimentCLIRunner.parseSlots("fear:20:1.0:ablate")
         #expect(ablate[0].mode == .ablate)
@@ -312,12 +368,16 @@ import Testing
             await invoke(["create", "ctrl", "--model", Self.model])
             await invoke(["attach", "ctrl", "french"])
             await invoke(
-                ["declare-condition", "ctrl", "french-hi", "--slots", "french:17:0.4"])
+                [
+                    "declare-condition", "ctrl", "french-hi",
+                    "--slots", "french:17:0.4", "--alpha-units", "norm",
+                ])
             #expect(
                 await invoke(
                     [
                         "declare-condition", "ctrl", "french-hi-random",
-                        "--slots", "french:17:0.4", "--control", "randomMatchedNorm",
+                        "--slots", "french:17:0.4", "--alpha-units", "norm",
+                        "--control", "randomMatchedNorm",
                     ]
                 ).exitCode == 0)
             let manifest = try ExperimentStore.load(name: "ctrl")
@@ -335,7 +395,7 @@ import Testing
             let bad = await invoke(
                 [
                     "declare-condition", "ctrl", "nope", "--slots", "french:17:0.4",
-                    "--control", "randomish",
+                    "--alpha-units", "norm", "--control", "randomish",
                 ])
             #expect(bad.exitCode != 0)
             #expect(bad.failure?.reason.contains("randomMatchedNorm") == true)
@@ -349,12 +409,13 @@ import Testing
             let both = await invoke(
                 [
                     "declare-condition", "excl", "x", "--baseline",
-                    "--slots", "french:17:0.4",
+                    "--slots", "french:17:0.4", "--alpha-units", "norm",
                 ])
             #expect(both.exitCode != 0)
             #expect(both.failure?.reason.contains("exclusive") == true)
 
-            let neither = await invoke(["declare-condition", "excl", "x"])
+            let neither = await invoke(
+                ["declare-condition", "excl", "x", "--alpha-units", "norm"])
             #expect(neither.exitCode != 0)
             #expect(neither.failure?.reason.contains("--slots") == true)
             #expect(neither.failure?.reason.contains("--baseline") == true)
@@ -452,7 +513,10 @@ import Testing
                 to: root.appending(components: "prompts", "cases", "items.jsonl"))
             await invoke(["pin-prompts", "judged", "prompts/cases/items.jsonl"])
             await invoke(
-                ["declare-condition", "judged", "french-hi", "--slots", "french:17:0.4"])
+                [
+                    "declare-condition", "judged", "french-hi",
+                    "--slots", "french:17:0.4", "--alpha-units", "norm",
+                ])
             // Judges with no rubric: exactly the shape the gate exists for.
             var manifest = try ExperimentStore.load(name: "judged")
             manifest.judges = [

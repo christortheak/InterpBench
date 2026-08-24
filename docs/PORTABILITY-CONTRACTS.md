@@ -1,10 +1,12 @@
 # Portability Contracts
 
-**Phase-0 deliverable of the portability program.** Phase 0 changes no
-production behaviour. Its entire output is this page plus the golden tests it
-indexes: a record of what the two engines currently promise each other, so a
-later phase that breaks one of those promises fails a test instead of failing
-in somebody's workspace.
+**Phase-0 deliverable of the portability program**, extended by **Phase 1a**.
+Phase 0 changed no production behaviour: its entire output was this page plus
+the golden tests it indexes — a record of what the two engines promise each
+other, so a later phase that breaks one of those promises fails a test instead
+of failing in somebody's workspace. Phase 1a closed four of the recorded gaps —
+G1, G3, G6, and G4 alongside G6 — and moved their pins from "pinned as broken"
+to "pinned as fixed"; §5 says what was decided in each and why.
 
 The program's target is a cross-platform Python client that will have to do
 three things the Swift and Python engines already do to each other:
@@ -14,8 +16,8 @@ three things the Swift and Python engines already do to each other:
 3. **import an evidence bundle with verification** — and refuse a bad one.
 
 Each contract below names what it guarantees and the test that pins it. Where a
-contract *should* exist but cannot be pinned today, it is listed in
-[§5 Gaps](#5-gaps-for-later-phases) rather than quietly omitted.
+contract *should* exist and still cannot be pinned, it is listed in
+[§5 Gaps](#5-gaps) rather than quietly omitted.
 
 Two files carry the new goldens, one per engine, each the other's twin:
 
@@ -41,8 +43,10 @@ established), **write-if-missing goldens** (`ExperimentCLIEnvelopeTests`,
 | **manifest-interop-reverse** | A manifest the Swift engine authors loads in the Python engine with every cross-engine field intact, and its raw document survives key-for-key. | fixture `Tests/Fixtures/cross-engine/swift-authored-manifest.json` (written by `PortabilityContractTests.theSwiftAuthoredManifestFixtureIsCurrent`); consumed by `test_a_swift_authored_manifest_loads_with_every_field_intact` |
 | **manifest-canonicalization** | The identity of a study is what it *measures*: the nine volatile freeze stamps (`status`, `frozenAt`, `freezeHash`, `gitCommit`, `frozenBy`, `createdAt`, `appVersion`, `freezeForced`, `forcedGatesSkipped`) are outside the content hash on **both** engines, and measured surface is inside it on both. | `PortabilityContractTests.volatileFreezeStampsAreOutsideTheContentHash` ↔ `test_volatile_freeze_stamps_are_outside_the_content_hash` |
 | **freeze-hash-is-the-content-hash** | On the Python engine the freeze hash and the frozen document's content hash are the same value reached by two code paths (`Manifest.content_hash`, `_write_freeze_canonical`), so a client may recompute either. | `test_a_python_authored_manifest_fixture_is_current` |
-| **server-freeze-canonical** | A study the Python engine froze verifies on the Swift engine against the server's *exact* `freeze-canonical.json` bytes: `sha256(bytes) == freezeHash`, and the parsed content deep-equals Swift's re-encoding minus the volatile stamps. | `PortabilityContractTests.aServerFrozenManifestVerifiesAgainstItsOwnCanonicalBytes` |
-| **condition-globals-are-required** | The Swift decoder has **no default** for a condition's `bandWidth` / `alphaInNormUnits`; the Python store stamps both in `_condition_entry`. A client must route condition authoring through that API (or write both keys). | `PortabilityContractTests.aConditionWithoutItsGlobalsIsUnreadableHere` |
+| **server-freeze-canonical** | A study the Python engine froze verifies on the Swift engine against the server's *exact* `freeze-canonical.json` bytes: `sha256(bytes) == freezeHash`, and the parsed content deep-equals Swift's re-encoding minus the volatile stamps **and minus the keys the server elides at their default** (`ExperimentStore.defaultElidedFreezeKeys`). | `PortabilityContractTests.aServerFrozenManifestVerifiesAgainstItsOwnCanonicalBytes` |
+| **server-authored-freeze** *(Phase 1a, was G1)* | A study authored **entirely** on the Python engine — the future client's path — passes the Swift post-freeze check; and a real edit is still refused, now with the differing field **named**. | `PortabilityContractTests.aServerAuthoredFrozenManifestVerifiesHere`, `.aRealEditToAServerFrozenStudyIsStillRefusedAndNamed`, `.theRepairIsInvisibleToEveryHashAndFingerprint` |
+| **condition-globals-are-required** | A condition document with no `bandWidth` / `alphaInNormUnits` is refused by the Swift decoder — as a **typed refusal naming the arm, the key and the repair** since Phase 1a, not a raw `keyNotFound` (was G4). | `PortabilityContractTests.aConditionWithoutItsGlobalsIsRefusedByName` |
+| **condition-alpha-units-explicit** *(Phase 1a, was G6)* | A **new** condition declaration that does not name `alphaInNormUnits` is refused on **both** engines, with the same repair in both spellings (manifest key and `--alpha-units`). An **existing** key-less condition keeps the reading its engine always gave it (`False` on the server; unreadable on the Mac), and the server advises at freeze rather than converting. | `PortabilityContractTests.theConditionAlphaUnitDeclarationIsExplicitOnBothEngines` ↔ `test_a_new_condition_that_declares_no_alpha_units_is_refused`, `test_an_existing_keyless_condition_keeps_its_original_reading`; CLI half `HeadlessAuthoringTests.declaringAnArmWithoutItsAlphaUnitsIsRefused` |
 
 **Not a contract, deliberately:** the two engines' manifest content hashes are
 **not** equal for the same study, and never were. `Manifest.content_hash` says
@@ -70,7 +74,8 @@ one engine with a hash produced by the other.** The bytes-level contract that
 | **evidence-member-integrity** | One flipped member byte is refused, and the refusal **names the member** — the only part a remote client can act on. | `test_a_flipped_member_byte_is_refused_and_the_refusal_names_the_member` (naming); `test_bundles.py::test_tampered_member_refuses_before_touching_the_workspace` (pre-existing: refusal happens before any disk write, no debris) |
 | **evidence-path-containment** | A tar member whose path escapes the target root is refused by name, and nothing is written anywhere. | `test_a_member_escaping_the_target_root_is_refused` |
 | **evidence-import-idempotence** | Re-importing identical evidence is not a way to quietly rewrite a workspace: it refuses, the existing files are byte- and mtime-identical afterwards, no second copy appears, and no staging debris is left. With the explicit override it is content-stable. | `test_re_importing_identical_evidence_neither_duplicates_nor_rewrites` (extends the pre-existing `test_bundles.py::test_import_rejects_overwrite`, which pinned only the refusal) |
-| **evidence-outer-hash** | The archive digest is an **out-of-band** pin the recipient checks: it is never stamped inside the archive it protects, `inspect_bundle` recomputes it from the file, and one flipped member byte moves it. On the Mac the check runs before extraction. | `test_the_outer_bundle_hash_travels_out_of_band_and_moves_with_one_member`; Swift half `CrossEngineLifecycleTests.aBundleWhoseHashDoesNotMatchIsRefused` (pre-existing) |
+| **evidence-outer-hash** | The archive digest is an **out-of-band** pin the recipient checks: it is never stamped inside the archive it protects, `inspect_bundle` recomputes it from the file, and one flipped member byte moves it. | `test_the_outer_bundle_hash_travels_out_of_band_and_moves_with_one_member`; Swift half `CrossEngineLifecycleTests.aBundleWhoseHashDoesNotMatchIsRefused` (pre-existing) |
+| **evidence-outer-hash-pre-extraction** *(Phase 1a, was G3)* | **Both** engines can verify that digest *before* extracting: `bundles.import_bundle(expected_sha256=…)` (and `POST /api/bundles/import` with `expectedSha256`, and `bundle import --sha256`) refuses a mismatch with **both hashes named**, having written nothing and opened nothing. The parameter is optional; absent, behaviour is exactly what it was. | `test_a_mismatched_expected_sha256_refuses_before_anything_is_extracted`, `test_a_matching_expected_sha256_imports_exactly_as_before`, `test_omitting_expected_sha256_is_unchanged_behaviour`; Mac twin `EvidenceBundleImporter.importEvidenceBundle(_:expectedSHA256:)` |
 | **evidence-wire** *(pre-existing)* | A real `package_evidence` archive imports on the Mac, its agent becomes discoverable, its vector resolves, and its declared sibling runs come home. | `CrossEngineLifecycleTests` over `Tests/Fixtures/cross-engine/server-evidence-bundle.tar.gz` |
 | **member caps and streaming** *(pre-existing)* | Declared-oversize members are refused before expansion; a lying tar header is caught mid-stream; metadata has its own smaller bound. | `test_bundles.py::test_a_member_over_the_uncompressed_cap_is_refused` and siblings |
 
@@ -84,28 +89,51 @@ one engine with a hash produced by the other.** The bytes-level contract that
 
 ---
 
-## 5. Gaps for later phases
+## 5. Gaps
 
-Contracts that *should* exist and cannot be pinned today. Each is recorded
-here because a gap nobody wrote down is a gap the next phase rediscovers by
-breaking something.
+Contracts that *should* exist and could not be pinned in Phase 0. Each is
+recorded here because a gap nobody wrote down is a gap the next phase
+rediscovers by breaking something. **G1, G3, G4 and G6 were closed in Phase
+1a** and are kept below with what was decided and why; G2 and G5 remain open.
 
-**G1 — A server-authored frozen study reads as drifted on the Mac.**
+**G1 — A server-authored frozen study read as drifted on the Mac.
+CLOSED (Phase 1a).**
 The Swift encoder always writes `multiAgentIncludeBaseline` and
 `recordTokenIDs`; the Python engine omits them when they hold their defaults.
 The defaults *agree* on both engines, so the two documents describe the same
-study — but `serverFreezeCanonicalViolations` compares parsed documents, and a
+study — but `serverFreezeCanonicalViolations` compared parsed documents, and a
 key present on one side only is a difference. A study authored entirely on the
-server therefore fails post-freeze verification with the generic "manifest
-content changed after freeze (hash mismatch)", naming no field. It has stayed
+server therefore failed post-freeze verification with the generic "manifest
+content changed after freeze (hash mismatch)", naming no field. It stayed
 invisible because today's server-frozen studies were authored on the Mac first
 and so already carry both keys — but *authoring entirely on the server is
 precisely what the future client does.*
-Pinned as-is (behaviour unchanged) by
-`PortabilityContractTests.aServerAuthoredFrozenManifestReadsAsDriftedHere`,
-with the working half beside it for contrast.
-*Phase 1: make the comparison default-aware, or make the refusal name the
-differing keys. Either is a behaviour change and out of scope here.*
+
+*The repair:* a **default-insensitive comparison**, not an emission change.
+`ExperimentStore.defaultElidedFreezeKeys` enumerates the keys with the default
+both engines hold, and `serverFreezeCanonicalViolations` drops each from **both**
+sides when it is present *and* at that default; a present non-default value
+still differs from an absence, because the server omits the key only at its
+default. The refusal now also names the differing top-level fields (reusing
+`manifestFieldMismatches`, the remote-freeze identity check's renderer).
+
+*Why not emission alignment (making the Python engine write both keys).* It
+would have repaired only *newly authored* server manifests — every study
+already frozen on the server would still fail — while moving the content hash
+of every new one, for a difference that was never about content. Both were
+weighed; the comparison change is the one that fixes the studies that exist.
+
+*What the repair deliberately did not touch.* The normalization lives in the
+freeze comparison alone, **not** in `comparableFreezeObject`, which also backs
+`canonicalManifestBodyHash` (a fingerprint researchers read off the screen) and
+`compareManifestDocuments` (the remote-freeze identity check). Nothing hashed,
+stamped or displayed moved — pinned by
+`PortabilityContractTests.theRepairIsInvisibleToEveryHashAndFingerprint`, and
+no manifest content hash on either engine changed at all.
+Pinned as FIXED by `.aServerAuthoredFrozenManifestVerifiesHere`, with the
+firewall half `.aRealEditToAServerFrozenStudyIsStillRefusedAndNamed` beside it
+and the Mac-authored half (`.aServerFrozenManifestVerifiesAgainstItsOwnCanonicalBytes`)
+passing unchanged.
 
 **G2 — The Swift engine has no run-bundle reader.**
 `RunBundlePackager` writes `steerlab-bundle.json`; nothing on the Swift side
@@ -113,24 +141,43 @@ reads one back. `EvidenceBundleImporter` reads *evidence* bundles only. So
 "a bundle either engine produced is inspectable by either engine" is currently
 true in one direction only, and the Python→Swift half is pinned as a metadata
 **shape** fixture rather than a round trip.
-*Phase 1: either add a Swift inspector, or state that run-bundle reading is a
-server-side capability by design and let the client rely on that.*
+*Still open after Phase 1a: either add a Swift inspector, or state that
+run-bundle reading is a server-side capability by design and let the client
+rely on that.*
 
-**G3 — The Python importer has no `expected_sha256` parameter.**
+**G3 — The Python importer had no `expected_sha256` parameter.
+CLOSED (Phase 1a).**
 The outer archive digest is carried out of band and checked by the consumer;
 on the Mac that is `EvidenceBundleImporter.importEvidenceBundle(_:expectedSHA256:)`,
-which verifies *before* extracting. `bundles.import_bundle` offers no
-equivalent, so a Python client must perform the check itself before calling in.
-*Phase 1: give the Python importer the same pre-extraction check, so the
-verification story is one story rather than one per engine.*
+which verifies *before* extracting. `bundles.import_bundle` offered no
+equivalent, so a Python client had to perform the check itself before calling
+in — and the verification story was one story per engine.
 
-**G4 — A hand-built condition is unreadable on the Mac, with no typed refusal.**
-See **condition-globals-are-required** above: the obvious client-side shape
-`{"name": …, "slots": […]}` produces a manifest the Swift decoder rejects with
-a `keyNotFound` deep inside `conditions[0]` rather than a typed refusal with a
-`repairAction`. This is the same failure shape as open-issues #11 (the adapter
-entry with no `name`), one level up.
-*Phase 1: default the two globals on decode, or refuse with a named gate.*
+*The repair:* an **optional** `expected_sha256` on `bundles.import_bundle`,
+verified by `_refuse_outer_hash_mismatch` before `inspect_bundle` opens the
+archive at all. A mismatch is a `BundleError` naming **both** hashes, with
+nothing written and no staging debris. Fronted additively by
+`POST /api/bundles/import` (`expectedSha256`) and `bundle import --sha256`.
+Absent parameter = today's behaviour exactly, which is what keeps every
+existing call site and every deployed cluster script working; the future client
+always passes it. What this catches and the per-member checks cannot is
+**substitution**: a wholesale swapped archive is internally consistent.
+
+**G4 — A hand-built condition was unreadable on the Mac, with no typed refusal.
+CLOSED (Phase 1a, with G6).**
+The obvious client-side shape `{"name": …, "slots": […]}` produced a manifest
+the Swift decoder rejected with a `keyNotFound` deep inside `conditions[0]`
+rather than a typed refusal with a `repairAction` — the same failure shape as
+open-issues #11 (the adapter entry with no `name`), one level up.
+
+*The repair:* `ExperimentManifest.init(from:)` wraps the `conditions` decode
+and rethrows through `conditionDecodeRefusal`, which re-reads the array
+opaquely to name the arm (by `name`, falling back to `conditions[i]`), names
+the missing key, and carries a repair — `ExperimentError.malformed`, so the
+envelope answers `blocked`/64 with a `repairAction` rather than `verbFailed`/70.
+The **answer** is unchanged: the document is still refused. Defaulting the two
+globals on decode was the other option and was rejected — for `alphaInNormUnits`
+it would mean inventing a dose unit, which is exactly what G6 forbids.
 
 **G5 — No cross-engine `push_manifest` canonical-body agreement.**
 `experiment_store.push_manifest` returns a `canonicalBodyHash` over the whole
@@ -139,25 +186,63 @@ document *minus* the volatile keys and with nulls stripped. The two are
 therefore not comparable, and the server's docstring already says the value is
 informational (the app re-fetches and compares documents itself). Nothing
 depends on them agreeing today, and nothing pins that they do not.
-*Phase 1: either align them or rename one, so a client author cannot reasonably
-read the two identically-shaped fields as the same quantity.*
+*Still open after Phase 1a: either align them or rename one, so a client author
+cannot reasonably read the two identically-shaped fields as the same
+quantity.*
 
-**G6 — `alphaInNormUnits` defaults differ, and it shows in the fixtures.**
-Declaring a condition without naming the key yields `false` on the Python
+**G6 — `alphaInNormUnits` defaults differed, and it showed in the fixtures.
+CLOSED (Phase 1a).**
+Declaring a condition without naming the key yielded `false` on the Python
 engine (`experiment_store._condition_entry`) and `true` on the Swift engine
-(`ExperimentManifest.Condition.init`). Nothing is broken in flight — both
+(`ExperimentManifest.Condition.init`). Nothing was broken in flight — both
 engines always *write* the key, so a condition that has crossed the wire is
-unambiguous — but the same client call produces a different study depending on
+unambiguous — but the same client call produced a different study depending on
 which engine served it, and α units are not a cosmetic setting (see the
-alpha-in-norm-units convention). The divergence is visible in the two
-committed manifests: `manifest-interop.json`'s conditions carry `false`,
-`swift-authored-manifest.json`'s carry `true`, from the same two-condition
+alpha-in-norm-units convention). The divergence was visible in the two
+committed manifests: `manifest-interop.json`'s conditions carried `false`,
+`swift-authored-manifest.json`'s carried `true`, from the same two-condition
 declaration.
-Pinned on both sides by
-`test_the_condition_alpha_unit_default_diverges_from_swift` ↔
-`PortabilityContractTests.theConditionAlphaUnitDefaultDivergesFromTheServer`.
-*Phase 1: pick one default and state it in both places — a client cannot be
-asked to know which engine answered.*
+
+*The repair — explicitness, not a chosen default.* "Pick one default" was the
+Phase-0 suggestion and it is the one thing that could not be done: whichever
+default was picked, every existing artifact authored under the other would have
+been silently reinterpreted, and a reinterpreted α is a study that measured
+something other than what it now says it measured. So **neither engine
+defaults, at any surface a client reaches**:
+
+- **New declarations are refused, typed, on both engines.**
+  `experiment_store._condition_entry` raises `ExperimentStoreError` carrying
+  `ALPHA_UNITS_REPAIR`; the Swift decoder refuses a condition document with no
+  key through `conditionDecodeRefusal` (G4's machinery), carrying
+  `ExperimentManifest.alphaUnitsRepairAction`. The two repair strings are
+  **independent twin literals** and are asserted equal across the engines
+  through the fixture — neither can reword the instruction the other gives.
+  Both name **both spellings** of the fix: the manifest key
+  (`"alphaInNormUnits": true|false`) and the CLI flag (`--alpha-units
+  norm|raw`).
+- **`steerlab-cli experiment declare-condition --alpha-units` is now required**,
+  baselines included. A slot-less arm carries no α, but it still *stamps* the
+  key the other engine reads, and two engines stamping different values for the
+  same call is the gap itself.
+- **Existing artifacts keep their reading.** `Manifest.from_dict` still reads a
+  key-less condition as `False` — the reading every study frozen under it was
+  measured with. The Swift engine cannot read such a manifest at all, so the
+  reading is engine-dependent; `freeze_advisories` therefore **surfaces an
+  advisory** naming the arms, saying which reading this engine gives them and
+  that the Mac cannot open the document, rather than converting anything.
+- **Not** removed: Swift's in-process `Condition.init(alphaInNormUnits: true)`
+  default. It is not a client-facing declaration — a Swift caller states the
+  unit in code, and the UI binds it to a control — and the two boundaries a
+  client actually reaches both refuse silence.
+
+Both committed fixtures now declare the key explicitly (`true` on each side),
+and `manifest-interop.json` additionally carries the server's own refusal text,
+its repair, and the preserved legacy reading (`conditionAlphaUnits`).
+Pinned by `test_a_new_condition_that_declares_no_alpha_units_is_refused` +
+`test_an_existing_keyless_condition_keeps_its_original_reading` ↔
+`PortabilityContractTests.theConditionAlphaUnitDeclarationIsExplicitOnBothEngines`,
+with the CLI half in
+`HeadlessAuthoringTests.declaringAnArmWithoutItsAlphaUnitsIsRefused`.
 
 ---
 

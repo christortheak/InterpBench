@@ -601,6 +601,90 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         }
     }
 
+    /// The repair for a condition DOCUMENT that declares no `alphaInNormUnits`
+    /// — in BOTH spellings a caller can write it in, because the two authoring
+    /// surfaces are the manifest document and the CLI verb, and a client that
+    /// only learns one of them is stuck the first time it uses the other.
+    ///
+    /// Phase-0 gap G6 (`docs/PORTABILITY-CONTRACTS.md`): the key's DEFAULT
+    /// disagreed across the engines — `true` from `Condition.init` here,
+    /// `False` from the server's `_condition_entry` — so the same client call
+    /// authored a different study depending on which engine served it. α units
+    /// are dose semantics (`docs/CONDUCTING-A-STUDY.md`: α in norm units is
+    /// the standing convention, and a raw α at the same number is a different
+    /// intervention), so the repair is not to pick a default: it is to refuse
+    /// a NEW declaration that does not say. Server twin:
+    /// `experiment_store._condition_entry`'s refusal, whose repair names the
+    /// same two spellings.
+    public static let alphaUnitsRepairAction =
+        "declare the α units explicitly: add \"alphaInNormUnits\": true "
+        + "(α in residual-stream-norm units — the project convention) or "
+        + "false (raw α) to the condition, or declare the arm with "
+        + "`steerlab-cli experiment declare-condition <study> <condition> "
+        + "--slots <concept>:<layer>:<alpha> --alpha-units norm|raw`"
+
+    /// Every key a condition document must carry, as a caller would type it.
+    static let conditionRequiredKeys = ["alphaInNormUnits", "bandWidth", "name", "slots"]
+
+    /// A condition document this engine cannot read, as a TYPED refusal that
+    /// names the arm, the key, and the repair (Phase-0 gaps G4 + G6).
+    ///
+    /// `DecodingError` is a debug dump whose only actionable content — which
+    /// key, in which array element — is buried in `codingPath`; the same
+    /// reading `MultiAgentScenarioStore.decodeFailureReason` does for
+    /// scenarios.
+    /// `raw` is the same `conditions` array re-decoded opaquely, so the arm
+    /// can be named by NAME rather than only by index.
+    static func conditionDecodeRefusal(
+        _ error: DecodingError, raw: [JSONValue]
+    ) -> ExperimentError {
+        func context(_ error: DecodingError) -> DecodingError.Context? {
+            switch error {
+            case let .keyNotFound(_, context): context
+            case let .typeMismatch(_, context): context
+            case let .valueNotFound(_, context): context
+            case let .dataCorrupted(context): context
+            @unknown default: nil
+            }
+        }
+        let index = context(error)?.codingPath.compactMap(\.intValue).first
+        let name: String? = index.flatMap { position in
+            guard position < raw.count, case let .object(fields) = raw[position],
+                case let .string(value)? = fields["name"], !value.isEmpty
+            else { return nil }
+            return value
+        }
+        let arm =
+            name.map { "condition '\($0)'" }
+            ?? index.map { "conditions[\($0)]" }
+            ?? "a condition"
+
+        guard case let .keyNotFound(key, _) = error else {
+            return .malformed(
+                "\(arm) is malformed: "
+                    + MultiAgentScenarioStore.decodeFailureReason(error),
+                repair: "repair the condition in the manifest document — it "
+                    + "must be {\"name\": …, \"slots\": [{\"concept\": …, "
+                    + "\"layer\": …, \"alpha\": …}, …], \"bandWidth\": 1, "
+                    + "\"alphaInNormUnits\": true|false}")
+        }
+        if key.stringValue == "alphaInNormUnits" {
+            return .malformed(
+                "\(arm) declares no 'alphaInNormUnits', so the α it names has "
+                    + "no unit — this engine would read residual-norm units "
+                    + "and the server engine raw α for the same document, "
+                    + "which is a different intervention at the same number",
+                repair: alphaUnitsRepairAction)
+        }
+        return .malformed(
+            "\(arm) is missing the required key '\(key.stringValue)'",
+            repair: "every condition declares "
+                + conditionRequiredKeys.map { "'\($0)'" }.joined(separator: ", ")
+                + " — add '\(key.stringValue)', or declare the arm through "
+                + "`steerlab-cli experiment declare-condition`, which writes "
+                + "the whole shape for you")
+    }
+
     /// Layer/alpha dose-response grid (alphas in residual-norm units; 0 is
     /// the baseline cell and is always implied). Default alphas recalibrated
     /// 2026-06-10 with the corrected norm-unit conversion (injected norm =
@@ -1590,7 +1674,20 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         concepts = try container.decodeIfPresent([ConceptRef].self, forKey: .concepts) ?? []
         grandMeanCorpus = try container.decodeIfPresent(
             GrandMeanCorpus.self, forKey: .grandMeanCorpus)
-        conditions = try container.decodeIfPresent([Condition].self, forKey: .conditions) ?? []
+        do {
+            conditions =
+                try container.decodeIfPresent([Condition].self, forKey: .conditions) ?? []
+        } catch let error as DecodingError {
+            // Phase-0 gaps G4 + G6 (docs/PORTABILITY-CONTRACTS.md): the
+            // obvious client-side shape `{"name": …, "slots": […]}` used to
+            // die as a raw `keyNotFound` deep inside `conditions[0]`, naming
+            // no arm and offering no repair. A condition document is client
+            // input, so it gets a typed refusal like every other client input.
+            throw Self.conditionDecodeRefusal(
+                error,
+                raw: (try? container.decodeIfPresent(
+                    [JSONValue].self, forKey: .conditions)) ?? [])
+        }
         variantConditions =
             try container.decodeIfPresent([VariantCondition].self, forKey: .variantConditions) ?? []
         neutralCorpusHash = try container.decodeIfPresent(String.self, forKey: .neutralCorpusHash)
@@ -5819,13 +5916,65 @@ public enum ExperimentStore {
         "appVersion", "freezeForced", "forcedGatesSkipped",
     ]
 
+    /// Keys this engine's encoder ALWAYS writes and the server OMITS when they
+    /// hold their default — with the default itself, which is IDENTICAL on
+    /// both engines. `multiAgentIncludeBaseline` defaults to true here
+    /// (`ExperimentManifest.init`) and on the server (`Manifest.from_dict`);
+    /// `recordTokenIDs` defaults to false on both. So absent-at-default and
+    /// present-at-default describe the SAME study, and only a key-set
+    /// comparison could disagree.
+    ///
+    /// Portability gap G1 (`docs/PORTABILITY-CONTRACTS.md`): a study authored
+    /// ENTIRELY on the server — which is exactly what the cross-platform
+    /// client does — carried neither key, so the post-freeze document
+    /// comparison below read it as drifted and refused with the generic
+    /// "changed after freeze", naming no field. Mac-authored studies frozen on
+    /// the server were invisible to it, because their documents already
+    /// carried both keys.
+    ///
+    /// Server twin: the omission is `experiment_store.create`'s key set (which
+    /// stamps neither) plus `Manifest.from_dict`'s two defaults. A key added
+    /// here must hold its default on BOTH engines — that is the whole licence
+    /// for eliding it — and the pin that proves the server really elides it is
+    /// `PortabilityContractTests.aServerAuthoredFrozenManifestVerifiesHere`
+    /// over the fixture `test_a_python_authored_manifest_fixture_is_current`
+    /// writes.
+    static let defaultElidedFreezeKeys: [String: Bool] = [
+        "multiAgentIncludeBaseline": true,
+        "recordTokenIDs": false,
+    ]
+
+    /// Drop each `defaultElidedFreezeKeys` entry that is PRESENT and holds its
+    /// default. Applied to both sides, so absent ≡ present-at-default while a
+    /// present NON-default value still differs from an absence (the server
+    /// omits only at the default, so an omission means the default and a
+    /// non-default value really is a change).
+    private static func droppingDefaultElidedKeys(
+        _ object: [String: Any]
+    ) -> [String: Any] {
+        var result = object
+        for (key, defaultValue) in defaultElidedFreezeKeys
+        where (result[key] as? Bool) == defaultValue {
+            result.removeValue(forKey: key)
+        }
+        return result
+    }
+
     /// Post-freeze verification for SERVER-frozen manifests. Swift cannot
     /// reproduce Python's canonical JSON byte-for-byte, so the server writes
     /// `freeze-canonical.json` — the exact bytes it hashed. The contract:
     /// sha256(file bytes) == freezeHash, AND the file's parsed content equals
     /// the manifest minus the volatile freeze stamps (compared as parsed JSON,
-    /// with explicit nulls stripped: Python writes `null` where Swift omits
-    /// the key — semantically the same pin).
+    /// with explicit nulls stripped — Python writes `null` where Swift omits
+    /// the key — and with `defaultElidedFreezeKeys` dropped at their default,
+    /// which is the same class of difference one level up: a key one engine
+    /// writes and the other elides, both meaning the same thing).
+    ///
+    /// The two normalizations are DELIBERATELY NOT part of
+    /// `comparableFreezeObject`: that function also backs
+    /// `canonicalManifestBodyHash`, a value shown to researchers, and moving
+    /// it would change a displayed fingerprint for every existing manifest to
+    /// close a gap that only this comparison has.
     private static func serverFreezeCanonicalViolations(
         _ manifest: ExperimentManifest, freezeHash: String
     ) -> [String] {
@@ -5846,14 +5995,30 @@ public enum ExperimentStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard
-            let canonicalObject = comparableFreezeObject(canonicalData),
+            let canonicalObject = comparableFreezeObject(canonicalData)
+                .map(droppingDefaultElidedKeys),
             let manifestData = try? encoder.encode(manifest),
-            let manifestObject = comparableFreezeObject(manifestData),
-            (canonicalObject as NSDictionary).isEqual(to: manifestObject)
+            let manifestObject = comparableFreezeObject(manifestData)
+                .map(droppingDefaultElidedKeys)
         else {
             return ["manifest content changed after freeze (hash mismatch)"]
         }
-        return []
+        guard !(canonicalObject as NSDictionary).isEqual(to: manifestObject) else {
+            return []
+        }
+        // NAME the differing fields. The generic line sent a reader looking
+        // for tampering when the difference was two keys nobody had edited
+        // (G1); the same reuse the remote-freeze identity check already makes
+        // of `manifestFieldMismatches` costs nothing and ends that.
+        let mismatches = manifestFieldMismatches(
+            local: manifestObject, server: canonicalObject)
+        return [
+            "manifest content changed after freeze — the manifest differs from "
+                + "freeze-canonical.json in: "
+                + (mismatches.isEmpty
+                    ? "no top-level key (a nested value differs)"
+                    : mismatches.joined(separator: "; "))
+        ]
     }
 
     private static func comparableFreezeObject(_ data: Data) -> [String: Any]? {

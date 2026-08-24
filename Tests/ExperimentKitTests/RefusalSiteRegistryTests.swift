@@ -443,7 +443,11 @@ import Testing
             manifest.status = .complete
             try ExperimentStore.save(manifest)  // frozen → complete is legal
             let outcome = await invoke(
-                "experiment", ["declare-condition", "done", "arm", "--baseline"])
+                "experiment",
+                [
+                    "declare-condition", "done", "arm", "--baseline",
+                    "--alpha-units", "norm",
+                ])
             expectRefusal(outcome, .statusImmutable)
         }
     }

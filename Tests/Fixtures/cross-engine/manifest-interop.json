@@ -1,5 +1,11 @@
 {
-  "contentHash": "59843526eeb375b0762466c01b0fd53991a565d98abb3b02706b5caae75209e0",
+  "conditionAlphaUnits": {
+    "declaredExplicitlyInThisFixture": true,
+    "legacyReadingHere": false,
+    "refusalOnNewDeclaration": "condition 'arm-a' declares no 'alphaInNormUnits', so the \u03b1 it names has no unit \u2014 this engine would read raw \u03b1 and the Mac engine residual-norm units for the same document. declare the \u03b1 units explicitly: add \"alphaInNormUnits\": true (\u03b1 in residual-stream-norm units \u2014 the project convention) or false (raw \u03b1) to the condition, or declare the arm with `steerlab-cli experiment declare-condition <study> <condition> --slots <concept>:<layer>:<alpha> --alpha-units norm|raw`",
+    "repairAction": "declare the \u03b1 units explicitly: add \"alphaInNormUnits\": true (\u03b1 in residual-stream-norm units \u2014 the project convention) or false (raw \u03b1) to the condition, or declare the arm with `steerlab-cli experiment declare-condition <study> <condition> --slots <concept>:<layer>:<alpha> --alpha-units norm|raw`"
+  },
+  "contentHash": "42336b6c8c2dbdc9bc80a3ea3c96805482b3c801912a259c795184d497f441fc",
   "draft": {
     "capabilityBatteryFile": "prompts/batteries/b1.jsonl",
     "capabilityBatteryHash": "976bd5dc407ad3f7f0203ca9b98a7bd8cf07740db9d689b693b2a451f13c5a19",
@@ -18,13 +24,13 @@
     ],
     "conditions": [
       {
-        "alphaInNormUnits": false,
+        "alphaInNormUnits": true,
         "bandWidth": 1,
         "name": "baseline",
         "slots": []
       },
       {
-        "alphaInNormUnits": false,
+        "alphaInNormUnits": true,
         "bandWidth": 1,
         "name": "arm-a",
         "slots": [
@@ -68,10 +74,10 @@
     "temperature": 0.7,
     "variantConditions": []
   },
-  "freezeCanonical": "{\"capabilityBatteryFile\":\"prompts/batteries/b1.jsonl\",\"capabilityBatteryHash\":\"976bd5dc407ad3f7f0203ca9b98a7bd8cf07740db9d689b693b2a451f13c5a19\",\"concepts\":[{\"name\":\"french\",\"options\":{\"method\":\"meanDifference\",\"readingPosition\":{\"lastToken\":{}}},\"stimulusSetHash\":\"4c072659bd86a71455db8d7a69fea6f537ea528f5a761fe8715443630fcb1e1f\",\"validationHash\":\"91b8a716260b7ef8cb3962ad171744474ab0f5b4792a07106fb83a9f328da876\"}],\"conditions\":[{\"alphaInNormUnits\":false,\"bandWidth\":1,\"name\":\"baseline\",\"slots\":[]},{\"alphaInNormUnits\":false,\"bandWidth\":1,\"name\":\"arm-a\",\"slots\":[{\"alpha\":0.1,\"concept\":\"french\",\"layer\":1}]}],\"evaluation\":{\"judgeModel\":\"claude-opus-4-8\",\"judgePrompt\":\"\",\"kind\":\"none\"},\"experimentDescription\":\"Phase-0 interop fixture\",\"judgeRubricFile\":\"prompts/rubrics/r1.md\",\"judgeRubricHash\":\"4befec25b1813b4efb780bfe304acc7fa65d28c42e1765c299efc37a5ad5cea5\",\"markersHash\":\"cc3e2659bd2f316d4bd4d86aac89e899a79259b917d514384ead7027c26a24b9\",\"maxTokens\":512,\"modelID\":\"org/m\",\"modelRevision\":\"0123456789abcdef0123456789abcdef01234567\",\"name\":\"portability-interop\",\"neutralCorpusHash\":\"d7ade169c4c1f2b51954a9a8bbb5fd2c8d48c36f1ddd79781e19a2eea912988c\",\"promptMode\":\"chatAssistant\",\"qwenThinkingEnabled\":false,\"samplesPerItem\":3,\"seedPolicy\":\"derivedSHA256\",\"seeds\":[0,1,2],\"studyKind\":\"modelOutput\",\"systemPrompt\":\"Respond in JSON.\",\"taskDescription\":\"answer the item\",\"taskPromptsFile\":\"prompts/tasks/cases.jsonl\",\"taskPromptsHash\":\"0cca009949adbced7db8a2427dd808435b1834eb482ad8c07d522f551bb0144c\",\"temperature\":0.7,\"variantConditions\":[]}",
-  "freezeCanonicalWithSwiftDefaults": "{\"capabilityBatteryFile\":\"prompts/batteries/b1.jsonl\",\"capabilityBatteryHash\":\"976bd5dc407ad3f7f0203ca9b98a7bd8cf07740db9d689b693b2a451f13c5a19\",\"concepts\":[{\"name\":\"french\",\"options\":{\"method\":\"meanDifference\",\"readingPosition\":{\"lastToken\":{}}},\"stimulusSetHash\":\"4c072659bd86a71455db8d7a69fea6f537ea528f5a761fe8715443630fcb1e1f\",\"validationHash\":\"91b8a716260b7ef8cb3962ad171744474ab0f5b4792a07106fb83a9f328da876\"}],\"conditions\":[{\"alphaInNormUnits\":false,\"bandWidth\":1,\"name\":\"baseline\",\"slots\":[]},{\"alphaInNormUnits\":false,\"bandWidth\":1,\"name\":\"arm-a\",\"slots\":[{\"alpha\":0.1,\"concept\":\"french\",\"layer\":1}]}],\"evaluation\":{\"judgeModel\":\"claude-opus-4-8\",\"judgePrompt\":\"\",\"kind\":\"none\"},\"experimentDescription\":\"Phase-0 interop fixture\",\"judgeRubricFile\":\"prompts/rubrics/r1.md\",\"judgeRubricHash\":\"4befec25b1813b4efb780bfe304acc7fa65d28c42e1765c299efc37a5ad5cea5\",\"markersHash\":\"cc3e2659bd2f316d4bd4d86aac89e899a79259b917d514384ead7027c26a24b9\",\"maxTokens\":512,\"modelID\":\"org/m\",\"modelRevision\":\"0123456789abcdef0123456789abcdef01234567\",\"multiAgentIncludeBaseline\":true,\"name\":\"portability-interop\",\"neutralCorpusHash\":\"d7ade169c4c1f2b51954a9a8bbb5fd2c8d48c36f1ddd79781e19a2eea912988c\",\"promptMode\":\"chatAssistant\",\"qwenThinkingEnabled\":false,\"recordTokenIDs\":false,\"samplesPerItem\":3,\"seedPolicy\":\"derivedSHA256\",\"seeds\":[0,1,2],\"studyKind\":\"modelOutput\",\"systemPrompt\":\"Respond in JSON.\",\"taskDescription\":\"answer the item\",\"taskPromptsFile\":\"prompts/tasks/cases.jsonl\",\"taskPromptsHash\":\"0cca009949adbced7db8a2427dd808435b1834eb482ad8c07d522f551bb0144c\",\"temperature\":0.7,\"variantConditions\":[]}",
-  "freezeHash": "d6a80c6e3fe31ec168448aa2cf42d8a044e1b54461149df8b1f6f1a13afd4f24",
-  "freezeHashWithSwiftDefaults": "57066658aa65a1c0401aaa4eb77ef8d6525026938f60b008af75c9ca5cacd120",
+  "freezeCanonical": "{\"capabilityBatteryFile\":\"prompts/batteries/b1.jsonl\",\"capabilityBatteryHash\":\"976bd5dc407ad3f7f0203ca9b98a7bd8cf07740db9d689b693b2a451f13c5a19\",\"concepts\":[{\"name\":\"french\",\"options\":{\"method\":\"meanDifference\",\"readingPosition\":{\"lastToken\":{}}},\"stimulusSetHash\":\"4c072659bd86a71455db8d7a69fea6f537ea528f5a761fe8715443630fcb1e1f\",\"validationHash\":\"91b8a716260b7ef8cb3962ad171744474ab0f5b4792a07106fb83a9f328da876\"}],\"conditions\":[{\"alphaInNormUnits\":true,\"bandWidth\":1,\"name\":\"baseline\",\"slots\":[]},{\"alphaInNormUnits\":true,\"bandWidth\":1,\"name\":\"arm-a\",\"slots\":[{\"alpha\":0.1,\"concept\":\"french\",\"layer\":1}]}],\"evaluation\":{\"judgeModel\":\"claude-opus-4-8\",\"judgePrompt\":\"\",\"kind\":\"none\"},\"experimentDescription\":\"Phase-0 interop fixture\",\"judgeRubricFile\":\"prompts/rubrics/r1.md\",\"judgeRubricHash\":\"4befec25b1813b4efb780bfe304acc7fa65d28c42e1765c299efc37a5ad5cea5\",\"markersHash\":\"cc3e2659bd2f316d4bd4d86aac89e899a79259b917d514384ead7027c26a24b9\",\"maxTokens\":512,\"modelID\":\"org/m\",\"modelRevision\":\"0123456789abcdef0123456789abcdef01234567\",\"name\":\"portability-interop\",\"neutralCorpusHash\":\"d7ade169c4c1f2b51954a9a8bbb5fd2c8d48c36f1ddd79781e19a2eea912988c\",\"promptMode\":\"chatAssistant\",\"qwenThinkingEnabled\":false,\"samplesPerItem\":3,\"seedPolicy\":\"derivedSHA256\",\"seeds\":[0,1,2],\"studyKind\":\"modelOutput\",\"systemPrompt\":\"Respond in JSON.\",\"taskDescription\":\"answer the item\",\"taskPromptsFile\":\"prompts/tasks/cases.jsonl\",\"taskPromptsHash\":\"0cca009949adbced7db8a2427dd808435b1834eb482ad8c07d522f551bb0144c\",\"temperature\":0.7,\"variantConditions\":[]}",
+  "freezeCanonicalWithSwiftDefaults": "{\"capabilityBatteryFile\":\"prompts/batteries/b1.jsonl\",\"capabilityBatteryHash\":\"976bd5dc407ad3f7f0203ca9b98a7bd8cf07740db9d689b693b2a451f13c5a19\",\"concepts\":[{\"name\":\"french\",\"options\":{\"method\":\"meanDifference\",\"readingPosition\":{\"lastToken\":{}}},\"stimulusSetHash\":\"4c072659bd86a71455db8d7a69fea6f537ea528f5a761fe8715443630fcb1e1f\",\"validationHash\":\"91b8a716260b7ef8cb3962ad171744474ab0f5b4792a07106fb83a9f328da876\"}],\"conditions\":[{\"alphaInNormUnits\":true,\"bandWidth\":1,\"name\":\"baseline\",\"slots\":[]},{\"alphaInNormUnits\":true,\"bandWidth\":1,\"name\":\"arm-a\",\"slots\":[{\"alpha\":0.1,\"concept\":\"french\",\"layer\":1}]}],\"evaluation\":{\"judgeModel\":\"claude-opus-4-8\",\"judgePrompt\":\"\",\"kind\":\"none\"},\"experimentDescription\":\"Phase-0 interop fixture\",\"judgeRubricFile\":\"prompts/rubrics/r1.md\",\"judgeRubricHash\":\"4befec25b1813b4efb780bfe304acc7fa65d28c42e1765c299efc37a5ad5cea5\",\"markersHash\":\"cc3e2659bd2f316d4bd4d86aac89e899a79259b917d514384ead7027c26a24b9\",\"maxTokens\":512,\"modelID\":\"org/m\",\"modelRevision\":\"0123456789abcdef0123456789abcdef01234567\",\"multiAgentIncludeBaseline\":true,\"name\":\"portability-interop\",\"neutralCorpusHash\":\"d7ade169c4c1f2b51954a9a8bbb5fd2c8d48c36f1ddd79781e19a2eea912988c\",\"promptMode\":\"chatAssistant\",\"qwenThinkingEnabled\":false,\"recordTokenIDs\":false,\"samplesPerItem\":3,\"seedPolicy\":\"derivedSHA256\",\"seeds\":[0,1,2],\"studyKind\":\"modelOutput\",\"systemPrompt\":\"Respond in JSON.\",\"taskDescription\":\"answer the item\",\"taskPromptsFile\":\"prompts/tasks/cases.jsonl\",\"taskPromptsHash\":\"0cca009949adbced7db8a2427dd808435b1834eb482ad8c07d522f551bb0144c\",\"temperature\":0.7,\"variantConditions\":[]}",
+  "freezeHash": "8f9b31cd47bc068bef5ec48ef52ff23b495b9378aa2fcc3c7ebd3c0c87d34865",
+  "freezeHashWithSwiftDefaults": "427e1b9639bf9d30c51dfa56b589b0e26d96ec16f333d6a68b84a0bf6138abf8",
   "frozen": {
     "appVersion": "<appVersion>",
     "capabilityBatteryFile": "prompts/batteries/b1.jsonl",
@@ -91,13 +97,13 @@
     ],
     "conditions": [
       {
-        "alphaInNormUnits": false,
+        "alphaInNormUnits": true,
         "bandWidth": 1,
         "name": "baseline",
         "slots": []
       },
       {
-        "alphaInNormUnits": false,
+        "alphaInNormUnits": true,
         "bandWidth": 1,
         "name": "arm-a",
         "slots": [
@@ -120,7 +126,7 @@
       "validateEvidence"
     ],
     "freezeForced": true,
-    "freezeHash": "d6a80c6e3fe31ec168448aa2cf42d8a044e1b54461149df8b1f6f1a13afd4f24",
+    "freezeHash": "8f9b31cd47bc068bef5ec48ef52ff23b495b9378aa2fcc3c7ebd3c0c87d34865",
     "frozenAt": "1970-01-01T00:00:00Z",
     "frozenBy": "server",
     "gitCommit": "<gitCommit>",
@@ -169,13 +175,13 @@
     ],
     "conditions": [
       {
-        "alphaInNormUnits": false,
+        "alphaInNormUnits": true,
         "bandWidth": 1,
         "name": "baseline",
         "slots": []
       },
       {
-        "alphaInNormUnits": false,
+        "alphaInNormUnits": true,
         "bandWidth": 1,
         "name": "arm-a",
         "slots": [
@@ -198,7 +204,7 @@
       "validateEvidence"
     ],
     "freezeForced": true,
-    "freezeHash": "57066658aa65a1c0401aaa4eb77ef8d6525026938f60b008af75c9ca5cacd120",
+    "freezeHash": "427e1b9639bf9d30c51dfa56b589b0e26d96ec16f333d6a68b84a0bf6138abf8",
     "frozenAt": "1970-01-01T00:00:00Z",
     "frozenBy": "server",
     "gitCommit": "<gitCommit>",

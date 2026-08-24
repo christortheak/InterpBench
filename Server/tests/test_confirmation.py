@@ -187,7 +187,7 @@ def test_rerun_replaces_previously_generated_conditions(tmp_path):
         "rr", "fear-agent", deltas=(0.25,), root=root, log=lambda *_: None)
     # A hand-authored condition must survive the replace.
     es.add_condition("rr", {
-        "name": "hand-authored",
+        "name": "hand-authored", "alphaInNormUnits": False,
         "slots": [{"concept": "fear", "layer": 3, "alpha": 0.1}]}, root)
 
     d = confirmation.attach_perturbations(

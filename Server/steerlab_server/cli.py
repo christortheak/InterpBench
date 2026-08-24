@@ -1308,7 +1308,7 @@ def _bundle(args: list[str]) -> int:
             "  bundle run <experiment> [--out path]\n"
             "  bundle evidence <run-dir> [--out path]\n"
             "  bundle inspect <bundle.tar.gz>\n"
-            "  bundle import <bundle.tar.gz> [--target root] [--overwrite]\n"
+            "  bundle import <bundle.tar.gz> [--target root] [--overwrite] [--sha256 <outer digest>]\n"
             "  bundle execute <bundle.tar.gz> --verb <verify|extract|validate|sweep|run|evaluate|analyze|pipeline> [--target root] [--shard k/K] [--resume <run-dir>]\n"
             "  bundle create|submit <bundle-dir> [--gres A100] [--walltime HH:MM:SS] -- <cmd...>\n")
         return 64
@@ -1346,7 +1346,10 @@ def _bundle(args: list[str]) -> int:
         print(json.dumps(
             bundles.import_bundle(
                 args[1], target_root=_flag(args, "--target"),
-                allow_overwrite=("--overwrite" in args)),
+                allow_overwrite=("--overwrite" in args),
+                # The out-of-band outer pin (G3), spelled as the Mac CLI
+                # spells it (`experiment import-evidence --sha256`).
+                expected_sha256=_flag(args, "--sha256")),
             indent=2, sort_keys=True))
         return 0
     if verb == "execute":

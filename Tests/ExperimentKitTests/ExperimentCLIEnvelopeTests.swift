@@ -320,7 +320,10 @@ import Testing
             await invoke("experiment", ["attach", "demo", "french"])
             let outcome = await invoke(
                 "experiment",
-                ["declare-condition", "demo", "french-hi", "--slots", "french:17:0.4"])
+                [
+                    "declare-condition", "demo", "french-hi",
+                    "--slots", "french:17:0.4", "--alpha-units", "norm",
+                ])
             #expect(outcome.exitCode == 0)
             #expect(outcome.envelope.changed)
 

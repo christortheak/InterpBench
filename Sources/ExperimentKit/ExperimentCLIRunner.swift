@@ -2279,10 +2279,11 @@ public struct ExperimentCLIRunner: Sendable {
                 throw ExperimentError(
                     reason: "usage: experiment declare-condition <name> <condition> "
                         + "--slots <concept>:<layer>:<alpha>[:add|ablate][,…] "
-                        + "[--band-width K] [--alpha-units norm|raw] "
+                        + "--alpha-units norm|raw [--band-width K] "
                         + "[--control randomMatchedNorm|randomDirectionAblation]\n"
                         + "       experiment declare-condition <name> <condition> "
-                        + "--baseline  (an explicit no-intervention arm)")
+                        + "--baseline --alpha-units norm|raw  "
+                        + "(an explicit no-intervention arm)")
             }
             let conditionName = args[2].trimmingCharacters(in: .whitespacesAndNewlines)
             let isBaseline = args.contains("--baseline")
@@ -2307,18 +2308,35 @@ public struct ExperimentCLIRunner: Sendable {
                 }
                 bandWidth = value
             }
-            var alphaInNormUnits = true
-            if let raw = flag("--alpha-units") {
-                switch raw {
-                case "norm": alphaInNormUnits = true
-                case "raw": alphaInNormUnits = false
-                default:
-                    throw ExperimentError(
-                        reason: "--alpha-units must be norm | raw — got '\(raw)'. "
-                            + "norm denominates α by the residual-stream norm at "
-                            + "that layer on the pinned neutral corpus, which is "
-                            + "what makes α comparable across concepts")
-                }
+            // REQUIRED, as of Phase 1a of the portability program (Phase-0 gap
+            // G6, docs/PORTABILITY-CONTRACTS.md). It used to default to `norm`
+            // here and to `raw` on the server's `_condition_entry`, so the
+            // same undeclared arm authored a different study depending on
+            // which engine served it — and α units are dose semantics, not a
+            // display setting. Neither engine guesses now: both refuse a NEW
+            // declaration that does not say, and both name the same two
+            // spellings of the repair. Baselines are not exempt: a slot-less
+            // arm carries no α, but the key it stamps is still part of the
+            // document the other engine reads, and two engines stamping
+            // different values for the same call is the gap itself.
+            let alphaInNormUnits: Bool
+            switch flag("--alpha-units") {
+            case "norm": alphaInNormUnits = true
+            case "raw": alphaInNormUnits = false
+            case nil:
+                throw ExperimentError.malformed(
+                    "declare-condition needs --alpha-units norm|raw — α units "
+                        + "are dose semantics, so this engine no longer "
+                        + "supplies a default the server engine does not share",
+                    repair: ExperimentManifest.alphaUnitsRepairAction)
+            case let raw?:
+                throw ExperimentError.malformed(
+                    "--alpha-units must be norm | raw — got '\(raw)'. "
+                        + "norm denominates α by the residual-stream norm at "
+                        + "that layer on the pinned neutral corpus, which is "
+                        + "what makes α comparable across concepts",
+                    repair: "re-run with --alpha-units norm (the project "
+                        + "convention) or --alpha-units raw")
             }
             var controlType: String?
             if let raw = flag("--control") {

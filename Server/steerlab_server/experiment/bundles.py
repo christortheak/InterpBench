@@ -639,9 +639,52 @@ def _check_bundle_closure(meta: dict, members) -> None:
             "does not carry (exactly once) — refusing an incomplete bundle")
 
 
+def _refuse_outer_hash_mismatch(bundle_path: str, expected: str) -> None:
+    """The OUT-OF-BAND pin, checked before the archive is opened at all.
+
+    Portability gap G3 (``docs/PORTABILITY-CONTRACTS.md``): the archive digest
+    travels beside the archive (a job record's ``bundleSha256``), never inside
+    it, and the recipient checks it. The Mac has always done that BEFORE
+    extracting (``EvidenceBundleImporter.importEvidenceBundle(_:expectedSHA256:)``,
+    ``Sources/ExperimentKit/ClusterClient.swift``); this engine offered no
+    equivalent, so a Python client had to hash the file itself and the
+    verification story was one story per engine.
+
+    Substitution, not corruption, is what this catches: a wholesale swapped
+    archive is internally consistent — every member matches its own metadata —
+    so the per-member checks inside :func:`import_bundle` cannot see it. Both
+    hashes are NAMED, because a client that cannot see which side moved cannot
+    tell a stale pin from a tampered file.
+    """
+    expected = expected.strip().lower()
+    if not expected:
+        return
+    actual = sha256_file(bundle_path)
+    if actual != expected:
+        raise BundleError(
+            f"bundle hash mismatch: expected {expected}, got {actual} — "
+            "nothing was extracted. Re-fetch the bundle and retry with the "
+            "expectedSha256 the job record stamped, or drop the pin only if "
+            "you fetched the archive over a channel you already trust")
+
+
 def import_bundle(bundle_path: str, *, target_root: str | None = None,
-                  allow_overwrite: bool = False) -> dict:
+                  allow_overwrite: bool = False,
+                  expected_sha256: str | None = None) -> dict:
+    """Extract a bundle into ``target_root``.
+
+    ``expected_sha256`` is the OPTIONAL out-of-band outer pin (G3): when
+    supplied it is verified before the archive is opened, and a mismatch
+    refuses with both hashes named and nothing written. Omitted (the default)
+    is exactly the historical behaviour — the caller has then taken
+    responsibility for the outer digest itself, which is what every existing
+    call site does.
+    """
     target = os.path.realpath(target_root or paths.project_root())
+    # BEFORE `inspect_bundle` — before the archive is opened, let alone
+    # extracted — so a substituted archive never gets to speak for itself.
+    if expected_sha256:
+        _refuse_outer_hash_mismatch(bundle_path, expected_sha256)
     meta = inspect_bundle(bundle_path)
     extracted: list[str] = []
     portable_payload: bytes | None = None

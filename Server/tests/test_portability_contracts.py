@@ -1,12 +1,16 @@
-"""Phase-0 of the portability program: the cross-engine contracts a future
-cross-platform Python client will depend on, pinned as goldens — Python half.
+"""The cross-engine contracts a future cross-platform Python client will depend
+on, pinned as goldens — Python half. Phase 0 of the portability program wrote
+them; Phase 1a closed three of the gaps they recorded.
 
 The client the later phases build has to do three things this engine and the
 Swift engine already do to each other: **author a workspace the Swift engine
 reads**, **submit a hash-pinned run bundle either engine produced**, and
-**import an evidence bundle with verification**. Nothing here changes
-behaviour; it records what today's behaviour IS, so a later phase that breaks
-one of these seams fails a test instead of failing in a workspace.
+**import an evidence bundle with verification**. Phase 0 recorded what today's
+behaviour IS, so a later phase that breaks one of these seams fails a test
+instead of failing in a workspace; **Phase 1a** closed G3 (this engine's
+importer had no pre-extraction outer-hash check) and G6 (the two engines'
+``alphaInNormUnits`` defaults disagreed), and the tests that used to pin those
+breakages now pin the repairs.
 
 Three idioms are reused rather than reinvented:
 
@@ -133,6 +137,19 @@ RUN_BUNDLE_HEADER_KEYS = [
 BUNDLE_ENTRY_KEYS = ["bytes", "path", "sha256"]
 
 
+def _keyless_condition_refusal() -> str:
+    """This engine's own refusal text for a NEW condition declaring no
+    ``alphaInNormUnits`` — produced by calling the projection, never
+    hand-written, so the fixture cannot pin a stale message."""
+    try:
+        es._condition_entry({"name": "arm-a", "slots": []})
+    except es.ExperimentStoreError as exc:
+        return str(exc)
+    raise AssertionError(
+        "a condition declaring no alphaInNormUnits was accepted — G6 has "
+        "regressed; re-read docs/PORTABILITY-CONTRACTS.md")
+
+
 def _interop_study(root: str) -> dict:
     """A draft study declaring a broad slice of the pin surface, authored
     ENTIRELY through this engine's public store API — the shape a future
@@ -178,16 +195,21 @@ def _interop_study(root: str) -> dict:
     es.save_raw(d, root)
     # Conditions go through the STORE's own projection rather than being
     # hand-written into the document: `_condition_entry` stamps `bandWidth`
-    # and `alphaInNormUnits`, which the Swift decoder REQUIRES (its
-    # `ExperimentManifest.Condition` has no default for either). A fixture
+    # and requires `alphaInNormUnits`, both of which the Swift decoder REQUIRES
+    # (its `ExperimentManifest.Condition` has no default for either). A fixture
     # that hand-wrote a bare `{name, slots}` condition would publish a
     # manifest no client should ever author — see
-    # ``PortabilityContractTests.aConditionWithoutItsGlobalsIsUnreadableHere``
+    # ``PortabilityContractTests.aConditionWithoutItsGlobalsIsRefusedByName``
     # for the pinned consequence.
+    #
+    # `alphaInNormUnits` is stated EXPLICITLY, on the baseline too (Phase 1a,
+    # gap G6): both engines refuse a new declaration that does not say, and a
+    # slot-less arm still stamps the key the other engine reads.
     es.add_conditions("portability-interop", [
-        {"name": "baseline", "slots": []},
+        {"name": "baseline", "slots": [], "alphaInNormUnits": True},
         {"name": "arm-a", "slots": [{"concept": "french", "layer": 1,
-                                     "alpha": 0.1}]},
+                                     "alpha": 0.1}],
+         "alphaInNormUnits": True},
     ], root)
     return es.load_raw("portability-interop", root)
 
@@ -303,6 +325,17 @@ def test_a_python_authored_manifest_fixture_is_current(tmp_path):
         "freezeHashWithSwiftDefaults": swift_shaped["freezeHash"],
         "keysSwiftAlwaysWritesAndThisEngineOmitsAtDefault": [
             "multiAgentIncludeBaseline", "recordTokenIDs"],
+        # G6, closed by Phase 1a. Published for the Swift half to read: the
+        # refusal this engine gives a NEW key-less declaration, the repair it
+        # names (which must be word-for-word the Mac's — the two are
+        # independent literals), and the reading it keeps giving an EXISTING
+        # key-less condition, which must stay False forever.
+        "conditionAlphaUnits": {
+            "refusalOnNewDeclaration": _keyless_condition_refusal(),
+            "repairAction": es.ALPHA_UNITS_REPAIR,
+            "legacyReadingHere": False,
+            "declaredExplicitlyInThisFixture": True,
+        },
     })
 
 
@@ -339,29 +372,87 @@ def test_volatile_freeze_stamps_are_outside_the_content_hash(tmp_path):
             f"'{key}' is measured surface and must move the content hash")
 
 
-def test_the_condition_alpha_unit_default_diverges_from_swift():
-    """GAP (found by this phase, recorded not repaired): declaring a condition
-    without naming ``alphaInNormUnits`` yields FALSE here and TRUE on the Mac.
+def test_a_new_condition_that_declares_no_alpha_units_is_refused():
+    """CONTRACT: condition-alpha-units-explicit (Phase-0 gap G6, CLOSED by
+    Phase 1a) — declaring a condition without naming ``alphaInNormUnits`` is
+    refused HERE and on the Mac, rather than silently defaulting to opposite
+    values on the two engines.
 
-    ``experiment_store._condition_entry`` defaults it to False;
-    ``ExperimentManifest.Condition.init`` (``Sources/ExperimentKit/ExperimentStore.swift``)
-    defaults it to true. Neither engine is reading the other's default — both
-    always WRITE the key, so a condition that has crossed the wire is
-    unambiguous — but the same client call produces a different study
-    depending on which engine served it, and α units are not a cosmetic
-    setting.
+    The gap: ``_condition_entry`` defaulted it to False and
+    ``ExperimentManifest.Condition.init``
+    (``Sources/ExperimentKit/ExperimentStore.swift``) to true, so the same
+    client call authored a different study depending on which engine served it
+    — and α units are dose semantics, not a display setting: the same α is a
+    different intervention in each convention. Picking one default would have
+    reinterpreted every existing artifact authored under the other, so neither
+    engine picks one; both refuse a NEW declaration that does not say.
 
-    Pinned as it IS. Swift twin:
-    ``PortabilityContractTests.theConditionAlphaUnitDefaultDivergesFromTheServer``."""
-    entry = es._condition_entry({"name": "arm", "slots": []})
-    assert entry["alphaInNormUnits"] is False, (
-        "this engine's condition default changed — the divergence with Swift's "
-        "`true` may be closed; re-check docs/PORTABILITY-CONTRACTS.md G6")
-    assert entry["bandWidth"] == 1          # this one DOES agree
-    # An explicit value is always honoured, on both engines.
+    Swift twin:
+    ``PortabilityContractTests.aConditionWithoutItsGlobalsIsRefusedByName``."""
+    with pytest.raises(es.ExperimentStoreError) as excinfo:
+        es._condition_entry({"name": "arm", "slots": []})
+    detail = str(excinfo.value)
+    assert "alphaInNormUnits" in detail, detail
+    # The refusal names BOTH spellings of the repair: the manifest key and the
+    # CLI flag. A client that learned only one is stuck the first time it uses
+    # the other.
+    assert "--alpha-units norm|raw" in detail, detail
+    assert excinfo.value.repair_action == es.ALPHA_UNITS_REPAIR
+    # A baseline is not exempt: it carries no α, but it stamps the key the
+    # other engine reads, and two engines stamping different values for the
+    # same call IS the gap.
+    with pytest.raises(es.ExperimentStoreError):
+        es._condition_entry({"name": "baseline", "slots": []})
+
+    # An explicit value is always honoured, either way, on both engines.
     assert es._condition_entry(
         {"name": "arm", "slots": [], "alphaInNormUnits": True}
     )["alphaInNormUnits"] is True
+    assert es._condition_entry(
+        {"name": "arm", "slots": [], "alphaInNormUnits": False}
+    )["alphaInNormUnits"] is False
+    assert es._condition_entry(
+        {"name": "arm", "slots": [], "alphaInNormUnits": True}
+    )["bandWidth"] == 1                     # this one always DID agree
+
+
+def test_an_existing_keyless_condition_keeps_its_original_reading(tmp_path):
+    """CONTRACT: condition-alpha-units-explicit (the other half) — a manifest
+    that ALREADY holds a key-less condition keeps exactly the reading this
+    engine has always given it, and the ambiguity is surfaced rather than
+    guessed.
+
+    Refusing new declarations must not become a retroactive reinterpretation:
+    a study pinned or frozen with a key-less condition was measured as RAW α,
+    and flipping it to norm units would silently change what every α in that
+    study meant. So the READ layer (``Manifest.from_dict``) is untouched, and
+    ``freeze_advisories`` says out loud that the reading is engine-dependent —
+    the Mac engine cannot read such a condition at all
+    (``PortabilityContractTests.aConditionWithoutItsGlobalsIsRefusedByName``)."""
+    root = str(tmp_path)
+    _interop_study(root)
+
+    # Plant the legacy shape directly in the document — which is the only way
+    # it can exist now, and the way every pre-Phase-1a manifest carries it.
+    d = es.load_raw("portability-interop", root)
+    d["conditions"] = [{"name": "legacy-arm", "bandWidth": 1,
+                        "slots": [{"concept": "french", "layer": 1,
+                                   "alpha": 0.1}]}]
+    es.save_raw(d, root)
+
+    condition = Manifest.load("portability-interop", root).conditions[0]
+    assert condition.alpha_in_norm_units is False, (
+        "an existing key-less condition was reinterpreted — every α in every "
+        "study frozen under the old reading now means something else")
+
+    # …and the freeze path says the reading is engine-dependent.
+    advisories = es.freeze_advisories(es.load_raw("portability-interop", root),
+                                      root)
+    named = [a for a in advisories if "alphaInNormUnits" in a]
+    assert len(named) == 1, advisories
+    assert "'legacy-arm'" in named[0]
+    assert "RAW" in named[0]
+    assert es.ALPHA_UNITS_REPAIR in named[0]
 
 
 def test_a_swift_authored_manifest_loads_with_every_field_intact(tmp_path):
@@ -659,13 +750,13 @@ def test_the_outer_bundle_hash_travels_out_of_band_and_moves_with_one_member(
     RECIPIENT checks before extracting, and it is never read from inside the
     archive it is supposed to protect.
 
-    This engine's importer has no ``expected_sha256`` parameter: the outer
-    pin is carried out of band (the job record's ``bundleSha256``) and checked
-    by the consumer. On the Mac that consumer is
-    ``EvidenceBundleImporter.importEvidenceBundle(_:expectedSHA256:)``, pinned
-    by ``CrossEngineLifecycleTests.aBundleWhoseHashDoesNotMatchIsRefused``. A
-    future Python client must do the same check itself — this is a GAP for
-    Phase 1, recorded in docs/PORTABILITY-CONTRACTS.md."""
+    The pin is carried out of band (the job record's ``bundleSha256``) and
+    checked by the consumer: on the Mac by
+    ``EvidenceBundleImporter.importEvidenceBundle(_:expectedSHA256:)`` (pinned
+    by ``CrossEngineLifecycleTests.aBundleWhoseHashDoesNotMatchIsRefused``),
+    and — since Phase 1a closed G3 — here by
+    ``bundles.import_bundle(expected_sha256=…)``, pinned by the three tests
+    below."""
     meta = _evidence_bundle(tmp_path)
     assert meta["bundleSha256"] == _sha256_file(meta["bundlePath"])
 
@@ -684,6 +775,68 @@ def test_the_outer_bundle_hash_travels_out_of_band_and_moves_with_one_member(
     assert bundles.inspect_bundle(tampered)["bundleSha256"] \
         != meta["bundleSha256"], (
         "one flipped member byte did not move the outer digest")
+
+
+def test_a_mismatched_expected_sha256_refuses_before_anything_is_extracted(
+        tmp_path):
+    """CONTRACT: evidence-outer-hash (pre-extraction half, G3 closed) — when
+    the caller supplies the out-of-band digest, the archive is refused BEFORE
+    it is opened, and the refusal names BOTH hashes.
+
+    Substitution is the threat this catches and the per-member checks cannot:
+    a wholesale swapped archive is internally consistent, so every member
+    matches its own metadata. Naming both hashes is what lets a client tell a
+    stale pin from a tampered file. Swift twin:
+    ``CrossEngineLifecycleTests.aBundleWhoseHashDoesNotMatchIsRefused``."""
+    meta = _evidence_bundle(tmp_path)
+    target = tmp_path / "target"
+    target.mkdir()
+
+    wrong = "0" * 64
+    with pytest.raises(bundles.BundleError) as excinfo:
+        bundles.import_bundle(meta["bundlePath"], target_root=str(target),
+                              expected_sha256=wrong)
+    detail = str(excinfo.value)
+    assert "bundle hash mismatch" in detail
+    assert wrong in detail, f"the refusal does not name the EXPECTED hash: {detail}"
+    assert meta["bundleSha256"] in detail, (
+        f"the refusal does not name the ACTUAL hash: {detail}")
+
+    # Nothing was extracted, and no staging debris was left: the check ran
+    # before the archive was opened at all.
+    assert list(target.rglob("*")) == []
+
+
+def test_a_matching_expected_sha256_imports_exactly_as_before(tmp_path):
+    """The pin is a GATE, not a second code path: a matching digest imports
+    the same members the unpinned call imports."""
+    meta = _evidence_bundle(tmp_path)
+    pinned = tmp_path / "pinned"
+    imported = bundles.import_bundle(meta["bundlePath"], target_root=str(pinned),
+                                     expected_sha256=meta["bundleSha256"])
+    assert imported["extracted"]
+    assert (pinned / "runs" / meta["runID"] / "report.json").exists()
+
+    plain = tmp_path / "plain"
+    assert sorted(bundles.import_bundle(
+        meta["bundlePath"], target_root=str(plain))["extracted"]) \
+        == sorted(imported["extracted"])
+
+
+def test_omitting_expected_sha256_is_unchanged_behaviour(tmp_path):
+    """Absent parameter = today's behaviour, including for a bundle whose
+    outer digest a client never checked. The pin is opt-in precisely so every
+    existing call site (and every already-deployed cluster script) keeps
+    working unchanged."""
+    meta = _evidence_bundle(tmp_path)
+    target = tmp_path / "target"
+    result = bundles.import_bundle(meta["bundlePath"], target_root=str(target))
+    assert (target / "runs" / meta["runID"] / "report.json").exists()
+    assert result["extracted"]
+    # An empty/None pin is "no pin", never "expect the empty string".
+    other = tmp_path / "other"
+    assert bundles.import_bundle(meta["bundlePath"], target_root=str(other),
+                                 expected_sha256=None)["extracted"]
 
 
 # =============================================================================
