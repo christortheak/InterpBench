@@ -589,11 +589,16 @@ def test_no_authoring_verb_accepts_a_server_locator():
     """
     authoring = [spec for spec in client_cli.CLIENT_VERB_SPECS
                  if spec.family in client_cli.AUTHORING_FAMILIES]
-    # The exclusion must not silently swallow the whole table.
+    # The exclusion must not silently swallow the whole table: it covers
+    # EXACTLY the two families whose job is to address a runner — `runner`
+    # (Phase 2/3) and the composite `run` (Phase 5) — and a third family
+    # appearing here without a decision fails this line rather than quietly
+    # opting itself out of the contract below.
     assert client_cli.RUNNER_FAMILY not in client_cli.AUTHORING_FAMILIES
-    assert len(authoring) == len(client_cli.CLIENT_VERB_SPECS) - len(
-        [s for s in client_cli.CLIENT_VERB_SPECS
-         if s.family == client_cli.RUNNER_FAMILY])
+    assert client_cli.RUN_FAMILY not in client_cli.AUTHORING_FAMILIES
+    excluded = ({spec.family for spec in client_cli.CLIENT_VERB_SPECS}
+                - set(client_cli.AUTHORING_FAMILIES))
+    assert excluded == {client_cli.RUNNER_FAMILY, client_cli.RUN_FAMILY}
     assert len(authoring) >= 16
     for spec in authoring:
         for flag in spec.declared_flags:

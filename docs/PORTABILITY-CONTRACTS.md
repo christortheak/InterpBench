@@ -1,7 +1,9 @@
 # Portability Contracts
 
 **Phase-0 deliverable of the portability program**, extended by **Phase 1a**,
-**Phase 1b** (§7), **Phase 2** (§8) and **Phase 3** (§9).
+**Phase 1b** (§7), **Phase 2** (§8), **Phase 3** (§9) and **Phase 5** (§10 —
+the composite `steerlab run`, which completes the eleven-step round trip this
+document opened with).
 Phase 0 changed no production behaviour: its entire output was this page plus
 the golden tests it indexes — a record of what the two engines promise each
 other, so a later phase that breaks one of those promises fails a test instead
@@ -856,3 +858,336 @@ into the runner's runs root. That is the same allowance
   — the waiting policy, resume-after-disconnect, and when a client may import
   on its own — remains **Phase 5**, which wants exactly the pieces this phase
   made boring.
+
+---
+
+## 10. Phase 5 — the composite `steerlab run`
+
+Phase 2 said it out loud (§8.7) and Phase 3 said it again (§9.6): **no
+composite `run --wait`, not yet, because it wants the pieces below it to be
+boring first.** They are. Phase 5 is the one command:
+
+```bash
+steerlab run <experiment> --runner <url>          # --wait is the DEFAULT
+```
+
+A frozen study in this workspace becomes verified evidence in this workspace.
+The verb **composes** — every step below is a call into a piece that already
+exists and is already separately tested, and every refusal a caller can meet
+is one of theirs. Two files:
+
+- `Server/steerlab_server/client_cli.py` — the `run` family and its machine
+  (`_run`, `_run_machine`, `_run_wire`, `_poll_to_terminal`,
+  `_refuse_unexecutable`, `_write_provenance`).
+- `Server/tests/test_run_orchestration.py` — the pins below.
+
+### 10.1 `run` is a SOLO family
+
+`steerlab run <experiment>`, never `steerlab run run <experiment>`. The verb
+table grew one entry whose family name *is* its verb (`SOLO_FAMILIES`), and
+the synopsis, the help page, every repair sentence and the envelope's `verb`
+all name the command a person types. Every other family is unchanged: the verb
+word is still consumed as a verb word.
+
+It is **not** in `AUTHORING_FAMILIES`, for §8.7's reason one level up. It does
+author one thing — it *imports evidence* — which is exactly why it may not be
+in the authoring set: an authoring verb may never declare a locator, and this
+one must. `test_client_cli.py::test_no_authoring_verb_accepts_a_server_locator`
+now asserts the excluded families are **exactly** `{runner, run}`, so a third
+family cannot opt itself out quietly.
+
+### 10.2 The stages, and what each may do
+
+`result.stages` carries **one row per stage, always all nine**, each with a
+`stage`, a `state`, and the facts the next stage needs. Absence is never the
+signal: a stage that never happened says `notReached`, because "we never got
+there" and "we forgot to record it" must not be the same observation. Human
+mode streams one `run[<stage>]: …` line per transition to **stderr** (in both
+modes — under `--json` stdout carries exactly one document).
+
+| # | stage | what it does | what it composes | refuses with |
+|---|---|---|---|---|
+| 1 | `load` | load the local study, check it is **frozen**, re-verify every pin | `Manifest.load`, `experiment_store.load_raw`, `Manifest.verify` | `experimentNotFrozen` (65); `pinDrift` (65, **the store's own gate**, `error.gate` present) |
+| 2 | `package` | package the run bundle here, record its sha256 | `bundles.package_experiment` | `bundleRefused` (65) |
+| 3 | `capabilities` | ask the runner who it is and whether it can execute **this verb on this executor** | `RunnerClient.info` / `.capabilities` / `.identity` | `runnerCannotExecute` (65), naming what the runner offers |
+| 4 | `upload` | stage the archive; the cross-socket digest agreement is the adapter's | `RunnerClient.upload_run_bundle` | `uploadDigestMismatch` (65) and the adapter's HTTP vocabulary |
+| 5 | `submit` | submit with an explicit `--verb`, `--executor` and the submit endpoint's pass-throughs | `RunnerClient.submit_uploaded_bundle` (which pre-checks `--bundle-sha` against the runner's own inspect) | `bundleDigestMismatch` (65); `submitOutcomeUnknown` (70) |
+| 6 | `wait` | poll to a terminal status | `RunnerClient.job` | `waitDeadlineExceeded` (70); `remoteJobFailed` (70, after stages 7–9) |
+| 7 | `evidence` | fetch the **strongest evidence available** and verify its outer digest | `RunnerClient.evidence_reference`, `.download_bundle` | `evidenceNotPackaged` (65); `evidenceDigestMismatch` (65) |
+| 8 | `import` | verify-and-extract into this workspace with the out-of-band pin | `bundles.import_bundle(expected_sha256=…)` | `bundleRefused` (65) |
+| 9 | `provenance` | stamp the imported run, additively | `_write_provenance` | never — it skips and says why |
+
+A failure mid-machine is a **typed envelope naming the stage it died in**:
+`result.failedStage` plus the stage table, on top of whatever typed refusal the
+underlying module produced. The translation itself is unchanged — a
+`BundleError` is still `bundleRefused`, a mistyped study is still 66 — the
+composite only adds *where*.
+
+**Stage states** are a smaller, separate vocabulary from the envelope's
+(`ok`, `skipped`, `refused`, `failed`, `notReached`), deliberately, so nobody
+switches on them as if they were the twelve.
+
+### 10.3 Refuse before you spend
+
+Stage 3 exists so that an unexecutable submission never becomes staged disk on
+somebody else's machine, and never becomes a scheduler allocation nobody gets
+back. Three checks, all against what the runner **reports**:
+
+- an unknown **study verb** — the client's `RUN_STUDY_VERBS` is a twin literal
+  of `api/submissions.VALID_STUDY_VERBS` (a literal, not an import, because
+  importing the route module pulls FastAPI into the light client; and not a
+  read of the runner's `availableJobTypes`, because that is the *job-type*
+  roster and does not contain `verify` — refusing the one model-free verb would
+  be worse than not checking);
+- an unknown **executor** — twin of `api/profile._VALID_EXECUTORS`;
+- `--executor slurm` against a runner whose `schedulerMode` is not `slurm` —
+  the submit route's own rule, read one hop earlier. `--dry-run` is exempt,
+  because a dry run schedules nothing and the route accepts it anywhere; a
+  precheck stricter than the rule it anticipates would refuse work that would
+  have succeeded.
+
+Every one of these refusals carries `result.runnerOffers` — `schedulerMode`,
+`serverRole`, `availableJobTypes`, `engineVersion`, and the study-verb roster.
+"Unsupported" with no list beside it sends the reader to a different machine to
+find out what they should have typed.
+
+| Contract | Guarantees | Pinned by |
+|---|---|---|
+| **capability-refusal-precedes-upload** | An unsupported verb/executor combination is refused with **nothing uploaded** — the fake adapter saw exactly one `GET /api/info` and zero uploads and zero submits. | `test_a_capability_refusal_happens_before_any_upload`, `test_an_unknown_study_verb_is_refused_before_any_upload`, `test_a_dry_run_may_name_slurm_on_any_runner` |
+| **unfrozen-refuses-locally** | A draft refuses at stage 1 with the runner never addressed at all (`script.info_calls == 0`). | `test_an_unfrozen_study_is_refused_before_the_runner_is_addressed` |
+| **drift-keeps-the-stores-gate** | A drifted pin refuses as `pinDrift` with `error.gate` present — the vocabulary `experiment verify` already answers in, not a composite's paraphrase. | `test_a_drifted_pin_is_refused_with_the_stores_own_gate` |
+
+### 10.4 The retry table
+
+| call | retried? | why |
+|---|---|---|
+| `GET /api/info`, `GET /api/capabilities`, `GET /api/jobs/{id}` | freely (they are the poll) | plain reads |
+| **upload** | **yes — one automatic retry on a transport error** | each upload lands in its own server-minted staging directory, so a retry costs disk and produces a second path, never a second effect |
+| **evidence download** | **yes — one automatic retry on a transport error** | a GET whose write is temp → verify → move; a half-file never reaches the destination |
+| **submit** | **NEVER, not once, not ever automatically** | it creates a job and on Slurm spends an allocation. A transport failure here is genuinely ambiguous — the job may exist — so the machine stops with `submitOutcomeUnknown` (70) and the repair is to **LOOK**: `steerlab runner jobs --runner <url>`, with the `runner submit` line that resumes from the already-staged bundle printed beside it |
+| `POST /api/jobs/{id}/cancel` | **never called by this verb at all** | see below |
+
+Pinned by `test_a_submit_transport_error_is_never_retried_and_says_to_look`
+(exactly one submit attempt, no poll, no download, no cancel) and
+`test_an_upload_transport_error_is_retried_once`.
+
+### 10.5 Waiting, and the two ways to stop
+
+`--wait` is the **default** — orchestrating the wait is the point of the verb.
+Polling is one cheap `GET /api/jobs/{id}` on a fixed interval with a gentle
+backoff: 1 s, ×1.5, capped at 30 s, so a ten-second job stays responsive and an
+eight-hour job is not asked twenty-eight thousand times.
+
+**`--timeout <seconds>` on this verb is the WAIT deadline** (default 24 h), and
+that is a different meaning from `--timeout` on the `runner` family, where it
+is the per-request budget. The divergence is deliberate and both spellings are
+present: a caller of a composite is thinking about how long the whole thing may
+take, and the per-request budget keeps its own name here — `--request-timeout`
+— so neither meaning has to be guessed from context.
+
+**Nothing in this verb ever cancels a remote job.** Both ways of stopping
+detach:
+
+- **SIGINT during the wait** — the handler is installed for the duration of the
+  wait only and restored afterwards; it sets a flag, the poll loop returns, and
+  the verb answers `pending` (12) with `outcome: "interrupted"`,
+  `cancelled: false`, and the three follow-up commands. A composite that killed
+  a running cluster job because somebody pressed ctrl-c in a terminal would be
+  destroying work it did not do and cannot give back. (The sleep is sliced into
+  0.1 s steps: PEP 475 makes `time.sleep` *resume* after a handled signal, so a
+  single 30-second sleep would swallow the interrupt for half a minute.)
+- **`--timeout` expiry** — `waitDeadlineExceeded` (70), with `cancelled: false`
+  in the result and "the job was NOT cancelled and is still on the runner" in
+  the reason. The deadline bounds this client's patience, never the runner's
+  work.
+
+`--no-wait` detaches immediately after submit, answering `pending` (12) with
+`outcome: "detached"` — the same state and the same exit code the engine's own
+`study submit` already answers for asynchronous work in flight. `pending` is a
+**success document**: no `error`, and `result.followUps` carries the three
+commands that finish the job by hand, runnable as printed:
+
+```
+steerlab runner jobs <id> --runner <url>
+steerlab runner evidence <id> --out <file.tar.gz> --runner <url>
+steerlab bundle import <file.tar.gz> --sha256 <digest>
+```
+
+Pinned by `test_no_wait_detaches_and_prints_the_exact_follow_ups`,
+`test_an_interrupt_during_the_wait_detaches_rather_than_cancelling` (which
+raises a real SIGINT into the process and then asserts the handler was
+restored) and `test_the_wait_deadline_stops_watching_and_never_cancels`.
+
+### 10.6 The strongest-evidence rule
+
+> **On a terminal state — success OR failure — fetch the strongest evidence the
+> job has.**
+
+A failed job that packaged partial evidence still gets its bundle downloaded,
+verified and imported, and the job's failure is **loud** in the result:
+`remoteJobFailed` (70), the runner's own error sentence in the reason, and a
+repair that says a partial is evidence about a *failure*, never a result.
+"The data still exists somewhere under /scratch" is not a retention policy —
+the same sentence `bundles` already carries on the engine's side of the wire.
+
+The other outcomes, all typed:
+
+| situation | answer |
+|---|---|
+| job succeeded, evidence imported | `ready` (0), `outcome: "succeeded"` |
+| job succeeded, **packaged none** | `evidenceNotPackaged` (65), `outcome: "noEvidence"` — the repair names why (`verify` writes no run directory by design; a dry run runs nothing) |
+| job failed, evidence imported | `remoteJobFailed` (70), `imported: true`, stamp written |
+| job failed, packaged none | `remoteJobFailed` (70), `imported: false` |
+| `--no-evidence` / `--dry-run` | stages 7–9 `skipped`, with the flag as the `reason`; **not** a refusal — the caller asked for exactly this |
+| download digest disagrees | the adapter's `evidenceDigestMismatch` (65); `import` and `provenance` are `notReached`, and nothing is written to the workspace |
+
+The archive itself is a **courier, not an artifact**: without `--evidence-out`
+it is downloaded into a temp directory of the verb's own, imported, and the
+directory removed. A stray `.tar.gz` left in the workspace's `runs/` would look
+like evidence that had not been imported. `--evidence-out <file>` keeps it, at
+that path, and `--max-bytes` is the adapter's size cap.
+
+Pinned by `test_a_failed_job_with_partial_evidence_still_comes_home`,
+`test_a_terminal_job_with_no_evidence_reports_a_typed_outcome`,
+`test_no_evidence_requested_is_a_skip_and_not_a_refusal` and
+`test_a_download_whose_digest_disagrees_imports_nothing`.
+
+### 10.7 Provenance, without rewriting the frozen study
+
+The imported run's bytes cannot say **which** engine produced them, from
+**which** bundle, under **which** job. `run` answers that with a small JSON
+document written into the imported run directory at import time —
+`runs/<runID>/remote-execution.json`.
+
+**Where the shape comes from.** This is the house pattern, not a new one:
+`adjudication.STAMP_FILENAME` (`adjudicated-endpoint.json`) is a named-constant
+JSON stamp written into the run directory it describes, carrying a prose `NOTE`
+that explains its own standing; and `bundles.import_bundle` already writes
+`pipeline-portable.json` into an imported pipeline run as part of the landing
+write. This is the same act, one caller out.
+
+**What it is NOT allowed to touch.** Nothing under `experiments/`. Not the
+manifest, not `pinned/`, not the freeze hash, not any content hash. The record
+is additive and client-side, and that is checkable rather than believable:
+`test_the_provenance_stamp_leaves_the_frozen_study_untouched` reads the entire
+`experiments/` tree byte-for-byte before and after and asserts equality, and
+the happy-path test re-asserts the frozen manifest's bytes on its own.
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "kind": "remoteExecution",
+  "note": "Remote execution provenance. …",     // prose, in the file itself
+  "client":     { "program": "steerlab", "role": "client",
+                  "version": "…", "engine": "python-hf-transformers" },
+  "experiment": "<name>",
+  "manifest":   { "status": "frozen", "contentHash": "<64 hex>",
+                  "freezeHash": "<64 hex|null>", "freezeForced": false,
+                  "modelID": "…", "modelRevision": "…" },
+  "runner":     { "url": "https://…", "service": "steerlab-server",
+                  "engineVersion": "steerlab-server <v>+<sha8>",
+                  "root": "…", "schedulerMode": "local|slurm",
+                  "serverRole": "…", "tokenPresent": true },
+  "runBundle":  { "path": "<local>", "sha256": "<64 hex>",
+                  "runnerPath": "<staged>", "bytes": 0, "entries": 0,
+                  "experimentContentHash": "<64 hex>" },
+  "job":        { "id": "…", "verb": "run", "executor": "local",
+                  "status": "succeeded", "dryRun": false,
+                  "slurmJobID": null, "shardJobIDs": [],
+                  "error": null, "runDirectory": "<runner-side>" },
+  "evidence":   { "sha256": "<64 hex>", "bytes": 0, "verified": true,
+                  "runnerPath": "…", "archivePath": null,
+                  "archiveRetained": false },
+  "outcome":    "succeeded | jobFailed",
+  "timestamps": { "startedAt": "…Z", "submittedAt": "…Z",
+                  "terminalAt": "…Z", "importedAt": "…Z" }
+}
+```
+
+Three properties worth naming:
+
+- **Full digests, never elided.** An abbreviated hash in a provenance record is
+  a provenance hole.
+- **This client's own clock.** Every timestamp is an observation this process
+  made, in the envelope's ISO-8601. Two machines' wall clocks disagree, and a
+  record that mixed them would make its own durations meaningless.
+- **`tokenPresent`, never the token.** §8.4's rule extended to the one durable
+  surface this phase added — and the surface most likely to leak, because it is
+  written to disk and travels with the run.
+  `test_the_token_reaches_no_document_no_stamp_and_no_log_line` drives one
+  distinctive fake token through a whole successful machine and then greps
+  **every file in the workspace** for it.
+
+Written with `O_EXCL`: a run's provenance is part of its landing write and is
+never rewritten. In practice the importer refuses an existing member long
+before this matters, which is exactly why the guard is cheap to keep. No run
+directory to stamp (an evidence bundle that named no `runID`) is a `skipped`
+stage with the reason, not an error.
+
+### 10.8 The tests, and the one allowance
+
+**Unit tier** — `test_run_orchestration.py`, an injected `FakeRunner` over
+`runner_api.RunnerClient`, no sockets. Real parsing, real envelope, real
+workspace, real `bundles`; only the wire is fake. It deliberately does **not**
+re-pin the adapter's own integrity checks (those are `test_client_runner.py`'s,
+over the genuine routes) — when a test wants "the runner hashed it
+differently", the script raises the adapter's own `RunnerRefusal` with the
+adapter's own code, and what is asserted is what the *machine* then does, and
+above all **what never happened**.
+
+**End-to-end tier** — the Phase-3 managed-runner harness, imported rather than
+re-written. `test_the_whole_machine_runs_against_a_managed_runner` drives
+`steerlab run <exp> --runner <url> --verb verify --executor local` through argv
+against the genuine served engine over a real loopback socket in token mode:
+stages 1–6 all `ok`, the job really `succeeded`, the runner's `/api/info` root
+really is the runner root and not the workspace, the staged upload really is
+inside the runner root, and the client workspace gained nothing but the run
+bundle it packaged — no staging directory, no job database, no token.
+
+**The allowance, stated rather than implied.** It ends at a *typed*
+`evidenceNotPackaged`, and that is the honest outcome rather than a shortfall:
+`verify` is the only bundled verb that needs no model, and it writes no run
+directory, so it has no evidence to package
+(`bundles._execute_run_bundle_inner`). The import-and-stamp half therefore gets
+its own end-to-end test against the **same** runner —
+`test_evidence_comes_home_verified_and_stamped_over_a_real_socket` — over the
+job Phase 3 already seeds into the runner's durable store, carrying an archive
+`bundles.package_evidence` really wrote. It enters at the stage boundary rather
+than through argv, and everything it touches is the production path: the HTTP
+download route, the outer-digest verification, the importer, the stamp writer.
+It closes with Phase 3's two-roles assertions repeated for the composite's
+landing write — the runner is stopped, its root deleted wholesale, and the
+imported run's bytes and its provenance stamp are still here and still hash to
+what they hashed before.
+
+**Import guard** — `test_the_run_verb_stays_within_the_clients_light_import_set`
+runs the whole machine out of process against a dead port (author → freeze →
+`run` → transport failure, exit 70) and pins the import set: nothing heavy, and
+nothing third-party outside the union of Phase 1b's authoring set and Phase 2's
+httpx closure. The composite composes **light** pieces plus the adapter; if
+this fails, the repair is to move the offending import inside the code that
+needs it, never to weaken the guard.
+
+### 10.9 What this completes, and what it deliberately did NOT do
+
+This closes the eleven-step round trip this document opened with — author,
+freeze, package, address, upload, submit, watch, fetch, verify, import, record
+— as one command, with every hop still hash-pinned and every hop still
+separately refusable. §8.7's and §9.6's standing "no composite `run --wait`,
+still" is now spent.
+
+- **No engine change of any kind.** `steerlab-server`'s behaviour is
+  byte-identical after this phase; no route was added, versioned, or altered,
+  and every payload key is transcribed from one that already existed. The only
+  files that moved are the client's.
+- **No auto-cancel, ever.** §10.5. There is no `--cancel-on-timeout` and there
+  will not be one.
+- **No resume-after-disconnect.** `--no-wait` and the detach paths print the
+  three commands that re-attach by hand; the verb has no `--attach <job-id>` of
+  its own. Re-entering a machine at stage 6 means answering what happens when
+  the local bundle no longer matches the job's, which is a question this phase
+  did not need to answer to be useful.
+- **No sharding surface beyond `--parallel`.** The pass-throughs are exactly
+  the ones `runner submit` already exposes; the composite invented none.
+- **No second envelope.** `run` writes exactly one document, like every client
+  verb except `runner serve` (§9.4) — the stage lines are diagnostics.

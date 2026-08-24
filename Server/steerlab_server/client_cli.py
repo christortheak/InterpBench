@@ -36,6 +36,20 @@ role and is untouched by any of this.) It is the one long-running verb here, so
 its document is a STARTUP envelope: one JSON value on stdout when the engine is
 ready, then diagnostics on stderr until it stops.
 
+**Phase 5 added ``run``** — the composite. One command takes a FROZEN study in
+this workspace to a runner and brings its VERIFIED evidence back here:
+package → capability check → upload → submit → wait → evidence → import →
+provenance stamp, with ``--wait`` the default because waiting is the point.
+It COMPOSES the verbs above and reimplements none of them, so every refusal a
+caller can meet is one of theirs. Three rules it holds to, spelled out because
+they are choices and not defaults: everything checkable happens BEFORE the
+upload; a terminal job's evidence comes home whether it succeeded or FAILED
+(with the failure loud in the document); and nothing here ever cancels a
+remote job — ctrl-c and the ``--timeout`` deadline stop the WATCHING and print
+the commands that re-attach. The provenance it writes is ADDITIVE and lands
+inside the imported run directory: the frozen study, its manifest and every
+hash in them are untouched.
+
 **The token discipline, because it is the part that is easy to get wrong.**
 A runner in token mode wants a bearer token. This client takes it from
 ``$STEERLAB_RUNNER_TOKEN`` or ``--token-file <path>`` and from nowhere else —
@@ -128,6 +142,84 @@ WORKSPACE_ENV = "STEERLAB_WORKSPACE"
 #: host the operator never authorized. There is no ``--token`` flag — see the
 #: module docstring.
 RUNNER_TOKEN_ENV = "STEERLAB_RUNNER_TOKEN"
+
+
+# --- the composite verb's vocabulary (Phase 5) ---------------------------------
+#
+# `run` composes what Phases 1b, 2 and 3 made boring. Everything below is a
+# TRANSCRIPTION of a vocabulary the engine already owns, kept equal by test
+# rather than by memory — the same discipline every other client surface here
+# follows ("every call signature is transcribed from the HTTP route that
+# already fronts it").
+
+#: The study verbs ``POST /api/studies/submit-bundle`` accepts. Twin literal of
+#: ``api/submissions.VALID_STUDY_VERBS``, sorted; kept equal by
+#: ``test_run_orchestration.py::test_the_study_verb_vocabulary_twins_the_route``.
+#: It is a LITERAL rather than an import because importing the route module
+#: pulls FastAPI, and it is a literal rather than a read of the runner's
+#: ``availableJobTypes`` because that list is the JOB-type roster and does not
+#: contain ``verify`` — refusing the one model-free verb would be worse than
+#: not checking at all.
+RUN_STUDY_VERBS: tuple[str, ...] = ("analyze", "evaluate", "extract",
+                                    "pipeline", "run", "sweep", "validate",
+                                    "verify")
+
+#: The executors a runner can be asked for. Twin of ``api/profile``'s
+#: ``_VALID_EXECUTORS`` and of the submit route's own check.
+RUN_EXECUTORS: tuple[str, ...] = ("local", "slurm")
+
+#: What ``run`` submits when ``--verb`` is absent. The same default both
+#: submit paths already hold (``CLI-REFERENCE`` §7.1) — stated here so the
+#: composite does not become a third opinion about it.
+DEFAULT_STUDY_VERB = "run"
+
+#: Job statuses that mean "this job has stopped moving". Twin literal of
+#: ``api/jobs.TERMINAL`` (sorted), for the same FastAPI reason as above.
+JOB_TERMINAL_STATUSES: tuple[str, ...] = (
+    "cancelled", "cancelledResumable", "failed", "parked", "prepared",
+    "succeeded")
+
+#: The terminal statuses that mean the runner did what it was asked.
+#: ``prepared`` is the dry run's terminal state — nothing executed, and
+#: nothing was supposed to.
+JOB_SUCCESS_STATUSES: tuple[str, ...] = ("prepared", "succeeded")
+
+#: How long ``run --wait`` will watch a job before it gives up WATCHING. It
+#: never cancels: the deadline bounds this client's patience, never the
+#: runner's work. Generous on purpose — a sweep on a busy cluster queue is
+#: measured in hours, and a client that timed out at ten minutes would teach
+#: everyone to pass ``--no-wait`` and lose the composite entirely.
+RUN_WAIT_DEADLINE = 24 * 60 * 60.0
+
+#: The poll interval, and its gentle backoff. Every poll is one cheap
+#: ``GET /api/jobs/{id}``; starting at a second keeps a ten-second job
+#: responsive, and the cap keeps an eight-hour job from asking 28 800 times.
+POLL_INTERVAL_START = 1.0
+POLL_BACKOFF = 1.5
+POLL_INTERVAL_CAP = 30.0
+
+#: The ADDITIVE provenance record ``run`` writes into the run directory it
+#: imported. House pattern: ``adjudication.STAMP_FILENAME`` and
+#: ``import_bundle``'s own ``pipeline-portable.json`` — a small JSON document
+#: that lands with the run, in the run's own directory, at import time.
+PROVENANCE_FILENAME = "remote-execution.json"
+PROVENANCE_SCHEMA = 1
+
+#: The stages of the machine, in the order they run. ``result.stages`` carries
+#: one row per name, ALWAYS all of them: a caller reading the table must be
+#: able to see which stages never happened, not have to infer it from absence.
+RUN_STAGES: tuple[str, ...] = ("load", "package", "capabilities", "upload",
+                               "submit", "wait", "evidence", "import",
+                               "provenance")
+
+#: A stage's state. Not the envelope's vocabulary (these describe a STEP, not
+#: an invocation) and deliberately a different, smaller set so nobody switches
+#: on them as if they were.
+STAGE_OK = "ok"
+STAGE_SKIPPED = "skipped"
+STAGE_REFUSED = "refused"
+STAGE_FAILED = "failed"
+STAGE_NOT_REACHED = "notReached"
 
 
 # --- the declared verb surface -------------------------------------------------
@@ -263,12 +355,47 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
              purpose="Serve this machine as a managed local runner on "
                      "loopback.",
              value_flags=frozenset({"--runner-root", "--port", "--timeout"})),
+
+    # --- run (Phase 5) ------------------------------------------------------
+    #
+    # The composite. It COMPOSES the six verbs above — it does not reimplement
+    # any of them — and it is a SOLO family (`steerlab run <experiment>`,
+    # never `steerlab run run <experiment>`) because there is no second `run`
+    # verb to disambiguate from and the command a person types is the one the
+    # documents should name.
+    #
+    # `--timeout` means something different here from everywhere else in this
+    # binary, and the difference is deliberate rather than accidental: on the
+    # `runner` verbs it is the per-REQUEST budget, because those verbs make
+    # one request; on this one it is the deadline for the whole WAIT, because
+    # that is the only duration a caller of a composite is thinking about. The
+    # per-request budget keeps its own spelling here (`--request-timeout`) so
+    # neither meaning has to be guessed from context.
+    VerbSpec("run", "run", positional="<experiment>",
+             purpose="Take a frozen study to a runner and bring its verified "
+                     "evidence home.",
+             boolean_flags=frozenset({"--dry-run", "--no-evidence",
+                                      "--no-wait"}),
+             value_flags=frozenset({
+                 "--runner", "--token-file", "--ca-bundle", "--timeout",
+                 "--request-timeout", "--verb", "--executor", "--target-root",
+                 "--dtype", "--device", "--parallel", "--evidence-out",
+                 "--max-bytes"}),
+             required_flags=frozenset({"--runner"})),
 )
 
 _SPECS_BY_LABEL = {spec.label: spec for spec in CLIENT_VERB_SPECS}
 
 #: Families this binary dispatches, in the order ``--help`` prints them.
-FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "runner")
+FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "runner",
+                             "run")
+
+#: Families whose ENTIRE surface is one verb, spelled as the family name and
+#: nothing after it: ``steerlab run <experiment>``. Maps family → the verb its
+#: spec is registered under. A solo family's documents and synopses name the
+#: command a person actually types (``verb: "run"``), never the internal
+#: ``"run run"`` its spec label carries.
+SOLO_FAMILIES: dict = {"run": "run"}
 
 #: The families that AUTHOR — the Phase-1b surface. The structural contract
 #: "no authoring verb declares a flag that could hold a server locator" is
@@ -281,6 +408,13 @@ AUTHORING_FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle")
 
 #: The family that talks to a runner and authors nothing.
 RUNNER_FAMILY = "runner"
+
+#: The composite family (Phase 5). Excluded from :data:`AUTHORING_FAMILIES`
+#: for the same reason ``runner`` is: addressing a runner is half its job. It
+#: does author one thing — it IMPORTS evidence into the workspace — which is
+#: precisely why it is not in the authoring set: an authoring verb may never
+#: hold a locator, and this one must.
+RUN_FAMILY = "run"
 
 #: Families that run without a workspace when none is named. The runner verbs
 #: address a REMOTE engine and name their local paths explicitly (the bundle
@@ -310,6 +444,7 @@ METAVARS: dict = {
     "--device": "<cuda|cpu|mps>",
     "--dtype": "<auto|float16|bfloat16|float32>",
     "--eval-run": "<run-dir>",
+    "--evidence-out": "<file.tar.gz>",
     "--executor": "<local|slurm>",
     "--file": "<path>",
     "--max-bytes": "<n>",
@@ -320,6 +455,7 @@ METAVARS: dict = {
     "--pool-from": "<token-index>",
     "--port": "<n>",
     "--reference": "<stories-concept>",
+    "--request-timeout": "<seconds>",
     "--revision": "<commit>",
     "--root": "<dir>",
     "--runner": "<url>",
@@ -387,6 +523,25 @@ RUNNER_PORT_UNAVAILABLE_CODE = "runnerPortUnavailable"
 #: The engine process started and then died, or never answered ``/api/info``
 #: inside the deadline. An operational failure — nothing declined anything.
 RUNNER_START_FAILED_CODE = "runnerStartFailed"
+#: ``run`` was pointed at a study that is not frozen. The composite hands a
+#: bundle to a machine that will execute it and cite the result; a draft has no
+#: freeze hash for that citation to rest on, and the repair is one verb.
+NOT_FROZEN_CODE = "experimentNotFrozen"
+#: The runner cannot execute what ``run`` was asked to submit — an unknown
+#: study verb, an unknown executor, or ``--executor slurm`` against a runner
+#: that schedules locally. Raised BEFORE the upload: an archive staged on a
+#: runner that was never going to run it is disk nobody reclaims.
+RUNNER_CANNOT_EXECUTE_CODE = "runnerCannotExecute"
+#: The submit request never got an answer. NOT a refusal and never retried:
+#: the job may exist, and the only honest repair is to LOOK.
+SUBMIT_OUTCOME_UNKNOWN_CODE = "submitOutcomeUnknown"
+#: The remote job reached a terminal state that is not a success. The evidence
+#: it did package still comes home; this code says the RUN failed, loudly, so
+#: nothing downstream mistakes a partial for a result.
+REMOTE_JOB_FAILED_CODE = "remoteJobFailed"
+#: ``run --wait`` gave up watching. The remote job was deliberately NOT
+#: cancelled — this client never kills work it did not do.
+WAIT_DEADLINE_CODE = "waitDeadlineExceeded"
 
 
 class ClientRefusal(Exception):
@@ -407,13 +562,20 @@ class ClientRefusal(Exception):
     """
 
     def __init__(self, *, code: str, reason: str, repair_action: str,
-                 state: str = "blocked", payload: dict | None = None) -> None:
+                 state: str = "blocked", payload: dict | None = None,
+                 gate: str | None = None) -> None:
         super().__init__(reason)
         self.code = code
         self.reason = reason
         self.repair_action = repair_action
         self.state = state
         self.payload = dict(payload or {})
+        #: A LIFECYCLE gate id, when this refusal is one of the store's own
+        #: rules re-raised from a client verb rather than a client rule. The
+        #: contract is that a lifecycle refusal's ``code`` IS its gate id and
+        #: that ``error.gate`` is present — a client that dropped the gate
+        #: would make its refusal unrecognisable to an agent switching on it.
+        self.gate = gate
 
 
 class ServeCompleted(Exception):
@@ -468,7 +630,7 @@ class Invocation:
 
     @property
     def label(self) -> str:
-        return self.spec.label if self.spec else self.family
+        return verb_label(self.spec) if self.spec else self.family
 
     def one(self, flag: str) -> str | None:
         """The last value given for ``flag``, or ``None``. Last-wins, so a
@@ -490,6 +652,20 @@ def spec_for(family: str, verb: str | None) -> VerbSpec | None:
     return _SPECS_BY_LABEL.get(f"{family} {verb}")
 
 
+def verb_label(spec: VerbSpec) -> str:
+    """How a verb NAMES itself — in an envelope's ``verb``, in a synopsis, and
+    in a repair sentence.
+
+    Almost always ``<family> <verb>``, which is what :class:`VerbSpec` builds.
+    A SOLO family is the exception: its whole surface is one verb spelled as
+    the family name, so ``steerlab run`` is the command and a document
+    reporting ``verb: "run run"`` would name a spelling nobody can type.
+    """
+    if SOLO_FAMILIES.get(spec.family) == spec.verb:
+        return spec.family
+    return spec.label
+
+
 def parse(family: str, args: list) -> Invocation:
     """Parse one family invocation's arguments (everything AFTER the family
     name), strictly.
@@ -500,8 +676,17 @@ def parse(family: str, args: list) -> Invocation:
     positional is validated: a caller asking what the arguments are must not
     have to supply them first.
     """
-    verb = args[0] if args and not args[0].startswith("--") else None
-    spec = spec_for(family, verb)
+    # A SOLO family's first token is already its first POSITIONAL — there is
+    # no verb word to consume, because the family name is the verb.
+    solo_verb = SOLO_FAMILIES.get(family)
+    if solo_verb is not None:
+        verb = solo_verb
+        spec = spec_for(family, solo_verb)
+        first = 0
+    else:
+        verb = args[0] if args and not args[0].startswith("--") else None
+        spec = spec_for(family, verb)
+        first = 1
 
     if HELP_FLAG in args:
         return Invocation(family=family, spec=spec, positionals=[], flags={},
@@ -520,7 +705,7 @@ def parse(family: str, args: list) -> Invocation:
     flags: dict = {}
     json_mode = False
     out_path = None
-    index = 1
+    index = first
     while index < len(args):
         token = args[index]
         if not token.startswith("--"):
@@ -642,7 +827,7 @@ def synopsis(spec: VerbSpec) -> str:
     """One synopsis line for one verb. Required flags render unbracketed —
     "optional" and "the verb will not run without it" are the difference
     between a usable synopsis and a misleading one."""
-    parts = [PROGRAM, spec.family, spec.verb]
+    parts = [PROGRAM, verb_label(spec)]
     if spec.positional:
         parts.append(spec.positional)
     for flag in sorted(spec.required_flags):
@@ -721,7 +906,7 @@ def help_payload(family: str | None = None, verb: str | None = None) -> dict:
         "verbs": [{
             "family": spec.family,
             "verb": spec.verb,
-            "label": spec.label,
+            "label": verb_label(spec),
             "purpose": spec.purpose,
             "positional": spec.positional,
             "synopsis": synopsis(spec),
@@ -739,7 +924,7 @@ def _require(values: list, count: int, spec: VerbSpec) -> None:
         raise ClientRefusal(
             code=USAGE_CODE,
             reason=f"usage: {synopsis(spec)}",
-            repair_action=f"{PROGRAM} {spec.family} {spec.verb} {HELP_FLAG}  "
+            repair_action=f"{PROGRAM} {verb_label(spec)} {HELP_FLAG}  "
                           "(the verb's declared surface, runs nothing)")
 
 
@@ -2217,19 +2402,872 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
         repair_action=f"{PROGRAM} {spec.family} {HELP_FLAG}")
 
 
+# --- verbs: run — the composite orchestration verb (Phase 5) -------------------
+#
+# ONE command from a frozen study here to verified evidence here. Every step
+# below is a call into a piece that already exists and is already separately
+# tested; this function is the STATE MACHINE over them and nothing else. If a
+# stage here starts to contain logic rather than a call, it belongs in the
+# module that owns the guarantee, not in the orchestrator.
+#
+# Three rules the shape follows from:
+#
+# 1. **Refuse before you spend.** Everything checkable — the study is frozen,
+#    its pins still hash, the runner can execute this verb on this executor —
+#    happens before the upload. An archive staged on a runner that was never
+#    going to run it is disk nobody reclaims, and a job that dies on a
+#    capability the client could have read is a scheduler allocation nobody
+#    gets back.
+# 2. **Evidence comes home.** A terminal job gets its bundle fetched whether it
+#    SUCCEEDED or FAILED — a failed run's partial evidence is exactly what a
+#    researcher needs, and "the data still exists somewhere under /scratch" is
+#    not a retention policy (the same sentence `bundles` already carries). The
+#    job's failure is loud in the document either way.
+# 3. **Never kill work you did not do.** The wait deadline bounds this
+#    client's patience, never the runner's job; SIGINT during the wait detaches
+#    and prints the follow-ups. Nothing here ever calls cancel.
+
+
+def _stage_table(recorded: dict) -> list:
+    """``result.stages``: one row per declared stage, always all of them.
+
+    A caller reading this table must be able to see which stages never
+    happened. Absence would make "we never got there" and "we forgot to
+    record it" the same observation.
+    """
+    return [recorded.get(name, {"stage": name, "state": STAGE_NOT_REACHED})
+            for name in RUN_STAGES]
+
+
+def _note(stage: str, line: str) -> None:
+    """One line per stage transition, on stderr in BOTH modes.
+
+    stderr because under ``--json`` stdout carries exactly one document, and
+    because a composite that runs for hours with nothing on the terminal is
+    indistinguishable from a hung one.
+    """
+    sys.stderr.write(f"run[{stage}]: {line}\n")
+    sys.stderr.flush()
+
+
+def _record(stages: dict, stage: str, state: str, **facts) -> None:
+    stages[stage] = {"stage": stage, "state": state,
+                     **{k: v for k, v in facts.items() if v is not None}}
+
+
+def _die(stages: dict, stage: str, *, code: str, reason: str, repair: str,
+         state: str = "refused", common: dict | None = None,
+         gate: str | None = None, facts: dict | None = None,
+         stage_facts: dict | None = None,
+         next_action: dict | None = None) -> "ClientRefusal":
+    """Build the typed refusal for a stage that declined or broke.
+
+    Returned rather than raised so the call site reads ``raise _die(…)`` and
+    the control flow is visible at the point it happens.
+    """
+    _record(stages, stage,
+            STAGE_FAILED if state == "failed" else STAGE_REFUSED,
+            **(stage_facts or {}))
+    refusal = ClientRefusal(
+        code=code, reason=reason, repair_action=repair, state=state, gate=gate,
+        payload={**(common or {}), **(facts or {}),
+                 "failedStage": stage, "stages": _stage_table(stages)})
+    if next_action is not None:
+        refusal.payload["nextAction"] = next_action
+    return refusal
+
+
+def _retry_once(call, *, transport_error, stage: str):
+    """Run an IDEMPOTENT call, retrying once on a transport error.
+
+    Only upload and download reach this. Upload lands in a server-minted
+    staging directory, so a retry costs disk and produces a second path, never
+    a second effect; download is a GET whose write is temp → verify → move.
+    ``submit`` is deliberately NOT reachable from here — see
+    :data:`SUBMIT_OUTCOME_UNKNOWN_CODE`.
+    """
+    try:
+        return call()
+    except transport_error as first:
+        _note(stage, f"transport error ({first.reason}) — retrying once; this "
+                     "call is idempotent")
+        return call()
+
+
+def _refuse_unexecutable(stages: dict, *, study_verb: str,
+                         executor: str | None, dry_run: bool,
+                         capabilities: dict, identity: dict,
+                         common: dict) -> None:
+    """The capability gate, BEFORE any upload.
+
+    What the runner OFFERS is named in every refusal here, because "unsupported"
+    with no roster beside it sends the reader to a different machine to find
+    out what they should have typed.
+    """
+    scheduler = capabilities.get("schedulerMode")
+    offers = {"schedulerMode": scheduler,
+              "serverRole": capabilities.get("serverRole"),
+              "availableJobTypes": capabilities.get("availableJobTypes"),
+              "engineVersion": identity.get("engineVersion"),
+              "studyVerbs": list(RUN_STUDY_VERBS)}
+
+    if study_verb not in RUN_STUDY_VERBS:
+        raise _die(
+            stages, "capabilities", code=RUNNER_CANNOT_EXECUTE_CODE,
+            reason=(f"no runner executes a study verb {study_verb!r} — "
+                    f"submit-bundle takes: {', '.join(RUN_STUDY_VERBS)}"),
+            repair=(f"{PROGRAM} run <experiment> --runner <url> --verb "
+                    f"{DEFAULT_STUDY_VERB}  (the default; the roster above is "
+                    "the whole vocabulary the submit route accepts)"),
+            common=common, facts={"runnerOffers": offers},
+            stage_facts={"requestedVerb": study_verb})
+
+    if executor is not None and executor not in RUN_EXECUTORS:
+        raise _die(
+            stages, "capabilities", code=RUNNER_CANNOT_EXECUTE_CODE,
+            reason=(f"unknown executor {executor!r} — a runner schedules "
+                    f"{' or '.join(RUN_EXECUTORS)}"),
+            repair=f"--executor {'|'.join(RUN_EXECUTORS)}",
+            common=common, facts={"runnerOffers": offers},
+            stage_facts={"requestedExecutor": executor})
+
+    # The submit route's own rule, read one hop earlier: a Slurm submission
+    # against a runner that is not configured for Slurm refuses THERE, after
+    # the archive has been uploaded and staged. Reading `schedulerMode` costs
+    # one GET that has already happened.
+    effective = executor or scheduler
+    if effective == "slurm" and scheduler != "slurm" and not dry_run:
+        raise _die(
+            stages, "capabilities", code=RUNNER_CANNOT_EXECUTE_CODE,
+            reason=(f"this runner schedules {scheduler!r}, not 'slurm' — a "
+                    "Slurm study submission needs STEERLAB_EXECUTOR=slurm on "
+                    "the RUNNER, and nothing the client sends changes that"),
+            repair=("--executor local (what this runner offers), or point "
+                    "--runner at a Slurm-configured engine. `--dry-run` is "
+                    "accepted against any runner, because it schedules "
+                    "nothing."),
+            common=common, facts={"runnerOffers": offers},
+            stage_facts={"requestedExecutor": effective,
+                         "runnerSchedulerMode": scheduler})
+
+
+def _poll_to_terminal(client, job_id: str, *, deadline: float):
+    """Watch one job until it stops moving. Returns ``(record, disposition)``.
+
+    ``disposition`` is ``"terminal"``, ``"interrupted"`` (SIGINT) or
+    ``"deadline"``. Every poll is one cheap ``GET /api/jobs/{id}``; the
+    interval starts at :data:`POLL_INTERVAL_START` and backs off gently to
+    :data:`POLL_INTERVAL_CAP`, so a ten-second job stays responsive and an
+    eight-hour job is not asked twenty-eight thousand times.
+
+    **SIGINT detaches; it does not cancel.** A composite that killed a running
+    cluster job because somebody pressed ctrl-c in a terminal would be
+    destroying work it did not do and cannot give back. The handler is
+    installed for the duration of the WAIT only, and restored afterwards, so
+    an interrupt anywhere else in this process behaves exactly as it always
+    did. Installing it can fail (this is only legal on the main thread); a
+    library caller polling from a worker thread simply gets the deadline.
+    """
+    import signal
+    import time
+
+    interrupted: list = []
+
+    def _catch(signum, _frame):     # pragma: no cover - exercised by signal
+        interrupted.append(signum)
+
+    previous = None
+    installed = False
+    try:
+        previous = signal.signal(signal.SIGINT, _catch)
+        installed = True
+    except (ValueError, OSError, AttributeError):    # not the main thread
+        installed = False
+
+    try:
+        limit = time.monotonic() + float(deadline)
+        interval = POLL_INTERVAL_START
+        record = client.job(job_id)
+        while True:
+            if interrupted:
+                return record, "interrupted"
+            if str(record.get("status") or "") in JOB_TERMINAL_STATUSES:
+                return record, "terminal"
+            if time.monotonic() >= limit:
+                return record, "deadline"
+            # Sliced, because PEP 475 makes `time.sleep` RESUME after a
+            # handled signal rather than return early: a single 30-second
+            # sleep would swallow the ctrl-c for half a minute.
+            slept = 0.0
+            while slept < interval and not interrupted:
+                step = min(0.1, interval - slept)
+                time.sleep(step)
+                slept += step
+            interval = min(interval * POLL_BACKOFF, POLL_INTERVAL_CAP)
+            record = client.job(job_id)
+    finally:
+        if installed:
+            signal.signal(signal.SIGINT, previous)
+
+
+def _download_evidence(client, *, reference: dict, destination: str,
+                       temp_path: str, max_bytes: int | None) -> dict:
+    """Fetch and verify one evidence archive. Verify-then-move is the
+    adapter's; the retry is this machine's, and it is safe for the reason
+    :func:`_retry_once` gives."""
+    from .client import runner as runner_api
+    return _retry_once(
+        lambda: client.download_bundle(
+            remote_path=reference["bundlePath"],
+            expected_sha256=reference.get("bundleSha256") or "",
+            destination=destination, temp_path=temp_path,
+            max_bytes=max_bytes),
+        transport_error=runner_api.RunnerUnreachable, stage="evidence")
+
+
+#: What the provenance record says about itself, in prose, once. The house
+#: pattern (``adjudication.NOTE``): a stamp a reader meets in six months has to
+#: explain its own standing without the commit message that created it.
+PROVENANCE_NOTE = (
+    "Remote execution provenance. This run directory was produced by a RUNNER "
+    "and imported into this workspace by `steerlab run`. The record is "
+    "ADDITIVE and client-side: the frozen study, its manifest, its pins and "
+    "every hash in them are untouched by it, nothing here is inside any "
+    "content hash, and no file under experiments/ was written. It answers the "
+    "question the imported bytes cannot — WHICH engine produced them, from "
+    "WHICH bundle, under WHICH job — so a result can be traced back to the "
+    "machine that computed it. The runner's bearer token is never recorded; "
+    "runner.tokenPresent says only whether one was presented.")
+
+
+def _provenance_document(*, experiment: str, manifest_facts: dict,
+                         runner: dict, bundle: dict, job: dict,
+                         evidence: dict | None, outcome: str,
+                         timestamps: dict) -> dict:
+    """The ADDITIVE record :data:`PROVENANCE_FILENAME` carries.
+
+    Sorted keys on the wire, full digests (an elided hash in a provenance
+    record is a provenance hole), and a closed shape: everything here is a
+    fact this client observed itself or read out of a document it verified.
+    """
+    from . import __version__
+    return {
+        "schemaVersion": PROVENANCE_SCHEMA,
+        "kind": "remoteExecution",
+        "note": PROVENANCE_NOTE,
+        "client": {"program": PROGRAM, "role": ROLE, "version": __version__,
+                   "engine": envelope.ENGINE},
+        "experiment": experiment,
+        "manifest": manifest_facts,
+        "runner": runner,
+        "runBundle": bundle,
+        "job": job,
+        "evidence": evidence,
+        "outcome": outcome,
+        "timestamps": timestamps,
+    }
+
+
+def _write_provenance(run_directory: str, document: dict) -> str | None:
+    """Land the record beside the run it describes, exclusively.
+
+    ``O_EXCL``: this file is written once, as part of the landing write, and a
+    second ``run`` that somehow reached the same directory must not rewrite
+    the first one's provenance. In practice it cannot happen — the importer
+    refuses to overwrite an existing member long before this — which is
+    exactly why the guard is cheap to keep.
+
+    Returns the path, or ``None`` when there was no run directory to stamp.
+    """
+    if not run_directory or not os.path.isdir(run_directory):
+        return None
+    path = os.path.join(run_directory, PROVENANCE_FILENAME)
+    payload = json.dumps(document, indent=2, sort_keys=True) + "\n"
+    try:
+        handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        return None
+    with os.fdopen(handle, "w", encoding="utf-8") as stream:
+        stream.write(payload)
+    return path
+
+
+def _run(invocation: Invocation) -> CLIResult:
+    """``steerlab run <experiment> --runner <url>`` — the whole machine.
+
+    The stages, their order, and what each one is allowed to do are
+    :data:`RUN_STAGES` and ``docs/PORTABILITY-CONTRACTS.md`` §10.
+    """
+    import time
+
+    from .client import runner as runner_api
+    from .experiment import bundles, lifecycle_gates
+    from .experiment import experiment_store as store
+    from .experiment.manifest import Manifest
+
+    spec = invocation.spec
+    args = invocation.positionals
+    _require(args, 1, spec)
+    name = args[0]
+
+    stages: dict = {}
+    started_at = time.time()
+
+    base_url = invocation.one("--runner")
+    if not base_url:
+        raise ClientRefusal(
+            code=RUNNER_USAGE_CODE,
+            reason="run needs --runner <url>: which engine should execute it?",
+            repair_action=(
+                f"{PROGRAM} run {name} --runner http://127.0.0.1:8080  (start "
+                f"one with `{PROGRAM} runner serve`, which prints its URL)"),
+            payload={"experiment": name, "stages": _stage_table(stages)})
+
+    study_verb = (invocation.one("--verb") or DEFAULT_STUDY_VERB).strip()
+    executor = (invocation.one("--executor") or "").strip() or None
+    dry_run = invocation.has("--dry-run")
+    package_evidence = not invocation.has("--no-evidence")
+    waiting = not invocation.has("--no-wait")
+    wait_deadline = _runner_float(invocation, "--timeout", RUN_WAIT_DEADLINE)
+    request_timeout = _runner_float(invocation, "--request-timeout",
+                                    runner_api.DEFAULT_TIMEOUT)
+    max_bytes = _runner_int(invocation, "--max-bytes", None)
+    evidence_out = invocation.one("--evidence-out")
+
+    # ---- stage 1: the LOCAL study ------------------------------------------
+    #
+    # Light verbs, against the workspace, before anything is built or sent.
+    # `Manifest.load` raises FileNotFoundError for a mistyped name, which
+    # `_envelope_for_exception` already turns into a 66 naming the study.
+    manifest = Manifest.load(name)
+    document = store.load_raw(name)
+    status = str(document.get("status") or "draft")
+    manifest_facts = {
+        "status": status,
+        "contentHash": manifest.content_hash(),
+        "freezeHash": document.get("freezeHash"),
+        "freezeForced": bool(document.get("freezeForced")),
+        "modelID": document.get("modelID"),
+        "modelRevision": document.get("modelRevision"),
+    }
+    # `studyVerb`, not `verb`: the envelope's own top-level `verb` is this
+    # binary's ("run"), and two different meanings for one key in one document
+    # is how a dispatching agent picks the wrong one.
+    common = {"experiment": name, "runner": base_url,
+              "studyVerb": study_verb, "executor": executor}
+
+    if status != "frozen":
+        raise _die(
+            stages, "load", code=NOT_FROZEN_CODE,
+            reason=(f"'{name}' is {status!r}, not frozen — this verb hands a "
+                    "study to a machine that will execute it and stamp the "
+                    "result with its identity, and a draft has no freeze hash "
+                    "for that citation to rest on"),
+            repair=(f"{PROGRAM} experiment verify {name}, then {PROGRAM} "
+                    f"experiment freeze {name}  (the gates it must clear are "
+                    "named in the refusal if it declines)"),
+            common=common, stage_facts={"status": status})
+
+    violations = manifest.verify(None)
+    if violations:
+        for violation in violations:
+            print(f"VIOLATION: {violation}")
+        raise _die(
+            stages, "load", code=lifecycle_gates.PIN_DRIFT,
+            gate=lifecycle_gates.PIN_DRIFT,
+            reason=(f"{len(violations)} pinned input(s) of {name!r} no longer "
+                    "match their hashes — the bundle would carry a study that "
+                    "is not the one on disk"),
+            repair=(f"{PROGRAM} experiment verify {name}  (names every drifted "
+                    "pin); then restore the named files, or duplicate the "
+                    f"study and re-pin: {PROGRAM} experiment duplicate {name} "
+                    f"{name}-v2"),
+            common=common, facts={"violations": list(violations)},
+            stage_facts={"status": status})
+
+    _record(stages, "load", STAGE_OK, experiment=name, status=status,
+            experimentContentHash=manifest_facts["contentHash"],
+            freezeHash=manifest_facts["freezeHash"])
+    _note("load", f"{name!r} is frozen and every pin verifies")
+
+    try:
+        return _run_machine(
+            invocation, stages=stages, common=common, name=name,
+            manifest_facts=manifest_facts, base_url=base_url,
+            study_verb=study_verb, executor=executor, dry_run=dry_run,
+            package_evidence=package_evidence, waiting=waiting,
+            wait_deadline=wait_deadline, request_timeout=request_timeout,
+            max_bytes=max_bytes, evidence_out=evidence_out,
+            started_at=started_at, runner_api=runner_api, bundles=bundles)
+    except ClientRefusal:
+        raise
+    except Exception as exc:   # noqa: BLE001 — every throw keeps its TYPE and
+        # gains the stage table. The translation stays in
+        # `_envelope_for_exception` (a BundleError is still `bundleRefused`, a
+        # missing file is still 66); all this adds is WHERE it happened, which
+        # is the one thing a composite owes a caller that a single verb does
+        # not.
+        exc.run_stages = _stage_table(stages)                # type: ignore[attr-defined]
+        exc.run_failed_stage = _first_unfinished(stages)     # type: ignore[attr-defined]
+        raise
+
+
+def _first_unfinished(stages: dict) -> str | None:
+    for stage in RUN_STAGES:
+        if stage not in stages:
+            return stage
+    return None       # pragma: no cover - every stage recorded, nothing threw
+
+
+def _run_machine(invocation: Invocation, *, stages: dict, common: dict,
+                 name: str, manifest_facts: dict, base_url: str,
+                 study_verb: str, executor: str | None, dry_run: bool,
+                 package_evidence: bool, waiting: bool, wait_deadline: float,
+                 request_timeout: float, max_bytes: int | None,
+                 evidence_out: str | None, started_at: float,
+                 runner_api, bundles) -> CLIResult:
+    """Stages 2–9. Split from :func:`_run` only so the stage-table decoration
+    above has one place to sit."""
+    import time
+
+    from .experiment import paths
+
+    workspace = paths.project_root()
+
+    # ---- stage 2: package, locally -----------------------------------------
+    meta = bundles.package_experiment(name)
+    bundle_path = meta["bundlePath"]
+    bundle_sha = meta["bundleSha256"]
+    bundle_facts = {"path": bundle_path, "sha256": bundle_sha,
+                    "entries": len(meta.get("entries") or []),
+                    "experimentContentHash": meta.get("experimentContentHash")}
+    _record(stages, "package", STAGE_OK, bundlePath=bundle_path,
+            bundleSha256=bundle_sha,
+            entries=len(meta.get("entries") or []))
+    _note("package", f"{os.path.basename(bundle_path)} "
+                     f"({len(meta.get('entries') or [])} entries) "
+                     f"sha256 {bundle_sha}")
+
+    token = _runner_token(invocation)
+    ca_bundle = invocation.one("--ca-bundle")
+    client = runner_api.RunnerClient(
+        base_url=base_url, token=token, timeout=request_timeout,
+        verify=ca_bundle if ca_bundle else True)
+    common = {**common, "runner": client.base_url,
+              "tokenPresent": client.has_token}
+    try:
+        return _run_wire(
+            client, invocation, stages=stages, common=common, name=name,
+            manifest_facts=manifest_facts, bundle_facts=bundle_facts,
+            bundle_path=bundle_path, bundle_sha=bundle_sha,
+            study_verb=study_verb, executor=executor, dry_run=dry_run,
+            package_evidence=package_evidence, waiting=waiting,
+            wait_deadline=wait_deadline, max_bytes=max_bytes,
+            evidence_out=evidence_out, started_at=started_at,
+            workspace=workspace, runner_api=runner_api, bundles=bundles,
+            time=time)
+    except runner_api.RunnerError as exc:
+        # Same translation `_runner` makes, plus the stage table: the authoring
+        # paths still never import this module to build a refusal document.
+        raise _die(
+            stages, _first_unfinished(stages) or "wait", code=exc.code,
+            reason=exc.reason, repair=exc.repair_action, state=exc.state,
+            common=common, facts=dict(exc.detail)) from exc
+    finally:
+        client.close()
+
+
+def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
+              name: str, manifest_facts: dict, bundle_facts: dict,
+              bundle_path: str, bundle_sha: str, study_verb: str,
+              executor: str | None, dry_run: bool, package_evidence: bool,
+              waiting: bool, wait_deadline: float, max_bytes: int | None,
+              evidence_out: str | None, started_at: float, workspace: str,
+              runner_api, bundles, time) -> CLIResult:
+    """Stages 3–9: everything that touches the wire or the workspace."""
+
+    # ---- stage 3: what is this runner, and can it do this? -----------------
+    info = client.info()
+    identity = client.identity(info)
+    capabilities = info.get("capabilities")
+    if not isinstance(capabilities, dict):
+        capabilities = client.capabilities()
+    if identity.get("rootLooksLikeSourceCheckout"):
+        sys.stderr.write(
+            "warning: this runner's artifact root looks like the SteerLab "
+            "SOURCE CHECKOUT, not a data workspace — anything it writes lands "
+            "in the code repo\n")
+    _refuse_unexecutable(stages, study_verb=study_verb, executor=executor,
+                         dry_run=dry_run, capabilities=capabilities,
+                         identity=identity, common=common)
+    runner_facts = {"url": client.base_url,
+                    "service": identity.get("service"),
+                    "engineVersion": identity.get("engineVersion"),
+                    "root": identity.get("root"),
+                    "schedulerMode": capabilities.get("schedulerMode"),
+                    "serverRole": capabilities.get("serverRole"),
+                    # PRESENCE, never the value. The one thing any document
+                    # here may say about the credential.
+                    "tokenPresent": bool(client.has_token)}
+    _record(stages, "capabilities", STAGE_OK, **runner_facts)
+    _note("capabilities", f"{identity.get('service')} "
+                          f"{identity.get('engineVersion')} serving "
+                          f"{identity.get('root')} "
+                          f"(schedulerMode={capabilities.get('schedulerMode')})")
+
+    # ---- stage 4: upload (idempotent; one automatic retry) -----------------
+    uploaded = _retry_once(
+        lambda: client.upload_run_bundle(bundle_path),
+        transport_error=runner_api.RunnerUnreachable, stage="upload")
+    staged = uploaded.get("path")
+    _record(stages, "upload", STAGE_OK, runnerPath=staged,
+            sha256=uploaded.get("localSha256"), bytes=uploaded.get("bytes"))
+    _note("upload", f"staged at {staged}; the runner reports the same sha256 "
+                    f"{uploaded.get('sha256')}")
+    bundle_facts = {**bundle_facts, "runnerPath": staged,
+                    "bytes": uploaded.get("bytes")}
+
+    # ---- stage 5: submit (NEVER retried) -----------------------------------
+    submit_at = time.time()
+    try:
+        submission = client.submit_uploaded_bundle(
+            remote_path=staged, expected_sha256=bundle_sha, verb=study_verb,
+            executor=executor, target_root=invocation.one("--target-root"),
+            dry_run=dry_run, dtype=invocation.one("--dtype"),
+            device=invocation.one("--device"),
+            package_evidence=package_evidence,
+            parallel_jobs=_runner_int(invocation, "--parallel", 1) or 1)
+    except runner_api.RunnerUnreachable as exc:
+        # The one call in this machine whose failure is genuinely ambiguous:
+        # the request may have created a job (and on Slurm spent an
+        # allocation) before the connection died. Retrying would be a second
+        # study. The repair is to LOOK.
+        raise _die(
+            stages, "submit", code=SUBMIT_OUTCOME_UNKNOWN_CODE, state="failed",
+            reason=(f"the submit request to {client.base_url} never got an "
+                    f"answer ({exc.reason}) — a job MAY have been created, so "
+                    "nothing was retried"),
+            repair=(f"{PROGRAM} runner jobs --runner {client.base_url}  (look "
+                    "before you submit again: a second submit is a second "
+                    f"study). The bundle is already staged at {staged}; if no "
+                    f"job exists, {PROGRAM} runner submit --runner "
+                    f"{client.base_url} --bundle-path {staged} --bundle-sha "
+                    f"{bundle_sha} --verb {study_verb} resumes from here."),
+            common=common,
+            facts={"runBundle": bundle_facts, "retried": False}) from exc
+
+    job_id = submission.get("jobId")
+    job_facts = {"id": job_id, "verb": submission.get("verb"),
+                 "executor": submission.get("executor"),
+                 "dryRun": bool(submission.get("dryRun")),
+                 "slurmJobID": submission.get("slurmJobID"),
+                 "shardJobIDs": submission.get("shardJobIDs"),
+                 "submissionDirectory": submission.get("submissionDirectory")}
+    _record(stages, "submit", STAGE_OK, jobId=job_id,
+            verb=submission.get("verb"), executor=submission.get("executor"),
+            dryRun=bool(submission.get("dryRun")))
+    _note("submit", f"job {job_id} ({submission.get('verb')} on "
+                    f"{submission.get('executor')})"
+                    + (" — dry run" if submission.get("dryRun") else ""))
+
+    follow_ups = [
+        f"{PROGRAM} runner jobs {job_id} --runner {client.base_url}",
+        f"{PROGRAM} runner evidence {job_id} --out <file.tar.gz> --runner "
+        f"{client.base_url}",
+        f"{PROGRAM} bundle import <file.tar.gz> --sha256 <digest>",
+    ]
+
+    # ---- stage 6: wait -----------------------------------------------------
+    if not waiting:
+        for stage in ("wait", "evidence", "import", "provenance"):
+            _record(stages, stage, STAGE_SKIPPED, reason="--no-wait")
+        line = (f"submitted {name!r} {study_verb} to {client.base_url} as job "
+                f"{job_id} — detached")
+        print(line)
+        return CLIResult(
+            state="pending", message=line, changed=True,
+            payload={**common, "job": job_facts, "runner": runner_facts,
+                     "runBundle": bundle_facts, "outcome": "detached",
+                     "followUps": follow_ups,
+                     "stages": _stage_table(stages)},
+            next_action=envelope.next_action(
+                follow_ups[0],
+                detail=("the job is running on the runner and this client "
+                        "detached at --no-wait. Watch it, then fetch and "
+                        "import its evidence: "
+                        + " ; ".join(follow_ups[1:]))))
+
+    _note("wait", f"watching job {job_id} (deadline {int(wait_deadline)}s; "
+                  "this client never cancels a remote job)")
+    record, disposition = _poll_to_terminal(client, job_id,
+                                            deadline=wait_deadline)
+    status = str(record.get("status") or "")
+
+    if disposition == "interrupted":
+        for stage in ("evidence", "import", "provenance"):
+            _record(stages, stage, STAGE_SKIPPED, reason="interrupted")
+        _record(stages, "wait", STAGE_SKIPPED, jobId=job_id, status=status,
+                reason="interrupted")
+        line = (f"detached from job {job_id} [{status}] on interrupt — the "
+                "remote job was NOT cancelled")
+        print(line)
+        _note("wait", "interrupted: detaching, not cancelling")
+        return CLIResult(
+            state="pending", message=line, changed=True,
+            payload={**common, "job": {**job_facts, "status": status},
+                     "runner": runner_facts, "runBundle": bundle_facts,
+                     "outcome": "interrupted", "cancelled": False,
+                     "followUps": follow_ups,
+                     "stages": _stage_table(stages)},
+            next_action=envelope.next_action(
+                follow_ups[0],
+                detail=("ctrl-c stops the WATCHING, never the work: this "
+                        "client does not kill a job it did not run. The job "
+                        "is still on the runner; re-attach with the commands "
+                        "above.")))
+
+    if disposition == "deadline":
+        raise _die(
+            stages, "wait", code=WAIT_DEADLINE_CODE, state="failed",
+            reason=(f"job {job_id} was still {status!r} after "
+                    f"{int(wait_deadline)}s — this client stopped WATCHING; "
+                    "the job was NOT cancelled and is still on the runner"),
+            repair=(f"{follow_ups[0]}  (its status and log tail), then "
+                    f"{follow_ups[1]} when it completes. Raise --timeout for a "
+                    "job this long, or submit with --no-wait and re-attach."),
+            common=common,
+            facts={"job": {**job_facts, "status": status},
+                   "runner": runner_facts, "runBundle": bundle_facts,
+                   "cancelled": False, "followUps": follow_ups},
+            stage_facts={"jobId": job_id, "status": status,
+                         "deadlineSeconds": wait_deadline})
+
+    succeeded = status in JOB_SUCCESS_STATUSES
+    job_facts = {**job_facts, "status": status,
+                 "error": record.get("error"),
+                 "runDirectory": (record.get("result") or {}).get(
+                     "runDirectory") if isinstance(record.get("result"), dict)
+                 else None}
+    _record(stages, "wait", STAGE_OK if succeeded else STAGE_FAILED,
+            jobId=job_id, status=status)
+    _note("wait", f"job {job_id} is terminal: {status}")
+    terminal_at = time.time()
+
+    # ---- stages 7–9: evidence comes home, success OR failure ---------------
+    #
+    # A failed job that packaged partial evidence still gets its bundle
+    # fetched: "the data still exists somewhere under /scratch" is not a
+    # retention policy. The failure below is loud either way.
+    evidence_facts: dict | None = None
+    imported: dict | None = None
+    provenance_path: str | None = None
+    run_directory: str | None = None
+    no_evidence_reason: str | None = None
+
+    if not package_evidence:
+        no_evidence_reason = "--no-evidence"
+    elif dry_run:
+        no_evidence_reason = "--dry-run"
+
+    if no_evidence_reason is not None:
+        for stage in ("evidence", "import", "provenance"):
+            _record(stages, stage, STAGE_SKIPPED, reason=no_evidence_reason)
+    else:
+        reference = client.evidence_reference(job_id, record=record)
+        if reference is None:
+            _record(stages, "evidence", STAGE_REFUSED, jobId=job_id,
+                    status=status, code=NO_EVIDENCE_CODE)
+            for stage in ("import", "provenance"):
+                _record(stages, stage, STAGE_NOT_REACHED)
+            _note("evidence", "the job packaged none")
+            if succeeded:
+                raise _die(
+                    stages, "evidence", code=NO_EVIDENCE_CODE, state="refused",
+                    reason=(f"job {job_id} [{status}] completed and packaged "
+                            "no evidence bundle — there is nothing to bring "
+                            "home"),
+                    repair=(
+                        "a job packages evidence when it COMPLETES with "
+                        "packageEvidence on AND the verb wrote a run "
+                        "directory. `verify` writes none by design, and a dry "
+                        "run runs nothing. Submit a verb that produces a run "
+                        f"(--verb {DEFAULT_STUDY_VERB}), or inspect what the "
+                        f"job did: {follow_ups[0]}"),
+                    common=common,
+                    facts={"job": job_facts, "runner": runner_facts,
+                           "runBundle": bundle_facts,
+                           "outcome": "noEvidence"},
+                    stage_facts={"jobId": job_id, "status": status})
+        else:
+            temporary_directory: str | None = None
+            if evidence_out:
+                destination = os.path.abspath(os.path.expanduser(evidence_out))
+                temp_path = f"{destination}.partial"
+            else:
+                import tempfile
+                # A temp directory of our own, removed after the import: the
+                # archive is a courier, not an artifact, and leaving one in
+                # the workspace's runs/ would look like evidence that had not
+                # been imported.
+                temporary_directory = tempfile.mkdtemp(prefix="steerlab-run-")
+                destination = os.path.join(temporary_directory,
+                                           os.path.basename(
+                                               reference["bundlePath"]))
+                temp_path = f"{destination}.partial"
+            try:
+                downloaded = _download_evidence(
+                    client, reference=reference, destination=destination,
+                    temp_path=temp_path, max_bytes=max_bytes)
+                evidence_facts = {
+                    "sha256": downloaded["sha256"],
+                    "bytes": downloaded["bytes"],
+                    "runnerPath": downloaded["remotePath"],
+                    "verified": True,
+                    "archivePath": destination if evidence_out else None,
+                    "archiveRetained": bool(evidence_out),
+                }
+                _record(stages, "evidence", STAGE_OK,
+                        sha256=downloaded["sha256"],
+                        bytes=downloaded["bytes"],
+                        runnerPath=downloaded["remotePath"],
+                        archivePath=destination if evidence_out else None)
+                _note("evidence", f"{downloaded['bytes']} bytes, outer digest "
+                                  f"verified: {downloaded['sha256']}")
+
+                # The importer owns atomic, never-overwriting extraction and
+                # the out-of-band outer pin (G3). This composite adds nothing
+                # to it and takes nothing away.
+                imported = bundles.import_bundle(
+                    downloaded["path"], target_root=workspace,
+                    expected_sha256=downloaded["sha256"])
+                run_id = str((imported.get("bundle") or {}).get("runID") or "")
+                run_directory = (os.path.join(workspace, "runs", run_id)
+                                 if run_id else None)
+                _record(stages, "import", STAGE_OK,
+                        targetRoot=imported.get("targetRoot"),
+                        files=len(imported.get("extracted") or []),
+                        runID=run_id or None, runDirectory=run_directory)
+                _note("import", f"{len(imported.get('extracted') or [])} "
+                                f"file(s) into {imported.get('targetRoot')}")
+            finally:
+                if temporary_directory:
+                    import shutil
+                    shutil.rmtree(temporary_directory, ignore_errors=True)
+
+    # ---- the outcome, and the stamp ----------------------------------------
+    outcome = ("succeeded" if succeeded else "jobFailed")
+    if imported is not None:
+        provenance = _provenance_document(
+            experiment=name, manifest_facts=manifest_facts,
+            runner=runner_facts, bundle=bundle_facts, job=job_facts,
+            evidence=evidence_facts, outcome=outcome,
+            # This client's OWN observations, not the runner's clock: two
+            # machines' wall clocks disagree, and a record that mixed them
+            # would make its own durations meaningless.
+            timestamps={"startedAt": _iso(started_at),
+                        "submittedAt": _iso(submit_at),
+                        "terminalAt": _iso(terminal_at),
+                        "importedAt": _iso(time.time())})
+        provenance_path = _write_provenance(run_directory or "", provenance)
+        if provenance_path:
+            _record(stages, "provenance", STAGE_OK, path=provenance_path,
+                    filename=PROVENANCE_FILENAME)
+            _note("provenance", f"stamped {provenance_path}")
+        else:
+            _record(stages, "provenance", STAGE_SKIPPED,
+                    reason=("the imported bundle named no run directory"
+                            if not run_directory
+                            else "already stamped"))
+
+    payload = {**common, "outcome": outcome, "job": job_facts,
+               "runner": runner_facts, "runBundle": bundle_facts,
+               "evidence": evidence_facts, "imported": imported is not None,
+               "importedRunDirectory": run_directory,
+               "provenancePath": provenance_path,
+               "stages": _stage_table(stages)}
+
+    if not succeeded:
+        # The evidence came home; the RUN still failed, and saying so quietly
+        # is how a partial becomes a citation.
+        raise _die(
+            stages, "wait", code=REMOTE_JOB_FAILED_CODE, state="failed",
+            reason=(f"job {job_id} finished {status!r} — "
+                    + (f"its evidence was fetched and imported into "
+                       f"{run_directory}" if imported is not None
+                       else "it packaged no evidence")
+                    + (f"; the runner reported: {record.get('error')}"
+                       if record.get("error") else "")),
+            repair=(f"read the run's own failure record before citing "
+                    f"anything from it: {follow_ups[0]} for the log tail"
+                    + (f", and {run_directory} for what the stage did write"
+                       if run_directory else "")
+                    + ". A partial is evidence about a FAILURE, never a "
+                      "result."),
+            common=common,
+            facts={k: v for k, v in payload.items() if k not in common},
+            stage_facts={"jobId": job_id, "status": status})
+
+    line = (f"ran {name!r} {study_verb} on {client.base_url} as job {job_id}: "
+            + (f"{status}, evidence imported into {run_directory}"
+               if imported is not None
+               else f"{status}, no evidence requested"))
+    print(line)
+    return CLIResult(
+        message=line, changed=True, payload=payload,
+        next_action=envelope.next_action(
+            f"experiment list  (--root {workspace})"
+            if imported is None else
+            f"bundle inspect {run_directory}",
+            detail=("the evidence is in the workspace and the run carries its "
+                    f"{PROVENANCE_FILENAME} provenance stamp; the frozen study "
+                    "was not modified"
+                    if imported is not None else
+                    "nothing was imported — this invocation asked for no "
+                    "evidence")))
+
+
+def _iso(value) -> str | None:
+    """An epoch seconds value as the envelope's ISO-8601, or ``None``.
+
+    Reuses ``cli_envelope``'s formatter so a timestamp in a provenance record
+    and a timestamp in the document that announced it are the same string
+    shape.
+    """
+    if value is None:
+        return None
+    try:
+        return envelope._iso8601(float(value))
+    except (TypeError, ValueError):     # pragma: no cover - defensive
+        return None
+
+
 HANDLERS = {"experiment": _experiment, "concept": _concept, "bundle": _bundle,
-            "runner": _runner}
+            "runner": _runner, "run": _run}
 
 
 # --- envelope construction -----------------------------------------------------
 
 
+#: States a verb RETURNS that are not refusals. ``pending`` is the composite's
+#: (and the engine's ``study submit``'s) answer for asynchronous work in
+#: flight: ``run --no-wait`` detached, or ctrl-c stopped the WATCHING. It is a
+#: success document — no ``error`` — with exit 12, exactly as the engine
+#: already answers for the same situation.
+SUCCESS_STATES: tuple[str, ...] = ("ready", "okWithAdvisories", "planned",
+                                   "running", "pending")
+
+
 def _envelope_for_result(label: str, outcome: CLIResult):
-    if outcome.state in ("ready", "okWithAdvisories"):
+    if outcome.state in SUCCESS_STATES:
         return envelope.success(
             label, outcome.message, changed=outcome.changed,
             advisories=outcome.advisories, result=outcome.payload or None,
-            next_action_=outcome.next_action)
+            next_action_=outcome.next_action,
+            # `None` for the ordinary case, so `envelope.success` keeps
+            # choosing between `ready` and `okWithAdvisories` itself — a verb
+            # that hard-set `ready` while carrying advisories would report a
+            # clean run it did not have.
+            state=(outcome.state if outcome.state != "ready" else None))
     return envelope.refusal(
         label, code=outcome.code or "refused", gate=outcome.gate,
         reason=outcome.message, repair_action=outcome.repair_action,
@@ -2238,6 +3276,29 @@ def _envelope_for_result(label: str, outcome: CLIResult):
 
 
 def _envelope_for_exception(label: str, exc: BaseException):
+    """The typed document for a throw, plus the stage table when there is one.
+
+    The translation itself is :func:`_typed_envelope_for_exception` and is
+    unchanged by the composite: a ``BundleError`` is still ``bundleRefused``, a
+    missing study is still 66. What ``run`` adds — and only ``run`` — is WHERE
+    in its machine the throw happened, carried on the exception as
+    ``run_stages`` / ``run_failed_stage`` rather than through a second
+    translation table. A single verb has one place to fail and owes nobody a
+    map; a composite has nine.
+    """
+    document = _typed_envelope_for_exception(label, exc)
+    stages = getattr(exc, "run_stages", None)
+    if stages is not None:
+        result = dict(document.result or {})
+        result.setdefault("stages", stages)
+        failed = getattr(exc, "run_failed_stage", None)
+        if failed is not None:
+            result.setdefault("failedStage", failed)
+        document.result = result
+    return document
+
+
+def _typed_envelope_for_exception(label: str, exc: BaseException):
     """Translate whatever the modules raised into the shared vocabulary.
 
     The order is the server dispatch's (``cli._exception_envelope``) and for
@@ -2258,10 +3319,15 @@ def _envelope_for_exception(label: str, exc: BaseException):
     reason = str(exc)
 
     if isinstance(exc, ClientRefusal):
+        payload = dict(exc.payload)
+        # A refusal that carried its own follow-up command puts it in the
+        # envelope's `nextAction`, where every other verb's lives — not in a
+        # `result` key an agent would have to learn separately.
+        carried = payload.pop("nextAction", None)
         return envelope.refusal(
-            label, code=exc.code, reason=exc.reason,
+            label, code=exc.code, gate=exc.gate, reason=exc.reason,
             repair_action=exc.repair_action, state=exc.state,
-            result=exc.payload or None)
+            result=payload or None, next_action_=carried)
 
     if isinstance(exc, UsageError):
         return envelope.refusal(

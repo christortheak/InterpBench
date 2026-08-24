@@ -81,10 +81,10 @@ There is a **third** command line, new and not yet covered by the generated
 regions of this document: `steerlab`, a cross-platform Python client that
 **authors a local workspace** and **hands hash-pinned bundles to a runner** —
 `Server/steerlab_server/client_cli.py`, installed by the same package as
-`steerlab-server`. It is the Phase-1b + Phase-2 deliverable of the portability
-program; `docs/PORTABILITY-CONTRACTS.md` §7 and §8 are its reference, and this
-note exists so a reader of *this* document is not left believing there are only
-two.
+`steerlab-server`. It is the Phase-1b + Phase-2 + Phase-3 + Phase-5 deliverable
+of the portability program; `docs/PORTABILITY-CONTRACTS.md` §7–§10 are its
+reference, and this note exists so a reader of *this* document is not left
+believing there are only two.
 
 What it is, in one table:
 
@@ -94,6 +94,7 @@ What it is, in one table:
 | loads a model / executes verbs | no | yes |
 | talks to a runner | **yes** (`runner …`, Phase 2) | it *is* the runner |
 | starts a local runner | **yes** (`runner serve`, Phase 3 — it launches the engine) | — |
+| runs a study end to end | **yes** (`run <experiment>`, Phase 5 — one command, evidence comes home) | it executes what it is handed |
 | needs torch | no — the whole authoring lifecycle is torch-free | yes |
 
 ```bash
@@ -116,11 +117,13 @@ same exit codes, same `error.code` / `error.repairAction`. Verb families:
 set-protocol, pin-revision, set-style-taxonomy, pin-sae-candidates, duplicate,
 verify, freeze, list), `concept import`, `bundle` (package, inspect, import),
 `runner` (below — including `runner serve`, which starts a managed local
-runner), plus `--version`. `steerlab <family> --help` prints the
-roster; the workspace comes from `--root` or `$STEERLAB_WORKSPACE` and there is
-**no default** — except for the `runner` family, which addresses a remote
-engine and names its local paths explicitly, so it runs without one (a named
-workspace is still honoured and still reported in the envelope).
+runner), `run` (the composite, below), plus `--version`. `steerlab <family>
+--help` prints the roster; the workspace comes from `--root` or
+`$STEERLAB_WORKSPACE` and there is **no default** — except for the `runner`
+family, which addresses a remote engine and names its local paths explicitly,
+so it runs without one (a named workspace is still honoured and still reported
+in the envelope). `run` is not an exception: it reads a study out of a
+workspace and imports evidence back into it, so it requires one.
 
 #### The `runner` family (Phase 2)
 
@@ -247,9 +250,95 @@ Five traps worth knowing before you rely on it:
   <file>` to write the JSON document; on these two the declaration wins, so
   `--out` names the archive. Get the document from stdout under `--json`.
 
-There is deliberately no composite "submit and wait" verb: upload → submit →
-poll → download → import are six explicit, separately refusable acts, and
-orchestrating them is a later phase (`PORTABILITY-CONTRACTS.md` §8.7).
+#### `run` — the composite (Phase 5)
+
+The six acts above, as one command. `--wait` is the **default**, because
+waiting is the point:
+
+```bash
+steerlab run <experiment> --runner <url>                 # the whole round trip
+steerlab run <experiment> --runner <url> --verb sweep --executor slurm
+steerlab run <experiment> --runner <url> --no-wait       # submit and detach
+```
+
+A frozen study in your workspace becomes verified evidence in your workspace.
+It **composes** the verbs above and reimplements none of them, so every refusal
+you can meet is one of theirs, and `run --help` is the only place the flag list
+is authoritative.
+
+| # | stage | what it does | typical refusal |
+|---|---|---|---|
+| 1 | `load` | loads the study, checks it is **frozen**, re-verifies every pin | `experimentNotFrozen` (65) · `pinDrift` (65, with `error.gate`) |
+| 2 | `package` | packages the run bundle locally, records its sha256 | `bundleRefused` (65) |
+| 3 | `capabilities` | asks the runner whether it can execute **this verb on this executor** — *before* anything is uploaded | `runnerCannotExecute` (65), with `result.runnerOffers` |
+| 4 | `upload` | streams the archive; the digest must agree across the socket | `uploadDigestMismatch` (65) |
+| 5 | `submit` | submits with `--verb` / `--executor` and the submit endpoint's pass-throughs | `submitOutcomeUnknown` (70) |
+| 6 | `wait` | polls `GET /api/jobs/{id}` to a terminal status | `waitDeadlineExceeded` (70) · `remoteJobFailed` (70) |
+| 7 | `evidence` | downloads the job's bundle and verifies its outer digest | `evidenceNotPackaged` (65) · `evidenceDigestMismatch` (65) |
+| 8 | `import` | verify-and-extract into your workspace with the out-of-band pin | `bundleRefused` (65) |
+| 9 | `provenance` | stamps `runs/<runID>/remote-execution.json` | — |
+
+`result.stages` carries **all nine rows, always**, each with a `state` (`ok`,
+`skipped`, `refused`, `failed`, `notReached`) and the facts that stage
+produced. A failure names `result.failedStage`. In human mode each transition
+prints one `run[<stage>]: …` line on **stderr**.
+
+| flag | meaning |
+|---|---|
+| `--runner <url>` | required. Where to execute |
+| `--token-file <path>`, `--ca-bundle <path>` | as everywhere else; still **no `--token`** |
+| `--verb <run\|sweep\|validate\|…>` | default `run`. The submit route's vocabulary |
+| `--executor <local\|slurm>` | default: whatever the runner is configured for |
+| `--dry-run` | prepare, schedule nothing. Accepted against any runner |
+| `--target-root`, `--dtype`, `--device`, `--parallel` | pass-throughs, exactly as `runner submit` exposes them |
+| `--no-evidence` | do not package or fetch evidence (stages 7–9 `skipped`) |
+| `--no-wait` | detach right after submit |
+| `--timeout <seconds>` | **the WAIT deadline**, default 24 h — see the trap below |
+| `--request-timeout <seconds>` | the per-HTTP-request budget (what `--timeout` means on the `runner` verbs) |
+| `--evidence-out <file.tar.gz>` | keep the downloaded archive at this path. Without it the archive is a courier: temp directory, imported, removed |
+| `--max-bytes <n>` | the download size cap |
+
+**Detaching, and re-attaching by hand.** `--no-wait` — and ctrl-c during the
+wait, and `--timeout` expiry — all **detach**. None of them cancels the remote
+job, ever; this client does not kill work it did not do. `--no-wait` and ctrl-c
+answer `pending` (exit **12**, a success document with no `error` — the same
+state the engine's `study submit` answers for asynchronous work in flight);
+`--timeout` expiry answers `waitDeadlineExceeded` (70) and says the job is
+still running. All three put the three commands that finish the job by hand in
+`result.followUps`, runnable as printed:
+
+```bash
+steerlab runner jobs <id> --runner <url>
+steerlab runner evidence <id> --out <file.tar.gz> --runner <url>
+steerlab bundle import <file.tar.gz> --sha256 <digest>
+```
+
+**Evidence comes home from a failure too.** A job that fails after producing
+partial output still gets its bundle fetched, verified, imported and stamped —
+and the envelope is `remoteJobFailed` (70) carrying the runner's own error
+sentence, because a partial is evidence about a *failure*, never a result.
+
+**Provenance is additive.** `runs/<runID>/remote-execution.json` records the
+runner's URL and `engineVersion`, the bundle sha256, the job id, the submitted
+verb and executor, the timestamps and the outcome. Nothing under `experiments/`
+is written — not the manifest, not `pinned/`, not any hash. The bearer token
+appears nowhere in it; only `runner.tokenPresent`. Schema and rationale:
+`PORTABILITY-CONTRACTS.md` §10.7.
+
+Three traps specific to this verb:
+
+- **`--timeout` means the WAIT deadline here, and the per-request budget on the
+  `runner` verbs.** The divergence is deliberate — a caller of a composite is
+  thinking about how long the whole thing may take — and the other meaning
+  keeps its own spelling, `--request-timeout`, so neither has to be guessed.
+- **`submit` is never retried, and only `submit`.** Upload and evidence
+  download each get one automatic retry on a transport error (both are
+  idempotent). A transport failure at submit leaves `submitOutcomeUnknown` and
+  a repair that says to run `runner jobs` — the job may exist.
+- **`--verb verify` legitimately brings nothing home.** `verify` writes no run
+  directory, so it packages no evidence, and the machine ends at a typed
+  `evidenceNotPackaged` (65) rather than pretending. Same for `--dry-run`,
+  which reports stages 7–9 as `skipped`.
 
 **Do not carry a `~/.local/bin/steerlab` symlink to the Swift CLI once you
 install this.** `AGENTS.md` step 1 calls that alias temporary and reserved for
