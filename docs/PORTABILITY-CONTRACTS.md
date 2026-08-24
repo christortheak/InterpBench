@@ -1,6 +1,7 @@
 # Portability Contracts
 
-**Phase-0 deliverable of the portability program**, extended by **Phase 1a**.
+**Phase-0 deliverable of the portability program**, extended by **Phase 1a**
+and **Phase 1b** (§7).
 Phase 0 changed no production behaviour: its entire output was this page plus
 the golden tests it indexes — a record of what the two engines promise each
 other, so a later phase that breaks one of those promises fails a test instead
@@ -94,7 +95,9 @@ one engine with a hash produced by the other.** The bytes-level contract that
 Contracts that *should* exist and could not be pinned in Phase 0. Each is
 recorded here because a gap nobody wrote down is a gap the next phase
 rediscovers by breaking something. **G1, G3, G4 and G6 were closed in Phase
-1a** and are kept below with what was decided and why; G2 and G5 remain open.
+1a** and are kept below with what was decided and why; G2 and G5 remain open,
+and **G7 was found in Phase 1b** while building the client that G1/G4/G6 made
+possible.
 
 **G1 — A server-authored frozen study read as drifted on the Mac.
 CLOSED (Phase 1a).**
@@ -179,6 +182,34 @@ The **answer** is unchanged: the document is still refused. Defaulting the two
 globals on decode was the other option and was rejected — for `alphaInNormUnits`
 it would mean inventing a dose unit, which is exactly what G6 forbids.
 
+**G7 — The client's light import graph ends at `experiment verify`.
+OPEN (found in Phase 1b).**
+Importing `steerlab_server.client_cli` and running `steerlab --help` pulls
+*nothing* third-party at all, and `create` / `attach` / `declare-condition` /
+`set-protocol` / `duplicate` / `list` / `concept import` pull only what the
+client declares (numpy, safetensors). `experiment verify` and `experiment
+freeze` — and `bundle package`, which calls `verify` — pull **torch**, through
+`Manifest.verify` → `experiment.sae_latent` → `steering.sae_latent` →
+`steering.injector` → `import torch`.
+
+*Why it was not repaired in 1b.* `experiment/sae_latent.py`'s own docstring
+says "everything here validates OFFLINE: no SAE weights, no HuggingFace, no
+network" — and that is true of what it *does*; it is false of what it
+*imports*. Four names cross the line (`CLAMP`, `MODES`, `SAELatentEdit`,
+`SAELatentFeature`), and the module they come from sits on the injector stack,
+so no single lazy import reaches it. The repair is to split the SAE latent
+**validation** surface from the **execution** surface — an engine refactor with
+cross-engine twin-literal consequences (the mode vocabulary is one of the
+closed key sets), not a client change. Doing it inside a client phase, to
+satisfy a client guard, is exactly the kind of change that breaks an engine
+nobody was looking at.
+
+*Consequence, stated plainly so nobody discovers it at install time:* a bare
+`pip install steerlab-server` gives a client that authors, declares and
+packages-by-name, but cannot `verify` or `freeze` without `[runner]`. Pinned
+as-is (both halves) by `test_client_cli.py::test_the_authoring_verbs_stay_light_and_verify_is_where_that_ends`,
+which fails if either half moves — including if somebody closes it.
+
 **G5 — No cross-engine `push_manifest` canonical-body agreement.**
 `experiment_store.push_manifest` returns a `canonicalBodyHash` over the whole
 merged document; `ExperimentStore.canonicalManifestBodyHash` hashes the
@@ -262,3 +293,114 @@ holds the register: a new fixture with no staleness check fails it.
 
 A fixture diff in review means one engine changed its contract. That is the
 point — decide deliberately whether the other should follow.
+
+---
+
+## 7. Phase 1b — the `steerlab` client
+
+Phase 0 wrote the contracts; Phase 1a closed the four gaps that stopped a
+client-authored study from verifying on the Mac; **Phase 1b is the client
+itself** — `Server/steerlab_server/client_cli.py`, console script `steerlab`,
+declared beside the untouched `steerlab-server`.
+
+### What it is
+
+The **client** authors the LOCAL workspace it is pointed at. The **engine**
+(`steerlab-server`) executes. They are complements: every verb the engine
+redirects to the Mac as `macAuthorityVerb` is one the client can now perform
+against a local workspace on any platform — and the engine's redirects are
+unchanged, because on a cluster node the workspace really is a cache.
+
+The workspace comes from `--root <dir>` or `$STEERLAB_WORKSPACE`, and there is
+**no default**. The engine's `paths.project_root()` falls back to the current
+directory, which is right for a node started inside its cache and wrong here:
+the commonest client mistake is authoring into the source checkout, and a cwd
+fallback makes that mistake silent and successful.
+
+**Authoring verbs take no server URL, structurally.** There is no flag on any
+of them that could hold one — pinned by iterating the declared verb table
+(`test_client_cli.py::test_no_authoring_verb_accepts_a_server_locator`), so a
+verb added without a test is still covered. Submitting to a remote runner is
+**Phase 2** and is deliberately absent.
+
+### Verb surface (v0)
+
+| family | verbs |
+|---|---|
+| `experiment` | `create`, `attach`, `declare-condition`, `remove-condition`, `set-protocol`, `pin-revision`, `set-style-taxonomy`, `pin-sae-candidates`, `duplicate`, `verify`, `freeze`, `list` |
+| `concept` | `import` |
+| `bundle` | `package`, `inspect`, `import` |
+
+Plus `steerlab --version` (package version + the `client` role — one
+distribution ships two console scripts, and a caller that got the wrong one has
+no other way to tell). Each verb is a thin wrapper over the module that already
+holds the guarantee: the `experiment` verbs over `experiment_store` and
+`manifest`, `concept import` over `authoring`, the `bundle` verbs over
+`bundles`. Every call signature is transcribed from the HTTP route that already
+fronts it in `api/routes.py`; every payload key twins the Mac verb's.
+
+Two Phase-1a requirements surface here by construction rather than by
+re-implementation:
+
+- `declare-condition --alpha-units norm|raw` is **required**, baselines
+  included (G6). When it is absent the client passes the key through as
+  *absent* rather than defaulting, so the refusal is
+  `experiment_store._condition_entry`'s own and its `repairAction` is the twin
+  literal of `ExperimentManifest.alphaUnitsRepairAction`. A client that
+  invented its own sentence would be a third independent spelling of a rule
+  whose whole value is that there are exactly two, kept equal by test.
+- `bundle import --sha256` carries the out-of-band outer pin (G3), verified
+  before the archive is opened.
+
+Two setters `experiment_store` exposes are deliberately **not** client verbs:
+`replace_draft_manifest` (the server's draft-sync remedy — it installs a
+document *into a server's* copy, which is the opposite of what this client
+does) and `attach_artifact` (reachable as `attach --artifact`, which is the
+spelling the store itself dispatches). The Mac's `pin-prompts`, `pin-rubric`,
+`set-instruments` and `set-sweep-selection` are protocol *fields* here,
+reachable through `set-protocol --set <key>=<json>`, because that is the shape
+`set_protocol` actually has.
+
+### The envelope
+
+The client emits the **same document** the engine does: `cli_envelope` is the
+one implementation on this engine, so §4's contracts — the closed header, the
+state vocabulary and its exit codes, the advisory vocabulary, the four dispatch
+fields — hold on both surfaces without a second literal to keep in sync. Two
+client goldens sit beside the engine's in
+`Server/tests/fixtures/cli-envelopes/`: `client-experiment-create.json` (ready)
+and `client-declare-condition-no-alpha-units.json` (refused — chosen because
+its repair is the G6 twin literal, so the committed bytes are a standing
+comparison against the Mac's wording). Both are checked by
+`test_every_committed_golden_carries_the_fields_a_client_dispatches_on`.
+
+One deliberate difference: the client's exit code is derived from `state` in
+**both** output modes. The engine holds its human-mode codes byte-stable
+(a refusing `experiment verify` is 1 in human mode, 65 under `--json`) because
+`set -e` wrappers depend on them; the client was born speaking the vocabulary
+and has nothing to hold still.
+
+### The light-install guarantee
+
+`pip install` of the package **without extras** yields the client: numpy and
+safetensors, no torch, no transformers, no FastAPI. The engine's stack moved
+behind a new `runner` extra; `all` still contains it verbatim, so
+`bootstrap.sh`, `ONBOARDING`, `README`, the committed platform locks
+(`update-locks.sh` compiles `--extra all`) and the app's Local Engine flow
+(which installs `-r <lock>` then `--no-deps -e Server`) resolve the same
+package set they always did.
+
+Guarded out of process, because an in-process assertion about `sys.modules`
+passes or fails on test ORDER once another module has imported torch:
+`test_importing_the_client_pulls_no_heavy_dependency` asserts that importing
+`client_cli` and running `--help` imports nothing third-party at all.
+`test_the_authoring_verbs_stay_light_and_verify_is_where_that_ends` extends
+that to the verbs that really write — and pins **G7**, the one place the
+guarantee currently stops.
+
+### Phase 2
+
+The runner HTTP adapter: submitting a hash-pinned bundle to an engine and
+importing the evidence back. Nothing in this module anticipates it — the
+authoring verbs have no locator flag to grow into one, and adding a `submit`
+family is additive to a table, not a change to these verbs.

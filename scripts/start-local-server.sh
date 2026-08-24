@@ -9,9 +9,13 @@
 #   2. Refuses plainly if something already listens on the port (exit 3).
 #   3. Creates Server/.venv.nosync via `python3 -m venv` if absent, then
 #      installs the FULL workbench when anything is missing:
-#      `pip install -e "Server[lora,gemmascope]"` — the server plus
-#      peft+pypdf (LoRA adapters, PDF stimulus ingestion) and sae-lens
-#      (Gemma Scope SAE analysis). First install pulls torch/transformers —
+#      `pip install -e "Server[runner,lora,gemmascope]"` — the ENGINE stack
+#      (torch/transformers/fastapi — the `runner` extra) plus peft+pypdf
+#      (LoRA adapters, PDF stimulus ingestion) and sae-lens
+#      (Gemma Scope SAE analysis). `runner` is named EXPLICITLY since the
+#      client/runner split (Phase 1b): the package's bare dependencies are
+#      now the cross-platform client's, and a bare `-e Server` would install
+#      a workbench with no torch in it. First install pulls torch/transformers —
 #      this can take MANY minutes; progress streams below so a silent wait
 #      never looks like a hang.
 #   4. Writes the pidfile `<root>/.steerlab-local-server.pid` ("<pid> <port>",
@@ -113,10 +117,13 @@ fi
 # Full-workbench check (cheap — find_spec imports nothing): the server itself
 # plus its optional pieces. Covers a fresh venv, an interrupted install, and
 # an older venv created before the extras were part of the one-click path.
-if ! "$PY" -c 'import importlib.util, sys; sys.exit(0 if all(importlib.util.find_spec(m) for m in ("steerlab_server", "peft", "pypdf", "sae_lens")) else 1)' >/dev/null 2>&1; then
-  echo "Installing the full Python workbench: the server plus peft+pypdf (LoRA adapters, PDF stimulus ingestion) and sae-lens (Gemma Scope SAE analysis)."
+# `torch` joined the probe with the client/runner split (Phase 1b): a venv
+# provisioned before the split has every other spec and would answer "ready"
+# while the engine's own stack is only there by history, not by declaration.
+if ! "$PY" -c 'import importlib.util, sys; sys.exit(0 if all(importlib.util.find_spec(m) for m in ("steerlab_server", "torch", "peft", "pypdf", "sae_lens")) else 1)' >/dev/null 2>&1; then
+  echo "Installing the full Python workbench: the engine stack plus peft+pypdf (LoRA adapters, PDF stimulus ingestion) and sae-lens (Gemma Scope SAE analysis)."
   echo "First installs pull torch/transformers and friends — this can take MANY minutes. Progress streams below."
-  "$PY" -m pip install -e "$PROJECT_ROOT/Server[lora,gemmascope]"
+  "$PY" -m pip install -e "$PROJECT_ROOT/Server[runner,lora,gemmascope]"
   echo "Python environment ready."
 fi
 

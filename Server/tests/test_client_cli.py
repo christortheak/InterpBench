@@ -1,0 +1,826 @@
+"""The cross-platform ``steerlab`` CLIENT (Phase 1b of the portability
+program).
+
+Four things are pinned here, and they fail differently, which is why they are
+separate sections:
+
+1. **The round trip.** create → import a concept → attach → declare an arm
+   (with ``--alpha-units``) → verify → freeze, driven entirely through
+   ``client_cli.main`` against a temp workspace, ending with the frozen
+   manifest passing the same canonicalization checks the Phase-0/1a fixtures
+   pin (``docs/PORTABILITY-CONTRACTS.md`` §1). If this breaks, a client
+   authors studies the Mac cannot open.
+2. **The envelope.** Goldens (write-if-missing, the ``test_cli_envelope.py``
+   rule) plus the exit-code table, one representative per state. If this
+   breaks, an agent mis-reads a refusal.
+3. **The import graph.** Out of process, because an in-process assertion about
+   ``sys.modules`` proves nothing once another test module has already
+   imported torch. If this breaks, the client stops being installable without
+   the science stack.
+4. **The structural rule.** No authoring verb declares a flag that could hold
+   a server locator. If this breaks, "the client authors locally" has become a
+   convention instead of a fact.
+"""
+
+import json
+import os
+import subprocess
+import sys
+
+import pytest
+
+from steerlab_server import cli_envelope, client_cli
+from steerlab_server.experiment import experiment_store
+from steerlab_server.experiment.manifest import Manifest
+
+FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "cli-envelopes")
+
+#: The same pinned instant the server goldens and the Swift goldens use
+#: (``Date(timeIntervalSince1970: 1_000)``), so a reader comparing a client
+#: document with an engine document sees the same ``observedAt``.
+PINNED_NOW = 1_000.0
+
+SERVER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+@pytest.fixture(autouse=True)
+def _pinned_clock(monkeypatch):
+    monkeypatch.setattr(cli_envelope, "now", lambda: PINNED_NOW)
+
+
+@pytest.fixture
+def workspace(tmp_path, monkeypatch):
+    """A bare workspace, named through the environment so most tests exercise
+    the ``STEERLAB_WORKSPACE`` half of the resolution.
+
+    ``STEERLAB_ROOT`` is cleared first: the client sets it as a CONSEQUENCE of
+    resolving a workspace, and a value inherited from the developer's shell
+    would make the tests pass for the wrong reason.
+    """
+    root = tmp_path / "ws"
+    root.mkdir()
+    monkeypatch.delenv("STEERLAB_ROOT", raising=False)
+    monkeypatch.setenv(client_cli.WORKSPACE_ENV, str(root))
+    return root
+
+
+def _concept_files(root, name="french"):
+    directory = os.path.join(str(root), "prompts", "concepts", name)
+    os.makedirs(directory, exist_ok=True)
+    for filename, text in (("positive.jsonl", '{"text": "bonjour"}\n'),
+                           ("negative.jsonl", '{"text": "hello"}\n')):
+        with open(os.path.join(directory, filename), "w",
+                  encoding="utf-8") as handle:
+            handle.write(text)
+
+
+def _run(argv, capsys=None):
+    """Drive the client and return ``(exit_code, stdout, stderr)``."""
+    code = client_cli.main(list(argv))
+    if capsys is None:
+        return code
+    captured = capsys.readouterr()
+    return code, captured.out, captured.err
+
+
+def _document(capsys) -> dict:
+    """The one JSON document on stdout — and the assertion that it IS one."""
+    text = capsys.readouterr().out
+    assert text.endswith("}\n"), text
+    assert text.count("\n}") == 1, "more than one document on stdout"
+    return json.loads(text)
+
+
+# =============================================================================
+# 1. The authoring round trip
+# =============================================================================
+
+
+def test_a_client_authored_study_freezes_and_canonicalizes_like_the_engines(
+        workspace, capsys):
+    """CONTRACT: the client's whole reason to exist.
+
+    A study authored from nothing but client verbs must end as a frozen
+    manifest whose canonical bytes satisfy the cross-engine rules
+    ``docs/PORTABILITY-CONTRACTS.md`` §1 pins: the freeze hash IS the sha256
+    of ``freeze-canonical.json``, it IS the frozen document's content hash
+    reached by the other code path, and the nine volatile stamps are OUTSIDE
+    it. Those are exactly the properties Phase 1a's
+    ``PortabilityContractTests.aServerAuthoredFrozenManifestVerifiesHere``
+    checks on the Mac — so a study that has them here is one the Mac opens.
+    """
+    root = str(workspace)
+    pairs = workspace / "french-pairs.jsonl"
+    pairs.write_text('{"positive": "bonjour", "negative": "hello"}\n',
+                     encoding="utf-8")
+
+    assert _run(["concept", "import", "french", "--file", str(pairs)]) == 0
+    assert _run(["experiment", "create", "demo", "--model", "org/m",
+                 "--revision", "0123456789abcdef0123456789abcdef01234567"]) == 0
+    assert _run(["experiment", "attach", "demo", "french"]) == 0
+    assert _run(["experiment", "declare-condition", "demo", "baseline",
+                 "--baseline", "--alpha-units", "norm"]) == 0
+    assert _run(["experiment", "declare-condition", "demo", "arm-a",
+                 "--slots", "french:17:0.4", "--alpha-units", "norm"]) == 0
+    assert _run(["experiment", "verify", "demo"]) == 0
+    capsys.readouterr()
+
+    # `--force` skips the EVIDENCE gates (there is no validate run in a
+    # client-only workspace, and producing one needs a model). The
+    # canonicalization under test is unaffected by which gates ran — the same
+    # allowance `test_portability_contracts.py::_interop_study` makes.
+    assert _run(["experiment", "freeze", "demo", "--force"]) == 0
+
+    frozen = experiment_store.load_raw("demo", root)
+    assert frozen["status"] == "frozen"
+    assert frozen["frozenBy"] == "server"
+    assert [c["name"] for c in frozen["conditions"]] == ["baseline", "arm-a"]
+    # Phase 1a G6: BOTH arms stamp the unit key, the baseline included.
+    assert all("alphaInNormUnits" in c for c in frozen["conditions"])
+    assert all(c["alphaInNormUnits"] is True for c in frozen["conditions"])
+
+    canonical = os.path.join(root, "experiments", "demo",
+                             "freeze-canonical.json")
+    with open(canonical, "rb") as handle:
+        payload = handle.read()
+    import hashlib
+    assert hashlib.sha256(payload).hexdigest() == frozen["freezeHash"]
+    assert Manifest.load("demo", root).content_hash() == frozen["freezeHash"]
+
+    # The nine volatile stamps are outside the hash — the identity of a study
+    # is what it MEASURES.
+    body = json.loads(payload)
+    for key in ("status", "frozenAt", "freezeHash", "gitCommit", "frozenBy",
+                "createdAt", "appVersion", "freezeForced",
+                "forcedGatesSkipped"):
+        assert key not in body, f"volatile stamp {key!r} is inside the hash"
+    # …and the measured surface is inside it.
+    assert body["conditions"] and body["concepts"]
+    assert body["modelRevision"] == "0123456789abcdef0123456789abcdef01234567"
+
+
+def test_the_frozen_study_packages_and_reimports_with_its_outer_pin(
+        workspace, capsys):
+    """The other two things the client must do (``PORTABILITY-CONTRACTS`` §2,
+    §3), end to end from the same authored study: package the pin surface, and
+    import it back with the out-of-band digest Phase 1a added (G3)."""
+    _concept_files(workspace)
+    root = str(workspace)
+    for argv in (["experiment", "create", "demo", "--model", "org/m"],
+                 ["experiment", "attach", "demo", "french"],
+                 ["experiment", "declare-condition", "demo", "arm-a",
+                  "--slots", "french:17:0.4", "--alpha-units", "raw"],
+                 ["experiment", "freeze", "demo", "--force"]):
+        assert _run(argv) == 0
+    capsys.readouterr()
+
+    assert _run(["bundle", "package", "demo", "--json"]) == 0
+    packaged = _document(capsys)["result"]
+    assert packaged["kind"] == "runBundle"
+    bundle_path, digest = packaged["bundlePath"], packaged["bundleSha256"]
+
+    target = os.path.join(root, "reimported")
+    os.makedirs(target)
+    # A WRONG pin refuses before anything is extracted, and names both hashes.
+    assert _run(["bundle", "import", bundle_path, "--target-root", target,
+                 "--sha256", "d" * 64, "--json"]) == 65
+    refusal = _document(capsys)
+    assert refusal["error"]["code"] == client_cli.BUNDLE_REFUSED_CODE
+    assert digest in refusal["error"]["reason"]
+    assert os.listdir(target) == []
+
+    # The right pin imports exactly as before.
+    assert _run(["bundle", "import", bundle_path, "--target-root", target,
+                 "--sha256", digest, "--json"]) == 0
+    assert _document(capsys)["result"]["extracted"]
+
+
+def test_declaring_an_arm_without_its_alpha_units_is_refused_with_the_twin_repair(
+        workspace, capsys):
+    """CONTRACT: condition-alpha-units-explicit (Phase 1a, G6) reaches the
+    CLIENT surface unparaphrased.
+
+    The client passes an ABSENT key through rather than defaulting, so the
+    refusal is ``experiment_store``'s own and its ``repairAction`` is the
+    twin literal of the Mac's ``ExperimentManifest.alphaUnitsRepairAction``.
+    A client that invented its own sentence here would be the third
+    independent spelling of a rule whose entire value is that there are
+    exactly two, kept equal by test."""
+    _concept_files(workspace)
+    assert _run(["experiment", "create", "demo", "--model", "org/m"]) == 0
+    assert _run(["experiment", "attach", "demo", "french"]) == 0
+    capsys.readouterr()
+
+    assert _run(["experiment", "declare-condition", "demo", "arm-a",
+                 "--slots", "french:17:0.4", "--json"]) == 65
+    document = _document(capsys)
+    assert document["error"]["code"] == client_cli.AUTHORING_REFUSED_CODE
+    assert document["error"]["repairAction"] == \
+        experiment_store.ALPHA_UNITS_REPAIR
+    # Nothing was declared: a refusal that half-wrote the arm is worse than no
+    # refusal.
+    assert experiment_store.load_raw("demo", str(workspace))["conditions"] == []
+
+    # A NAMED but unknown unit is a malformed invocation (64), not a rule
+    # declining — and it names the two spellings that are legal.
+    assert _run(["experiment", "declare-condition", "demo", "arm-a",
+                 "--slots", "french:17:0.4", "--alpha-units", "sometimes",
+                 "--json"]) == 64
+    document = _document(capsys)
+    assert document["state"] == "blocked"
+    assert "norm" in document["error"]["repairAction"]
+
+
+def test_verify_names_the_drifted_pin_after_the_stimuli_change(workspace,
+                                                              capsys):
+    """The refusal an agent hits most, on the client's surface: 65 with
+    ``error.gate == "pinDrift"`` and the drifted pins in
+    ``result.violations``."""
+    _concept_files(workspace)
+    assert _run(["experiment", "create", "demo", "--model", "org/m"]) == 0
+    assert _run(["experiment", "attach", "demo", "french"]) == 0
+    with open(os.path.join(str(workspace), "prompts", "concepts", "french",
+                           "positive.jsonl"), "w", encoding="utf-8") as handle:
+        handle.write('{"text": "salut"}\n')
+    capsys.readouterr()
+
+    assert _run(["experiment", "verify", "demo", "--json"]) == 65
+    document = _document(capsys)
+    assert document["error"]["gate"] == "pinDrift"
+    assert document["result"]["violations"]
+
+
+def test_a_frozen_study_refuses_further_authoring(workspace, capsys):
+    """The freeze firewall holds on this surface too: iterating means
+    duplicating, never editing."""
+    _concept_files(workspace)
+    for argv in (["experiment", "create", "demo", "--model", "org/m"],
+                 ["experiment", "attach", "demo", "french"],
+                 ["experiment", "freeze", "demo", "--force"]):
+        assert _run(argv) == 0
+    capsys.readouterr()
+
+    assert _run(["experiment", "declare-condition", "demo", "arm-a", "--slots",
+                 "french:17:0.4", "--alpha-units", "norm", "--json"]) == 65
+    document = _document(capsys)
+    assert document["error"]["gate"] == "statusImmutable"
+    assert document["error"]["repairAction"]
+
+    # Duplicating IS the way forward, and the client offers it.
+    assert _run(["experiment", "duplicate", "demo", "demo-v2"]) == 0
+    assert experiment_store.load_raw("demo-v2", str(workspace))["status"] == \
+        "draft"
+
+
+def test_set_protocol_reports_the_fields_it_did_not_apply(workspace, capsys):
+    """``set_protocol`` filters against a closed allow-list and says nothing
+    about what it dropped. A silently ignored protocol field is a study
+    measuring something other than what the caller declared, so the client
+    reports the difference."""
+    assert _run(["experiment", "create", "demo", "--model", "org/m"]) == 0
+    capsys.readouterr()
+    assert _run(["experiment", "set-protocol", "demo",
+                 "--set", "temperature=0.7",
+                 "--set", "seeds=[0,1,2]",
+                 "--set", "taskDescription=answer the item",
+                 "--set", "notAField=1", "--json"]) == 0
+    result = _document(capsys)["result"]
+    assert result["applied"] == ["seeds", "taskDescription", "temperature"]
+    assert result["ignored"] == ["notAField"]
+    document = experiment_store.load_raw("demo", str(workspace))
+    assert document["temperature"] == 0.7
+    assert document["seeds"] == [0, 1, 2]
+    assert "notAField" not in document
+
+
+def test_concept_import_asks_which_pole_unpaired_texts_join(workspace, capsys):
+    """``authoring.parse_import``'s docstring says the UI decides which side
+    single texts join. The client is that decider's headless twin and ASKS:
+    a stimulus filed on the wrong pole inverts the direction the vector
+    points, and nothing downstream would say so."""
+    texts = workspace / "one-sided.txt"
+    texts.write_text("guten tag\nmoin\n", encoding="utf-8")
+
+    assert _run(["concept", "import", "german", "--file", str(texts),
+                 "--json"]) == 64
+    document = _document(capsys)
+    assert "--side" in document["error"]["repairAction"]
+
+    assert _run(["concept", "import", "german", "--file", str(texts),
+                 "--side", "positive", "--json"]) == 0
+    result = _document(capsys)["result"]
+    assert (result["positiveCount"], result["negativeCount"]) == (2, 0)
+
+    # Importing again APPENDS rather than replacing: "import" means adding
+    # material to a concept, and a second file must not silently delete the
+    # first one's stimuli.
+    more = workspace / "pairs.jsonl"
+    more.write_text('{"positive": "hallo", "negative": "hello"}\n',
+                    encoding="utf-8")
+    assert _run(["concept", "import", "german", "--file", str(more),
+                 "--json"]) == 0
+    result = _document(capsys)["result"]
+    assert (result["positiveCount"], result["negativeCount"]) == (3, 1)
+    assert len(result["contentHash"]) == 64
+
+
+# =============================================================================
+# 2. The workspace, the envelope, and the exit-code table
+# =============================================================================
+
+
+def test_no_workspace_is_a_typed_refusal_naming_both_ways_to_name_one(
+        tmp_path, monkeypatch, capsys):
+    """There is no default and there will not be one: the engine's cwd
+    fallback is right for a node started inside its cache and wrong for a
+    client, where the commonest mistake is authoring into the source
+    checkout."""
+    monkeypatch.delenv(client_cli.WORKSPACE_ENV, raising=False)
+    monkeypatch.delenv("STEERLAB_ROOT", raising=False)
+
+    assert _run(["experiment", "list", "--json"]) == 64
+    document = _document(capsys)
+    assert document["error"]["code"] == client_cli.WORKSPACE_UNSET_CODE
+    assert client_cli.ROOT_FLAG in document["error"]["reason"]
+    assert client_cli.WORKSPACE_ENV in document["error"]["reason"]
+    # And it does NOT claim a workspace answered — the field is omitted, not
+    # filled with whatever cwd happened to be.
+    assert "workspace" not in document
+
+    # A named but nonexistent root is a different fact: 66, not 64.
+    assert _run(["--root", str(tmp_path / "nope"), "experiment", "list",
+                 "--json"]) == 66
+    assert _document(capsys)["error"]["code"] == "notFound"
+
+
+def test_the_root_flag_wins_over_the_environment(tmp_path, monkeypatch,
+                                                 capsys):
+    """Both spellings resolve, and the explicit one is authoritative — a
+    wrapper that exports the variable must still be overridable per call."""
+    env_root = tmp_path / "from-env"
+    flag_root = tmp_path / "from-flag"
+    env_root.mkdir()
+    flag_root.mkdir()
+    monkeypatch.delenv("STEERLAB_ROOT", raising=False)
+    monkeypatch.setenv(client_cli.WORKSPACE_ENV, str(env_root))
+
+    assert _run(["experiment", "list", "--json"]) == 0
+    assert _document(capsys)["workspace"] == os.path.realpath(str(env_root))
+
+    assert _run(["experiment", "list", "--root", str(flag_root),
+                 "--json"]) == 0
+    assert _document(capsys)["workspace"] == os.path.realpath(str(flag_root))
+
+
+def test_an_undeclared_flag_is_64_before_the_verb_does_any_work(workspace,
+                                                               capsys):
+    """A malformed invocation was never a refusal, and a refusal after the
+    first concept is pinned is not much better than no refusal at all. The
+    class is the ENGINE's ``UsageError``, so the code and the repair sentence
+    are the same strings on both surfaces."""
+    assert _run(["experiment", "create", "demo", "--model", "org/m",
+                 "--modle", "typo", "--json"]) == 64
+    document = _document(capsys)
+    assert document["error"]["code"] == cli_envelope.UsageError.code
+    assert "--model" in document["error"]["repairAction"]
+    assert not os.path.exists(os.path.join(str(workspace), "experiments",
+                                           "demo"))
+
+
+def test_an_unknown_verb_answers_with_the_roster(workspace, capsys):
+    assert _run(["experiment", "extract", "demo", "--json"]) == 64
+    document = _document(capsys)
+    assert document["error"]["code"] == client_cli.UNKNOWN_VERB_CODE
+    assert "freeze" in document["error"]["repairAction"]
+
+
+def test_help_runs_nothing_and_travels_as_data_under_json(workspace, capsys):
+    """``--help`` is answered before any positional is validated: a caller
+    asking what the arguments are must not have to supply them first."""
+    assert _run(["experiment", "freeze", "--help"]) == 0
+    assert "steerlab experiment freeze" in capsys.readouterr().out
+
+    assert _run(["experiment", "freeze", "--help", "--json"]) == 0
+    document = _document(capsys)
+    assert document["state"] == "ready"
+    verbs = document["result"]["verbs"]
+    assert [v["label"] for v in verbs] == ["experiment freeze"]
+    assert "--force" in verbs[0]["flags"]
+
+
+def test_version_reports_the_package_version_and_the_client_role(capsys,
+                                                                 monkeypatch):
+    """One distribution, two console scripts: a caller that got the wrong one
+    has no other way to tell."""
+    monkeypatch.delenv(client_cli.WORKSPACE_ENV, raising=False)
+    from steerlab_server import __version__
+
+    assert _run(["--version"]) == 0
+    assert f"({client_cli.ROLE})" in capsys.readouterr().out
+
+    assert _run(["--version", "--json"]) == 0
+    result = _document(capsys)["result"]
+    assert result == {"engine": cli_envelope.ENGINE, "package":
+                      "steerlab-server", "program": client_cli.PROGRAM,
+                      "role": "client",
+                      "schemaVersion": cli_envelope.SCHEMA_VERSION,
+                      "version": __version__}
+
+
+def test_out_writes_the_document_in_both_modes(workspace, tmp_path, capsys):
+    """"Give me the document in a file" is a separate request from "put it on
+    stdout" — the same rule the engine's ``--out`` follows."""
+    target = tmp_path / "envelope.json"
+    assert _run(["experiment", "list", "--out", str(target)]) == 0
+    written = json.loads(target.read_text(encoding="utf-8"))
+    assert written["verb"] == "experiment list"
+    # Human mode still printed the human listing, not the document.
+    assert "no experiments" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("state,code", sorted(
+    {"ready": 0, "blocked": 64, "refused": 65, "notFound": 66,
+     "failed": 70}.items()))
+def test_the_exit_code_table_has_a_representative_for_every_state(
+        state, code, workspace, monkeypatch, capsys):
+    """One drivable representative per state the client can reach. The engine
+    holds its human exit codes byte-stable for compatibility; the client was
+    born speaking the vocabulary, so the code is derived from ``state`` in
+    both modes and there is nothing to hold still."""
+    _concept_files(workspace)
+    argv = {
+        # ready — a plain success.
+        "ready": ["experiment", "create", "demo", "--model", "org/m"],
+        # blocked — a malformed invocation.
+        "blocked": ["experiment", "create", "demo", "--nope", "x"],
+        # refused — a rule declined (the alpha-units declaration).
+        "refused": ["experiment", "declare-condition", "demo", "a",
+                    "--slots", "french:17:0.4"],
+        # notFound — a mistyped study name.
+        "notFound": ["experiment", "verify", "typo"],
+        # failed — an UNTYPED throw, which must stay distinguishable from
+        # every refusal above it.
+        "failed": ["experiment", "create", "boom", "--model", "org/m"],
+    }[state]
+
+    if state == "refused":
+        assert _run(["experiment", "create", "demo", "--model", "org/m"]) == 0
+    if state == "failed":
+        def explode(*_args, **_kwargs):
+            raise RuntimeError("the disk fell over")
+        monkeypatch.setattr(experiment_store, "create", explode)
+    capsys.readouterr()
+
+    assert _run(argv + ["--json"]) == code
+    document = _document(capsys)
+    assert document["state"] == state
+    assert cli_envelope.exit_code_for(document["state"]) == code
+    if code != 0:
+        assert document["error"]["code"]
+        assert len(document["error"]["repairAction"]) > 8
+
+
+# =============================================================================
+# 3. Envelope goldens
+# =============================================================================
+
+
+def _canonicalize(text: str, root) -> str:
+    return (text.replace(os.path.realpath(str(root)), "<workspace>")
+                .replace(str(root), "<workspace>")
+                .replace(os.path.dirname(os.path.dirname(os.path.abspath(
+                    __file__))), "<checkout>"))
+
+
+def _check_golden(capsys, name: str, root, *, expect_state: str) -> dict:
+    """The ``test_cli_envelope.py::_check`` rule, applied to the client's
+    documents: the structural assertions always run on the freshly produced
+    envelope, and only the byte comparison waits for the file to be
+    committed."""
+    text = capsys.readouterr().out
+    document = json.loads(text)
+    assert text.endswith("}\n")
+    assert text.count("\n}") == 1
+
+    allowed = set(cli_envelope.CONTRACT_HEADER_KEYS) | set(
+        cli_envelope.CONTRACT_OPTIONAL_KEYS)
+    for key in cli_envelope.CONTRACT_HEADER_KEYS:
+        assert key in document, f"{name}: header key {key!r} missing"
+    for key in document:
+        assert key in allowed, f"{name}: undeclared top-level key {key!r}"
+    assert document["engine"] == cli_envelope.ENGINE
+    assert document["state"] == expect_state
+    assert document["observedAt"] == "1970-01-01T00:16:40Z"
+    is_success = cli_envelope.exit_code_for(document["state"]) == 0
+    assert ("error" in document) != is_success
+
+    os.makedirs(FIXTURES, exist_ok=True)
+    path = os.path.join(FIXTURES, f"{name}.json")
+    canonical = _canonicalize(text, root)
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(canonical)
+        return document
+    with open(path, encoding="utf-8") as handle:
+        assert canonical == handle.read(), (
+            f"{name}: envelope drifted from tests/fixtures/cli-envelopes/"
+            f"{name}.json")
+    return document
+
+
+def test_client_experiment_create_golden(workspace, capsys):
+    assert _run(["experiment", "create", "demo", "--model",
+                 "google/gemma-3-27b-it", "--revision",
+                 "0123456789abcdef0123456789abcdef01234567", "--json"]) == 0
+    document = _check_golden(capsys, "client-experiment-create", workspace,
+                             expect_state="ready")
+    assert document["changed"] is True
+    # FULL revision, never the human line's twelve characters.
+    assert document["result"]["modelRevision"] == \
+        "0123456789abcdef0123456789abcdef01234567"
+    assert document["nextAction"]["verb"] == "experiment attach demo <concept>"
+
+
+def test_client_declare_condition_without_alpha_units_golden(workspace,
+                                                             capsys):
+    """The refused golden, and deliberately THIS refusal: it is the one whose
+    repair is a cross-engine twin literal (Phase 1a, G6), so the committed
+    bytes are a standing comparison against the Mac's wording."""
+    _concept_files(workspace)
+    assert _run(["experiment", "create", "demo", "--model",
+                 "google/gemma-3-27b-it"]) == 0
+    assert _run(["experiment", "attach", "demo", "french"]) == 0
+    capsys.readouterr()
+
+    assert _run(["experiment", "declare-condition", "demo", "arm-a",
+                 "--slots", "french:17:0.4", "--json"]) == 65
+    document = _check_golden(capsys,
+                             "client-declare-condition-no-alpha-units",
+                             workspace, expect_state="refused")
+    assert document["error"]["repairAction"] == \
+        experiment_store.ALPHA_UNITS_REPAIR
+
+
+# =============================================================================
+# 4. The structural rules
+# =============================================================================
+
+
+#: Substrings that would name a REMOTE endpoint. The point is not to catch a
+#: careless flag name — it is that a reviewer adding `--server` to an authoring
+#: verb has to delete this test to do it, and deleting it is a decision.
+_LOCATOR_WORDS = ("url", "uri", "host", "port", "server", "endpoint",
+                  "remote", "site", "executor", "submit")
+
+
+def test_no_authoring_verb_accepts_a_server_locator():
+    """CONTRACT: the client authors LOCALLY, structurally.
+
+    Phase 2 adds a runner adapter; until it does — and after it does, for
+    these verbs — there is no flag on an authoring verb that could hold a
+    server address. Enforced by iterating the declared table rather than by
+    reading the dispatch, so a verb added without a test is still covered.
+    """
+    for spec in client_cli.CLIENT_VERB_SPECS:
+        for flag in spec.declared_flags:
+            lowered = flag.lower()
+            for word in _LOCATOR_WORDS:
+                assert word not in lowered, (
+                    f"{spec.label} declares {flag} — this client authors the "
+                    "local workspace and never addresses a runner")
+
+
+def test_the_client_table_is_separate_from_the_engines_twin_literal():
+    """The engine's ``VERB_SPECS`` is a cross-engine twin literal whose exact
+    fifteen labels ``CLIEnvelopeParityTests`` pins. Appending client verbs to
+    it would assert the ENGINE grew verbs it does not have — and would break
+    the Swift half."""
+    engine = {spec.label for spec in cli_envelope.VERB_SPECS}
+    client = {spec.label for spec in client_cli.CLIENT_VERB_SPECS}
+    assert len(cli_envelope.VERB_SPECS) == 15
+    # `experiment list` and `experiment verify` exist on both by design (a
+    # client reads its own workspace); everything else is disjoint.
+    assert engine & client == {"experiment list", "experiment verify"}
+
+
+def test_every_client_verb_has_a_purpose_and_a_synopsis():
+    """``--help`` is generated from the table, so a verb with no purpose line
+    ships a blank manual."""
+    for spec in client_cli.CLIENT_VERB_SPECS:
+        assert spec.purpose.strip(), f"{spec.label} has no purpose"
+        assert spec.purpose.strip().endswith("."), \
+            f"{spec.label}'s purpose is not a sentence"
+        synopsis = client_cli.synopsis(spec)
+        assert synopsis.startswith(f"{client_cli.PROGRAM} {spec.family} ")
+        for flag in spec.required_flags:
+            assert f"[{flag}" not in synopsis, (
+                f"{spec.label} renders the required {flag} as optional")
+
+
+def test_the_client_declares_the_authoring_verbs_the_engine_refuses():
+    """The two surfaces are complements, not rivals: every verb the engine
+    redirects to the Mac as `macAuthorityVerb` is one this client can now
+    perform against a LOCAL workspace. (`pin-prompts`, `pin-rubric`,
+    `set-instruments` and `set-sweep-selection` are protocol fields the client
+    reaches through `set-protocol` rather than as their own verbs, and
+    `panel compile` needs the scenario compiler, not the store.)"""
+    client = {spec.verb for spec in client_cli.CLIENT_VERB_SPECS
+              if spec.family == "experiment"}
+    redirected = set(cli_envelope.MAC_AUTHORITY_VERBS["experiment"])
+    assert {"create", "attach", "duplicate", "freeze",
+            "declare-condition"} <= (client & redirected)
+    # …and the engine's refusals are untouched by this module's existence.
+    assert "create" not in {spec.verb for spec in cli_envelope.VERB_SPECS}
+
+
+# =============================================================================
+# 5. The light-install guard
+# =============================================================================
+
+
+#: What must NOT be imported to author a workspace. `numpy` and `safetensors`
+#: are allowed: they are the client's declared runtime dependencies
+#: (`pyproject.toml` `[project] dependencies`), measured rather than assumed.
+HEAVY = ("torch", "transformers", "fastapi", "uvicorn", "peft", "sae_lens")
+
+_PROBE = """
+import json, sys
+from steerlab_server import client_cli
+imported_after_import = sorted(m for m in {heavy!r} if m in sys.modules)
+client_cli.main(["--help"])
+imported_after_help = sorted(m for m in {heavy!r} if m in sys.modules)
+sys.stderr.write(json.dumps({{
+    "afterImport": imported_after_import,
+    "afterHelp": imported_after_help,
+    "topLevel": sorted({{m.split(".")[0] for m in sys.modules
+                        if not m.startswith("_")}} - set(sys.stdlib_module_names)),
+}}))
+"""
+
+
+def test_importing_the_client_pulls_no_heavy_dependency(tmp_path):
+    """CONTRACT: the light install.
+
+    Out of process on purpose. An in-process assertion about ``sys.modules``
+    proves nothing here: by the time this module runs, half the suite has
+    already imported torch, and the assertion would pass or fail on test
+    ORDER. A subprocess starting from a clean interpreter is the only place
+    the question has an answer.
+
+    If this ever fails, the repair is to move the offending import INSIDE the
+    verb that needs it (``client_cli`` imports every engine module lazily for
+    exactly this reason) — never to restructure the module it reached, which
+    the engine also depends on.
+    """
+    proc = subprocess.run(
+        [sys.executable, "-c", _PROBE.format(heavy=list(HEAVY))],
+        cwd=str(tmp_path), text=True, capture_output=True, check=False,
+        env={**os.environ, "PYTHONPATH": SERVER_DIR})
+    assert proc.returncode == 0, proc.stderr
+    report = json.loads(proc.stderr[proc.stderr.index("{"):])
+    assert report["afterImport"] == [], (
+        "importing steerlab_server.client_cli pulled: "
+        + ", ".join(report["afterImport"]))
+    assert report["afterHelp"] == [], (
+        "`steerlab --help` pulled: " + ", ".join(report["afterHelp"]))
+    # And the positive statement, so the guard describes a shape rather than
+    # only forbidding a list: nothing third-party at all is needed to reach
+    # the manual.
+    assert report["topLevel"] == ["steerlab_server"], report["topLevel"]
+
+
+#: The verbs that reach `Manifest.verify`, which is where the light graph ends
+#: today. See `test_the_light_graph_ends_at_verify` and
+#: `docs/PORTABILITY-CONTRACTS.md` G7.
+_VERIFY_REACHING_VERBS = ("verify", "freeze")
+
+
+def test_the_authoring_verbs_stay_light_and_verify_is_where_that_ends(
+        tmp_path):
+    """The guard extended past ``--help`` to the verbs that actually WRITE —
+    an import graph that stays light only until the first real call would be a
+    guarantee about the manual, not about the client.
+
+    It pins BOTH halves of the boundary as it really is (Phase 1b, gap G7):
+
+    * create / attach / declare-condition / set-protocol / duplicate / list
+      pull nothing heavy — a bare ``pip install`` really does author studies;
+    * ``verify`` and ``freeze`` pull **torch**, through
+      ``Manifest.verify`` → ``experiment.sae_latent`` →
+      ``steering.sae_latent`` → ``steering.injector`` → ``import torch``.
+
+    The second half is pinned as BROKEN on purpose, in the idiom
+    ``PORTABILITY-CONTRACTS`` §5 established: a gap nobody wrote down is a gap
+    the next phase rediscovers by breaking something. It is NOT repaired here,
+    because the only repair is to split the SAE latent *validation* surface
+    (constants, dataclasses, ``condition_violations`` — all of which the
+    module's own docstring says "validates OFFLINE") from the *execution*
+    surface that needs tensors. That is an engine refactor with cross-engine
+    twin-literal consequences, not a client change, and lazifying a single
+    import would not reach it: the whole injector stack is above torch.
+
+    If this test starts failing because the heavy list is EMPTY for verify,
+    somebody closed G7 — delete the second half and say so in the contracts
+    document.
+    """
+    workspace = tmp_path / "ws"
+    (workspace / "prompts" / "concepts" / "french").mkdir(parents=True)
+    for filename, text in (("positive.jsonl", '{"text": "bonjour"}\n'),
+                           ("negative.jsonl", '{"text": "hello"}\n')):
+        (workspace / "prompts" / "concepts" / "french" / filename).write_text(
+            text, encoding="utf-8")
+
+    script = f"""
+import io, json, sys, contextlib
+from steerlab_server import client_cli
+root = {str(workspace)!r}
+report = {{}}
+steps = [
+    ("create", ["experiment", "create", "d", "--model", "org/m"]),
+    ("attach", ["experiment", "attach", "d", "french"]),
+    ("declare-condition", ["experiment", "declare-condition", "d", "a",
+                           "--slots", "french:17:0.4", "--alpha-units",
+                           "norm"]),
+    ("set-protocol", ["experiment", "set-protocol", "d", "--set",
+                      "temperature=0.7"]),
+    ("list", ["experiment", "list"]),
+    ("duplicate", ["experiment", "duplicate", "d", "d2"]),
+    ("verify", ["experiment", "verify", "d"]),
+    ("freeze", ["experiment", "freeze", "d", "--force"]),
+]
+for label, argv in steps:
+    with contextlib.redirect_stdout(io.StringIO()), \
+            contextlib.redirect_stderr(io.StringIO()):
+        code = client_cli.main(["--root", root] + argv)
+    assert code == 0, (label, code)
+    report[label] = sorted(m for m in {list(HEAVY)!r} if m in sys.modules)
+sys.__stderr__.write(json.dumps(report))
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", script], cwd=str(tmp_path), text=True,
+        capture_output=True, check=False,
+        env={**os.environ, "PYTHONPATH": SERVER_DIR})
+    assert proc.returncode == 0, proc.stderr
+    report = json.loads(proc.stderr[proc.stderr.rindex("{"):])
+
+    for label, pulled in report.items():
+        if label in _VERIFY_REACHING_VERBS:
+            continue
+        assert pulled == [], f"`{label}` pulled: {', '.join(pulled)}"
+
+    # The gap, pinned as it is. Cumulative by construction: once `verify` has
+    # imported torch it stays imported, so `freeze` inherits it.
+    assert report["verify"] == ["torch"], (
+        "G7 moved: `experiment verify`'s heavy imports are now "
+        f"{report['verify']} — update docs/PORTABILITY-CONTRACTS.md")
+    assert report["freeze"] == ["torch"]
+
+
+def test_the_console_script_is_declared_beside_the_engines(monkeypatch):
+    """One distribution, two entry points — and the engine's is untouched.
+    Read off ``pyproject.toml`` rather than the installed metadata so the
+    assertion holds in a checkout nobody has reinstalled yet."""
+    text = open(os.path.join(SERVER_DIR, "pyproject.toml"),
+                encoding="utf-8").read()
+    assert 'steerlab-server = "steerlab_server.cli:main"' in text
+    assert 'steerlab = "steerlab_server.client_cli:main"' in text
+
+
+def test_the_runner_extra_carries_the_engine_stack_and_all_still_has_it():
+    """The extras split's one hard invariant: every install path that needs
+    the engine must resolve the SAME package set it resolved before.
+
+    ``all`` is what ``bootstrap.sh``, ``ONBOARDING.md``, ``README.md`` and
+    ``Server/scripts/update-locks.sh`` (``uv pip compile --extra all``) use, so
+    the committed locks and the app's Local Engine flow are unaffected as long
+    as ``all`` ⊇ ``runner``.
+    """
+    import re
+    text = open(os.path.join(SERVER_DIR, "pyproject.toml"),
+                encoding="utf-8").read()
+
+    def _names(block: str) -> set:
+        return {re.split(r"[<>=!\s]", entry)[0].strip('"').replace("_", "-")
+                for entry in re.findall(r'"([^"]+)"', block)}
+
+    runner = _names(re.search(r"^runner = \[(.*?)\]", text,
+                              re.S | re.M).group(1))
+    every = _names(re.search(r"^all = \[(.*?)\]", text, re.S | re.M).group(1))
+    core = _names(re.search(r"^dependencies = \[(.*?)\]", text,
+                            re.S | re.M).group(1))
+
+    assert {"torch", "transformers", "accelerate", "fastapi", "uvicorn"} \
+        <= runner
+    assert runner <= every, f"`all` lost: {sorted(runner - every)}"
+    # The client's own set stays small and stays OUT of the runner extra —
+    # a package in both would be a floor stated twice.
+    assert core == {"numpy", "safetensors"}
+    assert not (core & runner)
+    # THE invariant that let the split land without touching the committed
+    # locks or the app's Local Engine flow: client + runner is exactly the
+    # dependency list that used to be `dependencies`, name for name. If this
+    # ever fails, `--extra all` resolves a different package set than it did
+    # before the split and the locks are stale.
+    assert core | runner == {
+        "numpy", "safetensors", "torch", "transformers", "accelerate",
+        "huggingface-hub", "fastapi", "uvicorn", "pydantic"}

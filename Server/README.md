@@ -56,18 +56,41 @@ MLX-8bit-on-Metal. Vectors are model+revision-specific by design, so the cluster
 is a **fresh extraction substrate** — re-extract and re-validate here; do not
 transplant Mac vectors as scientific artifacts.
 
-## Install
+## Install roles
 
-The package's heavy deps (torch, transformers) are typically already present on
-a cluster. A clean install:
+One distribution, two console scripts, two install sizes:
+
+| you want | install | you get |
+|---|---|---|
+| the **client** (`steerlab`) — author a workspace on any platform | `pip install -e .` | manifests, pins, conditions, concepts, bundles. numpy + safetensors, no torch |
+| the **engine** (`steerlab-server`) — execute and serve | `pip install -e ".[runner]"` | + torch, transformers, accelerate, huggingface_hub, fastapi, uvicorn, pydantic |
+| the full workbench | `pip install -e ".[all]"` | + peft/pypdf (LoRA), sae-lens (Gemma Scope), pytest |
+
+The bare dependencies are the **client's**, not the engine's: everything only
+execution needs lives behind the `runner` extra (see the comments in
+`pyproject.toml`). `all` still contains `runner`'s whole contents, so
+`bootstrap.sh`, `docs/ONBOARDING.md`, the committed locks
+(`update-locks.sh` compiles with `--extra all`) and the app's Local Engine
+flow resolve exactly the package set they always did.
+
+Two verbs of the client — `experiment verify` and `experiment freeze` — still
+need `[runner]` today: `Manifest.verify` reaches `experiment.sae_latent`,
+which sits on the torch-bound injector stack. That boundary is measured and
+pinned (`tests/test_client_cli.py::
+test_the_authoring_verbs_stay_light_and_verify_is_where_that_ends`) and
+recorded as gap **G7** in `docs/PORTABILITY-CONTRACTS.md`.
 
 ```bash
 cd Server
 python -m venv .venv && source .venv/bin/activate
-pip install -e .            # core engine + API
-pip install -e .[lora]      # + PEFT/pypdf for LoRA training
-pip install -e .[test]      # + pytest
+pip install -e .                # the client only
+pip install -e ".[runner]"      # + the engine's model/serve stack
+pip install -e ".[runner,lora]" # + PEFT/pypdf for LoRA training
+pip install -e ".[test]"        # + pytest
 ```
+
+The package's heavy deps (torch, transformers) are typically already present on
+a cluster.
 
 On a machine that already has torch in another venv, you can bridge it instead
 of reinstalling (what this repo's dev setup does): create the venv and drop a

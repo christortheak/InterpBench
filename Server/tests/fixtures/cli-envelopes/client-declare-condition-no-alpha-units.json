@@ -1,0 +1,15 @@
+{
+  "changed": false,
+  "engine": "python-hf-transformers",
+  "error": {
+    "code": "authoringRefused",
+    "reason": "condition 'arm-a' declares no 'alphaInNormUnits', so the \u03b1 it names has no unit \u2014 this engine would read raw \u03b1 and the Mac engine residual-norm units for the same document. declare the \u03b1 units explicitly: add \"alphaInNormUnits\": true (\u03b1 in residual-stream-norm units \u2014 the project convention) or false (raw \u03b1) to the condition, or declare the arm with `steerlab-cli experiment declare-condition <study> <condition> --slots <concept>:<layer>:<alpha> --alpha-units norm|raw`",
+    "repairAction": "declare the \u03b1 units explicitly: add \"alphaInNormUnits\": true (\u03b1 in residual-stream-norm units \u2014 the project convention) or false (raw \u03b1) to the condition, or declare the arm with `steerlab-cli experiment declare-condition <study> <condition> --slots <concept>:<layer>:<alpha> --alpha-units norm|raw`"
+  },
+  "message": "condition 'arm-a' declares no 'alphaInNormUnits', so the \u03b1 it names has no unit \u2014 this engine would read raw \u03b1 and the Mac engine residual-norm units for the same document. declare the \u03b1 units explicitly: add \"alphaInNormUnits\": true (\u03b1 in residual-stream-norm units \u2014 the project convention) or false (raw \u03b1) to the condition, or declare the arm with `steerlab-cli experiment declare-condition <study> <condition> --slots <concept>:<layer>:<alpha> --alpha-units norm|raw`",
+  "observedAt": "1970-01-01T00:16:40Z",
+  "schemaVersion": 1,
+  "state": "refused",
+  "verb": "experiment declare-condition",
+  "workspace": "<workspace>"
+}

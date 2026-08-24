@@ -11,19 +11,55 @@ requires-python = ">=3.10"
 # Concept-agnostic steering core + experiment orchestration + a thin HTTP service.
 # Mirrors the on-disk artifact contracts of the Swift/MLX app so vectors,
 # manifests, and run directories interoperate. See README.md.
+#
+# TWO ROLES, ONE DISTRIBUTION (Phase 1b of the portability program). The
+# package ships two console scripts and they need different amounts of
+# machinery:
+#
+#   * `steerlab`        — the CLIENT. Authors a local workspace: manifests,
+#                         pins, conditions, concepts, bundles. No model, no
+#                         GPU, no HTTP service. Runs anywhere Python does.
+#   * `steerlab-server` — the ENGINE. Loads models and executes; serves the
+#                         API. Needs the whole science stack.
+#
+# `dependencies` below is therefore the CLIENT's set — what a bare
+# `pip install steerlab-server` must resolve — and the engine's stack lives
+# behind the `runner` extra. That split is enforced, not merely intended:
+# `tests/test_client_cli.py::test_importing_the_client_pulls_no_heavy_dependency`
+# asserts out of process that importing `steerlab_server.client_cli` (and
+# running `--help`) imports none of torch/transformers/fastapi/uvicorn/peft/
+# sae_lens.
+#
+# WHAT IS IN THE CLIENT SET AND WHY. Both are real module-level imports on the
+# authoring path, measured rather than assumed: `numpy` (vector math in
+# `steering`, reached through `experiment_store`'s import graph) and
+# `safetensors` (`steering.vector_store` reads/writes the artifact format a
+# pinned-artifact attach hashes). Neither is heavy — pure wheels, no CUDA.
 dependencies = [
+    "numpy>=1.26",
+    "safetensors>=0.4",
+]
+
+[project.optional-dependencies]
+# THE ENGINE'S STACK. Everything only EXECUTION needs: model loading and
+# inference (torch/transformers/accelerate/huggingface_hub) and the HTTP
+# service (fastapi/uvicorn/pydantic). Every install path that runs verbs
+# installs this — directly, or through `all`, or from a committed lock
+# (which is compiled with `--extra all`, so its resolution is unchanged by
+# this split). See Server/README.md "Install roles".
+#
+# Do NOT fold these back into `dependencies` to "simplify": the whole point is
+# that a client install of the package is a ~30 MB wheel set instead of a
+# multi-gigabyte one, on a machine that may have no GPU at all.
+runner = [
     "torch>=2.2",
     "transformers>=4.44",
     "accelerate>=0.30",
-    "safetensors>=0.4",
-    "numpy>=1.26",
     "huggingface_hub>=0.24",
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "pydantic>=2.6",
 ]
-
-[project.optional-dependencies]
 # Heavy/risky parity pieces (Phase 3) and the test suite are split out so the
 # pure-CPU core can be installed and tested without dragging in everything.
 lora = ["peft>=0.11", "pypdf>=4.2"]
@@ -58,7 +94,22 @@ test = ["pytest>=8.0"]
 # is part of the lock's provenance: a different major could resolve differently
 # from the same pyproject.
 dev = ["uv>=0.12.5,<0.13"]
-all = ["peft>=0.11", "pypdf>=4.2", "sae-lens>=5.0", "pytest>=8.0"]
+# `all` = runner + lora + gemmascope + test, spelled out rather than referenced
+# so `uv pip compile --extra all` (Server/scripts/update-locks.sh) and every
+# `pip install -e "Server[all]"` in bootstrap.sh / ONBOARDING / README resolve
+# the SAME package set they resolved before the client/runner split. That
+# invariant is the reason the split could land without touching the committed
+# locks or the app's Local Engine flow.
+all = [
+    "torch>=2.2",
+    "transformers>=4.44",
+    "accelerate>=0.30",
+    "huggingface_hub>=0.24",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic>=2.6",
+    "peft>=0.11", "pypdf>=4.2", "sae-lens>=5.0", "pytest>=8.0",
+]
 
 # NOTE ON FLOORS vs LOCKS (WP6 R1, 2026-08-18). The `dependencies` above are
 # FLOORS — the right contract for a library, the wrong one for an instrument:
@@ -71,7 +122,15 @@ all = ["peft>=0.11", "pypdf>=4.2", "sae-lens>=5.0", "pytest>=8.0"]
 # already-provisioned nodes.
 
 [project.scripts]
+# The ENGINE's command line — unchanged, including its Mac-authority authoring
+# refusals. A cluster node drives this one.
 steerlab-server = "steerlab_server.cli:main"
+# The CLIENT's command line (Phase 1b): authors a local workspace on any
+# platform, runs nothing, talks to no runner. Installing this package now
+# CLAIMS the `steerlab` name — anyone carrying the temporary
+# `~/.local/bin/steerlab` symlink to the Swift CLI should drop it (AGENTS.md
+# step 1 calls that alias temporary and reserved for exactly this).
+steerlab = "steerlab_server.client_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -75,6 +75,60 @@ Vectors do **not** transfer between engines: re-extract and re-validate on the
 substrate a study runs on. `vectors compare` (both CLIs, key-identical JSON) is
 the parity check.
 
+### 1.4 The `steerlab` client (preview)
+
+There is a **third** command line, new and not yet covered by the generated
+regions of this document: `steerlab`, a cross-platform Python client that
+**authors a local workspace** — `Server/steerlab_server/client_cli.py`,
+installed by the same package as `steerlab-server`. It is the Phase-1b
+deliverable of the portability program; `docs/PORTABILITY-CONTRACTS.md` §7 is
+its reference, and this note exists so a reader of *this* document is not left
+believing there are only two.
+
+What it is, in one table:
+
+| | `steerlab` (client) | `steerlab-server` (engine) |
+|---|---|---|
+| authors a workspace | **yes**, the local one | no — Mac-authority refusals, unchanged |
+| loads a model / executes verbs | no | yes |
+| talks to a runner | no (Phase 2) | it *is* the runner |
+| needs torch | no (see the G7 caveat below) | yes |
+
+```bash
+pip install -e Server                     # the client alone — no torch
+export STEERLAB_WORKSPACE=~/SteerLab/Workspaces/<study>   # or: --root <dir>
+steerlab experiment create <name> --model <id>
+steerlab concept import <concept> --file <stimuli.jsonl>
+steerlab experiment attach <name> <concept>
+steerlab experiment declare-condition <name> <arm> \
+    --slots <concept>:<layer>:<alpha> --alpha-units norm
+steerlab experiment verify <name>
+steerlab experiment freeze <name>
+steerlab bundle package <name>            # hand the bundle to an engine
+```
+
+Everything above speaks `--json` and answers in the **same envelope** the two
+engines share (§7.7's vocabulary, §4 of the contracts document) — same states,
+same exit codes, same `error.code` / `error.repairAction`. Verb families:
+`experiment` (create, attach, declare-condition, remove-condition,
+set-protocol, pin-revision, set-style-taxonomy, pin-sae-candidates, duplicate,
+verify, freeze, list), `concept import`, `bundle` (package, inspect, import),
+plus `--version`. `steerlab <family> --help` prints the roster; the workspace
+comes from `--root` or `$STEERLAB_WORKSPACE` and there is **no default**.
+
+Two traps worth knowing before you rely on it:
+
+- `declare-condition --alpha-units norm|raw` is **required**, baselines
+  included — the same refusal, word for word, that the Mac gives (§3.3, G6).
+- `experiment verify` and `experiment freeze` still import torch today
+  (gap **G7**), so a torch-free install can author and declare but not yet
+  freeze. `pip install -e "Server[runner]"` closes it for now.
+
+**Do not carry a `~/.local/bin/steerlab` symlink to the Swift CLI once you
+install this.** `AGENTS.md` step 1 calls that alias temporary and reserved for
+exactly this binary; keeping both means `steerlab` means two different things
+on two machines.
+
 ### 1.3 Traps at a glance
 
 Read §7 before a cluster session. The short list:

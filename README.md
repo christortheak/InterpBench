@@ -329,6 +329,13 @@ This is a source release, an early one. What that means concretely:
   comparing across machines.
 - Supported user interfaces are the macOS app and the two command lines, plus
   the Python server's own browser workbench for remote use.
+- A **cross-platform `steerlab` client is available as a preview** for agents
+  and developers: a third command line that authors a local workspace on any
+  platform, installed by `pip install -e Server` with no torch. See
+  `docs/CLI-REFERENCE.md` §1.4 and `docs/PORTABILITY-CONTRACTS.md` §7. If you
+  are carrying the temporary `~/.local/bin/steerlab` symlink to the Swift CLI
+  that `AGENTS.md` step 1 describes, **drop it** when you install the Python
+  client — the name now has its intended owner.
 - Cluster deployment works against a generic Slurm site through a versioned
   site profile, but the profile schema does not yet represent every field a
   site might need.
