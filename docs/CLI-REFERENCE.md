@@ -93,7 +93,7 @@ What it is, in one table:
 | authors a workspace | **yes**, the local one | no — Mac-authority refusals, unchanged |
 | loads a model / executes verbs | no | yes |
 | talks to a runner | **yes** (`runner …`, Phase 2) | it *is* the runner |
-| needs torch | no (see the G7 caveat below) | yes |
+| needs torch | no — the whole authoring lifecycle is torch-free | yes |
 
 ```bash
 pip install -e Server                     # the client alone — no torch
@@ -155,9 +155,11 @@ Five traps worth knowing before you rely on it:
 
 - `declare-condition --alpha-units norm|raw` is **required**, baselines
   included — the same refusal, word for word, that the Mac gives (§3.3, G6).
-- `experiment verify` and `experiment freeze` still import torch today
-  (gap **G7**), so a torch-free install can author and declare but not yet
-  freeze. `pip install -e "Server[runner]"` closes it for now.
+- `experiment verify`, `experiment freeze` and `bundle package` used to import
+  torch (gap **G7**), so a torch-free install could author and declare but not
+  freeze. **Closed:** the SAE latent *declared* surface moved to the torch-free
+  `steering.sae_latent_schema`, and a bare `pip install -e Server` now runs the
+  whole authoring lifecycle. `[runner]` is for *executing*.
 - **There is no `--token` flag, on any runner verb, deliberately.** argv is
   readable by every process on a shared login node. The token comes from
   `$STEERLAB_RUNNER_TOKEN` or `--token-file <path>` (a path, not a secret), and

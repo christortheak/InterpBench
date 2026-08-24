@@ -67,9 +67,16 @@ torch, transformers, fastapi, uvicorn, peft or sae_lens. That is a measured
 fact about ``experiment_store``/``authoring``/``manifest``/``bundles`` and it
 is guarded by an out-of-process assertion
 (``tests/test_client_cli.py::test_importing_the_client_pulls_no_heavy_dependency``).
-The rule the guard implies: if a needed module ever drags a heavy dependency
-transitively, restructure the IMPORT here — lazily, inside the verb — never
-the module.
+The guarantee runs to the END of the authoring lifecycle — ``verify``,
+``freeze`` and ``bundle package`` included, and for studies that declare an SAE
+latent condition too, since portability gap G7 was closed by giving that
+condition type a torch-free schema module
+(``steering.sae_latent_schema``); ``tests/test_client_cli.py::
+test_the_whole_authoring_lifecycle_stays_light_including_verify`` pins it.
+The rule the guards imply: if a needed module ever drags a heavy dependency
+transitively, restructure the IMPORT here — lazily, inside the verb — or split
+the module so the declared surface sits below the executable one. Never make
+the client the exception.
 """
 
 from __future__ import annotations

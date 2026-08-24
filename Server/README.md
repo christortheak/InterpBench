@@ -73,12 +73,17 @@ execution needs lives behind the `runner` extra (see the comments in
 (`update-locks.sh` compiles with `--extra all`) and the app's Local Engine
 flow resolve exactly the package set they always did.
 
-Two verbs of the client — `experiment verify` and `experiment freeze` — still
-need `[runner]` today: `Manifest.verify` reaches `experiment.sae_latent`,
-which sits on the torch-bound injector stack. That boundary is measured and
-pinned (`tests/test_client_cli.py::
-test_the_authoring_verbs_stay_light_and_verify_is_where_that_ends`) and
-recorded as gap **G7** in `docs/PORTABILITY-CONTRACTS.md`.
+The client covers the **whole authoring lifecycle** on that bare install —
+create, attach, declare-condition, set-protocol, list, duplicate, `verify`,
+`freeze` and `bundle package` — including studies that declare an SAE latent
+condition they never execute. `[runner]` is needed to *execute*, not to
+author or to check. (`verify` / `freeze` used to need it, because
+`Manifest.verify` reached `experiment.sae_latent` and through it the
+torch-bound injector stack; the SAE latent declared surface now lives in the
+torch-free `steering.sae_latent_schema`.) The boundary is measured and pinned
+(`tests/test_client_cli.py::
+test_the_whole_authoring_lifecycle_stays_light_including_verify`) and recorded
+as the now-closed gap **G7** in `docs/PORTABILITY-CONTRACTS.md`.
 
 ```bash
 cd Server

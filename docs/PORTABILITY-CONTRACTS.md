@@ -7,7 +7,8 @@ the golden tests it indexes — a record of what the two engines promise each
 other, so a later phase that breaks one of those promises fails a test instead
 of failing in somebody's workspace. Phase 1a closed four of the recorded gaps —
 G1, G3, G6, and G4 alongside G6 — and moved their pins from "pinned as broken"
-to "pinned as fixed"; §5 says what was decided in each and why.
+to "pinned as fixed"; G7, which Phase 1b found and Phase 2 left alone, has
+since been closed as engine work. §5 says what was decided in each and why.
 
 The program's target is a cross-platform Python client that will have to do
 three things the Swift and Python engines already do to each other:
@@ -95,9 +96,8 @@ one engine with a hash produced by the other.** The bytes-level contract that
 Contracts that *should* exist and could not be pinned in Phase 0. Each is
 recorded here because a gap nobody wrote down is a gap the next phase
 rediscovers by breaking something. **G1, G3, G4 and G6 were closed in Phase
-1a** and are kept below with what was decided and why; G2 and G5 remain open,
-and **G7 was found in Phase 1b** while building the client that G1/G4/G6 made
-possible.
+1a** and are kept below with what was decided and why; **G7 — found in Phase
+1b, deferred through Phase 2 — is now closed too**; G2 and G5 remain open.
 
 **G1 — A server-authored frozen study read as drifted on the Mac.
 CLOSED (Phase 1a).**
@@ -182,33 +182,70 @@ The **answer** is unchanged: the document is still refused. Defaulting the two
 globals on decode was the other option and was rejected — for `alphaInNormUnits`
 it would mean inventing a dose unit, which is exactly what G6 forbids.
 
-**G7 — The client's light import graph ends at `experiment verify`.
-OPEN (found in Phase 1b).**
+**G7 — The client's light import graph ended at `experiment verify`.
+CLOSED.**
 Importing `steerlab_server.client_cli` and running `steerlab --help` pulls
 *nothing* third-party at all, and `create` / `attach` / `declare-condition` /
 `set-protocol` / `duplicate` / `list` / `concept import` pull only what the
 client declares (numpy, safetensors). `experiment verify` and `experiment
-freeze` — and `bundle package`, which calls `verify` — pull **torch**, through
-`Manifest.verify` → `experiment.sae_latent` → `steering.sae_latent` →
-`steering.injector` → `import torch`.
+freeze` — and `bundle package`, which calls `verify` — used to pull **torch**,
+through `Manifest.verify` → `experiment.sae_latent` → `steering.sae_latent` →
+`steering.injector` → `import torch`. A pure metadata check paid for the whole
+execution stack, and it did so for **every** study, including the ones with no
+SAE latent condition anywhere in them.
 
-*Why it was not repaired in 1b.* `experiment/sae_latent.py`'s own docstring
-says "everything here validates OFFLINE: no SAE weights, no HuggingFace, no
-network" — and that is true of what it *does*; it is false of what it
-*imports*. Four names cross the line (`CLAMP`, `MODES`, `SAELatentEdit`,
-`SAELatentFeature`), and the module they come from sits on the injector stack,
-so no single lazy import reaches it. The repair is to split the SAE latent
-**validation** surface from the **execution** surface — an engine refactor with
-cross-engine twin-literal consequences (the mode vocabulary is one of the
-closed key sets), not a client change. Doing it inside a client phase, to
-satisfy a client guard, is exactly the kind of change that breaks an engine
-nobody was looking at.
+*Why it was not repaired in 1b or 2.* `experiment/sae_latent.py`'s own
+docstring says "everything here validates OFFLINE: no SAE weights, no
+HuggingFace, no network" — and that was true of what it *does* and false of
+what it *imports*. Four names crossed the line (`CLAMP`, `MODES`,
+`SAELatentEdit`, `SAELatentFeature`), and the module they came from sits on the
+injector stack, so no single lazy import reached it. The repair had to be an
+engine refactor — splitting the SAE latent **declared** surface from the
+**execution** surface — with cross-engine consequences (the mode vocabulary is
+one of the closed key sets). Doing that inside a client phase, to satisfy a
+client guard, is exactly the kind of change that breaks an engine nobody was
+looking at, so it waited until it could be done as engine work.
 
-*Consequence, stated plainly so nobody discovers it at install time:* a bare
-`pip install steerlab-server` gives a client that authors, declares and
-packages-by-name, but cannot `verify` or `freeze` without `[runner]`. Pinned
-as-is (both halves) by `test_client_cli.py::test_the_authoring_verbs_stay_light_and_verify_is_where_that_ends`,
-which fails if either half moves — including if somebody closes it.
+*The repair — a schema seam, not a lazy import.* A new module
+`steerlab_server/steering/sae_latent_schema.py` holds the SAE latent **declared
+surface** and imports `math` and `dataclasses` and nothing else: the mode
+vocabulary (`ADD` / `CLAMP` / `MODES`) and the two frozen dataclasses
+(`SAELatentFeature`, `SAELatentEdit`) with their range checks. Everything moved
+byte-for-byte; no constant, field, docstring or refusal string was reworded on
+the way. `steering/sae_latent.py` keeps the execution half — the torch
+arithmetic, `SAELatentIntervention`, `group_edits` — imports the schema module,
+and **re-exports all five names explicitly** (`__all__`), so every existing
+`from .sae_latent import SAELatentEdit` (`steering.plan`, `tasks`, the tests)
+resolves to the same objects it always did and no call site changed.
+`experiment/sae_latent.py` — the validation module `Manifest.verify` reaches —
+now imports `..steering.sae_latent_schema` instead, and is torch-free at import
+time end to end; its one execution-path function, `materialize`, already
+imported `gemma_scope` and `vector_store` *inside* itself and still does.
+
+*The dependency arrow points execution → schema and never back.* The schema
+module imports nothing from the execution module, which is what makes the seam
+hold: a future edit that reaches the other way would re-open the gap, and the
+guard below would fail out of process rather than quietly.
+
+*Why not lazify `Manifest.verify`'s import instead.* It is already lazy — the
+`from . import sae_latent` inside `verify()` was never the problem. The cost
+was one module further down, and the only way to reach it without moving code
+was to make `condition_violations` stop using the mode vocabulary it validates
+against, i.e. to duplicate a closed key set. Two copies of `MODES` is precisely
+the failure the vocabulary exists to prevent.
+
+*Consequence, restated:* a bare `pip install steerlab-server` now gives a
+client that authors, declares, verifies, freezes and packages — **the whole
+authoring lifecycle** — with numpy and safetensors and nothing else. `[runner]`
+is needed to *execute*, which is what it was always named for.
+Pinned as FIXED by `test_client_cli.py::test_the_whole_authoring_lifecycle_stays_light_including_verify`,
+which runs the lifecycle out of process against three fixture studies — one
+with no latent conditions, one that **declares an SAE latent condition it never
+executes** (the case that used to cost an execution stack), and one whose
+latent condition is malformed — and asserts that no step pulls
+torch/transformers/fastapi/uvicorn/peft/sae_lens, *and* that the malformed one
+is still refused in the same words. A validator that got lighter by getting
+weaker would pass an import-set assertion alone.
 
 **G5 — No cross-engine `push_manifest` canonical-body agreement.**
 `experiment_store.push_manifest` returns a `canonicalBodyHash` over the whole
@@ -394,9 +431,16 @@ Guarded out of process, because an in-process assertion about `sys.modules`
 passes or fails on test ORDER once another module has imported torch:
 `test_importing_the_client_pulls_no_heavy_dependency` asserts that importing
 `client_cli` and running `--help` imports nothing third-party at all.
-`test_the_authoring_verbs_stay_light_and_verify_is_where_that_ends` extends
-that to the verbs that really write — and pins **G7**, the one place the
-guarantee currently stops.
+`test_the_whole_authoring_lifecycle_stays_light_including_verify` extends that
+to the verbs that really write.
+
+**The guarantee covers the full authoring lifecycle** — create, attach,
+declare-condition, set-protocol, list, duplicate, **verify, freeze, and bundle
+package** — for studies with no SAE latent condition *and* for studies that
+declare one they never execute. It stops where execution begins, which is what
+`[runner]` is for. G7 was the one place it used to stop earlier than that; §5
+records how it was closed (a torch-free `steering.sae_latent_schema` under the
+validation path) and the guard that keeps it closed.
 
 ### Phase 2
 
@@ -554,9 +598,10 @@ install does not resolve — `test_httpx_needs_none_of_its_optional_cli_dependen
 blocks them on the meta-path and imports httpx anyway rather than taking that
 on trust.
 
-**G7 is untouched and still open.** The runner family does not reach
-`Manifest.verify`, so it does not pull torch; `experiment verify` / `freeze`
-still do, for the reason §5 gives.
+**G7 was untouched by this phase.** The runner family does not reach
+`Manifest.verify`, so it never pulled torch either way. `experiment verify` /
+`freeze` still did at the time, for the reason §5 gives; they no longer do —
+G7 was closed afterwards, as engine work, and §5 records it.
 
 ### 8.7 What Phase 2 deliberately did NOT do
 

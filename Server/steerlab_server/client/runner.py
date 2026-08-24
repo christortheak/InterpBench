@@ -288,7 +288,7 @@ class RunnerClient:
         self._token = (token or "").strip() or None
         self._owns_client = http_client is None
         if http_client is None:
-            import httpx           # lazy: the light-import contract, §7/G7
+            import httpx           # lazy: the light-import contract, §7/§8.6
             http_client = httpx.Client(timeout=self.timeout, verify=verify,
                                        follow_redirects=False)
         self._client = http_client

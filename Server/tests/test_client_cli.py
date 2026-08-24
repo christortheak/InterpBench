@@ -703,39 +703,60 @@ def test_importing_the_client_pulls_no_heavy_dependency(tmp_path):
     assert report["topLevel"] == ["steerlab_server"], report["topLevel"]
 
 
-#: The verbs that reach `Manifest.verify`, which is where the light graph ends
-#: today. See `test_the_light_graph_ends_at_verify` and
-#: `docs/PORTABILITY-CONTRACTS.md` G7.
-_VERIFY_REACHING_VERBS = ("verify", "freeze")
+#: One well-formed ``saeLatentConditions`` entry, and one whose mode is a typo.
+#: Declared but never executed: the point is that VALIDATING them — which is
+#: all `verify` and `freeze` ever do with them — needs no tensors.
+_LATENT_CONDITION = {
+    "name": "clamp-formality-b10",
+    "interventionType": "saeLatent",
+    "serverOnly": True,
+    "release": "gemma-scope-2b-pt-res",
+    "saeID": "layer_20/width_16k/average_l0_71",
+    "feature": 4242,
+    "mode": "clamp",
+    "beta": 10.0,
+    "layer": 20,
+    "constructLabel": "formality",
+}
+_LATENT_CONDITION_WITH_A_TYPOD_MODE = dict(_LATENT_CONDITION, mode="scale")
+
+#: The refusal `experiment.sae_latent.entry_violations` must still produce for
+#: that typo — quoted here, in the light-install guard, because the whole risk
+#: of the G7 split was that a refusal text moved house and changed on the way.
+#: `test_sae_latent.py` owns the behaviour; this asserts the LIGHT path reaches
+#: the same words.
+_UNKNOWN_MODE_REFUSAL = (
+    "unknown mode 'scale' — expected one of add, clamp")
 
 
-def test_the_authoring_verbs_stay_light_and_verify_is_where_that_ends(
-        tmp_path):
+def test_the_whole_authoring_lifecycle_stays_light_including_verify(tmp_path):
     """The guard extended past ``--help`` to the verbs that actually WRITE —
     an import graph that stays light only until the first real call would be a
     guarantee about the manual, not about the client.
 
-    It pins BOTH halves of the boundary as it really is (Phase 1b, gap G7):
+    **This is the flipped half of gap G7 (CLOSED).** It used to pin the
+    boundary as broken: `create` / `attach` / `declare-condition` /
+    `set-protocol` / `duplicate` / `list` pulled nothing, and then `verify` /
+    `freeze` pulled **torch**, through ``Manifest.verify`` →
+    ``experiment.sae_latent`` → ``steering.sae_latent`` →
+    ``steering.injector`` → ``import torch``. Splitting the SAE latent
+    *declared* surface (``ADD`` / ``CLAMP`` / ``MODES``, ``SAELatentFeature``,
+    ``SAELatentEdit``) into the torch-free
+    ``steering.sae_latent_schema`` ended that chain, so the light set is now
+    the **whole authoring lifecycle**: everything above plus `verify`,
+    `freeze`, and `bundle package` (which verifies).
 
-    * create / attach / declare-condition / set-protocol / duplicate / list
-      pull nothing heavy — a bare ``pip install`` really does author studies;
-    * ``verify`` and ``freeze`` pull **torch**, through
-      ``Manifest.verify`` → ``experiment.sae_latent`` →
-      ``steering.sae_latent`` → ``steering.injector`` → ``import torch``.
+    Two studies, on purpose. A workspace with no latent conditions never
+    enters the latent validator at all, so it would prove nothing about the
+    module the gap was named for; the second declares a latent condition it
+    will never execute, which is exactly the case that used to cost a whole
+    execution stack. The third step goes further and asserts the light process
+    still REFUSES a malformed one, in the same words — a validator that got
+    lighter by getting weaker would pass a mere import-set assertion.
 
-    The second half is pinned as BROKEN on purpose, in the idiom
-    ``PORTABILITY-CONTRACTS`` §5 established: a gap nobody wrote down is a gap
-    the next phase rediscovers by breaking something. It is NOT repaired here,
-    because the only repair is to split the SAE latent *validation* surface
-    (constants, dataclasses, ``condition_violations`` — all of which the
-    module's own docstring says "validates OFFLINE") from the *execution*
-    surface that needs tensors. That is an engine refactor with cross-engine
-    twin-literal consequences, not a client change, and lazifying a single
-    import would not reach it: the whole injector stack is above torch.
-
-    If this test starts failing because the heavy list is EMPTY for verify,
-    somebody closed G7 — delete the second half and say so in the contracts
-    document.
+    If this test starts failing because some verb's heavy list is non-empty,
+    the repair is to move the offending import INSIDE the code that needs it
+    (or below a schema seam, as G7 did) — never to weaken the assertion.
     """
     workspace = tmp_path / "ws"
     (workspace / "prompts" / "concepts" / "french").mkdir(parents=True)
@@ -745,49 +766,90 @@ def test_the_authoring_verbs_stay_light_and_verify_is_where_that_ends(
             text, encoding="utf-8")
 
     script = f"""
-import io, json, sys, contextlib
+import io, json, os, sys, contextlib
 from steerlab_server import client_cli
 root = {str(workspace)!r}
-report = {{}}
-steps = [
-    ("create", ["experiment", "create", "d", "--model", "org/m"]),
-    ("attach", ["experiment", "attach", "d", "french"]),
-    ("declare-condition", ["experiment", "declare-condition", "d", "a",
-                           "--slots", "french:17:0.4", "--alpha-units",
-                           "norm"]),
-    ("set-protocol", ["experiment", "set-protocol", "d", "--set",
-                      "temperature=0.7"]),
-    ("list", ["experiment", "list"]),
-    ("duplicate", ["experiment", "duplicate", "d", "d2"]),
-    ("verify", ["experiment", "verify", "d"]),
-    ("freeze", ["experiment", "freeze", "d", "--force"]),
-]
-for label, argv in steps:
-    with contextlib.redirect_stdout(io.StringIO()), \
+heavy = {list(HEAVY)!r}
+report, refusal = {{}}, {{}}
+
+def step(label, argv, expect=0):
+    with contextlib.redirect_stdout(io.StringIO()) as out, \
             contextlib.redirect_stderr(io.StringIO()):
         code = client_cli.main(["--root", root] + argv)
-    assert code == 0, (label, code)
-    report[label] = sorted(m for m in {list(HEAVY)!r} if m in sys.modules)
-sys.__stderr__.write(json.dumps(report))
+    assert code == expect, (label, code, out.getvalue())
+    report[label] = sorted(m for m in heavy if m in sys.modules)
+    return out.getvalue()
+
+def declare_latent(name, entry):
+    path = os.path.join(root, "experiments", name, "experiment.json")
+    if not os.path.exists(path):
+        path = os.path.join(root, "experiments", name + ".json")
+    with open(path, encoding="utf-8") as handle:
+        document = json.load(handle)
+    document["saeLatentConditions"] = [entry]
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(document, handle, indent=2)
+
+# 1. A study with NO latent conditions: the plain authoring lifecycle, end to
+#    end, through the two verbs the gap used to stop at and the one that
+#    calls verify on its way to an archive.
+step("create", ["experiment", "create", "d", "--model", "org/m"])
+step("attach", ["experiment", "attach", "d", "french"])
+step("declare-condition", ["experiment", "declare-condition", "d", "a",
+                           "--slots", "french:17:0.4", "--alpha-units",
+                           "norm"])
+step("set-protocol", ["experiment", "set-protocol", "d", "--set",
+                      "temperature=0.7"])
+step("list", ["experiment", "list"])
+step("duplicate", ["experiment", "duplicate", "d", "d2"])
+step("verify", ["experiment", "verify", "d"])
+step("freeze", ["experiment", "freeze", "d", "--force"])
+step("bundle-package", ["bundle", "package", "d",
+                        "--out", os.path.join(root, "d.tar.gz")])
+
+# 2. A study that DECLARES an SAE latent condition and never executes one.
+step("create-latent", ["experiment", "create", "s", "--model", "org/m"])
+step("attach-latent", ["experiment", "attach", "s", "french"])
+declare_latent("s", {_LATENT_CONDITION!r})
+step("verify-latent", ["experiment", "verify", "s"])
+step("freeze-latent", ["experiment", "freeze", "s", "--force"])
+step("bundle-package-latent", ["bundle", "package", "s",
+                               "--out", os.path.join(root, "s.tar.gz")])
+
+# 3. …and the validator still refuses a malformed one, from the light path.
+step("create-bad", ["experiment", "create", "b", "--model", "org/m"])
+step("attach-bad", ["experiment", "attach", "b", "french"])
+declare_latent("b", {_LATENT_CONDITION_WITH_A_TYPOD_MODE!r})
+# 65 = refused, in both modes: this client derives its exit code from
+# `state` (see the module docstring), so there is no human-mode variant.
+refusal["text"] = step("verify-bad", ["experiment", "verify", "b"], expect=65)
+
+# A marker, not `rindex("{{")`: this report is nested, so the last brace in
+# the stream is not the start of it.
+sys.__stderr__.write("\\n@REPORT@" + json.dumps(
+    {{"imports": report, "refusal": refusal}}))
 """
     proc = subprocess.run(
         [sys.executable, "-c", script], cwd=str(tmp_path), text=True,
         capture_output=True, check=False,
         env={**os.environ, "PYTHONPATH": SERVER_DIR})
     assert proc.returncode == 0, proc.stderr
-    report = json.loads(proc.stderr[proc.stderr.rindex("{"):])
+    observed = json.loads(
+        proc.stderr[proc.stderr.rindex("@REPORT@") + len("@REPORT@"):])
 
-    for label, pulled in report.items():
-        if label in _VERIFY_REACHING_VERBS:
-            continue
+    # The whole lifecycle, with nothing exempted. There is no second half any
+    # more: G7's exemption list is gone, not shortened.
+    for label, pulled in observed["imports"].items():
         assert pulled == [], f"`{label}` pulled: {', '.join(pulled)}"
+    for required in ("verify", "freeze", "bundle-package", "verify-latent",
+                     "freeze-latent", "bundle-package-latent", "verify-bad"):
+        assert required in observed["imports"], (
+            f"the guard stopped covering `{required}`")
 
-    # The gap, pinned as it is. Cumulative by construction: once `verify` has
-    # imported torch it stays imported, so `freeze` inherits it.
-    assert report["verify"] == ["torch"], (
-        "G7 moved: `experiment verify`'s heavy imports are now "
-        f"{report['verify']} — update docs/PORTABILITY-CONTRACTS.md")
-    assert report["freeze"] == ["torch"]
+    # The validator did its job in that light process — same refusal, same
+    # words, no tensors anywhere near it.
+    assert _UNKNOWN_MODE_REFUSAL in observed["refusal"]["text"], \
+        observed["refusal"]["text"]
 
 
 def test_the_console_script_is_declared_beside_the_engines(monkeypatch):

@@ -101,106 +101,36 @@ would let an injected offset move the SAE gate), and it is asserted by test.
 The residual stream is float (bf16/fp16) even for quantized models: the encode /
 edit / decode arithmetic runs in float32 and only the final delta is cast back to
 ``h.dtype``. Quantized weights are never touched.
+
+Schema half
+-----------
+
+The **declared** surface — ``ADD`` / ``CLAMP`` / ``MODES`` and the
+``SAELatentFeature`` / ``SAELatentEdit`` data classes — lives in
+:mod:`steerlab_server.steering.sae_latent_schema`, which imports no torch, and
+is re-exported here by name. Manifest validation needs that vocabulary and
+nothing else; this file needs tensors. See the schema module's docstring for
+why the two are separated (portability gap G7).
 """
 
 from __future__ import annotations
-
-import math
-from dataclasses import dataclass
 
 import torch
 
 from .injector import VectorInjector
 from .intervention import LayerIntervention
+# The declared surface — mode vocabulary and the two data classes — lives in a
+# torch-free module so that manifest VALIDATION (`experiment.sae_latent`, and
+# through it `Manifest.verify`) can reach it without importing the execution
+# stack this file sits on. Re-exported here by name, so every existing
+# `from .sae_latent import SAELatentEdit` (and the experiment-side imports)
+# keeps resolving exactly as before. The arrow points execution → schema and
+# never back: `sae_latent_schema` imports nothing from this module.
+from .sae_latent_schema import (ADD, CLAMP, MODES, SAELatentEdit,
+                                SAELatentFeature)
 
-#: Edit the pre-activation and re-evaluate the SAE's gate.
-ADD = "add"
-#: Set the post-activation latent to β, whatever the state.
-CLAMP = "clamp"
-#: The closed vocabulary. An unknown mode is refused at manifest validation —
-#: never defaulted, because every default here is a different experiment.
-MODES = (ADD, CLAMP)
-
-
-@dataclass(frozen=True)
-class SAELatentFeature:
-    """One feature's slice of an SAE: everything needed to encode and decode it.
-
-    Four numbers-and-vectors, no dictionary: a single-feature latent edit needs
-    the encoder column, its bias, its JumpReLU threshold, and the decoder row.
-    Loading them is a separate concern (the injectable loader seam in
-    :mod:`steerlab_server.experiment.gemma_scope`), so this class is pure data
-    and every test builds one by hand.
-    """
-
-    #: ``W_enc[:, f]`` — the encoder direction, length = model hidden size.
-    encoder_row: tuple[float, ...]
-    #: ``W_dec[f]`` — the decoder direction, length = model hidden size.
-    decoder_row: tuple[float, ...]
-    #: ``b_enc[f]``. When the SAE applies ``b_dec`` to its input, the exact
-    #: correction ``−b_dec · W_enc[:, f]`` is FOLDED IN here by the loader
-    #: (``pre = (h − b_dec)·w + b_enc`` = ``h·w + (b_enc − b_dec·w)``), so this
-    #: class never needs ``b_dec`` and the arithmetic stays a dot product plus
-    #: a scalar.
-    encoder_bias: float = 0.0
-    #: ``threshold[f]`` — the per-feature JumpReLU threshold (0.0 for a plain
-    #: ReLU SAE, which the loader stamps explicitly rather than assuming).
-    threshold: float = 0.0
-
-    def __post_init__(self) -> None:
-        # Any float sequence is accepted and normalized to a tuple: the rows
-        # come from a loader (list) or a test (list), and a frozen dataclass
-        # holding a mutable list is only nominally immutable.
-        object.__setattr__(self, "encoder_row",
-                           tuple(float(x) for x in self.encoder_row))
-        object.__setattr__(self, "decoder_row",
-                           tuple(float(x) for x in self.decoder_row))
-        object.__setattr__(self, "encoder_bias", float(self.encoder_bias))
-        object.__setattr__(self, "threshold", float(self.threshold))
-        if len(self.encoder_row) != len(self.decoder_row):
-            raise ValueError(
-                f"encoder row ({len(self.encoder_row)}) and decoder row "
-                f"({len(self.decoder_row)}) must both have the model's hidden "
-                f"size — this is not one feature of one SAE")
-        if not self.encoder_row:
-            raise ValueError("empty encoder/decoder rows")
-
-    @property
-    def hidden_size(self) -> int:
-        return len(self.encoder_row)
-
-
-@dataclass(frozen=True)
-class SAELatentEdit:
-    """One declared latent edit, with its feature already resolved.
-
-    ``label`` / ``source`` carry identity for error messages and record
-    provenance only; nothing in the arithmetic reads them.
-    """
-
-    layer: int
-    feature: SAELatentFeature
-    #: ``"add"`` or ``"clamp"`` — see the module docstring for exact semantics.
-    mode: str
-    #: The edit magnitude, in LATENT units (never α, never norm units).
-    beta: float
-    #: The feature's id in its dictionary (provenance / messages).
-    feature_id: int = -1
-    #: The researcher's construct label (provenance / messages).
-    label: str = ""
-
-    def __post_init__(self) -> None:
-        if self.mode not in MODES:
-            raise ValueError(
-                f"unknown SAE latent mode {self.mode!r} — expected one of "
-                f"{', '.join(MODES)}")
-        if not math.isfinite(self.beta):
-            raise ValueError(f"β must be finite, got {self.beta!r}")
-        if self.mode == CLAMP and self.beta < 0:
-            raise ValueError(
-                f"clamp β must be ≥ 0 (got {self.beta}): a JumpReLU latent is "
-                "non-negative by construction, so a negative clamp target is "
-                "outside the dictionary's range")
+__all__ = ["ADD", "CLAMP", "MODES", "SAELatentEdit", "SAELatentFeature",
+           "SAELatentIntervention", "group_edits"]
 
 
 class SAELatentIntervention(LayerIntervention):

@@ -35,9 +35,13 @@ constraint in the hashed bytes, it lets any reader (or a future Swift-side
 gate) refuse the block without understanding it, and it makes an unmarked
 latent condition impossible to author rather than merely discouraged.
 
-Everything here validates OFFLINE: no SAE weights, no HuggingFace, no network.
-:func:`materialize` is the one function that loads tensors, and it does so
-through the injectable seam in :mod:`steerlab_server.experiment.gemma_scope`.
+Everything here validates OFFLINE: no SAE weights, no HuggingFace, no network —
+and, since the G7 split, no torch either. The mode vocabulary and the two data
+classes come from :mod:`steerlab_server.steering.sae_latent_schema`, the
+torch-free half of the steering module, so importing this file for validation
+costs nothing beyond the standard library. :func:`materialize` is the one
+function that loads tensors, and it does so through the injectable seam in
+:mod:`steerlab_server.experiment.gemma_scope`, imported inside the function.
 """
 
 from __future__ import annotations
@@ -45,7 +49,13 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from ..steering.sae_latent import CLAMP, MODES, SAELatentEdit, SAELatentFeature
+# The SCHEMA half of the steering module, deliberately: this file validates a
+# manifest and must not drag the injector stack (and therefore torch) into
+# `Manifest.verify`. `sae_latent_schema` imports nothing heavy; the names are
+# the same objects `steering.sae_latent` re-exports, so `materialize` below
+# builds exactly what the intervention consumes.
+from ..steering.sae_latent_schema import (CLAMP, MODES, SAELatentEdit,
+                                          SAELatentFeature)
 
 #: Top-level manifest key holding the latent conditions.
 CONDITION_KEY = "saeLatentConditions"
