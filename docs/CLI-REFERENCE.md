@@ -93,6 +93,7 @@ What it is, in one table:
 | authors a workspace | **yes**, the local one | no — Mac-authority refusals, unchanged |
 | loads a model / executes verbs | no | yes |
 | talks to a runner | **yes** (`runner …`, Phase 2) | it *is* the runner |
+| starts a local runner | **yes** (`runner serve`, Phase 3 — it launches the engine) | — |
 | needs torch | no — the whole authoring lifecycle is torch-free | yes |
 
 ```bash
@@ -114,7 +115,8 @@ same exit codes, same `error.code` / `error.repairAction`. Verb families:
 `experiment` (create, attach, declare-condition, remove-condition,
 set-protocol, pin-revision, set-style-taxonomy, pin-sae-candidates, duplicate,
 verify, freeze, list), `concept import`, `bundle` (package, inspect, import),
-`runner` (below), plus `--version`. `steerlab <family> --help` prints the
+`runner` (below — including `runner serve`, which starts a managed local
+runner), plus `--version`. `steerlab <family> --help` prints the
 roster; the workspace comes from `--root` or `$STEERLAB_WORKSPACE` and there is
 **no default** — except for the `runner` family, which addresses a remote
 engine and names its local paths explicitly, so it runs without one (a named
@@ -123,7 +125,9 @@ workspace is still honoured and still reported in the envelope).
 #### The `runner` family (Phase 2)
 
 Handing a frozen study to an engine and bringing the evidence home. Every verb
-takes `--runner <url>`; none of them authors anything.
+that *addresses* a runner takes `--runner <url>`; none of them authors
+anything. (`runner serve`, added in Phase 3 and documented after this table,
+is the one that *becomes* a runner instead — it takes no `--runner`.)
 
 ```bash
 export STEERLAB_RUNNER_TOKEN=…                # or: --token-file <path>
@@ -150,6 +154,74 @@ steerlab bundle import <file.tar.gz> --sha256 <digest>   # the separate step
 
 Connection flags, identical on all six: `--runner <url>`, `--token-file
 <path>`, `--timeout <seconds>`, `--ca-bundle <path>`.
+
+#### `runner serve` — this machine as a managed local runner (Phase 3)
+
+```bash
+pipx install 'steerlab-server[runner]'    # client + engine, one distribution
+steerlab runner serve                     # loopback, token mode, foreground
+```
+
+`runner serve` is the one verb in the family that does **not** address a
+runner: it becomes one. It starts the engine's own service — `python -m
+steerlab_server.cli serve`, unchanged, as a subprocess on the same interpreter
+— on `127.0.0.1`, in **token mode always**, under a **runner-owned root**, and
+prints the URL, the token file's path, and the exact invocation that uses it:
+
+```
+runner: http://127.0.0.1:59640
+  runner root: ~/Library/Application Support/SteerLab/local-runner  (RUNNER-OWNED — not a workspace)
+  token file:  …/local-runner/runner.token  (minted; the VALUE is never printed)
+  reach it with:
+    steerlab runner capabilities --runner http://127.0.0.1:59640 --token-file …/runner.token
+```
+
+| | |
+|---|---|
+| flags | `--runner-root <dir>`, `--port <n>`, `--timeout <seconds>` — and deliberately no `--runner`, no token flag of any spelling, no `--host` |
+| bind | `127.0.0.1` only. Serving to a network is `steerlab-server serve`'s decision, where the posture refusals that gate a non-loopback bind live (§2.3) |
+| port | `--port <n>`, else a free ephemeral one, picked and printed. `--port` is **bind-tested before the engine starts**: a collision is a typed refusal naming the port, never a child that dies a moment after the parent claimed success |
+| auth | token mode, always. A 0600 token file is minted under the runner root (reused across restarts, announced if its mode is loose). The **value** is never printed or put in any document |
+| lifetime | foreground; v1 has no daemon management. ctrl-c (or SIGTERM) stops the engine too, with a one-line summary |
+| executor | `local`. An inherited `STEERLAB_EXECUTOR=slurm` cannot make a laptop sbatch |
+
+**The runner root, per platform** (override with `--runner-root <dir>`):
+
+| platform | default |
+|---|---|
+| macOS | `~/Library/Application Support/SteerLab/local-runner` |
+| Linux / BSD | `$XDG_DATA_HOME/steerlab/local-runner` (default `~/.local/share/steerlab/local-runner`) |
+| Windows | `%LOCALAPPDATA%\SteerLab\local-runner` |
+
+It holds `runner.token`, the artifact tree (`prompts/`, `experiments/`,
+`runs/`) and `.steerlab/` (the job database). All of it is a **cache**: delete
+the whole directory and nothing a workspace holds goes with it.
+
+**Why it is never your workspace.** Local and remote execution use the
+identical bundle round trip — upload → submit → evidence → import — and there
+is no privileged localhost path into the client workspace. So
+`runner serve --runner-root <a workspace>` is a **typed refusal**
+(`runnerRootIsWorkspace`), and so is nesting either way. A runner rooted in the
+workspace could read and write it directly, which no remote runner can do, and
+a study that "worked" against one would prove nothing about a study that has to
+travel. (The Mac app's local **workbench** — interactive serving of a live
+workspace — is a different service role and is unaffected.) The full ruling and
+the tests that pin it: `docs/PORTABILITY-CONTRACTS.md` §9.
+
+**`--json` is envelope-then-stream.** Because the verb finishes only when it is
+stopped, `--json` emits **one** startup envelope on stdout the moment the
+engine answers `/api/info` — `state: ready`, with `url`, `port`, `runnerRoot`,
+`tokenFile`, `tokenFilePresent`, `authMode`, `enginePID` — and everything after
+that is diagnostics on **stderr**, the engine's own log lines included. Every
+other verb's document is a completion envelope; this one's is a startup
+envelope, and the difference is why an agent can start a runner and use it in
+the same script.
+
+A light install (`pip install steerlab-server`, no extras) refuses this verb by
+name — `runnerExtraMissing`, with `pip install 'steerlab-server[runner]'` as
+the repair — **before** anything starts. Authoring, packaging and talking to a
+*remote* runner keep working without the extra; only serving one yourself needs
+it.
 
 Five traps worth knowing before you rely on it:
 

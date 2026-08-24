@@ -24,6 +24,18 @@ submits it, watches the job, and brings the evidence home verified
 listed there). It authors nothing, and no authoring verb grew a locator flag
 to reach it.
 
+**Phase 3 added ``runner serve``** — localhost as a MANAGED runner. It starts
+the engine's own service (``python -m steerlab_server.cli serve``, unchanged)
+on loopback in token mode, under a RUNNER-OWNED root that is never the client's
+workspace, and prints the URL and the token FILE's path. The ruling it
+implements: the bundle protocol binds BATCH execution, so a local runner and a
+cluster runner are reached the IDENTICAL way — upload → submit → evidence, with
+no privileged localhost path into the client workspace. (The app's local
+WORKBENCH, which serves a live workspace interactively, is the other service
+role and is untouched by any of this.) It is the one long-running verb here, so
+its document is a STARTUP envelope: one JSON value on stdout when the engine is
+ready, then diagnostics on stderr until it stops.
+
 **The token discipline, because it is the part that is easy to get wrong.**
 A runner in token mode wants a bearer token. This client takes it from
 ``$STEERLAB_RUNNER_TOKEN`` or ``--token-file <path>`` and from nowhere else —
@@ -236,6 +248,21 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
              value_flags=_RUNNER_FLAGS | frozenset({"--out", "--temp",
                                                     "--max-bytes"}),
              required_flags=frozenset({"--runner", "--out"})),
+
+    # --- runner serve (Phase 3) ---------------------------------------------
+    #
+    # The one verb in this family that does NOT address a runner: it BECOMES
+    # one, by starting the engine's own service on loopback under a
+    # RUNNER-OWNED root. It therefore declares none of `_RUNNER_FLAGS`'
+    # addressing surface (`--runner`, `--ca-bundle`) — there is nothing to
+    # address and no certificate to trust — and no token flag either: the
+    # token is MINTED here rather than presented, and its path is printed.
+    # `--timeout` keeps the family's "HOW LONG" meaning, narrowed to the one
+    # wait this verb has: how long the engine may take to answer /api/info.
+    VerbSpec("runner", "serve",
+             purpose="Serve this machine as a managed local runner on "
+                     "loopback.",
+             value_flags=frozenset({"--runner-root", "--port", "--timeout"})),
 )
 
 _SPECS_BY_LABEL = {spec.label: spec for spec in CLIENT_VERB_SPECS}
@@ -291,10 +318,12 @@ METAVARS: dict = {
     "--out": "<file>",
     "--parallel": "<n>",
     "--pool-from": "<token-index>",
+    "--port": "<n>",
     "--reference": "<stories-concept>",
     "--revision": "<commit>",
     "--root": "<dir>",
     "--runner": "<url>",
+    "--runner-root": "<dir>",
     "--set": "<key>=<json>",
     "--sha256": "<digest>",
     "--side": "<positive|negative>",
@@ -342,6 +371,22 @@ RUNNER_USAGE_CODE = "runnerUsage"
 #: `notFound` (the JOB was found) and not a failure (nothing broke): the run
 #: really has no bundle to bring home.
 NO_EVIDENCE_CODE = "evidenceNotPackaged"
+#: ``runner serve`` was pointed at the workspace it would have to stay out of
+#: (Phase 3, the two-roles rule). A refusal, and one that names the rule: a
+#: managed runner with a client workspace for a root is not a runner, it is
+#: the privileged local path the bundle protocol exists to forbid.
+RUNNER_ROOT_IS_WORKSPACE_CODE = "runnerRootIsWorkspace"
+#: ``runner serve`` on an install that carries the client but not the engine.
+#: Named BEFORE anything starts: a half-started service whose first request
+#: dies on `import fastapi` is a worse answer than a sentence naming the extra.
+RUNNER_EXTRA_MISSING_CODE = "runnerExtraMissing"
+#: The port ``runner serve`` was told to use is already listening. Refusal,
+#: not failure: something is there, and silently serving on a different port
+#: (or exiting with a traceback from uvicorn) are both worse.
+RUNNER_PORT_UNAVAILABLE_CODE = "runnerPortUnavailable"
+#: The engine process started and then died, or never answered ``/api/info``
+#: inside the deadline. An operational failure — nothing declined anything.
+RUNNER_START_FAILED_CODE = "runnerStartFailed"
 
 
 class ClientRefusal(Exception):
@@ -371,6 +416,24 @@ class ClientRefusal(Exception):
         self.payload = dict(payload or {})
 
 
+class ServeCompleted(Exception):
+    """``runner serve`` already emitted its document and has now stopped.
+
+    The envelope-then-stream shape (``PORTABILITY-CONTRACTS`` §9.4) needs a
+    way to say
+    "the document is gone, do not write a second one": every other verb
+    RETURNS a :class:`CLIResult` that :func:`main` turns into exactly one
+    envelope, but this one emits a STARTUP envelope and then serves for as
+    long as the operator leaves it running. Raising is how it returns without
+    re-entering that path — caught in :func:`main` above the blanket handler,
+    where it becomes the process exit code and nothing else.
+    """
+
+    def __init__(self, exit_code: int) -> None:
+        super().__init__(f"runner serve finished with {exit_code}")
+        self.exit_code = exit_code
+
+
 # --- parsing -------------------------------------------------------------------
 
 
@@ -393,6 +456,15 @@ class Invocation:
         self.json = json
         self.out_path = out_path
         self.help = help
+        #: The REAL stdout, kept for the one verb whose document is a STARTUP
+        #: envelope rather than a completion envelope (``runner serve``).
+        #: Every other verb lets :func:`main` emit for it after the handler
+        #: returns; a verb that never returns while it is working has to emit
+        #: mid-flight, and under ``--json`` ``sys.stdout`` is pointed at
+        #: stderr by then. Set by :func:`main` before dispatch; ``None``
+        #: everywhere else, including in tests that build an Invocation by
+        #: hand.
+        self.document_stream = None
 
     @property
     def label(self) -> str:
@@ -614,6 +686,10 @@ def help_text(family: str | None = None, verb: str | None = None) -> str:
         f"bearer token from",
         f"${RUNNER_TOKEN_ENV} or --token-file <path> — never from a flag "
         "(argv is public).",
+        f"`{RUNNER_FAMILY} serve` is the exception: it BECOMES a runner "
+        "(loopback, token mode,",
+        "a runner-owned root that is never your workspace) and prints the "
+        "URL and token path.",
         "",
     ]
     for name in FAMILIES:
@@ -1291,6 +1367,556 @@ def _job_row(record: dict) -> dict:
             "cancellationRequested": record.get("cancellationRequested")}
 
 
+# --- runner serve: localhost as a MANAGED runner (Phase 3) ---------------------
+#
+# The ruling this implements, recorded because the code below only makes sense
+# under it: **the bundle protocol binds BATCH execution.** A local runner and a
+# cluster runner must be reached the same way — upload → submit → evidence,
+# every hop hash-pinned — and there is deliberately NO privileged localhost
+# shortcut into the client's workspace. The app's local WORKBENCH (interactive
+# serving of a live workspace) is the OTHER service role and is untouched by
+# any of this: it serves the workspace on purpose, and it is not a runner.
+#
+# Everything else here follows from that one sentence. A managed runner gets a
+# RUNNER-OWNED root; `STEERLAB_ROOT` is never allowed to name the client's
+# workspace; and the four other root variables are set explicitly rather than
+# inherited, because an ambient `STEERLAB_RUN_ROOT` from the operator's shell
+# would put the runner's staging back inside the tree it must stay out of.
+
+#: The directory name every platform's runner root ends with.
+LOCAL_RUNNER_DIRECTORY = "local-runner"
+
+#: The bearer token the managed runner mints for itself, under its own root.
+#: Never the engine's ``~/.steerlab-token``: that file is the token of
+#: whatever server the operator runs by hand, and a managed runner that
+#: adopted it would hand its socket to anyone holding the other one.
+RUNNER_TOKEN_FILENAME = "runner.token"
+
+#: How long ``runner serve`` waits for the engine to answer ``/api/info``
+#: before it gives up and reports what the process did. Generous: a cold
+#: import of the engine stack on a laptop is seconds, and on a loaded machine
+#: it is more.
+SERVE_READY_DEADLINE = 90.0
+
+#: What the engine must import to serve at all. Probed with ``find_spec``,
+#: which resolves the name WITHOUT executing the module — so the light-install
+#: guarantee survives the check that reports the light install.
+RUNNER_EXTRA_MODULES = ("fastapi", "uvicorn")
+
+
+def default_runner_root() -> str:
+    """The runner-owned root for this platform.
+
+    Per-platform convention rather than a dotfile in ``$HOME``, and a small
+    internal helper rather than a dependency: the whole need is three
+    ``os.path.join`` calls, and `platformdirs` in the CLIENT's dependency set
+    would have to be justified to every packager for the rest of the project's
+    life.
+
+    - macOS: ``~/Library/Application Support/SteerLab/local-runner``
+    - Linux/BSD: ``$XDG_DATA_HOME/steerlab/local-runner`` (default
+      ``~/.local/share/steerlab/local-runner``)
+    - Windows: ``%LOCALAPPDATA%\\SteerLab\\local-runner``
+
+    Note what is NOT here: the current directory, ``$STEERLAB_WORKSPACE``, and
+    ``$STEERLAB_ROOT``. The default must never be a tree the client authors —
+    see :func:`_refuse_workspace_as_runner_root`.
+    """
+    if sys.platform == "darwin":
+        return os.path.join(os.path.expanduser("~"), "Library",
+                            "Application Support", "SteerLab",
+                            LOCAL_RUNNER_DIRECTORY)
+    if os.name == "nt":
+        base = (os.environ.get("LOCALAPPDATA") or "").strip() or \
+            os.path.join(os.path.expanduser("~"), "AppData", "Local")
+        return os.path.join(base, "SteerLab", LOCAL_RUNNER_DIRECTORY)
+    base = (os.environ.get("XDG_DATA_HOME") or "").strip() or \
+        os.path.join(os.path.expanduser("~"), ".local", "share")
+    return os.path.join(base, "steerlab", LOCAL_RUNNER_DIRECTORY)
+
+
+def _contains(outer: str, inner: str) -> bool:
+    """True when ``inner`` is ``outer`` or lives under it. Path-component
+    comparison, not ``startswith``: ``/tmp/ws-2`` is not inside ``/tmp/ws``."""
+    outer = os.path.normpath(outer)
+    inner = os.path.normpath(inner)
+    return inner == outer or inner.startswith(outer + os.sep)
+
+
+def _refuse_workspace_as_runner_root(runner_root: str) -> None:
+    """The two-roles rule, enforced where it is cheapest to enforce.
+
+    A workspace is named on this invocation (``--root`` / ``$STEERLAB_WORKSPACE``
+    — ``resolve_workspace`` exported it as ``STEERLAB_ROOT``) and the runner
+    root would be that same tree, or nested with it either way. Refuse, and
+    say WHY rather than just that: pointing the engine at the client workspace
+    is exactly the privileged local path the bundle protocol exists to
+    forbid, and the value of a local runner is that it proves the remote path
+    works, which it cannot do if it takes a shortcut no remote runner has.
+    """
+    workspace = (os.environ.get("STEERLAB_ROOT") or "").strip()
+    if not workspace:
+        return
+    workspace = os.path.realpath(workspace)
+    if not (_contains(workspace, runner_root)
+            or _contains(runner_root, workspace)):
+        return
+    same = os.path.normpath(workspace) == os.path.normpath(runner_root)
+    raise ClientRefusal(
+        code=RUNNER_ROOT_IS_WORKSPACE_CODE, state="refused",
+        reason=(
+            f"the runner root {runner_root!r} "
+            + ("IS this client's workspace"
+               if same else f"is nested with this client's workspace "
+                            f"{workspace!r}")
+            + " — a managed runner owns its root, and it may not own yours. "
+              "Local and remote execution use the IDENTICAL bundle round trip "
+              "(upload → submit → evidence); a runner rooted in the workspace "
+              "would be a privileged local shortcut that no remote runner has, "
+              "so a study that worked here would prove nothing about one that "
+              "has to travel"),
+        repair_action=(
+            f"{PROGRAM} runner serve  (the runner-owned default: "
+            f"{default_runner_root()}) — or --runner-root <dir> naming a "
+            "directory OUTSIDE every workspace. The runner's copies are a "
+            "cache; your workspace keeps only what `bundle import` puts there"))
+
+
+def _require_runner_extra() -> None:
+    """Refuse a light install BEFORE anything starts.
+
+    ``find_spec`` resolves the name without executing the module, so this
+    check does not itself import the engine stack into a client process — the
+    §7 light-install guarantee is not spent to report that it holds.
+    """
+    import importlib.util
+
+    missing = [name for name in RUNNER_EXTRA_MODULES
+               if importlib.util.find_spec(name) is None]
+    if not missing:
+        return
+    raise ClientRefusal(
+        code=RUNNER_EXTRA_MISSING_CODE, state="refused",
+        reason=(f"this install carries the client but not the engine "
+                f"({', '.join(missing)} missing) — `runner serve` starts the "
+                "ENGINE, which is what the `runner` extra installs"),
+        repair_action=(
+            "pip install 'steerlab-server[runner]'  (from a checkout: "
+            "pip install -e \"Server[runner]\") — then re-run. Authoring, "
+            "packaging and talking to a REMOTE runner all keep working "
+            "without it; only serving one yourself needs it"))
+
+
+def _runner_root_layout(runner_root: str) -> dict:
+    """Create the runner-owned tree and return the paths that name it.
+
+    ``prompts/`` and ``experiments/`` exist so the engine's serve-time
+    "artifact root has no prompts or experiments" warning does not fire on a
+    root that is legitimately empty; ``runs/`` is where uploads stage and
+    evidence is packaged; ``.steerlab/`` is the metadata root that holds the
+    durable job database. Every one of them is INSIDE the runner root, which
+    is the property assertion (b) of the acceptance test deletes to prove.
+    """
+    for name in ("prompts", "experiments", "runs"):
+        os.makedirs(os.path.join(runner_root, name), exist_ok=True)
+    metadata = os.path.join(runner_root, ".steerlab")
+    os.makedirs(metadata, mode=0o700, exist_ok=True)
+    return {"root": runner_root, "runs": os.path.join(runner_root, "runs"),
+            "metadata": metadata,
+            "jobsDatabase": os.path.join(metadata, "jobs.sqlite"),
+            "tokenFile": os.path.join(runner_root, RUNNER_TOKEN_FILENAME)}
+
+
+def _mint_runner_token(path: str) -> bool:
+    """Ensure a 0600 token file at ``path``. Returns True when it was minted.
+
+    Reused when it is already there — restarting a runner must not invalidate
+    the credential the operator already put in a shell or a script. The VALUE
+    is never read here and never printed anywhere: the engine hydrates it from
+    the same file, and the client verbs read it with ``--token-file``.
+    """
+    import secrets
+    import stat as _stat
+
+    if os.path.isfile(path):
+        try:
+            mode = _stat.S_IMODE(os.stat(path).st_mode)
+            if mode & 0o077:
+                sys.stderr.write(
+                    f"warning: runner token file {path} is mode {mode:04o} — "
+                    "other users on this machine can read it "
+                    f"(repair: chmod 600 {path})\n")
+        except OSError:      # pragma: no cover - stat of a file we just saw
+            pass
+        return False
+    # O_EXCL, and 0600 at creation rather than a chmod afterwards: a token
+    # that is world-readable for even one syscall is a token that leaked.
+    handle_fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+        handle.write(secrets.token_urlsafe(32) + "\n")
+    return True
+
+
+def _claim_port(requested: str | None) -> int:
+    """The port to serve on: the one asked for, or a free ephemeral one.
+
+    An explicit ``--port`` is BOUND-TESTED first, so "something is already
+    listening there" is a typed refusal from this process rather than a
+    uvicorn traceback from a child that exits half a second later. The
+    ephemeral case asks the kernel for a free port and closes it again —
+    a window another process could theoretically take, which the deadline
+    below turns into an honest failure rather than a silent wrong port.
+    """
+    import socket
+
+    if requested is None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return int(sock.getsockname()[1])
+    try:
+        port = int(requested)
+    except ValueError:
+        port = -1
+    if not 1 <= port <= 65535:
+        raise ClientRefusal(
+            code=USAGE_CODE,
+            reason=f"--port expects a TCP port between 1 and 65535 — got "
+                   f"{requested!r}",
+            repair_action="--port 8080, or drop the flag for a free one")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError as exc:
+            raise ClientRefusal(
+                code=RUNNER_PORT_UNAVAILABLE_CODE, state="refused",
+                reason=(f"127.0.0.1:{port} is not available ({exc.strerror}) "
+                        "— something is already listening there, quite "
+                        "possibly a runner you started earlier"),
+                repair_action=(
+                    f"{PROGRAM} runner capabilities --runner "
+                    f"http://127.0.0.1:{port} …  (ask what it is), or re-run "
+                    "without --port and this verb picks a free one and prints "
+                    "it")) from None
+    return port
+
+
+def _runner_environment(layout: dict, host: str) -> dict:
+    """The child engine's environment, built rather than inherited.
+
+    Every variable here is SET, not defaulted, and the reason is the two-roles
+    rule: `STEERLAB_ROOT` decides what the engine calls its workspace, and the
+    other three decide where its runs, its metadata and its job database land.
+    An operator's shell that exports any of them — pointing at the study they
+    were authoring five minutes ago — would otherwise reach straight through
+    this verb and put the runner's cache inside the client's tree.
+
+    The auth posture is likewise explicit (WP-S token mode, hydrated from the
+    minted file), and `STEERLAB_AUTH_TOKEN` is REMOVED: an inherited value
+    would silently outrank the file whose path this verb prints, so the
+    printed path would name a credential that does not work.
+    """
+    env = {**os.environ,
+           "STEERLAB_ROOT": layout["root"],
+           "STEERLAB_RUN_ROOT": layout["runs"],
+           "STEERLAB_METADATA_ROOT": layout["metadata"],
+           "STEERLAB_JOBS_DB": layout["jobsDatabase"],
+           # Loopback, always. A managed local runner has no reason to accept
+           # a connection from the network, and `--host` is deliberately not
+           # a flag on this verb: opening a socket to the world is the
+           # engine's own decision to make, through `steerlab-server serve`,
+           # where the posture refusals are written for it.
+           "STEERLAB_BIND": host,
+           "STEERLAB_AUTH_MODE": "token",
+           "STEERLAB_AUTH_TOKEN_FILE": layout["tokenFile"],
+           # A managed LOCAL runner executes locally by definition. Inheriting
+           # `STEERLAB_EXECUTOR=slurm` from a cluster shell would make every
+           # submission try to sbatch from a laptop.
+           "STEERLAB_EXECUTOR": "local"}
+    for name in ("STEERLAB_AUTH_TOKEN", "STEERLAB_DEV_OPEN_LOOPBACK"):
+        env.pop(name, None)
+    return env
+
+
+def _pump(stream, sink) -> None:      # pragma: no cover - thread body
+    """Forward the engine's output to ``sink``, line by line.
+
+    A PIPE plus a thread rather than handing the child our own stderr: under
+    ``--json`` this process' ``sys.stdout`` is a Python-level swap, not a
+    ``dup2``, so a child inheriting fd 1 would write its log lines into the
+    document stream — the one stream that must carry exactly one JSON value.
+    Pumping puts every engine line on stderr in BOTH modes, which is what the
+    envelope-then-stream contract promises.
+    """
+    try:
+        for line in stream:
+            sink.write(line if line.endswith("\n") else line + "\n")
+            sink.flush()
+    except (ValueError, OSError):
+        pass
+
+
+def _await_engine(port: int, process, *, deadline: float, host: str) -> None:
+    """Poll ``GET /api/info`` until the engine answers, or raise.
+
+    ``http.client``, not httpx: the readiness probe is one unauthenticated GET
+    against a loopback socket, and doing it from the standard library keeps
+    ``runner serve`` free of even the client's own third-party dependency.
+
+    ANY HTTP status counts as ready, 401 included — in token mode an
+    unauthenticated ``/api/info`` is *supposed* to be refused, and a probe that
+    demanded 200 would have to hold the bearer token to ask. The question here
+    is "is a SteerLab engine answering on this socket", and a refusal answers
+    it.
+
+    A deadline and a poll, never a sleep, and the child is watched for early
+    exit while polling — the pattern ``test_client_runner.py::_wait_for_runner``
+    established, for the same reason: a fixed sleep is either flaky or slow,
+    and it cannot notice that the process it is waiting for is already dead.
+    """
+    import http.client
+    import time
+
+    limit = time.monotonic() + deadline
+    last = "no answer yet"
+    while time.monotonic() < limit:
+        if process.poll() is not None:
+            raise ClientRefusal(
+                code=RUNNER_START_FAILED_CODE, state="failed",
+                reason=(f"the engine exited with {process.returncode} before "
+                        f"it served on {host}:{port} — its output is above, "
+                        "on stderr"),
+                repair_action=(
+                    "read the engine's own lines above: a posture refusal is "
+                    "exit 64 and names the variable, a port collision names "
+                    "the address, and an import error names the package. "
+                    f"`{PROGRAM} runner serve --port <n>` picks a different "
+                    "socket"))
+        connection = http.client.HTTPConnection(host, port, timeout=2.0)
+        try:
+            connection.request("GET", "/api/info")
+            connection.getresponse().read()
+            return
+        except OSError as exc:
+            last = str(exc)
+        finally:
+            connection.close()
+        time.sleep(0.1)
+    raise ClientRefusal(
+        code=RUNNER_START_FAILED_CODE, state="failed",
+        reason=(f"the engine did not answer http://{host}:{port}/api/info "
+                f"within {deadline:g}s (last error: {last})"),
+        repair_action=("give it longer with --timeout <seconds>, or read the "
+                       "engine's lines above — it is still running and will "
+                       "be stopped now"))
+
+
+class _StopSignals:
+    """Make SIGINT **and** SIGTERM stop the wait, so the engine cannot outlive
+    this verb.
+
+    Two holes this closes, both of which leave an orphaned server listening on
+    a port nobody remembers minting a token for:
+
+    - a SIGINT this process *inherited as ignored* (every shell puts a
+      background job's SIGINT at ``SIG_IGN``, and CPython leaves an inherited
+      ignore alone) would never raise ``KeyboardInterrupt`` at all;
+    - a SIGTERM — from ``kill``, from a supervisor, from a test's
+      ``terminate()`` — kills this process outright by default, and the child
+      it started keeps running with no parent to stop it.
+
+    Raising ``KeyboardInterrupt`` from the handler is deliberate: the wait
+    below is already written to treat that as "stop cleanly", and the one
+    stopping path is easier to reason about than two. Handlers are restored on
+    the way out, and a non-main thread (where ``signal.signal`` is illegal) is
+    tolerated rather than fatal — the verb still works there, it just cannot
+    improve on the interpreter's default.
+    """
+
+    NAMES = ("SIGINT", "SIGTERM")
+
+    def __init__(self) -> None:
+        self._previous: list = []
+
+    def __enter__(self):
+        import signal
+
+        def handler(signum, _frame):      # pragma: no cover - signal delivery
+            raise KeyboardInterrupt(f"stopped by signal {signum}")
+
+        for name in self.NAMES:
+            number = getattr(signal, name, None)
+            if number is None:            # pragma: no cover - POSIX has both
+                continue
+            try:
+                self._previous.append((number, signal.signal(number, handler)))
+            except (ValueError, OSError):  # pragma: no cover - not main thread
+                pass
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        import signal
+        for number, previous in self._previous:
+            try:
+                signal.signal(number, previous)
+            except (ValueError, OSError):  # pragma: no cover
+                pass
+        return False
+
+
+def _stop_engine(process) -> int:
+    """Terminate, then kill. Returns the child's exit status."""
+    if process.poll() is not None:
+        return int(process.returncode)
+    process.terminate()
+    try:
+        process.wait(timeout=20)
+    except Exception:      # pragma: no cover - a child that ignores SIGTERM
+        process.kill()
+        try:
+            process.wait(timeout=20)
+        except Exception:
+            pass
+    return int(process.returncode or 0)
+
+
+def _runner_serve(invocation: Invocation) -> CLIResult:
+    """``steerlab runner serve`` — this machine, as a managed local runner.
+
+    **Subprocess, not an in-process call**, and the choice is load-bearing
+    rather than a matter of taste:
+
+    1. The engine's ``cli._serve`` resolves the WP-S posture by MUTATING the
+       process environment — it exports ``STEERLAB_AUTH_MODE`` and hydrates
+       ``STEERLAB_AUTH_TOKEN`` — and then reads its artifact root from
+       ``STEERLAB_ROOT``. In this process ``STEERLAB_ROOT`` may already name
+       the CLIENT's workspace (``resolve_workspace`` exports it), so an
+       in-process serve would have to unset and re-set the very variable the
+       two-roles rule turns on. A child gets an environment BUILT for it
+       (:func:`_runner_environment`), and the rule holds by construction
+       instead of by discipline.
+    2. It would hydrate a bearer token into the client's own environment,
+       where every later verb in that shell inherits it.
+    3. ``uvicorn.run`` installs signal handlers and does not return, so the
+       client would have no process of its own left to stop cleanly with.
+    4. It would import fastapi/uvicorn into the client process, and the
+       light-import contract (§7, §8.6) is measured on exactly that.
+
+    What the child runs is ``python -m steerlab_server.cli serve`` — the same
+    entry point an operator types, on the same interpreter this client runs
+    on, with no argument that does not exist today. The engine's behaviour is
+    untouched by this phase; all this verb does is choose the root, mint the
+    token, pick the port, and wait.
+    """
+    import subprocess
+    import threading
+    import time
+
+    if invocation.positionals:
+        raise ClientRefusal(
+            code=USAGE_CODE,
+            reason=(f"runner serve takes no positional arguments — got "
+                    f"{invocation.positionals[0]!r}"),
+            repair_action=f"{PROGRAM} {synopsis(invocation.spec)}")
+
+    _require_runner_extra()
+
+    raw_root = invocation.one("--runner-root")
+    runner_root = os.path.realpath(os.path.abspath(os.path.expanduser(
+        raw_root if raw_root else default_runner_root())))
+    _refuse_workspace_as_runner_root(runner_root)
+
+    # Everything that can REFUSE happens before anything that can WRITE: a
+    # busy port or a malformed timeout must not leave a half-made runner root
+    # and a freshly minted credential behind for a run that never started.
+    host = "127.0.0.1"
+    port = _claim_port(invocation.one("--port"))
+    deadline = _runner_float(invocation, "--timeout", SERVE_READY_DEADLINE)
+    url = f"http://{host}:{port}"
+
+    os.makedirs(runner_root, exist_ok=True)
+    layout = _runner_root_layout(runner_root)
+    minted = _mint_runner_token(layout["tokenFile"])
+
+    process = subprocess.Popen(
+        [sys.executable, "-m", "steerlab_server.cli", "serve",
+         "--host", host, "--port", str(port)],
+        env=_runner_environment(layout, host), cwd=runner_root,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        bufsize=1)
+    threading.Thread(target=_pump, args=(process.stdout, sys.stderr),
+                     daemon=True).start()
+
+    started = time.monotonic()
+    try:
+        _await_engine(port, process, deadline=deadline, host=host)
+    except BaseException:
+        _stop_engine(process)
+        raise
+
+    # The human banner. Under `--json` `sys.stdout` IS stderr (main's
+    # `_StdoutToStderr`), so these lines join the diagnostics and the document
+    # stream stays clean; in human mode they are the output.
+    print(f"runner: {url}")
+    print(f"  runner root: {runner_root}  (RUNNER-OWNED — not a workspace)")
+    print(f"  token file:  {layout['tokenFile']}  "
+          f"({'minted' if minted else 'reused'}; the VALUE is never printed)")
+    print("  reach it with:")
+    print(f"    {PROGRAM} runner capabilities --runner {url} "
+          f"--token-file {layout['tokenFile']}")
+    print("  ctrl-c stops it. Evidence comes home through `runner evidence` +")
+    print("  `bundle import` — the same round trip a cluster runner uses.")
+
+    document = envelope.success(
+        invocation.label, f"managed local runner serving on {url}",
+        result={"url": url, "host": host, "port": port,
+                "runnerRoot": runner_root,
+                "runnerRootIsDefault": not raw_root,
+                # PRESENCE, never the value — the same rule every other
+                # runner verb's `tokenPresent` follows.
+                "tokenFilePresent": True,
+                "tokenFile": layout["tokenFile"],
+                "tokenFileMinted": minted,
+                "authMode": "token",
+                "executor": "local",
+                "runsDirectory": layout["runs"],
+                "metadataRoot": layout["metadata"],
+                "enginePID": process.pid},
+        next_action_=envelope.next_action(
+            f"runner capabilities --runner {url} --token-file "
+            f"{layout['tokenFile']}",
+            detail=("this document is a STARTUP envelope: the verb keeps "
+                    "serving after it, with every further line on stderr")))
+    envelope.emit(document, json_mode=invocation.json,
+                  out_path=invocation.out_path,
+                  stream=invocation.document_stream or sys.__stdout__)
+    # Flushed HERE, deliberately: a caller that launched this verb to use the
+    # runner is blocked until the document arrives, and a buffered stdout on a
+    # pipe would hold it until the process exits — which is never, on purpose.
+    try:
+        (invocation.document_stream or sys.__stdout__).flush()
+    except (ValueError, OSError):      # pragma: no cover - closed stream
+        pass
+
+    stopped_by_signal = False
+    with _StopSignals():
+        try:
+            code = process.wait()
+        except KeyboardInterrupt:
+            # ctrl-c at a terminal reaches the child too (shared process
+            # group); a `kill` to this process alone does not, and neither
+            # does the SIGTERM a supervisor sends. `_stop_engine` covers all
+            # three, so the engine can never outlive the verb that started it.
+            stopped_by_signal = True
+            code = _stop_engine(process)
+    elapsed = time.monotonic() - started
+    sys.stderr.write(
+        f"{PROGRAM} runner serve: stopped after {elapsed:.0f}s "
+        f"({'interrupted' if stopped_by_signal else f'engine exited {code}'})"
+        f" — runner root {runner_root} kept; nothing was written to a "
+        "workspace\n")
+    raise ServeCompleted(0 if stopped_by_signal or code == 0 else 70)
+
+
 def _runner(invocation: Invocation) -> CLIResult:
     """The runner verbs. Every call is a route that already exists in
     ``api/routes.py``; :mod:`steerlab_server.client.runner` holds the mapping
@@ -1300,6 +1926,12 @@ def _runner(invocation: Invocation) -> CLIResult:
     token in a document.** ``common`` below is what every payload starts from,
     and the only thing it says about the credential is whether there was one.
     """
+    # `serve` BECOMES a runner rather than addressing one: it takes no
+    # `--runner`, presents no token (it mints one), and needs no adapter — so
+    # it is dispatched above every line below, including the httpx import.
+    if invocation.spec.verb == "serve":
+        return _runner_serve(invocation)
+
     from .client import runner as runner_api
 
     spec = invocation.spec
@@ -1842,9 +2474,16 @@ def main(argv: list | None = None) -> int:
             if not (family in WORKSPACE_OPTIONAL_FAMILIES
                     and workspace_exc.code == WORKSPACE_UNSET_CODE):
                 raise
+        invocation.document_stream = document_stream
         with envelope._StdoutToStderr() if invocation.json else _NullContext():
             outcome = HANDLERS[family](invocation)
         document = _envelope_for_result(label, outcome)
+    except ServeCompleted as served:
+        # `runner serve` emitted a STARTUP envelope before it started serving
+        # and has now stopped. Its document is already on the stream; a second
+        # one here would break the one-document rule the whole surface rests
+        # on. Caught ABOVE the blanket handler for exactly that reason.
+        return served.exit_code
     except Exception as exc:    # noqa: BLE001 — every throw becomes a document
         document = _envelope_for_exception(label, exc)
     return _emit(document, invocation.json, invocation.out_path,

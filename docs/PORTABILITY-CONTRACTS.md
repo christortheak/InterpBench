@@ -1,7 +1,7 @@
 # Portability Contracts
 
 **Phase-0 deliverable of the portability program**, extended by **Phase 1a**,
-**Phase 1b** (§7) and **Phase 2** (§8).
+**Phase 1b** (§7), **Phase 2** (§8) and **Phase 3** (§9).
 Phase 0 changed no production behaviour: its entire output was this page plus
 the golden tests it indexes — a record of what the two engines promise each
 other, so a later phase that breaks one of those promises fails a test instead
@@ -610,6 +610,9 @@ G7 was closed afterwards, as engine work, and §5 records it.
   them into one verb — with the waiting policy, the resume-after-disconnect
   question, and the decision about when a client may import on its own — is
   **Phase 5**, and it wants the pieces below it to be boring first.
+- **No runner of its own.** Phase 2's client can talk to a runner and cannot
+  *be* one; every test that needed a live engine launched `steerlab-server`
+  itself. **Delivered: §9.**
 - **No auto-import.** See `download-is-not-import` above.
 - **No new or versioned endpoints, and no server behaviour change.** The engine
   and `steerlab-server` are byte-identical after this phase.
@@ -630,3 +633,226 @@ the file, so the parse now lets a verb's **declaration win** over the global
 flag. Those two verbs' envelopes still travel on stdout under `--json`; they
 simply have no second spelling for “write the document to a file”. Pinned by
 `test_client_runner.py::test_out_belongs_to_the_verb_that_declares_it`.
+
+---
+
+## 9. Phase 3 — localhost as a MANAGED runner
+
+Phase 2 gave the client a runner to talk to and no way to have one. Phase 3 is
+the runner a person has on the machine in front of them:
+
+```bash
+steerlab runner serve                    # loopback, token mode, a root of its own
+```
+
+One new verb, one new test file, and **no change to the engine**: what
+`runner serve` starts is `python -m steerlab_server.cli serve` — the same entry
+point an operator types, with no argument that did not already exist.
+
+- `Server/steerlab_server/client_cli.py` — the `runner serve` verb and its
+  helpers (`default_runner_root`, `_runner_environment`, `_mint_runner_token`,
+  `_claim_port`, `_await_engine`).
+- `Server/tests/test_local_runner.py` — the acceptance test below.
+
+### 9.1 The ruling: two service roles
+
+**The bundle protocol binds BATCH execution.** Local and remote runners are
+reached the IDENTICAL way — upload → submit → evidence → import, every hop
+hash-pinned — and there is **no privileged localhost path into the client
+workspace**. A managed runner therefore gets a **runner-owned root**, and
+`STEERLAB_ROOT` is never allowed to name the workspace the client authors.
+
+The app's local **workbench** — interactive serving of a live workspace, which
+is what the Mac app has always done — is the *other* service role, and this
+phase does not touch it. It serves the workspace on purpose; it is not a
+runner, and nothing about it is batch execution.
+
+The reason the rule is worth a refusal rather than a convention: a runner
+rooted in the workspace could read and write that tree directly, which no
+remote runner can do. A study that "worked" against such a runner would prove
+nothing about one that has to travel — and the round trip everything else in
+this document pins would become optional in practice, which is how it stops
+being tested.
+
+| Contract | Guarantees | Pinned by |
+|---|---|---|
+| **runner-root-is-not-the-workspace** | `runner serve --runner-root <the workspace>` is a typed refusal (`runnerRootIsWorkspace`, 65) naming the rule and the repair — for the workspace named by `--root` **or** `$STEERLAB_WORKSPACE`, and for nesting in **either** direction. Containment, not string prefix: `/tmp/ws-runner` is a legal root beside `/tmp/ws`. Nothing is created before it refuses. | `test_local_runner.py::test_serving_the_client_workspace_as_the_runner_root_is_refused`, `::test_a_sibling_of_the_workspace_is_a_legal_runner_root` |
+| **the-engine-root-is-the-runner-root** | The engine's own `GET /api/info` reports the runner root, asked over the wire rather than assumed. | `::test_the_whole_round_trip_runs_against_a_managed_local_runner` (assertion (c)) |
+| **the-runner-root-is-disposable** | After the round trip, **deleting the entire runner root removes nothing the client workspace holds** — the imported run's bytes are re-hashed with the runner root gone. What the runner keeps is a cache; what the workspace keeps came home through `bundle import`. | same test, assertion (b) |
+| **no-ambient-redirection** | The child engine's environment is BUILT, not inherited: `STEERLAB_ROOT`, `STEERLAB_RUN_ROOT`, `STEERLAB_METADATA_ROOT` and `STEERLAB_JOBS_DB` are set to runner-root paths, `STEERLAB_AUTH_MODE=token` + `STEERLAB_AUTH_TOKEN_FILE` are declared, `STEERLAB_EXECUTOR=local`, `STEERLAB_BIND=127.0.0.1`, and `STEERLAB_AUTH_TOKEN` / `STEERLAB_DEV_OPEN_LOOPBACK` are **removed**. A shell that exports `STEERLAB_ROOT` — the commonest thing a SteerLab user has in theirs — cannot reach through the verb and put the runner's staging in the workspace it names. | `::test_the_engine_environment_is_built_rather_than_inherited` |
+
+### 9.2 The runner root, per platform
+
+Derived by a small internal helper (`client_cli.default_runner_root`), not a
+new dependency: the whole need is three `os.path.join` calls, and
+`platformdirs` in the **client's** dependency set would have to be justified to
+every packager for the rest of the project's life.
+
+| platform | default runner root |
+|---|---|
+| macOS | `~/Library/Application Support/SteerLab/local-runner` |
+| Linux / BSD | `$XDG_DATA_HOME/steerlab/local-runner` (default `~/.local/share/steerlab/local-runner`) |
+| Windows | `%LOCALAPPDATA%\SteerLab\local-runner` |
+
+`--runner-root <dir>` overrides it. What is deliberately **not** in that table:
+the current directory, `$STEERLAB_WORKSPACE`, and `$STEERLAB_ROOT` — the value
+of the default is that a person who types `steerlab runner serve` while
+standing in their workspace does not thereby serve it.
+
+Inside, all of it runner-owned and all of it disposable:
+
+```
+<runner-root>/
+  runner.token        # 0600, minted here — never the engine's ~/.steerlab-token
+  prompts/  experiments/  runs/     # the artifact tree (STEERLAB_ROOT)
+  .steerlab/                        # metadata root: the durable job database
+```
+
+`runs/` is where uploads stage (`runs/<stamp>-uploaded-bundle/`), where
+submissions record themselves (`runs/<stamp>-submit-bundle-…/`), and where
+evidence is packaged. `prompts/` and `experiments/` exist so the engine's
+serve-time "artifact root has no prompts or experiments" warning does not fire
+on a root that is legitimately empty.
+
+**Token discipline, from the other side of the wire.** Token mode, always, and
+the token is *minted* rather than presented: a 0600 file under the runner root,
+created `O_EXCL` at that mode rather than chmod'ed afterwards, reused across
+restarts (restarting a runner must not invalidate the credential already in
+someone's script), and announced-but-still-used when its mode is loose — the
+same call `api/posture.hydrate_token` makes. The **value is never printed**,
+not on stdout, not on stderr, not in the envelope; the *path* is, together with
+the exact `--token-file` invocation that uses it. `runner serve` declares no
+token flag of any spelling, and §8.4's reason has not changed because the
+secret is now ours: argv is public. Pinned by
+`::test_a_reused_token_file_is_kept_and_a_loose_one_is_announced` and by the
+secret-absence assertions in the round-trip test.
+
+### 9.3 Subprocess, not an in-process serve
+
+The mechanics decision, recorded because the alternative looks cheaper:
+
+1. The engine's `cli._serve` resolves the WP-S posture by **mutating the
+   process environment** — it exports `STEERLAB_AUTH_MODE` and hydrates
+   `STEERLAB_AUTH_TOKEN` — and then reads its artifact root from
+   `STEERLAB_ROOT`. In the client process `STEERLAB_ROOT` may already name the
+   **workspace** (`resolve_workspace` exports it), so an in-process serve would
+   have to unset and re-set the very variable the two-roles rule turns on. A
+   child gets an environment built for it, and the rule holds by construction
+   rather than by discipline.
+2. An in-process serve would hydrate a **bearer token into the client's own
+   environment**, where every later verb in that shell inherits it.
+3. `uvicorn.run` installs signal handlers and does not return — there would be
+   no process of our own left to stop cleanly.
+4. It would import fastapi/uvicorn into the client process, and the
+   light-import contract (§7, §8.6) is measured on exactly that.
+
+So: `subprocess.Popen([sys.executable, "-m", "steerlab_server.cli", "serve",
+"--host", "127.0.0.1", "--port", str(port)])`, with the engine's output pumped
+line-by-line onto **stderr** by a thread. (A pipe and a pump rather than
+handing the child our stderr directly: under `--json` the client's `sys.stdout`
+is a Python-level swap, not a `dup2`, so a child inheriting fd 1 would write
+log lines into the one stream that must carry exactly one JSON value.)
+
+Everything that can refuse happens before anything that can write:
+
+- **light install** — `runner serve` on a client-only install refuses by name
+  (`runnerExtraMissing`, 65) with `pip install 'steerlab-server[runner]'`, and
+  probes with `importlib.util.find_spec`, which resolves a name **without
+  executing the module** — the light-install guarantee is not spent to report
+  that it holds (`::test_a_light_install_is_refused_by_name_before_anything_starts`);
+- **port** — `--port` is bind-tested first, so a collision is a typed refusal
+  (`runnerPortUnavailable`, 65) naming the port and offering `runner
+  capabilities` against it, rather than a uvicorn traceback from a child that
+  dies half a second after the parent claimed success. No `--port` means an
+  ephemeral one, picked and printed
+  (`::test_a_second_runner_on_the_same_port_refuses_rather_than_serving_quietly`);
+- **readiness** — a polled deadline on `GET /api/info` (stdlib `http.client`,
+  not even httpx), with the subprocess watched for early exit; **any** status
+  counts, 401 included, because in token mode an unauthenticated `/api/info` is
+  *supposed* to be refused and the question is only whether an engine is
+  answering. A child that exits first becomes `runnerStartFailed` (70) naming
+  what to read.
+
+**Stopping.** SIGINT *and* SIGTERM are handled, and both stop the child before
+this process leaves: a shell puts a background job's SIGINT at `SIG_IGN` (which
+CPython inherits, so `KeyboardInterrupt` would never arrive), and a plain
+SIGTERM would kill the client outright and leave the engine listening with
+nobody to stop it. One line on stderr on the way out, naming how long it served
+and that the runner root was kept and no workspace was touched.
+
+### 9.4 `--json`: one startup envelope, then a stream
+
+Every other client verb writes exactly one document when it **finishes**. This
+one finishes only when it is stopped, so:
+
+> **`runner serve --json` emits ONE envelope on stdout the moment the engine is
+> ready, and then serves, with every further line on stderr.**
+
+An agent that had to wait for the process to die to learn the URL of the runner
+it just started would have no use for the document at all. The envelope is an
+ordinary §4 document — `state: ready`, sorted keys, a `nextAction` — whose
+`result` carries `url`, `host`, `port`, `runnerRoot`, `runnerRootIsDefault`,
+`tokenFilePresent`, `tokenFile`, `tokenFileMinted`, `authMode`, `executor`,
+`runsDirectory`, `metadataRoot`, `enginePID`. It is flushed explicitly: a
+buffered stdout on a pipe would hold the document until process exit, which is
+never, on purpose. Mechanically the verb raises `client_cli.ServeCompleted`
+when it stops, caught in `main` above the blanket handler, so no second
+document can be written for the same invocation.
+
+Pinned by `::test_the_document_is_a_startup_envelope_and_then_a_stream`, which
+asserts stdout parses as exactly one value and that the engine's own artifact-
+root banner and the verb's human banner are on **stderr**.
+
+### 9.5 The acceptance test — the point of the phase
+
+`test_local_runner.py::test_the_whole_round_trip_runs_against_a_managed_local_runner`
+launches the verb the way an operator does (a subprocess of the real module, an
+ephemeral port, an environment scrubbed of every `STEERLAB_*` that could point
+it elsewhere), waits on the startup envelope and then on a polled `/api/info`
+deadline — no sleeps anywhere — and drives the whole path with client verbs
+against a temp **client** workspace:
+
+author (`concept` files + `experiment create/attach/declare-condition/verify/
+freeze --force`) → `bundle package` → `runner upload` (the digest the client
+computed IS the one the runner read) → `runner submit --verb verify --executor
+local` (a **real** execution: the only bundled verb that needs no model) →
+poll `runner jobs <id>` to terminal → `runner evidence --out` (downloaded,
+outer digest verified, deliberately **not** imported) → `bundle import
+--sha256` into the client workspace.
+
+Then the three assertions the phase exists for: **(a)** the runner root holds
+the staging and the cache (`uploaded-bundle`, `submit-bundle`, `jobs.sqlite`,
+the imported study) and the client workspace gained exactly one thing — the
+imported run — with no staging directory, no job database and no token in it;
+**(b)** the runner is stopped and its root deleted wholesale, after which the
+imported run's bytes still hash to what they hashed before; **(c)** the
+engine's `/api/info` root is the runner root and is not the workspace.
+
+**What is real and what is not**, stated rather than implied: the runner, the
+routes, the socket, the archive, the digests, the study, the submission and the
+import are all genuine. The one thing skipped is the GPU compute that would
+have produced a run directory — `verify` is the only model-free bundled verb
+and it writes no run directory, so it packages no evidence — so the evidence
+half is driven over a job **seeded into the runner's own durable job store
+before it boots**, carrying an archive `bundles.package_evidence` really wrote
+into the runner's runs root. That is the same allowance
+`test_client_runner.py::_evidence_bearing_job` makes, one process further out.
+
+### 9.6 What Phase 3 deliberately did NOT do
+
+- **No daemon management.** `runner serve` is foreground, v1. No start/stop/
+  status, no pidfile, no launchd/systemd unit, no auto-restart. Every one of
+  those is a promise about a process nobody is watching, and the failure mode
+  is a forgotten runner holding a port and a token.
+- **No `--host`.** Binding a managed runner to the network is the engine's
+  decision to make through `steerlab-server serve`, where the posture refusals
+  that gate a non-loopback bind are written and tested (`api/posture`).
+- **No engine change of any kind.** `steerlab-server`'s behaviour is
+  byte-identical after this phase; the verb chooses the root, mints the token,
+  picks the port, and waits.
+- **No composite `run --wait`, still.** The round trip is still six explicit,
+  separately refusable acts, and having a local runner makes that *more*
+  valuable, not less: it is now cheap to exercise each one. Orchestrating them
+  — the waiting policy, resume-after-disconnect, and when a client may import
+  on its own — remains **Phase 5**, which wants exactly the pieces this phase
+  made boring.
