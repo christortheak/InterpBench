@@ -90,6 +90,34 @@ class SteeringVectorSidecar:
     # they always have; ``backfill-norms`` is the opt-in path to a stamped
     # denominator.
     residualNormConvention: str | None = None
+    # WHICH RENDERING the denominator corpus was tokenized under — the third
+    # member of the residualNorm* provenance family (source = which corpus,
+    # convention = how its positions were averaged, rendering = how its texts
+    # reached the model). α in norm units only means one dose if the
+    # denominator was measured on the same distribution the vector was read
+    # from, so the denominator always follows the extraction's rendering and
+    # the artifact says which one that was. Values: "raw" | "chatTemplate".
+    # **Absent is LEGACY RAW** — every pre-2026-08-24 artifact was raw, and no
+    # artifact is retro-stamped.
+    residualNormRendering: str | None = None
+    # HOW the stimulus strings reached the model during extraction — the
+    # declared rendering block ({"mode": "raw"} or {"mode": "chatTemplate",
+    # "addGenerationPrompt": …, "qwenThinkingEnabled": …, optional
+    # "systemPrompt"}). Pinned cross-engine contract: same JSON key and inner
+    # key names on the Swift ``SteeringVectorSidecar``. Additive and
+    # **absent = legacy raw**, never retro-filled: the same discipline
+    # residualNormConvention follows.
+    extractionRendering: dict | None = None
+    # The requested reading position AND what it RESOLVED to, per sequence
+    # shape — {"requested", "mode", "parameter"?, "rendering", "source",
+    # "shapes": [{"offsetFromEnd", "sequenceCount", "exampleIndex",
+    # "exampleEndIndex", "exampleTokenCount"}]}. `readingPosition` says what
+    # was ASKED for; this says where that landed, so a reader never has to
+    # re-derive a template's internals to know what was read. Stamped only
+    # when the label does not already imply the index (a template-aware role,
+    # an explicit offset, or any non-raw rendering) — so legacy artifacts keep
+    # byte-identical sidecars. Additive cross-engine contract.
+    readingPositionResolution: dict | None = None
     recipeMethod: str | None = None
     recipeHash: str | None = None
     recipeName: str | None = None
@@ -196,6 +224,9 @@ class SteeringVectorSidecar:
              residual_norm_per_layer: list[float] | None = None,
              residual_norm_source: str | None = None,
              residual_norm_convention: str | None = None,
+             residual_norm_rendering: str | None = None,
+             extraction_rendering=None,
+             reading_position_resolution: dict | None = None,
              neutral_projection: str | None = None,
              neutral_corpus_hash: str | None = None,
              source_stimulus_count: int | None = None,
@@ -217,6 +248,16 @@ class SteeringVectorSidecar:
             # convention it measured under; one that copies or omits norms
             # passes None, and the artifact stays honestly unstamped (legacy).
             residualNormConvention=residual_norm_convention,
+            # Absent-not-null, exactly like the convention stamp: a raw
+            # extraction writes NOTHING, so its sidecar bytes are identical to
+            # what this engine has always written. Only a declared
+            # chat-template rendering stamps.
+            residualNormRendering=(
+                residual_norm_rendering
+                if residual_norm_rendering and residual_norm_rendering != "raw"
+                else None),
+            extractionRendering=_rendering_block(extraction_rendering),
+            readingPositionResolution=reading_position_resolution,
             neutralProjection=neutral_projection or "none",
             neutralCorpusHash=neutral_corpus_hash,
             readingMinimumTokenCount=(reading_position.minimum_token_count
@@ -234,6 +275,22 @@ class SteeringVectorSidecar:
     def from_dict(cls, d: dict) -> "SteeringVectorSidecar":
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in d.items() if k in known})
+
+
+def _rendering_block(rendering) -> dict | None:
+    """The ``extractionRendering`` block to stamp, or ``None`` to omit it.
+
+    Accepts an :class:`~steerlab_server.steering.extraction_rendering.
+    ExtractionRendering` (a fresh extraction), an already-shaped dict (a
+    materialized copy carrying its source's block), or ``None``. RAW stamps
+    NOTHING — absent is the legacy meaning and a raw artifact's sidecar bytes
+    must stay byte-identical to what this engine has always written.
+    """
+    if rendering is None:
+        return None
+    if isinstance(rendering, dict):
+        return None if rendering.get("mode", "raw") == "raw" else dict(rendering)
+    return None if rendering.is_raw else rendering.to_dict()
 
 
 def stamp_grand_mean_provenance(

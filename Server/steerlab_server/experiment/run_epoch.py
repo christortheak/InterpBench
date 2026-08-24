@@ -177,6 +177,57 @@ def _measurement_drift(live_cmp, snap) -> str | None:
     return drift.lstrip(": ") if drift else "measurement-side fields differ"
 
 
+def unreadable_source_refusal(verb: str, run_directory: str) -> str | None:
+    """The refusal for a source run that IS NOT THERE — ``None`` when the
+    directory exists and can be read.
+
+    **Why this is its own failure mode** (ledger 2026-08-21, live jobs
+    47606365/47606373). A source run that cannot be opened produced no stamp,
+    and the stamp reader cannot tell "unstamped" from "unreadable" — both
+    answer ``None``. The guard therefore reported a correctly stamped run as
+    one that "carries no experiment-hash stamp … or pass allowUnverifiedEpoch",
+    which coaches the operator into disabling a scientific firewall gate to
+    work around a PATH bug. The repair for this refusal is a path correction
+    and nothing else, which is why the escape hatch is deliberately absent
+    from its text: forgiving a missing stamp cannot make an absent directory
+    readable.
+
+    The message prints the RESOLVED absolute path, because the whole class of
+    bug this separates out is "the relative path you typed was resolved
+    against a directory you did not expect" — naming the string back at the
+    operator is exactly what hid it.
+    """
+    resolved = os.path.abspath(run_directory)
+    if os.path.isdir(resolved):
+        if os.access(resolved, os.R_OK | os.X_OK):
+            return None
+        return (
+            f"{verb}: the source run directory at {resolved} cannot be read "
+            "(permissions) — nothing was read from it, so nothing is known "
+            "about which manifest epoch it belongs to")
+    if os.path.exists(resolved):
+        return (
+            f"{verb}: the source run path {resolved} is not a directory — a "
+            "source run is the run DIRECTORY, not a file inside it")
+    return (
+        f"{verb}: the source run directory does not exist at {resolved} — a "
+        "relative source path is resolved against the target root, not the "
+        "working directory the job happens to start in. Nothing was read, so "
+        "nothing is known about which manifest epoch it belongs to")
+
+
+def unreadable_source_repair(verb: str, name: str) -> str:
+    """The path-correction repair for :func:`unreadable_source_refusal`.
+
+    Named separately so every surface says the same thing, and so no surface
+    can accidentally offer the epoch escape for a path fault.
+    """
+    return (f"steerlab-server experiment {verb} {name} --source "
+            "<runs/…-exp-…-run>  (a run directory that exists under the "
+            "target root — `ls <root>/runs`; an absolute path always works, "
+            "and a relative one is taken relative to the target root)")
+
+
 def foreign_substrate_refusal(verb: str, run_name: str,
                               substrate: str) -> str:
     """The refusal a MEASUREMENT verb gives a run produced on the other
@@ -226,6 +277,15 @@ def epoch_refusal(verb: str, name: str, live_hash: str, run_directory: str,
     caller: ``tasks`` raises RuntimeError, ``promote`` raises PromoteError,
     and neither has to catch and re-wrap the other's."""
     run_name = os.path.basename(os.path.normpath(run_directory))
+    # BEFORE anything else, including the foreign-substrate probe: a run that
+    # cannot be opened at all is a PATH fault, not an epoch fact. Every reader
+    # below (the stamp file, config.json, the manifest snapshot) answers None
+    # for an absent directory, so without this the guard would go on to blame
+    # the run's provenance for the operator's path — and offer the epoch
+    # escape as the repair. See :func:`unreadable_source_refusal`.
+    unreadable = unreadable_source_refusal(verb, run_directory)
+    if unreadable is not None:
+        return unreadable, False, None
     # FIRST, and before any stamp is read: a foreign run's stamp is not
     # comparable, and for a measurement verb the snapshot rescue below would
     # answer the wrong question — whether the SETTINGS match, when what fails

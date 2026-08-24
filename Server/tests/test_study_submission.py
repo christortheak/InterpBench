@@ -91,7 +91,12 @@ def test_execute_run_bundle_analyze_dispatches_with_source(tmp_path, monkeypatch
     """The bundle-execute dispatch (the path every remote submission runs)
     reaches tasks.analyze with the imported target root and the --source
     run — and does NOT bypass the epoch guard tasks.analyze enforces
-    (no allow_unverified_epoch smuggled in)."""
+    (no allow_unverified_epoch smuggled in).
+
+    A RELATIVE --source arrives resolved against --target (ledger 2026-08-21):
+    this dispatch used to hand the string through verbatim, and the rendered
+    sbatch cd's into its own slurm directory before srun, so `runs/<dir>`
+    resolved against the slurm directory and read nothing at all."""
     from steerlab_server.experiment import tasks
 
     source = str(tmp_path / "source")
@@ -111,8 +116,9 @@ def test_execute_run_bundle_analyze_dispatches_with_source(tmp_path, monkeypatch
         meta["bundlePath"], verb="analyze", target_root=target,
         source_path="runs/some-run", package_evidence_on_complete=False)
 
-    assert seen["args"] == ("submit-study", os.path.realpath(target),
-                            "runs/some-run")
+    assert seen["args"] == (
+        "submit-study", os.path.realpath(target),
+        os.path.join(os.path.realpath(target), "runs", "some-run"))
     assert not seen["kwargs"].get("allow_unverified_epoch")
     assert result["runDirectory"].endswith("fake-exp-submit-study-analyze")
 

@@ -1,8 +1,42 @@
 import MLX
+import MLXLMCommon
 import Synchronization
+
+/// A reading position that cannot be honored for a given sequence.
+///
+/// Typed and carrying a repair, per house style. Never clamped: silently
+/// reading token 0 because the caller asked for "7 back from the end" of a
+/// 5-token stimulus is the class of quiet substitution the freeze discipline
+/// exists to forbid.
+public struct ReadingPositionError: Error, CustomStringConvertible {
+    public let reason: String
+    public init(reason: String) { self.reason = reason }
+    public var description: String { reason }
+}
 
 /// Where in the stimulus the residual stream is read during extraction
 /// (METHODS.md › Method options).
+///
+/// MAINTAINER RULING (recorded here because it is the whole point of the
+/// named roles): **raw negative indices are the MECHANISM, named roles are
+/// the PORTABLE FORM.** `offsetFromEnd(3)` says "three back from the end" and
+/// nothing more — on Gemma 3 under the chat template that token is
+/// `<start_of_turn>`, on Llama-3 it is something else entirely, and on a raw
+/// stimulus it is a word. A study should therefore prefer `lastContentToken`,
+/// `turnCloseToken`, and `postInstruction`, which name the thing being read
+/// and resolve to whatever concrete index the model family's template puts it
+/// at. `offsetFromEnd` exists so an arbitrary offset is DECLARABLE rather than
+/// smuggled in, not because it travels.
+///
+/// Two axes, deliberately separate: **shape-only positions** (`lastToken`,
+/// `meanFromToken`, `offsetFromEnd`) resolve from the sequence LENGTH alone
+/// and mean the same thing under any rendering; **template-aware roles**
+/// (`lastContentToken`, `turnCloseToken`, `postInstruction`) resolve against
+/// the TOKEN IDS and refuse under raw rendering, because a raw stimulus has
+/// no turn-close token to find.
+///
+/// Server twin: `Server/steerlab_server/steering/reading_position.py`. The
+/// `label` strings are the sidecar contract and must match it byte-for-byte.
 public enum ReadingPosition: Codable, Sendable, Equatable {
     /// Hidden state of the final token (RepE's convention; Phase 0 default).
     case lastToken
@@ -10,27 +44,91 @@ public enum ReadingPosition: Codable, Sendable, Equatable {
     /// from token 50 of paragraph stories). Extraction callers must enforce
     /// that token `k` exists; otherwise this reading position is not valid.
     case meanFromToken(Int)
+    /// The single token at index `last − k`, `k ≥ 0`. `k = 0` is exactly
+    /// `.lastToken` — same index, same value — and the recipe identity
+    /// canonicalizes it as such. The MECHANISM form; prefer a named role.
+    case offsetFromEnd(Int)
+    /// The last token of the stimulus's own content: the token immediately
+    /// before the marker that closes its turn. Under a generation prompt the
+    /// sequence's own last token is template, not content (on Gemma 3 it is a
+    /// bare newline), so this names the boundary a study usually means by
+    /// "read the end of the prompt".
+    case lastContentToken
+    /// The template's end-of-turn token — Gemma 3's `<end_of_turn>`, ChatML's
+    /// `<|im_end|>`, Llama-3's `<|eot_id|>` — taken as the LAST such marker
+    /// in the sequence.
+    case turnCloseToken
+    /// Arditi's post-instruction convention: the `i`-th token AFTER the end
+    /// of the instruction content, `i ∈ 1...5`. Those positions are the
+    /// template's own trailing tokens; naming the role is what makes the
+    /// convention portable instead of a hard-coded `−5`.
+    case postInstruction(Int)
 
     public var label: String {
         switch self {
         case .lastToken: "last token"
         case .meanFromToken(let k): "mean from token \(k)"
+        case .offsetFromEnd(let k): "offset from end \(k)"
+        case .lastContentToken: "last content token"
+        case .turnCloseToken: "turn close token"
+        case .postInstruction(let i): "post-instruction \(i)"
         }
     }
 
     /// Minimum token count required for this reading position to mean what it
-    /// says. `meanFromToken(50)` needs token index 50 to exist.
+    /// says. `meanFromToken(50)` needs token index 50 to exist. For a named
+    /// role the real bound is not a length — it is "the template put this
+    /// anchor in the sequence" — which `resolve` enforces against the ids.
     public var minimumTokenCount: Int {
         switch self {
         case .lastToken: 1
         case .meanFromToken(let k): max(1, k + 1)
+        case .offsetFromEnd(let k): max(1, k + 1)
+        case .lastContentToken, .turnCloseToken, .postInstruction: 1
         }
     }
 
+    /// The first position of a POOLED read, for callers that bank rows from
+    /// there (the neutral token bank). nil for every single-token read —
+    /// `offsetFromEnd` deliberately included, because `k` counts from the end
+    /// and answering with it would bank the wrong rows.
     public var requestedStartIndex: Int? {
         switch self {
-        case .lastToken: nil
         case .meanFromToken(let k): k
+        case .lastToken, .offsetFromEnd, .lastContentToken, .turnCloseToken,
+            .postInstruction:
+            nil
+        }
+    }
+
+    /// True for roles that only exist inside a rendered chat turn.
+    public var requiresTemplatedRendering: Bool {
+        switch self {
+        case .lastContentToken, .turnCloseToken, .postInstruction: true
+        case .lastToken, .meanFromToken, .offsetFromEnd: false
+        }
+    }
+
+    /// The canonical mode token this position contributes to the recipe
+    /// identity (`RecipeIdentity.canonicalReading` applies the
+    /// `offsetFromEnd(0) ≡ lastToken` rule on top).
+    public var identityMode: String {
+        switch self {
+        case .lastToken: "lastToken"
+        case .meanFromToken: "meanFromToken"
+        case .offsetFromEnd: "offsetFromEnd"
+        case .lastContentToken: "lastContentToken"
+        case .turnCloseToken: "turnCloseToken"
+        case .postInstruction: "postInstruction"
+        }
+    }
+
+    public var identityParameter: Int? {
+        switch self {
+        case .meanFromToken(let k): k
+        case .offsetFromEnd(let k): k
+        case .postInstruction(let i): i
+        case .lastToken, .lastContentToken, .turnCloseToken: nil
         }
     }
 
@@ -39,15 +137,330 @@ public enum ReadingPosition: Codable, Sendable, Equatable {
     /// artifact's recorded position (e.g. residual-norm backfill). Nil for
     /// unrecognized labels — callers must fail loudly, not guess.
     public init?(label: String) {
-        if label == ReadingPosition.lastToken.label {
-            self = .lastToken
-        } else if label.hasPrefix("mean from token "),
-            let k = Int(label.dropFirst("mean from token ".count)), k >= 0
-        {
-            self = .meanFromToken(k)
-        } else {
+        switch label {
+        case ReadingPosition.lastToken.label: self = .lastToken
+        case ReadingPosition.lastContentToken.label: self = .lastContentToken
+        case ReadingPosition.turnCloseToken.label: self = .turnCloseToken
+        default:
+            func number(after prefix: String) -> Int? {
+                guard label.hasPrefix(prefix) else { return nil }
+                let rest = label.dropFirst(prefix.count)
+                guard !rest.isEmpty, rest.allSatisfy(\.isNumber) else { return nil }
+                return Int(rest)
+            }
+            if let k = number(after: "mean from token ") {
+                self = .meanFromToken(k)
+            } else if let k = number(after: "offset from end ") {
+                self = .offsetFromEnd(k)
+            } else if let i = number(after: "post-instruction "),
+                (1 ... 5).contains(i)
+            {
+                self = .postInstruction(i)
+            } else {
+                return nil
+            }
+        }
+    }
+}
+
+/// What was ACTUALLY read, for one sequence.
+///
+/// `startIndex`/`endIndex` are a half-open window, so a single-token read is
+/// `(i, i + 1)` and a pooled read is `(k, n)`. Artifacts stamp this alongside
+/// the requested position so a reader can see what happened without
+/// re-deriving template internals — the same both-halves discipline
+/// `layerResolution` follows (layer AND depth fraction AND the rule).
+public struct ResolvedReadingPosition: Sendable, Equatable {
+    public let requested: String
+    public let mode: String
+    public let parameter: Int?
+    public let startIndex: Int
+    public let endIndex: Int
+    public let tokenCount: Int
+    /// How the index was derived, in words ("sequence end", "last content
+    /// token + 2", …). The provenance half of the stamp.
+    public let source: String
+
+    public init(
+        requested: String, mode: String, parameter: Int?, startIndex: Int,
+        endIndex: Int, tokenCount: Int, source: String
+    ) {
+        self.requested = requested
+        self.mode = mode
+        self.parameter = parameter
+        self.startIndex = startIndex
+        self.endIndex = endIndex
+        self.tokenCount = tokenCount
+        self.source = source
+    }
+
+    public var isPooled: Bool { endIndex - startIndex > 1 }
+
+    /// Distance of the read position from the sequence end, or nil for a
+    /// pooled read. This is the SEQUENCE-SHAPE invariant: under a fixed
+    /// template the offset is constant while the absolute index moves with
+    /// stimulus length.
+    public var offsetFromEnd: Int? {
+        isPooled ? nil : tokenCount - 1 - startIndex
+    }
+}
+
+/// The stamped `readingPositionResolution` block.
+///
+/// Records BOTH halves: the REQUESTED position (name + parameter) and what it
+/// RESOLVED to — mirroring the way `layerResolution` records the layer
+/// together with its depth fraction and the rule that chose it. A reader can
+/// then see what was actually read without re-deriving template internals.
+///
+/// Resolutions are grouped by OFFSET FROM END, the sequence-shape invariant:
+/// under one template the offset is constant while the absolute index moves
+/// with stimulus length, so a single row means "every stimulus was read at the
+/// same place in its template", and two rows are a loud sign the template did
+/// not render uniformly.
+///
+/// Server twin: `extractor.resolution_report`.
+public struct ReadingPositionResolutionReport: Codable, Sendable, Equatable {
+
+    public struct Shape: Codable, Sendable, Equatable {
+        public var offsetFromEnd: Int?
+        public var sequenceCount: Int
+        public var exampleIndex: Int
+        public var exampleEndIndex: Int
+        public var exampleTokenCount: Int
+    }
+
+    public var requested: String
+    public var mode: String
+    /// Encoded only when the position takes one, so a parameterless role
+    /// stamps no null.
+    public var parameter: Int?
+    public var rendering: String
+    public var source: String
+    public var shapes: [Shape]
+
+    /// The report for one extraction pass, or nil to OMIT the key.
+    ///
+    /// nil for the legacy pair (a shape-only position under raw rendering),
+    /// whose resolved index is fully implied by its label — so legacy
+    /// artifacts keep byte-identical sidecars.
+    public static func make(
+        position: ReadingPosition,
+        rendering: ExtractionRendering,
+        resolutions: [ResolvedReadingPosition]
+    ) -> ReadingPositionResolutionReport? {
+        let stampedModes: Set<String> = [
+            "offsetFromEnd", "lastContentToken", "turnCloseToken", "postInstruction",
+        ]
+        guard !rendering.isRaw || stampedModes.contains(position.identityMode) else {
             return nil
         }
+        guard let first = resolutions.first else { return nil }
+
+        var order: [Int?] = []
+        var byOffset: [Int: Shape] = [:]
+        var pooled: Shape?
+        for resolved in resolutions {
+            let key = resolved.offsetFromEnd
+            let fresh = Shape(
+                offsetFromEnd: key, sequenceCount: 1,
+                exampleIndex: resolved.startIndex,
+                exampleEndIndex: resolved.endIndex,
+                exampleTokenCount: resolved.tokenCount)
+            if let key {
+                if byOffset[key] == nil {
+                    byOffset[key] = fresh
+                    order.append(key)
+                } else {
+                    byOffset[key]?.sequenceCount += 1
+                }
+            } else if pooled == nil {
+                pooled = fresh
+                order.append(nil)
+            } else {
+                pooled?.sequenceCount += 1
+            }
+        }
+        // Sorted by offset, with the pooled row (no single offset) last —
+        // matching the server's `(offsetFromEnd is None, offsetFromEnd)` key.
+        var shapes = order.compactMap { $0 }.sorted().compactMap { byOffset[$0] }
+        if let pooled { shapes.append(pooled) }
+
+        return ReadingPositionResolutionReport(
+            requested: position.label,
+            mode: position.identityMode,
+            parameter: position.identityParameter,
+            rendering: rendering.mode.rawValue,
+            source: first.source,
+            shapes: shapes)
+    }
+}
+
+extension ReadingPosition {
+
+    /// End-of-turn markers probed by NAME, in addition to whatever the
+    /// tokenizer declares as its eos. Cross-engine contract: the server twin
+    /// (`reading_position.END_OF_TURN_TOKENS`) probes the same strings in the
+    /// same order.
+    public static let endOfTurnTokens = [
+        "<end_of_turn>",    // Gemma 3
+        "<|im_end|>",       // Qwen / ChatML
+        "<|eot_id|>",       // Llama 3
+        "<|end|>",          // Phi
+        "</s>",             // Llama 2 / Mistral
+    ]
+
+    static func endOfTurnIDs(tokenizer: any MLXLMCommon.Tokenizer) -> Set<Int> {
+        var ids = Set<Int>()
+        let unknown = tokenizer.unknownTokenId
+        for token in endOfTurnTokens {
+            if let id = tokenizer.convertTokenToId(token), id >= 0, id != unknown {
+                ids.insert(id)
+            }
+        }
+        if let eos = tokenizer.eosTokenId, eos >= 0 { ids.insert(eos) }
+        return ids
+    }
+
+    /// Index of the LAST end-of-turn marker in the sequence.
+    ///
+    /// ONE mechanism for all three named roles, and one both engines have. A
+    /// "last token that is not special" rule would have been engine-specific
+    /// AND wrong — on Gemma 3 the generation prompt ends in a bare newline, an
+    /// ordinary content token, so a special-token scan lands past the
+    /// instruction rather than inside it.
+    static func turnCloseIndex(
+        tokens: [Int], tokenizer: any MLXLMCommon.Tokenizer, label: String
+    ) throws -> Int {
+        let markers = endOfTurnIDs(tokenizer: tokenizer)
+        guard !markers.isEmpty else {
+            throw ReadingPositionError(
+                reason: "reading position '\(label)' did not resolve on the "
+                    + "swift-mlx engine: this tokenizer declares no end-of-turn "
+                    + "token (looked for \(endOfTurnTokens.joined(separator: ", ")) "
+                    + "and the tokenizer's own eos) — repair: read at an explicit "
+                    + "'offset from end k', which needs no template anchor")
+        }
+        for index in stride(from: tokens.count - 1, through: 0, by: -1)
+        where markers.contains(tokens[index]) {
+            return index
+        }
+        throw ReadingPositionError(
+            reason: "reading position '\(label)' did not resolve: the rendered "
+                + "sequence (\(tokens.count) tokens) contains no end-of-turn "
+                + "marker — repair: check that extractionRendering really is "
+                + "'chatTemplate' for this concept, or read at an explicit "
+                + "'offset from end k'")
+    }
+
+    static func lastContentIndex(
+        tokens: [Int], tokenizer: any MLXLMCommon.Tokenizer, label: String
+    ) throws -> Int {
+        let close = try turnCloseIndex(tokens: tokens, tokenizer: tokenizer, label: label)
+        guard close > 0 else {
+            throw ReadingPositionError(
+                reason: "reading position '\(label)' did not resolve: the turn "
+                    + "closes at token 0, so the stimulus contributed no content "
+                    + "— repair: check the stimulus is non-empty and that the "
+                    + "rendering is the one you meant")
+        }
+        return close - 1
+    }
+
+    func requireTemplated(renderingIsRaw: Bool) throws {
+        guard renderingIsRaw, requiresTemplatedRendering else { return }
+        throw ReadingPositionError(
+            reason: "reading position '\(label)' needs templated rendering: a "
+                + "raw stimulus has no chat turn, so there is no turn boundary "
+                + "to read at — repair: declare extractionRendering "
+                + "{\"mode\": \"chatTemplate\"} on this concept, or choose a "
+                + "rendering-independent position ('last token', 'offset from "
+                + "end k', 'mean from token k')")
+    }
+
+    /// The concrete read window for one tokenized stimulus.
+    ///
+    /// `tokens` is the sequence actually fed to the model — already rendered,
+    /// so a templated stimulus resolves against the template's own tokens.
+    /// Throws `ReadingPositionError` (typed, with a repair) rather than
+    /// clamping.
+    public func resolve(
+        tokens: [Int], tokenizer: any MLXLMCommon.Tokenizer, renderingIsRaw: Bool
+    ) throws -> ResolvedReadingPosition {
+        try requireTemplated(renderingIsRaw: renderingIsRaw)
+        let n = tokens.count
+
+        func single(_ index: Int, _ source: String) -> ResolvedReadingPosition {
+            ResolvedReadingPosition(
+                requested: label, mode: identityMode, parameter: identityParameter,
+                startIndex: index, endIndex: index + 1, tokenCount: n,
+                source: source)
+        }
+
+        switch self {
+        case .lastToken:
+            guard n >= 1 else { throw tooShort(have: n) }
+            return single(n - 1, "sequence end")
+
+        case .meanFromToken(let k):
+            guard n >= minimumTokenCount else { throw tooShort(have: n) }
+            // Historical clamp preserved EXACTLY: this position has always
+            // pooled from min(max(0, k), n − 1).
+            let start = min(max(0, k), n - 1)
+            return ResolvedReadingPosition(
+                requested: label, mode: identityMode, parameter: k,
+                startIndex: start, endIndex: n, tokenCount: n,
+                source: "token \(k) through sequence end")
+
+        case .offsetFromEnd(let k):
+            guard k >= 0 else {
+                throw ReadingPositionError(
+                    reason: "offsetFromEnd needs k ≥ 0, got \(k) — repair: "
+                        + "offsets count BACKWARD from the last token, so k=0 is "
+                        + "the last token and k=3 is three before it")
+            }
+            guard n >= minimumTokenCount else { throw tooShort(have: n) }
+            return single(n - 1 - k, "sequence end − \(k)")
+
+        case .lastContentToken:
+            let index = try Self.lastContentIndex(
+                tokens: tokens, tokenizer: tokenizer, label: label)
+            return single(index, "token before the last end-of-turn marker")
+
+        case .turnCloseToken:
+            let index = try Self.turnCloseIndex(
+                tokens: tokens, tokenizer: tokenizer, label: label)
+            return single(index, "last end-of-turn marker")
+
+        case .postInstruction(let i):
+            guard (1 ... 5).contains(i) else {
+                throw ReadingPositionError(
+                    reason: "postInstruction needs i in 1...5, got \(i) — repair: "
+                        + "the convention covers the five template tokens that "
+                        + "follow the instruction; for anything further out "
+                        + "declare an explicit 'offset from end k'")
+            }
+            let content = try Self.lastContentIndex(
+                tokens: tokens, tokenizer: tokenizer, label: label)
+            let index = content + i
+            guard index < n else {
+                throw ReadingPositionError(
+                    reason: "reading position '\(label)' did not resolve: the "
+                        + "instruction ends at token \(content) of \(n), so there "
+                        + "is no token \(i) after it — repair: lower i, or render "
+                        + "with addGenerationPrompt true so the template's "
+                        + "trailing tokens are present")
+            }
+            return single(index, "last content token + \(i)")
+        }
+    }
+
+    func tooShort(have: Int) -> ReadingPositionError {
+        ReadingPositionError(
+            reason: "sequence is too short for '\(label)': \(have) tokens, needs "
+                + "\(minimumTokenCount) — repair: drop the short stimuli, or "
+                + "choose a position that fits them (this position is never "
+                + "clamped, because reading a different token instead would "
+                + "silently change the recipe)")
     }
 }
 
@@ -94,6 +507,9 @@ public final class ActivationRecorder: LayerIntervention {
     private let layers: Set<Int>
     private let position: ReadingPosition
     private let storage = Mutex<[Capture]>([])
+    /// Half-open read window pinned by the driver for the next forward pass,
+    /// or nil for the historical length-only behavior. See `setWindow`.
+    private let window = Mutex<(start: Int, end: Int)?>(nil)
 
     /// - Parameters:
     ///   - layers: block indices to record; record only what you need —
@@ -113,20 +529,49 @@ public final class ActivationRecorder: LayerIntervention {
         storage.withLock { $0.removeAll() }
     }
 
+    /// Pin the half-open read window for the NEXT forward pass.
+    ///
+    /// Template-aware reading positions ("turn close token",
+    /// "post-instruction 2") resolve against the TOKEN IDS, which only the
+    /// extraction driver holds — the hook sees hidden states. So the driver
+    /// resolves and pins the window here, and this recorder stays free of
+    /// template knowledge. Unset (the default) keeps the historical
+    /// length-only behavior for the two shape-only positions, byte-for-byte.
+    public func setWindow(start: Int, end: Int) {
+        window.withLock { $0 = (start, end) }
+    }
+
+    public func clearWindow() {
+        window.withLock { $0 = nil }
+    }
+
     public func apply(_ h: MLXArray, layer: Int, offset: Int) -> MLXArray {
         guard layers.contains(layer) else { return h }
 
         let length = h.dim(1)
         let startIndex: Int
-        switch position {
-        case .lastToken:
-            startIndex = length - 1
-        case .meanFromToken(let k):
-            startIndex = min(max(0, k), length - 1)
+        let endIndex: Int
+        if let pinned = window.withLock({ $0 }) {
+            startIndex = pinned.start
+            endIndex = min(pinned.end, length)
+        } else {
+            switch position {
+            case .lastToken, .offsetFromEnd, .lastContentToken, .turnCloseToken,
+                .postInstruction:
+                // Only the two shape-only cases can reach here unpinned; the
+                // rest are always driver-resolved. Last-token is the honest
+                // fallback for a hand-built recorder.
+                startIndex = length - 1
+            case .meanFromToken(let k):
+                startIndex = min(max(0, k), length - 1)
+            }
+            endIndex = length
         }
 
-        // rows: [positions, hidden] over the reading window.
-        let rows = h[0, startIndex..., 0...].asType(.float32)
+        // rows: [positions, hidden] over the reading window. `h[0, s..<length]`
+        // is the same tensor `h[0, s...]` was, so every legacy recipe's
+        // pooled numbers are unchanged.
+        let rows = h[0, startIndex ..< endIndex, 0...].asType(.float32)
         let pooled = rows.mean(axis: 0)
         let norms = sqrt(rows.square().sum(axis: -1)).mean()
 

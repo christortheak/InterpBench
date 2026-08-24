@@ -367,7 +367,8 @@ never read by Python: `STEERLAB_MODULES`, `STEERLAB_CONDA_SH`,
 |---|---|---|
 | `STEERLAB_PYTHON` | `sys.executable` | Interpreter for spawned child jobs and the GPU-session worker. Needed when the controller's interpreter is not valid on the compute node. |
 | `STEERLAB_JOB_ID` | the record file's basename | Provenance stamp; the server sets it for every child job. |
-| `STEERLAB_NODE_STAGE_DIR` | unset (staging off) | Node-local model staging. Expanded **on the compute node**, so a literal `/lscratch/$SLURM_JOB_ID` lands under the worker's job id. Every rendered sbatch script removes this directory in an EXIT trap when — and only when — the template embeds `$SLURM_JOB_ID`, i.e. is job-scoped by construction (2026-08-19: `/lscratch` is not wiped for you). Pair it with `STEERLAB_SLURM_SCRATCH_GRES` so the space is also *requested*. |
+| `STEERLAB_NODE_STAGE_DIR` | unset (staging off) | Node-local model staging, from the site profile's `constraints.storage.nodeStageDirTemplate`. Expanded **on the compute node**, so a literal `/lscratch/$SLURM_JOB_ID` lands under the worker's job id. Every rendered sbatch script removes **the directory this template names** in an EXIT trap — not a hardcoded `/lscratch/…` — when, and only when, the template embeds a job-scoping variable (`$SLURM_JOB_ID`, `$SLURM_JOBID`, `$SLURM_TMPDIR`; either `$X` or `${X}` spelling) *and* that variable is actually set on the node. Anything else — a shared node cache, a variable the engine does not authorise, a variable the node left unset — is removed by nobody, never by everybody. Pair it with `STEERLAB_SLURM_SCRATCH_GRES` so the space is also *requested*. |
+| `STEERLAB_NODE_SCRATCH_PURGED_BY_SCHEDULER` | unset (the job cleans up) | Rendered from the site profile's `constraints.storage.nodeScratchPurgedByScheduler`. `1` declares that the **scheduler** reclaims node-local scratch at job end (an epilog), and rendered scripts then arm no cleanup trap — a job racing the epilog for the same directory adds risk and removes nothing the site was not going to remove. Absent is the safe default and renders exactly as before. |
 | `STEERLAB_TRANSFER_METHOD` | none | Drives the capability snapshot's transfer advertisement; `profile validate` warns when unset on a cluster profile. |
 
 ### 2.7 Housekeeping, judging, generation
@@ -2033,7 +2034,7 @@ never a model id.
 <!-- Generated from the declarative verb table — `steerlab-server docs cli-reference --write`. Edit the table, not this block. -->
 
 ```
-steerlab-server study submit <experiment> [--device <device>] [--dry-run] [--dtype <dtype>] [--executor <local|slurm>] [--force] [--gres <spec>] [--job-name <name>] [--mem <size>] [--no-evidence] [--parallel <n>] [--parallel-jobs <n>] [--partition <partition>] [--prompts <path>] [--source <run-dir>] [--target <root>] [--verb <verb>] [--walltime <hh:mm:ss>]
+steerlab-server study submit <experiment> [--dependency <spec>] [--device <device>] [--dry-run] [--dtype <dtype>] [--executor <local|slurm>] [--force] [--gres <spec>] [--job-name <name>] [--mem <size>] [--no-evidence] [--parallel <n>] [--parallel-jobs <n>] [--partition <partition>] [--prompts <path>] [--resume <run-dir>] [--source <run-dir>] [--target <root>] [--verb <verb>] [--walltime <hh:mm:ss>]
 ```
 
 | Verb | Purpose |
@@ -2166,6 +2167,45 @@ Three things to know before you type it:
 - `--parallel` and a resumed submission are mutually exclusive; a
   checkpointed shard is resumed through its own shard job or through Resume
   on the sharded parent.
+
+**`--source` / `--resume` take a run directory, and it is checked here.** A
+relative path is resolved **against the target root** (`--target`, defaulting
+to `STEERLAB_ROOT`), never against the directory you typed the command in —
+the rendered sbatch `cd`s into its own `slurm/` directory before `srun`, so
+"relative to the cwd" would mean something no one intended. `study submit`
+stats the path before it bakes it in and **refuses a path that is not there**
+(`submissionPath`, `state: refused`, with a repair), naming the *resolved
+absolute* path: discovering a typo on a compute node costs a queue slot and an
+allocation. A malformed `--dependency` refuses the same way
+(`submissionDependency`). If a source run does turn out to be
+unreadable at read time, that is now its own refusal (`missingPrerequisite`,
+with a path correction) and is no longer confused with "this run carries no
+experiment-hash stamp" — only the latter mentions `--allow-unverified-epoch`,
+because forgiving a missing stamp cannot make an absent directory readable.
+
+#### 5.1.1 Never hand-write an sbatch for a cluster
+
+Submit through `study submit`, or start from the canonical wrapper
+(`steerlab-server site node-scratch-wrapper`, rendered beside
+`controller-job.sbatch` in the metadata root; `sbatch <wrapper> <your
+command>`). Only rendered scripts carry the site's two node-scratch halves —
+the `--gres` that *requests* node-local space and the EXIT trap that *returns*
+it — and a job that stages to node scratch without that trap is a defect
+regardless of what it produces: on a site whose scheduler does not purge node
+scratch, it leaks until an operator notices. The two reasons people used to
+hand-roll are closed: `--resume <run-dir>` continues a parked run through the
+renderer, and `--dependency <spec>` takes a raw Slurm dependency
+(`afterok:12345`, `afterany:1,afterok:2`, `singleton`), shape-checked here and
+passed to `sbatch` as a command-line argument rather than a script header — an
+auto-resubmitted continuation must not re-wait on a dependency that was
+already satisfied. If you must write your own, copy the wrapper; never copy
+the trap into a script of your own, because "how this site cleans up" has
+exactly one definition (`steerlab_server/node_scratch.py`) and a second copy
+is what drifts.
+
+Also, from live verification: **Slurm snapshots the batch script at submit
+time.** Editing the file after `sbatch` returns does not change what a queued
+job will run — the fix has to be `scancel` plus a fresh submission.
 
 ### 5.2 `bundle`
 

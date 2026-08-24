@@ -497,6 +497,13 @@ class SiteStorage:
     #: stage models, e.g. ``"lscratch:100"`` (GB). Scheduling accounting only —
     #: Slurm does not enforce it. Emitted only for gres-carrying job classes.
     node_scratch_gres: str | None = None
+    #: The site declares that its SCHEDULER reclaims node-local scratch at job
+    #: end (a Slurm epilog), so a job need not — and should not — race it.
+    #: Absent (the default) means "the job cleans up after itself", which is
+    #: today's behaviour and renders byte-identically to before. Deliberately
+    #: minimal: one boolean, because the only decision it drives is whether a
+    #: rendered script arms the cleanup trap (ledger 2026-08-23).
+    node_scratch_purged_by_scheduler: bool = False
     #: ``offline`` | ``online`` | ``auto``; ``auto`` derives from compute egress.
     hub_offline_mode: str = "auto"
     #: True when the metadata root must sit on a POSIX-lock-capable local
@@ -520,6 +527,8 @@ class SiteStorage:
         return cls(
             node_stage_dir_template=_opt_str(obj, "nodeStageDirTemplate", path),
             node_scratch_gres=_opt_str(obj, "nodeScratchGres", path),
+            node_scratch_purged_by_scheduler=_bool(
+                obj, "nodeScratchPurgedByScheduler", path, False),
             hub_offline_mode=_vocabulary(
                 obj, "hubOfflineMode", path, OFFLINE_MODES, "auto"),
             metadata_requires_local_filesystem=_bool(

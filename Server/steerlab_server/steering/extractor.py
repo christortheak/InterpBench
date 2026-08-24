@@ -16,8 +16,9 @@ import numpy as np
 import torch
 
 from . import vector_math as vm
+from .extraction_rendering import RAW_RENDERING, ExtractionRendering
 from .model_loader import SteeredModel
-from .reading_position import LAST_TOKEN, ReadingPosition
+from .reading_position import LAST_TOKEN, ReadingPosition, ReadingPositionError
 from .recorder import ActivationBankRecorder, ActivationRecorder
 from .residual_norm_convention import CURRENT as RESIDUAL_NORM_CONVENTION
 from .residual_norm_convention import ResidualNormTally
@@ -33,12 +34,19 @@ class ExtractionOptions:
     method: vm.ExtractionMethod = vm.ExtractionMethod.MEAN_DIFFERENCE
     reading_position: ReadingPosition = LAST_TOKEN
     neutral_pc_count: int | None = None
+    #: HOW the stimulus string reaches the model — raw (legacy, and what an
+    #: absent declaration means) or the family chat template. See
+    #: :mod:`steerlab_server.steering.extraction_rendering`.
+    extraction_rendering: ExtractionRendering = RAW_RENDERING
 
 
 @dataclass
 class StimulusActivations:
     values: list[list[list[float]]]       # [text][layer][hidden]
     residual_norm_per_layer: list[float]
+    #: What was actually read, per stimulus (:class:`ResolvedReadingPosition`).
+    #: The provenance half of the reading-position stamp.
+    resolutions: list = field(default_factory=list)
 
 
 @dataclass
@@ -51,12 +59,25 @@ class ExtractionResult:
     #: because this value describes a measurement THIS code just made.
     #: Sidecar writers stamp it verbatim; see :mod:`residual_norm_convention`.
     residual_norm_convention: str = RESIDUAL_NORM_CONVENTION
-    #: Per-layer cosine between the recipe's vectors and last-token vectors
-    #: from the SAME forward passes — populated only for pooled readings.
-    #: The standing justification for the pooled-reading rule: "we measured
-    #: the two conventions X apart" beats "the emotion paper did it this
-    #: way" (METHODS appendix, reading-position diagnostic).
+    #: WHICH RENDERING produced ``residual_norm_per_layer``. The denominator
+    #: follows the extraction's rendering (α in norm units must divide by a
+    #: number from the same distribution the vector was read from), and the
+    #: artifact says so rather than leaving a reader to infer it. Same field
+    #: family as ``residual_norm_source``/``residual_norm_convention``;
+    #: absent on legacy artifacts, which are raw.
+    residual_norm_rendering: str = "raw"
+    #: Per-layer cosine between the recipe's vectors and the LEGACY DEFAULT
+    #: recipe's vectors (raw rendering, last token). Populated whenever the
+    #: recipe departs from that default in either axis — a non-last-token
+    #: reading position (free: same forward passes) or a non-raw rendering
+    #: (extra passes, flagged in the report). The standing justification for
+    #: any departure: "we measured the two conventions X apart" beats "the
+    #: emotion paper did it this way" (METHODS appendix).
     reading_position_diagnostic: dict | None = None
+    #: The requested reading position AND what it resolved to, per sequence
+    #: shape — see :func:`resolution_report`. None for the legacy pair, whose
+    #: resolved index its label already implies.
+    reading_position_resolution: dict | None = None
     #: Per-layer mean of the neutral-corpus activations at the reading
     #: position — the residual stream's "carrier" estimate, persisted into
     #: the artifact (``neutral_mean_layer_<i>``) so ablation paths can
@@ -110,14 +131,30 @@ class NeutralActivationBank:
         return out
 
 
-def _encode(model: SteeredModel, text: str) -> torch.Tensor:
-    ids = model.tokenizer(text, return_tensors="pt").input_ids
+def _encode(model: SteeredModel, text: str,
+            rendering: ExtractionRendering = RAW_RENDERING) -> torch.Tensor:
+    """Token ids for one stimulus, under the declared extraction rendering.
+
+    The raw branch is the historical call, unchanged — an absent/raw
+    declaration tokenizes byte-for-byte as it always did. The chat-template
+    branch delegates to the MEASUREMENT renderer via
+    :func:`extraction_rendering.rendered_token_ids`, so extraction and
+    generation share one rendering definition instead of two that can drift.
+    """
+    if rendering is None or rendering.is_raw:
+        ids = model.tokenizer(text, return_tensors="pt").input_ids
+    else:
+        from .extraction_rendering import rendered_token_ids
+        ids = torch.tensor([rendered_token_ids(model, text, rendering)],
+                           dtype=torch.long)
     return ids.to(model.device)
 
 
 @torch.no_grad()
 def activations_multi(model: SteeredModel, texts: list[str],
-                      positions: list[ReadingPosition]) -> list[StimulusActivations]:
+                      positions: list[ReadingPosition],
+                      rendering: ExtractionRendering = RAW_RENDERING,
+                      ) -> list[StimulusActivations]:
     """One forward pass per text, read at SEVERAL positions at once.
 
     Recorders compose in the hook session (each returns the hidden state
@@ -125,21 +162,38 @@ def activations_multi(model: SteeredModel, texts: list[str],
     diagnostic's last-token comparison — costs zero extra passes. The
     short-stimulus refusal names the STRICTEST position; when the primary
     reading is the pooled one (the only case the diagnostic runs), that is
-    the primary, and single-position behavior is byte-identical to before."""
+    the primary, and single-position behavior is byte-identical to before.
+
+    Each position is RESOLVED against the rendered token ids before the pass
+    and its window pinned on the recorder, so template-aware roles land on a
+    concrete index and the resolution is recorded for stamping."""
+    rendering = rendering or RAW_RENDERING
     recorders = [ActivationRecorder(layers=range(model.num_layers), position=p)
                  for p in positions]
     strictest = max(positions, key=lambda p: p.minimum_token_count)
     results: list[list[list[list[float]]]] = [[] for _ in positions]
     norm_sums: list[list[float]] = [[] for _ in positions]
+    resolutions: list[list] = [[] for _ in positions]
     with model.hooked.session(list(recorders)):
         for text in texts:
             for recorder in recorders:
                 recorder.reset()
-            input_ids = _encode(model, text)
+            input_ids = _encode(model, text, rendering)
             if input_ids.shape[1] < strictest.minimum_token_count:
                 raise ConceptExtractorError(
                     f"stimulus too short ({input_ids.shape[1]} tokens) for "
                     f"{strictest.label!r}: {text[:60]!r}")
+            ids = input_ids[0].tolist()
+            for i, (position, recorder) in enumerate(zip(positions, recorders)):
+                try:
+                    resolved = position.resolve(
+                        ids, tokenizer=model.tokenizer,
+                        rendering_is_raw=rendering.is_raw)
+                except ReadingPositionError as exc:
+                    raise ConceptExtractorError(
+                        f"{exc} (stimulus: {text[:60]!r})") from exc
+                resolutions[i].append(resolved)
+                recorder.set_window(resolved.start_index, resolved.end_index)
             model.hooked.reset_offsets()
             model.model(input_ids=input_ids, use_cache=False)
             for i, recorder in enumerate(recorders):
@@ -155,15 +209,18 @@ def activations_multi(model: SteeredModel, texts: list[str],
     count = max(1, len(texts))
     return [StimulusActivations(
                 values=results[i],
-                residual_norm_per_layer=[s / count for s in norm_sums[i]])
+                residual_norm_per_layer=[s / count for s in norm_sums[i]],
+                resolutions=resolutions[i])
             for i in range(len(positions))]
 
 
 @torch.no_grad()
 def activations(model: SteeredModel, texts: list[str],
-                position: ReadingPosition = LAST_TOKEN) -> StimulusActivations:
+                position: ReadingPosition = LAST_TOKEN,
+                rendering: ExtractionRendering = RAW_RENDERING
+                ) -> StimulusActivations:
     """Activations for each text at every block output, read at ``position``."""
-    return activations_multi(model, texts, [position])[0]
+    return activations_multi(model, texts, [position], rendering)[0]
 
 
 # Memory cap for the neutral token bank: every layer keeps one float row per
@@ -190,7 +247,13 @@ def neutral_activation_bank(model: SteeredModel, texts: list[str], *,
                             reading_position: ReadingPosition,
                             layers: set[int] | None = None,
                             max_token_rows: int | None = DEFAULT_MAX_TOKEN_ROWS,
-                            downsample_seed: int = 0) -> NeutralActivationBank:
+                            downsample_seed: int = 0,
+                            rendering: ExtractionRendering = RAW_RENDERING
+                            ) -> NeutralActivationBank:
+    # Denominator-rendering consistency: the bank IS the norm denominator on
+    # the token-bank path, so it is tokenized exactly as the extraction it
+    # serves. Absent/raw is the historical behavior, unchanged.
+    rendering = rendering or RAW_RENDERING
     start_index = reading_position.requested_start_index or 0
 
     # Pre-tokenize to count bankable positions, then pick the kept subset up
@@ -200,7 +263,7 @@ def neutral_activation_bank(model: SteeredModel, texts: list[str], *,
     # every position × every layer of one text as Python floats before the
     # filter ran. The same positions are kept at EVERY layer, so per-layer
     # banks stay aligned.
-    encoded = [_encode(model, text) for text in texts]
+    encoded = [_encode(model, text, rendering) for text in texts]
     per_text_rows = [max(0, ids.shape[1] - start_index) for ids in encoded]
     positions_total = sum(per_text_rows)
     selected = deterministic_row_selection(positions_total, max_token_rows,
@@ -250,19 +313,46 @@ def extract(model: SteeredModel, stimuli, options: ExtractionOptions = Extractio
             neutral_texts: list[str] | None = None) -> ExtractionResult:
     """Derive a per-layer concept vector. ``stimuli`` is a
     :class:`~steerlab_server.steering.stimulus_set.StimulusSet`."""
-    # Reading-position diagnostic (standing, per METHODS appendix): for any
-    # pooled reading, also read LAST TOKEN from the same forward passes and
-    # report the per-layer cosine between the two conventions' vectors. The
-    # measured gap is the pooled-reading rule's justification.
-    diagnose = options.reading_position.label != LAST_TOKEN.label
-    if diagnose:
+    rendering = options.extraction_rendering or RAW_RENDERING
+    # Reading-position/rendering diagnostic (standing, per METHODS appendix):
+    # whenever the recipe departs from the LEGACY DEFAULT (raw rendering, last
+    # token), also extract under that default and report the per-layer cosine
+    # between the two recipes' vectors. The measured gap is the departure's
+    # justification — "we measured the two conventions X apart" beats "the
+    # paper did it this way".
+    #
+    # Cost: for a non-default POSITION under raw rendering the baseline reads
+    # from the SAME forward passes (a second recorder in the same hook
+    # session), so it is free. For a non-raw RENDERING the baseline is a
+    # genuinely different tokenization and needs its own passes — recorded
+    # honestly as ``extraForwardPasses`` in the report.
+    diagnose_position = options.reading_position.label != LAST_TOKEN.label
+    diagnose_rendering = not rendering.is_raw
+    diagnose = diagnose_position or diagnose_rendering
+    positive_last = negative_last = None
+    if diagnose_rendering:
+        # Baseline = the legacy default recipe end to end: raw rendering read
+        # at the last token. Separate passes, because the token ids differ.
+        positive = activations(model, stimuli.positive,
+                               options.reading_position, rendering)
+        negative = activations(model, stimuli.negative,
+                               options.reading_position, rendering)
+        positive_last = activations(model, stimuli.positive, LAST_TOKEN,
+                                    RAW_RENDERING)
+        negative_last = activations(model, stimuli.negative, LAST_TOKEN,
+                                    RAW_RENDERING)
+    elif diagnose_position:
         positive, positive_last = activations_multi(
-            model, stimuli.positive, [options.reading_position, LAST_TOKEN])
+            model, stimuli.positive, [options.reading_position, LAST_TOKEN],
+            rendering)
         negative, negative_last = activations_multi(
-            model, stimuli.negative, [options.reading_position, LAST_TOKEN])
+            model, stimuli.negative, [options.reading_position, LAST_TOKEN],
+            rendering)
     else:
-        positive = activations(model, stimuli.positive, options.reading_position)
-        negative = activations(model, stimuli.negative, options.reading_position)
+        positive = activations(model, stimuli.positive,
+                               options.reading_position, rendering)
+        negative = activations(model, stimuli.negative,
+                               options.reading_position, rendering)
 
     layer_count = len(positive.values[0]) if positive.values else 0
     if not all(len(v) == layer_count for v in positive.values) or \
@@ -272,7 +362,14 @@ def extract(model: SteeredModel, stimuli, options: ExtractionOptions = Extractio
     pc_count = options.neutral_pc_count or 0
     neutral: StimulusActivations | None = None
     if neutral_texts is not None and len(neutral_texts) >= 4:
-        neutral = activations(model, neutral_texts, options.reading_position)
+        # DENOMINATOR-RENDERING CONSISTENCY: α is reported in residual-norm
+        # units, so the norms must be measured on the same DISTRIBUTION the
+        # vector was read from. Measuring a chat-template vector against a
+        # raw-tokenized denominator divides by a number from a different
+        # distribution; the neutral corpus therefore follows the extraction's
+        # rendering, always.
+        neutral = activations(model, neutral_texts,
+                              options.reading_position, rendering)
     elif pc_count > 0:
         raise ConceptExtractorError("neutral corpus required for confound projection")
 
@@ -318,17 +415,79 @@ def extract(model: SteeredModel, stimuli, options: ExtractionOptions = Extractio
         ordered = sorted(diagnostic_cosines)
         diagnostic = {
             "primaryReadingPosition": options.reading_position.label,
+            "primaryRendering": rendering.mode,
             "comparedTo": LAST_TOKEN.label,
+            "comparedToRendering": RAW_RENDERING.mode,
+            "extraForwardPasses": diagnose_rendering,
             "perLayerCosine": diagnostic_cosines,
             "min": ordered[0],
             "median": ordered[len(ordered) // 2],
             "max": ordered[-1],
         }
-    return ExtractionResult(vectors=ConceptVectors(per_layer=per_layer),
-                            residual_norm_per_layer=residual_norms,
-                            residual_norm_source=norm_source, options=options,
-                            reading_position_diagnostic=diagnostic,
-                            neutral_mean_per_layer=neutral_mean)
+    return ExtractionResult(
+        vectors=ConceptVectors(per_layer=per_layer),
+        residual_norm_per_layer=residual_norms,
+        residual_norm_source=norm_source, options=options,
+        residual_norm_rendering=rendering.mode,
+        reading_position_diagnostic=diagnostic,
+        reading_position_resolution=resolution_report(
+            options.reading_position, rendering,
+            positive.resolutions + negative.resolutions),
+        neutral_mean_per_layer=neutral_mean)
+
+
+def resolution_report(position: ReadingPosition, rendering: ExtractionRendering,
+                      resolutions: list) -> dict | None:
+    """The stamped ``readingPositionResolution`` block, or ``None`` to omit it.
+
+    Records BOTH halves: the REQUESTED position (name + parameter) and what it
+    RESOLVED to — mirroring the way ``layerResolution`` records the layer
+    together with its depth fraction and the rule that chose it. A reader can
+    then see what was actually read without re-deriving template internals.
+
+    Resolutions are grouped by OFFSET FROM END, the sequence-shape invariant:
+    under one template the offset is constant while the absolute index moves
+    with stimulus length, so a single row here means "every stimulus was read
+    at the same place in its template", and two rows are a loud sign the
+    template did not render uniformly.
+
+    ``None`` — the key omitted entirely — for the legacy pair (a shape-only
+    position under raw rendering), whose resolved index is fully implied by
+    its label. Legacy artifacts therefore keep byte-identical sidecars.
+    """
+    rendering = rendering or RAW_RENDERING
+    stamped_modes = ("offsetFromEnd", "lastContentToken", "turnCloseToken",
+                     "postInstruction")
+    if rendering.is_raw and position.identity_mode not in stamped_modes:
+        return None
+    if not resolutions:
+        return None
+    shapes: dict[object, dict] = {}
+    for resolved in resolutions:
+        key = resolved.offset_from_end
+        row = shapes.get(key)
+        if row is None:
+            shapes[key] = {
+                "offsetFromEnd": key,
+                "sequenceCount": 1,
+                "exampleIndex": resolved.start_index,
+                "exampleEndIndex": resolved.end_index,
+                "exampleTokenCount": resolved.token_count,
+            }
+        else:
+            row["sequenceCount"] += 1
+    block = {
+        "requested": position.label,
+        "mode": position.identity_mode,
+        "rendering": rendering.mode,
+        "source": resolutions[0].source,
+        "shapes": sorted(shapes.values(),
+                         key=lambda r: (r["offsetFromEnd"] is None,
+                                        r["offsetFromEnd"] or 0)),
+    }
+    if position.identity_parameter is not None:
+        block["parameter"] = position.identity_parameter
+    return block
 
 
 def _neutral_mean_per_layer(neutral: StimulusActivations,
@@ -354,6 +513,11 @@ class MultiConceptExtractionResult:
     residual_norm_source: str
     #: See :attr:`ExtractionResult.residual_norm_convention`.
     residual_norm_convention: str = RESIDUAL_NORM_CONVENTION
+    #: See :attr:`ExtractionResult.residual_norm_rendering`.
+    residual_norm_rendering: str = "raw"
+    #: See :attr:`ExtractionResult.reading_position_resolution` — shared by
+    #: every concept in the pass (one corpus, one rendering, one position).
+    reading_position_resolution: dict | None = None
     excluded_short: int = 0
     included: int = 0
     #: See :attr:`ExtractionResult.neutral_mean_per_layer` — shared by every
@@ -363,16 +527,22 @@ class MultiConceptExtractionResult:
 
 def _screen_short(model: SteeredModel, corpus: list[tuple[str, str]],
                   reading_position: ReadingPosition,
-                  max_fraction: float) -> list[tuple[str, str]]:
+                  max_fraction: float,
+                  rendering: ExtractionRendering = RAW_RENDERING
+                  ) -> list[tuple[str, str]]:
     """Drop rows too short for the reading position (parallel to Swift
-    ``screenTexts``); refuse if too large a fraction would be excluded."""
+    ``screenTexts``); refuse if too large a fraction would be excluded.
+
+    Screening counts tokens under the SAME rendering extraction will use — a
+    templated render adds the template's own tokens, so screening the raw
+    string would answer a question about a sequence the model never sees."""
     minimum = reading_position.minimum_token_count
     if minimum <= 1:
         return corpus
     kept: list[tuple[str, str]] = []
     excluded = 0
     for concept, text in corpus:
-        n = model.tokenizer(text, return_tensors="pt").input_ids.shape[1]
+        n = _encode(model, text, rendering).shape[1]
         if n >= minimum:
             kept.append((concept, text))
         else:
@@ -389,7 +559,8 @@ def extract_grand_mean(model: SteeredModel, corpus: list[tuple[str, str]], *,
                        reading_position: ReadingPosition = LAST_TOKEN,
                        neutral_texts: list[str] | None = None,
                        neutral_pc_count: int | None = None,
-                       max_short_exclusion_fraction: float = DEFAULT_MAX_SHORT_EXCLUSION_FRACTION
+                       max_short_exclusion_fraction: float = DEFAULT_MAX_SHORT_EXCLUSION_FRACTION,
+                       extraction_rendering: ExtractionRendering = RAW_RENDERING
                        ) -> MultiConceptExtractionResult:
     """Emotion-paper multi-concept extraction: each concept direction is
     mean(its rows) − mean(all rows), per layer (parallel to Swift
@@ -399,18 +570,21 @@ def extract_grand_mean(model: SteeredModel, corpus: list[tuple[str, str]], *,
     negative class). ``neutral_pc_count`` optionally projects the top-K
     neutral-corpus principal components out of every vector — the same
     confound projection the paired path offers."""
-    corpus = _screen_short(model, corpus, reading_position, max_short_exclusion_fraction)
+    rendering = extraction_rendering or RAW_RENDERING
+    corpus = _screen_short(model, corpus, reading_position,
+                           max_short_exclusion_fraction, rendering)
     if not corpus:
         raise ConceptExtractorError("empty multi-concept corpus after screening")
     concepts = [c for c, _ in corpus]
     texts = [t for _, t in corpus]
-    pooled = activations(model, texts, reading_position)
+    pooled = activations(model, texts, reading_position, rendering)
     layer_count = len(pooled.values[0]) if pooled.values else 0
 
     pc_count = neutral_pc_count or 0
     neutral: StimulusActivations | None = None
     if neutral_texts is not None and len(neutral_texts) >= 4:
-        neutral = activations(model, neutral_texts, reading_position)
+        # Denominator follows the extraction's rendering — see `extract`.
+        neutral = activations(model, neutral_texts, reading_position, rendering)
     elif pc_count > 0:
         raise ConceptExtractorError("neutral corpus required for confound projection")
     neutral_components: list[list[list[float]]] = []
@@ -443,11 +617,15 @@ def extract_grand_mean(model: SteeredModel, corpus: list[tuple[str, str]], *,
         residual = pooled.residual_norm_per_layer
         source = "extraction-stimuli"
         neutral_mean = None
-    return MultiConceptExtractionResult(per_concept=per_concept,
-                                        residual_norm_per_layer=residual,
-                                        residual_norm_source=source,
-                                        included=len(texts),
-                                        neutral_mean_per_layer=neutral_mean)
+    return MultiConceptExtractionResult(
+        per_concept=per_concept,
+        residual_norm_per_layer=residual,
+        residual_norm_source=source,
+        residual_norm_rendering=rendering.mode,
+        reading_position_resolution=resolution_report(
+            reading_position, rendering, pooled.resolutions),
+        included=len(texts),
+        neutral_mean_per_layer=neutral_mean)
 
 
 @dataclass

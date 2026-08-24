@@ -21,7 +21,10 @@ from dataclasses import dataclass, field
 from typing import NamedTuple
 
 from ..steering import vector_math as vm
-from ..steering.reading_position import LAST_TOKEN, ReadingPosition, from_label, mean_from_token
+from ..steering.extraction_rendering import RAW_RENDERING, ExtractionRendering
+from ..steering.extraction_rendering import from_json as rendering_from_json
+from ..steering.reading_position import (LAST_TOKEN, ReadingPosition, from_label,
+                                         mean_from_token)
 from ..steering.stimulus_set import StimulusSet, load_texts
 from ..steering.vector_store import SUBSTRATE as _THIS_SUBSTRATE
 from . import paths
@@ -102,6 +105,11 @@ class ExtractionOptions:
     method: vm.ExtractionMethod = vm.ExtractionMethod.MEAN_DIFFERENCE
     reading_position: ReadingPosition = LAST_TOKEN
     neutral_pc_count: int | None = None
+    #: HOW the stimulus reaches the model (``extractionRendering``). ABSENT is
+    #: legacy raw and is never retro-applied: a manifest without the key
+    #: renders, hashes, and verifies exactly as it always has. See
+    #: :mod:`steerlab_server.steering.extraction_rendering`.
+    extraction_rendering: ExtractionRendering = RAW_RENDERING
 
     @classmethod
     def from_json(cls, d: dict | None) -> "ExtractionOptions":
@@ -110,7 +118,9 @@ class ExtractionOptions:
             if d.get("method") else vm.ExtractionMethod.MEAN_DIFFERENCE
         return cls(method=method,
                    reading_position=_parse_reading_position(d.get("readingPosition")),
-                   neutral_pc_count=d.get("neutralPCCount"))
+                   neutral_pc_count=d.get("neutralPCCount"),
+                   extraction_rendering=rendering_from_json(
+                       d.get("extractionRendering")))
 
 
 @dataclass
@@ -2713,21 +2723,58 @@ def _human_baseline_shape_violations(base: str, rel_path: str) -> list[str]:
     return []
 
 
+#: Swift Codable enum case name → the label-building constructor. Cases with
+#: an associated value carry it under ``_0`` in Swift's synthesized encoding.
+_READING_POSITION_CASES = {
+    "lastToken": lambda _: LAST_TOKEN,
+    "meanFromToken": lambda k: mean_from_token(int(k)),
+    "offsetFromEnd": lambda k: _offset_from_end(int(k)),
+    "lastContentToken": lambda _: _last_content_token(),
+    "turnCloseToken": lambda _: _turn_close_token(),
+    "postInstruction": lambda i: _post_instruction(int(i)),
+}
+
+
+def _offset_from_end(k):
+    from ..steering.reading_position import offset_from_end
+    return offset_from_end(k)
+
+
+def _post_instruction(i):
+    from ..steering.reading_position import post_instruction
+    return post_instruction(i)
+
+
+def _last_content_token():
+    from ..steering.reading_position import LAST_CONTENT_TOKEN
+    return LAST_CONTENT_TOKEN
+
+
+def _turn_close_token():
+    from ..steering.reading_position import TURN_CLOSE_TOKEN
+    return TURN_CLOSE_TOKEN
+
+
 def _parse_reading_position(value) -> ReadingPosition:
     """Parse the manifest ``readingPosition`` (Swift Codable enum or a label).
 
     Swift synthesizes an enum-with-associated-value as ``{"lastToken": {}}`` or
-    ``{"meanFromToken": {"_0": k}}``; older/looser data may use the label string.
+    ``{"meanFromToken": {"_0": k}}``; older/looser data may use the label
+    string. Named template-aware roles (``lastContentToken``,
+    ``turnCloseToken``, ``postInstruction``) travel the same two ways.
     """
     if value is None:
         return LAST_TOKEN
     if isinstance(value, str):
         return from_label(value)
     if isinstance(value, dict):
-        if "meanFromToken" in value:
-            inner = value["meanFromToken"]
-            k = inner.get("_0") if isinstance(inner, dict) else inner
-            return mean_from_token(int(k))
-        if "lastToken" in value:
-            return LAST_TOKEN
+        for case, make in _READING_POSITION_CASES.items():
+            if case not in value:
+                continue
+            inner = value[case]
+            parameter = inner.get("_0") if isinstance(inner, dict) else inner
+            try:
+                return make(parameter)
+            except (TypeError, ValueError):
+                return LAST_TOKEN
     return LAST_TOKEN

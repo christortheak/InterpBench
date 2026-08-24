@@ -468,6 +468,24 @@ public enum ClusterEnvironmentRenderer {
                         "the loader ON THE COMPUTE NODE, never here.",
                     ]))
         }
+        // Declare-or-omit (ledger 2026-08-23): a site whose scheduler purges
+        // node scratch itself says so, and rendered scripts then arm no
+        // cleanup trap. A site that has never declared it emits nothing and
+        // renders exactly as before — the trap stays on, the safe default.
+        // Twin of the Python renderer's entry (site_environment.py); the two
+        // must stay byte-identical.
+        if profile.constraints.storage.nodeScratchPurgedByScheduler == true {
+            entries.append(
+                EnvEntry(
+                    key: "STEERLAB_NODE_SCRATCH_PURGED_BY_SCHEDULER",
+                    value: "1", quoting: .bare,
+                    comments: [
+                        "This site's SCHEDULER reclaims node-local scratch at job end (an",
+                        "epilog), so rendered scripts arm no cleanup trap: a job racing the",
+                        "epilog for the same directory adds risk and removes nothing the",
+                        "site was not already going to remove.",
+                    ]))
+        }
 
         // --- G2: runtime reconstruction under --export=NONE ---
         entries += runtimeReconstructionEntries(environment)

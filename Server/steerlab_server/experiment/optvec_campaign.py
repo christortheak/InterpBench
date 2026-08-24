@@ -1056,7 +1056,18 @@ def _submission_lock(campaign_dir: str):
 def submit(campaign_dir: str, *, runner: Runner | None = None,
            sbatch_command: str = "sbatch") -> dict:
     """Top up the campaign's queue occupancy to ``maxQueued`` (serialized by
-    :data:`SUBMIT_LOCK_FILENAME`) and return a machine-readable report."""
+    :data:`SUBMIT_LOCK_FILENAME`) and return a machine-readable report.
+
+    The campaign directory is absolutized FIRST (audit of the
+    relative-path-through-the-renderer class, 2026-08-23). Every cell's
+    rendered script carries this path twice — as its own ``cd`` target and
+    inside ``optvec train --config <cell>/config.json`` — and the two resolve
+    against DIFFERENT working directories once the ``cd`` has run, so a
+    relative campaign directory typed on the command line renders a script
+    that cannot find its own config. Same mechanism as the ``--source`` defect
+    the same audit closed; louder failure, identical cause.
+    """
+    campaign_dir = os.path.abspath(campaign_dir)
     with _submission_lock(campaign_dir) as held:
         report = _submit_cycle(campaign_dir, runner=runner,
                                sbatch_command=sbatch_command)

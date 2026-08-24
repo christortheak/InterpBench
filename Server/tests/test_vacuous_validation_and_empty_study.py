@@ -79,7 +79,7 @@ def _run_validate(root, name, monkeypatch, *, concepts=("fear",),
     from steerlab_server.steering import extractor
     monkeypatch.setattr(
         extractor, "activations",
-        lambda model, texts, reading: SimpleNamespace(
+        lambda model, texts, reading, rendering=None: SimpleNamespace(
             values=[[[1.0, 0.0]] * LAYER_COUNT for _ in texts]))
     monkeypatch.setattr(
         extractor, "logit_lens",

@@ -1,4 +1,5 @@
 import Foundation
+import SteeringKit
 
 /// Telling near-identically-named artifacts apart by what actually differs.
 ///
@@ -200,6 +201,14 @@ extension ArtifactDisambiguation {
             if let reading = sidecar.readingPosition {
                 identity["reading"] = reading
             }
+            // Two artifacts of one concept can differ ONLY in how the
+            // stimulus reached the model, so the rendering has to be a
+            // disambiguating field — otherwise the chooser would call them
+            // identical and pick the newest, which is exactly the silent win
+            // this surface exists to prevent. Absent means legacy raw.
+            identity["rendering"] =
+                sidecar.extractionRendering?.mode.rawValue
+                ?? ExtractionRendering.Mode.raw.rawValue
             if let projection = sidecar.neutralProjection {
                 identity["projection"] = projection
             }

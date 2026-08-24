@@ -1652,6 +1652,8 @@ public enum ExperimentTasks {
             residualNormPerLayer: extraction.residualNormPerLayer,
             residualNormSource: normSource,
             residualNormConvention: extraction.residualNormConvention,
+            residualNormRendering: extraction.residualNormRendering,
+            readingPositionResolution: extraction.readingPositionResolution,
             // The FULL corpus hash (the identity contract needs it; the
             // legacy 12-char prefix embedded in normSource stays for
             // display compatibility but proves nothing).
@@ -1712,13 +1714,19 @@ public enum ExperimentTasks {
         struct GroupKey: Hashable {
             let readingPosition: String
             let neutralPCCount: Int?
+            let extractionRendering: String
         }
         var groups: [GroupKey: [ExperimentManifest.ConceptRef]] = [:]
         var order: [GroupKey] = []
         for ref in refs {
+            // The RENDERING joins the grouping key: two concepts that render
+            // differently are two different corpus passes with two different
+            // denominators, so pooling them would silently give one of them
+            // the other's numbers.
             let key = GroupKey(
                 readingPosition: ref.options.readingPosition.label,
-                neutralPCCount: ref.options.neutralPCCount)
+                neutralPCCount: ref.options.neutralPCCount,
+                extractionRendering: ref.options.resolvedExtractionRendering.label)
             if groups[key] == nil { order.append(key) }
             groups[key, default: []].append(ref)
         }
@@ -1740,7 +1748,8 @@ public enum ExperimentTasks {
                 targetConcepts: Set(members.map(\.name)),
                 readingPosition: first.options.readingPosition,
                 neutralPCCount: first.options.neutralPCCount,
-                neutralTexts: neutralTexts)
+                neutralTexts: neutralTexts,
+                extractionRendering: first.options.resolvedExtractionRendering)
             for ref in members {
                 guard let vectors = extraction.vectorsByConcept[ref.name] else {
                     throw ExperimentError(
@@ -1752,6 +1761,8 @@ public enum ExperimentTasks {
                     residualNormPerLayer: extraction.residualNormPerLayer,
                     residualNormSource: extraction.residualNormSource,
                     options: ref.options,
+                    residualNormRendering: extraction.residualNormRendering,
+                    readingPositionResolution: extraction.readingPositionResolution,
                     neutralMeanPerLayer: extraction.neutralMeanPerLayer)
                 if let runDirectory {
                     // Live hashes (like the paired path's stimuli.hash): the
@@ -1970,9 +1981,12 @@ public enum ExperimentTasks {
         var corpusActivationCache: [String: (concepts: [String], activations: StimulusActivations)] =
             [:]
         func corpusActivations(
-            _ reading: ReadingPosition
+            _ reading: ReadingPosition, _ rendering: ExtractionRendering
         ) async throws -> (concepts: [String], activations: StimulusActivations) {
-            if let cached = corpusActivationCache[reading.label] { return cached }
+            // The rendering joins the cache key because it changes the token
+            // sequence, hence the activations.
+            let cacheKey = "\(reading.label) | \(rendering.label)"
+            if let cached = corpusActivationCache[cacheKey] { return cached }
             guard let corpus = manifest.grandMeanCorpus else {
                 throw ExperimentError(
                     reason: "grand-mean concepts attached but no grandMeanCorpus pinned — "
@@ -1987,8 +2001,9 @@ public enum ExperimentTasks {
                 rows.append(contentsOf: loaded.rows)
             }
             let computed = try await ConceptExtractor.multiConceptActivations(
-                container: container, corpus: rows, readingPosition: reading)
-            corpusActivationCache[reading.label] = computed
+                container: container, corpus: rows, readingPosition: reading,
+                rendering: rendering)
+            corpusActivationCache[cacheKey] = computed
             return computed
         }
 
@@ -2080,11 +2095,17 @@ public enum ExperimentTasks {
                 // midpoint — the population plays the negative-class role.
                 // Activations are captured once for all layers; each
                 // declared depth is per-layer arithmetic on the same pass.
+                // Held-out activations must be read where AND rendered how
+                // the vector was: a probe score is a projection onto that
+                // direction, and a raw-tokenized scenario is a sample from a
+                // different distribution than a templated one.
                 let (labels, corpusActs) = try await corpusActivations(
-                    ref.options.readingPosition)
+                    ref.options.readingPosition,
+                    ref.options.resolvedExtractionRendering)
                 let scenarioActs = try await ConceptExtractor.activations(
                     container: container, texts: scenarios.map(\.text),
-                    position: ref.options.readingPosition)
+                    position: ref.options.readingPosition,
+                    rendering: ref.options.resolvedExtractionRendering)
                 for resolution in resolutions {
                     let layer = resolution.layer
                     let direction = extraction.result.vectors.perLayer[layer]
@@ -2726,6 +2747,15 @@ public enum ExperimentTasks {
         return scorers
     }
 
+    /// The measured-generation render for one prompt.
+    ///
+    /// The family rules themselves — Gemma 3 has no system role; Qwen3
+    /// studies disable thinking mode — live in `SteeringKit.PromptRendering`,
+    /// which EXTRACTION also calls when a concept declares a chat-template
+    /// `extractionRendering`. One definition, two callers: that is what makes
+    /// "extraction rendered the way generation does" a checkable claim rather
+    /// than two copies drifting apart (the drift that made a concept's
+    /// direction depend on an undeclared detail).
     static func userInput(
         prompt: String,
         modelID: String,
@@ -2733,45 +2763,32 @@ public enum ExperimentTasks {
         systemPrompt: String?,
         qwenThinkingEnabled: Bool
     ) -> UserInput {
-        let system = systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let hasSystem = system?.isEmpty == false
-        let lowerModel = modelID.lowercased()
-
         switch promptMode {
         case .rawCompletion:
-            var text = prompt
-            if hasSystem, let system {
-                text = system + "\n\n" + text
-            }
-            if lowerModel.contains("qwen") {
-                text += qwenThinkingEnabled ? " /think" : " /no_think"
-            }
-            return UserInput(prompt: .text(text))
+            return UserInput(
+                prompt: .text(
+                    PromptRendering.rawCompletionText(
+                        prompt: prompt, modelID: modelID,
+                        systemPrompt: systemPrompt,
+                        qwenThinkingEnabled: qwenThinkingEnabled)))
 
         case .chatAssistant:
-            var user = prompt
-            var messages: [Chat.Message] = []
-            if hasSystem, let system {
-                if lowerModel.contains("gemma") {
-                    user = system + "\n\n" + user
-                } else {
-                    messages.append(.system(system))
-                }
-            }
-            messages.append(.user(user))
             return UserInput(
-                chat: messages,
+                chat: PromptRendering.chatMessages(
+                    prompt: prompt, modelID: modelID,
+                    systemPrompt: systemPrompt),
                 additionalContext: qwenContext(
                     modelID: modelID, qwenThinkingEnabled: qwenThinkingEnabled))
         }
     }
 
+    /// Forwarder to the single definition (`SteeringKit.PromptRendering`),
+    /// kept because several call sites in this file already name it.
     static func qwenContext(
         modelID: String, qwenThinkingEnabled: Bool
     ) -> [String: any Sendable]? {
-        modelID.lowercased().contains("qwen")
-            ? ["enable_thinking": qwenThinkingEnabled]
-            : nil
+        PromptRendering.qwenContext(
+            modelID: modelID, qwenThinkingEnabled: qwenThinkingEnabled)
     }
 
     // MARK: - Transcript-with-roles rendering (send-as-assistant / prefill)
@@ -9431,15 +9448,19 @@ public enum ExperimentTasks {
     ) async throws
         -> [(layer: Int, accuracy: Float, diagnostics: ScenarioDiagnostics.Report)]
     {
+        // Held-out activations must be read where AND rendered how the
+        // vector was — a projection onto the direction is only meaningful
+        // against samples from the distribution it was read from.
+        let rendering = options.resolvedExtractionRendering
         let positives = try await ConceptExtractor.activations(
             container: container, texts: stimuli.positive,
-            position: options.readingPosition)
+            position: options.readingPosition, rendering: rendering)
         let negatives = try await ConceptExtractor.activations(
             container: container, texts: stimuli.negative,
-            position: options.readingPosition)
+            position: options.readingPosition, rendering: rendering)
         let scenarioActivations = try await ConceptExtractor.activations(
             container: container, texts: scenarios.map(\.text),
-            position: options.readingPosition)
+            position: options.readingPosition, rendering: rendering)
 
         var profile: [(layer: Int, accuracy: Float,
                        diagnostics: ScenarioDiagnostics.Report)] = []

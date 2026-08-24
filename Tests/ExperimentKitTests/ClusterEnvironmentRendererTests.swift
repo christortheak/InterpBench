@@ -598,6 +598,30 @@ struct ClusterEnvironmentRendererTests {
         #expect(headers.contains("#SBATCH --gres=lscratch:100"))
     }
 
+    /// Twin of the Python renderer's entry (site_environment.py, ledger
+    /// 2026-08-23): a site declaring that its scheduler reclaims node scratch
+    /// emits the flag the sbatch renderer reads to arm no cleanup trap —
+    /// value and spelling byte-identical across engines.
+    @Test func schedulerPurgedScratchDeclarationReachesTheEnvironment() throws {
+        var site = ClusterSiteProfile.genericSlurm
+        site.constraints.storage.nodeScratchPurgedByScheduler = true
+        let env = ClusterEnvironmentRenderer.resolvedEnvironment(site)
+        #expect(env["STEERLAB_NODE_SCRATCH_PURGED_BY_SCHEDULER"] == "1")
+    }
+
+    /// Declare-or-omit: absent (and explicit false) render byte-identically
+    /// to before — no env line, trap stays on, the safe default.
+    @Test func schedulerPurgeIsAbsentUntilASiteDeclaresIt() throws {
+        for site in [try legacyV1Site(), ClusterSiteProfile.genericSlurm] {
+            let env = ClusterEnvironmentRenderer.resolvedEnvironment(site)
+            #expect(env["STEERLAB_NODE_SCRATCH_PURGED_BY_SCHEDULER"] == nil)
+        }
+        var declined = ClusterSiteProfile.genericSlurm
+        declined.constraints.storage.nodeScratchPurgedByScheduler = false
+        let env = ClusterEnvironmentRenderer.resolvedEnvironment(declined)
+        #expect(env["STEERLAB_NODE_SCRATCH_PURGED_BY_SCHEDULER"] == nil)
+    }
+
     /// The declare-or-omit half (hard requirement): a site that has never heard
     /// of node-local scratch renders exactly what it rendered before — no env
     /// line, and no change to any `--gres` directive.

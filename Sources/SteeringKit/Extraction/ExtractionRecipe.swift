@@ -135,9 +135,20 @@ public struct VectorExtractionRecipe: Codable, Sendable, Equatable {
     public var datasets: [DatasetRef]
     public var readingPosition: ReadingPosition
     public var neutralPCSelection: NeutralPCSelection
+    /// HOW the stimulus string reaches the model — raw (legacy, and what an
+    /// ABSENT declaration means) or the family chat template. Optional and
+    /// nil-defaulted on purpose: Swift's synthesized encoder omits a nil
+    /// optional, so a recipe that never declares a rendering encodes to
+    /// byte-identical JSON and keeps its `canonicalHash()`.
+    public var extractionRendering: ExtractionRendering?
     public var promptMode: String?
     public var systemPrompt: String?
     public var notes: String?
+
+    /// The rendering actually applied — absent resolves to legacy raw.
+    public var resolvedExtractionRendering: ExtractionRendering {
+        extractionRendering ?? .raw
+    }
 
     public init(
         name: String,
@@ -146,6 +157,7 @@ public struct VectorExtractionRecipe: Codable, Sendable, Equatable {
         datasets: [DatasetRef],
         readingPosition: ReadingPosition = .lastToken,
         neutralPCSelection: NeutralPCSelection = .none,
+        extractionRendering: ExtractionRendering? = nil,
         promptMode: String? = nil,
         systemPrompt: String? = nil,
         notes: String? = nil
@@ -156,6 +168,7 @@ public struct VectorExtractionRecipe: Codable, Sendable, Equatable {
         self.datasets = datasets
         self.readingPosition = readingPosition
         self.neutralPCSelection = neutralPCSelection
+        self.extractionRendering = extractionRendering
         self.promptMode = promptMode
         self.systemPrompt = systemPrompt
         self.notes = notes

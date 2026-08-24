@@ -39,6 +39,7 @@ class ActivationRecorder(LayerIntervention):
         self._layers = set(layers)
         self._position = position
         self._captures: list[Capture] = []
+        self._window: tuple[int, int] | None = None
 
     @property
     def captures(self) -> list[Capture]:
@@ -47,16 +48,38 @@ class ActivationRecorder(LayerIntervention):
     def reset(self) -> None:
         self._captures.clear()
 
+    def set_window(self, start: int, end: int | None) -> None:
+        """Pin the half-open read window for the NEXT forward pass.
+
+        Template-aware reading positions ("turn close token",
+        "post-instruction 2") resolve against the TOKEN IDS, which only the
+        extraction driver holds — the hook sees hidden states. So the driver
+        resolves and pins the window here, and this recorder stays free of
+        template knowledge. Unset (the default) keeps the historical
+        length-only behavior for the two shape-only positions, byte-for-byte.
+        """
+        self._window = (start, end if end is not None else -1)
+
+    def clear_window(self) -> None:
+        self._window = None
+
     def apply(self, h: torch.Tensor, layer: int, offset: int) -> torch.Tensor:
         if layer not in self._layers:
             return h
         length = h.shape[1]
-        if isinstance(self._position, MeanFromToken):
+        if self._window is not None:
+            start_index, pinned_end = self._window
+            end_index = length if pinned_end < 0 else min(pinned_end, length)
+        elif isinstance(self._position, MeanFromToken):
             start_index = min(max(0, self._position.k), length - 1)
+            end_index = length
         else:  # last token
             start_index = length - 1
+            end_index = length
 
-        rows = h[0, start_index:, :].to(torch.float32)            # [positions, hidden]
+        # `h[0, start:length, :]` is the same tensor `h[0, start:, :]` was, so
+        # the pooled-reading numbers are unchanged for every legacy recipe.
+        rows = h[0, start_index:end_index, :].to(torch.float32)   # [positions, hidden]
         pooled = rows.mean(dim=0)                                  # [hidden]
         norms = torch.sqrt(rows.square().sum(dim=-1)).mean()      # scalar
         self._captures.append(Capture(

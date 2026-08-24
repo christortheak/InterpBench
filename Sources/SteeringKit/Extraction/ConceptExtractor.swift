@@ -8,6 +8,17 @@ public enum ConceptExtractorError: Error, CustomStringConvertible {
     case layerMismatch
     case stimulusTooShort(text: String, tokenCount: Int, minimumTokenCount: Int, reading: String)
     case tooManyShortStimuli(excluded: Int, total: Int, maximumFraction: Double)
+    /// A reading position could not be resolved for this stimulus — a named
+    /// role under raw rendering, an offset past the sequence start, a
+    /// template with no end-of-turn marker. Carries the typed
+    /// `ReadingPositionError`'s message (which already names its repair) plus
+    /// the offending stimulus.
+    case readingPositionUnresolved(reason: String, text: String)
+    /// The rendering declared for this extraction could not be applied on
+    /// this engine — e.g. the tokenizer has no chat template. Named, never a
+    /// silent fallback to raw: a silent fallback is the exact ambiguity the
+    /// `extractionRendering` option exists to end.
+    case renderingUnsupported(rendering: String, modelID: String, reason: String)
     /// The projected neutral token bank exceeds the memory budget. Thrown
     /// BEFORE any forward pass — an over-budget bank fails inside MLX/native
     /// allocation, which kills the process rather than raising.
@@ -30,6 +41,15 @@ public enum ConceptExtractorError: Error, CustomStringConvertible {
         case .tooManyShortStimuli(let excluded, let total, let maximumFraction):
             "excluded \(excluded)/\(total) stimuli as too short; maximum allowed is "
                 + "\(Int((maximumFraction * 100).rounded()))%"
+        case .readingPositionUnresolved(let reason, let text):
+            "\(reason) (stimulus: \(text.prefix(40))…)"
+        case .renderingUnsupported(let rendering, let modelID, let reason):
+            "extraction rendering '\(rendering)' cannot be applied on the "
+                + "swift-mlx engine for \(modelID): \(reason). Repair: extract "
+                + "this concept on an engine that supports the rendering, or "
+                + "declare extractionRendering {\"mode\": \"raw\"} — never let "
+                + "it fall back silently, because a direction read from raw "
+                + "activations is not the direction read from templated ones."
         case .neutralBankTooLarge(let preflight):
             "neutral token bank is too large to build: \(preflight.summary). "
                 + "Restrict the capture to a layer band (the middle third is the "
@@ -71,15 +91,29 @@ public struct ExtractionOptions: Codable, Sendable, Equatable {
     /// concept signal. Experiment verification blocks this path until the
     /// calibrated neutral bank exists.
     public var neutralPCCount: Int?
+    /// HOW the stimulus string reaches the model — raw (legacy, and what an
+    /// ABSENT declaration means) or the family chat template. Optional and
+    /// nil-defaulted on purpose: Swift's synthesized encoder omits a nil
+    /// optional, so a manifest that never declares a rendering encodes to
+    /// byte-identical JSON and keeps its recipe-identity hash. See
+    /// ``ExtractionRendering``.
+    public var extractionRendering: ExtractionRendering?
+
+    /// The rendering actually applied — absent resolves to legacy raw.
+    public var resolvedExtractionRendering: ExtractionRendering {
+        extractionRendering ?? .raw
+    }
 
     public init(
         method: ExtractionMethod = .meanDifference,
         readingPosition: ReadingPosition = .lastToken,
-        neutralPCCount: Int? = nil
+        neutralPCCount: Int? = nil,
+        extractionRendering: ExtractionRendering? = nil
     ) {
         self.method = method
         self.readingPosition = readingPosition
         self.neutralPCCount = neutralPCCount
+        self.extractionRendering = extractionRendering
     }
 }
 
@@ -98,7 +132,18 @@ public struct ExtractionResult: Sendable {
     /// because this value describes a measurement THIS code just made.
     /// Sidecar writers stamp it verbatim; see `ResidualNormConvention`.
     public let residualNormConvention: String = ResidualNormConvention.current
+    /// WHICH RENDERING produced `residualNormPerLayer`. The denominator
+    /// follows the extraction's rendering — α in norm units must divide by a
+    /// number from the same distribution the vector was read from — and the
+    /// artifact says so rather than leaving a reader to infer it. Same field
+    /// family as `residualNormSource`/`residualNormConvention`; "raw" is the
+    /// legacy value and stamps nothing.
+    public let residualNormRendering: String
     public let options: ExtractionOptions
+    /// The requested reading position AND what it resolved to, per sequence
+    /// shape. nil for the legacy pair, whose resolved index its label already
+    /// implies.
+    public let readingPositionResolution: ReadingPositionResolutionReport?
     /// Per-layer mean of the neutral-corpus activations at the reading
     /// position — the residual stream's "carrier" estimate, persisted into
     /// the artifact (`neutral_mean_layer_<i>`) so ablation paths can center
@@ -111,12 +156,16 @@ public struct ExtractionResult: Sendable {
         residualNormPerLayer: [Float],
         residualNormSource: String,
         options: ExtractionOptions,
+        residualNormRendering: String = ExtractionRendering.Mode.raw.rawValue,
+        readingPositionResolution: ReadingPositionResolutionReport? = nil,
         neutralMeanPerLayer: [[Float]]? = nil
     ) {
         self.vectors = vectors
         self.residualNormPerLayer = residualNormPerLayer
         self.residualNormSource = residualNormSource
         self.options = options
+        self.residualNormRendering = residualNormRendering
+        self.readingPositionResolution = readingPositionResolution
         self.neutralMeanPerLayer = neutralMeanPerLayer
     }
 }
@@ -127,7 +176,15 @@ public struct MultiConceptExtractionResult: Sendable {
     public let residualNormSource: String
     /// See `ExtractionResult.residualNormConvention`.
     public let residualNormConvention: String = ResidualNormConvention.current
+    /// See `ExtractionResult.residualNormRendering`.
+    public let residualNormRendering: String
     public let readingPosition: ReadingPosition
+    /// The rendering every concept in this pass was extracted under (one
+    /// corpus, one rendering).
+    public let extractionRendering: ExtractionRendering
+    /// See `ExtractionResult.readingPositionResolution` — shared by every
+    /// concept in the pass.
+    public let readingPositionResolution: ReadingPositionResolutionReport?
     public let neutralPCCount: Int?
     public let screening: ExtractionScreening
     public let neutralScreening: ExtractionScreening?
@@ -161,13 +218,27 @@ public struct ExtractionScreening: Codable, Sendable, Equatable {
     }
 }
 
-/// Per-stimulus activations from prefill-only forward passes (raw text, no
-/// chat template, no sampling).
+/// Per-stimulus activations from prefill-only forward passes (no sampling).
+///
+/// Text reaches the model under the pass's declared ``ExtractionRendering``:
+/// raw (the legacy default — no chat template) or the family template.
 public struct StimulusActivations: Sendable {
     /// `values[textIndex][layer]` is the pooled hidden vector.
     public let values: [[[Float]]]
     /// Mean residual norm per layer, averaged over stimuli.
     public let residualNormPerLayer: [Float]
+    /// What was actually read, per stimulus — the provenance half of the
+    /// reading-position stamp.
+    public let resolutions: [ResolvedReadingPosition]
+
+    public init(
+        values: [[[Float]]], residualNormPerLayer: [Float],
+        resolutions: [ResolvedReadingPosition] = []
+    ) {
+        self.values = values
+        self.residualNormPerLayer = residualNormPerLayer
+        self.resolutions = resolutions
+    }
 }
 
 public struct NeutralActivationBank: Sendable {
@@ -235,10 +306,20 @@ public enum ConceptExtractor {
     public static let defaultMaximumShortTextExclusionFraction = 0.10
 
     /// Activations for each text at every block's output, read at the given
-    /// position.
+    /// position and under the given rendering.
+    ///
+    /// `rendering` defaults to `.raw` — the legacy behavior, byte for byte:
+    /// the bare stimulus through `tokenizer.encode(text:)`. A chat-template
+    /// rendering goes through ``PromptRendering``, the same definition
+    /// measured generation uses, so extraction and generation cannot drift.
+    ///
+    /// Each position is RESOLVED against the (rendered) token ids before the
+    /// pass and its window pinned on the recorder, so template-aware roles
+    /// land on a concrete index and the resolution is available for stamping.
     public static func activations(
         container: ModelContainer, texts: [String],
-        position: ReadingPosition = .lastToken
+        position: ReadingPosition = .lastToken,
+        rendering: ExtractionRendering = .raw
     ) async throws -> StimulusActivations {
         try await container.perform { context in
             guard let hookable = context.model as? InterventionHookable else {
@@ -250,11 +331,13 @@ public enum ConceptExtractor {
 
             var results: [[[Float]]] = []
             var normSums: [Float] = []
+            var resolutions: [ResolvedReadingPosition] = []
             results.reserveCapacity(texts.count)
 
             for text in texts {
                 recorder.reset()
-                let tokens = context.tokenizer.encode(text: text)
+                let tokens = try tokenIDs(
+                    context: context, text: text, rendering: rendering)
                 guard tokens.count >= position.minimumTokenCount else {
                     throw ConceptExtractorError.stimulusTooShort(
                         text: text,
@@ -262,6 +345,18 @@ public enum ConceptExtractor {
                         minimumTokenCount: position.minimumTokenCount,
                         reading: position.label)
                 }
+                let resolved: ResolvedReadingPosition
+                do {
+                    resolved = try position.resolve(
+                        tokens: tokens, tokenizer: context.tokenizer,
+                        renderingIsRaw: rendering.isRaw)
+                } catch let error as ReadingPositionError {
+                    throw ConceptExtractorError.readingPositionUnresolved(
+                        reason: error.reason, text: text)
+                }
+                resolutions.append(resolved)
+                recorder.setWindow(start: resolved.startIndex, end: resolved.endIndex)
+
                 let input = MLXArray(tokens.map { Int32($0) }).reshaped([1, tokens.count])
                 let logits = context.model(input, cache: nil)
                 eval(logits)
@@ -282,7 +377,29 @@ public enum ConceptExtractor {
             let count = Float(texts.count)
             return StimulusActivations(
                 values: results,
-                residualNormPerLayer: normSums.map { $0 / count })
+                residualNormPerLayer: normSums.map { $0 / count },
+                resolutions: resolutions)
+        }
+    }
+
+    /// Token ids for one stimulus under `rendering`, with the engine-named
+    /// refusal when a declared rendering cannot be applied here. Never falls
+    /// back to raw: a silent fallback is the exact ambiguity the
+    /// `extractionRendering` option exists to end.
+    static func tokenIDs(
+        context: ModelContext, text: String, rendering: ExtractionRendering
+    ) throws -> [Int] {
+        guard !rendering.isRaw else { return context.tokenizer.encode(text: text) }
+        do {
+            return try PromptRendering.tokenIDs(
+                tokenizer: context.tokenizer,
+                modelID: context.configuration.name,
+                text: text, rendering: rendering)
+        } catch {
+            throw ConceptExtractorError.renderingUnsupported(
+                rendering: rendering.label,
+                modelID: context.configuration.name,
+                reason: "\(error)")
         }
     }
 
@@ -340,14 +457,19 @@ public enum ConceptExtractor {
         maxRowsPerLayer: Int = TokenBankDownsampler.defaultRowCapPerLayer,
         downsampleSeed: UInt64? = nil,
         memoryBudgetBytes: Int? = nil,
+        rendering: ExtractionRendering = .raw,
         log: (@Sendable (String) -> Void)? = nil
     ) async throws -> NeutralActivationBank {
+        // Denominator-rendering consistency: the bank IS the norm denominator
+        // on the token-bank path, so it is tokenized exactly as the extraction
+        // it serves. Absent/raw is the historical behavior, unchanged.
         let screened = try await screenTexts(
             container: container,
             items: texts,
             text: { $0 },
             readingPosition: readingPosition,
-            maximumShortTextExclusionFraction: maximumShortTextExclusionFraction)
+            maximumShortTextExclusionFraction: maximumShortTextExclusionFraction,
+            rendering: rendering)
         let startIndex = readingPosition.requestedStartIndex ?? 0
         // Seed precedence: caller-supplied (derived from the pinned corpus
         // FILE hash) wins; otherwise derive from the screened texts so the
@@ -372,7 +494,9 @@ public enum ConceptExtractor {
             // Tokenize once, up front: this both sizes the bank and supplies
             // the tokens the forward passes use (the pre-fix code tokenized
             // inside the loop, so this costs nothing extra).
-            let tokenized = screened.included.map { context.tokenizer.encode(text: $0) }
+            let tokenized = try screened.included.map {
+                try tokenIDs(context: context, text: $0, rendering: rendering)
+            }
             let rowsPerText = tokenized.map { max(0, $0.count - startIndex) }
             let totalRows = rowsPerText.reduce(0, +)
 
@@ -450,7 +574,8 @@ public enum ConceptExtractor {
         container: ModelContainer,
         texts: [String],
         position: ReadingPosition,
-        maximumShortTextExclusionFraction: Double = defaultMaximumShortTextExclusionFraction
+        maximumShortTextExclusionFraction: Double = defaultMaximumShortTextExclusionFraction,
+        rendering: ExtractionRendering = .raw
     ) async throws -> (residualNormPerLayer: [Float], screening: ExtractionScreening) {
         let screened = try await screenTexts(
             container: container,
@@ -458,7 +583,8 @@ public enum ConceptExtractor {
             text: { $0 },
             readingPosition: position,
             maximumShortTextExclusionFraction: maximumShortTextExclusionFraction,
-            enforceMaximumShortTextExclusion: false)
+            enforceMaximumShortTextExclusion: false,
+            rendering: rendering)
         // Same minimum `extract` enforces before it accepts a neutral corpus
         // as the denominator source.
         guard screened.included.count >= 4 else {
@@ -467,7 +593,8 @@ public enum ConceptExtractor {
                     + "\(position.label) norm measurement")
         }
         let measured = try await activations(
-            container: container, texts: screened.included, position: position)
+            container: container, texts: screened.included, position: position,
+            rendering: rendering)
         return (measured.residualNormPerLayer, screened.report)
     }
 
@@ -514,12 +641,13 @@ public enum ConceptExtractor {
         options: ExtractionOptions = ExtractionOptions(),
         neutralTexts: [String]? = nil
     ) async throws -> ExtractionResult {
+        let rendering = options.resolvedExtractionRendering
         let positive = try await activations(
             container: container, texts: stimuli.positive,
-            position: options.readingPosition)
+            position: options.readingPosition, rendering: rendering)
         let negative = try await activations(
             container: container, texts: stimuli.negative,
-            position: options.readingPosition)
+            position: options.readingPosition, rendering: rendering)
 
         guard let layerCount = positive.values.first?.count,
             positive.values.allSatisfy({ $0.count == layerCount }),
@@ -536,9 +664,15 @@ public enum ConceptExtractor {
         var neutralActivations: StimulusActivations?
         let pcCount = options.neutralPCCount ?? 0
         if let neutralTexts, neutralTexts.count >= 4 {
+            // DENOMINATOR-RENDERING CONSISTENCY: α is reported in
+            // residual-norm units, so the norms must be measured on the same
+            // DISTRIBUTION the vector was read from. Measuring a
+            // chat-template vector against a raw-tokenized denominator
+            // divides by a number from a different distribution, so the
+            // neutral corpus follows the extraction's rendering, always.
             neutralActivations = try await activations(
                 container: container, texts: neutralTexts,
-                position: options.readingPosition)
+                position: options.readingPosition, rendering: rendering)
         } else if pcCount > 0 {
             throw ConceptExtractorError.missingCaptures(
                 text: "neutral corpus required for confound projection")
@@ -584,6 +718,10 @@ public enum ConceptExtractor {
             residualNormPerLayer: residualNorms,
             residualNormSource: normSource,
             options: options,
+            residualNormRendering: rendering.mode.rawValue,
+            readingPositionResolution: ReadingPositionResolutionReport.make(
+                position: options.readingPosition, rendering: rendering,
+                resolutions: positive.resolutions + negative.resolutions),
             neutralMeanPerLayer: neutralActivations.map {
                 neutralMeanPerLayer(of: $0, layerCount: layerCount)
             })
@@ -621,21 +759,24 @@ public enum ConceptExtractor {
         neutralPCCount: Int? = nil,
         neutralTexts: [String]? = nil,
         neutralPCSelection: VectorExtractionRecipe.NeutralPCSelection = .none,
-        maximumShortTextExclusionFraction: Double = defaultMaximumShortTextExclusionFraction
+        maximumShortTextExclusionFraction: Double = defaultMaximumShortTextExclusionFraction,
+        extractionRendering: ExtractionRendering = .raw
     ) async throws -> MultiConceptExtractionResult {
         guard !corpus.isEmpty else {
             throw ConceptExtractorError.missingCaptures(text: "empty multi-concept corpus")
         }
+        let rendering = extractionRendering
         let screenedCorpus = try await screenTexts(
             container: container,
             items: corpus,
             text: { $0.text },
             readingPosition: readingPosition,
-            maximumShortTextExclusionFraction: maximumShortTextExclusionFraction)
+            maximumShortTextExclusionFraction: maximumShortTextExclusionFraction,
+            rendering: rendering)
         let corpusActivations = try await activations(
             container: container,
             texts: screenedCorpus.included.map(\.text),
-            position: readingPosition)
+            position: readingPosition, rendering: rendering)
         guard let layerCount = corpusActivations.values.first?.count,
             corpusActivations.values.allSatisfy({ $0.count == layerCount })
         else {
@@ -653,7 +794,8 @@ public enum ConceptExtractor {
                 texts: neutralTexts,
                 readingPosition: readingPosition,
                 layers: Set(0 ..< layerCount),
-                maximumShortTextExclusionFraction: maximumShortTextExclusionFraction)
+                maximumShortTextExclusionFraction: maximumShortTextExclusionFraction,
+                rendering: rendering)
             neutralScreening = neutralBank?.screening
         } else if let neutralTexts, neutralTexts.count >= 4 {
             let screenedNeutral = try await screenTexts(
@@ -662,13 +804,16 @@ public enum ConceptExtractor {
                 text: { $0 },
                 readingPosition: readingPosition,
                 maximumShortTextExclusionFraction: maximumShortTextExclusionFraction,
-                enforceMaximumShortTextExclusion: false)
+                enforceMaximumShortTextExclusion: false,
+                rendering: rendering)
             neutralScreening = screenedNeutral.report
             if !screenedNeutral.included.isEmpty {
+                // Denominator follows the extraction's rendering — see
+                // `extract`.
                 neutralActivations = try await activations(
                     container: container,
                     texts: screenedNeutral.included,
-                    position: readingPosition)
+                    position: readingPosition, rendering: rendering)
             }
         } else if pcCount > 0 {
             throw ConceptExtractorError.missingCaptures(
@@ -764,7 +909,12 @@ public enum ConceptExtractor {
             vectorsByConcept: vectorsByConcept,
             residualNormPerLayer: residualNorms,
             residualNormSource: normSource,
+            residualNormRendering: rendering.mode.rawValue,
             readingPosition: readingPosition,
+            extractionRendering: rendering,
+            readingPositionResolution: ReadingPositionResolutionReport.make(
+                position: readingPosition, rendering: rendering,
+                resolutions: corpusActivations.resolutions),
             neutralPCCount: neutralPCCount,
             screening: screenedCorpus.report,
             neutralScreening: neutralScreening,
@@ -781,7 +931,8 @@ public enum ConceptExtractor {
     public static func multiConceptActivations(
         container: ModelContainer,
         corpus: [StimulusSet.MultiConceptStimulus],
-        readingPosition: ReadingPosition = .meanFromToken(50)
+        readingPosition: ReadingPosition = .meanFromToken(50),
+        rendering: ExtractionRendering = .raw
     ) async throws -> (concepts: [String], activations: StimulusActivations) {
         let screened = try await screenTexts(
             container: container,
@@ -789,11 +940,12 @@ public enum ConceptExtractor {
             text: { $0.text },
             readingPosition: readingPosition,
             maximumShortTextExclusionFraction: 1,
-            enforceMaximumShortTextExclusion: false)
+            enforceMaximumShortTextExclusion: false,
+            rendering: rendering)
         let values = try await activations(
             container: container,
             texts: screened.included.map(\.text),
-            position: readingPosition)
+            position: readingPosition, rendering: rendering)
         return (screened.included.map(\.concept), values)
     }
 
@@ -803,12 +955,18 @@ public enum ConceptExtractor {
         text: @Sendable @escaping (T) -> String,
         readingPosition: ReadingPosition,
         maximumShortTextExclusionFraction: Double,
-        enforceMaximumShortTextExclusion: Bool = true
+        enforceMaximumShortTextExclusion: Bool = true,
+        rendering: ExtractionRendering = .raw
     ) async throws -> ScreenedTexts<T> {
         let minimum = readingPosition.minimumTokenCount
-        let included = await container.perform { context in
-            items.filter { item in
-                context.tokenizer.encode(text: text(item)).count >= minimum
+        // Screening counts tokens under the SAME rendering extraction will
+        // use — a templated render adds the template's own tokens, so
+        // screening the raw string would answer a question about a sequence
+        // the model never sees.
+        let included = try await container.perform { context in
+            try items.filter { item in
+                try tokenIDs(context: context, text: text(item), rendering: rendering)
+                    .count >= minimum
             }
         }
         let excluded = items.count - included.count

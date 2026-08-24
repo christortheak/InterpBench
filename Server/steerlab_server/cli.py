@@ -123,6 +123,7 @@ def _usage_text() -> str:
         "| vectors backfill-norms <runDir/name> [--corpus <path>] "
         "[--output-name N] [--redenominate] "
         "| site qualify [--json OUT] [--skip-model-fixtures] "
+        "| site node-scratch-wrapper [--metadata-root DIR] [--print] "
         "| data check optvec [--dir DIR] [--json] "
         "| data check lora [<package-manifest-or-dir>] [--json] "
         "| battery lint <path> [--json] "
@@ -1308,7 +1309,7 @@ def _bundle(args: list[str]) -> int:
             "  bundle evidence <run-dir> [--out path]\n"
             "  bundle inspect <bundle.tar.gz>\n"
             "  bundle import <bundle.tar.gz> [--target root] [--overwrite]\n"
-            "  bundle execute <bundle.tar.gz> --verb <verify|extract|validate|sweep|run|evaluate|analyze|pipeline> [--target root] [--shard k/K]\n"
+            "  bundle execute <bundle.tar.gz> --verb <verify|extract|validate|sweep|run|evaluate|analyze|pipeline> [--target root] [--shard k/K] [--resume <run-dir>]\n"
             "  bundle create|submit <bundle-dir> [--gres A100] [--walltime HH:MM:SS] -- <cmd...>\n")
         return 64
     verb = args[0]
@@ -1379,6 +1380,12 @@ def _bundle(args: list[str]) -> int:
                 # Slurm case is the one that matters most, since that is
                 # where a failed judged evaluate is expensive to redo.
                 resume_from=_flag(args, "--resume-from"),
+                # `--resume <run-dir>` continues a PARKED run/sweep/pipeline
+                # through the bundle path (2026-08-23). A relative directory
+                # is resolved against `--target`, so the flag behaves the same
+                # whether the child was started by hand or by the renderer,
+                # which cd's into its own slurm directory before srun.
+                resume_directory=_flag(args, "--resume"),
                 checkpoint=flag,
                 # Multi-GPU fan-out: generate ONLY the records in shard k of
                 # K (0-based, balanced contiguous ranges of the run's
@@ -1431,7 +1438,8 @@ def _study(args: list[str]):
             "[--gres A100] [--partition P] [--mem M] [--walltime HH:MM:SS] "
             "[--job-name N]\n"
             "  [--target root] [--dtype D] [--device DEV] [--prompts P] "
-            "[--source S] [--no-evidence]\n"
+            "[--source S] [--resume <run-dir>] [--dependency <spec>] "
+            "[--no-evidence]\n"
             "(--force overrides a failing preflight verdict — recorded loudly "
             "on the job)\n"
             "(--parallel N shards a Slurm 'run' across N GPU jobs, cap 64; the "
@@ -1440,7 +1448,7 @@ def _study(args: list[str]):
             "to STEERLAB_SLURM_GRES from the site profile)\n")
         return 64
     from .api.jobs import JobManager
-    from .api.submissions import submit_study
+    from .api.submissions import SubmissionRefusal, submit_study
 
     experiment = args[1]
     verb = _flag(args, "--verb") or "run"
@@ -1496,8 +1504,27 @@ def _study(args: list[str]):
             target_root=_flag(args, "--target"), dtype=_flag(args, "--dtype") or "auto",
             device=_flag(args, "--device"), prompts_path=_flag(args, "--prompts"),
             source_path=_flag(args, "--source"),
+            # The two flags that close the reasons an operator hand-rolls an
+            # sbatch (2026-08-23): a parked run continues through the RENDERER
+            # (node-scratch gres + cleanup trap), and a job can be chained
+            # behind another with Slurm's own dependency vocabulary.
+            resume_directory=_flag(args, "--resume"),
+            dependency=_flag(args, "--dependency"),
             package_evidence=("--no-evidence" not in args), resources=resources,
             force=("--force" in args), parallel_jobs=parallel)
+    except SubmissionRefusal as exc:
+        # A TYPED refusal, not a failure: the request is well formed and a
+        # policy/precondition declined it, so `--json` carries the reason and
+        # the repair rather than "exited 1 — see the diagnostics on stderr"
+        # (which is how the ledger's operator ended up with no usable words).
+        # Human mode is unchanged: the same stderr shape, the same exit 1.
+        from .cli_envelope import CLIResult
+
+        sys.stderr.write(f"study submit refused: {exc}\n  {exc.repair_action}\n")
+        return CLIResult(
+            state="refused", exit_code=1, code=exc.code, message=str(exc),
+            repair_action=exc.repair_action,
+            payload={"experiment": experiment, "verb": verb})
     except Exception as exc:  # noqa: BLE001 - command-line setup error
         sys.stderr.write(f"study submit failed: {type(exc).__name__}: {exc}\n")
         return 1
@@ -2917,7 +2944,9 @@ def _vectors_backfill_norms(args: list[str]) -> int:
 
 
 _SITE_USAGE = ("usage: steerlab-server site qualify [--json OUT] "
-               "[--skip-model-fixtures]\n")
+               "[--skip-model-fixtures]\n"
+               "       steerlab-server site node-scratch-wrapper "
+               "[--metadata-root DIR] [--print]\n")
 
 #: Non-gate machine code for a qualification that found a failing check. NOT a
 #: :mod:`lifecycle_gates` id: that vocabulary describes a STUDY's state, and
@@ -2926,6 +2955,45 @@ _SITE_USAGE = ("usage: steerlab-server site qualify [--json OUT] "
 #: ``usage``, ``macAuthorityVerb``), with no ``error.gate`` — which is what
 #: tells an agent not to switch on it as a gate.
 SITE_QUALIFY_FAILED = "siteQualifyFailed"
+
+
+def _site_node_scratch_wrapper(args: list[str]) -> int:
+    """``site node-scratch-wrapper`` — render THE canonical ad-hoc sbatch.
+
+    The one sanctioned starting point for a job this engine does not render
+    (ledger 2026-08-23). It carries the site's node-local scratch gres request
+    and the cleanup trap already armed, from the SAME definition
+    (:mod:`node_scratch`) the study renderer uses — so there is one answer to
+    "how does this site clean up", not a rendered one and a copied one that
+    drift. The payload command is the only variable: ``sbatch <wrapper> <your
+    command>``.
+
+    It lands beside ``controller-job.sbatch`` in the metadata root, for the
+    same reason that one does: a per-node artifact an operator submits by
+    hand. Re-rendering is idempotent — identical bytes are not rewritten — so
+    a standing ritual can call it every time.
+    """
+    from . import node_scratch
+
+    if _flag(args, "--metadata-root") is None and "--metadata-root" in args:
+        sys.stderr.write("--metadata-root requires a directory\n")
+        return 64
+    metadata_root = _flag(args, "--metadata-root")
+    try:
+        if "--print" in args:
+            sys.stdout.write(node_scratch.render_wrapper())
+            return 0
+        result = node_scratch.write_wrapper(metadata_root=metadata_root)
+    except OSError as exc:
+        sys.stderr.write(f"site node-scratch-wrapper: {exc}\n")
+        return 2
+    sys.stderr.write(
+        ("wrote " if result["written"] else "already current: ")
+        + result["path"] + "\n"
+        + f"  submit an ad-hoc job with:  sbatch {result['path']} "
+          "<your command>\n")
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
 
 
 def _site(args: list[str]):
@@ -2948,6 +3016,8 @@ def _site(args: list[str]):
     from . import site_qualify
     from .cli_envelope import CLIResult, advisory
 
+    if args and args[0] == "node-scratch-wrapper":
+        return _site_node_scratch_wrapper(args[1:])
     if not args or args[0] != "qualify":
         sys.stderr.write(_SITE_USAGE)
         return 64

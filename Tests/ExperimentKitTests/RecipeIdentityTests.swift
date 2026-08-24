@@ -45,7 +45,10 @@ struct RecipeIdentityTests {
                 projectionBasisHash: raw["projectionBasisHash"] as? String,
                 residualNormSource: try #require(raw["residualNormSource"] as? String),
                 normCorpusHash: raw["normCorpusHash"] as? String,
-                grandMeanPopulation: population)
+                grandMeanPopulation: population,
+                designatedReference: nil,
+                extractionRendering: renderingFragment(
+                    raw["extractionRendering"] as? [String: Any]))
             out[name] = (
                 components,
                 try #require(entry["canonicalJSON"] as? String),
@@ -55,11 +58,25 @@ struct RecipeIdentityTests {
         return out
     }
 
+    /// The fixture stores the rendering as the canonical identity FRAGMENT
+    /// (`null` for absent/raw), so this decodes exactly what both engines
+    /// hash.
+    private func renderingFragment(_ raw: [String: Any]?) -> ExtractionRendering? {
+        guard let raw, let mode = raw["mode"] as? String,
+            let parsed = ExtractionRendering.Mode(rawValue: mode)
+        else { return nil }
+        return ExtractionRendering(
+            mode: parsed,
+            addGenerationPrompt: raw["addGenerationPrompt"] as? Bool,
+            qwenThinkingEnabled: raw["qwenThinkingEnabled"] as? Bool,
+            systemPrompt: raw["systemPrompt"] as? String)
+    }
+
     // MARK: - cross-engine golden parity
 
     @Test func canonicalFormMatchesCommittedFixtureByteForByte() throws {
         let cases = try loadFixtureCases()
-        #expect(Set(cases.keys) == ["grandMean", "paired"])
+        #expect(Set(cases.keys) == ["grandMean", "paired", "templatedRendering"])
         for (name, entry) in cases {
             let json = RecipeIdentity.canonicalJSON(entry.components)
             #expect(json == entry.canonicalJSON, "case \(name): canonical JSON drifted")
@@ -337,5 +354,121 @@ struct RecipeIdentityTests {
         #expect(RecipeIdentity.jsonString("a\"b\\c") == "\"a\\\"b\\\\c\"")
         #expect(RecipeIdentity.jsonString("\n\t\r") == "\"\\n\\t\\r\"")
         #expect(RecipeIdentity.jsonString("\u{01}") == "\"\\u0001\"")
+    }
+
+    // MARK: - hash compatibility: the rendering option is invisible to legacy
+
+    /// THE HARD CONSTRAINT. A recipe that declares no `extractionRendering` —
+    /// every recipe written before the option existed — must produce the SAME
+    /// canonical bytes and the SAME hash it always did, so every frozen
+    /// experiment keeps verifying. The fixture's two legacy cases carry their
+    /// pre-option hashes verbatim; this asserts the key is genuinely ABSENT
+    /// rather than present-and-null.
+    @Test func aLegacyRecipeHashesIdenticallyWithAndWithoutTheKey() throws {
+        for name in ["grandMean", "paired"] {
+            let entry = try #require(try loadFixtureCases()[name])
+            #expect(!entry.canonicalJSON.contains("extractionRendering"),
+                    "case \(name): the legacy canonical form grew a key")
+            var explicitlyAbsent = entry.components
+            explicitlyAbsent.extractionRendering = nil
+            #expect(RecipeIdentity.canonicalJSON(explicitlyAbsent) == entry.canonicalJSON)
+            #expect(RecipeIdentity.hash(explicitlyAbsent) == entry.sha256)
+        }
+    }
+
+    /// Declaring `.raw` says the legacy semantics out loud; it must not fork
+    /// the identity away from an otherwise-identical recipe that said nothing.
+    @Test func anExplicitlyDeclaredRawRenderingIsTheLegacyIdentity() throws {
+        let entry = try #require(try loadFixtureCases()["paired"])
+        var declared = entry.components
+        declared.extractionRendering =
+            RecipeIdentity.Components.canonicalRendering(.raw)
+        #expect(RecipeIdentity.hash(declared) == entry.sha256)
+    }
+
+    /// The other half: an explicitly declared NON-default rendering is a
+    /// different recipe, and every rendering PARAMETER is part of it.
+    @Test func aDeclaredChatTemplateRenderingChangesTheIdentity() throws {
+        let legacy = try #require(try loadFixtureCases()["paired"]).components
+        var templated = legacy
+        templated.extractionRendering =
+            RecipeIdentity.Components.canonicalRendering(.chatTemplate())
+        #expect(RecipeIdentity.hash(templated) != RecipeIdentity.hash(legacy))
+
+        let variants: [ExtractionRendering] = [
+            .chatTemplate(addGenerationPrompt: false),
+            .chatTemplate(qwenThinkingEnabled: true),
+            .chatTemplate(systemPrompt: "be brief"),
+        ]
+        for variant in variants {
+            var varied = legacy
+            varied.extractionRendering =
+                RecipeIdentity.Components.canonicalRendering(variant)
+            #expect(RecipeIdentity.hash(varied) != RecipeIdentity.hash(templated),
+                    "rendering parameter \(variant.label) did not move the hash")
+        }
+    }
+
+    /// `offsetFromEnd(0)` names the identical token, so it must not split an
+    /// identity away from a last-token recipe (maintainer ruling: offsets are
+    /// the mechanism, roles are the portable form — neither may quietly
+    /// renumber a recipe).
+    @Test func offsetFromEndZeroIsTheLastTokenIdentity() {
+        #expect(RecipeIdentity.canonicalReading(.offsetFromEnd(0)).mode == "lastToken")
+        #expect(RecipeIdentity.canonicalReading(.offsetFromEnd(0)).parameter == nil)
+        #expect(RecipeIdentity.canonicalReading(.offsetFromEnd(3)).mode == "offsetFromEnd")
+        #expect(RecipeIdentity.canonicalReading(.offsetFromEnd(3)).parameter == 3)
+        #expect(RecipeIdentity.canonicalReading(.lastContentToken).mode == "lastContentToken")
+        #expect(RecipeIdentity.canonicalReading(.turnCloseToken).mode == "turnCloseToken")
+        #expect(RecipeIdentity.canonicalReading(.postInstruction(4)).mode == "postInstruction")
+        #expect(RecipeIdentity.canonicalReading(.postInstruction(4)).parameter == 4)
+    }
+
+    /// A sidecar stamps the LABEL; the identity reads it back strictly.
+    @Test func everyNewPositionLabelRoundTripsThroughTheSidecarReader() {
+        let positions: [ReadingPosition] = [
+            .lastToken, .meanFromToken(50), .offsetFromEnd(3),
+            .lastContentToken, .turnCloseToken, .postInstruction(1),
+        ]
+        for position in positions {
+            let parsed = ReadingPosition(label: position.label)
+            #expect(parsed == position, "label '\(position.label)' did not round trip")
+        }
+        #expect(ReadingPosition(label: "somewhere in the middle") == nil)
+        #expect(ReadingPosition(label: "post-instruction 9") == nil)
+        #expect(ReadingPosition(label: "offset from end -2") == nil)
+    }
+
+    /// An artifact whose rendering block this engine cannot read is refused
+    /// for promotion. Reading it as raw would be exactly the silent
+    /// substitution the option exists to end.
+    @Test func aLegacySidecarProvesTheAbsentRenderingAndATemplatedOneProvesItself() throws {
+        var sidecar = SteeringVectorSidecar(
+            modelID: "test/model", concept: "c", stimulusSetHash: "h",
+            vectors: ConceptVectors(perLayer: [[1, 0]]),
+            options: ExtractionOptions(),
+            residualNormPerLayer: [1], residualNormSource: "extraction-stimuli")
+        let legacy = RecipeIdentity.candidate(sidecar: sidecar)
+        #expect(legacy.missingFields.isEmpty)
+        #expect(legacy.components?.extractionRendering == nil)
+
+        sidecar.extractionRendering = ExtractionRendering.chatTemplate().stamp
+        let templated = RecipeIdentity.candidate(sidecar: sidecar)
+        #expect(templated.missingFields.isEmpty)
+        #expect(templated.components?.extractionRendering?.mode == .chatTemplate)
+        // …and the two identities differ, which is the whole point.
+        #expect(RecipeIdentity.hash(try #require(legacy.components))
+                != RecipeIdentity.hash(try #require(templated.components)))
+    }
+
+    /// The diff names the rendering by its canonical field path, so a refused
+    /// promotion says WHICH axis differed.
+    @Test func theDiffNamesTheRenderingField() throws {
+        let legacy = try #require(try loadFixtureCases()["paired"]).components
+        var templated = legacy
+        templated.extractionRendering =
+            RecipeIdentity.Components.canonicalRendering(.chatTemplate())
+        let diffs = RecipeIdentity.diffFields(manifest: legacy, artifact: templated)
+        #expect(diffs.contains { $0.hasPrefix("extractionRendering (") })
     }
 }

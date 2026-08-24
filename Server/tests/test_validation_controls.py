@@ -153,8 +153,12 @@ def test_each_control_is_extracted_with_its_own_options(tmp_path, monkeypatch):
             residual_norm_per_layer=[1.0, 1.0],
             residual_norm_source="extraction-stimuli",
             # The convention stamp joined ExtractionResult 2026-08-20; the
-            # stub mirrors the real interface (None = legacy/unstamped).
-            residual_norm_convention=None)
+            # stub mirrors the real interface (None = legacy/unstamped). The
+            # rendering stamp and the reading-position resolution joined it
+            # 2026-08-24 on the same absent-is-legacy terms.
+            residual_norm_convention=None,
+            residual_norm_rendering="raw",
+            reading_position_resolution=None)
 
     monkeypatch.setattr(tasks, "core_extract", fake_extract)
     out = tasks._extract_validation_controls(

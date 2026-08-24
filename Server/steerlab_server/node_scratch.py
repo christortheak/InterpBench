@@ -1,0 +1,337 @@
+"""How this site cleans up node-local scratch — ONE definition, two renderers.
+
+**The gap this closes** (ledger 2026-08-23, operator complaint 2026-08-22).
+The node-scratch contract — request the space as a gres, remove the staged
+directory in an EXIT trap — landed 2026-08-19 inside
+``executors.render_slurm_script``. Everything that goes through ``study
+submit`` therefore cleans up after itself, and everything that does NOT gets
+neither half, silently. Hand-rolled sbatch is not an abuse: continuing a
+parked run and chaining behind another job were, until now, genuinely easier
+to write by hand. Those two reasons are closed elsewhere (``study submit
+--resume`` / ``--dependency``); what remains is the residue of legitimate
+ad-hoc work, and it needs a wrapper that starts from the site's own rules.
+
+The rule is stated ONCE, here, and read by both renderers:
+
+- :func:`cleanup_lines` is the trap. ``executors.render_slurm_script`` emits
+  it into every study job; :func:`render_wrapper` emits the same lines into
+  the canonical ad-hoc wrapper. A second copy is the thing this module exists
+  to prevent — "how this site cleans up" that can drift between the studies
+  that matter and the one-offs that leak.
+- The path removed is the one the SITE PROFILE names
+  (``constraints.storage.nodeStageDirTemplate``, reaching the job as
+  ``STEERLAB_NODE_STAGE_DIR``), expanded on the node. Never a hardcoded
+  ``/lscratch/$SLURM_JOB_ID``: that is one site's spelling, and a site that
+  spells it ``$SLURM_TMPDIR`` used to get no cleanup at all while the render
+  looked correct.
+- The gres request is the site's (``constraints.storage.nodeScratchGres`` →
+  ``STEERLAB_SLURM_SCRATCH_GRES``).
+- A site whose scheduler purges node scratch itself declares
+  ``constraints.storage.nodeScratchPurgedByScheduler`` (→
+  :data:`SCHEDULER_PURGES_ENV`) and gets NO trap — an epilog that has already
+  removed the directory does not need a job racing it.
+
+Nothing here decides policy; it renders text. The safety argument lives in
+:func:`cleanup_lines`.
+"""
+
+from __future__ import annotations
+
+import os
+import shlex
+
+#: The job's node-local staging directory template, as the job sees it. Its
+#: value is the site profile's ``nodeStageDirTemplate``, carried VERBATIM (the
+#: env file single-quotes it) so ``$SLURM_JOB_ID`` and friends expand on the
+#: compute node and never on the submitting host.
+STAGE_DIR_ENV = "STEERLAB_NODE_STAGE_DIR"
+
+#: The site's node-local scratch gres token (``nodeScratchGres``).
+SCRATCH_GRES_ENV = "STEERLAB_SLURM_SCRATCH_GRES"
+
+#: Set by a site that declares its SCHEDULER removes node scratch at job end
+#: (a Slurm epilog). Truthy → render no trap. Absent → today's behaviour, so a
+#: site that has never declared it renders byte-identically to before.
+SCHEDULER_PURGES_ENV = "STEERLAB_NODE_SCRATCH_PURGED_BY_SCHEDULER"
+
+#: The environment variables whose presence in a stage-dir template makes that
+#: template JOB-SCOPED BY CONSTRUCTION — i.e. two jobs on the same node cannot
+#: name the same directory through it.
+#:
+#: This set IS the safety argument for ``rm -rf``. A template outside it may
+#: perfectly well be a shared node cache (``/lscratch/steerlab-models``), which
+#: is emphatically not this job's to delete, so an unrecognised template is
+#: cleaned up by nobody rather than by everybody.
+#:
+#: ``SLURM_TMPDIR`` earns its place for the same reason as ``SLURM_JOB_ID``,
+#: not by analogy: Slurm allocates it per job and points it at a per-job path.
+#: Adding a name here is a deliberate act — it authorises a recursive delete.
+JOB_SCOPING_VARIABLES: tuple[str, ...] = (
+    "SLURM_JOB_ID",
+    "SLURM_JOBID",
+    "SLURM_TMPDIR",
+)
+
+#: Variables the trap expands that are NOT job-scoping on their own, but
+#: routinely appear beside one (``/local_scratch/$USER/$SLURM_JOB_ID``). Listed
+#: separately so nobody reads this list as an authorisation to delete.
+COMPANION_VARIABLES: tuple[str, ...] = ("USER",)
+
+
+def _truthy(raw: str | None) -> bool:
+    return (raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def scheduler_purges_node_scratch(environ=None) -> bool:
+    """True when the SITE declares its scheduler reclaims node scratch."""
+    env = os.environ if environ is None else environ
+    return _truthy(env.get(SCHEDULER_PURGES_ENV))
+
+
+def _variable_case(name: str, *, scoping: bool) -> list[str]:
+    """Expand ONE authorised variable, refusing outright if it is unset.
+
+    Both spellings (``$X`` and ``${X}``) are handled: they are identical to
+    the shell, a site profile may use either, and a ``case`` pattern is
+    literal text that would silently miss the other one.
+
+    The unset check is the safety property this function exists for. Without
+    it, a template of ``$SLURM_TMPDIR/models`` on a node where Slurm set no
+    ``SLURM_TMPDIR`` expands to ``/models`` — an absolute path with nothing
+    left unexpanded, which passes every downstream sanity check and is
+    somebody else's directory. A variable the template names and the node has
+    not set means the path is UNKNOWN, and an unknown path is never removed.
+    """
+    return [
+        f'  case "${{stage_dir}}" in',
+        f"    *'${name}'*|*'${{{name}}}'*)",
+        f'      [ -n "${{{name}:-}}" ] || return 0',
+        f'      stage_dir="${{stage_dir//\\${name}/${{{name}}}}}"',
+        f'      stage_dir="${{stage_dir//\\${{{name}\\}}/${{{name}}}}}"',
+        *(["      scoped=1"] if scoping else []),
+        "      ;;",
+        "  esac",
+    ]
+
+
+def cleanup_lines(*, environ=None) -> list[str]:
+    """THE node-scratch cleanup block, as script lines.
+
+    Emitted verbatim by every renderer. The guard is the whole safety
+    argument: a directory is removed only when the site's template is
+    job-scoped by construction (:data:`JOB_SCOPING_VARIABLES`) AND the job
+    actually has a job id, so a shared node cache never matches and a
+    non-Slurm shell never fires.
+
+    The function never calls ``exit`` and always ends successfully, which is
+    what lets it be trapped on EXIT alongside the checkpoint trap without
+    disturbing the job's recorded exit status.
+    """
+    if scheduler_purges_node_scratch(environ):
+        return [
+            "",
+            "# This site declares that its SCHEDULER reclaims node-local",
+            f"# scratch at job end ({SCHEDULER_PURGES_ENV}), so no cleanup",
+            "# trap is rendered: a job racing the epilog for the same",
+            "# directory adds risk and removes nothing the site was not",
+            "# already going to remove.",
+        ]
+    return [
+        "",
+        "# cluster-operator requirement (2026-08-19): a job that stages to",
+        "# node-local scratch must remove its own directory — some sites do",
+        "# NOT wipe it at job end, and unrequested/unremoved staging leaks",
+        "# TBs. The path is the SITE's, not this engine's: whatever",
+        f"# {STAGE_DIR_ENV} names (the profile's",
+        "# storage.nodeStageDirTemplate), expanded here on the node.",
+        "# Guard: only a template that embeds a job-scoping variable —",
+        f"# {', '.join('$' + name for name in JOB_SCOPING_VARIABLES)} —",
+        "# is ever removed; a shared node cache never matches. The env value",
+        "# arrives single-quoted, so the case pattern sees the literal",
+        "# variable text.",
+        "cleanup_node_scratch() {",
+        "  local stage_dir scoped",
+        f'  [ -n "${{{STAGE_DIR_ENV}:-}}" ] || return 0',
+        '  [ -n "${SLURM_JOB_ID:-}" ] || return 0',
+        f'  stage_dir="${{{STAGE_DIR_ENV}}}"',
+        "  scoped=0",
+        *[line for name in JOB_SCOPING_VARIABLES
+          for line in _variable_case(name, scoping=True)],
+        *[line for name in COMPANION_VARIABLES
+          for line in _variable_case(name, scoping=False)],
+        "  # Job-scoped by construction, or nobody's to remove.",
+        '  [ "${scoped}" = 1 ] || return 0',
+        "  # Belt and braces: an absolute path, with nothing left unexpanded.",
+        "  # Neither can fail given the checks above; both are cheap, and the",
+        "  # cost of being wrong here is somebody else's data.",
+        '  case "${stage_dir}" in /*[!/]*) ;; *) return 0 ;; esac',
+        '  [ "${stage_dir#*\\$}" = "${stage_dir}" ] || return 0',
+        '  rm -rf -- "${stage_dir}" 2>/dev/null || true',
+        "}",
+        "# EXIT only, so it composes with any checkpoint trap (USR1/TERM) and",
+        "# never disturbs the job's recorded exit status: the function never",
+        "# calls exit and always ends successfully.",
+        "trap cleanup_node_scratch EXIT",
+    ]
+
+
+# =============================================================================
+# The canonical ad-hoc wrapper
+# =============================================================================
+
+#: The rendered wrapper's file name inside the metadata root — beside
+#: ``controller-job.sbatch``, for the same reason: it is a per-node artifact an
+#: operator submits by hand, not code.
+WRAPPER_NAME = "node-scratch-wrapper.sbatch"
+
+#: The stamp line a rendered wrapper carries, so a reader can tell a rendered
+#: artifact from something hand-edited. Same shape as the controller render's.
+WRAPPER_STAMP_MARKER = "# steerlab-node-scratch-wrapper:"
+
+
+def wrapper_path(metadata_root: str | None = None) -> str:
+    """Where the wrapper lives. ``STEERLAB_METADATA_ROOT`` is the authority and
+    ``$HOME/.steerlab`` the fallback — identical resolution to
+    ``controller_render.rendered_path``, so the two artifacts sit together."""
+    from .controller_render import rendered_path
+
+    return os.path.join(os.path.dirname(rendered_path(metadata_root)),
+                        WRAPPER_NAME)
+
+
+def render_wrapper(*, environ=None, resources=None) -> str:
+    """The canonical ad-hoc sbatch wrapper, as text.
+
+    Its contract in one sentence: **the payload command is the only variable.**
+    Everything else — the node-scratch gres request, the stage-dir export, the
+    cleanup trap — comes from the site, through the same
+    :func:`cleanup_lines` the study renderer uses.
+
+    The header is deliberately SMALL. It carries the placement facts an ad-hoc
+    job cannot get right by guessing (partition, account, qos, gres including
+    the scratch token) and nothing else; it does not carry ``--export=NONE``
+    or the checkpoint signal, because those belong to a job that reconstructs
+    its runtime from the bundle env and this one does not. An operator edits
+    the walltime and memory at the top; the trap is not theirs to edit.
+    """
+    from .api.executors import SlurmResources, combined_gres
+
+    env = os.environ if environ is None else environ
+    res = resources if resources is not None else SlurmResources.from_env(
+        job_name="steerlab-adhoc")
+
+    lines = [
+        "#!/usr/bin/env bash",
+        f"{WRAPPER_STAMP_MARKER} the site's node-scratch contract, rendered",
+        "#",
+        "# Submit an ad-hoc job THROUGH this wrapper rather than writing a bare",
+        "# sbatch:",
+        "#",
+        f"#     sbatch {WRAPPER_NAME} <your command> [args...]",
+        "#",
+        "# Everything below the payload line is the SITE's node-scratch",
+        "# contract and is rendered, not authored — re-render it rather than",
+        "# editing it, and never copy the trap into a script of your own.",
+        "# Resource lines above the payload are yours to adjust.",
+        "",
+        f"#SBATCH --job-name={res.job_name}",
+    ]
+    for directive, value in (
+        ("partition", res.partition),
+        ("account", res.account),
+        ("qos", res.qos),
+        ("time", res.walltime),
+        ("mem", res.memory),
+    ):
+        if value:
+            lines.append(f"#SBATCH --{directive}={value}")
+    lines.append(f"#SBATCH --cpus-per-task={res.cpus_per_task}")
+    gres = combined_gres(_wrapper_gpu_gres(res), res.normalized_scratch_gres())
+    if gres:
+        lines.append(f"#SBATCH --gres={gres}")
+    else:
+        lines.append(
+            "# (this site declares no gres, GPU or node-local scratch, so no")
+        lines.append("#  --gres directive is rendered)")
+
+    lines += ["", "set -euo pipefail", ""]
+    stage = (env.get(STAGE_DIR_ENV) or "").strip()
+    if stage:
+        lines += [
+            "# The site's node-local staging template, carried VERBATIM: the",
+            "# variables inside it expand HERE, on the compute node.",
+            f"export {STAGE_DIR_ENV}={shlex.quote(stage)}",
+        ]
+    else:
+        lines += [
+            f"# This site declares no {STAGE_DIR_ENV}, so nothing stages to",
+            "# node-local scratch by default. If you stage something by hand,",
+            "# export the variable ABOVE this line and the trap below will",
+            "# clean it up — provided the path is job-scoped.",
+            f"# export {STAGE_DIR_ENV}='/node/scratch/$SLURM_JOB_ID'",
+        ]
+    lines += cleanup_lines(environ=env)
+    lines += [
+        "",
+        "# ---- the payload: the only variable in this script --------------",
+        'echo "SteerLab ad-hoc job on $(hostname) at $(date -Is)"',
+        '"$@"',
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _wrapper_gpu_gres(res) -> str | None:
+    """The GPU half of the wrapper's gres, or None.
+
+    A site with an UNDECLARED GPU vocabulary refuses to normalize a gres
+    (declare-or-refuse, ``SlurmResources.normalized_gres``). That refusal is
+    right for a study job and wrong for this artifact: a wrapper that cannot
+    render because the GPU list is missing would leave the operator with no
+    canonical way to request node scratch at all — which is the exact hole
+    being closed. Degrade to "no GPU directive"; the operator adds one.
+    """
+    try:
+        return res.normalized_gres()
+    except ValueError:
+        return None
+
+
+def write_wrapper(*, metadata_root: str | None = None, environ=None,
+                  resources=None) -> dict:
+    """Render the wrapper into the metadata root and describe what happened.
+
+    Returns ``{"path", "written", "schedulerPurgesNodeScratch",
+    "nodeStageDirTemplate", "nodeScratchGres"}``. ``written`` is False when the
+    bytes on disk already match — re-rendering is idempotent, so a standing
+    ritual can call it every time without churning mtimes.
+    """
+    env = os.environ if environ is None else environ
+    path = wrapper_path(metadata_root)
+    text = render_wrapper(environ=env, resources=resources)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    existing = None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            existing = handle.read()
+    except OSError:
+        pass
+    written = existing != text
+    if written:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(path, 0o755)
+    return {
+        "path": path,
+        "written": written,
+        "schedulerPurgesNodeScratch": scheduler_purges_node_scratch(env),
+        "nodeStageDirTemplate": (env.get(STAGE_DIR_ENV) or "").strip() or None,
+        "nodeScratchGres": (env.get(SCRATCH_GRES_ENV) or "").strip() or None,
+    }
+
+
+__all__ = [
+    "COMPANION_VARIABLES", "JOB_SCOPING_VARIABLES", "SCHEDULER_PURGES_ENV",
+    "SCRATCH_GRES_ENV", "STAGE_DIR_ENV", "WRAPPER_NAME",
+    "WRAPPER_STAMP_MARKER", "cleanup_lines", "render_wrapper",
+    "scheduler_purges_node_scratch", "wrapper_path", "write_wrapper",
+]

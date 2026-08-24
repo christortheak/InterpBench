@@ -429,6 +429,13 @@ extension ClusterSiteProfile {
         /// only — Slurm does not enforce it. Emitted only for gres-carrying job
         /// classes.
         public var nodeScratchGres: String?
+
+        /// True when the SITE's scheduler reclaims node-local scratch at job
+        /// end (an epilog): rendered scripts then arm no cleanup trap.
+        /// Declare-or-omit (ledger 2026-08-23) — absent/nil renders byte-
+        /// identically to before, trap on, the safe default. Twin of the
+        /// Python engine's `nodeScratchPurgedByScheduler`.
+        public var nodeScratchPurgedByScheduler: Bool?
         public var hubOfflineMode: OfflineMode
         /// True when the metadata root must sit on a POSIX-lock-capable local
         /// filesystem (the SQLite job DB) rather than the parallel filesystem.
@@ -454,6 +461,7 @@ extension ClusterSiteProfile {
         public init(
             nodeStageDirTemplate: String? = nil,
             nodeScratchGres: String? = nil,
+            nodeScratchPurgedByScheduler: Bool? = nil,
             hubOfflineMode: OfflineMode = .auto,
             metadataRequiresLocalFilesystem: Bool = false,
             scanFileCap: Int? = nil,
@@ -466,6 +474,7 @@ extension ClusterSiteProfile {
         ) {
             self.nodeStageDirTemplate = nodeStageDirTemplate
             self.nodeScratchGres = nodeScratchGres
+            self.nodeScratchPurgedByScheduler = nodeScratchPurgedByScheduler
             self.hubOfflineMode = hubOfflineMode
             self.metadataRequiresLocalFilesystem = metadataRequiresLocalFilesystem
             self.scanFileCap = scanFileCap
@@ -484,6 +493,9 @@ extension ClusterSiteProfile {
                 try container.decodeIfPresent(String.self, forKey: .nodeStageDirTemplate)
             nodeScratchGres =
                 try container.decodeIfPresent(String.self, forKey: .nodeScratchGres)
+            nodeScratchPurgedByScheduler =
+                try container.decodeIfPresent(
+                    Bool.self, forKey: .nodeScratchPurgedByScheduler)
             if let value = try container.decodeIfPresent(
                 OfflineMode.self, forKey: .hubOfflineMode)
             {

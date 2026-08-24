@@ -46,6 +46,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .. import node_scratch
 from .site_profile import ClusterSiteProfile, LoginNodePolicy, SlurmSiteData
 
 
@@ -927,6 +928,23 @@ def environment_entries(profile: ClusterSiteProfile) -> list[EnvEntry]:
                 comments=[
                     "Node-local model staging. SINGLE-QUOTED: $SLURM_JOB_ID expands in",
                     "the loader ON THE COMPUTE NODE, never here.",
+                ],
+            ))
+    # Declare-or-omit (ledger 2026-08-23): a site whose scheduler purges node
+    # scratch itself says so, and rendered scripts then arm no cleanup trap.
+    # A site that has never declared it emits nothing and renders exactly as
+    # before — the trap stays on, which is the safe default.
+    if profile.constraints.storage.node_scratch_purged_by_scheduler:
+        entries.append(
+            EnvEntry(
+                key=node_scratch.SCHEDULER_PURGES_ENV,
+                value="1",
+                quoting=BARE,
+                comments=[
+                    "This site's SCHEDULER reclaims node-local scratch at job end (an",
+                    "epilog), so rendered scripts arm no cleanup trap: a job racing the",
+                    "epilog for the same directory adds risk and removes nothing the",
+                    "site was not already going to remove.",
                 ],
             ))
 

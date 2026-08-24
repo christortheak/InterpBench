@@ -33,6 +33,7 @@ METAVARS: dict = {
     "--agent-name": "<name>",
     "--cell": "<layer>:<alpha>",
     "--deltas": "<d1,d2>",
+    "--dependency": "<spec>",
     "--device": "<device>",
     "--dir": "<path>",
     "--dtype": "<dtype>",
@@ -73,6 +74,8 @@ FLAG_PURPOSES: dict = {
         "Accept a legacy run that carries no experiment-hash stamp.",
     "--cell": "Override the sweep-selected cell, loudly.",
     "--deltas": "Perturbation deltas around the anchor cell (default 0.2).",
+    "--dependency":
+        "Hold the submission behind a Slurm dependency, e.g. afterok:12345.",
     "--device": "Torch device the verb loads the model onto.",
     "--dir": "Directory the template reads instead of its default.",
     "--dry-run": "Print what would be submitted and submit nothing.",

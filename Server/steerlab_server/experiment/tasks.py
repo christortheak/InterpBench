@@ -54,6 +54,20 @@ class ConceptVectorBundle:
     # norms came from a LEGACY artifact that never recorded one; never
     # invented (see :mod:`steering.residual_norm_convention`).
     residual_norm_convention: str | None = None
+    # WHICH RENDERING the denominator corpus was tokenized under — carried to
+    # the sidecar's ``residualNormRendering`` stamp. "raw" (or None) is legacy
+    # and stamps nothing.
+    residual_norm_rendering: str | None = None
+    # The requested reading position AND where it resolved, per sequence
+    # shape — carried to the sidecar's ``readingPositionResolution``. None
+    # when the position's label already implies its index (the legacy pair).
+    reading_position_resolution: dict | None = None
+    # The rendering block to stamp. None = take the manifest concept's
+    # declaration (the ordinary case: this run rendered it). A MATERIALIZED
+    # pinned artifact sets it from the source sidecar, because the copy's
+    # rendering is the one that produced the bytes, not the one this study
+    # would have used.
+    extraction_rendering: dict | None = None
     # Grand-mean extractions only: the FULL comparison population actually
     # read (concept name → stories.jsonl SHA-256), stamped into the sidecar
     # so the artifact can prove its recipe identity. None for paired methods.
@@ -454,15 +468,18 @@ def _extract_all(model: model_loader.SteeredModel, manifest: Manifest,
         options = CoreExtractionOptions(
             method=concept.options.method,
             reading_position=concept.options.reading_position,
-            neutral_pc_count=concept.options.neutral_pc_count)
+            neutral_pc_count=concept.options.neutral_pc_count,
+            extraction_rendering=concept.options.extraction_rendering)
         result = core_extract(model, stimuli, options, neutral_texts=neutral_texts)
         bundles[concept.name] = ConceptVectorBundle(
             vectors=result.vectors,
             residual_norm_per_layer=result.residual_norm_per_layer,
             residual_norm_source=result.residual_norm_source,
             residual_norm_convention=result.residual_norm_convention,
+            residual_norm_rendering=result.residual_norm_rendering,
             stimulus_hash=stimuli.hash,
             reading_position_diagnostic=result.reading_position_diagnostic,
+            reading_position_resolution=result.reading_position_resolution,
             neutral_mean_per_layer=result.neutral_mean_per_layer)
     bundles.update(_extract_grand_mean_bundles(model, manifest, root, neutral_texts))
     return bundles
@@ -561,6 +578,12 @@ def _materialize_pinned_artifact(manifest: Manifest, concept,
         residual_norm_per_layer=list(sidecar.residualNormPerLayer or []),
         residual_norm_source=sidecar.residualNormSource or "",
         residual_norm_convention=sidecar.residualNormConvention,
+        # The materialized copy carries the SOURCE's norm provenance whole:
+        # its denominator rendering and where its reading position landed
+        # travel with the norms, exactly as the convention stamp does.
+        residual_norm_rendering=sidecar.residualNormRendering,
+        reading_position_resolution=sidecar.readingPositionResolution,
+        extraction_rendering=sidecar.extractionRendering,
         # The artifact's own recorded stimulus identity — the same value
         # attach pinned, so the materialized copy claims exactly what the
         # manifest pins (and nothing the manifest never saw).
@@ -626,15 +649,18 @@ def _extract_designated_reference(model, concept, root,
     options = CoreExtractionOptions(
         method=concept.options.method,
         reading_position=concept.options.reading_position,
-        neutral_pc_count=concept.options.neutral_pc_count)
+        neutral_pc_count=concept.options.neutral_pc_count,
+        extraction_rendering=concept.options.extraction_rendering)
     result = core_extract(model, stimuli, options, neutral_texts=neutral_texts)
     return ConceptVectorBundle(
         vectors=result.vectors,
         residual_norm_per_layer=result.residual_norm_per_layer,
         residual_norm_source=result.residual_norm_source,
         residual_norm_convention=result.residual_norm_convention,
+        residual_norm_rendering=result.residual_norm_rendering,
         stimulus_hash=concept.stimulus_set_hash,
         reading_position_diagnostic=result.reading_position_diagnostic,
+        reading_position_resolution=result.reading_position_resolution,
         neutral_mean_per_layer=result.neutral_mean_per_layer,
         designated_reference={"name": ref_name, "hash": ref.get("hash")})
 
@@ -658,15 +684,23 @@ def _extract_grand_mean_bundles(model, manifest: Manifest, root,
         raise RuntimeError("grand-mean corpus is empty on disk")
     groups: dict[tuple, list] = {}
     for concept in grand:
-        key = (concept.options.reading_position.label, concept.options.neutral_pc_count)
+        # The RENDERING joins the grouping key: two concepts that render
+        # differently are two different corpus passes with two different
+        # denominators, so pooling them would silently give one of them the
+        # other's numbers.
+        key = (concept.options.reading_position.label,
+               concept.options.neutral_pc_count,
+               json.dumps(concept.options.extraction_rendering.to_dict(),
+                          sort_keys=True))
         groups.setdefault(key, []).append(concept)
     bundles: dict[str, ConceptVectorBundle] = {}
-    for (_, pc_count), members in groups.items():
+    for (_, pc_count, _), members in groups.items():
         reading = members[0].options.reading_position
+        rendering = members[0].options.extraction_rendering
         result = extract_grand_mean(
             model, rows, target_concepts={m.name for m in members},
             reading_position=reading, neutral_texts=neutral_texts,
-            neutral_pc_count=pc_count)
+            neutral_pc_count=pc_count, extraction_rendering=rendering)
         for member in members:
             vectors = result.per_concept.get(member.name)
             if vectors is None:
@@ -678,6 +712,8 @@ def _extract_grand_mean_bundles(model, manifest: Manifest, root,
                 residual_norm_per_layer=result.residual_norm_per_layer,
                 residual_norm_source=result.residual_norm_source,
                 residual_norm_convention=result.residual_norm_convention,
+                residual_norm_rendering=result.residual_norm_rendering,
+                reading_position_resolution=result.reading_position_resolution,
                 # Live hashes (like the paired path's stimuli.hash): the
                 # sidecar records what was actually read — including the FULL
                 # population the grand mean was computed over; verify()
@@ -701,6 +737,11 @@ def _persist_vectors(bundles: dict[str, ConceptVectorBundle], manifest: Manifest
             residual_norm_per_layer=bundle.residual_norm_per_layer,
             residual_norm_source=bundle.residual_norm_source,
             residual_norm_convention=bundle.residual_norm_convention,
+            residual_norm_rendering=bundle.residual_norm_rendering,
+            extraction_rendering=(bundle.extraction_rendering
+                                  if bundle.pinned_from is not None
+                                  else concept.options.extraction_rendering),
+            reading_position_resolution=bundle.reading_position_resolution,
             # Record the projection that was actually applied (previously the
             # sidecar said "none" even when the legacy pooled projection ran
             # — an under-recorded recipe).
@@ -1215,13 +1256,22 @@ def extract(name: str, root: str | None = None, dtype: str = "auto",
 
 
 def _write_reading_position_diagnostics(bundles, run_directory: str, _log) -> None:
-    """Standing per-concept diagnostic for pooled readings (METHODS
-    appendix): the per-layer cosine between the recipe's vectors and
-    last-token vectors read from the SAME forward passes. Nearly free at
-    extraction time — a second recorder in the same hook session — and the
-    paper's justification for the pooled-reading rule is the measured gap,
-    not a citation. Written beside the vectors, never into the sidecar
-    (which is a cross-engine artifact contract)."""
+    """Standing per-concept diagnostic for any DEPARTURE from the legacy
+    default recipe (METHODS appendix): the per-layer cosine between this
+    recipe's vectors and vectors extracted the legacy way — raw rendering,
+    last token.
+
+    Fires for a non-last-token reading position (free: the baseline reads
+    from the SAME forward passes via a second recorder in the same hook
+    session) AND for any non-raw extraction rendering (not free: a different
+    tokenization needs its own passes, which the report flags as
+    ``extraForwardPasses``). Either way the justification for a departure is
+    the measured gap, not a citation — the two renderings were measured
+    cosine ≈ 0.18 apart mid-network while both probed near-perfectly (ledger
+    §26), which is exactly the kind of number a METHODS section has to carry.
+
+    Written beside the vectors, never into the sidecar (which is a
+    cross-engine artifact contract)."""
     diagnostics = {name: b.reading_position_diagnostic
                    for name, b in bundles.items()
                    if b.reading_position_diagnostic}
@@ -1231,8 +1281,11 @@ def _write_reading_position_diagnostics(bundles, run_directory: str, _log) -> No
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(diagnostics, handle, indent=2, sort_keys=True)
     for name, diag in sorted(diagnostics.items()):
+        against = diag["comparedTo"]
+        if diag.get("comparedToRendering"):
+            against += f" / {diag['comparedToRendering']} rendering"
         _log(f"reading-position diagnostic — {name}: cosine vs "
-             f"{diag['comparedTo']} min {diag['min']:.3f} / median "
+             f"{against} min {diag['min']:.3f} / median "
              f"{diag['median']:.3f} / max {diag['max']:.3f} over "
              f"{len(diag['perLayerCosine'])} layers")
 
@@ -1403,16 +1456,20 @@ def _validate_impl(name: str, manifest: Manifest, model, root, _log) -> str:
                         for c in manifest.concepts if owes_held_out_probe(c)}
     corpus_cache: dict[str, tuple[list[str], list]] = {}
 
-    def _corpus_activations(reading):
+    def _corpus_activations(reading, rendering):
         """(concept labels, pooled activations) for the pinned grand-mean
-        corpus at one reading position — computed once per position."""
-        if reading.label not in corpus_cache:
+        corpus at one reading position and rendering — computed once per
+        (position, rendering) pair. The rendering joins the cache key because
+        it changes the token sequence, hence the activations."""
+        key = f"{reading.label} | {rendering.label}"
+        if key not in corpus_cache:
             rows, _ = multiconcept.load_corpus(manifest.grand_mean_corpus.concepts, root)
             from ..steering.extractor import _screen_short
-            rows = _screen_short(model, rows, reading, 1.0)
-            values = activations(model, [t for _, t in rows], reading).values
-            corpus_cache[reading.label] = ([c for c, _ in rows], values)
-        return corpus_cache[reading.label]
+            rows = _screen_short(model, rows, reading, 1.0, rendering)
+            values = activations(model, [t for _, t in rows], reading,
+                                 rendering).values
+            corpus_cache[key] = ([c for c, _ in rows], values)
+        return corpus_cache[key]
 
     for concept_name, bundle in bundles.items():
         concept = next(c for c in manifest.concepts if c.name == concept_name)
@@ -1462,16 +1519,22 @@ def _validate_impl(name: str, manifest: Manifest, model, root, _log) -> str:
         if not scenarios:
             continue
         reading = concept.options.reading_position
+        # Held-out activations must be read where AND rendered how the vector
+        # was: a probe score is a projection onto that direction, and a
+        # raw-tokenized scenario is a sample from a different distribution
+        # than a chat-template-rendered one (ledger §26).
+        rendering = concept.options.extraction_rendering
         resolutions = _validation_layer_resolutions(
             manifest, concept_name, bundle.vectors.layer_count)
         # Activations are captured ONCE for all layers — extra declared
         # depths cost per-layer arithmetic, not forward passes. That is why
         # a depth list is one run, not N runs.
-        scen = activations(model, [s["text"] for s in scenarios], reading).values
+        scen = activations(model, [s["text"] for s in scenarios], reading,
+                           rendering).values
         labeled = all("expresses" in s for s in scenarios)
         entry: dict = {"scenarioCount": len(scenarios), "labeled": labeled}
         if grand_mean:
-            labels_by_row, values = _corpus_activations(reading)
+            labels_by_row, values = _corpus_activations(reading, rendering)
         else:
             if method.is_designated_reference:
                 from types import SimpleNamespace
@@ -1483,8 +1546,8 @@ def _validate_impl(name: str, manifest: Manifest, model, root, _log) -> str:
             else:
                 stimuli = StimulusSet.from_directory(
                     paths.concept_directory(data_concept, root))
-            pos = activations(model, stimuli.positive, reading).values
-            neg = activations(model, stimuli.negative, reading).values
+            pos = activations(model, stimuli.positive, reading, rendering).values
+            neg = activations(model, stimuli.negative, reading, rendering).values
 
         depth_entries: list[dict] = []
         for resolution in resolutions:
@@ -1713,13 +1776,16 @@ def _extract_validation_controls(model, manifest: Manifest, root, _log
             CoreExtractionOptions(
                 method=options.method,
                 reading_position=options.reading_position,
-                neutral_pc_count=options.neutral_pc_count),
+                neutral_pc_count=options.neutral_pc_count,
+                extraction_rendering=options.extraction_rendering),
             neutral_texts=neutral_texts)
         out[concept] = ConceptVectorBundle(
             vectors=result.vectors,
             residual_norm_per_layer=result.residual_norm_per_layer,
             residual_norm_source=result.residual_norm_source,
             residual_norm_convention=result.residual_norm_convention,
+            residual_norm_rendering=result.residual_norm_rendering,
+            reading_position_resolution=result.reading_position_resolution,
             stimulus_hash=stimuli.hash)
     return out
 
@@ -5221,6 +5287,18 @@ def _require_source_epoch(verb: str, name: str, manifest: Manifest,
     The rule itself lives in :mod:`run_epoch`, shared with ``promote`` (which
     stays strict: a judge swap changes what a judged sweep's evidence
     means)."""
+    # A source run that is NOT THERE is a path fault, and it gets its own
+    # typed refusal with its own repair (ledger 2026-08-21). Before this split
+    # the missing directory fell through to "carries no experiment-hash stamp
+    # … or pass allowUnverifiedEpoch" — the same sentence a genuinely legacy
+    # run gets, on a run that was correctly stamped all along, with a repair
+    # that invites the operator to switch the epoch firewall off. The two are
+    # different failures and must read as different failures.
+    unreadable = run_epoch.unreadable_source_refusal(verb, run_dir)
+    if unreadable:
+        raise lifecycle_gates.refusing(
+            lifecycle_gates.MISSING_PREREQUISITE, unreadable,
+            repair=run_epoch.unreadable_source_repair(verb, name))
     refusal, unverified, drift = run_epoch.epoch_refusal(
         verb, name, manifest.content_hash(), run_dir,
         allow_unverified=allow_unverified_epoch, live_manifest=manifest,
@@ -5265,6 +5343,102 @@ def _require_source_epoch(verb: str, name: str, manifest: Manifest,
         raise lifecycle_gates.refusing(
             lifecycle_gates.MANIFEST_EPOCH, refusal, repair=repair)
     return unverified, drift
+
+
+def _panel_transcript_directory(run_directory: str, condition: str,
+                                replicate: int, replicates: int) -> str:
+    """Where ONE panel transcript's artifacts live.
+
+    Single-replicate runs keep the historical ``<run>/<condition>/`` layout so
+    existing consumers (``panel_effects``, the Runs browser) are untouched;
+    replicates nest one level deeper. Shared by the writer loop and the
+    run-end completeness check on purpose: a check that derived the layout
+    independently could pass while looking in the wrong place.
+    """
+    return (os.path.join(run_directory, condition) if replicates == 1
+            else os.path.join(run_directory, condition,
+                              f"replicate-{replicate}"))
+
+
+#: Artifacts a COMPLETE panel transcript tree carries. ``turns.jsonl`` is the
+#: per-transcript record the root ``generations.jsonl`` is flattened from;
+#: ``transcript.md`` is the human-readable layer. Both are written by
+#: ``multi_agent.run_scenario``; either one missing means the writer did not
+#: finish that transcript.
+_PANEL_TRANSCRIPT_ARTIFACTS = ("turns.jsonl", "transcript.md")
+
+
+def panel_transcript_completeness(run_directory: str,
+                                  planned: list[tuple[str, int]],
+                                  replicates: int) -> list[str]:
+    """Which PLANNED transcript trees are not on disk, named one per entry.
+
+    ``planned`` is the (condition, replicate) list this run was responsible
+    for — for a shard, only the transcripts that shard owns, so the check
+    cannot cry wolf about work another shard did. Returns an empty list when
+    every planned tree is present and carries its artifacts.
+
+    Deliberately a DISK check rather than a tally kept by the loop: a tally
+    proves the loop believed it wrote something, and the failure this exists
+    to catch (2026-08-20 ledger: a complete ``generations.jsonl``, a complete
+    ``baseline/`` tree, and an empty ``configured/``) is precisely the case
+    where that belief and the filesystem disagree.
+    """
+    problems: list[str] = []
+    for condition, replicate in planned:
+        sub = _panel_transcript_directory(run_directory, condition, replicate,
+                                          replicates)
+        label = (condition if replicates == 1
+                 else f"{condition}/replicate-{replicate}")
+        if not os.path.isdir(sub):
+            problems.append(f"{label}: no transcript directory")
+            continue
+        absent = [artifact for artifact in _PANEL_TRANSCRIPT_ARTIFACTS
+                  if not os.path.isfile(os.path.join(sub, artifact))]
+        if absent:
+            problems.append(f"{label}: missing " + ", ".join(absent))
+    return problems
+
+
+def _advise_panel_transcripts(run_directory: str, problems: list[str],
+                              notes: list[str], _log) -> None:
+    """Run-end LOUD, non-blocking transcript-completeness advisory.
+
+    Same shape as the other run-directory advisories
+    (:func:`_advise_dependency_lock_drift`): an ``ADVISORY:`` line in the run
+    log and an appended line in ``advisories.txt``, and NEVER a change to the
+    exit code. ``generations.jsonl`` is the authoritative record and it is
+    written before this runs; ``transcript.md``/``turns.jsonl`` are the
+    human-readable layer, so their absence is a thing a later reader of the
+    run directory must be TOLD about, not a thing that fails a finished run.
+
+    ``notes`` are per-transcript problems the writer already observed while
+    running (an artifact write that raised, a transcript that flattened to
+    zero records) — carried here with their exception text so the advisory
+    says what happened as well as what is missing.
+    """
+    if not problems and not notes:
+        return
+    parts = []
+    if problems:
+        parts.append(f"{len(problems)} transcript tree(s) missing or "
+                     "incomplete: " + "; ".join(problems))
+    if notes:
+        parts.append("writer reported: " + "; ".join(notes))
+    advisory = (
+        "panel transcripts incomplete — " + ". ".join(parts)
+        + ". generations.jsonl is the authoritative record and is complete "
+          "for this run; the human-readable transcript layer is what is "
+          "missing. Not a refusal.")
+    _log(f"ADVISORY: {advisory}")
+    # Append, like the lock-drift and case-family advisories: the
+    # cross-substrate advisory may already own this file for this run.
+    try:
+        with open(os.path.join(run_directory, "advisories.txt"), "a",
+                  encoding="utf-8") as handle:
+            handle.write(advisory + "\n")
+    except OSError:  # the advisory must never sink a run
+        pass
 
 
 def _panel_records_from(sub: str, name: str, manifest, model, condition: str,
@@ -5434,6 +5608,13 @@ def _run_multi_agent_study(name, manifest, model, root, model_provider=None,
     # multi-agent output as ordinary study results (parallel to Swift).
     records: list[dict] = []
     cancelled = False
+    # The transcripts THIS run is responsible for, appended as the loop admits
+    # each one, and the per-transcript problems the writer saw while running.
+    # Both feed the run-end completeness advisory: `planned` is what the check
+    # looks for on disk (a shard is responsible only for the transcripts it
+    # owns), `writer_notes` is what the writer already knows went wrong.
+    planned: list[tuple[str, int]] = []
+    writer_notes: list[str] = []
     # Replicates: the STUDY manifest owns measured-run sampling policy, so its
     # temperature overrides the scenario's authoring value and samplesPerItem
     # is the replicate count. Each replicate is an independent play-through —
@@ -5479,11 +5660,13 @@ def _run_multi_agent_study(name, manifest, model, root, model_provider=None,
                     f"{cond}/replicate-{replicate} — partial run kept for resume")
                 cancelled = True
                 break
-            # Single-replicate runs keep the historical <run>/<condition>/
-            # layout, so existing consumers (panel_effects, the Runs browser)
-            # are untouched; replicates nest one level deeper.
-            sub = (os.path.join(run_directory, cond) if replicates == 1
-                   else os.path.join(run_directory, cond, f"replicate-{replicate}"))
+            sub = _panel_transcript_directory(run_directory, cond, replicate,
+                                              replicates)
+            # Recorded BEFORE the write, so a transcript this run admitted and
+            # then failed to write is still something the run-end check looks
+            # for. (Appending after a successful write would make the check
+            # blind to exactly the skip it exists to catch.)
+            planned.append((cond, replicate))
             os.makedirs(sub, exist_ok=True)
             try:
                 multi_agent.run_scenario(
@@ -5495,6 +5678,11 @@ def _run_multi_agent_study(name, manifest, model, root, model_provider=None,
                     replicate_index=replicate,
                     experiment_hash=manifest.content_hash(),
                     checkpoint=checkpoint,
+                    # Per-transcript summary-artifact failures land here with
+                    # their exception text instead of vanishing (or sinking a
+                    # run whose turns are already durable); the run-end
+                    # advisory says them out loud.
+                    artifact_problems=writer_notes,
                     # Forward the task's logger. Without this, run_scenario
                     # fell back to its default no-op and every per-turn line
                     # — progress ✓s, the accelerator-memory probe, turn
@@ -5520,8 +5708,18 @@ def _run_multi_agent_study(name, manifest, model, root, model_provider=None,
                 # the next attempt somewhere it can do nothing useful.
                 raise resume_mod.CheckpointRequested(
                     run_directory, "run", len(records), reason="signal") from None
-            records.extend(_panel_records_from(
-                sub, name, manifest, model, cond, replicate))
+            flattened = _panel_records_from(
+                sub, name, manifest, model, cond, replicate)
+            if not flattened:
+                # `_panel_records_from` returns [] for an absent or unreadable
+                # turns.jsonl — the one place a whole transcript can leave the
+                # run's record without anything being raised. Say so here
+                # rather than letting the arm evaporate silently.
+                writer_notes.append(
+                    f"{cond}/replicate-{replicate} flattened to zero turn "
+                    "records (turns.jsonl absent or unreadable)")
+                log(f"WARNING: {writer_notes[-1]}")
+            records.extend(flattened)
     with open(os.path.join(run_directory, "generations.jsonl"), "w", encoding="utf-8") as handle:
         for r in records:
             handle.write(json.dumps(r) + "\n")
@@ -5537,6 +5735,17 @@ def _run_multi_agent_study(name, manifest, model, root, model_provider=None,
         log(f"panel run interrupted: {len(records)} turn record(s) kept; "
             "directory is resumable")
         return run_directory
+    # Run-end completeness of the TRANSCRIPT layer (2026-08-20 ledger): the
+    # trees on disk must match the transcripts this run was responsible for.
+    # A mismatch is a loud advisory naming exactly which condition/replicates
+    # are missing — never an exit code, never a failed run, because
+    # generations.jsonl (written above) is the authoritative record and it is
+    # complete. Runs only on the COMPLETION path: a cancelled or checkpointed
+    # run legitimately has trees it has not written yet, and returned above.
+    _advise_panel_transcripts(
+        run_directory,
+        panel_transcript_completeness(run_directory, planned, replicates),
+        writer_notes, log)
     _write_metrics_csv(records, run_directory, style=style)
     _write_report(name, manifest, records, run_directory, style=style)
     # Voice lint, aggregated per (speaker × condition) into its OWN artifact

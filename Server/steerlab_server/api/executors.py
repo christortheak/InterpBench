@@ -359,6 +359,69 @@ class SlurmResources:
         return token
 
 
+#: Slurm's dependency TYPES, as a submitted spec may name them. Deliberately a
+#: closed vocabulary rather than a free string: the value goes onto the sbatch
+#: command line, and a typo'd type is silently a job that never runs (Slurm
+#: rejects some spellings and quietly waits forever on others).
+_DEPENDENCY_TYPES = frozenset({
+    "after", "afterany", "afterburstbuffer", "aftercorr", "afternotok",
+    "afterok",
+})
+
+#: A job id, optionally with Slurm's ``+<minutes>`` delay suffix.
+_DEPENDENCY_JOB_RE = re.compile(r"^\d+(_\d+|_\[\d+(-\d+)?\])?(\+\d+)?$")
+
+
+def normalized_dependency(spec: str) -> str:
+    """Validate a RAW Slurm dependency spec and return it unchanged.
+
+    Raw on purpose (ledger 2026-08-23): "wait for that job" is Slurm's own
+    vocabulary, an operator already knows how to spell it, and inventing a
+    SteerLab dialect for it would be one more thing that can disagree with the
+    scheduler. What this engine adds is a SHAPE check, because the failure
+    mode of a malformed spec is a job that sits in the queue forever rather
+    than an error anybody sees.
+
+    Accepted: ``singleton``, and ``<type>:<jobid>[+min][:<jobid>…]`` for the
+    types in :data:`_DEPENDENCY_TYPES`, joined by ``,`` (all must be
+    satisfied) or ``?`` (any). A leading ``-`` on a term — Slurm's
+    "cancel-on-unsatisfiable" marker — rides through.
+    """
+    text = (spec or "").strip()
+    if not text:
+        raise ValueError(
+            "--dependency needs a Slurm dependency spec, e.g. "
+            "'afterok:12345' or 'afterany:12345,afterok:12346'")
+    if "\n" in text or any(ch.isspace() for ch in text):
+        raise ValueError(
+            f"Slurm dependency spec {spec!r} contains whitespace — it is one "
+            "token, e.g. 'afterok:12345,afterok:12346'")
+    # `,` and `?` are Slurm's own AND / OR separators between terms.
+    for term in re.split(r"[,?]", text):
+        term = term.strip()
+        if not term:
+            raise ValueError(
+                f"Slurm dependency spec {spec!r} has an empty term — check "
+                "the ',' / '?' separators")
+        if term.startswith("-"):
+            term = term[1:]
+        if term == "singleton":
+            continue
+        kind, separator, ids = term.partition(":")
+        if not separator or kind not in _DEPENDENCY_TYPES:
+            raise ValueError(
+                f"Slurm dependency term {term!r} is not <type>:<jobid> for a "
+                "known type — expected one of "
+                f"{', '.join(sorted(_DEPENDENCY_TYPES))}, or 'singleton'")
+        parts = [part for part in ids.split(":")]
+        if not parts or not all(_DEPENDENCY_JOB_RE.match(p) for p in parts):
+            raise ValueError(
+                f"Slurm dependency term {term!r} must name job id(s) — "
+                "digits, optionally an array element and a '+<minutes>' "
+                "delay, e.g. 'afterok:12345+10'")
+    return text
+
+
 @dataclass
 class JobBundle:
     bundle_dir: str
@@ -515,7 +578,8 @@ class SlurmExecutor:
             }, handle, indent=2, sort_keys=True)
         return bundle
 
-    def submit(self, bundle: JobBundle, *, job_name: str | None = None) -> str:
+    def submit(self, bundle: JobBundle, *, job_name: str | None = None,
+               dependency: str | None = None) -> str:
         if crosses_maintenance_window(
             bundle.resources.walltime, self.profile.maintenance_calendar_path):
             raise RuntimeError("requested walltime crosses a configured maintenance window")
@@ -535,6 +599,13 @@ class SlurmExecutor:
             # submission via `squeue/sacct --name <token>` and ADOPT it
             # instead of double-submitting.
             command.append(f"--job-name={job_name}")
+        if dependency:
+            # A COMMAND-LINE argument, deliberately not an `#SBATCH` header in
+            # the script: auto-resubmit-on-checkpoint re-submits this exact
+            # file verbatim, and a resubmitted continuation must not re-wait on
+            # a dependency that was satisfied before the job ever started. The
+            # shape was validated at submission (`normalized_dependency`).
+            command.append(f"--dependency={normalized_dependency(dependency)}")
         command.append(bundle.script_path)
         proc = scheduler_run(command, text=True,
                              capture_output=True, check=False,
@@ -792,30 +863,12 @@ def render_slurm_script(bundle: JobBundle) -> str:
         "# clean from the scheduler's point of view.",
         "export SLURM_EXPORT_ENV=ALL",
     ])
-    lines.extend([
-        "",
-        "# cluster-operator requirement (2026-08-19): a job that stages to",
-        "# node-local scratch must remove its own directory — the cluster does",
-        "# NOT wipe /lscratch at job end, and unrequested/unremoved staging",
-        "# leaks TBs. Guard: only a stage dir whose template embeds",
-        "# $SLURM_JOB_ID (job-scoped by construction) is ever removed; a shared",
-        "# node cache never matches. The env value arrives single-quoted, so the",
-        "# literal string '$SLURM_JOB_ID' is what the case pattern sees.",
-        "cleanup_node_scratch() {",
-        "  if [ -n \"${STEERLAB_NODE_STAGE_DIR:-}\" ] && [ -n \"${SLURM_JOB_ID:-}\" ]; then",
-        "    case \"${STEERLAB_NODE_STAGE_DIR}\" in",
-        "      *'$SLURM_JOB_ID'*)",
-        "        stage_dir=\"${STEERLAB_NODE_STAGE_DIR//\\$SLURM_JOB_ID/${SLURM_JOB_ID}}\"",
-        "        rm -rf -- \"${stage_dir}\" 2>/dev/null || true",
-        "        ;;",
-        "    esac",
-        "  fi",
-        "}",
-        "# EXIT only, so it composes with the checkpoint trap below (USR1/TERM)",
-        "# and never disturbs the job's recorded exit status: the function never",
-        "# calls exit and always ends successfully.",
-        "trap cleanup_node_scratch EXIT",
-    ])
+    # ONE definition of "how this site cleans up node scratch"
+    # (:mod:`node_scratch`), shared with the canonical ad-hoc wrapper. It used
+    # to live inline here, which is why anything not rendered by this function
+    # silently got neither the gres request nor the trap (ledger 2026-08-23).
+    from ..node_scratch import cleanup_lines
+    lines.extend(cleanup_lines())
     lines.extend([
         "",
         "# Reconstruct the runtime explicitly; --export=NONE drops login-shell state.",

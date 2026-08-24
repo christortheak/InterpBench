@@ -102,6 +102,10 @@ class _FakeActivations:
     def __init__(self, values, norms):
         self.values = values
         self.residual_norm_per_layer = norms
+        # Where each stimulus was actually read (added 2026-08-24 with the
+        # reading-position resolution stamp); empty is honest for a stub
+        # that never resolved anything, and omits the stamp.
+        self.resolutions = []
 
 
 def test_extract_grand_mean_math_and_projection(monkeypatch):
@@ -115,7 +119,7 @@ def test_extract_grand_mean_math_and_projection(monkeypatch):
                                    [[5.0, 0.0]], [[7.0, 0.0]]],
     }
 
-    def fake_activations(model, texts, position):
+    def fake_activations(model, texts, position, rendering=None):
         return _FakeActivations(acts[tuple(texts)], [1.0])
 
     monkeypatch.setattr(extractor, "activations", fake_activations)
@@ -162,7 +166,8 @@ def test_extract_all_dispatches_grand_mean(tmp_path, monkeypatch):
     captured = {}
 
     def fake_extract_grand_mean(model, rows, *, target_concepts, reading_position,
-                                neutral_texts, neutral_pc_count):
+                                neutral_texts, neutral_pc_count,
+                                extraction_rendering=None):
         captured["rows"] = rows
         captured["targets"] = target_concepts
         captured["pc"] = neutral_pc_count

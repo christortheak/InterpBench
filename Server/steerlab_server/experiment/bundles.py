@@ -790,6 +790,33 @@ def import_bundle(bundle_path: str, *, target_root: str | None = None,
     return result
 
 
+def resolve_against_target(path: str | None, target_root: str) -> str | None:
+    """A caller-supplied RUN-DIRECTORY path, anchored to the target root.
+
+    **The bug this closes** (ledger 2026-08-21, reproduced live on jobs
+    47606365/47606373). ``study submit … --source runs/<dir>`` renders the
+    path VERBATIM into the bundle command, and the rendered sbatch ``cd``s
+    into ``<submitdir>/slurm`` before ``srun`` — so a relative path resolved
+    against the slurm directory, not against the workspace the very same
+    command line names with ``--target``. The read then found nothing, and
+    the epoch guard blamed the run's provenance for the operator's path.
+
+    The fix belongs in the CHILD rather than only in the renderer, because a
+    hand-written ``bundle execute`` has exactly the same cwd problem and no
+    renderer to fix it. Absolute paths are untouched; ``None``/empty pass
+    through so "not supplied" keeps meaning "not supplied".
+
+    The rule is the one already true of every other workspace-relative
+    reference in this engine (``paths.resolve``, ``_load_prompts``): a
+    relative artifact path names a location under the artifact root.
+    """
+    if not path:
+        return path
+    if os.path.isabs(path):
+        return path
+    return os.path.normpath(os.path.join(target_root, path))
+
+
 def _partial_directory_for(verb: str, name: str, target_root: str,
                            started: float) -> str | None:
     """Best-effort recovery of a run directory a failing stage did not name.
@@ -1026,7 +1053,8 @@ def execute_run_bundle(bundle_path: str, *, verb: str, target_root: str | None =
                        record_path: str | None = None,
                        checkpoint: "resume_mod.CheckpointFlag | None" = None,
                        shard: str | None = None,
-                       resume_from: str | None = None) -> dict:
+                       resume_from: str | None = None,
+                       resume_directory: str | None = None) -> dict:
     """Import a run bundle, execute one experiment verb, and package evidence.
 
     This is intended as the Slurm child-process entry point. It deliberately
@@ -1059,7 +1087,8 @@ def execute_run_bundle(bundle_path: str, *, verb: str, target_root: str | None =
             device=device, prompts_path=prompts_path, source_path=source_path,
             package_evidence_on_complete=package_evidence_on_complete,
             record_path=record_path, checkpoint=checkpoint, shard=shard,
-            resume_from=resume_from, captured_logs=captured_lines)
+            resume_from=resume_from, resume_directory=resume_directory,
+            captured_logs=captured_lines)
     finally:
         sys.stdout = sys.stdout.wrapped  # type: ignore[union-attr]
 
@@ -1099,7 +1128,8 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
                               record_path: str | None,
                               checkpoint: "resume_mod.CheckpointFlag | None",
                               shard: str | None, resume_from: str | None,
-                              captured_logs: list[str]) -> dict:
+                              captured_logs: list[str],
+                              resume_directory: str | None = None) -> dict:
     meta = inspect_bundle(bundle_path)
     if meta.get("kind") != "runBundle":
         raise BundleError("bundle execute requires a runBundle")
@@ -1114,7 +1144,24 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
                 "other verbs have no independent per-record record set to "
                 "partition")
         shard_spec = sharding_mod.parse_shard(shard)
+    # A flag a verb cannot honour is REFUSED, never dropped (open-issues §16,
+    # the same rule `--shard` follows above): a correct-looking resume that
+    # silently started a fresh run would spend the whole allocation again and
+    # look like it worked.
+    if resume_directory is not None and verb not in ("run", "sweep", "pipeline"):
+        raise BundleError(
+            f"--resume applies to the 'run', 'sweep' and 'pipeline' verbs only "
+            f"(got {verb!r}) — the other verbs write a fresh run directory "
+            "each time and have no checkpoint to continue")
     target = os.path.realpath(target_root or paths.project_root())
+    # Anchor every caller-supplied RUN-DIRECTORY path to the target root
+    # BEFORE anything reads it. The rendered sbatch cd's into its own slurm
+    # directory before srun, so the child's cwd is not the workspace and a
+    # relative path resolved somewhere nobody meant (ledger 2026-08-21).
+    # `--prompts` needs nothing here: `_load_prompts` already joins a relative
+    # prompts file to the root it is handed, which is this same `target`.
+    source_path = resolve_against_target(source_path, target)
+    resume_directory = resolve_against_target(resume_directory, target)
     imported = import_bundle(bundle_path, target_root=target, allow_overwrite=True)
     name = meta["experiment"]
 
@@ -1144,7 +1191,18 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
                     if record_path else None)
     resume_dir: str | None = None
     complete_dir: str | None = None
-    if verb in ("run", "sweep") and pointer_path is not None:
+    if resume_directory is not None:
+        # An EXPLICIT `--resume <run-dir>` (the operator named a parked
+        # directory) outranks the pointer, which only remembers what THIS job
+        # record started. Resuming a run parked by an earlier job — the reason
+        # an operator writes a raw sbatch at all — has no pointer to consult,
+        # so the pointer's disposition must not be allowed to override or
+        # contradict what was asked for. The resume ADMISSION gate still
+        # applies inside the task (complete directories refuse; a drifted
+        # manifest refuses); this only chooses which directory it judges.
+        resume_dir = resume_directory
+        result["resumedFrom"] = resume_directory
+    elif verb in ("run", "sweep") and pointer_path is not None:
         # Sweeps checkpoint/resume too (2026-08-03: a walltime-killed sweep
         # lost ~20 minutes of finished cells) — same pointer contract, with
         # recommendations.json as the sweep's completion marker.
@@ -1156,7 +1214,9 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
             complete_dir = pointed
             result["alreadyComplete"] = True
     resume_pipeline_dir: str | None = None
-    if verb == "pipeline" and pointer_path is not None:
+    if verb == "pipeline" and resume_directory is not None:
+        resume_pipeline_dir = resume_directory
+    elif verb == "pipeline" and pointer_path is not None:
         # Pipeline resume classification is the LEDGER's job (pipeline.json:
         # completed stages skip; a completed/aborted disposition returns
         # idempotently — an aborted chain is a recorded scientific stop that

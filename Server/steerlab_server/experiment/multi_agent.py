@@ -786,7 +786,8 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                  scenario_hash: str = "", log=lambda m: None,
                  model_provider=None, default_revision: str | None = None,
                  temperature: float | None = None, replicate_index: int = 0,
-                 experiment_hash: str = "", checkpoint=None) -> str:
+                 experiment_hash: str = "", checkpoint=None,
+                 artifact_problems: list | None = None) -> str:
     """Play the scenario on the loaded ``model``; write artifacts to ``run_dir``.
 
     ``temperature`` overrides the scenario's own value — a STUDY manifest owns
@@ -794,6 +795,11 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
     ad-hoc/authoring convenience (same rule the variant path applies to a saved
     agent's stored temperature). ``replicate_index`` distinguishes independent
     play-throughs of the same scenario under one condition.
+
+    ``artifact_problems``, when given, collects the SUMMARY-artifact write
+    failures of this transcript (``report.json``, ``transcript.md``) instead
+    of letting them sink the run — see the narrow ``except OSError`` at the
+    end of this function.
     """
     # Local import: tasks imports this module lazily, so keep the edge one-way.
     from .tasks import derive_seed, _seeded_generation
@@ -823,8 +829,8 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
     # nor regenerated, because `done` says it is finished. Truncating first
     # means the same record is simply regenerated: a wasted turn, not a lost
     # one.
-    _truncate_torn_tail(turns_path)
-    done = _completed_turns(turns_path)
+    _truncate_torn_tail(turns_path, log=log)
+    done = _completed_turns(turns_path, log=log)
     if done:
         log(f"resuming transcript: {len(done)} turn(s) already complete")
 
@@ -992,10 +998,25 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
               "replicateIndex": replicate_index,
               "seedPolicy": "derivedSHA256" if effective_temperature > 0 else "greedy",
               "warnings": warnings}
-    with open(os.path.join(run_dir, "report.json"), "w", encoding="utf-8") as handle:
-        json.dump(report, handle, indent=2, sort_keys=True)
-    with open(os.path.join(run_dir, "transcript.md"), "w", encoding="utf-8") as handle:
-        handle.write(_transcript(scenario, results))
+    # The SUMMARY layer of a transcript. turns.jsonl above is the authoritative
+    # record and every one of its appends is fsynced and fatal on failure;
+    # these two are derived from it — report.json restates the header, and
+    # transcript.md is the human-readable rendering. So an I/O failure here is
+    # RECORDED, per transcript and with the exception text, rather than
+    # throwing away a transcript whose measurement is already durable. Narrow
+    # by construction: only OSError from these two writes, only after the
+    # turns are on disk. Anything else still propagates.
+    try:
+        with open(os.path.join(run_dir, "report.json"), "w", encoding="utf-8") as handle:
+            json.dump(report, handle, indent=2, sort_keys=True)
+        with open(os.path.join(run_dir, "transcript.md"), "w", encoding="utf-8") as handle:
+            handle.write(_transcript(scenario, results))
+    except OSError as exc:
+        problem = (f"{condition_name}/replicate-{replicate_index}: transcript "
+                   f"artifacts not written ({type(exc).__name__}: {exc})")
+        log(f"ADVISORY: {problem}")
+        if artifact_problems is not None:
+            artifact_problems.append(problem)
     return run_dir
 
 
@@ -1104,7 +1125,7 @@ def _trim_accelerator_cache(model) -> None:
         pass
 
 
-def _completed_turns(turns_path: str) -> dict[str, dict]:
+def _completed_turns(turns_path: str, log=lambda m: None) -> dict[str, dict]:
     """Turns a prior attempt finished, by turn id.
 
     A truncated final line — the run was killed mid-write — is discarded
@@ -1126,12 +1147,19 @@ def _completed_turns(turns_path: str) -> dict[str, dict]:
                     continue  # torn tail
                 if record.get("turnID"):
                     out[record["turnID"]] = record
-    except OSError:
+    except OSError as exc:
+        # A clean restart is still the right recovery, but it is not a thing
+        # to do QUIETLY: an unreadable turns.jsonl means the transcript is
+        # about to be regenerated from turn 1, and a reader of the log has to
+        # be able to tell that from a first attempt.
+        log(f"WARNING: could not read {os.path.basename(turns_path)} "
+            f"({type(exc).__name__}: {exc}) — regenerating this transcript "
+            "from turn 1")
         return {}
     return out
 
 
-def _truncate_torn_tail(turns_path: str) -> None:
+def _truncate_torn_tail(turns_path: str, log=lambda m: None) -> None:
     """Cut the file back to its last COMPLETE line.
 
     ``_completed_turns`` ignores a torn final line, but ignoring is not
@@ -1160,7 +1188,9 @@ def _truncate_torn_tail(turns_path: str) -> None:
         cut = data.rfind(b"\n")
         with open(turns_path, "wb") as handle:
             handle.write(data[:cut + 1] if cut >= 0 else b"")
-    except OSError:
+    except OSError as exc:
+        log(f"WARNING: could not repair {os.path.basename(turns_path)} "
+            f"({type(exc).__name__}: {exc})")
         return
 
 

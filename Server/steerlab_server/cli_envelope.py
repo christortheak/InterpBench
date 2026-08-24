@@ -468,7 +468,13 @@ VERB_SPECS: tuple[VerbSpec, ...] = (
              value_flags=frozenset({
                  "--verb", "--executor", "--parallel", "--parallel-jobs",
                  "--gres", "--partition", "--mem", "--walltime", "--job-name",
-                 "--target", "--dtype", "--device", "--prompts", "--source"})),
+                 "--target", "--dtype", "--device", "--prompts", "--source",
+                 # `--resume` and `--dependency` exist so the two reasons an
+                 # operator writes a raw sbatch — continue a parked run, chain
+                 # behind another job — go through the RENDERER, which is the
+                 # only thing that requests node-local scratch and arms the
+                 # cleanup trap (ledger 2026-08-23).
+                 "--resume", "--dependency"})),
 )
 
 _SPECS_BY_LABEL = {spec.label: spec for spec in VERB_SPECS}

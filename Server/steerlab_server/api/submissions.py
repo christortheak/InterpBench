@@ -24,7 +24,7 @@ from ..experiment.manifest import Manifest
 from . import housekeeping
 from . import instrument_family
 from .executors import (SlurmExecutor, SlurmResources, _parse_walltime,
-                        first_crossing_window)
+                        first_crossing_window, normalized_dependency)
 from .jobs import JobManager
 from .profile import ServerProfile
 from .workspace_lock import submitting as _submitting_workspace
@@ -143,6 +143,8 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
                  env: dict | None = None,
                  force: bool = False,
                  resume_from: str | None = None,
+                 resume_directory: str | None = None,
+                 dependency: str | None = None,
                  registry=None,
                  parallel_jobs: int = 1) -> StudySubmission:
     """Submit a SERVER-RESIDENT experiment (packaged here into a run bundle).
@@ -198,6 +200,34 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
             "parallelJobs and --resume-from are mutually exclusive: a "
             "checkpointed shard is resumed through its own shard job (or the "
             "sharded parent's Resume), not by re-submitting the fan-out")
+    if requested_parallel > 1 and resume_directory:
+        raise ValueError(
+            "parallelJobs and --resume are mutually exclusive: a resumed run "
+            "continues ONE parked directory, and a fan-out would have K jobs "
+            "appending to it. Resume the shard through its own shard job (or "
+            "the sharded parent's Resume)")
+    # Both path flags are checked BEFORE a submission directory or a packaged
+    # bundle exists, against the root the child will resolve them against — a
+    # refusal must leave nothing behind, and must never cost a queue slot.
+    target_for_paths = target_root or profile.root
+    _require_readable_run_directory(source_path, target_for_paths,
+                                    flag="--source")
+    _require_readable_run_directory(resume_directory, target_for_paths,
+                                    flag="--resume")
+    if dependency is not None:
+        # Shape-validated here so a typo refuses on the terminal rather than
+        # at sbatch, where it costs a round trip and a confusing message — and
+        # where some malformed specs do not error at all, they simply wait
+        # forever.
+        try:
+            dependency = normalized_dependency(dependency)
+        except ValueError as exc:
+            raise SubmissionRefusal(
+                str(exc), code="submissionDependency",
+                repair_action=(
+                    "re-submit with a Slurm dependency spec: "
+                    "'afterok:<jobid>', 'afterany:<jobid>,afterok:<jobid>', "
+                    "or 'singleton'")) from None
 
     submission_dir = paths.make_unique_run_directory(f"submit-{experiment}-{verb}", root)
     records_dir = os.path.join(submission_dir, "records")
@@ -208,12 +238,17 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
 
     job_id = uuid.uuid4().hex[:12]
     record_path = os.path.join(records_dir, f"{job_id}.json")
-    target = target_root or profile.root
+    # ABSOLUTE, always: this value is rendered into the sbatch command as
+    # `--target`, and the child resolves every relative artifact path
+    # against it. A relative root here would put the anchor itself at the
+    # mercy of the job's working directory — the same class of defect as
+    # the relative `--source` (ledger 2026-08-21), one level up.
+    target = os.path.abspath(target_root or profile.root)
     command = _bundle_execute_command(
         run_bundle_path, verb=verb, target_root=target, dtype=dtype,
         device=device, prompts_path=prompts_path, source_path=source_path,
         package_evidence=package_evidence, record_path=record_path,
-        resume_from=resume_from)
+        resume_from=resume_from, resume_directory=resume_directory)
 
     # The JUDGE fan-out (a pipeline whose evaluate stage pins foreign local
     # judges) still routes through bundle submission: `--parallel` wires the
@@ -314,8 +349,10 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
     status = "prepared" if dry_run else "submitted"
     log = f"prepared Slurm study submission {experiment}:{verb}"
     if not dry_run:
-        slurm_id = SlurmExecutor(profile).submit(bundle)
+        slurm_id = SlurmExecutor(profile).submit(bundle, dependency=dependency)
         log = f"submitted study {experiment}:{verb} as Slurm job {slurm_id}"
+        if dependency:
+            log += f" (held on dependency {dependency})"
     if overridden:
         log += " (PREFLIGHT OVERRIDDEN: verdict fail, forced by caller)"
     job = jobs.record_external(
@@ -327,6 +364,10 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
                 "command": command, "recordsDirectory": records_dir,
                 "submissionDirectory": submission_dir,
                 "preflight": preflight,
+                # Durable provenance for a held submission: "why did this job
+                # sit in PENDING/Dependency" must be answerable from the
+                # record, not only from squeue while the job still exists.
+                **({"dependency": dependency} if dependency else {}),
                 **({"preflightOverridden": True} if overridden else {})},
         log=log)
     return StudySubmission(job.id, experiment, verb, "slurm", dry_run, run_bundle,
@@ -369,13 +410,22 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
         raise ValueError(f"unsupported executor {executor!r}")
     if executor == "slurm" and profile.executor != "slurm" and not dry_run:
         raise ValueError("Slurm study submission requires STEERLAB_EXECUTOR=slurm")
+    # Same submit-time path refusal as `submit_study`: this path bakes the
+    # source into a durable sbatch too, and the app reaches it.
+    _require_readable_run_directory(source_path, target_root or profile.root,
+                                    flag="sourcePath")
 
     submission_dir = paths.make_unique_run_directory(f"submit-bundle-{experiment}-{verb}")
     records_dir = os.path.join(submission_dir, "records")
     os.makedirs(records_dir, exist_ok=True)
     job_id = uuid.uuid4().hex[:12]
     record_path = os.path.join(records_dir, f"{job_id}.json")
-    target = target_root or profile.root
+    # ABSOLUTE, always: this value is rendered into the sbatch command as
+    # `--target`, and the child resolves every relative artifact path
+    # against it. A relative root here would put the anchor itself at the
+    # mercy of the job's working directory — the same class of defect as
+    # the relative `--source` (ledger 2026-08-21), one level up.
+    target = os.path.abspath(target_root or profile.root)
     command = _bundle_execute_command(
         bundle_path, verb=verb, target_root=target, dtype=dtype, device=device,
         prompts_path=prompts_path, source_path=source_path,
@@ -838,12 +888,68 @@ def _read_child_record(record_path: str) -> dict:
     return out
 
 
+class SubmissionRefusal(ValueError):
+    """A well-formed submission declined for a reason the CALLER can repair.
+
+    A ValueError, so every existing handler (the API's 400, the CLI's exit 1)
+    keeps working untouched; typed and carrying a ``repair_action``, so the
+    agent envelope can answer ``refused`` with the sentence that fixes it
+    instead of "exited 1 — see the diagnostics on stderr". Ledger 2026-08-21's
+    complaint was precisely that the words which would have solved the problem
+    were reachable only as prose.
+    """
+
+    def __init__(self, message: str, *, code: str, repair_action: str):
+        super().__init__(message)
+        self.code = code
+        self.repair_action = repair_action
+
+
+def _require_readable_run_directory(path: str | None, target_root: str, *,
+                                    flag: str) -> None:
+    """Refuse a run-directory path that is not there, at SUBMIT time.
+
+    **Why here and not only on the node** (ledger 2026-08-21). The path is
+    baked into a durable sbatch script and then waits in the queue; the first
+    read happens on a compute node, minutes-to-hours later, on an allocation
+    the mistake has already been charged for. Nothing about the check needs
+    the node — a Slurm submission and its job share the filesystem — so the
+    only thing deferring it buys is a wasted queue slot and a confusing
+    diagnosis (see ``run_epoch.unreadable_source_refusal``).
+
+    The path is resolved the same way the CHILD resolves it (relative → under
+    the target root), and the refusal PRINTS the resolved absolute path: the
+    whole point is to show the operator where their relative path actually
+    landed.
+    """
+    if not path:
+        return
+    from ..experiment.bundles import resolve_against_target
+    resolved = os.path.abspath(resolve_against_target(path, target_root))
+    if os.path.isdir(resolved):
+        return
+    detail = ("is not a directory" if os.path.exists(resolved)
+              else "does not exist")
+    raise SubmissionRefusal(
+        f"{flag} {path!r} {detail} at {resolved} — refusing to submit a job "
+        "that would spend a queue slot to discover this on a compute node. "
+        "A relative path is resolved against the target root "
+        f"({target_root}), not the directory you typed the command in",
+        code="submissionPath",
+        repair_action=(
+            f"re-submit with {flag} naming a run directory that exists under "
+            f"{target_root} (`ls {os.path.join(target_root, 'runs')}`) — an "
+            "absolute path always works, and a relative one is taken relative "
+            "to that root"))
+
+
 def _bundle_execute_command(bundle_path: str, *, verb: str, target_root: str,
                             dtype: str, device: str | None,
                             prompts_path: str | None, source_path: str | None,
                             package_evidence: bool, record_path: str,
                             shard: str | None = None,
-                            resume_from: str | None = None) -> list[str]:
+                            resume_from: str | None = None,
+                            resume_directory: str | None = None) -> list[str]:
     python = os.environ.get("STEERLAB_PYTHON") or sys.executable or "python"
     command = [
         python, "-m", "steerlab_server.cli", "bundle", "execute", bundle_path,
@@ -864,6 +970,11 @@ def _bundle_execute_command(bundle_path: str, *, verb: str, target_root: str,
         # failed evaluation by judging only its undecided cells. This is
         # the case where redoing a judged evaluate costs the most.
         command.extend(["--resume-from", resume_from])
+    if resume_directory:
+        # Resume a PARKED run through the renderer (2026-08-23), so the
+        # continuation gets the site's node-scratch gres and the cleanup trap
+        # instead of the hand-rolled sbatch an operator would otherwise write.
+        command.extend(["--resume", resume_directory])
     return command
 
 

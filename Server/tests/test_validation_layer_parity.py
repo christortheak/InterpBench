@@ -209,7 +209,7 @@ def test_a_declared_depth_list_yields_per_depth_entries_and_matrices(
     monkeypatch.setattr(tasks, "_persist_vectors", lambda *a, **k: None)
     from steerlab_server.steering import extractor
 
-    def fake_activations(model, texts, reading):
+    def fake_activations(model, texts, reading, rendering=None):
         return SimpleNamespace(
             values=[[[1.0, 0.0]] * LAYER_COUNT for _ in texts])
 
@@ -260,7 +260,7 @@ def test_a_single_depth_report_keeps_the_flat_shape_exactly(
     from steerlab_server.steering import extractor
     monkeypatch.setattr(
         extractor, "activations",
-        lambda model, texts, reading: SimpleNamespace(
+        lambda model, texts, reading, rendering=None: SimpleNamespace(
             values=[[[1.0, 0.0]] * LAYER_COUNT for _ in texts]))
     monkeypatch.setattr(
         extractor, "logit_lens",

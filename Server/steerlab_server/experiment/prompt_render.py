@@ -282,7 +282,16 @@ def _apply_chat_template(tokenizer, chat, *, model_id: str, **kwargs) -> str:
 
 def render(tokenizer, prompt: str, *, model_id: str,
            prompt_mode: str = CHAT_ASSISTANT, system_prompt: str | None = None,
-           qwen_thinking_enabled: bool = False) -> RenderedPrompt:
+           qwen_thinking_enabled: bool = False,
+           add_generation_prompt: bool = True) -> RenderedPrompt:
+    """Render one prompt to token ids.
+
+    ``add_generation_prompt`` exists for the EXTRACTION rendering path
+    (``steering.extraction_rendering``), which may want the conversation
+    rendered without the trailing generation prompt. Generation callers never
+    pass it: the default reproduces the measured-generation render exactly,
+    so this parameter cannot change what any existing caller does.
+    """
     system = (system_prompt or "").strip()
     has_system = bool(system)
 
@@ -313,7 +322,8 @@ def render(tokenizer, prompt: str, *, model_id: str,
 
     text = _apply_chat_template(
         tokenizer, messages, model_id=model_id,
-        tokenize=False, add_generation_prompt=True, **template_kwargs)
+        tokenize=False, add_generation_prompt=add_generation_prompt,
+        **template_kwargs)
     # The template already emits BOS/special markers; tokenize without adding a
     # second set (double-BOS guard, esp. for Gemma).
     ids = tokenizer(text, add_special_tokens=False).input_ids

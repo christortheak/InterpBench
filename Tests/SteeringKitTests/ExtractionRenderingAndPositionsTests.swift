@@ -1,0 +1,508 @@
+import Foundation
+import MLXLMCommon
+import Testing
+
+@testable import SteeringKit
+
+/// Extraction RENDERING and the reading-position vocabulary (Swift twin of the
+/// server's `test_extraction_rendering_and_positions.py`).
+///
+/// The bug this closes: extraction tokenized the raw stimulus while measured
+/// generation rendered through the chat template, so which direction a study
+/// got — and what the α denominator equalled — depended on an undeclared
+/// implementation detail. These contracts pin the fix on this engine:
+///
+/// 1. **Absent is legacy raw** — a recipe that declares nothing encodes,
+///    hashes, and stamps exactly as it always did.
+/// 2. **The chat-template path reuses the MEASUREMENT renderer**
+///    (`PromptRendering`), which `ExperimentTasks.userInput` also calls.
+/// 3. **New positions resolve or refuse — never clamp**, and template-aware
+///    roles refuse under raw rendering naming the dependency.
+/// 4. **The stamp carries the request AND where it landed.**
+/// 5. **A rendering form this engine cannot apply is a named refusal**, never
+///    a silent fallback.
+///
+/// Pure CPU: a fake tokenizer, no model, no downloads.
+@Suite struct ExtractionRenderingAndPositionsTests {
+
+    // MARK: - fake tokenizer
+
+    /// Ids shaped like a Gemma render: `<bos> … content … <end_of_turn> \n
+    /// <start_of_turn> model \n`.
+    static let bos = 2
+    static let endOfTurn = 106
+    static let newline = 107
+    static let startOfTurn = 105
+    static let model = 108
+
+    struct FakeTokenizer: MLXLMCommon.Tokenizer {
+        var chatTemplateFails = false
+
+        var bosToken: String? { "<bos>" }
+        var eosToken: String? { "<end_of_turn>" }
+        var unknownToken: String? { "<unk>" }
+
+        func encode(text: String, addSpecialTokens: Bool) -> [Int] {
+            [ExtractionRenderingAndPositionsTests.bos] + text.utf8.map { Int($0) + 200 }
+        }
+
+        func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
+            tokenIds.map(String.init).joined(separator: " ")
+        }
+
+        func convertTokenToId(_ token: String) -> Int? {
+            switch token {
+            case "<bos>": ExtractionRenderingAndPositionsTests.bos
+            case "<end_of_turn>": ExtractionRenderingAndPositionsTests.endOfTurn
+            case "<start_of_turn>": ExtractionRenderingAndPositionsTests.startOfTurn
+            case "<unk>": 3
+            default: nil
+            }
+        }
+
+        func convertIdToToken(_ id: Int) -> String? { "tok\(id)" }
+
+        /// Stands in for the real template: the ids the generation-prompt
+        /// render produces. `additionalContext` and the message dictionaries
+        /// are recorded through `lastRender` so a test can assert the family
+        /// rules reached it.
+        func applyChatTemplate(
+            messages: [[String: any Sendable]],
+            tools: [[String: any Sendable]]?,
+            additionalContext: [String: any Sendable]?
+        ) throws -> [Int] {
+            if chatTemplateFails {
+                struct NoTemplate: Error, CustomStringConvertible {
+                    var description: String { "this tokenizer has no chat template" }
+                }
+                throw NoTemplate()
+            }
+            let body = messages
+                .compactMap { $0["content"] as? String }
+                .joined(separator: "\u{01}")
+            return [ExtractionRenderingAndPositionsTests.bos]
+                + body.utf8.map { Int($0) + 200 }
+                + [
+                    ExtractionRenderingAndPositionsTests.endOfTurn,
+                    ExtractionRenderingAndPositionsTests.newline,
+                    ExtractionRenderingAndPositionsTests.startOfTurn,
+                    ExtractionRenderingAndPositionsTests.model,
+                    ExtractionRenderingAndPositionsTests.newline,
+                ]
+        }
+    }
+
+    /// A rendered Gemma-shaped sequence: content at 1...2, turn close at 3,
+    /// then four scaffold tokens.
+    static let renderedTokens = [
+        bos, 201, 202, endOfTurn, newline, startOfTurn, model, newline,
+    ]
+
+    // MARK: - 1. absent is legacy raw
+
+    @Test func anAbsentDeclarationIsRaw() {
+        #expect(ExtractionRendering.raw.isRaw)
+        #expect(ExtractionOptions().resolvedExtractionRendering.isRaw)
+        #expect(VectorExtractionRecipe(
+            name: "r", method: .caaMeanDifference, targetConcept: "c",
+            datasets: []).resolvedExtractionRendering.isRaw)
+    }
+
+    /// Hash compatibility at the recipe level: a nil optional is OMITTED by
+    /// Swift's synthesized encoder, so a recipe that declares no rendering
+    /// encodes to the bytes it always did and keeps its `canonicalHash()`.
+    @Test func anUndeclaredRenderingLeavesTheRecipeHashUntouched() throws {
+        var recipe = VectorExtractionRecipe(
+            name: "r", method: .caaMeanDifference, targetConcept: "c", datasets: [])
+        let legacyHash = recipe.canonicalHash()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let legacyJSON = String(decoding: try encoder.encode(recipe), as: UTF8.self)
+        #expect(!legacyJSON.contains("extractionRendering"))
+
+        // Declaring raw explicitly is a different DOCUMENT (it says so out
+        // loud) but must never be reached by accident…
+        recipe.extractionRendering = .chatTemplate()
+        #expect(recipe.canonicalHash() != legacyHash)
+        recipe.extractionRendering = nil
+        #expect(recipe.canonicalHash() == legacyHash)
+    }
+
+    /// Absent-not-null on the artifact: a raw extraction's sidecar is
+    /// byte-identical to what this engine has always written.
+    @Test func aRawSidecarStampsNeitherNewKey() throws {
+        let sidecar = SteeringVectorSidecar(
+            modelID: "m", concept: "c", stimulusSetHash: "h",
+            vectors: ConceptVectors(perLayer: [[1, 0]]),
+            options: ExtractionOptions(),
+            residualNormPerLayer: [1], residualNormSource: "extraction-stimuli",
+            residualNormConvention: ResidualNormConvention.current,
+            residualNormRendering: ExtractionRendering.Mode.raw.rawValue,
+            extractionRendering: .raw)
+        #expect(sidecar.residualNormRendering == nil)
+        #expect(sidecar.extractionRendering == nil)
+        #expect(sidecar.readingPositionResolution == nil)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let json = String(decoding: try encoder.encode(sidecar), as: UTF8.self)
+        #expect(!json.contains("extractionRendering"))
+        #expect(!json.contains("residualNormRendering"))
+        #expect(!json.contains("readingPositionResolution"))
+    }
+
+    @Test func aTemplatedSidecarStampsTheRenderingThatMadeTheVector() throws {
+        let sidecar = SteeringVectorSidecar(
+            modelID: "m", concept: "c", stimulusSetHash: "h",
+            vectors: ConceptVectors(perLayer: [[1, 0]]),
+            options: ExtractionOptions(
+                readingPosition: .turnCloseToken,
+                extractionRendering: .chatTemplate()),
+            residualNormPerLayer: [1], residualNormSource: "neutral-corpus",
+            residualNormConvention: ResidualNormConvention.current,
+            residualNormRendering: ExtractionRendering.Mode.chatTemplate.rawValue)
+        #expect(sidecar.residualNormRendering == "chatTemplate")
+        #expect(sidecar.readingPosition == "turn close token")
+        // Defaults stamped EXPLICITLY, so a reader never needs to know them.
+        let stamped = try #require(sidecar.extractionRendering)
+        #expect(stamped.addGenerationPrompt == true)
+        #expect(stamped.qwenThinkingEnabled == false)
+    }
+
+    // MARK: - 2. the chat-template path reuses the measurement renderer
+
+    /// Gemma 3 has no system role: the system text is folded into the user
+    /// turn. This is the rule `ExperimentTasks.userInput` applies for MEASURED
+    /// generation, and extraction now reaches it through the same function.
+    @Test func gemmaFoldsTheSystemPromptIntoTheUserTurn() {
+        let messages = PromptRendering.chatMessages(
+            prompt: "the prompt", modelID: "google/gemma-3-4b-it",
+            systemPrompt: "answer plainly")
+        #expect(messages.count == 1)
+        #expect(messages[0].role == .user)
+        #expect(messages[0].content == "answer plainly\n\nthe prompt")
+    }
+
+    @Test func nonGemmaFamiliesGetARealSystemTurn() {
+        let messages = PromptRendering.chatMessages(
+            prompt: "the prompt", modelID: "Qwen/Qwen3-4B",
+            systemPrompt: "answer plainly")
+        #expect(messages.map(\.role) == [.system, .user])
+        #expect(messages[1].content == "the prompt")
+    }
+
+    @Test func qwenThinkingTravelsAsTemplateContext() {
+        let off = PromptRendering.qwenContext(
+            modelID: "Qwen/Qwen3-4B", qwenThinkingEnabled: false)
+        #expect(off?["enable_thinking"] as? Bool == false)
+        #expect(PromptRendering.qwenContext(
+            modelID: "google/gemma-3-4b-it", qwenThinkingEnabled: false) == nil)
+    }
+
+    @Test func theRawBranchIsTheHistoricalEncodeCall() throws {
+        let tokenizer = FakeTokenizer()
+        let ids = try PromptRendering.tokenIDs(
+            tokenizer: tokenizer, modelID: "google/gemma-3-4b-it",
+            text: "hi", rendering: .raw)
+        #expect(ids == tokenizer.encode(text: "hi"))
+    }
+
+    @Test func theTemplateBranchAddsTheTemplatesOwnTokens() throws {
+        let ids = try PromptRendering.tokenIDs(
+            tokenizer: FakeTokenizer(), modelID: "google/gemma-3-4b-it",
+            text: "hi", rendering: .chatTemplate())
+        #expect(ids.count > FakeTokenizer().encode(text: "hi").count)
+        #expect(ids.contains(Self.endOfTurn))
+        #expect(ids.last == Self.newline)
+    }
+
+    // MARK: - 5. an unsupportable form is a NAMED refusal
+
+    /// `addGenerationPrompt: false` is not reachable through MLXLMCommon's
+    /// tokenizer bridge. It must refuse by name — never render WITH a
+    /// generation prompt while stamping that the recipe asked for none.
+    @Test func addGenerationPromptFalseRefusesNamingTheEngineAndTheRepair() {
+        #expect(throws: PromptRendering.UnsupportedForm.self) {
+            try PromptRendering.tokenIDs(
+                tokenizer: FakeTokenizer(), modelID: "google/gemma-3-4b-it",
+                text: "hi", rendering: .chatTemplate(addGenerationPrompt: false))
+        }
+        do {
+            _ = try PromptRendering.tokenIDs(
+                tokenizer: FakeTokenizer(), modelID: "google/gemma-3-4b-it",
+                text: "hi", rendering: .chatTemplate(addGenerationPrompt: false))
+            Issue.record("expected a refusal")
+        } catch let error as PromptRendering.UnsupportedForm {
+            #expect(error.reason.contains("python-hf-transformers"))
+            #expect(error.reason.contains("Repair:"))
+        } catch {
+            Issue.record("wrong error type: \(error)")
+        }
+    }
+
+    /// The extractor's wrapper names the engine and the model, so the refusal
+    /// reads the same as every other typed refusal in the house style.
+    @Test func theExtractorWrapsAnUnsupportedRenderingWithEngineAndRepair() {
+        let error = ConceptExtractorError.renderingUnsupported(
+            rendering: ExtractionRendering.chatTemplate().label,
+            modelID: "google/gemma-3-4b-it",
+            reason: "no chat template")
+        #expect(error.description.contains("swift-mlx"))
+        #expect(error.description.contains("google/gemma-3-4b-it"))
+        #expect(error.description.contains("Repair:"))
+    }
+
+    // MARK: - 3./4. positions resolve or refuse, and the stamp records both
+
+    @Test func offsetFromEndReadsTheIndexItNames() throws {
+        let tokenizer = FakeTokenizer()
+        let ids = Array(0 ..< 10)
+        let resolved = try ReadingPosition.offsetFromEnd(3).resolve(
+            tokens: ids, tokenizer: tokenizer, renderingIsRaw: true)
+        #expect(resolved.startIndex == 6)
+        #expect(resolved.endIndex == 7)
+        #expect(resolved.offsetFromEnd == 3)
+        #expect(!resolved.isPooled)
+
+        // k = 0 is the last token, exactly.
+        let zero = try ReadingPosition.offsetFromEnd(0).resolve(
+            tokens: ids, tokenizer: tokenizer, renderingIsRaw: true)
+        let last = try ReadingPosition.lastToken.resolve(
+            tokens: ids, tokenizer: tokenizer, renderingIsRaw: true)
+        #expect(zero.startIndex == last.startIndex)
+    }
+
+    @Test func offsetFromEndRefusesAShortSequenceInsteadOfClamping() {
+        do {
+            _ = try ReadingPosition.offsetFromEnd(7).resolve(
+                tokens: [1, 2, 3], tokenizer: FakeTokenizer(), renderingIsRaw: true)
+            Issue.record("expected a refusal")
+        } catch let error as ReadingPositionError {
+            #expect(error.reason.contains("too short"))
+            #expect(error.reason.contains("needs 8"))
+            #expect(error.reason.contains("never"))
+            #expect(error.reason.contains("repair:"))
+        } catch {
+            Issue.record("wrong error type: \(error)")
+        }
+    }
+
+    /// A raw stimulus has no turn-close token; saying so — and naming the
+    /// dependency plus the escape hatch — is the repair.
+    @Test func namedRolesRefuseUnderRawRenderingNamingTheDependency() {
+        let roles: [ReadingPosition] = [
+            .lastContentToken, .turnCloseToken, .postInstruction(1),
+        ]
+        for role in roles {
+            do {
+                _ = try role.resolve(
+                    tokens: Self.renderedTokens, tokenizer: FakeTokenizer(),
+                    renderingIsRaw: true)
+                Issue.record("\(role.label) resolved under raw rendering")
+            } catch let error as ReadingPositionError {
+                #expect(error.reason.contains("templated rendering"))
+                #expect(error.reason.contains("\"mode\": \"chatTemplate\""))
+                #expect(error.reason.contains("offset from end k"))
+            } catch {
+                Issue.record("wrong error type: \(error)")
+            }
+        }
+    }
+
+    @Test func namedRolesResolveToTheIndicesTheTemplatePutsThemAt() throws {
+        let tokenizer = FakeTokenizer()
+        func index(_ position: ReadingPosition) throws -> Int {
+            try position.resolve(
+                tokens: Self.renderedTokens, tokenizer: tokenizer,
+                renderingIsRaw: false
+            ).startIndex
+        }
+        #expect(try index(.lastContentToken) == 2)
+        #expect(try index(.turnCloseToken) == 3)
+        // Arditi's convention: the i-th token AFTER the instruction content.
+        #expect(try (1 ... 5).map { try index(.postInstruction($0)) } == [3, 4, 5, 6, 7])
+        // The turn-close token IS where post-instruction 1 lands under a
+        // generation prompt — a fact about the template, not a bug.
+        #expect(try index(.turnCloseToken) == index(.postInstruction(1)))
+    }
+
+    /// `lastContentToken` anchors on the turn boundary, not on a special-token
+    /// scan: on a Gemma render the sequence's own last token is a bare
+    /// newline, which a special-token rule would wrongly accept as content.
+    @Test func lastContentTokenIgnoresTheTrailingScaffoldNewline() throws {
+        let resolved = try ReadingPosition.lastContentToken.resolve(
+            tokens: Self.renderedTokens, tokenizer: FakeTokenizer(),
+            renderingIsRaw: false)
+        #expect(resolved.startIndex == 2)
+        #expect(Self.renderedTokens[resolved.startIndex] == 202)
+        #expect(resolved.source == "token before the last end-of-turn marker")
+    }
+
+    @Test func postInstructionRefusesWhenTheTemplateLeftNoRoom() {
+        do {
+            _ = try ReadingPosition.postInstruction(3).resolve(
+                tokens: [Self.bos, 201, 202, Self.endOfTurn],
+                tokenizer: FakeTokenizer(), renderingIsRaw: false)
+            Issue.record("expected a refusal")
+        } catch let error as ReadingPositionError {
+            #expect(error.reason.contains("no token 3 after it"))
+            #expect(error.reason.contains("addGenerationPrompt"))
+        } catch {
+            Issue.record("wrong error type: \(error)")
+        }
+    }
+
+    @Test func postInstructionIsBoundedToTheDocumentedRange() {
+        for i in [0, 6] {
+            do {
+                _ = try ReadingPosition.postInstruction(i).resolve(
+                    tokens: Self.renderedTokens, tokenizer: FakeTokenizer(),
+                    renderingIsRaw: false)
+                Issue.record("postInstruction(\(i)) resolved")
+            } catch let error as ReadingPositionError {
+                #expect(error.reason.contains("i in 1...5"))
+            } catch {
+                Issue.record("wrong error type: \(error)")
+            }
+        }
+    }
+
+    @Test func aTurnCloseRoleRefusesWhenNoMarkerIsPresent() {
+        do {
+            _ = try ReadingPosition.turnCloseToken.resolve(
+                tokens: [Self.bos, 201, 202], tokenizer: FakeTokenizer(),
+                renderingIsRaw: false)
+            Issue.record("expected a refusal")
+        } catch let error as ReadingPositionError {
+            #expect(error.reason.contains("no end-of-turn marker"))
+        } catch {
+            Issue.record("wrong error type: \(error)")
+        }
+    }
+
+    /// The legacy pooled read must still produce exactly the window it always
+    /// did, now that resolution runs through the same code path.
+    @Test func theLegacyPooledReadResolvesToItsHistoricalWindow() throws {
+        let tokenizer = FakeTokenizer()
+        let ids = Array(0 ..< 10)
+        let pooled = try ReadingPosition.meanFromToken(3).resolve(
+            tokens: ids, tokenizer: tokenizer, renderingIsRaw: true)
+        #expect(pooled.startIndex == 3)
+        #expect(pooled.endIndex == 10)
+        #expect(pooled.isPooled)
+        #expect(pooled.offsetFromEnd == nil)
+
+        let last = try ReadingPosition.lastToken.resolve(
+            tokens: ids, tokenizer: tokenizer, renderingIsRaw: true)
+        #expect(last.startIndex == 9)
+        #expect(last.endIndex == 10)
+    }
+
+    // MARK: - the resolution stamp
+
+    @Test func theStampCarriesTheRequestAndWhereItLanded() throws {
+        let tokenizer = FakeTokenizer()
+        let resolutions = try (0 ..< 4).map { _ in
+            try ReadingPosition.postInstruction(2).resolve(
+                tokens: Self.renderedTokens, tokenizer: tokenizer,
+                renderingIsRaw: false)
+        }
+        let report = try #require(
+            ReadingPositionResolutionReport.make(
+                position: .postInstruction(2), rendering: .chatTemplate(),
+                resolutions: resolutions))
+        // BOTH halves, per the layerResolution precedent.
+        #expect(report.requested == "post-instruction 2")
+        #expect(report.mode == "postInstruction")
+        #expect(report.parameter == 2)
+        #expect(report.rendering == "chatTemplate")
+        #expect(report.source == "last content token + 2")
+        // One sequence shape: every stimulus read at the same place in its
+        // template — which is what the offset-from-end grouping shows.
+        #expect(report.shapes.count == 1)
+        #expect(report.shapes[0].offsetFromEnd == 3)
+        #expect(report.shapes[0].sequenceCount == 4)
+        #expect(report.shapes[0].exampleIndex + 1 == report.shapes[0].exampleEndIndex)
+    }
+
+    @Test func theStampIsOmittedForTheLegacyPair() throws {
+        let tokenizer = FakeTokenizer()
+        for position in [ReadingPosition.lastToken, .meanFromToken(3)] {
+            let resolved = try position.resolve(
+                tokens: Array(0 ..< 10), tokenizer: tokenizer, renderingIsRaw: true)
+            #expect(
+                ReadingPositionResolutionReport.make(
+                    position: position, rendering: .raw,
+                    resolutions: [resolved]) == nil,
+                "\(position.label) stamped a resolution it did not need")
+        }
+    }
+
+    /// An explicit offset is the MECHANISM form — what lives three back is
+    /// model- and rendering-specific — so the artifact records where it landed
+    /// even under raw rendering.
+    @Test func anExplicitOffsetIsStampedEvenUnderRawRendering() throws {
+        let resolved = try ReadingPosition.offsetFromEnd(3).resolve(
+            tokens: Array(0 ..< 10), tokenizer: FakeTokenizer(), renderingIsRaw: true)
+        let report = try #require(
+            ReadingPositionResolutionReport.make(
+                position: .offsetFromEnd(3), rendering: .raw,
+                resolutions: [resolved]))
+        #expect(report.mode == "offsetFromEnd")
+        #expect(report.rendering == "raw")
+        #expect(report.shapes[0].offsetFromEnd == 3)
+    }
+
+    /// Two shapes are the loud signal: the stimuli did NOT all render the same
+    /// way, so a reader sees it instead of averaging over it.
+    @Test func aNonUniformRenderShowsUpAsTwoShapes() throws {
+        let tokenizer = FakeTokenizer()
+        let short = [Self.bos, 201, Self.endOfTurn, Self.newline]
+        let resolutions = [
+            try ReadingPosition.turnCloseToken.resolve(
+                tokens: Self.renderedTokens, tokenizer: tokenizer,
+                renderingIsRaw: false),
+            try ReadingPosition.turnCloseToken.resolve(
+                tokens: short, tokenizer: tokenizer, renderingIsRaw: false),
+        ]
+        let report = try #require(
+            ReadingPositionResolutionReport.make(
+                position: .turnCloseToken, rendering: .chatTemplate(),
+                resolutions: resolutions))
+        #expect(report.shapes.count == 2)
+        #expect(report.shapes.map(\.offsetFromEnd) == [1, 4])
+        #expect(report.parameter == nil)
+    }
+
+    // MARK: - Codable round trip (the cross-engine artifact contract)
+
+    @Test func theRenderingBlockEncodesTheKeysTheServerReads() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let stamped = try #require(ExtractionRendering.chatTemplate().stamp)
+        let json = String(decoding: try encoder.encode(stamped), as: UTF8.self)
+        #expect(json == #"{"addGenerationPrompt":true,"mode":"chatTemplate","qwenThinkingEnabled":false}"#)
+
+        let decoded = try JSONDecoder().decode(
+            ExtractionRendering.self, from: Data(json.utf8))
+        #expect(decoded == stamped)
+    }
+
+    /// The Swift Codable enum forms the server's manifest parser reads.
+    @Test func everyPositionRoundTripsThroughItsSwiftCodableForm() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let positions: [ReadingPosition] = [
+            .lastToken, .meanFromToken(50), .offsetFromEnd(3),
+            .lastContentToken, .turnCloseToken, .postInstruction(2),
+        ]
+        for position in positions {
+            let data = try encoder.encode(position)
+            let decoded = try JSONDecoder().decode(ReadingPosition.self, from: data)
+            #expect(decoded == position)
+            // The case NAME is the wire key the server matches on.
+            let json = String(decoding: data, as: UTF8.self)
+            #expect(json.contains("\"\(position.identityMode)\""),
+                    "\(position.label) encoded as \(json)")
+        }
+    }
+}

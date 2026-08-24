@@ -46,6 +46,29 @@ public struct SteeringVectorSidecar: Codable, Sendable {
     /// artifacts read exactly as they always have; `backfill-norms` is the
     /// researcher's opt-in path to a stamped denominator.
     public var residualNormConvention: String?
+    /// WHICH RENDERING the denominator corpus was tokenized under — the third
+    /// member of the `residualNorm*` provenance family (source = which corpus,
+    /// convention = how its positions were averaged, rendering = how its texts
+    /// reached the model). α in norm units only means one dose if the
+    /// denominator was measured on the same distribution the vector was read
+    /// from, so the denominator always follows the extraction's rendering and
+    /// the artifact says which one that was. Values: "raw" | "chatTemplate".
+    /// **Absent is LEGACY RAW** — every pre-2026-08-24 artifact was raw, and
+    /// no artifact is retro-stamped.
+    public var residualNormRendering: String?
+    /// HOW the stimulus strings reached the model during extraction — the
+    /// declared rendering block. Pinned cross-engine contract: same JSON key
+    /// and inner key names on the server's `vector_store`. Additive and
+    /// **absent = legacy raw**, never retro-filled: the same discipline
+    /// `residualNormConvention` follows.
+    public var extractionRendering: ExtractionRendering?
+    /// The requested reading position AND what it RESOLVED to, per sequence
+    /// shape. `readingPosition` says what was ASKED for; this says where that
+    /// landed, so a reader never has to re-derive a template's internals to
+    /// know what was read. Stamped only when the label does not already imply
+    /// the index (a template-aware role, an explicit offset, or any non-raw
+    /// rendering) — so legacy artifacts keep byte-identical sidecars.
+    public var readingPositionResolution: ReadingPositionResolutionReport?
     /// Optional method-family recipe. This lets future artifacts distinguish
     /// a CAA contrastive concept from RepE LAT or emotion-grand-mean vectors
     /// even when older fields are still present for compatibility.
@@ -202,6 +225,9 @@ public struct SteeringVectorSidecar: Codable, Sendable {
         options: ExtractionOptions? = nil, residualNormPerLayer: [Float]? = nil,
         residualNormSource: String? = nil,
         residualNormConvention: String? = nil,
+        residualNormRendering: String? = nil,
+        extractionRendering: ExtractionRendering? = nil,
+        readingPositionResolution: ReadingPositionResolutionReport? = nil,
         recipeMethod: VectorExtractionRecipe.Method? = nil,
         recipeHash: String? = nil,
         recipeName: String? = nil,
@@ -236,6 +262,15 @@ public struct SteeringVectorSidecar: Codable, Sendable {
         // it measured under; one that copies or omits norms passes nil, and
         // the artifact stays honestly unstamped (legacy).
         self.residualNormConvention = residualNormConvention
+        // Absent-not-null, exactly like the convention stamp: a raw
+        // extraction writes NOTHING, so its sidecar bytes stay identical to
+        // what this engine has always written.
+        self.residualNormRendering =
+            residualNormRendering == ExtractionRendering.Mode.raw.rawValue
+            ? nil : residualNormRendering
+        self.extractionRendering =
+            (extractionRendering ?? options?.extractionRendering)?.stamp
+        self.readingPositionResolution = readingPositionResolution
         self.recipeMethod = recipeMethod?.rawValue
         self.recipeHash = recipeHash
         self.recipeName = recipeName

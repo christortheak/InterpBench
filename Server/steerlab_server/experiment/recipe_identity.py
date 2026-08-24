@@ -13,6 +13,18 @@ for every absent field, raw UTF-8 (no ASCII escaping, no forward-slash
 escaping). Top-level keys, in sorted order:
 
 - "concept": the concept name.
+- "extractionRendering": THE ONE OPTIONAL TOP-LEVEL KEY — present only when
+  the recipe declares a CHAT-TEMPLATE extraction rendering, omitted entirely
+  otherwise. This is deliberate and load-bearing: every recipe written before
+  the rendering option existed rendered raw, and adding an explicit-null key
+  would have changed every one of their identity hashes, breaking promotion
+  for every frozen experiment. Absent = legacy raw, and an explicitly
+  declared ``{"mode": "raw"}`` canonicalizes to absent because it IS the
+  legacy semantics said out loud. When present the value is
+  {"addGenerationPrompt": bool, "mode": "chatTemplate",
+  "qwenThinkingEnabled": bool, "systemPrompt": string|null} with every inner
+  field explicit (an identity may not depend on a default a later version
+  could change).
 - "extractionMethod": the substrate-independent method name in the MANIFEST
   vocabulary ("meanDifference" | "lat" | "emotionGrandMean"). Sidecar
   recipeMethod values map caaMeanDifference→meanDifference, repeLAT→lat,
@@ -37,8 +49,14 @@ escaping). Top-level keys, in sorted order:
 - "normCorpusHash": SHA-256 of the pinned neutral corpus when
   residualNormSource is "neutral-corpus" or "neutral-token-bank"; null
   otherwise.
-- "readingPosition": {"mode": "lastToken" | "meanFromToken",
-  "parameter": int|null} (the pool-from token index for meanFromToken).
+- "readingPosition": {"mode": "lastToken" | "meanFromToken" |
+  "offsetFromEnd" | "lastContentToken" | "turnCloseToken" |
+  "postInstruction", "parameter": int|null} — the pool-from token index for
+  meanFromToken, the backward offset for offsetFromEnd, the post-instruction
+  index for postInstruction, null for the rest. ``offsetFromEnd`` with
+  parameter 0 canonicalizes to ``{"mode": "lastToken", "parameter": null}``:
+  it names the identical token, so declaring it that way must not split an
+  identity away from an otherwise-identical last-token recipe.
 - "residualNormSource": the canonical source token ("neutral-corpus" |
   "extraction-stimuli" | "neutral-token-bank"). A sidecar value is
   canonicalized by truncating at the first space (the Swift experiment writer
@@ -108,6 +126,15 @@ def canonical_json(components: dict) -> str:
         "schema": SCHEMA,
         "stimulusSetHash": components["stimulusSetHash"],
     }
+    # The ONE optional key. Absent (and explicitly-raw) recipes must hash
+    # byte-identically to every recipe written before this option existed, so
+    # the key is added only for a chat-template rendering. See the
+    # canonical-form contract above. Swift twin: `RecipeIdentity.canonicalJSON`
+    # appends the same fragment between "extractionMethod" and
+    # "grandMeanPopulation" in sorted-key order.
+    rendering = components.get("extractionRendering")
+    if rendering is not None:
+        payload["extractionRendering"] = rendering
     return json.dumps(payload, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False)
 
@@ -159,12 +186,8 @@ def required_identity(manifest, ref) -> dict:
     extraction paths derive the norm denominator from exactly these pins, so
     the prediction here matches what a faithful extraction stamps. Raises
     ``ValueError`` when the manifest's own pins are incomplete."""
-    reading = ref.options.reading_position
-    start = reading.requested_start_index
-    if start is None:
-        reading_mode, reading_parameter = "lastToken", None
-    else:
-        reading_mode, reading_parameter = "meanFromToken", int(start)
+    reading_mode, reading_parameter = canonical_reading(
+        ref.options.reading_position)
     pc_count = ref.options.neutral_pc_count or 0
     # A pinned neutral corpus is the norm denominator on both engines
     # (extract / extract_grand_mean use it whenever present); without one,
@@ -223,7 +246,31 @@ def required_identity(manifest, ref) -> dict:
         "normCorpusHash": norm_corpus_hash,
         "grandMeanPopulation": population,
         "methodParameters": method_parameters,
+        "extractionRendering": rendering_fragment(
+            getattr(ref.options, "extraction_rendering", None)),
     }
+
+
+def canonical_reading(position) -> tuple[str, int | None]:
+    """A reading position's ``(mode, parameter)`` for the identity.
+
+    ``offsetFromEnd(0)`` canonicalizes to ``("lastToken", None)``: it names
+    the identical token, so declaring the offset form must not split an
+    identity away from an otherwise-identical last-token recipe. Swift twin:
+    ``RecipeIdentity.canonicalReading``.
+    """
+    mode = position.identity_mode
+    parameter = position.identity_parameter
+    if mode == "offsetFromEnd" and parameter == 0:
+        return ("lastToken", None)
+    return (mode, parameter)
+
+
+def rendering_fragment(rendering) -> dict | None:
+    """The identity fragment for an extraction rendering, or ``None`` to omit
+    the key (absent, or an explicitly declared legacy raw)."""
+    from ..steering.extraction_rendering import canonical_identity_fragment
+    return canonical_identity_fragment(rendering)
 
 
 def candidate_identity(sidecar: dict) -> tuple[dict | None, list[str]]:
@@ -244,6 +291,10 @@ def candidate_identity(sidecar: dict) -> tuple[dict | None, list[str]]:
     reading = _parse_reading_label(sidecar.get("readingPosition"))
     if reading is None:
         missing.add("readingPosition")
+
+    rendering, rendering_ok = _parse_sidecar_rendering(sidecar)
+    if not rendering_ok:
+        missing.add("extractionRendering")
 
     projection = None
     description = sidecar.get("neutralProjection")
@@ -312,6 +363,7 @@ def candidate_identity(sidecar: dict) -> tuple[dict | None, list[str]]:
         "normCorpusHash": norm_corpus_hash,
         "grandMeanPopulation": population,
         "methodParameters": method_parameters,
+        "extractionRendering": rendering,
     }, []
 
 
@@ -319,14 +371,33 @@ def _parse_reading_label(label) -> tuple[str, int | None] | None:
     """STRICT reading-position parse for identity — unlike
     ``reading_position.from_label`` this never falls back to last-token: an
     unrecognized label makes the field unprovable."""
-    if label == "last token":
-        return ("lastToken", None)
-    prefix = "mean from token "
-    if isinstance(label, str) and label.startswith(prefix):
-        rest = label[len(prefix):]
-        if rest.isdigit():
-            return ("meanFromToken", int(rest))
-    return None
+    from ..steering.reading_position import parse_label_strict
+    position = parse_label_strict(label)
+    if position is None:
+        return None
+    return canonical_reading(position)
+
+
+def _parse_sidecar_rendering(sidecar: dict) -> tuple[dict | None, bool]:
+    """``(identity fragment, ok)`` from an artifact's stamped
+    ``extractionRendering``.
+
+    Absent is LEGACY RAW — provable, and it contributes nothing to the
+    identity, which is exactly why every pre-option artifact keeps its hash.
+    An unparseable block is NOT provable: the caller must refuse rather than
+    silently read it as raw, because reading a templated artifact as raw is
+    the confusion this whole option exists to end.
+    """
+    from ..steering.extraction_rendering import (ExtractionRenderingError,
+                                                 canonical_identity_fragment)
+    from ..steering.extraction_rendering import from_json as parse
+    raw = sidecar.get("extractionRendering")
+    if raw is None:
+        return None, True
+    try:
+        return canonical_identity_fragment(parse(raw)), True
+    except ExtractionRenderingError:
+        return None, False
 
 
 def _parse_projection(description) -> tuple[str, int | None, str | None] | None:

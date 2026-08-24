@@ -17,6 +17,18 @@ import SteeringKit
 /// forward-slash escaping). Top-level keys, in sorted order:
 ///
 /// - "concept": the concept name.
+/// - "extractionRendering": THE ONE OPTIONAL TOP-LEVEL KEY — present only
+///   when the recipe declares a CHAT-TEMPLATE extraction rendering, omitted
+///   entirely otherwise. This is deliberate and load-bearing: every recipe
+///   written before the rendering option existed rendered raw, and adding an
+///   explicit-null key would have changed every one of their identity hashes,
+///   breaking promotion for every frozen experiment. Absent = legacy raw, and
+///   an explicitly declared `.raw` canonicalizes to absent because it IS the
+///   legacy semantics said out loud. When present the value is
+///   {"addGenerationPrompt": bool, "mode": "chatTemplate",
+///   "qwenThinkingEnabled": bool, "systemPrompt": string|null} with every
+///   inner field explicit (an identity may not depend on a default a later
+///   version could change).
 /// - "extractionMethod": the substrate-independent method name in the
 ///   MANIFEST vocabulary ("meanDifference" | "lat" | "emotionGrandMean").
 ///   Sidecar recipeMethod values map caaMeanDifference→meanDifference,
@@ -42,8 +54,15 @@ import SteeringKit
 /// - "normCorpusHash": SHA-256 of the pinned neutral corpus when
 ///   residualNormSource is "neutral-corpus" or "neutral-token-bank"; null
 ///   otherwise.
-/// - "readingPosition": {"mode": "lastToken" | "meanFromToken",
-///   "parameter": int|null} (the pool-from token index for meanFromToken).
+/// - "readingPosition": {"mode": "lastToken" | "meanFromToken" |
+///   "offsetFromEnd" | "lastContentToken" | "turnCloseToken" |
+///   "postInstruction", "parameter": int|null} — the pool-from token index
+///   for meanFromToken, the backward offset for offsetFromEnd, the
+///   post-instruction index for postInstruction, null for the rest.
+///   `offsetFromEnd` with parameter 0 canonicalizes to
+///   {"mode": "lastToken", "parameter": null}: it names the identical token,
+///   so declaring it that way must not split an identity away from an
+///   otherwise-identical last-token recipe.
 /// - "residualNormSource": the canonical source token ("neutral-corpus" |
 ///   "extraction-stimuli" | "neutral-token-bank"). A sidecar value is
 ///   canonicalized by truncating at the first space (the Swift experiment
@@ -94,6 +113,11 @@ public enum RecipeIdentity {
         public var grandMeanPopulation: [Member]?
         /// designatedReference only: the reference pin (concept = name).
         public var designatedReference: Member?
+        /// The extraction rendering's identity fragment, or nil to OMIT the
+        /// key. nil for absent AND for an explicitly declared `.raw` — both
+        /// mean the legacy rendering, so both must hash exactly as every
+        /// pre-option recipe does.
+        public var extractionRendering: ExtractionRendering?
 
         public init(
             concept: String, modelID: String, revision: String?,
@@ -103,7 +127,8 @@ public enum RecipeIdentity {
             projectionExplainedVariance: String?, projectionBasisHash: String?,
             residualNormSource: String, normCorpusHash: String?,
             grandMeanPopulation: [Member]?,
-            designatedReference: Member? = nil
+            designatedReference: Member? = nil,
+            extractionRendering: ExtractionRendering? = nil
         ) {
             self.concept = concept
             self.modelID = modelID
@@ -120,6 +145,21 @@ public enum RecipeIdentity {
             self.normCorpusHash = normCorpusHash
             self.grandMeanPopulation = grandMeanPopulation
             self.designatedReference = designatedReference
+            self.extractionRendering = Self.canonicalRendering(extractionRendering)
+        }
+
+        /// nil for absent or explicitly-raw; otherwise the rendering with
+        /// every parameter resolved explicitly. Server twin:
+        /// `extraction_rendering.canonical_identity_fragment`.
+        static func canonicalRendering(
+            _ rendering: ExtractionRendering?
+        ) -> ExtractionRendering? {
+            guard let rendering, !rendering.isRaw else { return nil }
+            return ExtractionRendering(
+                mode: .chatTemplate,
+                addGenerationPrompt: rendering.resolvedAddGenerationPrompt,
+                qwenThinkingEnabled: rendering.resolvedQwenThinkingEnabled,
+                systemPrompt: rendering.systemPrompt)
         }
     }
 
@@ -141,6 +181,18 @@ public enum RecipeIdentity {
         var out = "{"
         out += "\"concept\":\(jsonString(c.concept))"
         out += ",\"extractionMethod\":\(jsonString(c.extractionMethod))"
+        // The ONE optional key, in sorted position between "extractionMethod"
+        // and "grandMeanPopulation". Absent (and explicitly-raw) recipes must
+        // hash byte-identically to every recipe written before this option
+        // existed, so nothing is emitted for them. Server twin:
+        // `recipe_identity.canonical_json` adds the same fragment.
+        if let rendering = c.extractionRendering {
+            out += ",\"extractionRendering\":{"
+            out += "\"addGenerationPrompt\":\(rendering.resolvedAddGenerationPrompt)"
+            out += ",\"mode\":\(jsonString(rendering.mode.rawValue))"
+            out += ",\"qwenThinkingEnabled\":\(rendering.resolvedQwenThinkingEnabled)"
+            out += ",\"systemPrompt\":\(jsonOptionalString(rendering.systemPrompt))}"
+        }
         out += ",\"grandMeanPopulation\":"
         if let population = c.grandMeanPopulation {
             let sorted = population.sorted {
@@ -205,6 +257,9 @@ public enum RecipeIdentity {
         compare("concept", required.concept, candidate.concept)
         compare("extractionMethod", required.extractionMethod,
                 candidate.extractionMethod)
+        compare("extractionRendering",
+                renderingJSON(required.extractionRendering),
+                renderingJSON(candidate.extractionRendering), compound: true)
         compare("grandMeanPopulation",
                 populationJSON(required.grandMeanPopulation),
                 populationJSON(candidate.grandMeanPopulation), compound: true)
@@ -259,6 +314,18 @@ public enum RecipeIdentity {
         return text.count <= 48 ? text : String(text.prefix(44)) + "…"
     }
 
+    /// The rendering's canonical JSON fragment — the same bytes
+    /// `canonicalJSON` embeds, so the diff compares exactly what the hash
+    /// covered. nil (rendered as "null" in a diff line) is the legacy raw
+    /// rendering.
+    static func renderingJSON(_ rendering: ExtractionRendering?) -> String? {
+        guard let rendering else { return nil }
+        return "{\"addGenerationPrompt\":\(rendering.resolvedAddGenerationPrompt)"
+            + ",\"mode\":\(jsonString(rendering.mode.rawValue))"
+            + ",\"qwenThinkingEnabled\":\(rendering.resolvedQwenThinkingEnabled)"
+            + ",\"systemPrompt\":\(jsonOptionalString(rendering.systemPrompt))}"
+    }
+
     /// The population's canonical JSON fragment (sorted, compact) — the same
     /// bytes `canonicalJSON` embeds, so the diff compares exactly what the
     /// hash covered.
@@ -282,16 +349,8 @@ public enum RecipeIdentity {
     public static func required(
         manifest: ExperimentManifest, ref: ExperimentManifest.ConceptRef
     ) throws -> Components {
-        let readingMode: String
-        let readingParameter: Int?
-        switch ref.options.readingPosition {
-        case .lastToken:
-            readingMode = "lastToken"
-            readingParameter = nil
-        case .meanFromToken(let k):
-            readingMode = "meanFromToken"
-            readingParameter = k
-        }
+        let (readingMode, readingParameter) = canonicalReading(
+            ref.options.readingPosition)
         let pcCount = ref.options.neutralPCCount ?? 0
         // A pinned neutral corpus is the norm denominator on both engines
         // (extract / extractGrandMean use it whenever present); without one,
@@ -339,7 +398,23 @@ public enum RecipeIdentity {
             residualNormSource: source,
             normCorpusHash: source == "neutral-corpus" ? manifest.neutralCorpusHash : nil,
             grandMeanPopulation: population,
-            designatedReference: designatedReference)
+            designatedReference: designatedReference,
+            extractionRendering: ref.options.extractionRendering)
+    }
+
+    /// A reading position's `(mode, parameter)` for the identity.
+    ///
+    /// `offsetFromEnd(0)` canonicalizes to `("lastToken", nil)`: it names the
+    /// identical token, so declaring the offset form must not split an
+    /// identity away from an otherwise-identical last-token recipe (the
+    /// maintainer ruling: offsets are the mechanism, roles are the portable
+    /// form — neither may quietly renumber a recipe). Server twin:
+    /// `recipe_identity.canonical_reading`.
+    public static func canonicalReading(
+        _ position: ReadingPosition
+    ) -> (mode: String, parameter: Int?) {
+        if case .offsetFromEnd(0) = position { return ("lastToken", nil) }
+        return (position.identityMode, position.identityParameter)
     }
 
     // MARK: - the identity a SIDECAR can prove
@@ -368,15 +443,23 @@ public enum RecipeIdentity {
         if let label = sidecar.readingPosition,
             let position = ReadingPosition(label: label)
         {
-            switch position {
-            case .lastToken:
-                readingMode = "lastToken"
-            case .meanFromToken(let k):
-                readingMode = "meanFromToken"
-                readingParameter = k
-            }
+            (readingMode, readingParameter) = canonicalReading(position)
         } else {
             missing.insert("readingPosition")
+        }
+
+        // Absent is LEGACY RAW — provable, and it contributes nothing to the
+        // identity, which is exactly why every pre-option artifact keeps its
+        // hash. A block naming a mode this engine does not know is NOT
+        // provable: reading a templated artifact as raw would be the silent
+        // substitution this whole option exists to end.
+        var rendering: ExtractionRendering?
+        if let recorded = sidecar.extractionRendering {
+            if ExtractionRendering.Mode(rawValue: recorded.mode.rawValue) == nil {
+                missing.insert("extractionRendering")
+            } else {
+                rendering = recorded
+            }
         }
 
         var projection: (mode: String, count: Int?, explainedVariance: String?)?
@@ -452,7 +535,8 @@ public enum RecipeIdentity {
                 residualNormSource: source,
                 normCorpusHash: normCorpusHash,
                 grandMeanPopulation: population,
-                designatedReference: designatedReference),
+                designatedReference: designatedReference,
+                extractionRendering: rendering),
             missingFields: [])
     }
 

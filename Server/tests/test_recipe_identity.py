@@ -10,6 +10,8 @@ import pytest
 
 from steerlab_server.experiment import recipe_identity as ri
 from steerlab_server.experiment.manifest import ConceptRef, ExtractionOptions, Manifest
+from steerlab_server.steering import reading_position as rp
+from steerlab_server.steering.extraction_rendering import from_json as rendering_from_json
 
 FIXTURE = (Path(__file__).resolve().parent.parent.parent
            / "prompts" / "fixtures" / "recipe-identity"
@@ -25,11 +27,98 @@ def _cases():
 
 def test_canonical_form_matches_committed_fixture_byte_for_byte():
     cases = _cases()
-    assert set(cases) == {"grandMean", "paired"}
+    assert set(cases) == {"grandMean", "paired", "templatedRendering"}
     for name, entry in cases.items():
         components = entry["components"]
         assert ri.canonical_json(components) == entry["canonicalJSON"], name
         assert ri.identity_hash(components) == entry["sha256"], name
+
+
+# --- hash compatibility: the rendering option must be invisible to legacy ------
+
+def test_a_legacy_recipe_hashes_identically_with_and_without_the_key():
+    """The hard constraint. A recipe that declares no extractionRendering —
+    every recipe written before the option existed — must produce the SAME
+    canonical bytes and the SAME hash it always did, so every frozen
+    experiment keeps verifying. The fixture's two legacy cases carry their
+    pre-option hashes verbatim; this asserts the key is genuinely absent
+    rather than present-and-null."""
+    for name in ("grandMean", "paired"):
+        entry = _cases()[name]
+        assert "extractionRendering" not in entry["canonicalJSON"], name
+        # An explicit "no rendering declared" is byte-identical to omitting
+        # the component entirely.
+        components = dict(entry["components"])
+        components["extractionRendering"] = None
+        assert ri.canonical_json(components) == entry["canonicalJSON"], name
+        assert ri.identity_hash(components) == entry["sha256"], name
+
+
+def test_an_explicitly_declared_raw_rendering_is_the_legacy_identity():
+    """Declaring ``{"mode": "raw"}`` says the legacy semantics out loud; it
+    must not fork the identity away from an otherwise-identical recipe that
+    said nothing."""
+    entry = _cases()["paired"]
+    components = dict(entry["components"])
+    components["extractionRendering"] = ri.rendering_fragment(
+        rendering_from_json({"mode": "raw"}))
+    assert ri.identity_hash(components) == entry["sha256"]
+
+
+def test_a_declared_chat_template_rendering_changes_the_identity():
+    """The other half: an explicitly declared NON-default rendering is a
+    different recipe and must hash differently."""
+    legacy = _cases()["paired"]["components"]
+    templated = dict(legacy)
+    templated["extractionRendering"] = ri.rendering_fragment(
+        rendering_from_json({"mode": "chatTemplate"}))
+    assert ri.identity_hash(templated) != ri.identity_hash(legacy)
+    # Every rendering PARAMETER is part of the identity, not just the mode.
+    for change in ({"addGenerationPrompt": False},
+                   {"qwenThinkingEnabled": True},
+                   {"systemPrompt": "be brief"}):
+        varied = dict(legacy)
+        varied["extractionRendering"] = ri.rendering_fragment(
+            rendering_from_json({"mode": "chatTemplate", **change}))
+        assert ri.identity_hash(varied) != ri.identity_hash(templated), change
+
+
+def test_offset_from_end_zero_is_the_last_token_identity():
+    """``offsetFromEnd(0)`` names the identical token, so it must not split an
+    identity away from a last-token recipe (maintainer ruling: offsets are the
+    mechanism, roles are the portable form — neither may quietly renumber a
+    recipe)."""
+    assert ri.canonical_reading(rp.offset_from_end(0)) == ("lastToken", None)
+    assert ri.canonical_reading(rp.offset_from_end(3)) == ("offsetFromEnd", 3)
+    assert ri.canonical_reading(rp.LAST_CONTENT_TOKEN) == ("lastContentToken", None)
+    assert ri.canonical_reading(rp.TURN_CLOSE_TOKEN) == ("turnCloseToken", None)
+    assert ri.canonical_reading(rp.post_instruction(4)) == ("postInstruction", 4)
+
+
+def test_every_new_position_label_round_trips_through_the_sidecar_reader():
+    """A sidecar stamps the LABEL; the identity reads it back strictly. A
+    label the reader cannot parse must make the field unprovable, never
+    silently resolve to last-token."""
+    for position in (rp.LAST_TOKEN, rp.mean_from_token(50), rp.offset_from_end(3),
+                     rp.LAST_CONTENT_TOKEN, rp.TURN_CLOSE_TOKEN,
+                     rp.post_instruction(1)):
+        assert ri._parse_reading_label(position.label) == \
+            ri.canonical_reading(position), position.label
+    assert ri._parse_reading_label("somewhere in the middle") is None
+
+
+def test_an_unparseable_rendering_stamp_is_unprovable_not_raw():
+    """An artifact whose rendering block this engine cannot read is refused
+    for promotion. Reading it as raw would be exactly the silent substitution
+    the option exists to end."""
+    sidecar = {"concept": "c", "modelID": "m", "stimulusSetHash": "h",
+               "extractionMethod": "meanDifference",
+               "readingPosition": "last token", "neutralProjection": "none",
+               "residualNormSource": "extraction-stimuli",
+               "extractionRendering": {"mode": "someFutureForm"}}
+    components, missing = ri.candidate_identity(sidecar)
+    assert components is None
+    assert "extractionRendering" in missing
 
 
 def test_population_order_never_changes_the_hash():

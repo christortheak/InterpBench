@@ -32,6 +32,7 @@ the functions that need it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -534,6 +535,17 @@ def merge_shard_runs(name: str, shard_dirs: list[str], *, root: str,
     # copied once from shard 0. A mismatch is a real cross-shard
     # nondeterminism signal and refuses the merge.
     _copy_invariant_artifacts(stamps, merged_dir)
+    # Per-transcript SUBDIRECTORIES (a panel's <condition>/replicate-N trees).
+    # `_copy_invariant_artifacts` walks only files, so before this every
+    # sharded panel merge produced a run directory with a complete
+    # generations.jsonl and NO transcript layer at all — the whole
+    # human-readable half of a panel silently absent, with nothing in any log
+    # saying so (2026-08-20 ledger). Shards own disjoint transcripts, so
+    # these are collected from EVERY partial, not just shard 0.
+    copied = _copy_shard_subdirectories(stamps, merged_dir)
+    if copied:
+        _log(f"shard merge: carried {copied} transcript file(s) from the "
+             "shard partials into the merged run")
 
     with open(os.path.join(merged_dir, "generations.jsonl"), "wb") as handle:
         for blob in shard_blobs:
@@ -704,6 +716,61 @@ def _copy_invariant_artifacts(stamps: list[dict], merged_dir: str) -> None:
                     + " — cross-shard nondeterminism; do not trust these "
                     "partials")
         shutil.copyfile(source, os.path.join(merged_dir, entry))
+
+
+def _copy_shard_subdirectories(stamps: list[dict], merged_dir: str) -> int:
+    """Carry every shard partial's SUBDIRECTORY tree into the merged run.
+
+    A panel shards over transcripts, and a transcript's artifacts
+    (``turns.jsonl``, ``report.json``, ``transcript.md``) live in
+    ``<condition>/replicate-N/``. Shards own disjoint transcripts, so the
+    union across partials is exactly the merged run's transcript layer — no
+    shard is authoritative for it the way shard 0 is for the invariant files
+    above, which is why this is a separate pass.
+
+    Same honesty rule as :func:`_copy_invariant_artifacts`: two shards
+    claiming the SAME relative path must agree byte for byte, or the merge
+    refuses rather than picking a winner. Returns the number of files copied.
+    """
+    copied = 0
+    # Digests, not payloads: a panel's transcripts are the bulkiest thing in a
+    # run directory and the merge has no reason to hold them all at once.
+    written: dict[str, tuple[int, str]] = {}
+    for stamp in stamps:
+        source_root = stamp["_dir"]
+        for entry in sorted(os.listdir(source_root)):
+            source = os.path.join(source_root, entry)
+            if not os.path.isdir(source):
+                continue
+            for dirpath, _dirs, filenames in os.walk(source):
+                for filename in sorted(filenames):
+                    path = os.path.join(dirpath, filename)
+                    relative = os.path.relpath(path, source_root)
+                    digest = _sha256_file(path)
+                    prior = written.get(relative)
+                    if prior is not None:
+                        if prior[1] == digest:
+                            continue
+                        raise ShardMergeError(
+                            f"shard merge refused: '{relative}' was produced "
+                            f"by shard {prior[0]} AND shard "
+                            f"{stamp['shardIndex']} with different contents "
+                            "— the partials disagree about a transcript that "
+                            "exactly one shard should own")
+                    destination = os.path.join(merged_dir, relative)
+                    os.makedirs(os.path.dirname(destination), exist_ok=True)
+                    shutil.copyfile(path, destination)
+                    written[relative] = (int(stamp["shardIndex"]), digest)
+                    copied += 1
+    return copied
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _battery_summary(records: list[dict]) -> dict:
