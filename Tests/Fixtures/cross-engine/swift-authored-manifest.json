@@ -1,0 +1,74 @@
+{
+  "manifest" : {
+    "capabilityBatteryFile" : "prompts/batteries/b1.jsonl",
+    "capabilityBatteryHash" : "976bd5dc407ad3f7f0203ca9b98a7bd8cf07740db9d689b693b2a451f13c5a19",
+    "concepts" : [
+      {
+        "name" : "french",
+        "options" : {
+          "method" : "meanDifference",
+          "readingPosition" : {
+            "lastToken" : {
+
+            }
+          }
+        },
+        "stimulusSetHash" : "9711fc1dd6a12a339c175189a62cd5d189d017d0e3e855143512d0967805af7a",
+        "validationHash" : null
+      }
+    ],
+    "conditions" : [
+      {
+        "alphaInNormUnits" : true,
+        "bandWidth" : 1,
+        "name" : "baseline",
+        "slots" : [
+
+        ]
+      },
+      {
+        "alphaInNormUnits" : true,
+        "bandWidth" : 1,
+        "name" : "arm-a",
+        "slots" : [
+          {
+            "alpha" : 0.10000000000000001,
+            "concept" : "french",
+            "layer" : 1
+          }
+        ]
+      }
+    ],
+    "createdAt" : "1970-01-01T00:00:00Z",
+    "experimentDescription" : "Phase-0 interop fixture",
+    "maxTokens" : 512,
+    "modelID" : "org/m",
+    "modelRevision" : "0123456789abcdef0123456789abcdef01234567",
+    "multiAgentIncludeBaseline" : true,
+    "name" : "portability-interop-swift",
+    "neutralCorpusHash" : "252a00e477ffd11b651cfd625cdeedb8c67afbb13a0bc41d2016fb6e25660db1",
+    "promptMode" : "chatAssistant",
+    "qwenThinkingEnabled" : false,
+    "recordTokenIDs" : false,
+    "samplesPerItem" : 3,
+    "seedPolicy" : "derivedSHA256",
+    "seeds" : [
+      0,
+      1,
+      2
+    ],
+    "status" : "draft",
+    "studyKind" : "modelOutput",
+    "systemPrompt" : "Respond in JSON.",
+    "taskDescription" : "answer the item",
+    "taskPromptsFile" : "prompts/tasks/cases.jsonl",
+    "taskPromptsHash" : "0cca009949adbced7db8a2427dd808435b1834eb482ad8c07d522f551bb0144c",
+    "temperature" : 0.69999999999999996,
+    "variantConditions" : [
+
+    ]
+  },
+  "manifestHash" : "fbc4176a17965d9091a40f3ac60e94a4371ec118d9dbe93827faf7e8cd43130b",
+  "note" : "produced by the Swift engine's ExperimentStore (Tests/ExperimentKitTests/PortabilityContractTests.swift) — do not hand-edit; delete this file and re-run that suite to regenerate",
+  "stimulusSetHash" : "9711fc1dd6a12a339c175189a62cd5d189d017d0e3e855143512d0967805af7a"
+}

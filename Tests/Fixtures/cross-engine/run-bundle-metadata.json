@@ -1,0 +1,43 @@
+{
+  "entryKeys": [
+    "bytes",
+    "path",
+    "sha256"
+  ],
+  "entryPaths": [
+    "experiments/portability-interop/experiment.json",
+    "prompts/batteries/b1.jsonl",
+    "prompts/concepts/french/markers.json",
+    "prompts/concepts/french/negative.jsonl",
+    "prompts/concepts/french/positive.jsonl",
+    "prompts/concepts/french/validation.jsonl",
+    "prompts/neutral/corpus.jsonl",
+    "prompts/rubrics/r1.md",
+    "prompts/tasks/cases.jsonl"
+  ],
+  "headerKeys": [
+    "createdAt",
+    "entries",
+    "experiment",
+    "experimentContentHash",
+    "kind",
+    "rootRelative",
+    "schemaVersion",
+    "validationScopeHash",
+    "verificationViolations"
+  ],
+  "kind": "runBundle",
+  "note": "produced by Server bundles.package_experiment \u2014 do not hand-edit; delete and re-run Server/tests/test_portability_contracts.py",
+  "schemaVersion": 1,
+  "swiftPackagerHeaderKeys": [
+    "createdAt",
+    "entries",
+    "experiment",
+    "experimentContentHash",
+    "kind",
+    "rootRelative",
+    "schemaVersion",
+    "validationScopeHash",
+    "verificationViolations"
+  ]
+}

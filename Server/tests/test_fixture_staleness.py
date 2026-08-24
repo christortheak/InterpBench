@@ -193,6 +193,14 @@ def test_every_committed_fixture_has_a_staleness_test():
         "choice-margins.json", "server-evidence-bundle.json",
         # Checked inline in test_system_prompt_composition.py.
         "system-prompt-composition.json",
+        # Phase-0 portability contracts. The two produced by THIS engine are
+        # write-if-missing goldens checked inline in
+        # test_portability_contracts.py (delete the file and re-run that
+        # module to regenerate). The third is produced by the SWIFT engine
+        # (Tests/ExperimentKitTests/PortabilityContractTests.swift), so its
+        # staleness check lives there, on the side that can rebuild it.
+        "manifest-interop.json", "run-bundle-metadata.json",
+        "swift-authored-manifest.json",
     }
     present = {f for f in os.listdir(FIXTURES) if f.endswith(".json")}
     assert present <= covered, (
