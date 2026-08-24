@@ -49,6 +49,10 @@ public enum WorkspaceRunImport {
         /// Tightening 4: the remote bytes differ from local bytes already
         /// imported. Refused, nothing overwritten.
         case refusedByteDrift(message: String)
+        /// The remote inventory reported NO files for a directory this
+        /// workspace already holds. Never certified complete — see
+        /// `emptyRemoteInventoryRefusal`.
+        case refusedEmptyRemoteInventory(localFiles: Int)
         /// Transferred, but the post-transfer verification still disagrees —
         /// reported, never silently accepted.
         case verificationFailed(findings: [String])
@@ -56,7 +60,9 @@ public enum WorkspaceRunImport {
 
         public var isFailure: Bool {
             switch self {
-            case .refusedByteDrift, .verificationFailed, .failed: true
+            case .refusedByteDrift, .refusedEmptyRemoteInventory,
+                .verificationFailed, .failed:
+                true
             default: false
             }
         }
@@ -371,7 +377,10 @@ public enum WorkspaceRunImport {
         } catch {
             report.violations.append(
                 "could not inventory the remote run directories: "
-                    + "\(String(describing: error))")
+                    + ((error as? LocalizedError)?.errorDescription
+                        ?? String(describing: error))
+                    + " — no directory was classified from this listing, so "
+                    + "nothing was transferred and nothing was certified")
             report.directories = deferredReports
             return report
         }
@@ -400,6 +409,11 @@ public enum WorkspaceRunImport {
                 options: options, emit: emit)
             if case .refusedByteDrift(let message) = outcome {
                 report.violations.append(message)
+            }
+            if case .refusedEmptyRemoteInventory(let localFiles) = outcome {
+                report.violations.append(
+                    emptyRemoteInventoryRefusal(
+                        directory: classification.name, localFiles: localFiles))
             }
             if case .verificationFailed(let findings) = outcome {
                 report.violations.append(
@@ -501,7 +515,9 @@ public enum WorkspaceRunImport {
         // Already here. Verify BEFORE anything transfers: tightening 4 makes a
         // size (or pinned-hash) disagreement an immutability violation, and a
         // violation must refuse rather than let rsync decide.
-        let findings = verifyLanded(name, remote: remote, rules: rules, engine: engine)
+        let local = engine.localInventory(name)
+        let findings = verifyLanded(
+            name, remote: remote, local: local, rules: rules, engine: engine)
         let violations = findings.filter(\.isViolation)
         guard violations.isEmpty else {
             return .refusedByteDrift(
@@ -513,6 +529,16 @@ public enum WorkspaceRunImport {
                 return WorkspaceImportPolicy.FileStat(relativePath: path, size: size)
             }
             return nil
+        }
+        // An EMPTY remote inventory can never certify a populated local
+        // directory complete. `gaps` is derived entirely from the remote
+        // inventory, so "no gaps" over an empty inventory says nothing at all
+        // — and on 2026-08-24 that path certified 31 incomplete directories,
+        // two of them inside frozen studies, because a run-root prefix bug
+        // emptied every inventory. The remote reporting zero files while
+        // bytes sit here is a human's question, never a completeness proof.
+        guard !remote.isEmpty || local.isEmpty else {
+            return .refusedEmptyRemoteInventory(localFiles: local.count)
         }
         guard !gaps.isEmpty else {
             return .alreadyComplete(files: kept.count)
@@ -540,16 +566,41 @@ public enum WorkspaceRunImport {
         return .imported(files: gaps.count, bytes: gaps.reduce(0) { $0 + $1.size })
     }
 
+    /// Both sides through `WorkspaceImportPolicy.verify`, which applies the
+    /// policy's exclusion rules to the local inventory as well as the remote
+    /// one — the counts a mismatch is declared over are post-exclusion on
+    /// BOTH sides, from that one definition. `local` is passed in when the
+    /// caller already walked the directory, so a single directory is never
+    /// walked twice.
     static func verifyLanded(
         _ name: String, remote: [WorkspaceImportPolicy.FileStat],
+        local: [WorkspaceImportPolicy.FileStat]? = nil,
         rules: [WorkspaceImportPolicy.ExclusionRule], engine: Engine
     ) -> [WorkspaceImportPolicy.Finding] {
         WorkspaceImportPolicy.verify(
             remote: remote,
-            local: engine.localInventory(name),
+            local: local ?? engine.localInventory(name),
             exclusions: rules,
             pinnedHashes: engine.pinnedHashes(name),
             localHash: { engine.localFileHash(name, $0) })
+    }
+
+    /// The refusal an empty remote inventory earns over a populated local
+    /// directory. Names both candidate causes, because they need opposite
+    /// responses and only a human can tell them apart.
+    public static func emptyRemoteInventoryRefusal(
+        directory: String, localFiles: Int
+    ) -> String {
+        "'\(directory)' is in this workspace with \(localFiles) file"
+            + "\(localFiles == 1 ? "" : "s"), and the remote inventory "
+            + "reported NO files for it. That is not a completeness proof and "
+            + "was not treated as one. Either the inventory failed (the run "
+            + "root resolved to somewhere the `find` did not print under — "
+            + "check `steerlab-cli cluster preview --site <id>`), or the "
+            + "remote run really is gone (scratch retention, or a hand "
+            + "deletion), in which case the local copy is now the only copy "
+            + "and this directory needs no import. Nothing was transferred, "
+            + "overwritten, or deleted."
     }
 
     // MARK: - Rendering
@@ -620,6 +671,11 @@ public enum WorkspaceRunImport {
                 lines.append(
                     "\(directory.name)  [\(label)]  REFUSED — remote bytes differ "
                         + "from the local copy (see violations)")
+            case .refusedEmptyRemoteInventory(let localFiles):
+                lines.append(
+                    "\(directory.name)  [\(label)]  REFUSED — the remote "
+                        + "reported no files while \(localFiles) sit here; NOT "
+                        + "certified complete (see violations)")
             case .verificationFailed(let findings):
                 lines.append(
                     "\(directory.name)  [\(label)]  DID NOT VERIFY — "
@@ -708,12 +764,17 @@ extension WorkspaceRunImport {
         case notAClusterWorkspace(root: String)
         case noSSHTransport(siteID: String)
         case noRemoteRunRoot(siteID: String)
+        /// The site's run root is a shell expression the far side would not
+        /// (or could not) expand. Refused rather than compared against its own
+        /// unexpanded template.
+        case runRootUnresolved(siteID: String, runRoot: String, detail: String)
 
         public var code: String {
             switch self {
             case .notAClusterWorkspace: "notAClusterWorkspace"
             case .noSSHTransport: "noSSHTransport"
             case .noRemoteRunRoot: "noRemoteRunRoot"
+            case .runRootUnresolved: "runRootUnresolved"
             }
         }
 
@@ -728,6 +789,12 @@ extension WorkspaceRunImport {
             case .noRemoteRunRoot(let siteID):
                 "site '\(siteID)' declares no workspace or run storage root, so "
                     + "there is no remote runs/ to enumerate"
+            case .runRootUnresolved(let siteID, let runRoot, let detail):
+                "site '\(siteID)' declares its run storage root as "
+                    + "'\(runRoot)', and the cluster did not say what that "
+                    + "expands to (\(detail)). Nothing was enumerated: an "
+                    + "import that compared remote paths against an unexpanded "
+                    + "template would report every directory empty"
             }
         }
 
@@ -745,6 +812,14 @@ extension WorkspaceRunImport {
                 "set the site's storage roots (`workspace`, or `run`) and "
                     + "re-import it: `steerlab-cli cluster preview --site \(siteID)` "
                     + "shows what the site currently declares"
+            case .runRootUnresolved(let siteID, _, _):
+                "open the shared SSH session "
+                    + "(`steerlab-cli cluster auth open --site \(siteID)`) and "
+                    + "import again; if the session is healthy "
+                    + "(`steerlab-cli cluster status --site \(siteID) --json`), "
+                    + "the declared root is the suspect — "
+                    + "`steerlab-cli cluster preview --site \(siteID)` shows "
+                    + "exactly what the site declares"
             }
         }
 
@@ -763,7 +838,7 @@ extension WorkspaceRunImport {
         shell: any ClusterShellRunner,
         requireClusterWorkspace: Bool = true,
         emit: @escaping @Sendable (String) -> Void = { _ in }
-    ) throws -> Engine {
+    ) async throws -> Engine {
         if requireClusterWorkspace {
             let declared = WorkspaceCompute.declared(root: workspaceRoot)
             guard declared == nil || declared == .cluster else {
@@ -773,8 +848,16 @@ extension WorkspaceRunImport {
         guard case .ssh = site.transport else {
             throw SetupError.noSSHTransport(siteID: siteID)
         }
-        guard let runRoot = ClusterEnvironmentRenderer.resolvedRunRoot(site) else {
+        guard let declaredRunRoot = ClusterEnvironmentRenderer.resolvedRunRoot(site) else {
             throw SetupError.noRemoteRunRoot(siteID: siteID)
+        }
+        // ONE remote round trip, before any seam closes over it, so that every
+        // later use — the `find` paths, the client-side prefix, rsync's source,
+        // and the diagnostics — speaks the same expanded string.
+        let runRoot = try await expandedRunRoot(
+            site: site, siteID: siteID, declared: declaredRunRoot, shell: shell)
+        if runRoot != declaredRunRoot {
+            emit("run root '\(declaredRunRoot)' resolves to '\(runRoot)'")
         }
         let localRuns = workspaceRoot.appending(component: "runs")
 
@@ -839,7 +922,7 @@ extension WorkspaceRunImport {
                             reason: "could not inventory remote run directories "
                                 + "(exit \(result.exitCode)): \(result.text)")
                     }
-                    for (name, stats) in parseInventory(
+                    for (name, stats) in try parseInventory(
                         result.lines, runRoot: runRoot, names: batch)
                     {
                         inventory[name, default: []].append(contentsOf: stats)
@@ -899,6 +982,68 @@ extension WorkspaceRunImport {
             })
     }
 
+    // MARK: The run root, resolved on the far side
+
+    /// The marker `expandedRunRoot`'s round trip prints its answer behind, so
+    /// an ssh banner or a login-shell MOTD cannot be mistaken for the answer.
+    static let runRootAnswerMarker = "steerlab-run-root="
+
+    /// Ask the FAR shell what the site's declared run root expands to, and
+    /// answer with what it said.
+    ///
+    /// A site profile may declare its run root as a shell EXPRESSION — the
+    /// right shape for a site file shared between researchers whose home
+    /// layouts differ. That word is handed to a remote `find`, which the far
+    /// shell expands, so `find` prints EXPANDED paths; a client-side prefix
+    /// built from the declared text then matches nothing and every directory
+    /// inventories as empty. Silently. (2026-08-24: 31 run directories were
+    /// certified complete while incomplete, two inside frozen studies.)
+    ///
+    /// So the run root is resolved ONCE, here, by echoing the very word the
+    /// `find` would receive — `ClusterProvisioner.shellQuoted` quotes it
+    /// identically for both, so the same expansion applies — and everything
+    /// downstream uses the returned literal. Deliberately NOT `cd … && pwd
+    /// -P`: that resolves symlinks, while `find` prints its given path
+    /// verbatim, so on a symlinked scratch the two would mismatch again. The
+    /// invariant is that the prefix compared is byte-derived from the same
+    /// string handed to `find`.
+    ///
+    /// A round trip that fails, says nothing, or says several things REFUSES.
+    /// Falling back to the template is the defect this exists to end.
+    static func expandedRunRoot(
+        site: ClusterSiteProfile, siteID: String, declared: String,
+        shell: any ClusterShellRunner
+    ) async throws -> String {
+        let argv = ClusterProvisioner.sshRemoteArgv(
+            site: site,
+            remoteWords: ["printf", "\(runRootAnswerMarker)%s\\n", declared])
+        guard !argv.isEmpty else {
+            throw SetupError.runRootUnresolved(
+                siteID: siteID, runRoot: declared,
+                detail: "the site has no SSH host to ask")
+        }
+        let result = await shell.run(argv)
+        guard result.succeeded else {
+            throw SetupError.runRootUnresolved(
+                siteID: siteID, runRoot: declared,
+                detail: "the round trip exited \(result.exitCode): \(result.text)")
+        }
+        let answers = result.lines.compactMap { line -> String? in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.hasPrefix(runRootAnswerMarker) else { return nil }
+            let value = String(trimmed.dropFirst(runRootAnswerMarker.count))
+            return value.isEmpty ? nil : value
+        }
+        guard answers.count == 1, let expanded = answers.first else {
+            throw SetupError.runRootUnresolved(
+                siteID: siteID, runRoot: declared,
+                detail: answers.isEmpty
+                    ? "the round trip printed no answer"
+                    : "the round trip printed \(answers.count) answers")
+        }
+        return expanded
+    }
+
     /// `rsync -a --ignore-existing <policy filters> -e <ssh through the shared
     /// master> host:<runRoot>/<name>/ <workspace>/runs/<name>/`
     ///
@@ -924,21 +1069,32 @@ extension WorkspaceRunImport {
     }
 
     /// Parse `find … -printf '%p\t%s\n'` output into per-directory stats.
-    /// Lines that do not sit under one of the requested directories are
+    /// Lines that sit under the run root but outside the requested set are
     /// ignored rather than guessed at.
+    ///
+    /// A `find` that printed real lines, NONE of them under the root we asked
+    /// it about, is a defect and throws. That is the 2026-08-24 lesson in one
+    /// guard: the bare `continue` that used to swallow those lines turned a
+    /// path bug into a data-integrity bug, because "no files here" and "I
+    /// could not read what came back" arrived at the caller as the same
+    /// empty array.
     public static func parseInventory(
         _ lines: [String], runRoot: String, names: [String]
-    ) -> [String: [WorkspaceImportPolicy.FileStat]] {
+    ) throws -> [String: [WorkspaceImportPolicy.FileStat]] {
         let prefix = runRoot.hasSuffix("/") ? runRoot : runRoot + "/"
         let wanted = Set(names)
         var out: [String: [WorkspaceImportPolicy.FileStat]] = [:]
+        var strayPath: String?
         for line in lines {
             guard let tab = line.lastIndex(of: "\t") else { continue }
             let path = String(line[line.startIndex..<tab])
             guard let size = Int64(
                 line[line.index(after: tab)...].trimmingCharacters(in: .whitespaces))
             else { continue }
-            guard path.hasPrefix(prefix) else { continue }
+            guard path.hasPrefix(prefix) else {
+                if strayPath == nil { strayPath = path }
+                continue
+            }
             let relative = String(path.dropFirst(prefix.count))
             guard let slash = relative.firstIndex(of: "/") else { continue }
             let directory = String(relative[relative.startIndex..<slash])
@@ -948,7 +1104,46 @@ extension WorkspaceRunImport {
                     relativePath: String(relative[relative.index(after: slash)...]),
                     size: size))
         }
+        if out.isEmpty, let strayPath {
+            throw InventoryError.nothingUnderRunRoot(prefix: prefix, observed: strayPath)
+        }
         return out
+    }
+
+    /// What the remote inventory can find wrong with its own input. Typed,
+    /// because the caller turns it into a refusal rather than an empty
+    /// directory.
+    public enum InventoryError: Error, LocalizedError, Equatable {
+        /// `find` printed file paths, and not one of them began with the run
+        /// root we compared against.
+        case nothingUnderRunRoot(prefix: String, observed: String)
+
+        public var code: String {
+            switch self {
+            case .nothingUnderRunRoot: "inventoryPrefixMismatch"
+            }
+        }
+
+        public var reason: String {
+            switch self {
+            case .nothingUnderRunRoot(let prefix, let observed):
+                "the cluster's file listing is not under the run root this "
+                    + "import compared against: expected paths beginning "
+                    + "'\(prefix)', observed '\(observed)'"
+            }
+        }
+
+        public var repairAction: String {
+            switch self {
+            case .nothingUnderRunRoot:
+                "check the site's declared run storage root "
+                    + "(`steerlab-cli cluster preview --site <id>`) against the "
+                    + "observed path; nothing was transferred, and no directory "
+                    + "was classified from this listing"
+            }
+        }
+
+        public var errorDescription: String? { "\(reason) — \(repairAction)" }
     }
 
     // MARK: Local reads

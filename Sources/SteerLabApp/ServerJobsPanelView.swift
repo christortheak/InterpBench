@@ -505,7 +505,7 @@ struct ServerJobsPanelView: View {
         status = "importing run directories from \(entry.name)…"
         let engine: WorkspaceRunImport.Engine
         do {
-            engine = try WorkspaceRunImport.liveEngine(
+            engine = try await WorkspaceRunImport.liveEngine(
                 site: entry.resolvedSite, siteID: entry.id.uuidString,
                 workspaceRoot: ExperimentStore.workspaceRoot,
                 shell: ProvisionShellRunner())

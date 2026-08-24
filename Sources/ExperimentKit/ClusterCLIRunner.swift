@@ -750,7 +750,7 @@ public struct ClusterCLIRunner: Sendable {
             if let workspaceImportEngine {
                 engine = try workspaceImportEngine(site, emit)
             } else {
-                engine = try WorkspaceRunImport.liveEngine(
+                engine = try await WorkspaceRunImport.liveEngine(
                     site: site.profile, siteID: site.id,
                     workspaceRoot: ExperimentStore.workspaceRoot,
                     shell: shell, emit: emit)

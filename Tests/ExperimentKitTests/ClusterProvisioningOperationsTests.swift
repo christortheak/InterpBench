@@ -791,6 +791,53 @@ struct ClusterProvisioningOperationsTests {
                 == .absent)
     }
 
+    /// `payload: current` must NAME the two identities it compares. The bare
+    /// word reads as "my checkout is deployed", which is the one thing it never
+    /// means — `cluster push` ships the app bundle's payload, not a checkout.
+    @Test func aPayloadObservationNamesBothIdentities() async throws {
+        let payload = FileManager.default.temporaryDirectory
+            .appending(component: "steerlab-payload-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: payload, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: payload) }
+        let manifest = ResourceManifest(
+            appVersion: "0.9.1", serverVersion: "0.9.1", protocolVersion: 1,
+            sourceRevision: "aa11bb22", files: [:])
+        try manifest.write(
+            to: payload.appending(
+                component: ClusterProvisioner.deploymentManifestFileName))
+        let bytes = String(decoding: try manifest.canonicalJSON(), as: UTF8.self)
+        var configuration = configuration()
+        configuration.localPayloadPath = payload.path
+
+        let matching = ClusterProvisioningOperations(
+            shell: RecordingShell([ClusterShellResult(exitCode: 0, lines: [bytes])]),
+            secrets: RecordingSecretStore())
+        let current = await matching.observePayload(
+            site: site(), configuration: configuration)
+        #expect(
+            current
+                == .current(
+                    deploymentHash: ClusterSupportPaths.sha256Hex(Data(bytes.utf8)),
+                    localIdentity: "aa11bb22"))
+        #expect(current.summary.contains("local aa11bb22"))
+        #expect(current.summary.contains("deployed aa11bb22"))
+
+        var other = manifest
+        other.sourceRevision = "cc33dd44"
+        let otherBytes = String(decoding: try other.canonicalJSON(), as: UTF8.self)
+        let drifted = ClusterProvisioningOperations(
+            shell: RecordingShell([ClusterShellResult(exitCode: 0, lines: [otherBytes])]),
+            secrets: RecordingSecretStore())
+        guard case .stale(let reason) = await drifted.observePayload(
+            site: site(), configuration: configuration)
+        else {
+            Issue.record("a different deployed revision must read stale")
+            return
+        }
+        #expect(reason.contains("deployed cc33dd44"))
+        #expect(reason.contains("local payload aa11bb22"))
+    }
+
     // MARK: Controller reconciliation (the doctrine, at the operation level)
 
     @Test func aFailedSchedulerQueryIsUnknownAndNeverAbsent() async throws {

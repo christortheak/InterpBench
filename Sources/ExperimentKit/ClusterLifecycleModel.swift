@@ -211,9 +211,20 @@ public enum ClusterControlMasterObservation: String, Sendable, Codable, CaseIter
 }
 
 /// The deployed server payload on the far side.
+///
+/// `current` names the identity it is current AGAINST. The bare word alone
+/// misleads: `cluster push` deploys the payload baked into the app bundle, not
+/// whatever the reader's checkout holds, so `payload: current` means "the app's
+/// payload and the cluster's agree" and says nothing about the checkout. An
+/// agent read it the other way on 2026-08-24 and concluded that undeployed work
+/// was deployed. Printing the local identity next to the deployed one makes the
+/// comparison the word stands for visible.
 public enum ClusterPayloadObservation: Sendable, Equatable {
     case absent
-    case current(deploymentHash: String?)
+    /// `localIdentity` is the LOCAL payload's own name for itself — its
+    /// manifest `sourceRevision`, or a dev checkout's git stamp — nil when the
+    /// payload carries neither and only a content hash could be compared.
+    case current(deploymentHash: String?, localIdentity: String? = nil)
     case stale(reason: String)
     /// The comparison could not be made (no master, unreadable marker). NOT a
     /// licence to skip the push — but not proof one is needed either.
@@ -223,7 +234,14 @@ public enum ClusterPayloadObservation: Sendable, Equatable {
     public var summary: String {
         switch self {
         case .absent: "absent"
-        case .current: "current"
+        case .current(let hash, let identity):
+            if let identity {
+                "current (local \(identity) = deployed \(identity))"
+            } else if let hash {
+                "current (\(ClusterProvisioner.shortDigest(hash)))"
+            } else {
+                "current"
+            }
         case .stale(let reason): "stale (\(reason))"
         case .unknown(let reason): "unknown (\(reason))"
         case .notApplicable: "notApplicable"

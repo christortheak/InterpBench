@@ -691,10 +691,61 @@ verb to report, not a reason to bypass the renderer.
 
 The cluster lifecycle has first-class verbs — prefer them to raw `ssh`:
 `steerlab-cli cluster push` (deploys the engine AND re-stamps its build
-identity), `cluster ensure`, `cluster tunnel open`, `cluster remote --site
-<id> …`, and `cluster import --site <id>` (verified, never-purging run
-import). Site profiles live in the SteerLab home's `Sites/cluster-sites/`
-registry — never invent one; ask the researcher for theirs.
+identity — read §8.1 before you reach for it), `cluster ensure`, `cluster
+tunnel open`, `cluster remote --site <id> …`, and `cluster import --site <id>`
+(verified, never-purging run import). Site profiles live in the SteerLab
+home's `Sites/cluster-sites/` registry — never invent one; ask the researcher
+for theirs.
+
+### 8.1 Updating the server engine
+
+**`cluster push` deploys the payload baked into the app bundle**
+(`SteerLab.app/Contents/Resources/ClusterPayload/`), **not your checkout.**
+Pulling new commits and pushing deploys nothing — and every observation agrees
+that this is fine: the push succeeds, and `cluster status` reports `payload:
+current`, truthfully, because the app's payload and the cluster's really do
+match. Build first:
+
+```bash
+scripts/build-app.sh --install --force        # regenerates ClusterPayload
+steerlab-cli cluster push --site <id> --json
+```
+
+Prefer that form — it keeps the Mac CLI and the remote engine on one revision.
+When the installed signed app must not be replaced, or the machine carries no
+signing identity, build the payload alone and push that directory instead:
+
+```bash
+scripts/make-server-payload.sh --source <checkout> --output <dir> --force
+steerlab-cli cluster push --site <id> --payload <dir> --json
+```
+
+Legal, and it leaves a Mac CLI talking to an engine built from different
+source: a skew you then have to carry in your head.
+
+**Read what is deployed; never infer it from `git log`.** Both identities are
+the `sourceRevision` of a `deployment-manifest.json` — one in the app's
+`ClusterPayload/`, one at the remote bundle root — and `cluster status` prints
+them beside `payload:`, so `current` visibly means *these two agree*. It still
+says nothing about your checkout.
+
+**A push does not restart the engine.** The running controller keeps the code
+it loaded; a push only replaces files on disk. Cycle the controller and
+re-open the tunnel before importing anything:
+
+```bash
+steerlab-cli cluster controller stop --site <id> --json
+steerlab-cli cluster ensure --site <id> --target connected \
+  --allow-controller-start --json
+```
+
+**The payload is server code only** — `Server/` and `prompts/fixtures/`. Every
+Mac-side verb (`cluster import`, `experiment attach`, all the authoring verbs)
+is updated by rebuilding the app, never by pushing, so a refusal or a defect in
+one of them is never fixed by a push. When you are unsure which side a verb
+lives on, check whether it appears under `Server/steerlab_server/cli.py`.
+
+### 8.2 Where the depth is
 
 This file is deliberately self-contained for study work, but it is not the
 whole reference. The code checkout (normally a sibling of this workspace's

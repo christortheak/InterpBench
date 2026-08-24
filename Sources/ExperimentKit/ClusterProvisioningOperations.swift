@@ -606,6 +606,34 @@ public struct ClusterProvisioningOperations: Sendable {
         return ClusterSupportPaths.sha256Hex(data)
     }
 
+    /// The local payload's own name for itself: the `sourceRevision` its
+    /// deployment manifest was stamped with at packaging time. Nil for a dev
+    /// checkout (no manifest) and for a payload built outside a git checkout
+    /// (the stamp is omitted rather than invented).
+    ///
+    /// This is the identity `cluster status` prints beside the deployed one,
+    /// so a reader can see WHICH two things `payload: current` compares.
+    public static func localPayloadRevision(payloadRoot: String) -> String? {
+        let url = URL(filePath: payloadRoot)
+            .appending(component: ClusterProvisioner.deploymentManifestFileName)
+        guard let manifest = try? ResourceManifest.load(from: url) else { return nil }
+        guard let revision = manifest.sourceRevision, !revision.isEmpty else {
+            return nil
+        }
+        return revision
+    }
+
+    /// The same field read out of a manifest's BYTES — used for the copy the
+    /// cluster answered with, which never lands on this disk.
+    static func payloadRevision(inManifestText text: String) -> String? {
+        guard
+            let manifest = try? JSONDecoder().decode(
+                ResourceManifest.self, from: Data(text.utf8)),
+            let revision = manifest.sourceRevision, !revision.isEmpty
+        else { return nil }
+        return revision
+    }
+
     /// The python package's path relative to the payload root — where the
     /// engine's `BUILD_COMMIT` stamp lives (`build_identity.py` reads it as
     /// the deployed build identity). Nil when the payload holds no package.
@@ -698,9 +726,19 @@ public struct ClusterProvisioningOperations: Sendable {
             return .absent
         }
         let remote = ClusterSupportPaths.sha256Hex(Data(result.text.utf8))
-        return remote == local
-            ? .current(deploymentHash: local)
-            : .stale(reason: "the deployed payload does not match the local one")
+        let localRevision = Self.localPayloadRevision(payloadRoot: localPath)
+        guard remote != local else {
+            return .current(deploymentHash: local, localIdentity: localRevision)
+        }
+        // Name both sides. "does not match the local one" leaves the reader to
+        // guess which local one — and the answer (the app bundle's payload,
+        // never the checkout) is exactly what gets misread.
+        let deployedRevision = Self.payloadRevision(inManifestText: result.text)
+        let deployed = deployedRevision ?? ClusterProvisioner.shortDigest(remote)
+        let mine = localRevision ?? ClusterProvisioner.shortDigest(local)
+        return .stale(
+            reason: "deployed \(deployed) does not match the local payload "
+                + "\(mine)")
     }
 
     /// Dev-checkout payload comparison: local git stamp vs the deployed
@@ -741,7 +779,7 @@ public struct ClusterProvisioningOperations: Sendable {
                     + "restamps it")
         }
         return remote == local
-            ? .current(deploymentHash: local)
+            ? .current(deploymentHash: local, localIdentity: local)
             : .stale(
                 reason: "deployed \(remote) does not match local \(local)")
     }

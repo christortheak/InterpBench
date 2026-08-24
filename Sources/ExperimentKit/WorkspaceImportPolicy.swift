@@ -675,11 +675,16 @@ public enum WorkspaceImportPolicy {
     }
 
     /// Compare a remote inventory against a local one. Excluded paths are
-    /// dropped from the REMOTE side first, so the policy's own NEVER-import
-    /// rules can never be read as missing files.
+    /// dropped from BOTH sides first, so the policy's own NEVER-import rules
+    /// can never be read as missing files — nor, on the local side, as extra
+    /// ones. The symmetry is load-bearing: rsync applies the same rules, so a
+    /// directory that already holds an excluded file (a tarball imported
+    /// before the rule existed, a `checkpoints/` tree copied by hand) would
+    /// otherwise fail its own count comparison for ever (2026-08-24 field
+    /// report). One definition — `isExcluded` — decides both sides.
     ///
     /// `localHash` is consulted only for paths that already carry a pin, and
-    /// only when the file exists locally.
+    /// only when the file exists locally and the rules keep it.
     public static func verify(
         remote: [FileStat],
         local: [FileStat],
@@ -690,8 +695,11 @@ public enum WorkspaceImportPolicy {
         let remoteKept = remote.filter {
             !isExcluded(relativePath: $0.relativePath, rules: rules)
         }
+        let localKept = local.filter {
+            !isExcluded(relativePath: $0.relativePath, rules: rules)
+        }
         let localBySize = Dictionary(
-            local.map { ($0.relativePath, $0.size) },
+            localKept.map { ($0.relativePath, $0.size) },
             uniquingKeysWith: { first, _ in first })
         var findings: [Finding] = []
         for file in remoteKept.sorted(by: { $0.relativePath < $1.relativePath }) {
@@ -707,22 +715,22 @@ public enum WorkspaceImportPolicy {
             }
         }
         let remotePaths = Set(remoteKept.map(\.relativePath))
-        for file in local.sorted(by: { $0.relativePath < $1.relativePath })
+        for file in localKept.sorted(by: { $0.relativePath < $1.relativePath })
         where !remotePaths.contains(file.relativePath) {
             findings.append(.localOnly(relativePath: file.relativePath))
         }
         // Counts, stated independently of the per-file walk: a report that
         // only ever prints per-file rows can still leave a caller wondering
-        // whether the totals agreed.
+        // whether the totals agreed. Both counts are post-exclusion.
         let gaps = findings.filter { if case .gap = $0 { return true } else { return false } }
-        if remoteKept.count != local.count + gaps.count {
+        if remoteKept.count != localKept.count + gaps.count {
             findings.append(
-                .countMismatch(remote: remoteKept.count, local: local.count))
+                .countMismatch(remote: remoteKept.count, local: localKept.count))
         }
-        for pin in pinnedHashes
-        where localBySize[pin.relativePath] != nil
-            && !isExcluded(relativePath: pin.relativePath, rules: rules)
-        {
+        // `localBySize` is already post-exclusion, so a pin on an excluded
+        // path is silently out of scope here — which is right: the bytes it
+        // pins were never imported.
+        for pin in pinnedHashes where localBySize[pin.relativePath] != nil {
             guard let actual = localHash(pin.relativePath) else { continue }
             if actual.caseInsensitiveCompare(pin.sha256) != .orderedSame {
                 findings.append(

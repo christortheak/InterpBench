@@ -415,6 +415,22 @@ struct WorkspaceImportVerificationTests {
         #expect(findings.isEmpty)
     }
 
+    /// …and the same rules apply to the LOCAL side, or a directory that
+    /// already holds an excluded file fails its own count comparison for ever:
+    /// rsync will never bring the remote twin over to make raw counts agree.
+    @Test func excludedLocalPathsAreCountedOnNeitherSide() {
+        let findings = WorkspaceImportPolicy.verify(
+            remote: [stat("plan.json", 10), stat("manifest.json", 4)],
+            local: [
+                stat("plan.json", 10),
+                stat("manifest.json", 4),
+                stat("evidence.tar.gz", 1_000_000),
+                stat("run/adapter/checkpoints/step-1/optimizer.pt", 2_000_000),
+            ],
+            exclusions: WorkspaceImportPolicy.exclusions(for: .submit))
+        #expect(findings.isEmpty)
+    }
+
     @Test func theImmutabilityRefusalNamesTheFileAndForbidsARetry() {
         let text = WorkspaceImportPolicy.immutabilityRefusal(
             directory: "20260819T101500123-exp-alpha-run",
@@ -527,6 +543,97 @@ struct WorkspaceRunImportOperationTests {
         #expect(report.imported.isEmpty)
         guard case .alreadyComplete = report.directories.first?.outcome else {
             Issue.record("expected alreadyComplete, got \(String(describing: report.directories.first))")
+            return
+        }
+    }
+
+    /// An EMPTY remote inventory can never certify a populated local
+    /// directory. Before 2026-08-24 it certified 31 of them: `gaps` is derived
+    /// entirely from the remote inventory, so "no gaps" over an empty one says
+    /// nothing at all.
+    @Test func anEmptyRemoteInventoryNeverCertifiesAPopulatedDirectory() async {
+        let fake = FakeImportRemote()
+        let run = "\(stamp)-exp-alpha-run"
+        fake.directories = [run]
+        fake.inventories[run] = []
+        fake.localFiles[run] = remote(files: [
+            ("config.json", 120), ("generations.jsonl", 4096),
+        ])
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.transferred.isEmpty)
+        guard
+            case .refusedEmptyRemoteInventory(let localFiles)?
+                = report.directories.first?.outcome
+        else {
+            Issue.record(
+                "expected a refusal, got \(String(describing: report.directories.first))")
+            return
+        }
+        #expect(localFiles == 2)
+        let violation = report.violations.joined(separator: "\n")
+        #expect(violation.contains(run))
+        #expect(violation.contains("inventory failed"))
+        #expect(violation.contains("remote run really is gone"))
+        let text = WorkspaceRunImport.summaryLines(report).joined(separator: "\n")
+        #expect(text.contains("REFUSED"))
+        #expect(!text.contains("already complete"))
+    }
+
+    /// …and a directory that is empty on BOTH sides is not a refusal: there is
+    /// nothing there to be wrong about.
+    @Test func anEmptyDirectoryOnBothSidesIsStillComplete() async {
+        let fake = FakeImportRemote()
+        let run = "\(stamp)-exp-alpha-run"
+        fake.directories = [run]
+        fake.inventories[run] = []
+        fake.localFiles[run] = []
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(report.violations.isEmpty)
+        guard case .alreadyComplete = report.directories.first?.outcome else {
+            Issue.record(
+                "expected alreadyComplete, got \(String(describing: report.directories.first))")
+            return
+        }
+    }
+
+    /// The exclusion rules apply to BOTH sides of the count. A directory that
+    /// already holds an excluded file — a tarball copied home before the rule
+    /// existed — must not fail its own verification for ever, because rsync
+    /// will never bring the remote twin over to make the raw counts agree.
+    @Test func policyExcludedPathsAreDroppedFromBothSidesOfTheCount() async {
+        let fake = FakeImportRemote()
+        let submit = "\(stamp)-submit-alpha-run"
+        let tarball = "alpha.evidence-bundle.tar.gz"
+        fake.directories = [submit]
+        fake.inventories[submit] = remote(files: [
+            ("plan.json", 128), ("manifest.json", 64), (tarball, 30_000_000),
+        ])
+        fake.localFiles[submit] = remote(files: [("plan.json", 128), (tarball, 30_000_000)])
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(report.violations.isEmpty, "the tarball is excluded, not missing")
+        guard case .imported(let files, _)? = report.directories.first?.outcome else {
+            Issue.record(
+                "expected the one gap to be filled, got \(String(describing: report.directories.first))")
+            return
+        }
+        #expect(files == 1)
+
+        // The field report's second case, stated on its own: excluded remotely,
+        // absent locally, and complete.
+        let clean = FakeImportRemote()
+        clean.directories = [submit]
+        clean.inventories[submit] = remote(files: [
+            ("plan.json", 128), ("manifest.json", 64), (tarball, 30_000_000),
+        ])
+        clean.localFiles[submit] = remote(files: [("plan.json", 128), ("manifest.json", 64)])
+        let second = await WorkspaceRunImport.run(engine: clean.engine())
+        #expect(clean.transferred.isEmpty)
+        guard case .alreadyComplete = second.directories.first?.outcome else {
+            Issue.record(
+                "expected alreadyComplete, got \(String(describing: second.directories.first))")
             return
         }
     }
@@ -884,14 +991,14 @@ struct WorkspaceImportTransferSeamTests {
 
     /// The remote inventory parser turns `find -printf '%p\t%s\n'` into
     /// directory-relative stats, and ignores anything outside the requested set.
-    @Test func inventoryParsingIsRelativeToTheRunDirectory() {
+    @Test func inventoryParsingIsRelativeToTheRunDirectory() throws {
         let lines = [
             "/scratch/runs/20260819T101500123-exp-alpha-run/config.json\t120",
             "/scratch/runs/20260819T101500123-exp-alpha-run/sub/dir/file.jsonl\t4096",
             "/scratch/runs/somebody-elses-tree/file\t9",
             "not a find line",
         ]
-        let parsed = WorkspaceRunImport.parseInventory(
+        let parsed = try WorkspaceRunImport.parseInventory(
             lines, runRoot: "/scratch/runs",
             names: ["20260819T101500123-exp-alpha-run"])
         #expect(parsed.count == 1)
@@ -906,7 +1013,7 @@ struct WorkspaceImportTransferSeamTests {
     }
 
     /// The setup refusals are typed, with a stable code and a concrete repair.
-    @Test func setupRefusalsAreTypedAndActionable() throws {
+    @Test func setupRefusalsAreTypedAndActionable() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(component: "steerlab-import-setup-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -914,19 +1021,185 @@ struct WorkspaceImportTransferSeamTests {
 
         var direct = ClusterSiteProfile.exampleCluster
         direct.transport = .direct(baseURL: URL(string: "http://127.0.0.1:8080")!)
-        #expect(throws: WorkspaceRunImport.SetupError.noSSHTransport(siteID: "site-a")) {
-            _ = try WorkspaceRunImport.liveEngine(
+        await #expect(
+            throws: WorkspaceRunImport.SetupError.noSSHTransport(siteID: "site-a")
+        ) {
+            _ = try await WorkspaceRunImport.liveEngine(
                 site: direct, siteID: "site-a", workspaceRoot: root,
                 shell: NeverRunShell())
         }
 
         // ssh, but no declared storage roots: nothing to enumerate.
         let noRoots = ClusterSiteProfile.exampleCluster
-        #expect(throws: WorkspaceRunImport.SetupError.noRemoteRunRoot(siteID: "site-a")) {
-            _ = try WorkspaceRunImport.liveEngine(
+        await #expect(
+            throws: WorkspaceRunImport.SetupError.noRemoteRunRoot(siteID: "site-a")
+        ) {
+            _ = try await WorkspaceRunImport.liveEngine(
                 site: noRoots, siteID: "site-a", workspaceRoot: root,
                 shell: NeverRunShell())
         }
+    }
+}
+
+// =============================================================================
+// MARK: - The run root, resolved on the far side (2026-08-24 defect)
+//
+// A site profile may declare its run storage root as a shell EXPRESSION, which
+// is the right shape for a site file shared between researchers. The remote
+// shell expands it, so `find` prints EXPANDED paths; before this suite the
+// client compared them against the UNEXPANDED template, matched nothing, and
+// reported every directory empty — which then certified incomplete directories
+// complete. The fixtures below are the shape no fixture had: a far side whose
+// shell actually expands.
+// =============================================================================
+
+/// A far side that expands what its shell is handed. `find` answers with
+/// EXPANDED paths, exactly as a real cluster does.
+private final class ExpandingRemoteShell: ClusterShellRunner, @unchecked Sendable {
+    // @unchecked Sendable: written only by the serialized test body and the
+    // operation under test; never escapes the test.
+    let expandedRoot: String
+    var files: [(path: String, size: Int64)] = []
+    /// Overrides the round trip's reply: nil answers normally.
+    var expansionReply: ClusterShellResult?
+    private(set) var commands: [String] = []
+
+    init(expandedRoot: String) {
+        self.expandedRoot = expandedRoot
+    }
+
+    /// Every remote command word the far side was handed, joined — the argv's
+    /// last element is the whole remote command string.
+    var findCommands: [String] {
+        commands.filter { $0.hasPrefix("find") }
+    }
+
+    func run(_ argv: [String]) async -> ClusterShellResult {
+        let command = argv.last ?? ""
+        commands.append(command)
+        if command.contains(WorkspaceRunImport.runRootAnswerMarker) {
+            return expansionReply
+                ?? ClusterShellResult(
+                    exitCode: 0,
+                    lines: ["\(WorkspaceRunImport.runRootAnswerMarker)\(expandedRoot)"])
+        }
+        if command.hasPrefix("find") {
+            return ClusterShellResult(
+                exitCode: 0,
+                lines: files.map { "\(expandedRoot)/\($0.path)\t\($0.size)" })
+        }
+        return ClusterShellResult(exitCode: 0)
+    }
+}
+
+struct WorkspaceRunImportRemoteRootTests {
+
+    private let declaredRoot = "/scratch/${USER:-$(id -un)}/ws/runs"
+    private let expandedRoot = "/scratch/someone/ws/runs"
+    private let run = "20260819T101500123-exp-alpha-run"
+
+    private func siteDeclaringAnExpression() -> ClusterSiteProfile {
+        var profile = ClusterSiteProfile.exampleCluster
+        profile.transport = .ssh(
+            host: "user@login.example.edu", proxyJump: nil, remotePort: 8080,
+            vpnExpected: false)
+        profile.constraints.storageRoots["run"] = declaredRoot
+        return profile
+    }
+
+    private func workspace() throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appending(component: "steerlab-import-root-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    /// The regression the field report asked for: a declared shell expression
+    /// plus a far side that expands it. The inventory must be NON-EMPTY, and
+    /// the `find` must have been given the expanded root — the prefix the
+    /// client compares is byte-derived from the same string.
+    @Test func anExpandedRunRootIsUsedForBothTheFindAndThePrefix() async throws {
+        let root = try workspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let shell = ExpandingRemoteShell(expandedRoot: expandedRoot)
+        shell.files = [
+            (path: "\(run)/config.json", size: 120),
+            (path: "\(run)/generations.jsonl", size: 4096),
+        ]
+
+        let engine = try await WorkspaceRunImport.liveEngine(
+            site: siteDeclaringAnExpression(), siteID: "site-a",
+            workspaceRoot: root, shell: shell)
+        let inventory = try await engine.remoteInventory([run])
+
+        let stats = try #require(inventory[run])
+        #expect(
+            stats.sorted { $0.relativePath < $1.relativePath }
+                == [
+                    WorkspaceImportPolicy.FileStat(relativePath: "config.json", size: 120),
+                    WorkspaceImportPolicy.FileStat(
+                        relativePath: "generations.jsonl", size: 4096),
+                ])
+        let find = try #require(shell.findCommands.last)
+        #expect(find.contains(expandedRoot))
+        #expect(!find.contains(declaredRoot))
+    }
+
+    /// A round trip that fails, says nothing, or says several things REFUSES.
+    /// Falling back to the declared template is the defect itself.
+    @Test func anUnresolvableRunRootRefusesInsteadOfFallingBack() async throws {
+        let root = try workspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let replies: [ClusterShellResult] = [
+            ClusterShellResult(exitCode: 255, lines: ["connection closed"]),
+            ClusterShellResult(exitCode: 0, lines: ["motd: welcome"]),
+            ClusterShellResult(
+                exitCode: 0,
+                lines: [
+                    "\(WorkspaceRunImport.runRootAnswerMarker)/scratch/a/runs",
+                    "\(WorkspaceRunImport.runRootAnswerMarker)/scratch/b/runs",
+                ]),
+        ]
+        for reply in replies {
+            let shell = ExpandingRemoteShell(expandedRoot: expandedRoot)
+            shell.expansionReply = reply
+            do {
+                _ = try await WorkspaceRunImport.liveEngine(
+                    site: siteDeclaringAnExpression(), siteID: "site-a",
+                    workspaceRoot: root, shell: shell)
+                Issue.record("an unresolvable run root must refuse")
+            } catch let error as WorkspaceRunImport.SetupError {
+                #expect(error.code == "runRootUnresolved")
+                #expect(error.reason.contains(declaredRoot))
+                #expect(error.repairAction.contains("site-a"))
+            }
+            #expect(shell.findCommands.isEmpty, "nothing may be enumerated after a refusal")
+        }
+    }
+
+    /// The loud discard. `find` printed real lines and not one of them sat
+    /// under the root we compared against: a defect, named, with the expected
+    /// prefix and one observed path — never an empty directory.
+    @Test func aListingUnderNoKnownRootIsATypedErrorNotAnEmptyResult() throws {
+        let lines = [
+            "\(expandedRoot)/\(run)/config.json\t120",
+            "\(expandedRoot)/\(run)/report.json\t64",
+        ]
+        // The pre-fix comparison: expanded output against the declared template.
+        do {
+            _ = try WorkspaceRunImport.parseInventory(
+                lines, runRoot: declaredRoot, names: [run])
+            Issue.record("a listing under no known root must throw")
+        } catch let error as WorkspaceRunImport.InventoryError {
+            #expect(error.code == "inventoryPrefixMismatch")
+            #expect(error.reason.contains(declaredRoot))
+            #expect(error.reason.contains("\(expandedRoot)/\(run)/config.json"))
+        }
+
+        // A genuinely empty listing is still an empty result, not an error.
+        #expect(try WorkspaceRunImport.parseInventory(
+            [], runRoot: expandedRoot, names: [run]).isEmpty)
     }
 }
 
