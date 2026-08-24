@@ -98,6 +98,8 @@ extension ExperimentTasks {
         record.armingIsolated = fields.isolated
         record.armingPromptMode = fields.promptMode
         record.armingSystemPrompt = fields.systemPrompt
+        record.armingSystemPromptHash = .some(fields.systemPromptHash)
+        record.armingSystemPromptComposition = fields.composition
         record.armingMaxTokens = fields.maxTokens
         return record
     }

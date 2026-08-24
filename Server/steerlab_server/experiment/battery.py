@@ -31,7 +31,11 @@ pinned hash keeps its historical meaning; the contaminated case is now LOUD
   none), ``qwenThinkingEnabled``, ``maxTokens`` — which is applied identically
   to baseline, steering, and variant conditions. The intervention is then the
   ONLY thing that differs across conditions, which is the whole point of a
-  capability control.
+  capability control. The one thing that reaches a v2 reading from outside
+  the file is the arm's AGENT persona, composed ahead of the declared arming
+  text (2026-08-24 ruling; see :func:`resolve_arming`): the agent IS the model
+  under test, while the study's deployment frame — the thing that produced the
+  0.45-vs-1.00 split below — never enters a battery generation at all.
 * **defaults to ``choiceProbability`` scoring**: each item declares its
   ``options``, and the item is scored by the answer-token logprob instrument
   (:mod:`.logprob`, the same stepped KV-cache machinery a study's categorical
@@ -145,39 +149,87 @@ class BatteryArming:
     """The generation/rendering context a battery is actually scored under."""
 
     prompt_mode: str
+    #: The EFFECTIVE system prompt of the reading — for format 2, the agent's
+    #: persona composed with the battery's own declared arming text; for
+    #: format 1, the surrounding instrument's context, exactly as before.
     system_prompt: str | None
     qwen_thinking_enabled: bool
     max_tokens: int
     isolated: bool
+    #: The two LEVELS behind ``system_prompt`` on a format-2 reading: the arm's
+    #: agent persona and the battery file's own declared text. Both None on a
+    #: format-1 reading, whose arming has no composition to describe.
+    agent_system_prompt: str | None = None
+    declared_system_prompt: str | None = None
 
     def as_record_fields(self) -> dict:
         """JSON-safe provenance for a battery.jsonl record. Only the system
-        prompt's PRESENCE is stamped (the text itself is the instrument's, is
-        already in the manifest snapshot, and would bloat every row)."""
+        prompt's PRESENCE is stamped as a bool (the text itself is the
+        instrument's, is already in the manifest snapshot, and would bloat
+        every row) — plus, since the 2026-08-24 composition ruling, the
+        HASHES that say which levels produced it.
+
+        ``armingSystemPromptComposition`` spells its second key ``battery``,
+        not ``study``: a battery generation's second term is the battery
+        file's declared arming, and the study frame never enters one. The
+        difference in spelling from a study record's
+        ``systemPromptComposition`` is the point.
+
+        Stamped on format-2 rows only (the caller applies these fields under
+        ``spec.isolated``), so a legacy row's key set is untouched.
+        """
+        from . import system_prompt as system_prompt_mod
         return {"armingIsolated": self.isolated,
                 "armingPromptMode": self.prompt_mode,
                 "armingSystemPrompt": bool(self.system_prompt),
+                "armingSystemPromptHash":
+                    system_prompt_mod.text_hash(self.system_prompt),
+                "armingSystemPromptComposition":
+                    system_prompt_mod.composition(
+                        self.agent_system_prompt, self.declared_system_prompt,
+                        frame_key="battery"),
                 "armingMaxTokens": self.max_tokens}
 
 
 def resolve_arming(spec: BatterySpec, *, prompt_mode: str | None = None,
                    system_prompt: str | None = None,
-                   qwen_thinking_enabled: bool = False) -> BatteryArming:
+                   qwen_thinking_enabled: bool = False,
+                   agent_system_prompt: str | None = None) -> BatteryArming:
     """The arming a battery is scored under.
 
-    Format 2 ignores the caller's instrument context entirely and uses what
-    the battery file declares — the same arming for baseline, steering, and
-    variant conditions, which is what makes a reading comparable across
-    instruments and across conditions. Format 1 keeps the historical
-    behaviour: the surrounding instrument's rendering context leaks in, so
-    its readings stay reproducible (and its pinned hash keeps its meaning).
+    Format 2 ignores the caller's *instrument* context entirely and uses what
+    the battery file declares — the same rendering context for baseline,
+    steering, and variant conditions, which is what makes a reading comparable
+    across instruments and across conditions.
+
+    **Battery isolation under composition (2026-08-24 ruling).** One thing
+    does reach a format-2 reading from outside the file: the arm's AGENT
+    persona, composed FIRST, ahead of the battery's own declared arming text
+    (:func:`system_prompt.compose`). The agent is the model under test — an
+    agent whose capability is measured without its identity is not the thing
+    the study runs — whereas the STUDY FRAME is the deployment context of the
+    study's own task and has no business shaping a capability control. So a
+    baseline arm (no agent) reads under the battery's arming ALONE, and an
+    agent arm reads under persona + battery arming. ``agent_system_prompt`` is
+    the only channel for it; ``system_prompt`` remains the format-1 caller
+    context and is ignored here exactly as it always was.
+
+    Format 1 keeps the historical behaviour untouched, ``agent_system_prompt``
+    included (it is ignored): the surrounding instrument's rendering context
+    leaks in, so its readings stay reproducible and its pinned hash keeps its
+    meaning.
     """
     if spec.isolated:
-        return BatteryArming(prompt_mode=spec.prompt_mode,
-                             system_prompt=spec.system_prompt,
-                             qwen_thinking_enabled=spec.qwen_thinking_enabled,
-                             max_tokens=spec.max_tokens,
-                             isolated=True)
+        from . import system_prompt as system_prompt_mod
+        return BatteryArming(
+            prompt_mode=spec.prompt_mode,
+            system_prompt=system_prompt_mod.compose(agent_system_prompt,
+                                                    spec.system_prompt),
+            qwen_thinking_enabled=spec.qwen_thinking_enabled,
+            max_tokens=spec.max_tokens,
+            isolated=True,
+            agent_system_prompt=agent_system_prompt,
+            declared_system_prompt=spec.system_prompt)
     return BatteryArming(prompt_mode=prompt_mode or _DEFAULT_PROMPT_MODE,
                          system_prompt=system_prompt,
                          qwen_thinking_enabled=bool(qwen_thinking_enabled),

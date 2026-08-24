@@ -145,6 +145,9 @@ def test_a_v2_battery_scores_and_speaks_battery_jsonl_vocabulary(
     assert set(item) == {
         "promptIndex", "promptID", "prompt", "answer", "batteryFormat",
         "armingIsolated", "armingPromptMode", "armingSystemPrompt",
+        # Additive since the 2026-08-24 composition ruling: WHICH levels
+        # produced this reading's arming, and the effective hash of it.
+        "armingSystemPromptHash", "armingSystemPromptComposition",
         "armingMaxTokens", "batteryHash", "scoring", "options",
         "choiceProbability", "selected", "output", "correct",
     }

@@ -92,7 +92,17 @@ public enum ExperimentTasks {
         let taskPromptsFile: String
         let taskPromptsHash: String
         let promptMode: String
+        /// The EFFECTIVE system prompt this arm generated under — the agent's
+        /// persona composed with the study's frame, persona first
+        /// (`SystemPromptComposition`). Never one level alone: replacement
+        /// semantics are what the 2026-08-24 ruling ended.
         let systemPrompt: String?
+        /// WHICH levels produced `systemPrompt`, as hashes. Always encoded
+        /// (both keys explicit, `null` when that level contributed nothing) —
+        /// the server stamps `systemPromptComposition` on every record beside
+        /// its `systemPromptHash`, and an absent key would read as "this
+        /// engine does not stamp composition".
+        var systemPromptComposition: SystemPromptCompositionStamp = .none
         let qwenThinkingEnabled: Bool
         let condition: String
         let seed: UInt64
@@ -206,7 +216,11 @@ public enum ExperimentTasks {
         let taskPromptsFile: String
         let taskPromptsHash: String
         let promptMode: String
+        /// The EFFECTIVE system prompt this readout was taken under, and
+        /// which levels produced it — same contract as
+        /// `GenerationRecord.systemPrompt`/`systemPromptComposition`.
         let systemPrompt: String?
+        var systemPromptComposition: SystemPromptCompositionStamp = .none
         let qwenThinkingEnabled: Bool
         let condition: String
         let promptIndex: Int
@@ -345,11 +359,23 @@ public enum ExperimentTasks {
         var options: [String]? = nil
         var choiceProbability: [String: Double]? = nil
         var selected: String? = nil
-        /// What the reading was ARMED with — the four arming fields the
-        /// server stamps, spelled identically.
+        /// What the reading was ARMED with — the arming fields the server
+        /// stamps, spelled identically.
         var armingIsolated: Bool? = nil
         var armingPromptMode: String? = nil
         var armingSystemPrompt: Bool? = nil
+        /// The effective arming system prompt's hash, and WHICH levels
+        /// produced it (2026-08-24 composition ruling). The composition's
+        /// second key is `battery`, not `study`: the study frame never enters
+        /// a battery generation. Format-2 rows only, like their neighbours.
+        ///
+        /// The double Optional is this file's established idiom for "absent
+        /// and null are different claims" (see `GenerationRecord
+        /// .parsedChoice`): outer nil ⇒ key omitted, which is every format-1
+        /// row; inner nil ⇒ JSON `null`, a format-2 row armed with no system
+        /// text at all. The server stamps exactly that shape.
+        var armingSystemPromptHash: String?? = nil
+        var armingSystemPromptComposition: BatteryArmingCompositionStamp? = nil
         var armingMaxTokens: Int? = nil
     }
 
@@ -2099,6 +2125,21 @@ public enum ExperimentTasks {
                 // the vector was: a probe score is a projection onto that
                 // direction, and a raw-tokenized scenario is a sample from a
                 // different distribution than a templated one.
+                //
+                // VALIDATION IS FRAME-FREE, deliberately: the study's
+                // `manifest.systemPrompt` — and, since the 2026-08-24
+                // composition ruling, any agent persona composed with it —
+                // governs GENERATION arming and nothing else. It must never
+                // reach a held-out read, or the probe would score a
+                // distribution the vector was not extracted from and the
+                // accuracy would move with a run-time deployment choice. The
+                // ONE sanctioned channel for persona- or template-conditioned
+                // validation is the recipe's own pinned
+                // `extractionRendering.systemPrompt`, resolved here — it is
+                // part of recipe identity, so extraction and validation
+                // cannot silently disagree about it. (Asserted by
+                // `SystemPromptCompositionTests`; server twin: the rendering
+                // resolution in `tasks._task_validate`.)
                 let (labels, corpusActs) = try await corpusActivations(
                     ref.options.readingPosition,
                     ref.options.resolvedExtractionRendering)
@@ -2508,9 +2549,16 @@ public enum ExperimentTasks {
             let systemPrompt = runtime.variant?.systemPrompt ?? manifest.systemPrompt
             let qwenThinking = runtime.variant?.qwenThinkingEnabled
                 ?? manifest.qwenThinkingEnabled ?? false
+            // `systemPrompt:` is the FORMAT-1 caller context and keeps its
+            // historical replacement shape, so a legacy battery's pinned hash
+            // keeps its meaning. `agentSystemPrompt:` is the format-2 channel
+            // (2026-08-24 battery-isolation ruling): the arm's persona
+            // composes ahead of the battery's own declared arming, and the
+            // study frame enters neither — baseline reads the battery bare.
             let arming = battery.resolveArming(
                 promptMode: promptMode, systemPrompt: systemPrompt,
-                qwenThinkingEnabled: qwenThinking)
+                qwenThinkingEnabled: qwenThinking,
+                agentSystemPrompt: runtime.variant?.systemPrompt)
             if let advisory = battery.contaminationAdvisory(arming) {
                 print("WARNING: \(advisory)")
             }
@@ -3707,6 +3755,12 @@ public enum ExperimentTasks {
         taskPromptsHash: String,
         promptMode: ExperimentManifest.PromptMode,
         systemPrompt: String?,
+        // WHICH levels produced `systemPrompt` (2026-08-24 composition
+        // ruling). Defaulted so the engine-pure unit tests that predate the
+        // ruling keep compiling; both run loops pass the stamp built
+        // alongside the effective text (`ArmSystemPrompt`), so a record can
+        // never describe a composition its generation did not run under.
+        systemPromptComposition: SystemPromptCompositionStamp = .none,
         qwenThinkingEnabled: Bool,
         condition: String,
         seed: UInt64,
@@ -3733,6 +3787,7 @@ public enum ExperimentTasks {
             taskPromptsHash: taskPromptsHash,
             promptMode: promptMode.rawValue,
             systemPrompt: systemPrompt,
+            systemPromptComposition: systemPromptComposition,
             qwenThinkingEnabled: qwenThinkingEnabled,
             condition: condition,
             seed: seed,
@@ -3771,6 +3826,8 @@ public enum ExperimentTasks {
         taskPromptsHash: String,
         promptMode: ExperimentManifest.PromptMode,
         systemPrompt: String?,
+        /// Same contract as `sampledGenerationRecord`'s.
+        systemPromptComposition: SystemPromptCompositionStamp = .none,
         qwenThinkingEnabled: Bool,
         condition: String,
         promptIndex: Int,
@@ -3812,6 +3869,7 @@ public enum ExperimentTasks {
             taskPromptsHash: taskPromptsHash,
             promptMode: promptMode.rawValue,
             systemPrompt: systemPrompt,
+            systemPromptComposition: systemPromptComposition,
             qwenThinkingEnabled: qwenThinkingEnabled,
             condition: condition,
             promptIndex: promptIndex,
@@ -4133,6 +4191,21 @@ public enum ExperimentTasks {
         var batterySummaries: [String: CapabilityBatterySummary] = [:]
         var batteryHandle: FileHandle?
         defer { try? batteryHandle?.close() }
+        // Every arm of THIS loop is agent-free — baseline and steering
+        // conditions carry no persona — so the 2026-08-24 composition
+        // degrades to the study frame itself, byte for byte what this loop
+        // has always rendered and stamped. It goes through `ArmSystemPrompt`
+        // anyway so there is ONE place per loop where an arm's arming is
+        // resolved, and so the record stamp is built from the same two levels
+        // the generation used (server `_effective_ordinary_condition` twin).
+        let armSystemPrompt = ArmSystemPrompt(
+            agent: nil, study: manifest.systemPrompt)
+        // No comparability advisory here, by construction rather than by
+        // omission: every arm of this loop resolves the SAME
+        // `armSystemPrompt`, so `SystemPromptComposition.divergenceAdvisory`
+        // could only ever return nil. `runVariantComparison` — the loop that
+        // can mix agent arms with a bare baseline — emits it.
+
         if let file = manifest.capabilityBatteryFile,
             let pinned = manifest.capabilityBatteryHash
         {
@@ -4142,6 +4215,10 @@ public enum ExperimentTasks {
                 throw ExperimentError(reason: "capability battery '\(file)' is empty")
             }
             runBattery = (battery, pinned)
+            // `systemPrompt:` is the FORMAT-1 caller context, unchanged so a
+            // legacy battery's pinned hash keeps its historical meaning. No
+            // `agentSystemPrompt:` — these arms have no persona, so a
+            // format-2 reading here is armed by the battery file alone.
             let arming = battery.resolveArming(
                 promptMode: manifest.promptMode ?? .chatAssistant,
                 systemPrompt: manifest.systemPrompt,
@@ -4196,7 +4273,7 @@ public enum ExperimentTasks {
                         modelID: manifest.modelID,
                         injections: conditionInjections,
                         promptMode: manifest.promptMode ?? .chatAssistant,
-                        systemPrompt: manifest.systemPrompt,
+                        systemPrompt: armSystemPrompt.effective,
                         qwenThinkingEnabled: manifest.qwenThinkingEnabled ?? false,
                         transcript: prompt.transcript)
                     try checkOptionLengths(
@@ -4207,7 +4284,8 @@ public enum ExperimentTasks {
                         taskPromptsFile: taskPrompts.file,
                         taskPromptsHash: taskPrompts.hash,
                         promptMode: manifest.promptMode ?? .chatAssistant,
-                        systemPrompt: manifest.systemPrompt,
+                        systemPrompt: armSystemPrompt.effective,
+                        systemPromptComposition: armSystemPrompt.stamp,
                         qwenThinkingEnabled: manifest.qwenThinkingEnabled ?? false,
                         condition: condition.name,
                         promptIndex: index + 1,
@@ -4309,7 +4387,7 @@ public enum ExperimentTasks {
                         maxTokens: manifest.maxTokens, temperature: manifest.temperature,
                         injections: conditionInjections,
                         promptMode: manifest.promptMode ?? .chatAssistant,
-                        systemPrompt: manifest.systemPrompt,
+                        systemPrompt: armSystemPrompt.effective,
                         qwenThinkingEnabled: manifest.qwenThinkingEnabled ?? false,
                         transcript: prompt.transcript
                     ) { output in
@@ -4354,7 +4432,8 @@ public enum ExperimentTasks {
                         taskPromptsFile: taskPrompts.file,
                         taskPromptsHash: taskPrompts.hash,
                         promptMode: manifest.promptMode ?? .chatAssistant,
-                        systemPrompt: manifest.systemPrompt,
+                        systemPrompt: armSystemPrompt.effective,
+                        systemPromptComposition: armSystemPrompt.stamp,
                         qwenThinkingEnabled: manifest.qwenThinkingEnabled ?? false,
                         condition: condition.name,
                         seed: seed,
@@ -5045,6 +5124,26 @@ public enum ExperimentTasks {
                     artifactHash: $0.artifactHash)
             }
 
+        // Comparability advisory (2026-08-24 ruling): are all the arms of
+        // this run armed with the same effective system content? Loud,
+        // non-blocking, and silent unless they diverge — which, before a
+        // researcher gives an agent a persona, they never do. A
+        // persona-varying design IS legitimate, so this cannot gate; what it
+        // must not do is let the difference pass unremarked, because a
+        // contrast between two differently-armed arms mixes identity and
+        // framing into whatever the intervention did. Server twin:
+        // `tasks._advise_system_prompt_divergence`.
+        if let advisory = SystemPromptComposition.divergenceAdvisory(
+            arms: runtimeConditions.map {
+                ($0.name,
+                 SystemPromptComposition.compose(
+                    agent: $0.variant?.systemPrompt,
+                    frame: pinnedManifest.systemPrompt))
+            })
+        {
+            emitRunAdvisory(advisory, to: runDirectory)
+        }
+
         var cancelled = false
         for condition in runtimeConditions {
             let activeAdapter: LoRAContainer?
@@ -5057,12 +5156,21 @@ public enum ExperimentTasks {
             let promptMode = condition.variant
                 .flatMap { ExperimentManifest.PromptMode(rawValue: $0.promptMode) }
                 ?? (pinnedManifest.promptMode ?? .chatAssistant)
-            let systemPrompt =
-                if let variant = condition.variant {
-                    variant.systemPrompt
-                } else {
-                    pinnedManifest.systemPrompt
-                }
+            // System-prompt COMPOSITION (maintainer ruling, 2026-08-24).
+            // This resolution used to be a REPLACEMENT: an agent arm ran
+            // under its persona with the study's frame silently not applied,
+            // while the baseline arm ran under the frame — so the frame was
+            // part of the contrast instead of held constant, and the two arms
+            // were not comparable. Now an agent arm runs under BOTH, persona
+            // first. An agent with no persona (every agent artifact in the
+            // workspace today, and every newborn agent since promotion
+            // stopped inheriting the frame) composes to the frame alone —
+            // byte-identical to the historical behaviour, baseline included.
+            // Server twin: `_effective_variant_condition`.
+            let armSystemPrompt = ArmSystemPrompt(
+                agent: condition.variant?.systemPrompt,
+                study: pinnedManifest.systemPrompt)
+            let systemPrompt = armSystemPrompt.effective
             let qwenThinking = condition.variant?.qwenThinkingEnabled
                 ?? pinnedManifest.qwenThinkingEnabled
                 ?? false
@@ -5121,6 +5229,7 @@ public enum ExperimentTasks {
                             taskPromptsHash: taskPrompts.hash,
                             promptMode: promptMode,
                             systemPrompt: systemPrompt,
+                            systemPromptComposition: armSystemPrompt.stamp,
                             qwenThinkingEnabled: qwenThinking,
                             condition: condition.name,
                             promptIndex: index + 1,
@@ -5243,6 +5352,7 @@ public enum ExperimentTasks {
                                 taskPromptsHash: taskPrompts.hash,
                                 promptMode: promptMode,
                                 systemPrompt: systemPrompt,
+                                systemPromptComposition: armSystemPrompt.stamp,
                                 qwenThinkingEnabled: qwenThinking,
                                 condition: condition.name,
                                 seed: seed,
@@ -5284,9 +5394,18 @@ public enum ExperimentTasks {
                 // injections the study outputs used). A cancelled battery
                 // drops the whole cell — never a partial accuracy.
                 if let (battery, batteryHash) = runBattery, let batteryHandle, !cancelled {
+                    // `systemPrompt:` — the format-1 caller context. It is
+                    // the arm's EFFECTIVE prompt, which for a legacy battery
+                    // is what the surrounding instrument armed with, exactly
+                    // as before. `agentSystemPrompt:` is the format-2 channel:
+                    // the persona composes ahead of the battery's own declared
+                    // arming, and the STUDY FRAME reaches a format-2 reading
+                    // through neither — a baseline arm reads the battery bare,
+                    // which is what makes it the control (2026-08-24 ruling).
                     let arming = battery.resolveArming(
                         promptMode: promptMode, systemPrompt: systemPrompt,
-                        qwenThinkingEnabled: qwenThinking)
+                        qwenThinkingEnabled: qwenThinking,
+                        agentSystemPrompt: condition.variant?.systemPrompt)
                     if !batteryAdvised,
                         let advisory = battery.contaminationAdvisory(arming)
                     {
@@ -9451,6 +9570,12 @@ public enum ExperimentTasks {
         // Held-out activations must be read where AND rendered how the
         // vector was — a projection onto the direction is only meaningful
         // against samples from the distribution it was read from.
+        //
+        // Frame-free by the same rule as the grand-mean path above: the study
+        // frame (and any composed agent persona) is generation arming and
+        // never enters a held-out read. The pinned
+        // `extractionRendering.systemPrompt` resolved here is the one
+        // sanctioned channel for a persona-conditioned validation.
         let rendering = options.resolvedExtractionRendering
         let positives = try await ConceptExtractor.activations(
             container: container, texts: stimuli.positive,

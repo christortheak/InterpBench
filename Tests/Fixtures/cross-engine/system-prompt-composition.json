@@ -1,0 +1,287 @@
+{
+  "advisories": [
+    {
+      "advisory": null,
+      "arms": [
+        {
+          "name": "baseline",
+          "systemPrompt": "Respond in JSON."
+        },
+        {
+          "name": "agent-x",
+          "systemPrompt": "Respond in JSON."
+        }
+      ],
+      "label": "all-identical"
+    },
+    {
+      "advisory": null,
+      "arms": [
+        {
+          "name": "baseline",
+          "systemPrompt": null
+        },
+        {
+          "name": "agent-x",
+          "systemPrompt": null
+        }
+      ],
+      "label": "all-bare"
+    },
+    {
+      "advisory": null,
+      "arms": [
+        {
+          "name": "baseline",
+          "systemPrompt": "Respond in JSON."
+        }
+      ],
+      "label": "single-arm"
+    },
+    {
+      "advisory": "arms in this run are armed with DIFFERENT effective system prompts \u2014 baseline (ae92fe3fd623\u2026), agent-x (29a5d6b656b2\u2026). A contrast between two such arms mixes identity and framing with the intervention; hold the system prompt constant across arms, or report the difference as part of the design. Not a refusal.",
+      "arms": [
+        {
+          "name": "baseline",
+          "systemPrompt": "Respond in JSON."
+        },
+        {
+          "name": "agent-x",
+          "systemPrompt": "You are Adjudicator-7.\n\nRespond in JSON."
+        }
+      ],
+      "label": "persona-on-one-arm"
+    },
+    {
+      "advisory": "arms in this run are armed with DIFFERENT effective system prompts \u2014 bare (none), framed (ae92fe3fd623\u2026). A contrast between two such arms mixes identity and framing with the intervention; hold the system prompt constant across arms, or report the difference as part of the design. Not a refusal.",
+      "arms": [
+        {
+          "name": "bare",
+          "systemPrompt": null
+        },
+        {
+          "name": "framed",
+          "systemPrompt": "Respond in JSON."
+        }
+      ],
+      "label": "bare-versus-framed"
+    },
+    {
+      "advisory": "arms in this run are armed with DIFFERENT effective system prompts \u2014 baseline (ae92fe3fd623\u2026), agent-x (5e815286bca5\u2026), agent-y (none). A contrast between two such arms mixes identity and framing with the intervention; hold the system prompt constant across arms, or report the difference as part of the design. Not a refusal.",
+      "arms": [
+        {
+          "name": "baseline",
+          "systemPrompt": "Respond in JSON."
+        },
+        {
+          "name": "agent-x",
+          "systemPrompt": "persona"
+        },
+        {
+          "name": "agent-y",
+          "systemPrompt": null
+        }
+      ],
+      "label": "three-way"
+    }
+  ],
+  "composition": [
+    {
+      "agent": "You are Adjudicator-7.",
+      "batteryStamp": {
+        "agent": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+        "battery": "ae92fe3fd623e74566d71d8853b9135af6c9e583c189f2240c76b775a4b5408e"
+      },
+      "effective": "You are Adjudicator-7.\n\nRespond in JSON.",
+      "effectiveHash": "29a5d6b656b2c8a8dbf621203820828c63b71c21823b1ca30f9fc39cedadf58f",
+      "label": "both",
+      "study": "Respond in JSON.",
+      "studyStamp": {
+        "agent": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+        "study": "ae92fe3fd623e74566d71d8853b9135af6c9e583c189f2240c76b775a4b5408e"
+      }
+    },
+    {
+      "agent": "You are Adjudicator-7.",
+      "batteryStamp": {
+        "agent": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+        "battery": null
+      },
+      "effective": "You are Adjudicator-7.",
+      "effectiveHash": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+      "label": "agent-only",
+      "study": null,
+      "studyStamp": {
+        "agent": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+        "study": null
+      }
+    },
+    {
+      "agent": "You are Adjudicator-7.",
+      "batteryStamp": {
+        "agent": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+        "battery": null
+      },
+      "effective": "You are Adjudicator-7.",
+      "effectiveHash": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+      "label": "agent-only-empty-frame",
+      "study": "",
+      "studyStamp": {
+        "agent": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+        "study": null
+      }
+    },
+    {
+      "agent": "You are Adjudicator-7.",
+      "batteryStamp": {
+        "agent": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+        "battery": "0aad7da77d2ed59c396c99a74e49f3a4524dcdbcb5163251b1433d640247aeb4"
+      },
+      "effective": "You are Adjudicator-7.",
+      "effectiveHash": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+      "label": "agent-only-blank-frame",
+      "study": "   ",
+      "studyStamp": {
+        "agent": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+        "study": "0aad7da77d2ed59c396c99a74e49f3a4524dcdbcb5163251b1433d640247aeb4"
+      }
+    },
+    {
+      "agent": null,
+      "batteryStamp": {
+        "agent": null,
+        "battery": "ae92fe3fd623e74566d71d8853b9135af6c9e583c189f2240c76b775a4b5408e"
+      },
+      "effective": "Respond in JSON.",
+      "effectiveHash": "ae92fe3fd623e74566d71d8853b9135af6c9e583c189f2240c76b775a4b5408e",
+      "label": "frame-only-null-agent",
+      "study": "Respond in JSON.",
+      "studyStamp": {
+        "agent": null,
+        "study": "ae92fe3fd623e74566d71d8853b9135af6c9e583c189f2240c76b775a4b5408e"
+      }
+    },
+    {
+      "agent": "",
+      "batteryStamp": {
+        "agent": null,
+        "battery": "ae92fe3fd623e74566d71d8853b9135af6c9e583c189f2240c76b775a4b5408e"
+      },
+      "effective": "Respond in JSON.",
+      "effectiveHash": "ae92fe3fd623e74566d71d8853b9135af6c9e583c189f2240c76b775a4b5408e",
+      "label": "frame-only-empty-agent",
+      "study": "Respond in JSON.",
+      "studyStamp": {
+        "agent": null,
+        "study": "ae92fe3fd623e74566d71d8853b9135af6c9e583c189f2240c76b775a4b5408e"
+      }
+    },
+    {
+      "agent": "   ",
+      "batteryStamp": {
+        "agent": "0aad7da77d2ed59c396c99a74e49f3a4524dcdbcb5163251b1433d640247aeb4",
+        "battery": "ae92fe3fd623e74566d71d8853b9135af6c9e583c189f2240c76b775a4b5408e"
+      },
+      "effective": "Respond in JSON.",
+      "effectiveHash": "ae92fe3fd623e74566d71d8853b9135af6c9e583c189f2240c76b775a4b5408e",
+      "label": "frame-only-blank-agent",
+      "study": "Respond in JSON.",
+      "studyStamp": {
+        "agent": "0aad7da77d2ed59c396c99a74e49f3a4524dcdbcb5163251b1433d640247aeb4",
+        "study": "ae92fe3fd623e74566d71d8853b9135af6c9e583c189f2240c76b775a4b5408e"
+      }
+    },
+    {
+      "agent": null,
+      "batteryStamp": {
+        "agent": null,
+        "battery": null
+      },
+      "effective": null,
+      "effectiveHash": null,
+      "label": "neither",
+      "study": null,
+      "studyStamp": {
+        "agent": null,
+        "study": null
+      }
+    },
+    {
+      "agent": "",
+      "batteryStamp": {
+        "agent": null,
+        "battery": null
+      },
+      "effective": "",
+      "effectiveHash": null,
+      "label": "neither-empty",
+      "study": "",
+      "studyStamp": {
+        "agent": null,
+        "study": null
+      }
+    },
+    {
+      "agent": "  padded persona  ",
+      "batteryStamp": {
+        "agent": "2b20fdb2d18e9d287031027e2c5b583c2161443af8e264625d0b2cc2c3d7ba5c",
+        "battery": "9dcbd64ba8a33e7d90d773635295e3b1cb378663d148e0ef7115ecd366c8c264"
+      },
+      "effective": "  padded persona  \n\n  padded frame  ",
+      "effectiveHash": "5a401a4de6dae373384d67ceafc4876ff5b629a538329200547da983e1a5442d",
+      "label": "untrimmed-both",
+      "study": "  padded frame  ",
+      "studyStamp": {
+        "agent": "2b20fdb2d18e9d287031027e2c5b583c2161443af8e264625d0b2cc2c3d7ba5c",
+        "study": "9dcbd64ba8a33e7d90d773635295e3b1cb378663d148e0ef7115ecd366c8c264"
+      }
+    },
+    {
+      "agent": "line one\nline two",
+      "batteryStamp": {
+        "agent": "b6858b03a6cae635deeaeab09a74e598979b72c917cbfff0bb3fe2cd05111dbc",
+        "battery": "ae92fe3fd623e74566d71d8853b9135af6c9e583c189f2240c76b775a4b5408e"
+      },
+      "effective": "line one\nline two\n\nRespond in JSON.",
+      "effectiveHash": "104a440e785d57302285de73a96e4cc604370d11b19209a913742761b7aea161",
+      "label": "multiline-agent",
+      "study": "Respond in JSON.",
+      "studyStamp": {
+        "agent": "b6858b03a6cae635deeaeab09a74e598979b72c917cbfff0bb3fe2cd05111dbc",
+        "study": "ae92fe3fd623e74566d71d8853b9135af6c9e583c189f2240c76b775a4b5408e"
+      }
+    },
+    {
+      "agent": "Tu es un juge \u2014 pr\u00e9cis.",
+      "batteryStamp": {
+        "agent": "4316510c271f2448c3b7b9fc50bc31b30b2e5d2b2528ea849e5df1bc533071c5",
+        "battery": "1b65ffd0cdc0397b4993f49ac8c237ca6606df2955e6ca579892dbe0e666ffeb"
+      },
+      "effective": "Tu es un juge \u2014 pr\u00e9cis.\n\nR\u00e9ponds en JSON\u2026",
+      "effectiveHash": "fec7aee8422a60d50be8c97e70a33fe5c99864ec4c1b743ac8843e2165005255",
+      "label": "non-ascii",
+      "study": "R\u00e9ponds en JSON\u2026",
+      "studyStamp": {
+        "agent": "4316510c271f2448c3b7b9fc50bc31b30b2e5d2b2528ea849e5df1bc533071c5",
+        "study": "1b65ffd0cdc0397b4993f49ac8c237ca6606df2955e6ca579892dbe0e666ffeb"
+      }
+    },
+    {
+      "agent": "persona\n\n",
+      "batteryStamp": {
+        "agent": "e522dcf9d94512487bb7d4d3940aed0c9b03e8f626b2dc7661337df5563e16d6",
+        "battery": "9dff50df08c635815f4b19da10f756605a34a79a48d4ba48712782502975a70e"
+      },
+      "effective": "persona\n\n\n\nframe",
+      "effectiveHash": "aeb85aaaf5632aca6c8fc3fb25d66f739cc6c25f5468bf518c898a5aea929b43",
+      "label": "already-blank-line",
+      "study": "frame",
+      "studyStamp": {
+        "agent": "e522dcf9d94512487bb7d4d3940aed0c9b03e8f626b2dc7661337df5563e16d6",
+        "study": "9dff50df08c635815f4b19da10f756605a34a79a48d4ba48712782502975a70e"
+      }
+    }
+  ],
+  "joiner": "\n\n",
+  "note": "produced by Server experiment/system_prompt.py \u2014 do not hand-edit; regenerate with scripts/regenerate-cross-engine-fixtures.py"
+}

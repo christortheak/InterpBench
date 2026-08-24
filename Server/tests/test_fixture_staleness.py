@@ -191,6 +191,8 @@ def test_every_committed_fixture_has_a_staleness_test():
         "scenario-diagnostics.json", "validation-layers.json",
         "validation-depth-lists.json",
         "choice-margins.json", "server-evidence-bundle.json",
+        # Checked inline in test_system_prompt_composition.py.
+        "system-prompt-composition.json",
     }
     present = {f for f in os.listdir(FIXTURES) if f.endswith(".json")}
     assert present <= covered, (

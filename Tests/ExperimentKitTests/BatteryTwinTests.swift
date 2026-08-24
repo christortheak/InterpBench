@@ -369,7 +369,12 @@ import Testing
                 "condition", "promptIndex", "prompt", "expected", "output",
                 "correct", "batteryFormat", "scoring", "options",
                 "choiceProbability", "selected", "armingIsolated",
-                "armingPromptMode", "armingSystemPrompt", "armingMaxTokens",
+                "armingPromptMode", "armingSystemPrompt",
+                // Additive since the 2026-08-24 composition ruling: WHICH
+                // levels produced this reading's arming, and its effective
+                // hash (`SystemPromptCompositionTests` pins the values).
+                "armingSystemPromptHash", "armingSystemPromptComposition",
+                "armingMaxTokens",
             ])
         #expect(json["scoring"] as? String == "choiceProbability")
         #expect(json["selected"] as? String == "Paris")

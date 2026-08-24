@@ -592,9 +592,78 @@ def evidence_bundle() -> None:
         shutil.rmtree(workspace, ignore_errors=True)
 
 
+def system_prompt_composition() -> None:
+    """The composition contract both engines must agree on byte for byte
+    (maintainer ruling, 2026-08-24): the effective prompt, its hash, the
+    additive stamps, and the comparability advisory's exact wording.
+
+    Cases deliberately cover the whitespace-only and empty-string spellings of
+    "no system prompt" — the two engines trim differently by default, and this
+    is where that would show — plus non-ASCII text, because the hash is over
+    raw UTF-8 bytes on both sides.
+    """
+    from steerlab_server.experiment import system_prompt as sp
+
+    cases = []
+    for label, agent, study in (
+        ("both", "You are Adjudicator-7.", "Respond in JSON."),
+        ("agent-only", "You are Adjudicator-7.", None),
+        ("agent-only-empty-frame", "You are Adjudicator-7.", ""),
+        ("agent-only-blank-frame", "You are Adjudicator-7.", "   "),
+        ("frame-only-null-agent", None, "Respond in JSON."),
+        ("frame-only-empty-agent", "", "Respond in JSON."),
+        ("frame-only-blank-agent", "   ", "Respond in JSON."),
+        ("neither", None, None),
+        ("neither-empty", "", ""),
+        ("untrimmed-both", "  padded persona  ", "  padded frame  "),
+        ("multiline-agent", "line one\nline two", "Respond in JSON."),
+        ("non-ascii", "Tu es un juge — précis.", "Réponds en JSON…"),
+        ("already-blank-line", "persona\n\n", "frame"),
+    ):
+        effective = sp.compose(agent, study)
+        cases.append({
+            "label": label,
+            "agent": agent,
+            "study": study,
+            "effective": effective,
+            "effectiveHash": sp.text_hash(effective),
+            "studyStamp": sp.composition(agent, study),
+            "batteryStamp": sp.composition(agent, study, frame_key="battery"),
+        })
+
+    advisories = []
+    for label, arms in (
+        ("all-identical", [("baseline", "Respond in JSON."),
+                           ("agent-x", "Respond in JSON.")]),
+        ("all-bare", [("baseline", None), ("agent-x", None)]),
+        ("single-arm", [("baseline", "Respond in JSON.")]),
+        ("persona-on-one-arm",
+         [("baseline", "Respond in JSON."),
+          ("agent-x", sp.compose("You are Adjudicator-7.", "Respond in JSON."))]),
+        ("bare-versus-framed", [("bare", None), ("framed", "Respond in JSON.")]),
+        ("three-way",
+         [("baseline", "Respond in JSON."), ("agent-x", "persona"),
+          ("agent-y", None)]),
+    ):
+        advisories.append({
+            "label": label,
+            "arms": [{"name": n, "systemPrompt": t} for n, t in arms],
+            "advisory": sp.divergence_advisory(arms),
+        })
+
+    _write(os.path.join(FIXTURES, "system-prompt-composition.json"),
+           {"note": "produced by Server experiment/system_prompt.py — do not "
+                    "hand-edit; regenerate with "
+                    "scripts/regenerate-cross-engine-fixtures.py",
+            "joiner": sp.JOINER,
+            "composition": cases,
+            "advisories": advisories})
+
+
 def main() -> int:
     os.makedirs(FIXTURES, exist_ok=True)
     promotion_keys()
+    system_prompt_composition()
     server_minted_agent()
     server_minted_adapter_agent()
     scenario_diagnostics()

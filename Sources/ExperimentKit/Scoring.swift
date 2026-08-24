@@ -405,16 +405,33 @@ public struct CapabilityBattery: Sendable {
 
     /// The arming this battery is scored under.
     ///
-    /// Format 2 ignores the caller's instrument context entirely and uses what
-    /// the battery FILE declares — the same arming for baseline, steering and
-    /// variant conditions, which is what makes a reading comparable across
-    /// instruments and across conditions. Format 1 keeps the historical
-    /// behaviour: the surrounding instrument's rendering context leaks in, so
-    /// its readings stay reproducible (and its pinned hash keeps its meaning).
+    /// Format 2 ignores the caller's *instrument* context entirely and uses
+    /// what the battery FILE declares — the same rendering context for
+    /// baseline, steering and variant conditions, which is what makes a
+    /// reading comparable across instruments and across conditions.
+    ///
+    /// **Battery isolation under composition (2026-08-24 ruling).** One thing
+    /// does reach a format-2 reading from outside the file: the arm's AGENT
+    /// persona, composed FIRST, ahead of the battery's own declared arming
+    /// text (`SystemPromptComposition.compose`). The agent is the model under
+    /// test — an agent whose capability is measured without its identity is
+    /// not the thing the study runs — whereas the STUDY FRAME is the
+    /// deployment context of the study's own task and has no business shaping
+    /// a capability control. So a baseline arm (no agent) reads under the
+    /// battery's arming ALONE, and an agent arm reads under persona + battery
+    /// arming. `agentSystemPrompt` is the only channel for it; `systemPrompt`
+    /// remains the format-1 caller context and is ignored here exactly as it
+    /// always was.
+    ///
+    /// Format 1 keeps the historical behaviour untouched, `agentSystemPrompt`
+    /// included (it is ignored): the surrounding instrument's rendering
+    /// context leaks in, so its readings stay reproducible and its pinned
+    /// hash keeps its meaning. Server twin: `battery.resolve_arming`.
     public func resolveArming(
         promptMode: ExperimentManifest.PromptMode? = nil,
         systemPrompt: String? = nil,
-        qwenThinkingEnabled: Bool = false
+        qwenThinkingEnabled: Bool = false,
+        agentSystemPrompt: String? = nil
     ) -> BatteryArming {
         guard isolated else {
             return BatteryArming(
@@ -426,10 +443,13 @@ public struct CapabilityBattery: Sendable {
         }
         return BatteryArming(
             promptModeName: promptModeName,
-            systemPrompt: self.systemPrompt,
+            systemPrompt: SystemPromptComposition.compose(
+                agent: agentSystemPrompt, frame: self.systemPrompt),
             qwenThinkingEnabled: self.qwenThinkingEnabled,
             maxTokens: maxTokens,
-            isolated: true)
+            isolated: true,
+            agentSystemPrompt: agentSystemPrompt,
+            declaredSystemPrompt: self.systemPrompt)
     }
 
     /// The warning a legacy battery earns when the surrounding instrument's
@@ -491,21 +511,32 @@ public struct BatteryArming: Sendable, Equatable {
     /// The prompt mode as WRITTEN — what a record stamps. `promptMode`
     /// resolves it for this engine's renderer.
     public let promptModeName: String
+    /// The EFFECTIVE system prompt of the reading — for format 2, the agent's
+    /// persona composed with the battery's own declared arming text; for
+    /// format 1, the surrounding instrument's context, exactly as before.
     public let systemPrompt: String?
     public let qwenThinkingEnabled: Bool
     public let maxTokens: Int
     /// True when this arming came from the battery file itself.
     public let isolated: Bool
+    /// The two LEVELS behind `systemPrompt` on a format-2 reading: the arm's
+    /// agent persona and the battery file's own declared text. Both nil on a
+    /// format-1 reading, whose arming has no composition to describe.
+    public let agentSystemPrompt: String?
+    public let declaredSystemPrompt: String?
 
     public init(
         promptModeName: String, systemPrompt: String?,
-        qwenThinkingEnabled: Bool, maxTokens: Int, isolated: Bool
+        qwenThinkingEnabled: Bool, maxTokens: Int, isolated: Bool,
+        agentSystemPrompt: String? = nil, declaredSystemPrompt: String? = nil
     ) {
         self.promptModeName = promptModeName
         self.systemPrompt = systemPrompt
         self.qwenThinkingEnabled = qwenThinkingEnabled
         self.maxTokens = maxTokens
         self.isolated = isolated
+        self.agentSystemPrompt = agentSystemPrompt
+        self.declaredSystemPrompt = declaredSystemPrompt
     }
 
     public var promptMode: ExperimentManifest.PromptMode {
@@ -514,13 +545,23 @@ public struct BatteryArming: Sendable, Equatable {
 
     /// JSON-safe provenance for a battery.jsonl record (server
     /// `BatteryArming.as_record_fields`, identical KEY NAMES). Only the
-    /// system prompt's PRESENCE is stamped — the text itself is the
+    /// system prompt's PRESENCE is stamped as a bool — the text itself is the
     /// instrument's, is already in the manifest snapshot, and would bloat
-    /// every row.
+    /// every row — plus, since the 2026-08-24 composition ruling, the HASHES
+    /// that say which levels produced it.
+    ///
+    /// `composition` spells its second key `battery`, not `study`: a battery
+    /// generation's second term is the battery file's declared arming, and
+    /// the study frame never enters one. The difference in spelling from a
+    /// study record's `systemPromptComposition` is the point.
     public var recordFields:
-        (isolated: Bool, promptMode: String, systemPrompt: Bool, maxTokens: Int)
+        (isolated: Bool, promptMode: String, systemPrompt: Bool, maxTokens: Int,
+         systemPromptHash: String?, composition: BatteryArmingCompositionStamp)
     {
-        (isolated, promptModeName, systemPrompt?.isEmpty == false, maxTokens)
+        (isolated, promptModeName, systemPrompt?.isEmpty == false, maxTokens,
+         SystemPromptComposition.hash(systemPrompt),
+         BatteryArmingCompositionStamp(
+            agentText: agentSystemPrompt, batteryText: declaredSystemPrompt))
     }
 }
 

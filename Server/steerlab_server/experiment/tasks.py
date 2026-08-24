@@ -34,6 +34,7 @@ from . import response_format
 from . import resume as resume_mod
 from . import run_epoch
 from . import sharding as sharding_mod
+from . import system_prompt as system_prompt_mod
 from . import choice_deltas
 from . import turn_endpoint
 from .generate import CellInjection, generate
@@ -1034,6 +1035,10 @@ def _effective_sae_latent_condition(spec, edit, provenance,
     like an ordinary condition — the ONE measurement pipeline applies here
     too. What differs is only the model configuration: no vector injections at
     all, and the latent edit carried in its own field.
+
+    A latent arm carries no agent identity, so the system-prompt composition
+    degrades to the study frame itself (:func:`_effective_ordinary_condition`
+    twin) — byte-identical to what it always rendered.
     """
     from . import sae_latent as _sae_latent
 
@@ -1043,9 +1048,11 @@ def _effective_sae_latent_condition(spec, edit, provenance,
         latent_edits=[edit],
         intervention_state=_sae_latent.intervention_state(spec, provenance),
         prompt_mode=manifest.prompt_mode,
-        system_prompt=manifest.system_prompt,
+        system_prompt=system_prompt_mod.compose(None, manifest.system_prompt),
         qwen_thinking_enabled=manifest.qwen_thinking_enabled,
-        temperature=manifest.temperature)
+        temperature=manifest.temperature,
+        agent_system_prompt=None,
+        study_system_prompt=manifest.system_prompt)
 
 
 def _intervention_state(condition) -> dict:
@@ -1200,6 +1207,41 @@ def _advise_dependency_lock_drift(run_directory: str | None, _log, *,
     with open(os.path.join(run_directory, "advisories.txt"), "a",
               encoding="utf-8") as handle:
         handle.write(advisory + "\n")
+
+
+def _advise_system_prompt_divergence(arms, run_directory: str | None, _log, *,
+                                     write_file: bool) -> None:
+    """Comparability advisory (2026-08-24 ruling): the arms of THIS run are
+    not all armed with the same effective system content.
+
+    Same shape as :func:`_advise_dependency_lock_drift` — an ``ADVISORY:``
+    line at the verb's start, appended to the run directory's
+    ``advisories.txt``, never a refusal and never a change to the numbers.
+
+    Silent in the universal case. Before composition landed, every arm of
+    every real run shared one ``systemPromptHash`` (empty personas fell back
+    to the study frame); after it, they still do unless a researcher gives an
+    agent a persona — which is precisely the design decision this line exists
+    to make visible rather than to prevent.
+
+    ``arms`` is an ordered ``(name, effective system prompt)`` sequence in the
+    run's own emission order, so the advisory reads in the order the run
+    executes.
+    """
+    advisory = system_prompt_mod.divergence_advisory(arms)
+    if not advisory:
+        return
+    _log(f"ADVISORY: {advisory}")
+    if not write_file or not run_directory:
+        return
+    # Append, like the lock-drift and case-family advisories: the
+    # cross-substrate advisory may already own this file for this run.
+    try:
+        with open(os.path.join(run_directory, "advisories.txt"), "a",
+                  encoding="utf-8") as handle:
+            handle.write(advisory + "\n")
+    except OSError:  # the advisory must never sink a run
+        pass
 
 
 def _advise_implicit_case_family(fires: bool, run_directory: str | None, _log,
@@ -1523,6 +1565,19 @@ def _validate_impl(name: str, manifest: Manifest, model, root, _log) -> str:
         # was: a probe score is a projection onto that direction, and a
         # raw-tokenized scenario is a sample from a different distribution
         # than a chat-template-rendered one (ledger §26).
+        #
+        # VALIDATION IS FRAME-FREE, deliberately: the study's
+        # `manifest.systemPrompt` — and, since the 2026-08-24 composition
+        # ruling, any agent persona composed with it — governs GENERATION
+        # arming and nothing else. It must never reach a held-out read, or the
+        # probe would score a distribution the vector was not extracted from
+        # and the accuracy would move with a run-time deployment choice. The
+        # ONE sanctioned channel for persona- or template-conditioned
+        # validation is the recipe's own pinned `extractionRendering
+        # .systemPrompt`, resolved here — it is part of recipe identity, so
+        # extraction and validation cannot silently disagree about it.
+        # (`test_system_prompt_composition.py` asserts this by test; Swift
+        # twin: the `resolvedExtractionRendering` sites in ExperimentTasks.)
         rendering = concept.options.extraction_rendering
         resolutions = _validation_layer_resolutions(
             manifest, concept_name, bundle.vectors.layer_count)
@@ -1941,10 +1996,17 @@ def _battery_results(manifest: Manifest, model, root, _log) -> list[dict]:
             f"capability battery '{battery_file}' drifted from the pinned hash "
             f"(have {digest[:12]}…, pinned {manifest.capability_battery_hash[:12]}…)")
 
-    def _score(injections, prompt_mode, system_prompt, thinking) -> int:
+    def _score(injections, prompt_mode, system_prompt, thinking, *,
+               agent_system_prompt=None) -> int:
+        # ``system_prompt`` is the FORMAT-1 caller context (unchanged, so a
+        # legacy battery's pinned hash keeps its meaning);
+        # ``agent_system_prompt`` is the format-2 persona, composed ahead of
+        # the battery's own declared arming. The study frame reaches neither
+        # on a format-2 reading — that is the isolation (2026-08-24 ruling).
         arming = battery_mod.resolve_arming(
             spec, prompt_mode=prompt_mode, system_prompt=system_prompt,
-            qwen_thinking_enabled=thinking)
+            qwen_thinking_enabled=thinking,
+            agent_system_prompt=agent_system_prompt)
         advisory = battery_mod.contamination_advisory(spec, arming)
         if advisory:
             _log(f"WARNING: {advisory}")
@@ -1991,7 +2053,8 @@ def _battery_results(manifest: Manifest, model, root, _log) -> list[dict]:
         try:
             correct = _score(injections, variant.prompt_mode,
                              variant.system_prompt,
-                             variant.qwen_thinking_enabled)
+                             variant.qwen_thinking_enabled,
+                             agent_system_prompt=variant.system_prompt)
         finally:
             model_variant.remove_adapter(model, adapter)
         results.append(_row(vc.name, correct))
@@ -5119,6 +5182,14 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     # sampling policy different from the manifest's declared one.
     _require_manifest_sampling_policy(manifest, model, root,
                                       wants_choice=wants_choice)
+    # …and the comparability question the same resolution answers (2026-08-24):
+    # are all the arms of this run armed with the SAME effective system
+    # content? Advisory, never a refusal, and silent unless they diverge.
+    # Computed over the FULL matrix, not this shard's slice: divergence is a
+    # property of the design, and every shard should say the same thing.
+    _advise_system_prompt_divergence(
+        _run_arm_system_prompts(manifest, conditions, latent_conditions, root),
+        run_directory, _log, write_file=not resuming)
     try:
         for condition in conditions:
             if plan is not None and not plan.condition_participates(condition.name):
@@ -5813,9 +5884,21 @@ class EffectiveCondition:
     injections: list[CellInjection]
     intervention_state: dict
     prompt_mode: str
+    #: The EFFECTIVE system prompt this arm generates under — the composition
+    #: of ``agent_system_prompt`` and ``study_system_prompt``
+    #: (:func:`system_prompt.compose`), never one of them alone. This is what
+    #: reaches the renderer and what ``systemPromptHash`` stamps.
     system_prompt: str | None
     qwen_thinking_enabled: bool
     temperature: float
+    #: The two LEVELS the effective prompt was composed from, kept beside it so
+    #: every record can stamp which level contributed what
+    #: (``systemPromptComposition``) and so the run-start comparability
+    #: advisory can name the arms. ``agent_system_prompt`` is None for every
+    #: arm that is not agent-backed — which is baseline, every steering
+    #: condition, and every SAE latent condition.
+    agent_system_prompt: str | None = None
+    study_system_prompt: str | None = None
     # Extra provenance keys stamped on EVERY record of this condition
     # (variantArtifactPath/variantArtifactHash/agentPlaygroundTemperature
     # for variant conditions — the last is the artifact's stored Playground
@@ -5845,15 +5928,22 @@ def _effective_ordinary_condition(condition, bundles, manifest) -> EffectiveCond
     """Baseline and concept conditions execute under the manifest's own
     prompt/sampling configuration; injections and intervention provenance
     resolve from the condition's slots exactly as before (matched-norm random
-    controls included)."""
+    controls included).
+
+    These arms carry no agent identity, so the composition
+    (:func:`system_prompt.compose`) degrades to the study frame itself — the
+    same object, byte for byte what these conditions have always rendered and
+    stamped."""
     return EffectiveCondition(
         name=condition.name,
         injections=_condition_injections(condition, bundles),
         intervention_state=_intervention_state(condition),
         prompt_mode=manifest.prompt_mode,
-        system_prompt=manifest.system_prompt,
+        system_prompt=system_prompt_mod.compose(None, manifest.system_prompt),
         qwen_thinking_enabled=manifest.qwen_thinking_enabled,
-        temperature=manifest.temperature)
+        temperature=manifest.temperature,
+        agent_system_prompt=None,
+        study_system_prompt=manifest.system_prompt)
 
 
 def _variant_intervention_state(vc, variant) -> dict:
@@ -5880,7 +5970,16 @@ def _effective_variant_condition(vc, manifest, model, root, *,
     """Resolve a variant condition to its effective configuration: the stored
     artifact's injections + prompt settings, plus provenance stamped on every
     record. Raises on an invalid variant (the run loop turns that into the
-    historical error record and continues)."""
+    historical error record and continues).
+
+    System-prompt COMPOSITION (maintainer ruling, 2026-08-24): an agent arm
+    generates under its own persona AND the study's frame — persona first
+    (:func:`system_prompt.compose`) — not under the persona with the frame
+    silently dropped, which is what replacement semantics did and what made
+    an agent arm incomparable to the baseline it is contrasted with. An agent
+    with no persona (every agent artifact in the workspace today, and every
+    newborn agent since `promote` stopped inheriting) composes to the frame
+    alone, byte-identically to the historical behaviour."""
     from . import model_variant
     variant = (model_variant.ModelVariant.from_dict(vc.artifact) if vc.artifact
                else model_variant.ModelVariant.from_file(
@@ -5918,7 +6017,8 @@ def _effective_variant_condition(vc, manifest, model, root, *,
         injections=model_variant.variant_injections(variant),
         intervention_state=_variant_intervention_state(vc, variant),
         prompt_mode=variant.prompt_mode,
-        system_prompt=variant.system_prompt,
+        system_prompt=system_prompt_mod.compose(
+            variant.system_prompt, manifest.system_prompt),
         qwen_thinking_enabled=variant.qwen_thinking_enabled,
         # Study-owned sampling (2026-07-21): the MANIFEST owns the measured-
         # run sampling policy for EVERY condition; an agent artifact's stored
@@ -5934,10 +6034,49 @@ def _effective_variant_condition(vc, manifest, model, root, *,
         # "temperature" field remains the single source of what governed
         # generation.
         temperature=manifest.temperature,
+        agent_system_prompt=variant.system_prompt,
+        study_system_prompt=manifest.system_prompt,
         provenance={"variantArtifactPath": vc.artifact_path,
                     "variantArtifactHash": vc.artifact_hash,
                     "agentPlaygroundTemperature": variant.temperature},
         variant=variant)
+
+
+def _run_arm_system_prompts(manifest, conditions, latent_conditions,
+                            root) -> list:
+    """``(arm name, effective system prompt)`` for every arm of the run
+    matrix, in the executor's own emission order (ordinary, then variants,
+    then latent).
+
+    Built from the same :func:`system_prompt.compose` rule the three
+    ``_effective_*_condition`` resolvers apply, so the advisory can never
+    describe an arming the run does not execute. It deliberately does NOT go
+    through those resolvers: they also build injection cells (loading every
+    vector from disk), and a run-start advisory must not pay for a third
+    resolution of the whole matrix. Only the agent artifact's persona is
+    read here — the one input the composition takes that this function does
+    not already have.
+
+    A variant whose artifact will not load is skipped rather than raised on:
+    the condition loop owns that failure (it becomes the historical error
+    record), and an advisory must never be the thing that sinks a run.
+    """
+    from . import model_variant
+    frame = manifest.system_prompt
+    ordinary = system_prompt_mod.compose(None, frame)
+    arms = [(c.name, ordinary) for c in conditions]
+    for vc in manifest.variant_conditions:
+        try:
+            variant = (model_variant.ModelVariant.from_dict(vc.artifact)
+                       if vc.artifact
+                       else model_variant.ModelVariant.from_file(
+                           paths.resolve_artifact(vc.artifact_path, root)))
+        except (OSError, KeyError, ValueError, RuntimeError):
+            continue  # surfaces as the loop's per-condition error record
+        arms.append((vc.name,
+                     system_prompt_mod.compose(variant.system_prompt, frame)))
+    arms.extend((spec.name, ordinary) for spec, _edit, _p in latent_conditions)
+    return arms
 
 
 def _require_manifest_sampling_policy(manifest, model, root, *,
@@ -6276,6 +6415,14 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
         "modelID": manifest.model_id, "modelRevision": model.revision,
         "promptMode": eff.prompt_mode,
         "systemPromptHash": _sha256_text(eff.system_prompt),
+        # …and WHICH LEVELS produced that effective hash (2026-08-24 ruling).
+        # Additive provenance beside the effective hash, always present with
+        # explicit nulls: the effective hash alone cannot tell a reader
+        # whether an arm carried a persona, and after composition landed
+        # "no persona" is a fact about the arm rather than the default.
+        # Cross-engine spelling: Swift `SystemPromptCompositionStamp`.
+        "systemPromptComposition": system_prompt_mod.composition(
+            eff.agent_system_prompt, eff.study_system_prompt),
         **eff.provenance,
     }
     for prompt_index, prompt in enumerate(prompts):
@@ -6517,16 +6664,28 @@ def _run_capability_battery(model, name, manifest, bundles, conditions, root,
 
     def _score_condition(condition_name, injections, prompt_mode, system_prompt,
                          thinking, latent_edits=None,
-                         intervention_state=None) -> bool:
+                         intervention_state=None,
+                         agent_system_prompt=None) -> bool:
         """Emit one battery record per item under the given arming. Returns
         False when a cancel was observed (partial condition kept, resumable).
 
         ``latent_edits``/``intervention_state`` are the SAE latent arm's
         mechanism and its provenance stamp. Both default to off and neither
-        touches a non-latent condition's record bytes."""
+        touches a non-latent condition's record bytes.
+
+        ``system_prompt`` is the FORMAT-1 caller context — the study manifest's
+        for baseline/steering/latent arms, the artifact's for a variant arm —
+        preserved byte for byte so a legacy battery's pinned hash keeps its
+        historical meaning. ``agent_system_prompt`` is the FORMAT-2 persona:
+        composed ahead of the battery file's own declared arming, while the
+        STUDY frame reaches a format-2 reading through neither channel
+        (2026-08-24 battery-isolation ruling). Baseline therefore reads the
+        battery bare, which is what makes it the control for the agent arms.
+        """
         arming = battery_mod.resolve_arming(
             spec, prompt_mode=prompt_mode, system_prompt=system_prompt,
-            qwen_thinking_enabled=thinking)
+            qwen_thinking_enabled=thinking,
+            agent_system_prompt=agent_system_prompt)
         advisory = battery_mod.contamination_advisory(spec, arming)
         if advisory and advisory not in advised:
             advised.add(advisory)
@@ -6611,7 +6770,8 @@ def _run_capability_battery(model, name, manifest, bundles, conditions, root,
                 try:
                     completed = _score_condition(
                         vc.name, injections, variant.prompt_mode,
-                        variant.system_prompt, variant.qwen_thinking_enabled)
+                        variant.system_prompt, variant.qwen_thinking_enabled,
+                        agent_system_prompt=variant.system_prompt)
                 finally:
                     model_variant.remove_adapter(model, adapter)
                 if not completed:

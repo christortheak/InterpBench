@@ -723,7 +723,15 @@ def _mint(manifest, ref, name: str, concept: str, *, layer: int,
         prompt_mode=manifest.prompt_mode,
         qwen_thinking_enabled=manifest.qwen_thinking_enabled,
         temperature=manifest.temperature,
-        system_prompt=manifest.system_prompt,
+        # A newborn agent's identity is BARE (2026-08-24 ruling). This used to
+        # copy `manifest.system_prompt`, which made the study's deployment
+        # frame look like the agent's persona: the copy then travelled with
+        # the agent into other studies, and — once effective prompts compose
+        # rather than replace — would have been concatenated with the new
+        # study's own frame, doubling it. The frame belongs to the study and
+        # is applied at run time; a persona is something a researcher gives
+        # the agent deliberately.
+        system_prompt=None,
         created_at=promotion["promotedAt"],
         promotion=promotion)
     saved = model_variant.save_variant(variant, root)
