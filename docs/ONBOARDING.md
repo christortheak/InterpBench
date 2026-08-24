@@ -113,8 +113,9 @@ steerlab --version
 
 The two links are the same binary under both spellings — `steerlab-cli` is its
 own name and the one refusals use; `steerlab` is the shorter one the rest of
-these docs type, and a **temporary** alias: that name is reserved for a future
-cross-platform client, which will take it over when it ships. A symlink is enough: the binary resolves its shaders and the
+these docs type, and the name now **belongs to the cross-platform Python
+client** (its console script; see CLI-REFERENCE §1.4). Create the alias only
+if you do not install the Python client, and prefer typing `steerlab-cli`. A symlink is enough: the binary resolves its shaders and the
 app's bundled resources against its real location inside the bundle, not the
 link's, and invoking it in place by full path is identical. `steerlab --version`
 prints where each shipped resource family resolved, which is the quick answer to

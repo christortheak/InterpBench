@@ -42,8 +42,9 @@ Pick the first path that applies:
    ```sh
    mkdir -p ~/.local/bin
    ln -s <app>/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab-cli
-   # `steerlab` is the short name the docs type — a TEMPORARY alias, reserved
-   # for a future cross-platform client. Skip it if that name is taken.
+   # `steerlab` now names the cross-platform PYTHON client (step 1.3) — its
+   # console script owns that spelling. Alias the Swift CLI to it ONLY if
+   # the Python client is not installed; prefer typing `steerlab-cli`.
    ln -s <app>/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab
    ```
 
@@ -52,10 +53,19 @@ Pick the first path that applies:
    points at an older Xcode). It installs a `steerlab` shim under
    `~/.local/bin`.
 
-3. **Neither** (or not a Mac): there is no Swift CLI for this machine. The
-   Python engine (step 3) still installs and serves; on macOS, ask the person
-   whether to download SteerLab.app from the repository's Releases page —
-   that is the no-Xcode path.
+3. **Neither, on a Mac**: ask the person whether to download SteerLab.app
+   from the repository's Releases page — that is the no-Xcode path.
+
+4. **Not a Mac** (Linux/Windows): use the cross-platform Python client.
+   From this checkout, `pip install -e "Server"` installs `steerlab` — a
+   ~30 MB, no-GPU client that authors, verifies, freezes, packages, and
+   drives a runner (`steerlab run <exp> --runner <url>` is the whole
+   round trip; evidence comes home verified). Add the `[runner]` extra to
+   also EXECUTE locally via `steerlab runner serve` (a managed loopback
+   runner with its own root — never the workspace). The client has no
+   `workspace init`; bring a Mac-created or shared workspace, or author
+   into a plain directory. The full contract is
+   `docs/PORTABILITY-CONTRACTS.md`.
 
 Verify before proceeding: `steerlab-cli --version` (or `steerlab --version`)
 must report **6/6 resource families resolved**. If it reports fewer, stop and

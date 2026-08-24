@@ -161,7 +161,8 @@ Connection flags, identical on all six: `--runner <url>`, `--token-file
 #### `runner serve` — this machine as a managed local runner (Phase 3)
 
 ```bash
-pipx install 'steerlab-server[runner]'    # client + engine, one distribution
+# From a checkout (the package is not yet published to PyPI):
+pip install -e "Server[runner]"           # client + engine, one distribution
 steerlab runner serve                     # loopback, token mode, foreground
 ```
 

@@ -708,6 +708,12 @@ plus `docs/ONBOARDING.md` (§9 is specifically about driving SteerLab as an
 agent), `docs/CONDUCTING-A-STUDY.md`, and `SECURITY.md`. When a verb here
 seems to lack a flag you need, check CLI-REFERENCE before improvising.
 
+There is also a cross-platform Python client, `steerlab` (CLI-REFERENCE
+§1.4, `docs/PORTABILITY-CONTRACTS.md`): it authors, packages, and runs this
+workspace's studies against any runner from any OS — `steerlab run <name>
+--runner <url>` is the whole frozen-study-to-verified-evidence round trip.
+On a Mac the Swift CLI above remains the primary instrument.
+
 ---
 
 ## 9. What not to do

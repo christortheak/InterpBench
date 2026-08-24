@@ -135,6 +135,12 @@ Then take either seat, or both:
   Releases, unzip it into `~/SteerLab/`, and launch. The app carries the same
   CLI inside its bundle (`Contents/Helpers/steerlab-cli`), so this path needs
   no developer tools at all.
+- **Not on a Mac?** `pip install -e "Server"` from the checkout installs the
+  cross-platform `steerlab` client — ~30 MB, no GPU, no Xcode — which
+  authors, freezes, and drives studies against any runner
+  (`steerlab run <experiment> --runner <url>`); add `[runner]` to execute
+  locally through `steerlab runner serve`. The contract is
+  [docs/PORTABILITY-CONTRACTS.md](docs/PORTABILITY-CONTRACTS.md).
 
 Everything converges on one home folder that moves and backs up as a unit:
 
@@ -317,10 +323,12 @@ when you need it.
 
 This is a source release, an early one. What that means concretely:
 
-- The app is the distribution: `scripts/build-app.sh` assembles, signs, and
-  packages SteerLab.app, and the CLI ships inside it, so an app install needs
-  no Xcode. Building either from this checkout still needs Xcode 27, and there
-  is no downloadable Python engine yet.
+- The app is the distribution on macOS: `scripts/build-app.sh` assembles,
+  signs, and packages SteerLab.app, and the CLI ships inside it, so an app
+  install needs no Xcode; building from this checkout still needs Xcode 27.
+  Off the Mac, the cross-platform `steerlab` client installs from this
+  checkout (`pip install -e "Server"` — light; `[runner]` to execute
+  locally); PyPI publication is a later stage.
 - From a checkout, the macOS app runs through a developer launcher
   (`./scripts/run-app.sh`) rather than the assembled bundle.
 - The Python engine is an editable install, and its dependencies declare
