@@ -630,7 +630,36 @@ run the repair where it belongs.
 
 ---
 
-## 8. What not to do
+## 8. Remote execution, and where the depth is
+
+When this workspace's study runs on a cluster, the same contract holds — and
+one rule outranks convenience: **never write a bare sbatch script.** Submit
+through the engine's rendered path (`steerlab-server study submit …`, or the
+app), which requests node-scratch via the site's gres and arms the cleanup
+trap; a hand-rolled script silently gets neither, and stale node-scratch is
+how clusters come to email their operators about you. If a submission need
+seems to force a hand-roll (a dependency chain, a resume), that is a missing
+verb to report, not a reason to bypass the renderer.
+
+The cluster lifecycle has first-class verbs — prefer them to raw `ssh`:
+`steerlab-cli cluster push` (deploys the engine AND re-stamps its build
+identity), `cluster ensure`, `cluster tunnel open`, `cluster remote --site
+<id> …`, and `cluster import --site <id>` (verified, never-purging run
+import). Site profiles live in the SteerLab home's `Sites/cluster-sites/`
+registry — never invent one; ask the researcher for theirs.
+
+This file is deliberately self-contained for study work, but it is not the
+whole reference. The code checkout (normally a sibling of this workspace's
+SteerLab home, e.g. `~/SteerLab/<checkout>/`) carries the depth:
+`docs/CLI-REFERENCE.md` — every verb, flag, envelope, and refusal on BOTH
+command lines, generated from the parsers, so it is never stale —
+plus `docs/ONBOARDING.md` (§9 is specifically about driving SteerLab as an
+agent), `docs/CONDUCTING-A-STUDY.md`, and `SECURITY.md`. When a verb here
+seems to lack a flag you need, check CLI-REFERENCE before improvising.
+
+---
+
+## 9. What not to do
 
 - **Do not parse prose.** Use `--json` and read `state`, `error.code`,
   `error.gate`, `error.gates[]`, `advisories[].code`, and `result`.
