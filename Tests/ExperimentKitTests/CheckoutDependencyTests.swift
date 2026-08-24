@@ -302,6 +302,20 @@ extension CheckoutDependency {
                 "the packaged manifest wins; then Info.plist SLSourceRevision "
                 + "(labelled the APP's build revision); then a bare version"),
         .init(
+            file: "Sources/ExperimentKit/UpdateCheck.swift",
+            token: "executableCheckout",
+            resolves:
+                "READ-ONLY: where to run `git ls-remote` so the update signpost can "
+                + "see the repository's tags. It uses bucket B's resolver (an "
+                + "app-only install with a checkout beside it must still be able to "
+                + "ask) but never writes into the tree, so the ASSUMPTION is a "
+                + "developer-style observation, not a mutable-tree claim",
+            bucket: .developerOnly,
+            withoutACheckout:
+                "the git half is skipped entirely; the check falls back to the "
+                + "public release feed, and reports \"unknown\" with a reason when "
+                + "that is unavailable too — never \"up to date\""),
+        .init(
             file: "Sources/ExperimentKit/InstallProvenance.swift",
             token: "developerCheckoutRoot",
             resolves: "reporting only — `install version` names the checkout when there is one",

@@ -32,6 +32,9 @@ struct SteerLabApp: App {
     /// wheel install must survive toolbar view churn. It provisions;
     /// `localServer` keeps owning the running server's lifecycle.
     @State private var localEngine = LocalEngineProvisioner()
+    /// Update SIGNPOST — the once-a-day "a newer release exists" check and
+    /// its menu item. Never downloads or installs; see UpdateSignpost.swift.
+    @State private var updates = UpdateSignpostModel()
 
     init() {
         // WP2 — claim the seam `CodeResources.releaseModeAsserted` was
@@ -112,32 +115,63 @@ struct SteerLabApp: App {
 
     var body: some Scene {
         WindowGroup("SteerLab") {
-            ChatView(service: service, workspace: workspace)
-                // Floor: sidebar (~160) + section controls (≥560 for the dense
-                // panels) + viewer (≥420). Below this the sidebar collapses
-                // and section labels truncate (live-testing finding).
-                .frame(minWidth: 1200, minHeight: 700)
-                .toolbar {
-                    ToolbarItemGroup {
-                        WorkspaceSelector(
-                            workspace: workspace, service: service, catalog: catalog)
-                        SubstrateSelector(cluster: cluster, service: service)
-                        // Item 1 (cluster-testing): GPU session start/stop at
-                        // a glance, beside the connection dot — visible only
-                        // on server workspaces whose profile supports GPU
-                        // sessions. Same controller state as the Playground
-                        // section.
-                        GPUSessionToolbarControl(service: service)
-                        ClusterConnectionDot(
-                            cluster: cluster, tunnel: tunnel, service: service,
-                            localServer: localServer, localEngine: localEngine)
+            VStack(spacing: 0) {
+                UpdateBanner(model: updates)
+                ChatView(service: service, workspace: workspace)
+            }
+            // Floor: sidebar (~160) + section controls (≥560 for the dense
+            // panels) + viewer (≥420). Below this the sidebar collapses
+            // and section labels truncate (live-testing finding).
+            .frame(minWidth: 1200, minHeight: 700)
+            // After the window is up, never before: the check is entirely
+            // async and off the main actor, so launch time is unaffected.
+            .task { await updates.runAutomaticCheckIfDue() }
+            .alert(
+                "Software Update",
+                isPresented: Binding(
+                    get: { updates.manualReport != nil },
+                    set: { if !$0 { updates.manualReport = nil } })
+            ) {
+                Button("OK", role: .cancel) { updates.manualReport = nil }
+                if updates.downloadPage != nil {
+                    Button("Open Releases…") {
+                        updates.openDownloadPage()
+                        updates.manualReport = nil
                     }
                 }
+            } message: {
+                Text(updates.manualReport ?? "")
+            }
+            .toolbar {
+                ToolbarItemGroup {
+                    WorkspaceSelector(
+                        workspace: workspace, service: service, catalog: catalog)
+                    SubstrateSelector(cluster: cluster, service: service)
+                    // Item 1 (cluster-testing): GPU session start/stop at
+                    // a glance, beside the connection dot — visible only
+                    // on server workspaces whose profile supports GPU
+                    // sessions. Same controller state as the Playground
+                    // section.
+                    GPUSessionToolbarControl(service: service)
+                    ClusterConnectionDot(
+                        cluster: cluster, tunnel: tunnel, service: service,
+                        localServer: localServer, localEngine: localEngine)
+                }
+            }
         }
         // Without an explicit default, the first launch opens near the
         // content minimum and the sidebar truncates section names ("tabs cut
         // off"). 1440×900 fits every section's controls + viewer comfortably.
         .defaultSize(width: 1440, height: 900)
+        // "Check for Updates…" lives where macOS apps put it: the app menu,
+        // just under About. The toggle beside it is the visible off switch
+        // for the automatic once-a-day check.
+        .commands {
+            CommandGroup(after: .appInfo) {
+                UpdateCommands(model: updates)
+                Divider()
+            }
+        }
     }
 }
 
