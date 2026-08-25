@@ -601,6 +601,10 @@ def system_prompt_composition() -> None:
     "no system prompt" — the two engines trim differently by default, and this
     is where that would show — plus non-ASCII text, because the hash is over
     raw UTF-8 bytes on both sides.
+
+    ``panelCasting`` is the panel half of the same ruling: a cast seat's second
+    term is the CAST ENTRY's role text rather than the study frame, so it
+    stamps ``{"agent": …, "cast": …}``. Same primitive, same order.
     """
     from steerlab_server.experiment import system_prompt as sp
 
@@ -631,6 +635,39 @@ def system_prompt_composition() -> None:
             "batteryStamp": sp.composition(agent, study, frame_key="battery"),
         })
 
+    # PANEL CASTING (same ruling, same order). A seat's second term is the
+    # CAST ENTRY's role text, not the study frame — the study frame reaches no
+    # panel turn at all — so the stamp is spelled `cast`. Persona first, role
+    # second, through the SAME primitive: one uniform rule everywhere.
+    # `castOnlyNullPersona` is today's dominant case (every agent in the
+    # workspace has an empty persona) and is the legacy byte-identity lock.
+    # `untrimmedCast` is where the two engines used to DISAGREE — the server
+    # trimmed the cast text, Swift did not — so it is pinned deliberately.
+    castings = []
+    for label, persona, cast in (
+        ("persona-and-cast", "You are Adjudicator-7.", "You represent Team South."),
+        ("cast-only-null-persona", None, "You represent Team South."),
+        ("cast-only-empty-persona", "", "You represent Team South."),
+        ("cast-only-blank-persona", "   ", "You represent Team South."),
+        ("persona-only-null-cast", "You are Adjudicator-7.", None),
+        ("persona-only-empty-cast", "You are Adjudicator-7.", ""),
+        ("persona-only-blank-cast", "You are Adjudicator-7.", "   "),
+        ("neither", None, ""),
+        ("neither-null", None, None),
+        ("untrimmed-cast", "You are Adjudicator-7.", "  padded role  "),
+        ("multiline-persona", "line one\nline two", "You represent Team South."),
+        ("non-ascii", "Tu es un juge — précis.", "Tu représentes l'équipe Sud…"),
+    ):
+        effective = sp.compose(persona, cast)
+        castings.append({
+            "label": label,
+            "agent": persona,
+            "cast": cast,
+            "effective": effective,
+            "effectiveHash": sp.text_hash(effective),
+            "stamp": sp.composition(persona, cast, frame_key="cast"),
+        })
+
     advisories = []
     for label, arms in (
         ("all-identical", [("baseline", "Respond in JSON."),
@@ -657,6 +694,7 @@ def system_prompt_composition() -> None:
                     "scripts/regenerate-cross-engine-fixtures.py",
             "joiner": sp.JOINER,
             "composition": cases,
+            "panelCasting": castings,
             "advisories": advisories})
 
 

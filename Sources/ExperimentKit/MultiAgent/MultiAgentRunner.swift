@@ -45,6 +45,14 @@ public struct MultiAgentTurnResult: Codable, Identifiable, Sendable, Equatable {
     /// Server twin: the `voiceLint` key on `multi_agent.run_scenario`'s turn
     /// record.
     public let voiceLint: VoiceLintStamp?
+    /// WHICH LEVELS composed the system prompt this turn generated under
+    /// (2026-08-24 casting ruling): the cast agent artifact's persona and the
+    /// seat's cast-entry role text. Optional so pre-composition turns.jsonl
+    /// files still decode, and so an absent key stays absent rather than
+    /// claiming both levels were empty; every turn this engine generates
+    /// stamps it. Server twin: the `systemPromptComposition` key on
+    /// `multi_agent.run_scenario`'s turn record.
+    public let systemPromptComposition: PanelSystemPromptCompositionStamp?
 
     public init(
         turnID: String, turnIndex: Int, title: String, speakerAgentID: String,
@@ -52,7 +60,8 @@ public struct MultiAgentTurnResult: Codable, Identifiable, Sendable, Equatable {
         outputLabel: String, routedAgentIDs: [String],
         replicateIndex: Int? = nil, temperature: Double? = nil,
         endpoint: TurnEndpointStamp? = nil, promptRenderer: String? = nil,
-        voiceLint: VoiceLintStamp? = nil
+        voiceLint: VoiceLintStamp? = nil,
+        systemPromptComposition: PanelSystemPromptCompositionStamp? = nil
     ) {
         self.turnID = turnID
         self.turnIndex = turnIndex
@@ -69,6 +78,7 @@ public struct MultiAgentTurnResult: Codable, Identifiable, Sendable, Equatable {
         self.endpoint = endpoint
         self.promptRenderer = promptRenderer
         self.voiceLint = voiceLint
+        self.systemPromptComposition = systemPromptComposition
     }
 }
 
@@ -242,7 +252,10 @@ public enum MultiAgentRunner {
                     await progress?(.turnCompleted(replayed))
                     continue
                 }
-                let (variant, modelID, promptMode, systemPrompt, qwenThinking, injections, turnWarnings) =
+                let (
+                    variant, modelID, promptMode, systemPrompt, qwenThinking,
+                    injections, turnWarnings, systemComposition
+                ) =
                     try runtimeSettings(for: speaker.spec, stripInterventions: stripInterventions)
                 for warning in turnWarnings {
                     let key = warningKey(warning)
@@ -341,7 +354,12 @@ public enum MultiAgentRunner {
                     // Same seam, same fsync: the voice stamp describes the
                     // text it lands beside.
                     voiceLint: voiceLintStamp(
-                        for: turn, output: output, agents: scenario.agents))
+                        for: turn, output: output, agents: scenario.agents),
+                    // …and WHICH LEVELS composed the system prompt this turn
+                    // actually generated under. Built with the effective text
+                    // in `runtimeSettings`, so the stamp and the arming can
+                    // never describe two different things.
+                    systemPromptComposition: systemComposition)
                 results.append(result)
                 // Flush BEFORE the next turn starts: an unflushed transcript
                 // is a transcript replayed from turn 1.
@@ -701,7 +719,16 @@ public enum MultiAgentRunner {
             others: agents.filter { $0.id != turn.speakerAgentID }.map(\.name))
     }
 
-    private static func runtimeSettings(
+    /// Resolve one seat's runtime settings.
+    ///
+    /// `systemPrompt` is the seat's EFFECTIVE system prompt — the composition
+    /// of the cast agent artifact's persona and the seat's own cast-entry role
+    /// text, never one of them alone (see the casting note below) — and
+    /// `systemComposition` is the additive provenance stamp for exactly that
+    /// text, built beside it here so a turn record cannot stamp a composition
+    /// its generation did not run under. Server twin:
+    /// `multi_agent._runtime_settings`.
+    static func runtimeSettings(
         for agent: MultiAgentScenario.Agent,
         stripInterventions: Bool = false
     ) throws -> (
@@ -711,7 +738,8 @@ public enum MultiAgentRunner {
         systemPrompt: String?,
         qwenThinking: Bool,
         injections: [ExperimentTasks.CellInjection],
-        warnings: [MultiAgentRunWarning]
+        warnings: [MultiAgentRunWarning],
+        systemComposition: PanelSystemPromptCompositionStamp
     ) {
         var warnings: [MultiAgentRunWarning] = []
         let variant = try agent.variantArtifactPath.map { path -> ModelVariantArtifact in
@@ -734,20 +762,42 @@ public enum MultiAgentRunner {
         let modelID = variant?.baseModelID ?? agent.baseModelID
         let promptMode = variant.flatMap { ExperimentManifest.PromptMode(rawValue: $0.promptMode) }
             ?? .chatAssistant
-        let trimmedSystem = agent.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        let systemPrompt =
-            if trimmedSystem.isEmpty {
-                variant?.systemPrompt
-            } else {
-                agent.systemPrompt
-            }
+        // Casting COMPOSES; it no longer replaces (maintainer ruling,
+        // 2026-08-24). A seat has two levels of system content, and they used
+        // to be mutually exclusive here — a cast entry with role text silently
+        // discarded the agent's persona, and a seat with no role text ran on
+        // the persona alone:
+        //
+        //   * the AGENT ARTIFACT's `systemPrompt` — the persona, who the model
+        //     is;
+        //   * the CAST ENTRY's `systemPrompt` — the role, "you represent Team
+        //     South", which `PanelComposition.semanticForm` deliberately keeps
+        //     on the seat because the role is the EXPERIMENT and the agent is
+        //     what is cast into it.
+        //
+        // Persona first, role second, joined by one blank line — the SAME
+        // order and the same principle as the study rule
+        // (`SystemPromptComposition.compose`): identity precedes instruction,
+        // and a cast role is situational instruction TO whoever the agent is,
+        // exactly as a study frame is. Composed through that type's own
+        // primitive rather than re-spelled here, so the joiner and the four
+        // degradation cases cannot drift between the study path and this one.
+        //
+        // Degradation carries the legacy lock: every agent in the workspace
+        // today has an EMPTY persona, so `compose` returns the cast text
+        // itself — the same string, not a re-joined copy — and every existing
+        // panel renders the bytes it always did.
+        let seat = SeatSystemPrompt(
+            agent: variant?.systemPrompt, cast: agent.systemPrompt)
         let qwenThinking = variant?.qwenThinkingEnabled ?? false
         let injections =
             stripInterventions
             ? []
             : (try variant.map(ExperimentTasks.injections(for:)) ?? [])
         let adapterVariant = stripInterventions ? nil : variant
-        return (adapterVariant, modelID, promptMode, systemPrompt, qwenThinking, injections, warnings)
+        return (
+            adapterVariant, modelID, promptMode, seat.effective, qwenThinking,
+            injections, warnings, seat.stamp)
     }
 
     private static func model(

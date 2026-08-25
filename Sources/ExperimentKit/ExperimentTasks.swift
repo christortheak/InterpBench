@@ -4604,6 +4604,15 @@ public enum ExperimentTasks {
         defer { try? generationsHandle.close() }
 
         let prompt = multiAgentEvaluationPrompt(scenario: scenario)
+        // No system-prompt divergence advisory here, deliberately (2026-08-24
+        // casting ruling), and the server's panel path says the same. The
+        // advisory's unit is the ARM, and a panel's two arms cannot diverge in
+        // effective system content: the split is `stripInterventions`, which
+        // drops injections and the adapter and never touches a seat's persona
+        // or role text (`MultiAgentRunner.runtimeSettings`). Seats WITHIN a
+        // transcript are armed differently on purpose — that is what casting
+        // is — so per-seat divergence is the design, not a finding; the
+        // per-turn `systemPromptComposition` stamp is what records it.
         let conditionSpecs: [(name: String, strip: Bool)] =
             manifest.multiAgentIncludeBaseline
             ? [("baseline", true), ("configured", false)]

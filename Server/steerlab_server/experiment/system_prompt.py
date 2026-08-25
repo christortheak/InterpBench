@@ -38,6 +38,21 @@ what the model is armed with.
 
 Batteries compose the same way with a different second term — the battery's
 own declared arming text, never the study frame (see :mod:`.battery`).
+
+**Panels compose the same way too** (maintainer ruling, 2026-08-24). A panel
+seat carries a CAST ENTRY prompt — the role, "you represent Team South" — and
+the agent artifact cast into that seat carries the persona. Casting used to
+REPLACE, exactly as the study levels did (``multi_agent._runtime_settings``),
+so a cast agent lost its role or its persona depending on which one was
+non-empty. The order is the SAME as the study rule and holds for the same
+reason: identity precedes instruction. A cast role is situational instruction
+TO whoever the agent is, just as the study frame is::
+
+    compose(<agent artifact persona>, <cast entry role>)
+
+One uniform rule everywhere, so there is deliberately no second entry point —
+the panel path calls :func:`compose` with the cast text as the second term and
+stamps with ``frame_key="cast"``.
 """
 
 from __future__ import annotations
@@ -87,9 +102,12 @@ def composition(agent: str | None, frame: str | None, *,
     ``{"agent": <hash|null>, "study": <hash|null>}`` on a study record;
     ``frame_key="battery"`` spells the second term for a battery record, whose
     second term is the battery file's declared arming rather than the study
-    frame. Keys are ALWAYS present (``null`` when that level contributed
-    nothing) — an absent key would read as "this engine does not stamp
-    composition", a different claim from "this level was empty".
+    frame; ``frame_key="cast"`` spells it for a PANEL TURN record, whose second
+    term is the seat's cast-entry role text. Keys are ALWAYS present (``null``
+    when that level contributed nothing) — an absent key would read as "this
+    engine does not stamp composition", a different claim from "this level was
+    empty". The ``agent`` key is always first, whatever the second term is, so
+    the three stamp shapes read alike.
     """
     return {"agent": text_hash(agent), frame_key: text_hash(frame)}
 

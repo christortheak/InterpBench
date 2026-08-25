@@ -5703,6 +5703,17 @@ def _run_multi_agent_study(name, manifest, model, root, model_provider=None,
     _advise_implicit_case_family(
         implicit_case_family_endpoint(manifest), run_directory, log,
         write_file=True)
+    # No system-prompt divergence advisory here, deliberately (2026-08-24
+    # casting ruling). This path HAS the channel the standard path writes to —
+    # advisories.txt, three owners above — but the advisory's unit is the ARM,
+    # and a panel's two arms cannot diverge in effective system content: the
+    # split is `strip_interventions`, which drops injections and the adapter
+    # and never touches a seat's persona or role text
+    # (`multi_agent._runtime_settings`). A line that can only ever be silent is
+    # noise in the source instead of noise in the log. Seats WITHIN a
+    # transcript are armed differently on purpose — that is what casting is —
+    # so per-seat divergence is the design, not a finding; the per-turn
+    # `systemPromptComposition` stamp is what records it.
     conditions = [("configured", False)]
     if manifest.multi_agent_include_baseline:
         conditions.append(("baseline", True))

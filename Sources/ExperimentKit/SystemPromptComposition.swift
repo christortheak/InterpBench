@@ -38,6 +38,18 @@ import Foundation
 /// Batteries compose the same way with a different second term — the
 /// battery's own declared arming text, never the study frame (see
 /// `CapabilityBattery.resolveArming`).
+///
+/// **Panels compose the same way too** (maintainer ruling, 2026-08-24). A
+/// panel seat carries a CAST ENTRY prompt — the role, "you represent Team
+/// South" — and the agent artifact cast into that seat carries the persona.
+/// Casting used to REPLACE, exactly as the study levels did
+/// (`MultiAgentRunner.runtimeSettings`). The order is the SAME as the study
+/// rule and holds for the same reason: identity precedes instruction, and a
+/// cast role is situational instruction TO whoever the agent is, just as the
+/// study frame is. One uniform rule everywhere, so there is deliberately no
+/// second entry point — the panel path calls `compose(agent:frame:)` with the
+/// cast text as the `frame` and stamps with
+/// `PanelSystemPromptCompositionStamp`.
 public enum SystemPromptComposition {
 
     /// The separator between the two levels. One blank line, which every chat
@@ -159,6 +171,67 @@ public struct ArmSystemPrompt: Sendable, Equatable {
     public init(agent: String?, study: String?) {
         self.effective = SystemPromptComposition.compose(agent: agent, frame: study)
         self.stamp = SystemPromptCompositionStamp(agentText: agent, studyText: study)
+    }
+}
+
+/// The PANEL twin of `SystemPromptCompositionStamp`: a cast seat's second term
+/// is the CAST ENTRY's role text, never the study frame (the study frame
+/// reaches no panel turn at all) — so the key is spelled `cast`, and the
+/// difference in spelling is the point. `agent` stays first, so all three
+/// stamp shapes read alike. Server twin:
+/// `system_prompt.composition(frame_key="cast")`.
+public struct PanelSystemPromptCompositionStamp: Codable, Equatable, Sendable {
+    /// SHA-256 of the cast AGENT ARTIFACT's persona; nil ⇒ JSON `null`.
+    public let agent: String?
+    /// SHA-256 of the seat's CAST ENTRY role text; nil ⇒ JSON `null`.
+    public let cast: String?
+
+    public init(agent: String?, cast: String?) {
+        self.agent = agent
+        self.cast = cast
+    }
+
+    /// The stamp for one seat, from the two raw texts.
+    public init(agentText: String?, castText: String?) {
+        self.init(
+            agent: SystemPromptComposition.hash(agentText),
+            cast: SystemPromptComposition.hash(castText))
+    }
+
+    enum CodingKeys: String, CodingKey { case agent, cast }
+
+    /// Explicit `encode`, not `encodeIfPresent`: nil must reach the wire as
+    /// `null`, matching the server's always-present keys.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(agent, forKey: .agent)
+        try container.encode(cast, forKey: .cast)
+    }
+}
+
+/// ONE panel seat's resolved arming: the effective text the seat generates
+/// under, and the stamp that says which levels produced it.
+///
+/// The panel twin of `ArmSystemPrompt`, and built the same way — the two
+/// together, from the same two inputs, so a turn record can never stamp a
+/// composition its generation did not run under. Server twin: the
+/// `system`/`system_composition` pair returned by
+/// `multi_agent._runtime_settings`.
+public struct SeatSystemPrompt: Sendable, Equatable {
+    /// What reaches the renderer, and what the turn generated under.
+    public let effective: String?
+    /// What a turn record's `systemPromptComposition` carries.
+    public let stamp: PanelSystemPromptCompositionStamp
+
+    /// - Parameters:
+    ///   - agent: the persona on the agent artifact cast into this seat; nil
+    ///     for a baseline seat and for every agent with no persona — which,
+    ///     today, is every agent in the workspace.
+    ///   - cast: the seat's own cast-entry role text.
+    public init(agent: String?, cast: String?) {
+        self.effective = SystemPromptComposition.compose(agent: agent, frame: cast)
+        self.stamp = PanelSystemPromptCompositionStamp(
+            agentText: agent, castText: cast)
     }
 }
 

@@ -19,6 +19,10 @@ import Testing
 /// (`scripts/regenerate-cross-engine-fixtures.py`), so a rule change on one
 /// side cannot pass unnoticed on the other. Server twin:
 /// `Server/tests/test_system_prompt_composition.py`.
+///
+/// The **panel casting** section applies the same ruling one level down: a
+/// cast seat is armed with the AGENT ARTIFACT's persona then the CAST ENTRY's
+/// role text, through the same primitive, stamped `{agent, cast}`.
 struct SystemPromptCompositionTests {
 
     private static let frame = "You are a federal district judge. Respond in JSON."
@@ -427,6 +431,192 @@ struct SystemPromptCompositionTests {
                 == pinned)
     }
 
+    // MARK: - Panel casting
+
+    // The same ruling, one level down. A panel seat's two levels are the CAST
+    // ENTRY's role text ("you represent Team South", which
+    // `PanelComposition.semanticForm` deliberately keeps on the seat because
+    // the role is the EXPERIMENT) and the persona on the AGENT ARTIFACT cast
+    // into it. They used to REPLACE, exactly as the study levels did. Same
+    // order, same primitive, second term spelled `cast`.
+
+    private static let role = "You represent Team South. Argue its position."
+
+    /// A seat cast with an agent artifact carrying `persona`, written to a
+    /// temporary file and named by absolute path (which `absoluteURL` passes
+    /// through unchanged, so this needs no workspace override).
+    ///
+    /// `ModelVariantArtifact`'s own initializer normalizes a blank persona to
+    /// nil, so a whitespace-only persona reaches the runner as no persona at
+    /// all — which is why the blank case is also asserted directly against
+    /// `SeatSystemPrompt`, where the composition primitive can actually see it.
+    private func castSeat(persona: String?, cast: String, in directory: URL)
+        throws -> MultiAgentScenario.Agent
+    {
+        let artifact = ModelVariantArtifact(
+            name: "adjudicator", baseModelID: "test/model", adapters: [],
+            injections: [], promptMode: "chatAssistant",
+            qwenThinkingEnabled: false, temperature: 0,
+            systemPrompt: persona ?? "")
+        let url = directory.appending(component: "agent-\(UUID().uuidString).json")
+        try JSONEncoder().encode(artifact).write(to: url)
+        return MultiAgentScenario.Agent(
+            id: "a", name: "Alice", baseModelID: "test/model",
+            variantArtifactPath: url.path, systemPrompt: cast)
+    }
+
+    private func withTempDirectory<T>(_ body: (URL) throws -> T) rethrows -> T {
+        let temp = FileManager.default.temporaryDirectory
+            .appending(component: "panel-cast-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(
+            at: temp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+        return try body(temp)
+    }
+
+    @Test func aCastSeatIsArmedWithThePersonaThenTheRole() throws {
+        // Persona first, role second, one blank line — the SAME order as the
+        // study rule, because a cast role is situational instruction TO
+        // whoever the agent is, exactly as the study frame is.
+        try withTempDirectory { directory in
+            let seat = try castSeat(
+                persona: Self.persona, cast: Self.role, in: directory)
+            let resolved = try MultiAgentRunner.runtimeSettings(for: seat)
+            #expect(resolved.systemPrompt == Self.persona + "\n\n" + Self.role)
+        }
+    }
+
+    @Test(arguments: [
+        (Self.persona, Self.role, Self.persona + "\n\n" + Self.role),
+        (nil, Self.role, Self.role),          // today's dominant case
+        ("", Self.role, Self.role),
+        ("   ", Self.role, Self.role),
+        (Self.persona, "", Self.persona),
+        (Self.persona, "   ", Self.persona),
+        (nil, "", ""),
+    ] as [(String?, String, String?)])
+    func panelCastingDegradesGracefullyInEveryDirection(
+        persona: String?, cast: String, expected: String?
+    ) throws {
+        #expect(SeatSystemPrompt(agent: persona, cast: cast).effective == expected)
+        try withTempDirectory { directory in
+            let seat = try castSeat(persona: persona, cast: cast, in: directory)
+            #expect(
+                try MultiAgentRunner.runtimeSettings(for: seat).systemPrompt
+                    == expected)
+        }
+    }
+
+    @Test func anEmptyPersonaSeatRendersExactlyTodaysCastOnlyArming() throws {
+        // THE regression lock. Every agent in the workspace today has an EMPTY
+        // persona, so every existing panel must reach the sampler with exactly
+        // the cast-entry text it always did — not a re-joined copy of it.
+        try withTempDirectory { directory in
+            for empty in [nil, "", "   "] as [String?] {
+                let seat = try castSeat(
+                    persona: empty, cast: Self.role, in: directory)
+                let resolved = try MultiAgentRunner.runtimeSettings(for: seat)
+                #expect(resolved.systemPrompt == Self.role)
+                #expect(
+                    SystemPromptComposition.hash(resolved.systemPrompt)
+                        == sha(Self.role))
+                #expect(resolved.systemComposition.agent == nil)
+                #expect(resolved.systemComposition.cast == sha(Self.role))
+            }
+            // …and an uncast (baseline) seat, which names no artifact at all,
+            // is armed with its role and nothing else.
+            let baseline = MultiAgentScenario.Agent(
+                id: "b", name: "Bob", baseModelID: "test/model",
+                systemPrompt: Self.role)
+            #expect(
+                try MultiAgentRunner.runtimeSettings(for: baseline).systemPrompt
+                    == Self.role)
+        }
+    }
+
+    @Test func aPaddedCastEntryIsNeverTrimmed() throws {
+        // A non-empty value is never trimmed on either engine: what the
+        // researcher wrote is what the seat is armed with. (Pre-composition
+        // the SERVER trimmed the cast text where this engine never did, so the
+        // same panel was armed with different bytes on the two substrates.)
+        try withTempDirectory { directory in
+            let seat = try castSeat(
+                persona: nil, cast: "  padded role  ", in: directory)
+            #expect(
+                try MultiAgentRunner.runtimeSettings(for: seat).systemPrompt
+                    == "  padded role  ")
+        }
+    }
+
+    @Test func theCastCompositionStampAlwaysEncodesBothKeys() throws {
+        // Explicit nulls, `agent` first, same rule as the study and battery
+        // stamps — an ABSENT key would read as "this engine does not stamp
+        // composition", a different claim from "this level was empty".
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let bare = PanelSystemPromptCompositionStamp(
+            agentText: nil, castText: Self.role)
+        #expect(
+            String(data: try encoder.encode(bare), encoding: .utf8)
+                == #"{"agent":null,"cast":"\#(sha(Self.role))"}"#)
+        #expect(
+            String(
+                data: try encoder.encode(
+                    PanelSystemPromptCompositionStamp(
+                        agentText: nil, castText: nil)),
+                encoding: .utf8) == #"{"agent":null,"cast":null}"#)
+    }
+
+    @Test func seatSystemPromptBuildsTheTextAndTheStampTogether() throws {
+        let seat = SeatSystemPrompt(agent: Self.persona, cast: Self.role)
+        #expect(seat.effective == Self.persona + "\n\n" + Self.role)
+        #expect(seat.stamp.agent == sha(Self.persona))
+        #expect(seat.stamp.cast == sha(Self.role))
+
+        try withTempDirectory { directory in
+            let cast = try castSeat(
+                persona: Self.persona, cast: Self.role, in: directory)
+            let resolved = try MultiAgentRunner.runtimeSettings(for: cast)
+            #expect(resolved.systemComposition == seat.stamp)
+        }
+    }
+
+    @Test func aPanelTurnRecordStampsItsCompositionAdditively() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        func keys(_ turn: MultiAgentTurnResult) throws -> Set<String> {
+            let object = try #require(
+                try JSONSerialization.jsonObject(with: try encoder.encode(turn))
+                    as? [String: Any])
+            return Set(object.keys)
+        }
+        let base = MultiAgentTurnResult(
+            turnID: "t1", turnIndex: 1, title: "Alice opens",
+            speakerAgentID: "a", speakerName: "Alice", modelRevision: "r",
+            prompt: "Speak.", output: "spoken", outputLabel: "a1",
+            routedAgentIDs: ["a"])
+        // Absent when nothing stamped it — a turn written before casting
+        // composed does not claim both levels were empty.
+        #expect(base.systemPromptComposition == nil)
+        #expect(!(try keys(base).contains("systemPromptComposition")))
+
+        let stamped = MultiAgentTurnResult(
+            turnID: "t1", turnIndex: 1, title: "Alice opens",
+            speakerAgentID: "a", speakerName: "Alice", modelRevision: "r",
+            prompt: "Speak.", output: "spoken", outputLabel: "a1",
+            routedAgentIDs: ["a"],
+            systemPromptComposition: SeatSystemPrompt(
+                agent: nil, cast: Self.role).stamp)
+        #expect(try keys(stamped).contains("systemPromptComposition"))
+        // …and it round-trips, so a resumed transcript replays the same stamp.
+        let decoded = try JSONDecoder().decode(
+            MultiAgentTurnResult.self, from: try encoder.encode(stamped))
+        #expect(
+            decoded.systemPromptComposition
+                == PanelSystemPromptCompositionStamp(
+                    agent: nil, cast: sha(Self.role)))
+    }
+
     // MARK: - Cross-engine fixture
 
     /// The composition rule, its stamps, and the advisory's exact wording must
@@ -470,6 +660,24 @@ struct SystemPromptCompositionTests {
             #expect(
                 mineBattery.battery == batteryStamp["battery"] as? String,
                 "\(label)")
+        }
+
+        // The PANEL half of the same ruling: second term is the cast entry's
+        // role text, stamp spelled `cast`.
+        let castings = try #require(fixture["panelCasting"] as? [[String: Any]])
+        #expect(castings.count >= 8)
+        for entry in castings {
+            let label = try #require(entry["label"] as? String)
+            let seat = SeatSystemPrompt(
+                agent: entry["agent"] as? String,
+                cast: entry["cast"] as? String)
+            #expect(seat.effective == entry["effective"] as? String, "\(label)")
+            #expect(
+                SystemPromptComposition.hash(seat.effective)
+                    == entry["effectiveHash"] as? String, "\(label)")
+            let stamp = try #require(entry["stamp"] as? [String: Any])
+            #expect(seat.stamp.agent == stamp["agent"] as? String, "\(label)")
+            #expect(seat.stamp.cast == stamp["cast"] as? String, "\(label)")
         }
 
         let advisories = try #require(fixture["advisories"] as? [[String: Any]])

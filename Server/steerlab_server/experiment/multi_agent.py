@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 import re
 
 from . import model_variant, paths, turn_endpoint, voice_lint
+from . import system_prompt as system_prompt_mod
 from .generate import generate
 from .turn_endpoint import EndpointError, TurnEndpoint
 
@@ -756,7 +757,15 @@ def _render_contract_prompt(scenario: Scenario, turn: Turn, speaker_context: str
 
 def _runtime_settings(agent: Agent, strip_interventions: bool):
     """Resolve an agent's variant → (variant, model_id, prompt_mode, system,
-    qwen_thinking, injections, warnings). Mirrors Swift runtimeSettings."""
+    qwen_thinking, injections, warnings, system_composition). Mirrors Swift
+    runtimeSettings.
+
+    ``system`` is the seat's EFFECTIVE system prompt — the composition of the
+    cast agent artifact's persona and the seat's own cast-entry role text, not
+    one of them alone (see the casting note at the resolution below).
+    ``system_composition`` is the additive provenance stamp for that effective
+    text, built from the same two inputs in the same place so a turn record can
+    never stamp a composition its generation did not run under."""
     warnings: list[dict] = []
     variant = None
     if agent.variant_artifact_path:
@@ -774,11 +783,43 @@ def _runtime_settings(agent: Agent, strip_interventions: bool):
         variant = model_variant.ModelVariant.from_file(path)
     model_id = (variant.base_model_id if variant else None) or agent.base_model_id
     prompt_mode = (variant.prompt_mode if variant else None) or "chatAssistant"
-    system = agent.system_prompt.strip() or (variant.system_prompt if variant else None)
+    # Casting COMPOSES; it no longer replaces (maintainer ruling, 2026-08-24).
+    # A seat has two levels of system content, and they used to be mutually
+    # exclusive here — a cast entry with role text silently discarded the
+    # agent's persona, and a seat with no role text ran on the persona alone:
+    #
+    #   * the AGENT ARTIFACT's `systemPrompt` — the persona, who the model is;
+    #   * the CAST ENTRY's `systemPrompt` — the role, "you represent Team
+    #     South", which `PanelComposition.semanticForm` deliberately keeps on
+    #     the seat because the role is the EXPERIMENT and the agent is what is
+    #     cast into it.
+    #
+    # Persona first, role second, joined by one blank line — the SAME order and
+    # the same principle as the study rule (`system_prompt.compose`): identity
+    # precedes instruction, and a cast role is situational instruction TO
+    # whoever the agent is, exactly as a study frame is. Composed through that
+    # module's own primitive rather than re-spelled here, so the joiner and the
+    # four degradation cases cannot drift between the study path and this one.
+    #
+    # Degradation carries the legacy lock: every agent in the workspace today
+    # has an EMPTY persona, so `compose` returns the cast text itself — the
+    # same object, not a re-joined copy — and every existing panel renders the
+    # bytes it always did. (One deliberate correction rides along: the old
+    # expression `.strip()`ped the cast text where the Swift twin never did, so
+    # a whitespace-padded role rendered differently on the two engines. The
+    # shared primitive never trims a non-empty value, which settles that in
+    # Swift's favour — what the researcher wrote is what the seat is armed
+    # with.)
+    persona = variant.system_prompt if variant else None
+    cast = agent.system_prompt
+    system = system_prompt_mod.compose(persona, cast)
+    system_composition = system_prompt_mod.composition(
+        persona, cast, frame_key="cast")
     qwen_thinking = variant.qwen_thinking_enabled if variant else False
     injections = ([] if strip_interventions or not variant
                   else model_variant.variant_injections(variant))
-    return variant, model_id, prompt_mode, system, qwen_thinking, injections, warnings
+    return (variant, model_id, prompt_mode, system, qwen_thinking, injections,
+            warnings, system_composition)
 
 
 def run_scenario(model, scenario: Scenario, *, run_dir: str,
@@ -857,7 +898,8 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                     own_authored=aid == speaker.id))
             results.append(replayed)
             continue
-        variant, model_id, prompt_mode, system, qwen_thinking, injections, turn_warnings = \
+        (variant, model_id, prompt_mode, system, qwen_thinking, injections,
+         turn_warnings, system_composition) = \
             _runtime_settings(speaker, strip_interventions)
         for w in turn_warnings:
             key = w["agentName"] + "|" + (w.get("variantArtifactPath") or "")
@@ -939,6 +981,15 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                   # this means re-deriving it from the manifest snapshot.
                   "promptRenderer": (CONTRACT_RENDERER if turn.contract is not None
                                      else TEMPLATE_RENDERER),
+                  # WHICH LEVELS composed the system prompt this turn generated
+                  # under (2026-08-24 casting ruling): `{"agent": …, "cast": …}`
+                  # with explicit nulls, the panel spelling of the study
+                  # record's `systemPromptComposition`. Built beside the
+                  # effective text in `_runtime_settings` and stamped on the
+                  # same fsync as the output it describes. Additive: turns
+                  # written before casting composed simply have no such key,
+                  # which is a different claim from "both levels were empty".
+                  "systemPromptComposition": system_composition,
                   "routedAgentIDs": routed, "modelID": active_model.model_id,
                   "modelRevision": active_model.revision,
                   "device": str(getattr(active_model, "device", "")),

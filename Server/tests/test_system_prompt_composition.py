@@ -24,6 +24,9 @@ What is pinned here:
    read; the sanctioned channel is the pinned
    ``extractionRendering.systemPrompt``.
 6. **Additive stamps** on both record kinds.
+7. **Panel casting composes too** — a cast seat is armed with the agent
+   artifact's persona then the cast entry's role text, in that order, through
+   the same primitive; its turn records stamp ``{"agent": …, "cast": …}``.
 
 Swift twin: ``Tests/ExperimentKitTests/SystemPromptCompositionTests.swift``.
 """
@@ -566,7 +569,143 @@ def test_the_pinned_extraction_rendering_is_the_sanctioned_prompt_channel(
     assert all(FRAME not in (r.system_prompt or "") for r in captured)
 
 
-# --- 7. cross-engine fixture ------------------------------------------------
+# --- 7. panel casting -------------------------------------------------------
+#
+# The same ruling, one level down. A panel seat's two levels are the CAST
+# ENTRY's role text ("you represent Team South", kept on the seat by
+# `PanelComposition.semanticForm` because the role is the experiment) and the
+# persona on the AGENT ARTIFACT cast into it. They used to REPLACE, exactly as
+# the study levels did. Same order, same primitive, second term spelled `cast`.
+
+ROLE = "You represent Team South. Argue its position."
+
+
+def _seat(tmp_path, *, persona, cast, name="seat"):
+    """A panel seat cast with an agent artifact carrying ``persona``."""
+    from steerlab_server.experiment import multi_agent
+
+    path = None
+    if persona is not None or name == "carries-artifact":
+        artifact = model_variant.ModelVariant(
+            name="adjudicator", base_model_id="m", system_prompt=persona)
+        path = os.path.join(str(tmp_path), f"{name}.json")
+        _write(path, json.dumps(artifact.to_dict()))
+    return multi_agent.Agent(
+        id="a", name="Alice", base_model_id="m", system_prompt=cast,
+        variant_artifact_path=path)
+
+
+def _resolved(tmp_path, *, persona, cast, name="seat"):
+    """(effective system prompt, composition stamp) for one cast seat."""
+    from steerlab_server.experiment import multi_agent
+
+    settings = multi_agent._runtime_settings(
+        _seat(tmp_path, persona=persona, cast=cast, name=name), False)
+    return settings[3], settings[7]
+
+
+def test_a_cast_seat_is_armed_with_the_persona_then_the_role(tmp_path):
+    """Persona first, role second, one blank line — the SAME order as the
+    study rule, because a cast role is situational instruction TO whoever the
+    agent is, exactly as the study frame is."""
+    system, _stamp = _resolved(tmp_path, persona=PERSONA, cast=ROLE)
+    assert system == PERSONA + "\n\n" + ROLE
+
+
+@pytest.mark.parametrize("persona,cast,expected", [
+    (PERSONA, ROLE, PERSONA + "\n\n" + ROLE),
+    (None, ROLE, ROLE),          # today's dominant case
+    ("", ROLE, ROLE),
+    ("   ", ROLE, ROLE),
+    (PERSONA, "", PERSONA),
+    (PERSONA, "   ", PERSONA),
+    (None, "", ""),
+])
+def test_panel_casting_degrades_gracefully_in_every_direction(
+        tmp_path, persona, cast, expected):
+    system, _stamp = _resolved(tmp_path, persona=persona, cast=cast,
+                               name="carries-artifact")
+    assert system == expected
+
+
+def test_an_empty_persona_seat_renders_exactly_todays_cast_only_arming(
+        tmp_path, monkeypatch):
+    """THE regression lock. Every agent in the workspace today has an EMPTY
+    persona, so every existing panel must reach the sampler with exactly the
+    cast-entry text it always did — not a re-joined copy of it."""
+    from steerlab_server.experiment import multi_agent
+
+    for persona in (None, "", "   "):
+        system, stamp = _resolved(tmp_path, persona=persona, cast=ROLE,
+                                  name="carries-artifact")
+        assert system == ROLE
+        assert sp.text_hash(system) == _sha(ROLE)
+        assert stamp["cast"] == _sha(ROLE)
+
+    seen = []
+
+    def stub_generate(model, prompt, **kwargs):
+        seen.append(kwargs.get("system_prompt"))
+        return "out"
+
+    monkeypatch.setattr(multi_agent, "generate", stub_generate)
+    scenario = multi_agent.Scenario(
+        name="panel", base_model_id="m",
+        agents=[multi_agent.Agent(id="a", name="Alice", base_model_id="m",
+                                  system_prompt=ROLE)],
+        turns=[multi_agent.Turn(id="t1", title="Alice opens",
+                                speaker_agent_id="a",
+                                prompt_template="Speak.", output_label="a1")])
+    run_dir = str(tmp_path / "run1")
+    os.makedirs(run_dir, exist_ok=True)
+    multi_agent.run_scenario(SimpleNamespace(model_id="m", revision="r"),
+                             scenario, run_dir=run_dir)
+    assert seen == [ROLE]
+
+
+def test_a_padded_cast_entry_is_no_longer_trimmed_on_this_engine(tmp_path):
+    """Pre-composition the server `.strip()`ped the cast text where the Swift
+    twin never did — the same panel was armed with different bytes on the two
+    engines. The shared primitive never trims a non-empty value, which settles
+    it in Swift's favour: what the researcher wrote is what the seat runs."""
+    system, _stamp = _resolved(tmp_path, persona=None, cast="  padded role  ",
+                               name="carries-artifact")
+    assert system == "  padded role  "
+
+
+def test_a_cast_seat_stamps_which_levels_composed_its_prompt(tmp_path,
+                                                             monkeypatch):
+    """Additive provenance beside the effective text, always both keys, with
+    explicit nulls — the panel spelling of a study record's
+    `systemPromptComposition`."""
+    from steerlab_server.experiment import multi_agent
+
+    _system, stamp = _resolved(tmp_path, persona=PERSONA, cast=ROLE)
+    assert stamp == {"agent": _sha(PERSONA), "cast": _sha(ROLE)}
+    bare, bare_stamp = _resolved(tmp_path, persona=None, cast=ROLE,
+                                 name="carries-artifact")
+    assert bare_stamp == {"agent": None, "cast": _sha(ROLE)}
+
+    monkeypatch.setattr(multi_agent, "generate",
+                        lambda model, prompt, **kwargs: "out")
+    scenario = multi_agent.Scenario(
+        name="panel", base_model_id="m",
+        agents=[multi_agent.Agent(id="a", name="Alice", base_model_id="m",
+                                  system_prompt=ROLE)],
+        turns=[multi_agent.Turn(id="t1", title="Alice opens",
+                                speaker_agent_id="a",
+                                prompt_template="Speak.", output_label="a1")])
+    run_dir = str(tmp_path / "run2")
+    os.makedirs(run_dir, exist_ok=True)
+    multi_agent.run_scenario(SimpleNamespace(model_id="m", revision="r"),
+                             scenario, run_dir=run_dir)
+    turns = [json.loads(line) for line
+             in open(os.path.join(run_dir, "turns.jsonl"), encoding="utf-8")]
+    assert [t["systemPromptComposition"] for t in turns] == [
+        {"agent": None, "cast": _sha(ROLE)}]
+
+
+# --- 8. cross-engine fixture ------------------------------------------------
 
 FIXTURES = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -591,6 +730,12 @@ def test_the_cross_engine_composition_fixture_is_current():
         assert sp.composition(case["agent"], case["study"],
                               frame_key="battery") == case["batteryStamp"], \
             case["label"]
+    for case in fixture["panelCasting"]:
+        composed = sp.compose(case["agent"], case["cast"])
+        assert composed == case["effective"], case["label"]
+        assert sp.text_hash(composed) == case["effectiveHash"], case["label"]
+        assert sp.composition(case["agent"], case["cast"],
+                              frame_key="cast") == case["stamp"], case["label"]
     for case in fixture["advisories"]:
         arms = [(a["name"], a["systemPrompt"]) for a in case["arms"]]
         assert sp.divergence_advisory(arms) == case["advisory"], case["label"]

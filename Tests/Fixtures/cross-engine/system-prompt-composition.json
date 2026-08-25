@@ -283,5 +283,139 @@
     }
   ],
   "joiner": "\n\n",
-  "note": "produced by Server experiment/system_prompt.py \u2014 do not hand-edit; regenerate with scripts/regenerate-cross-engine-fixtures.py"
+  "note": "produced by Server experiment/system_prompt.py \u2014 do not hand-edit; regenerate with scripts/regenerate-cross-engine-fixtures.py",
+  "panelCasting": [
+    {
+      "agent": "You are Adjudicator-7.",
+      "cast": "You represent Team South.",
+      "effective": "You are Adjudicator-7.\n\nYou represent Team South.",
+      "effectiveHash": "c06b03775d5b8e93fdbf9cfa8b724c9dc655e91137c791d41a13598bdb4fab05",
+      "label": "persona-and-cast",
+      "stamp": {
+        "agent": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+        "cast": "8eac6c4d0272f4427b7f5ec28d47a3c60d26f82f38ab4c26ad1fe4b4692ed495"
+      }
+    },
+    {
+      "agent": null,
+      "cast": "You represent Team South.",
+      "effective": "You represent Team South.",
+      "effectiveHash": "8eac6c4d0272f4427b7f5ec28d47a3c60d26f82f38ab4c26ad1fe4b4692ed495",
+      "label": "cast-only-null-persona",
+      "stamp": {
+        "agent": null,
+        "cast": "8eac6c4d0272f4427b7f5ec28d47a3c60d26f82f38ab4c26ad1fe4b4692ed495"
+      }
+    },
+    {
+      "agent": "",
+      "cast": "You represent Team South.",
+      "effective": "You represent Team South.",
+      "effectiveHash": "8eac6c4d0272f4427b7f5ec28d47a3c60d26f82f38ab4c26ad1fe4b4692ed495",
+      "label": "cast-only-empty-persona",
+      "stamp": {
+        "agent": null,
+        "cast": "8eac6c4d0272f4427b7f5ec28d47a3c60d26f82f38ab4c26ad1fe4b4692ed495"
+      }
+    },
+    {
+      "agent": "   ",
+      "cast": "You represent Team South.",
+      "effective": "You represent Team South.",
+      "effectiveHash": "8eac6c4d0272f4427b7f5ec28d47a3c60d26f82f38ab4c26ad1fe4b4692ed495",
+      "label": "cast-only-blank-persona",
+      "stamp": {
+        "agent": "0aad7da77d2ed59c396c99a74e49f3a4524dcdbcb5163251b1433d640247aeb4",
+        "cast": "8eac6c4d0272f4427b7f5ec28d47a3c60d26f82f38ab4c26ad1fe4b4692ed495"
+      }
+    },
+    {
+      "agent": "You are Adjudicator-7.",
+      "cast": null,
+      "effective": "You are Adjudicator-7.",
+      "effectiveHash": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+      "label": "persona-only-null-cast",
+      "stamp": {
+        "agent": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+        "cast": null
+      }
+    },
+    {
+      "agent": "You are Adjudicator-7.",
+      "cast": "",
+      "effective": "You are Adjudicator-7.",
+      "effectiveHash": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+      "label": "persona-only-empty-cast",
+      "stamp": {
+        "agent": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+        "cast": null
+      }
+    },
+    {
+      "agent": "You are Adjudicator-7.",
+      "cast": "   ",
+      "effective": "You are Adjudicator-7.",
+      "effectiveHash": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+      "label": "persona-only-blank-cast",
+      "stamp": {
+        "agent": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+        "cast": "0aad7da77d2ed59c396c99a74e49f3a4524dcdbcb5163251b1433d640247aeb4"
+      }
+    },
+    {
+      "agent": null,
+      "cast": "",
+      "effective": "",
+      "effectiveHash": null,
+      "label": "neither",
+      "stamp": {
+        "agent": null,
+        "cast": null
+      }
+    },
+    {
+      "agent": null,
+      "cast": null,
+      "effective": null,
+      "effectiveHash": null,
+      "label": "neither-null",
+      "stamp": {
+        "agent": null,
+        "cast": null
+      }
+    },
+    {
+      "agent": "You are Adjudicator-7.",
+      "cast": "  padded role  ",
+      "effective": "You are Adjudicator-7.\n\n  padded role  ",
+      "effectiveHash": "148b04c9541fa81413bd54620e58f90d0054569c2c6a3c04d3e1b786d35057e3",
+      "label": "untrimmed-cast",
+      "stamp": {
+        "agent": "ee4a8b6557a1e4e1783a6861c306978b65e1b80ab3bda6d9eb17cc67e18e9af2",
+        "cast": "3146d2b433d4c483a2d47bd7b8b17d8426578e777e43d377dbe2bf83caabd258"
+      }
+    },
+    {
+      "agent": "line one\nline two",
+      "cast": "You represent Team South.",
+      "effective": "line one\nline two\n\nYou represent Team South.",
+      "effectiveHash": "cdaf4d17a781a2e1b82e2621dce9cddcf1c526092415debdf6ec365160693655",
+      "label": "multiline-persona",
+      "stamp": {
+        "agent": "b6858b03a6cae635deeaeab09a74e598979b72c917cbfff0bb3fe2cd05111dbc",
+        "cast": "8eac6c4d0272f4427b7f5ec28d47a3c60d26f82f38ab4c26ad1fe4b4692ed495"
+      }
+    },
+    {
+      "agent": "Tu es un juge \u2014 pr\u00e9cis.",
+      "cast": "Tu repr\u00e9sentes l'\u00e9quipe Sud\u2026",
+      "effective": "Tu es un juge \u2014 pr\u00e9cis.\n\nTu repr\u00e9sentes l'\u00e9quipe Sud\u2026",
+      "effectiveHash": "f36b0408b658894ee1eb55dd190c2b1044caabd8773ad7a688186ece9ebfaf24",
+      "label": "non-ascii",
+      "stamp": {
+        "agent": "4316510c271f2448c3b7b9fc50bc31b30b2e5d2b2528ea849e5df1bc533071c5",
+        "cast": "317816f4db841f8bdddee200fe235b78792c90b8b3aac308e865fcdb0c5ddc75"
+      }
+    }
+  ]
 }
