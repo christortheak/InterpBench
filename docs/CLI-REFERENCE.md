@@ -2008,7 +2008,7 @@ probes a **colocated `mlx.metallib`** before any bundle lookup, which is why the
 supported layout is
 
 ```
-~/.local/bin/steerlab                 # shim: exec's the real binary
+~/.local/bin/steerlab-cli             # shim: exec's the real binary
 ~/.local/libexec/steerlab/
     steerlab-cli                      # the binary, absolute LC_RPATH stripped
     mlx.metallib                      # colocated: GPU verbs need no DYLD_FRAMEWORK_PATH
@@ -2025,6 +2025,15 @@ that layout, strips the absolute build-machine `LC_RPATH` the linker bakes in,
 and calls `install stamp`. `scripts/install-cli.sh --verify` calls
 `install verify`, which is the **only** hasher — the shell never re-derives
 SHA-256.
+
+The shim's name is `steerlab-cli` — the binary's own. The short spelling
+`steerlab` belongs to the cross-platform Python **client** (§1.4), so the
+installer adds it as an alias only when nothing else on the machine answers to
+it: no client console script in `Server/.venv.nosync`, no `steerlab` on PATH,
+no existing `~/.local/bin/steerlab` it did not write itself (a foreign file
+there is never overwritten). `--short-name` opts in anyway, for a machine that
+will never install the client; when the alias is skipped, the installer says
+why.
 
 | Verb | What it does | Cost |
 |---|---|---|

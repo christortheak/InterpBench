@@ -370,10 +370,11 @@ This is a source release, an early one. What that means concretely:
   and developers: a third command line that authors a local workspace on any
   platform, installed by `pip install -e Server` with no torch. See
   `docs/CLI-REFERENCE.md` §1.4 and `docs/PORTABILITY-CONTRACTS.md` §7. The name
-  `steerlab` is the client's; if an older install left a
-  `~/.local/bin/steerlab` symlink or shim pointing at the Swift CLI — the
-  source installer still writes one — **drop it** and type `steerlab-cli` for
-  Mac verbs, per `AGENTS.md` step 1.
+  `steerlab` is the client's; the source installer now writes its shim as
+  `steerlab-cli` and adds the short alias only where no client answers to the
+  name. If an older install left a `~/.local/bin/steerlab` symlink or shim
+  pointing at the Swift CLI, **drop it** and type `steerlab-cli` for Mac
+  verbs, per `AGENTS.md` step 1.
 - Cluster deployment works against a generic Slurm site through a versioned
   site profile, but the profile schema does not yet represent every field a
   site might need.

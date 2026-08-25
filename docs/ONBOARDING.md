@@ -130,26 +130,27 @@ Xcode 27:
 git clone <this repository> && cd <checkout>
 ./scripts/install-cli.sh          # builds with xcodebuild, installs under ~/.local
 export PATH="$HOME/.local/bin:$PATH"
-cp ~/.local/bin/steerlab ~/.local/bin/steerlab-cli   # see the naming note below
 steerlab-cli --version
 ```
 
 Re-runnable, no `sudo`, and it stages everything before swapping the live tree,
 so a failed install leaves the previous one untouched. The binary lands in
 `~/.local/libexec/steerlab/` beside the Metal shader library it needs, with a
-shim at `~/.local/bin/steerlab` — which is why the installed CLI needs no
+shim at `~/.local/bin/steerlab-cli` — which is why the installed CLI needs no
 environment variables, unlike running out of a build directory. Set
 `DEVELOPER_DIR` first if `xcode-select` points at an older Xcode.
 
-**The installer still writes only the short name**, which is the Python
-client's. Copy the shim to `steerlab-cli` as above (same directory, so its
-relative hop to `libexec` still resolves) and type that; if this machine also
-gets the client, delete `~/.local/bin/steerlab` so the name has one owner.
-`steerlab-cli install verify` re-hashes the installed tree against its own
-manifest and answers "is what I am running what was installed". Re-running
-`install-cli.sh` rewrites `~/.local/bin/steerlab` — including over a symlink
-you made to the app's bundled binary — so if you keep both installs, decide
-which one owns that path and re-copy your `steerlab-cli` after an upgrade.
+**The short name `steerlab` is the Python client's**, so the installer writes
+it as an alias only when nothing else on this machine answers to it — no
+client console script in `Server/.venv.nosync`, no `steerlab` on PATH, and no
+existing `~/.local/bin/steerlab` it did not write itself (a foreign file
+there, such as a symlink you made to the app's bundled binary, is left alone).
+Pass `--short-name` to write the alias anyway on a machine that will never
+install the client. An install from before this policy may have left a
+Swift-CLI shim at `~/.local/bin/steerlab`; if this machine also gets the
+client, delete it so the name has one owner. `steerlab-cli install verify`
+re-hashes the installed tree against its own manifest and answers "is what I
+am running what was installed".
 
 One macOS wrinkle the installer warns about: keychain access is granted per
 binary identity, so the first verb that actually *uses* a stored credential may
