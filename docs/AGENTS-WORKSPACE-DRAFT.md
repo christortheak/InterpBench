@@ -649,6 +649,15 @@ tunnel open`, `cluster remote --site <id> …`, and `cluster import --site <id>`
 home's `Sites/cluster-sites/` registry — never invent one; ask the researcher
 for theirs.
 
+The shared SSH master EXPIRES — routinely, daily. A `Permission denied
+(publickey,keyboard-interactive)` from an otherwise-working site means
+expired authentication, not a broken site or profile: run
+`steerlab-cli cluster auth open --site <id>`, which spawns a Terminal
+window for the HUMAN's password and multi-factor prompt and then persists
+the master for hours; `cluster auth status` confirms, `cluster auth close`
+ends it. You cannot answer that prompt yourself — say so and wait for the
+researcher rather than retrying commands that can only refuse.
+
 ### 8.1 Updating the server engine
 
 **`cluster push` deploys the payload baked into the app bundle**
