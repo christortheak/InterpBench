@@ -714,6 +714,7 @@ never read by Python: `STEERLAB_MODULES`, `STEERLAB_CONDA_SH`,
 | `STEERLAB_JUDGE_KEY_FILE` | a `~/.steerlab-judge-key`-style path, mode 600 | A **path, never a secret**, which is why it is allowed through the secret-env filter and inherited into Slurm children. |
 | `STEERLAB_SKIP_PROVIDER_PREFLIGHT` | unset | Disables the provider catalogue lookup for air-gapped sites. **Skipping is logged** — an unverified pin must never look like a verified one. |
 | `STEERLAB_PREFILL_CHUNK` | `1024` | MPS-only; `0` disables chunking. CUDA and CPU never read it. |
+| `STEERLAB_JLENS_REFERENCE_FP32` | unset | `1`/`true`/`yes`/`on`: run `jlens qualify`'s `referenceAgreement` check with the REFERENCE path's own tensors promoted to float32 (ours is float32 already), then restored. A diagnostic for one question — whether a deviation is the two paths' dtype-cast asymmetry — at the cost of a second copy of the output head. The check stamps `referenceFP32Forced` in **both** modes and says so in its detail line, so a run that agreed only under promotion can never be read as a default-mode acceptance. It does not touch the tolerance. |
 | `STEERLAB_MEMORY_HEADROOM_GIB` | `16.0` | Floored at 0; a bad value is swallowed. |
 
 ### 2.8 Hugging Face
@@ -2999,6 +3000,16 @@ runtime. Records are appended, never replaced. Tier is read from the
 supported-lens table, so `qualify` RUNS on 4B (the cheap mechanics rehearsal)
 and its record is refused by freeze; no flag upgrades that. An unresolvable
 dtype refuses outright — absent is not a match.
+
+`referenceAgreement` records **every comparison**, not only the worst
+(2026-08-24, additive): `measured.perComparison` carries one row per
+(`layer`, `fixtureRow`, `tokenID`) with OUR logit, the REFERENCE logit, and the
+absolute deviation, plus `worstComparison` and a `perComparisonTruncated` flag
+for the bounded-record case. `maxAbsLogitDeviation` is unchanged and is still
+what the tolerance is compared against — the breakdown exists because a max
+alone cannot say whether a deviation is large *relative to its operands*, which
+is the whole question when one fires. `STEERLAB_JLENS_REFERENCE_FP32=1` (§2.7)
+is the paired instrument.
 
 `g0` is the feasibility gate, and its output is **two independent
 arm verdicts**: the STEERING arm (derive → inject → use in a study) and the

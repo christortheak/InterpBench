@@ -224,6 +224,242 @@ def test_reference_agreement_FAILS_when_the_reference_package_is_absent(
     assert "not installed" in result.detail
 
 
+# --- the reference-agreement breakdown and the fp32 diagnostic ---------------
+#
+# The reference package is not installed in CI (it floors transformers>=5.5 and
+# comes from a git URL), so these stand a FAKE `jlens` in for it — one that
+# computes the same softcap(U · RMSNorm(J h)) this engine does, but casts into
+# the output head the way the real one does. That cast asymmetry is the whole
+# subject: our path is float32 throughout, the reference's is not, and the 27B
+# run's 0.07059 deviation is suspected to be nothing else.
+
+REF_VOCAB = 16
+REF_WATCHLIST = [1, 4, 9, 15]
+
+
+def _rms(z):
+    return z * torch.rsqrt(z.pow(2).mean(-1, keepdim=True) + 1e-6)
+
+
+class FakeReferenceModel:
+    """The reference's model wrapper: an output head in the runtime's own dtype
+    plus a final-norm gain, exposed through ``unembed``."""
+
+    def __init__(self, head, gain):
+        self._lm_head = torch.nn.Linear(head.shape[1], head.shape[0],
+                                        bias=False).to(head.dtype)
+        self._lm_head.weight.requires_grad_(False)
+        with torch.no_grad():
+            self._lm_head.weight.copy_(head)
+        self._gain = gain
+
+    def unembed(self, z):
+        weight = self._lm_head.weight
+        scaled = _rms(z) * self._gain
+        # The cast the real reference performs on the way into the matmul.
+        return self._lm_head(scaled.to(weight.dtype)).to(torch.float32)
+
+
+class FakeReferenceLens:
+    def __init__(self, *, jacobians, n_prompts, d_model):
+        self._j = jacobians
+
+    def transport(self, h, layer):
+        return h @ self._j[layer].T.to(h.dtype)
+
+
+class FakeReadout:
+    """This engine's side: watched rows promoted to float32 at build time and
+    the whole readout computed there (the real ``LensReadout``'s convention)."""
+
+    def __init__(self, record, root, head, gain, watchlist):
+        self.device = torch.device("cpu")
+        self.watchlist = list(watchlist)
+        self.softcap = None
+        self.gain = gain
+        self._record = record
+        self._root = root
+        # head rows are the SAME bytes the reference holds, promoted — the two
+        # paths differ in compute dtype, never in operands.
+        self.watched_rows = head[watchlist].to(torch.float32) * gain
+
+    def watched_scores(self, hidden, layer):
+        j = lens_store.load_layer(self._record, layer,
+                                  root=self._root).to(torch.float32)
+        return _rms(hidden @ j.T) @ self.watched_rows.T
+
+
+def _install_fake_reference(monkeypatch, record, root, *,
+                            head_dtype=torch.bfloat16):
+    """Stand a fake ``jlens`` in for the absent extra. Returns the readout and
+    the reference model, so a test can inspect what the check did to them."""
+    import sys
+    import types
+
+    from steerlab_server.jlens import backend as backend_mod
+
+    torch.manual_seed(20260824)
+    head = (torch.randn(REF_VOCAB, record.dModel) * 0.5).to(head_dtype)
+    gain = 1.0 + torch.full((record.dModel,), 0.3)
+
+    ref_model = FakeReferenceModel(head, gain)
+    module = types.ModuleType("jlens")
+    module.from_hf = lambda inner, tokenizer, force_bos=False: ref_model
+    module.JacobianLens = FakeReferenceLens
+
+    monkeypatch.setitem(sys.modules, "jlens", module)
+    monkeypatch.setattr(backend_mod, "require_reference", lambda: module)
+    readout = FakeReadout(record, root, head, gain, REF_WATCHLIST)
+    return readout, ref_model
+
+
+class ReferenceModelHost:
+    """What the check reads off the study model: an inner model and (maybe) a
+    tokenizer. The fake reference ignores both."""
+
+    model = object()
+    tokenizer = None
+
+
+def _run_reference_check(tmp_path, monkeypatch, *, layers=(0, 1, 2)):
+    root = str(tmp_path / "ws")
+    record = _import(tmp_path, EVIDENCE_MODEL)
+    readout, ref_model = _install_fake_reference(monkeypatch, record, root)
+    result = qualification._check_reference_agreement(
+        record, ReferenceModelHost(), readout, list(layers), root=root)
+    return result, ref_model
+
+
+def test_reference_agreement_records_EVERY_comparison_not_only_the_max(
+        tmp_path, monkeypatch):
+    """§12(1). Max-only made the 27B investigation blind three times over: a
+    deviation of 0.07 is enormous against logits of ~10 and unremarkable
+    against ~96, and the record could not say which."""
+    result, _ = _run_reference_check(tmp_path, monkeypatch)
+
+    rows = result.measured["perComparison"]
+    assert len(rows) == 3 * qualification.REFERENCE_FIXTURE_ROWS
+    assert result.measured["comparisons"] == len(rows)
+    assert {r["layer"] for r in rows} == {0, 1, 2}
+    assert {r["fixtureRow"] for r in rows} == set(
+        range(qualification.REFERENCE_FIXTURE_ROWS))
+    for row in rows:
+        assert row["tokenID"] in REF_WATCHLIST
+        # The OPERANDS are what make the magnitude readable.
+        assert abs(abs(row["ours"] - row["reference"])
+                   - row["absDeviation"]) < 1e-6
+    assert result.measured["perComparisonTruncated"] is False
+    assert result.measured["perComparisonRecorded"] == len(rows)
+
+
+def test_the_summary_max_is_unchanged_by_the_breakdown(tmp_path, monkeypatch):
+    """The breakdown is ADDITIVE. `maxAbsLogitDeviation` still means exactly
+    what it meant, and it is still what the tolerance is compared against."""
+    result, _ = _run_reference_check(tmp_path, monkeypatch)
+
+    rows = result.measured["perComparison"]
+    assert result.measured["maxAbsLogitDeviation"] == pytest.approx(
+        max(r["absDeviation"] for r in rows))
+    assert result.measured["worstComparison"]["absDeviation"] == \
+        pytest.approx(result.measured["maxAbsLogitDeviation"])
+    assert result.measured["tolerance"] == qualification.REFERENCE_TOLERANCE
+
+
+def test_the_tolerance_is_untouched_by_the_diagnosis_instruments():
+    """The instruments produce the evidence; the number is a METHODS ruling for
+    the study lead and is not theirs to move."""
+    assert qualification.REFERENCE_TOLERANCE == 5e-2
+
+
+def test_the_fp32_mode_is_OFF_unless_asked_and_the_record_says_which(
+        tmp_path, monkeypatch):
+    """Default behaviour is untouched: nothing is promoted, the reference keeps
+    its runtime dtype, and the stamp is present and False — so a default-mode
+    record is legible as one rather than by the absence of a key."""
+    monkeypatch.delenv(qualification.REFERENCE_FP32_ENV, raising=False)
+    result, ref_model = _run_reference_check(tmp_path, monkeypatch)
+
+    assert result.measured["referenceFP32Forced"] is False
+    assert result.measured["referenceFP32Promoted"] == []
+    assert result.measured["referenceFP32EnvVar"] == \
+        qualification.REFERENCE_FP32_ENV
+    assert ref_model._lm_head.weight.dtype == torch.bfloat16
+    assert "float32" not in result.detail
+    # And the cast asymmetry is really there to be explained.
+    assert result.measured["maxAbsLogitDeviation"] > 1e-4
+
+
+def test_an_unset_and_an_explicitly_off_env_produce_the_SAME_numbers(
+        tmp_path, monkeypatch):
+    """'Opt-in' has to mean byte-identical when not opted in."""
+    monkeypatch.delenv(qualification.REFERENCE_FP32_ENV, raising=False)
+    unset, _ = _run_reference_check(tmp_path, monkeypatch)
+    monkeypatch.setenv(qualification.REFERENCE_FP32_ENV, "0")
+    off, _ = _run_reference_check(tmp_path / "second", monkeypatch)
+
+    assert off.measured["maxAbsLogitDeviation"] == \
+        unset.measured["maxAbsLogitDeviation"]
+    assert off.measured["perComparison"] == unset.measured["perComparison"]
+    assert off.detail == unset.detail
+
+
+def test_forcing_fp32_collapses_the_deviation_and_STAMPS_the_record(
+        tmp_path, monkeypatch):
+    """The confirmation the tolerance ruling wants: if the deviation collapses
+    when the reference path is promoted, the dtype-cast asymmetry is the whole
+    story. A record produced this way can never read as a default-mode one —
+    the stamp is in the measurements AND in the detail line."""
+    monkeypatch.delenv(qualification.REFERENCE_FP32_ENV, raising=False)
+    default, _ = _run_reference_check(tmp_path, monkeypatch)
+
+    monkeypatch.setenv(qualification.REFERENCE_FP32_ENV, "1")
+    forced, ref_model = _run_reference_check(tmp_path / "fp32", monkeypatch)
+
+    assert forced.measured["referenceFP32Forced"] is True
+    assert "_lm_head" in forced.measured["referenceFP32Promoted"]
+    assert qualification.REFERENCE_FP32_ENV in forced.detail
+    assert "FORCED TO float32" in forced.detail
+
+    assert forced.measured["maxAbsLogitDeviation"] < \
+        default.measured["maxAbsLogitDeviation"] / 100
+    assert forced.measured["maxAbsLogitDeviation"] < 1e-4
+    # Promotion is temporary: the reference wraps the STUDY model's live
+    # modules, and the checks that run after this one see the runtime dtype.
+    assert ref_model._lm_head.weight.dtype == torch.bfloat16
+
+
+def test_the_fp32_stamp_is_present_even_when_the_reference_is_absent(
+        tmp_path, monkeypatch):
+    """A skipped check is still a record someone reads for what mode it ran
+    in."""
+    from steerlab_server.jlens import backend as backend_mod
+    from steerlab_server.jlens.schemas import JLensError
+
+    record = _import(tmp_path, EVIDENCE_MODEL)
+    monkeypatch.setenv(qualification.REFERENCE_FP32_ENV, "1")
+    monkeypatch.setattr(backend_mod, "require_reference",
+                        lambda: (_ for _ in ()).throw(JLensError("absent")))
+    result = qualification._check_reference_agreement(
+        record, None, None, [0], root=str(tmp_path / "ws"))
+    assert result.skipped is True
+    assert result.measured["referenceFP32Forced"] is True
+
+
+def test_a_huge_comparison_set_keeps_the_LARGEST_deviations(tmp_path,
+                                                            monkeypatch):
+    """Truncation is bounded and honest: the rows a tolerance question is about
+    are the ones retained, and the record says it truncated."""
+    monkeypatch.setattr(qualification, "REFERENCE_MAX_RECORDED_COMPARISONS", 5)
+    result, _ = _run_reference_check(tmp_path, monkeypatch)
+
+    rows = result.measured["perComparison"]
+    assert result.measured["perComparisonTruncated"] is True
+    assert len(rows) == 5
+    assert result.measured["comparisons"] == 12      # counted, not retained
+    assert result.measured["maxAbsLogitDeviation"] == pytest.approx(
+        max(r["absDeviation"] for r in rows))
+
+
 # --- tier --------------------------------------------------------------------
 
 def test_tier_comes_from_the_supported_table():

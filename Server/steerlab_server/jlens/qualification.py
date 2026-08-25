@@ -97,7 +97,31 @@ BLOCKING = ("geometry", "runtimeNumerics", "jacobianFinite",
 #: the way into the matmul), tight enough that a missing RMSNorm gain — which
 #: rescales by ~an order of magnitude on Gemma (plan §11.1) — cannot hide under
 #: it. Pinned by test.
+#:
+#: Whether this ABSOLUTE number is the right shape is an open METHODS question,
+#: not a CLI default anyone may quietly retune (the 27B run reads 0.07059 on a
+#: fixture logit of ~96, i.e. a relative deviation of ~7e-4). The two
+#: instruments that produce the evidence for that ruling live in
+#: :func:`_check_reference_agreement` and change nothing about this number:
+#: ``measured["perComparison"]`` records the raw (layer, fixture row, token)
+#: logit PAIR behind every comparison, so the max is no longer the only thing
+#: a reader gets; and :data:`REFERENCE_FP32_ENV` forces the reference path to
+#: float32 for one diagnostic run, so "it is the dtype-cast asymmetry" becomes
+#: a measurement instead of a hypothesis. Both are stamped in the record.
 REFERENCE_TOLERANCE = 5e-2
+
+#: Opt-in diagnostic: force the REFERENCE path's own float tensors to float32
+#: for the agreement check (this engine's path is float32 already). Off by
+#: default, and the record stamps which mode produced it, so a run that passed
+#: only because both paths were promoted can never be read as a default-mode
+#: acceptance. See :func:`_promote_reference_to_fp32`.
+REFERENCE_FP32_ENV = "STEERLAB_JLENS_REFERENCE_FP32"
+
+#: How many per-comparison rows the record keeps. The check runs
+#: ``len(layers) × REFERENCE_FIXTURE_ROWS`` comparisons, so this bites only on
+#: an all-layer qualification; when it does, the rows retained are the LARGEST
+#: deviations (the ones a tolerance question is about) and the record says so.
+REFERENCE_MAX_RECORDED_COMPARISONS = 512
 
 #: Deterministic residual fixtures for the reference-agreement check: seeded
 #: draws, scaled to a plausible residual magnitude. Seeded rather than
@@ -347,6 +371,67 @@ def _reference_residuals(d_model: int, count: int = REFERENCE_FIXTURE_ROWS):
     return rows * (REFERENCE_FIXTURE_SCALE / rows.norm(dim=-1, keepdim=True))
 
 
+def _reference_fp32_requested() -> bool:
+    """Is the fp32-forced comparison mode switched on for this process?"""
+    return (os.environ.get(REFERENCE_FP32_ENV) or "").strip().lower() in {
+        "1", "true", "yes", "on"}
+
+
+def _promote_reference_to_fp32(ref_model):
+    """Promote the reference model's own float tensors to float32.
+
+    Returns ``(promoted_names, restore)``. The caller MUST call ``restore`` in
+    a ``finally``: the reference wraps the study model's live modules, so this
+    is a temporary promotion of shared objects, not a copy.
+
+    Restoring is exact rather than approximately exact. bfloat16 and float16
+    values are all representable in float32, so ``bf16 → fp32 → bf16`` returns
+    the identical bits; tensor attributes are restored by putting the ORIGINAL
+    object back, which does not even round-trip.
+
+    This costs a second copy of the output head while the check runs, which is
+    why it is opt-in: at 27B that is several GiB. It is a diagnosis instrument
+    for one question — whether the reference-agreement deviation is the
+    documented dtype-cast asymmetry between the two paths — and not something
+    a qualification run should be paying for by default.
+
+    Note what it does NOT touch: this engine's side of the comparison reads
+    ``readout.watched_rows``, which was materialized in float32 at build time,
+    so promoting the reference cannot move our operand.
+    """
+    import torch
+
+    promoted: list[str] = []
+    undo: list = []
+    for name, value in list(vars(ref_model).items()):
+        if isinstance(value, torch.nn.Module):
+            dtypes = {t.dtype for t in
+                      list(value.parameters()) + list(value.buffers())
+                      if t.is_floating_point()}
+            if not dtypes or dtypes == {torch.float32}:
+                continue
+            if len(dtypes) > 1:
+                # Mixed float widths: restoring would have to guess which
+                # tensor was which, so leave it and let the stamp show that
+                # this module was not promoted.
+                continue
+            original = dtypes.pop()
+            value.to(torch.float32)
+            undo.append(lambda m=value, d=original: m.to(d))
+            promoted.append(name)
+        elif isinstance(value, torch.Tensor) and value.is_floating_point() \
+                and value.dtype != torch.float32:
+            setattr(ref_model, name, value.to(torch.float32))
+            undo.append(lambda n=name, v=value: setattr(ref_model, n, v))
+            promoted.append(name)
+
+    def restore():
+        for step in reversed(undo):
+            step()
+
+    return promoted, restore
+
+
 # ---------------------------------------------------------------------------
 # The checks
 # ---------------------------------------------------------------------------
@@ -495,12 +580,29 @@ def _check_reference_agreement(record, model, readout, layers: list[int], *,
     the model's final norm (plan §12.1). The ``g ⊙ u_t`` fold this engine
     performs silently depends on that, so a future reference version that
     moved it would leave both paths self-consistent and both wrong.
+
+    **The record carries every comparison, not only the worst one.** For each
+    (source layer × fixture row) the record keeps the token the deviation is
+    largest at, OUR logit, the REFERENCE logit, and the absolute difference.
+    The max alone cannot answer the question a failing run actually raises —
+    whether a deviation is large in absolute terms because the operands are
+    large — and a 27B investigation stalled three times for exactly that
+    reason. ``maxAbsLogitDeviation`` is unchanged and still the summary.
+
+    There are no prompt or position axes here by construction: the fixtures are
+    seeded residual ROWS (:func:`_reference_residuals`), so a comparison is
+    identified by ``(layer, fixtureRow, tokenID)``.
+
+    :data:`REFERENCE_FP32_ENV` forces the reference path to float32 for the
+    comparison, and the record stamps whether it was on. The two paths cast
+    differently on the way into the output head; if the deviation collapses
+    under fp32, that asymmetry is the whole story, which is evidence a
+    tolerance ruling can stand on rather than an argument it has to take on
+    faith. The tolerance itself is untouched by the mode.
     """
-    import torch
-
     from . import backend as backend_mod
-    from . import lens_store
 
+    fp32_forced = _reference_fp32_requested()
     try:
         backend_mod.require_reference()
         import jlens as reference
@@ -509,13 +611,40 @@ def _check_reference_agreement(record, model, readout, layers: list[int], *,
             name="referenceAgreement", passed=False, skipped=True,
             detail=str(exc),
             measured={"referencePackage": backend_mod.REFERENCE_PACKAGE,
-                      "referenceCommit": backend_mod.REFERENCE_COMMIT})
+                      "referenceCommit": backend_mod.REFERENCE_COMMIT,
+                      "referenceFP32Forced": fp32_forced,
+                      "referenceFP32EnvVar": REFERENCE_FP32_ENV})
 
     inner = model.model
     ref_model = reference.from_hf(inner, getattr(model, "tokenizer", None),
                                   # Never mutate the study tokenizer's BOS
                                   # behaviour to run a check on it.
                                   force_bos=False)
+
+    promoted: list[str] = []
+    restore = None
+    if fp32_forced:
+        promoted, restore = _promote_reference_to_fp32(ref_model)
+    try:
+        result = _compare_against_reference(
+            record, readout, layers, ref_model, reference, backend_mod,
+            root=root, fp32_forced=fp32_forced, promoted=promoted)
+    finally:
+        if restore is not None:
+            restore()
+    return result
+
+
+def _compare_against_reference(record, readout, layers: list[int], ref_model,
+                               reference, backend_mod, *, root: str | None,
+                               fp32_forced: bool,
+                               promoted: list[str]) -> CheckResult:
+    """The comparison itself, with the reference model already in whatever
+    numeric mode the caller established. Split out so the fp32 promotion can be
+    undone in a ``finally`` no matter how the comparison ends."""
+    import torch
+
+    from . import lens_store
 
     residuals = _reference_residuals(record.dModel)
     device = readout.device
@@ -533,21 +662,46 @@ def _check_reference_agreement(record, model, readout, layers: list[int], *,
     watch = list(readout.watchlist)
     worst = 0.0
     compared = 0
+    per_comparison: list[dict] = []
     for layer in layers:
         j = lens_store.load_layer(record, layer, root=root).to(torch.float32)
         ref_lens = reference.JacobianLens(
             jacobians={layer: j}, n_prompts=record.nPrompts,
             d_model=record.dModel)
-        for row in residuals:
+        for index, row in enumerate(residuals):
             h = row.to(device=device, dtype=torch.float32)
             ours = readout.watched_scores(h, layer)
             if ours is None:
                 continue
             transported = ref_lens.transport(h, layer)
             theirs = ref_model.unembed(transported).to(torch.float32)[watch]
-            worst = max(worst, float(
-                (ours.to(torch.float32).cpu() - theirs.cpu()).abs().max()))
+            ours_cpu = ours.to(torch.float32).reshape(-1).cpu()
+            theirs_cpu = theirs.to(torch.float32).reshape(-1).cpu()
+            deviation = (ours_cpu - theirs_cpu).abs()
+            at = int(deviation.argmax())
+            worst = max(worst, float(deviation[at]))
             compared += 1
+            # The OPERANDS, not just their difference: whether 0.07 is a large
+            # deviation depends entirely on whether these are ~10 or ~96.
+            per_comparison.append({
+                "layer": int(layer),
+                "fixtureRow": int(index),
+                "tokenID": int(watch[at]) if at < len(watch) else None,
+                "watchIndex": at,
+                "ours": float(ours_cpu[at]),
+                "reference": float(theirs_cpu[at]),
+                "absDeviation": float(deviation[at]),
+            })
+    recorded = per_comparison
+    truncated = len(per_comparison) > REFERENCE_MAX_RECORDED_COMPARISONS
+    if truncated:
+        # Keep the largest deviations — the rows a tolerance question is
+        # about — and put them back in run order so the record still reads as
+        # a walk over (layer, fixture row).
+        recorded = sorted(
+            sorted(per_comparison, key=lambda c: -c["absDeviation"])
+            [:REFERENCE_MAX_RECORDED_COMPARISONS],
+            key=lambda c: (c["layer"], c["fixtureRow"]))
 
     problems: list[str] = []
     if not norm_applied:
@@ -564,15 +718,40 @@ def _check_reference_agreement(record, model, readout, layers: list[int], *,
         problems.append(
             f"max logit deviation {worst:.4g} exceeds the pinned tolerance "
             f"{REFERENCE_TOLERANCE:g}")
+    worst_comparison = max(per_comparison,
+                           key=lambda c: c["absDeviation"], default=None)
+    detail = ("; ".join(problems)
+              or (f"agrees with {backend_mod.REFERENCE_PACKAGE} within "
+                  f"{worst:.3g} over {compared} fixture(s)"))
+    if fp32_forced:
+        # In the detail as well as the measurements: this is what a reader
+        # sees in the CLI summary, and a passing line that does not say the
+        # reference was promoted would read as a default-mode acceptance.
+        detail += (f"; REFERENCE PATH FORCED TO float32 ({REFERENCE_FP32_ENV}) "
+                   f"— diagnostic mode, not a default-mode agreement")
     return CheckResult(
         name="referenceAgreement", passed=not problems,
-        detail="; ".join(problems)
-               or (f"agrees with {backend_mod.REFERENCE_PACKAGE} within "
-                   f"{worst:.3g} over {compared} fixture(s)"),
+        detail=detail,
         measured={"maxAbsLogitDeviation": worst,
                   "tolerance": REFERENCE_TOLERANCE,
                   "comparisons": compared,
                   "finalNormApplied": norm_applied,
+                  # Per-comparison operands (2026-08-24). The summary above is
+                  # unchanged; these are what make a deviation's MAGNITUDE
+                  # readable instead of only its size.
+                  "perComparison": recorded,
+                  "perComparisonRecorded": len(recorded),
+                  "perComparisonTruncated": truncated,
+                  "perComparisonBasis": ("seeded residual fixtures; a "
+                                         "comparison is (layer, fixtureRow, "
+                                         "tokenID) — no prompt or position "
+                                         "axis exists in this check"),
+                  "worstComparison": worst_comparison,
+                  # Always stamped, in BOTH modes, so the absence of a flag can
+                  # never be read as the default mode by omission.
+                  "referenceFP32Forced": fp32_forced,
+                  "referenceFP32EnvVar": REFERENCE_FP32_ENV,
+                  "referenceFP32Promoted": promoted,
                   "referencePackage": backend_mod.REFERENCE_PACKAGE,
                   "referenceVersion": backend_mod.reference_version(),
                   "referenceCommit": backend_mod.REFERENCE_COMMIT})

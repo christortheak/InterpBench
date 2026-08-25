@@ -287,11 +287,12 @@ def test_the_preflight_check_requires_an_over_budget_config_to_refuse():
 
 # --- the acquisition check ---------------------------------------------------
 
-def _import(tmp_path, model_id, *, layers=(0, 1, 2)):
+def _import(tmp_path, model_id, *, layers=(0, 1, 2), d_model=8):
     entry = importer.SUPPORTED[model_id]
     folder = tmp_path / "snap" / entry["folder"]
     folder.mkdir(parents=True, exist_ok=True)
-    backend.StubBackend(d_model=8, source_layers=list(layers)).save_checkpoint(
+    backend.StubBackend(d_model=d_model,
+                        source_layers=list(layers)).save_checkpoint(
         str(folder / entry["tensor"]))
     (folder / entry["config"]).write_text(f"hf_model_name: {model_id}\n")
     return importer.import_lens(model_id, root=str(tmp_path / "ws"),
@@ -339,6 +340,135 @@ def test_load_path_notices_a_width_mismatch(tmp_path):
 
     result = g0._check_load_path(record, Model(), root=root)
     assert result.passed is False and "hidden size" in result.detail
+
+
+# --- the resolution check's gain convention ----------------------------------
+#
+# The gate here used to be `gain_min <= 0`, which could not pass on ANY
+# supported model: "gain" is not a lens-artifact field at all — it is read live
+# from the RUNTIME's final RMSNorm as 1 + norm.weight — and Gemma-3's gammas go
+# negative at every published size (4B min -0.0546875 with 2/2560 non-positive
+# dims, 12B -0.117 with 8/3840, 27B -0.25). The sign gate indicted Google's
+# weights. What replaces it are the convention checks it was standing in for.
+
+D_MODEL_FOR_GAIN = 256          # wide enough that "a handful" is a fraction
+
+
+def _resolution_model(num_layers=4):
+    return type("Runtime", (), {"num_layers": num_layers})()
+
+
+def _readout_with_gain(gain, softcap=None):
+    return type("Readout", (), {"gain": gain, "softcap": softcap})()
+
+
+def _gemma_shaped_gain(width=D_MODEL_FOR_GAIN, negatives=2):
+    """A gain shaped like a real one: a body around 7-10, a long right tail,
+    and the model's own handful of dimensions below zero (measured on
+    gemma-3-4b-it: min -0.0546875, max 53.5, median 7.19)."""
+    gain = torch.full((width,), 7.19)
+    gain[0] = 53.5
+    for i in range(negatives):
+        gain[1 + i] = -0.0546875
+    return gain
+
+
+def test_a_realistic_gain_with_a_few_negative_dims_PASSES(tmp_path):
+    """The 4B/12B/27B runtimes all present one. A check they cannot pass is not
+    a check."""
+    record = _import(tmp_path, EVIDENCE_MODEL, d_model=D_MODEL_FOR_GAIN)
+    result = g0._check_resolution(record, _resolution_model(),
+                                  _readout_with_gain(_gemma_shaped_gain()))
+    assert result.passed is True
+    assert result.measured["gainMin"] < 0            # and it does not matter
+    assert result.measured["gainNonPositive"] == 2
+    assert result.measured["gainWidth"] == D_MODEL_FOR_GAIN
+    # The diagnostics survive the gate's removal — they were never the problem.
+    assert result.measured["gainMax"] == pytest.approx(53.5)
+
+
+def test_the_sign_gate_is_GONE_and_its_fixture_now_passes(tmp_path):
+    """Pinned against reintroduction. This is exactly the 4B fixture the old
+    `gain_min <= 0` failed on, and it is a healthy runtime."""
+    import inspect
+
+    record = _import(tmp_path, EVIDENCE_MODEL, d_model=D_MODEL_FOR_GAIN)
+    # The BODY, not the docstring — which names the deleted gate on purpose,
+    # so a later reader knows what was removed and why.
+    body = inspect.getsource(g0._check_resolution).split('"""')[2]
+    assert "gain_min <= 0" not in body
+    assert "non-positive entries (min" not in body
+
+    result = g0._check_resolution(record, _resolution_model(),
+                                  _readout_with_gain(_gemma_shaped_gain()))
+    assert result.passed is True
+    # The negative dims are REPORTED, in the passing detail, rather than judged.
+    assert "2 non-positive" in result.detail
+
+
+def test_a_gain_that_is_ENTIRELY_non_positive_fails(tmp_path):
+    """The realistic sign defect: the stored weight read as the gain itself, so
+    `1 + w` was never applied and the whole vector flips."""
+    record = _import(tmp_path, EVIDENCE_MODEL, d_model=D_MODEL_FOR_GAIN)
+    gain = torch.full((D_MODEL_FOR_GAIN,), -0.5)
+    result = g0._check_resolution(record, _resolution_model(),
+                                  _readout_with_gain(gain))
+    assert result.passed is False
+    assert "whole-vector sign flip" in result.detail
+    assert result.measured["gainNonPositive"] == D_MODEL_FOR_GAIN
+
+
+def test_an_all_zero_gain_fails_as_a_dead_read(tmp_path):
+    """An unloaded or zeroed norm buffer reads as a gain of exactly nothing;
+    saying 'sign' about it would name the wrong defect."""
+    record = _import(tmp_path, EVIDENCE_MODEL, d_model=D_MODEL_FOR_GAIN)
+    result = g0._check_resolution(
+        record, _resolution_model(),
+        _readout_with_gain(torch.zeros(D_MODEL_FOR_GAIN)))
+    assert result.passed is False
+    assert "all zeros" in result.detail
+
+
+def test_a_non_positive_POPULATION_fails_where_a_handful_does_not(tmp_path):
+    """The measured populations are 0.08% (4B) and 0.21% (12B). A tenth of the
+    dimensions below zero is a different object, not a noisier one."""
+    record = _import(tmp_path, EVIDENCE_MODEL, d_model=D_MODEL_FOR_GAIN)
+    many = _gemma_shaped_gain(negatives=26)          # ~10%
+    result = g0._check_resolution(record, _resolution_model(),
+                                  _readout_with_gain(many))
+    assert result.passed is False
+    assert "degeneracy limit" in result.detail
+    assert result.measured["gainNonPositiveFraction"] > \
+        g0.GAIN_NONPOSITIVE_FRACTION
+
+
+def test_a_gain_of_the_wrong_WIDTH_fails(tmp_path):
+    """The bug the sign gate was reaching for: a gain resolved off some other
+    norm module. It shows up as a width, never as a sign."""
+    record = _import(tmp_path, EVIDENCE_MODEL, d_model=D_MODEL_FOR_GAIN)
+    result = g0._check_resolution(
+        record, _resolution_model(),
+        _readout_with_gain(_gemma_shaped_gain(width=D_MODEL_FOR_GAIN // 2)))
+    assert result.passed is False
+    assert "d_model" in result.detail and "norm module" in result.detail
+
+
+def test_an_unresolved_gain_still_fails(tmp_path):
+    """Nothing about the sign ruling makes 'no gain at all' acceptable."""
+    record = _import(tmp_path, EVIDENCE_MODEL, d_model=D_MODEL_FOR_GAIN)
+    result = g0._check_resolution(record, _resolution_model(),
+                                  _readout_with_gain(None))
+    assert result.passed is False
+    assert "no final-norm gain" in result.detail
+
+
+def test_the_docstring_states_the_RANGE_not_the_distributions_body():
+    """It quoted '~6.6-9.5' as the range; the measured 4B span is -1.055..53.5
+    (median 7.19). Reading the body as the range is what made a sign gate look
+    reasonable in the first place."""
+    doc = g0._check_resolution.__doc__
+    assert "53.5" in doc and "1.055" in doc
+    assert "1 + norm.weight" in doc
 
 
 # --- thresholds are declared, not inferred -----------------------------------

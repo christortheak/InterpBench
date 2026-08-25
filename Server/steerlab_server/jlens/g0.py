@@ -173,6 +173,22 @@ ENDPOINT_MOVEMENT_NATS = 0.10
 #: movement is attributed to vocabulary rather than disposition.
 FREQUENCY_MOVEMENT_FRACTION = 0.25
 
+#: Fraction of final-norm gain entries that may be non-positive before the
+#: resolution check calls the gain degenerate.
+#:
+#: This number replaces a sign gate that could never pass. Gemma-3's final
+#: RMSNorm gammas legitimately go negative at every published size — measured
+#: on the runtime weights: **4B** min −0.0546875 with 2/2560 non-positive dims,
+#: **12B** min −0.117 with 8/3840, **27B** min −0.25 — so
+#: ``gain_min <= 0`` indicted Google's weights, not the lens or this engine
+#: (investigation 2026-08-24, old §13.2 DISSOLVED). A handful of negative dims
+#: is the model; a gain that is mostly or entirely non-positive is a wrong
+#: module or a dead read, which is what this check is actually for. The
+#: measured populations sit at 0.08% (4B) and 0.21% (12B), two orders below
+#: this limit, so it separates the real cases without pretending to a
+#: precision nobody has evidence for.
+GAIN_NONPOSITIVE_FRACTION = 0.01
+
 
 class G0Error(JLensError):
     """The gate could not be run. Distinct from failing it."""
@@ -319,10 +335,37 @@ def _check_resolution(record, model, readout) -> CheckResult:
     """Layer mapping, target-layer semantics, RMSNorm gain, and logit softcap
     resolved from the runtime — never assumed from the family name.
 
-    The gain fold is the one that bites: measured on gemma-3-4b-it the norm
-    weights run ~6.6–9.5, so ``g = 1 + w`` is ~7.6–10.5 and omitting it would
-    rescale every direction by about an order of magnitude, unevenly per
-    element.
+    The gain fold is the one that bites: measured on gemma-3-4b-it the BODY of
+    the ``g = 1 + w`` distribution sits around 7.6–10.5 (median 7.19), so
+    omitting the fold would rescale every direction by about an order of
+    magnitude, unevenly per element. That body is not the range: the full 4B
+    span is **−1.055 … 53.5**, and an earlier docstring quoted the body
+    ("~6.6–9.5") as if it were the range, which is what made a sign gate look
+    reasonable.
+
+    **What the gain is, and why there is no sign check.** ``gain`` is not a
+    lens-artifact field — the published lens carries ``J``/``d_model``/
+    ``n_prompts``/``source_layers`` and nothing else. It is read live from the
+    RUNTIME model's final RMSNorm as ``1 + norm.weight``, and Gemma-3's gammas
+    go negative at every size (4B min −0.0546875, 2/2560 non-positive dims;
+    12B −0.117, 8/3840; 27B −0.25). A ``gain_min <= 0`` failure therefore could
+    not pass on ANY supported model, and what it indicted was Google's weights
+    (investigation 2026-08-24; old §13.2, DISSOLVED).
+
+    What that gate was reaching for survives as two convention checks, which
+    catch the defects a sign test was standing in for:
+
+    * **Width** — ``len(gain) == record.dModel``. A gain read off the wrong
+      norm module (a per-layer norm, a vision-tower norm) is the realistic
+      bug, and it shows up here as a width, not a sign.
+    * **Non-degeneracy** — all-zero, all-non-positive, or more than
+      :data:`GAIN_NONPOSITIVE_FRACTION` of the dimensions non-positive fails.
+      An unloaded/zeroed buffer and a ``w`` that is really ``g`` (so ``1 + w``
+      lands near zero or below) both land here; the model's own handful of
+      negative dims does not.
+
+    ``gainMin``/``gainMax`` stay in ``measured`` either way — the diagnostic
+    value is real even though neither is a verdict.
     """
     problems: list[str] = []
     layers = int(getattr(model, "num_layers", 0) or 0)
@@ -337,19 +380,48 @@ def _check_resolution(record, model, readout) -> CheckResult:
         problems.append("source layers are not contiguous")
     gain = getattr(readout, "gain", None)
     gain_min = gain_max = None
+    gain_width = None
+    non_positive = None
+    non_positive_fraction = None
     if gain is None:
         problems.append("no final-norm gain resolved from the runtime")
     else:
         gain_min, gain_max = float(gain.min()), float(gain.max())
-        if gain_min <= 0:
+        gain_width = int(gain.numel())
+        if gain_width != record.dModel:
             problems.append(
-                f"the resolved gain has non-positive entries (min {gain_min:g})")
+                f"the resolved gain has {gain_width} entries but the lens "
+                f"d_model is {record.dModel} — this is read as "
+                f"1 + norm.weight off the runtime's FINAL norm, and a width "
+                f"mismatch means a different norm module was resolved")
+        non_positive = int((gain <= 0).sum())
+        non_positive_fraction = (non_positive / gain_width) if gain_width else None
+        if gain_width and gain_min == 0.0 and gain_max == 0.0:
+            problems.append(
+                "the resolved gain is all zeros — an unloaded or zeroed norm "
+                "buffer, not a runtime's weights")
+        elif gain_width and non_positive == gain_width:
+            problems.append(
+                f"every one of the {gain_width} resolved gain entries is "
+                f"non-positive (max {gain_max:g}) — the convention here is "
+                f"g = 1 + norm.weight, and a whole-vector sign flip means the "
+                f"stored weight was read as the gain itself")
+        elif (non_positive_fraction is not None
+                and non_positive_fraction > GAIN_NONPOSITIVE_FRACTION):
+            problems.append(
+                f"{non_positive}/{gain_width} "
+                f"({non_positive_fraction:.2%}) of the resolved gain entries "
+                f"are non-positive, above the "
+                f"{GAIN_NONPOSITIVE_FRACTION:.0%} degeneracy limit — Gemma's "
+                f"own gammas put a handful of dimensions below zero "
+                f"(4B: 2/2560), never a population this size")
     return CheckResult(
         name="resolution", passed=not problems,
         detail="; ".join(problems)
                or (f"layers {record.sourceLayers[0]}..{record.sourceLayers[-1]}"
                    f" → target {record.targetLayer}; gain "
-                   f"{gain_min:.2f}..{gain_max:.2f}; softcap "
+                   f"{gain_min:.2f}..{gain_max:.2f} over {gain_width} dims "
+                   f"({non_positive} non-positive); softcap "
                    f"{readout.softcap}"),
         measured={"sourceLayers": [record.sourceLayers[0],
                                    record.sourceLayers[-1]],
@@ -357,6 +429,13 @@ def _check_resolution(record, model, readout) -> CheckResult:
                   "targetLayer": record.targetLayer,
                   "runtimeLayerCount": layers,
                   "gainMin": gain_min, "gainMax": gain_max,
+                  # Diagnostics, not verdicts: negative gammas are the model's
+                  # own (see the docstring), so these are recorded for the
+                  # reader rather than compared against a sign.
+                  "gainWidth": gain_width,
+                  "gainNonPositive": non_positive,
+                  "gainNonPositiveFraction": non_positive_fraction,
+                  "gainNonPositiveFractionLimit": GAIN_NONPOSITIVE_FRACTION,
                   "finalLogitSoftcap": readout.softcap,
                   "gainConvention": "gemma (1 + norm.weight)"})
 
