@@ -511,9 +511,45 @@ public final class WorkspaceStore {
     /// cluster connections.
     public var onRootChange: ((URL) -> Void)?
 
+    /// Where the open-time contract notice lands. `.shared` in production —
+    /// the same feed the bell button in the Studies/Agents headers renders,
+    /// and the same one `ClusterConnectionStore` posts its `"Workspace"`
+    /// synchronization problems to. Injectable so a test never appends to the
+    /// live ring.
+    public var notices: PanelNotices = .shared
+
+    /// **One notice per workspace OPEN**, never per action: this workspace's
+    /// `AGENTS.md` is behind the contract this build ships, and its machine
+    /// header shows nobody has edited it. Returns what it recorded, or nil
+    /// when there was nothing to say.
+    ///
+    /// Deliberately on the OPEN path and not on any read path. The contract is
+    /// consulted by the researcher's agent, not by the app, so the moment
+    /// worth interrupting is the one where a person chose this workspace —
+    /// and a notice that reappeared on every panel refresh would train them to
+    /// dismiss the bell.
+    ///
+    /// Silent for `current`; for `absent`, which `open` has already rewritten
+    /// by the time `switchTo` reaches this line and which nobody has to
+    /// repair by hand in any case; and for `edited` — the researcher's own
+    /// text is not a defect and gets no notice on any surface. Non-blocking:
+    /// the open has already succeeded when this runs.
+    ///
+    /// `root` defaults to the live one; it is a parameter for the same reason
+    /// `open(at:defaults:setOverride:)` takes its two — so a test can point
+    /// the check at a fixture without moving the process's workspace.
+    @discardableResult
+    public func noteAgentContractStaleness(at root: URL? = nil) -> String? {
+        guard let advisory = AgentContract.stalenessAdvisory(at: root ?? rootURL)
+        else { return nil }
+        notices.record(source: "Workspace", severity: .warning, message: advisory)
+        return advisory
+    }
+
     public func switchTo(_ url: URL) throws {
         try Self.open(at: url)
         rootURL = WorkspaceRoot.current
+        noteAgentContractStaleness()
         onRootChange?(rootURL)
     }
 

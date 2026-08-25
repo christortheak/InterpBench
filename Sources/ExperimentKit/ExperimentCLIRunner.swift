@@ -164,6 +164,17 @@ public struct ExperimentCLIRunner: Sendable {
         // caller cannot repair by reading it.
         if invocation.help { return helpOutcome(invocation) }
 
+        // Workspace resolution is complete by here and this function runs
+        // EXACTLY ONCE per process (`main.swift` dispatches one invocation and
+        // exits; the parse-failure fallback re-enters through
+        // `run(namespace:)`, which funnels back into this same call). So the
+        // contract check belongs here and nowhere deeper: a helper on the read
+        // path would print the same line on every artifact load, which is how
+        // an advisory becomes noise and then becomes ignored.
+        if let advisory = Self.agentContractAdvisory(root: ExperimentStore.workspaceRoot) {
+            sink.err(advisory + "\n")
+        }
+
         do {
             let result: ExperimentCLIResult
             switch namespace {
@@ -430,6 +441,44 @@ public struct ExperimentCLIRunner: Sendable {
     /// Which data root answered — so an agent can tell a wrong-workspace
     /// answer from a wrong answer.
     private var workspacePath: String { ExperimentStore.workspaceRoot.path }
+
+    /// Workspace-contract upkeep for ONE invocation: regenerate an absent
+    /// `AGENTS.md`, then return the staleness advisory if there is one.
+    ///
+    /// Two things, deliberately in this order and deliberately together.
+    ///
+    /// **The regeneration** is what makes the advisory's repair TRUE on this
+    /// surface. `WorkspaceStore.open` gives an older workspace its contract
+    /// lazily, but the CLI never calls `open` — it resolves a root and reads
+    /// it — so before this a CLI-only workspace could delete `AGENTS.md` and
+    /// never see it again. `ensureAgentContract` is the same never-overwrite
+    /// primitive the app uses: it writes only when the file is absent, and
+    /// swallows failure so a read-only workspace still answers verbs.
+    /// Restricted to directories that actually ARE workspaces, so a resolved
+    /// root that is some other folder is never seeded with a contract for a
+    /// workspace it is not.
+    ///
+    /// **The advisory** is classified BEFORE the regeneration, so the write
+    /// cannot change the answer: `absent` stays silent (it was just repaired,
+    /// there is nothing to tell anyone), `edited` stays silent (the
+    /// researcher's file), `current` has nothing to say, and only
+    /// `staleUnedited` speaks — one non-blocking stderr line, no exit-code
+    /// effect, no envelope field.
+    ///
+    /// It gets no `advisories[]` entry on purpose. `CLIAdvisory` is a CLOSED
+    /// cross-engine vocabulary pinned literal-for-literal against the Python
+    /// engine (`CLIEnvelopeParityTests.advisoryCodesMatchServerLiteral`), and
+    /// this fact is about the local checkout's shipped text, which the other
+    /// engine has no view of. Minting a code here would either break parity or
+    /// force a synchronized change to a surface this fact does not belong on.
+    static func agentContractAdvisory(root: URL) -> String? {
+        guard WorkspaceStore.isWorkspace(url: root) else { return nil }
+        let status = AgentContract.status(at: root)
+        WorkspaceStore.ensureAgentContract(at: root)
+        guard let sentence = AgentContract.stalenessAdvisory(for: status, at: root)
+        else { return nil }
+        return "advisory: " + sentence
+    }
 
     /// Is this thrown prose a MALFORMED INVOCATION rather than a failure? The
     /// dispatch answers both through the same `ExperimentError`, so the shape

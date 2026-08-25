@@ -1,3 +1,5 @@
+import Foundation
+
 // =============================================================================
 // AGENTS.md — the contract every workspace carries (WP0 step 10)
 //
@@ -41,6 +43,162 @@ public enum AgentContract {
     /// The bytes written into a workspace: header line, blank line, body.
     public static func contents() -> String {
         generatedHeader + "\n\n" + body
+    }
+
+    // MARK: - Staleness
+
+    /// What a workspace's `AGENTS.md` is, relative to the contract THIS build
+    /// ships.
+    ///
+    /// The contract is written once, at workspace creation or on the first
+    /// open of an older workspace, and is **never overwritten**
+    /// (`WorkspaceStore.ensureAgentContract`). That rule is right — the file
+    /// is data in the researcher's own repository — and it has one cost: a
+    /// workspace made before a contract revision keeps the old text forever,
+    /// silently, while its runner agent reads instructions that no longer
+    /// describe the CLI. This type is the awareness that costs nothing: a
+    /// cheap read, a classification, and an advisory. Nothing here writes.
+    public enum Status: Sendable, Equatable {
+
+        /// No `AGENTS.md` at the workspace root. Silent by design: the
+        /// ensure-path regenerates an absent contract on its own, so there is
+        /// nothing for a person to repair.
+        case absent
+
+        /// Byte-identical to what this build would write.
+        case current
+
+        /// The machine header is present and intact, so SteerLab wrote this
+        /// file and no one has touched the part that says so — but the body
+        /// is not the shipped body. Safe to regenerate: delete and reopen.
+        ///
+        /// `linesBehind` counts lines of the SHIPPED body that this copy does
+        /// not have (see `missingLineCount` for exactly what that means and
+        /// what it deliberately is not).
+        case staleUnedited(linesBehind: Int)
+
+        /// The header is gone or altered — or the file is there but
+        /// unreadable as text. **The researcher owns this file now.** Silent
+        /// on every surface: they chose their text, and a tool that nags
+        /// about a file it promised never to touch is a tool that will be
+        /// worked around.
+        case edited
+    }
+
+    /// **The header-intact heuristic — the deliberate line between "safe to
+    /// regenerate" and "hands off".**
+    ///
+    /// `generatedHeader` is one line of machine-written HTML comment at the
+    /// top of the file. If it is there, byte-for-byte, we treat the file as
+    /// ours: SteerLab wrote it, and whoever has been in the file since left
+    /// the line that says so alone. If it is absent or altered — a researcher
+    /// who rewrote the contract for their own study, deleted the comment, or
+    /// started from their own text — the file is theirs, and the only correct
+    /// behaviour is silence.
+    ///
+    /// This is a heuristic and not a proof, and it is wrong in exactly one
+    /// direction: a researcher who edits the BODY while leaving the header
+    /// intact is classified `staleUnedited` and gets told their file is
+    /// behind. That is the failure we choose. The advisory never modifies
+    /// anything — it names a repair the person performs by hand — so the cost
+    /// of the wrong guess is one line of stderr they can ignore, while the
+    /// cost of the opposite bias (treating a drifted machine file as
+    /// hand-owned) is the silent drift this whole type exists to end.
+    ///
+    /// A pure seam: text in, classification out, no filesystem.
+    public static func classify(_ text: String) -> Status {
+        let headerLine = generatedHeader + "\n"
+        guard text.hasPrefix(headerLine) else { return .edited }
+        var rest = String(text.dropFirst(headerLine.count))
+        // `contents()` puts one blank line between header and body; tolerate
+        // its absence rather than calling a body-only difference an edit.
+        if rest.hasPrefix("\n") { rest.removeFirst() }
+        if rest == body { return .current }
+        return .staleUnedited(
+            linesBehind: missingLineCount(shipped: body, workspace: rest))
+    }
+
+    /// Classify the `AGENTS.md` at a workspace root. Never throws and never
+    /// writes: an unreadable-but-present file is `edited` (hands off — we
+    /// cannot see it, so we cannot claim it is ours), a missing one is
+    /// `absent`.
+    public static func status(at workspaceRoot: URL) -> Status {
+        let url = workspaceRoot.appending(component: fileName)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return .absent
+        }
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            return .edited
+        }
+        return classify(text)
+    }
+
+    /// How many lines the shipped body has that the workspace's copy does
+    /// not, counting duplicates — a multiset difference, one pass, no
+    /// allocation per line beyond the tally.
+    ///
+    /// **Honest about what it is not:** this is not an LCS diff and does not
+    /// claim to be. It cannot tell a moved line from a deleted one, and it
+    /// reports 0 for a copy that only ADDED lines. It answers exactly one
+    /// question — "how much of the current contract is missing here" — which
+    /// is the question the advisory asks, and it answers it in linear time
+    /// over a file read once. `stalenessAdvisory` words the 0 case as
+    /// "out of date with" rather than "0 lines behind", so the number is
+    /// never asked to mean more than it does.
+    static func missingLineCount(shipped: String, workspace: String) -> Int {
+        var have: [Substring: Int] = [:]
+        for line in workspace.split(
+            separator: "\n", omittingEmptySubsequences: false)
+        {
+            have[line, default: 0] += 1
+        }
+        var missing = 0
+        for line in shipped.split(separator: "\n", omittingEmptySubsequences: false) {
+            if let count = have[line], count > 0 {
+                have[line] = count - 1
+            } else {
+                missing += 1
+            }
+        }
+        return missing
+    }
+
+    /// The one advisory sentence, or nil when there is nothing to say.
+    ///
+    /// Fires for `staleUnedited` ONLY. `current` has nothing to report,
+    /// `absent` regenerates itself, and `edited` is the researcher's file.
+    /// Non-blocking everywhere it is used: it changes no exit code and gates
+    /// nothing.
+    ///
+    /// Prefix-free on purpose — the CLI stamps its own `advisory: ` in front,
+    /// the app's notice feed carries a severity instead, and neither surface
+    /// has to own the other's punctuation.
+    ///
+    /// The repair it names is real on both surfaces — the app rewrites an
+    /// absent contract on open (`WorkspaceStore.open`), and the CLI does the
+    /// same once per invocation on its resolution path
+    /// (`ExperimentCLIRunner.agentContractAdvisory`). Delete the file, run
+    /// anything, get the current contract back.
+    public static func stalenessAdvisory(at workspaceRoot: URL) -> String? {
+        stalenessAdvisory(for: status(at: workspaceRoot), at: workspaceRoot)
+    }
+
+    /// The wording, from an already-computed status — so a caller that has to
+    /// classify before acting (the CLI, which regenerates an absent file in
+    /// the same breath) does not read the file twice.
+    public static func stalenessAdvisory(
+        for status: Status, at workspaceRoot: URL
+    ) -> String? {
+        guard case .staleUnedited(let linesBehind) = status else { return nil }
+        let extent =
+            linesBehind > 0
+            ? "\(linesBehind) line\(linesBehind == 1 ? "" : "s") behind"
+            : "out of date with"
+        let path = workspaceRoot.appending(component: fileName).path
+        return "this workspace's \(fileName) is \(extent) the agent contract "
+            + "this build ships, and its machine header shows it unedited — "
+            + "delete \(path) and reopen the workspace (or run any workspace "
+            + "verb) to regenerate it"
     }
 
     // Raw literal (`#"""`) on purpose: the contract is full of shell

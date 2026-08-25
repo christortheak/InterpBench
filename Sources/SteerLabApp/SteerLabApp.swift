@@ -82,6 +82,12 @@ struct SteerLabApp: App {
             cluster.synchronizeServerToLocalWorkspace()
         }
         cluster.synchronizeServerToLocalWorkspace()  // launch-restored root
+        // The workspace-contract staleness notice, once per OPEN. `switchTo`
+        // raises it for every in-session switch; the launch-restored root
+        // never goes through `switchTo` (the store resolves it in `init`), so
+        // it is raised here too — the same two-call shape the line above uses,
+        // and for the same reason.
+        workspace.noteAgentContractStaleness()
         // Running as a bare SPM executable (no .app bundle): claim regular
         // app status so the window gets focus and a menu bar.
         DispatchQueue.main.async {
