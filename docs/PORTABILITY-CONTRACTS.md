@@ -696,6 +696,14 @@ every packager for the rest of the project's life.
 | Linux / BSD | `$XDG_DATA_HOME/steerlab/local-runner` (default `~/.local/share/steerlab/local-runner`) |
 | Windows | `%LOCALAPPDATA%\SteerLab\local-runner` |
 
+**Platform ruling: Windows is client-only.** Authoring, freezing, packaging,
+remote submission and evidence import are supported there; **local execution is
+not**, and `runner serve` refuses on Windows rather than starting an engine on
+an unsupported execution path. The Windows row above is therefore what
+`default_runner_root` computes, not a supported configuration — a Windows
+author points `--runner <url>` at a runner on macOS, Linux, or a cluster, and
+every hash-pinned hop in this document is unchanged.
+
 `--runner-root <dir>` overrides it. What is deliberately **not** in that table:
 the current directory, `$STEERLAB_WORKSPACE`, and `$STEERLAB_ROOT` — the value
 of the default is that a person who types `steerlab runner serve` while

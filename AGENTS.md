@@ -3,8 +3,17 @@
 You are a coding agent and a person has pointed you at this checkout, possibly
 with nothing else installed. This file is the contract for getting them from
 here to a working SteerLab and a first workspace. Once a workspace exists, its
-own `AGENTS.md` (written by `steerlab workspace init`) takes over for study
+own `AGENTS.md` (written by `steerlab-cli workspace init`) takes over for study
 work — this file is only the bootstrap.
+
+**Two products, two names — never type one under the other.**
+`steerlab-cli` is the Mac (Swift/MLX) instrument: workspace bootstrap, the full
+lifecycle (extract/validate/sweep/promote/freeze/run/analyze), the `cluster`
+family, and the app's companion. `steerlab` is the cross-platform Python
+client: local authoring, the bundle round trip, a managed local runner, and the
+composite `run`. The client has no `workspace init` and no extraction verbs; a
+Mac-lifecycle verb typed under `steerlab` exits `64`. Step 1 picks which one
+this machine gets, and each has its own verification banner.
 
 ## Ground rules (they outrank speed)
 
@@ -21,8 +30,11 @@ work — this file is only the bootstrap.
 - **Frozen artifacts and `runs/` directories are immutable.** Iterating means
   duplicating an experiment, never editing a frozen one.
 - **Secrets never go in files.** Tokens and passwords live in the macOS
-  Keychain (the CLI prompts when needed) — never in JSON, env files, shell
-  history, or anything under `Sites/`.
+  Keychain (`steerlab-cli` prompts when needed) — never in JSON, env files,
+  shell history, or anything under `Sites/`. Off the Mac the same rule takes
+  the client's shape: a runner token is reached by *path*
+  (`--token-file`, `$STEERLAB_RUNNER_TOKEN`), never as an argv value, because
+  argv is readable by every process on a shared machine.
 
 ## Step 0 — see what the machine already has
 
@@ -42,16 +54,26 @@ Pick the first path that applies:
    ```sh
    mkdir -p ~/.local/bin
    ln -s <app>/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab-cli
-   # `steerlab` now names the cross-platform PYTHON client (step 1.3) — its
-   # console script owns that spelling. Alias the Swift CLI to it ONLY if
-   # the Python client is not installed; prefer typing `steerlab-cli`.
-   ln -s <app>/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab
    ```
+
+   **Do not add a `~/.local/bin/steerlab` alias for it.** That spelling belongs
+   to the cross-platform Python client (path 4) — its console script installs
+   under exactly that name, and two products answering to one name is the
+   confusion this contract exists to prevent. Create the alias only on a
+   machine that will never install the client, and even there prefer typing
+   `steerlab-cli`; if the client is installed later, drop the alias first.
 
 2. **No app, but Xcode 27**: build and install from this checkout —
    `./scripts/install-cli.sh` (set `DEVELOPER_DIR` first if `xcode-select`
-   points at an older Xcode). It installs a `steerlab` shim under
-   `~/.local/bin`.
+   points at an older Xcode). **Today it writes only a `~/.local/bin/steerlab`
+   shim** — the client's name — so give the Swift CLI its own spelling right
+   after, and prefer typing that one:
+
+   ```sh
+   cp ~/.local/bin/steerlab ~/.local/bin/steerlab-cli   # same dir: the shim's
+                                                        # relative hop still resolves
+   # …and remove ~/.local/bin/steerlab if this machine also gets the client.
+   ```
 
 3. **Neither, on a Mac**: ask the person whether to download SteerLab.app
    from the repository's Releases page — that is the no-Xcode path.
@@ -62,16 +84,48 @@ Pick the first path that applies:
    drives a runner (`steerlab run <exp> --runner <url>` is the whole
    round trip; evidence comes home verified). Add the `[runner]` extra to
    also EXECUTE locally via `steerlab runner serve` (a managed loopback
-   runner with its own root — never the workspace). The client has no
-   `workspace init`; bring a Mac-created or shared workspace, or author
-   into a plain directory. The full contract is
-   `docs/PORTABILITY-CONTRACTS.md`.
+   runner with its own root — never the workspace) — **macOS and Linux
+   only. Windows is client-only**: authoring, freezing, packaging and
+   remote submission all work there, and `runner serve` refuses, so point
+   a Windows machine at a runner elsewhere. The client has no
+   `workspace init` and none of the Mac lifecycle verbs (extract, validate,
+   sweep, promote, analyze); bring a Mac-created or shared workspace, or
+   author into a plain directory. The full contract is
+   `docs/PORTABILITY-CONTRACTS.md`, and `docs/CLI-REFERENCE.md` §1.4 is the
+   verb-by-verb reference.
 
-Verify before proceeding: `steerlab-cli --version` (or `steerlab --version`)
-must report **6/6 resource families resolved**. If it reports fewer, stop and
-show the person the output.
+The paths are ordered, not exclusive: a Mac that took path 1 or 2 may also
+install the client from path 4 — they are separate products and coexist
+happily, provided the name `steerlab` is left to the client alone.
 
-## Step 2 — home layout
+**Verify before proceeding — the check depends on which product you installed,
+and the two answers look nothing alike.**
+
+*Paths 1–2, the Swift CLI:*
+
+```sh
+steerlab-cli --version      # must report 6/6 resource families resolved
+```
+
+Fewer than 6/6 means an incomplete install: stop and show the person the
+output.
+
+*Path 4, the Python client:* it does not have resource families and will never
+print that line. Two checks instead:
+
+```sh
+steerlab --version                     # -> steerlab <version> (client), e.g. 0.9.1
+steerlab experiment list --root <any-directory> --json
+```
+
+The banner must end in `(client)`; a version line that says anything else means
+`steerlab` on this PATH is not the client (most often a leftover symlink to the
+Swift CLI — remove it). The second command is the authoring smoke test: against
+an empty directory it answers a well-formed envelope — `"state": "ready"`,
+`"verb": "experiment list"`, `result.count` 0 — and exits `0`. Anything else,
+stop and show the person the output.
+
+## Step 2 — home layout (Swift CLI only)
 
 ```sh
 steerlab-cli init            # or: init --home /path/to/SteerLab
@@ -80,6 +134,11 @@ steerlab-cli init            # or: init --home /path/to/SteerLab
 Creates (and never overwrites) the `SteerLab/` home: `Workspaces/` for
 studies, `Sites/` for the private cluster-site registry, with the app and this
 checkout as siblings. Re-runnable; it reports what already existed.
+
+On a path-4 machine there is no `init` and no `workspace init`: skip to the
+client's own path — author into a plain directory (`--root <dir>` or
+`$STEERLAB_WORKSPACE`), or clone a workspace someone created on a Mac. Any
+folder layout you like; nothing there depends on the `~/SteerLab/` home.
 
 ## Step 3 — Python engine (only when GPU-side or parity work needs it)
 
@@ -93,7 +152,7 @@ Serve with an explicit `--root`; the artifact root must be the workspace, not
 `Server/`. The server binds loopback by default — read `SECURITY.md` before
 changing that.
 
-## Step 4 — first workspace, then hand off
+## Step 4 — first workspace, then hand off (Swift CLI only)
 
 ```sh
 steerlab-cli workspace init ~/SteerLab/Workspaces/<study-name>
@@ -105,12 +164,19 @@ here** — the study lifecycle (create → attach → extract → validate → s
 promote → freeze → run → analyze) is documented there and in
 `docs/CLI-REFERENCE.md`.
 
-## Step 5 — cluster sites (only when the person has one)
+Path 4 has no equivalent: the client cannot mint a workspace. Point it at a
+workspace that already exists (`export STEERLAB_WORKSPACE=…`, or `--root` per
+invocation) and follow `docs/CLI-REFERENCE.md` §1.4 for what it can do to one —
+author and declare, `verify`, `freeze`, `bundle package`, then `run <experiment>
+--runner <url>` to have an engine execute it and bring the evidence home.
 
-Site profiles live in `~/SteerLab/Sites/cluster-sites/` — one JSON file per
-site, read by the app and the CLI alike. If the person keeps a private Sites
-repository, clone it into `~/SteerLab/Sites`. Never invent or guess a site
-profile; ask for theirs. Credentials are prompted into the Keychain on first
+## Step 5 — cluster sites (Swift CLI only, and only when the person has one)
+
+The `cluster` family is `steerlab-cli`'s; the Python client reaches remote
+compute the other way, through `--runner <url>`. Site profiles live in
+`~/SteerLab/Sites/cluster-sites/` — one JSON file per site, read by the app and
+`steerlab-cli` alike. If the person keeps a private Sites repository, clone it
+into `~/SteerLab/Sites`. Never invent or guess a site profile; ask for theirs. Credentials are prompted into the Keychain on first
 use, per machine.
 
 ## Verifying a checkout

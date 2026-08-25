@@ -77,7 +77,7 @@ Three commitments shape everything else in the design:
 ## Two engines, one artifact model
 
 SteerLab has two independent compute engines that read and write the same
-durable artifacts. `steerlab` is a Swift/MLX engine for Apple silicon: a
+durable artifacts. `steerlab-cli` is a Swift/MLX engine for Apple silicon: a
 native macOS instrument for authoring, fast iteration, and local runs.
 `steerlab-server` is a Python/PyTorch/Hugging Face engine (FastAPI, with a
 Slurm and SSH deployment path) for CUDA hardware, where larger models and
@@ -89,6 +89,13 @@ identical across engines is the structure: the SHA-256 stimulus and corpus
 hashes, the manifest and run-directory schemas, the JSON output contract, and
 the committed golden fixtures that the `vectors compare` verb checks on both
 sides.
+
+A third command line, **`steerlab`**, is not an engine and must not be confused
+with either: it is the cross-platform Python client that authors a workspace
+locally and hands hash-pinned work to an engine (the Quickstart's third seat,
+and `docs/CLI-REFERENCE.md` §1.4). Two names, two products —
+`steerlab-cli` is the Mac instrument, `steerlab` is the client, and neither
+answers the other's verbs.
 
 ## Requirements
 
@@ -114,6 +121,14 @@ sides.
 - Disk for the Hugging Face model cache, which lives in the usual
   `~/.cache/huggingface` location and never inside this repository.
 
+**Cross-platform `steerlab` client (any machine):**
+
+- Python 3.10 or newer, and nothing else — no GPU, no torch, no Xcode.
+  macOS, Linux, and Windows all author, freeze, package, and submit.
+- Executing locally (`steerlab runner serve`, the `[runner]` extra) needs
+  macOS or Linux. **Windows is client-only** and the serve verb refuses there;
+  submit to a runner elsewhere instead.
+
 No model weights ship here. You download the models you want, and their
 licenses are your own to read — see NOTICE.
 
@@ -127,8 +142,9 @@ Then take either seat, or both:
 
 - **Point a coding agent at the checkout.** [AGENTS.md](AGENTS.md) at the
   repository root is the cold-start contract: it tells the agent how to see
-  what your machine already has, install the command line (using the app's
-  bundled CLI when there is no Xcode), create the `~/SteerLab/` home layout
+  what your machine already has, install the right command line for it — the
+  Mac instrument `steerlab-cli` (from the app's bundle when there is no Xcode)
+  or the cross-platform `steerlab` client — create the `~/SteerLab/` home layout
   and your first workspace, and hand off to that workspace's own `AGENTS.md`
   for study work. *"Read AGENTS.md and set me up"* is a complete instruction.
 - **Open the Mac app.** Download SteerLab.app from this repository's
@@ -139,7 +155,11 @@ Then take either seat, or both:
   cross-platform `steerlab` client — ~30 MB, no GPU, no Xcode — which
   authors, freezes, and drives studies against any runner
   (`steerlab run <experiment> --runner <url>`); add `[runner]` to execute
-  locally through `steerlab runner serve`. The contract is
+  locally through `steerlab runner serve`, on macOS and Linux. Windows is
+  **client-only**: authoring and remote submission work, `runner serve`
+  refuses. A correct install answers `steerlab --version` with
+  `steerlab <ver> (client)` — it is a different product from `steerlab-cli`
+  and does not report resource families. The contract is
   [docs/PORTABILITY-CONTRACTS.md](docs/PORTABILITY-CONTRACTS.md).
 
 Everything converges on one home folder that moves and backs up as a unit:
@@ -149,15 +169,15 @@ Everything converges on one home folder that moves and backs up as a unit:
 ├── Workspaces/     study workspaces, one folder each, each its own git repo
 ├── Sites/          your PRIVATE cluster-site registry — one JSON file per
 │                   site under cluster-sites/, read and written by the app
-│                   AND the CLI; keep it in a private git repo to sync
+│                   AND steerlab-cli; keep it in a private git repo to sync
 │                   between machines. Tokens and passwords never go here —
 │                   they live in each Mac's Keychain.
 ├── SteerLab.app/   the app, and the CLI it carries
 └── <checkout>/     this repository — any folder name; detected by content
 ```
 
-Preferring to do it by hand — installing the CLI, `steerlab init`, creating a
-workspace — is [docs/ONBOARDING.md](docs/ONBOARDING.md) §4–5, and building
+Preferring to do it by hand — installing the CLI, `steerlab-cli init`, creating
+a workspace — is [docs/ONBOARDING.md](docs/ONBOARDING.md) §4–5, and building
 from source (the one path that needs Xcode 27) is covered there too.
 
 ## The study lifecycle
@@ -166,29 +186,36 @@ A workspace is a plain folder holding `prompts/`, `experiments/`, and
 `runs/` — its own git repository, seeded with templates and its own
 `AGENTS.md`, which is written to hand a coding agent. Study data lives in a
 workspace, never in this checkout. Drive the lifecycle through the app,
-through your agent, or yourself:
+through your agent, or yourself.
+
+The full lifecycle below is the **Mac instrument's**, so every line types
+`steerlab-cli` — the Swift command line, whether installed from the app bundle
+or built from source. (The cross-platform `steerlab` client authors, freezes,
+and drives a runner; it has no `workspace init` and does not execute these
+verbs. Typing one of them under `steerlab` exits `64`.)
 
 ```bash
-steerlab workspace init ~/SteerLab/Workspaces/my-study
+steerlab-cli workspace init ~/SteerLab/Workspaces/my-study
 export STEERLAB_WORKSPACE=~/SteerLab/Workspaces/my-study
 
-steerlab experiment --help                    # the study lifecycle, one line each
-steerlab experiment create demo --model <model-id>
-steerlab experiment attach demo <concept>     # pins stimulus hashes + options
-steerlab experiment extract demo
-steerlab experiment validate demo
-steerlab experiment sweep demo                # layer x alpha on the dev split
-steerlab experiment promote demo <concept>
-steerlab experiment freeze demo               # one-way, and gated
-steerlab experiment run demo
-steerlab experiment analyze demo
-steerlab data check demo                      # data-readiness checklist
+steerlab-cli experiment --help                # the study lifecycle, one line each
+steerlab-cli experiment create demo --model <model-id>
+steerlab-cli experiment attach demo <concept> # pins stimulus hashes + options
+steerlab-cli experiment extract demo
+steerlab-cli experiment validate demo
+steerlab-cli experiment sweep demo            # layer x alpha on the dev split
+steerlab-cli experiment promote demo <concept>
+steerlab-cli experiment freeze demo           # one-way, and gated
+steerlab-cli experiment run demo
+steerlab-cli experiment analyze demo
+steerlab-cli data check demo                  # data-readiness checklist
 ```
 
 `<family> --help` lists a family's verbs; `<family> <verb> --help` prints one
 verb's arguments and exit codes. The full surface is in
 [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md), which is generated from the
-parser (`steerlab docs cli-reference --check`) rather than maintained by hand.
+parser (`steerlab-cli docs cli-reference --check`) rather than maintained by
+hand.
 
 To run the test suite or the macOS app from the checkout:
 
@@ -315,7 +342,8 @@ when you need it.
 - [docs/RESULTS-ARCHITECTURE.md](docs/RESULTS-ARCHITECTURE.md) — what each
   result layer can claim, and what gates it.
 - [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md) — every verb, flag, default,
-  and refusal on both command lines.
+  and refusal on both engines' command lines (`steerlab-cli` and
+  `steerlab-server`), with §1.4 covering the cross-platform `steerlab` client.
 - Your workspace's own `AGENTS.md`, written at workspace creation — the
   contract to hand a coding agent.
 
@@ -335,15 +363,17 @@ This is a source release, an early one. What that means concretely:
   version floors rather than a lockfile. Two sites can therefore resolve
   different `torch` and `transformers` versions; pin them yourself if you are
   comparing across machines.
-- Supported user interfaces are the macOS app and the two command lines, plus
-  the Python server's own browser workbench for remote use.
+- Supported user interfaces are the macOS app, the two engines' command lines
+  (`steerlab-cli`, `steerlab-server`) and the `steerlab` client, plus the
+  Python server's own browser workbench for remote use.
 - A **cross-platform `steerlab` client is available as a preview** for agents
   and developers: a third command line that authors a local workspace on any
   platform, installed by `pip install -e Server` with no torch. See
-  `docs/CLI-REFERENCE.md` §1.4 and `docs/PORTABILITY-CONTRACTS.md` §7. If you
-  are carrying the temporary `~/.local/bin/steerlab` symlink to the Swift CLI
-  that `AGENTS.md` step 1 describes, **drop it** when you install the Python
-  client — the name now has its intended owner.
+  `docs/CLI-REFERENCE.md` §1.4 and `docs/PORTABILITY-CONTRACTS.md` §7. The name
+  `steerlab` is the client's; if an older install left a
+  `~/.local/bin/steerlab` symlink or shim pointing at the Swift CLI — the
+  source installer still writes one — **drop it** and type `steerlab-cli` for
+  Mac verbs, per `AGENTS.md` step 1.
 - Cluster deployment works against a generic Slurm site through a versioned
   site profile, but the profile schema does not yet represent every field a
   site might need.

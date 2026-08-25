@@ -106,21 +106,22 @@ a name on your `PATH` and you are done:
 ```bash
 mkdir -p ~/.local/bin
 ln -s ~/SteerLab/SteerLab.app/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab-cli
-ln -s ~/SteerLab/SteerLab.app/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab
 export PATH="$HOME/.local/bin:$PATH"
-steerlab --version
+steerlab-cli --version
 ```
 
-The two links are the same binary under both spellings — `steerlab-cli` is its
-own name and the one refusals use; `steerlab` is the shorter one the rest of
-these docs type, and the name now **belongs to the cross-platform Python
-client** (its console script; see CLI-REFERENCE §1.4). Create the alias only
-if you do not install the Python client, and prefer typing `steerlab-cli`. A symlink is enough: the binary resolves its shaders and the
-app's bundled resources against its real location inside the bundle, not the
-link's, and invoking it in place by full path is identical. `steerlab --version`
-prints where each shipped resource family resolved, which is the quick answer to
-"is this install intact"; the app's code signature is the integrity guarantee,
-and there is deliberately no writable manifest inside a signed bundle.
+`steerlab-cli` is the binary's own name, the one refusals print, and the one
+these docs type for every Mac verb. Do **not** also link it as `steerlab`:
+that shorter spelling belongs to the cross-platform Python **client** (its
+console script; see CLI-REFERENCE §1.4), which is a different product with a
+different verb surface, and one name for two things is how a lifecycle command
+ends up exiting `64` for someone who copied it faithfully. A symlink is enough:
+the binary resolves its shaders and the app's bundled resources against its real
+location inside the bundle, not the link's, and invoking it in place by full
+path is identical. `steerlab-cli --version` prints where each shipped resource
+family resolved — **6/6 resolved** is the quick answer to "is this install
+intact"; the app's code signature is the integrity guarantee, and there is
+deliberately no writable manifest inside a signed bundle.
 
 **From source (the developer path).** Optional, and the only one that needs
 Xcode 27:
@@ -129,7 +130,8 @@ Xcode 27:
 git clone <this repository> && cd <checkout>
 ./scripts/install-cli.sh          # builds with xcodebuild, installs under ~/.local
 export PATH="$HOME/.local/bin:$PATH"
-steerlab --version
+cp ~/.local/bin/steerlab ~/.local/bin/steerlab-cli   # see the naming note below
+steerlab-cli --version
 ```
 
 Re-runnable, no `sudo`, and it stages everything before swapping the live tree,
@@ -138,10 +140,16 @@ so a failed install leaves the previous one untouched. The binary lands in
 shim at `~/.local/bin/steerlab` — which is why the installed CLI needs no
 environment variables, unlike running out of a build directory. Set
 `DEVELOPER_DIR` first if `xcode-select` points at an older Xcode.
-`steerlab install verify` re-hashes the installed tree against its own manifest
-and answers "is what I am running what was installed". It replaces the shim at
-`~/.local/bin/steerlab`, so run it rather than the symlink above if you want
-both.
+
+**The installer still writes only the short name**, which is the Python
+client's. Copy the shim to `steerlab-cli` as above (same directory, so its
+relative hop to `libexec` still resolves) and type that; if this machine also
+gets the client, delete `~/.local/bin/steerlab` so the name has one owner.
+`steerlab-cli install verify` re-hashes the installed tree against its own
+manifest and answers "is what I am running what was installed". Re-running
+`install-cli.sh` rewrites `~/.local/bin/steerlab` — including over a symlink
+you made to the app's bundled binary — so if you keep both installs, decide
+which one owns that path and re-copy your `steerlab-cli` after an upgrade.
 
 One macOS wrinkle the installer warns about: keychain access is granted per
 binary identity, so the first verb that actually *uses* a stored credential may
@@ -152,8 +160,8 @@ unattended agent at the install.
 checkout; `./scripts/run-app.sh` builds and launches it as a plain developer
 binary instead, without the bundle. The app is the richest surface for authoring
 concepts, watching a dose-response sweep, and chatting under steering, but
-everything that matters for a paper is reproducible through the CLI — the app
-calls into the same engine, never the reverse.
+everything that matters for a paper is reproducible through `steerlab-cli` —
+the app calls into the same engine, never the reverse.
 
 **The Python engine:**
 
@@ -174,13 +182,28 @@ dying. Regeneration and the cluster's site-owned-torch exception are in
 [Server/README.md](../Server/README.md). Once the venv exists, `install-cli.sh`
 also drops a `steerlab-server` shim on your PATH.
 
+**The cross-platform `steerlab` client.** A third command line, and a different
+product from the two engines: `pip install -e Server` (no extras, no torch,
+~30 MB, any OS with Python 3.10+) installs `steerlab`, which authors a
+workspace locally, freezes it, packages a hash-pinned bundle, and hands it to
+an engine over `--runner <url>` — `steerlab run <experiment> --runner <url>` is
+that whole round trip, evidence verified on the way home. A correct install
+says so: `steerlab --version` prints `steerlab <version> (client)`. It does not
+report resource families, and it does not answer the Mac lifecycle verbs this
+document types — no `workspace init`, no `extract`, no `sweep` — so a command
+from §5 or §6 typed under `steerlab` exits `64`, correctly. Add the `[runner]`
+extra to execute locally through `steerlab runner serve` (macOS and Linux;
+Windows is client-only and refuses that verb). The verb-by-verb reference is
+[CLI-REFERENCE.md](CLI-REFERENCE.md) §1.4, and the contracts behind it are
+[PORTABILITY-CONTRACTS.md](PORTABILITY-CONTRACTS.md) §7–§10.
+
 **Where to put things.** A `SteerLab/` folder in your home directory holds your
 workspaces, your private site library, the app, and — if you have one — the
 checkout as siblings, so one directory moves, backs up, and is handed to an
 agent as a unit. One command materializes it:
 
 ```bash
-steerlab init                      # or: steerlab init --home /path/to/SteerLab
+steerlab-cli init              # or: steerlab-cli init --home /path/to/SteerLab
 ```
 
 ```text
@@ -188,7 +211,7 @@ steerlab init                      # or: steerlab init --home /path/to/SteerLab
 ├── Workspaces/          study workspaces, one folder each, each its own git repo
 │   └── register-pilot/  one study's data
 ├── Sites/               your PRIVATE site registry
-│   └── cluster-sites/   one JSON file per site — the app AND the CLI read this
+│   └── cluster-sites/   one JSON file per site — app AND steerlab-cli read it
 ├── SteerLab.app/        the app, and the CLI it carries in Contents/Helpers/
 └── <checkout>/          the code checkout (this repository), under any name
 ```
@@ -208,10 +231,11 @@ workspace you share.
 
 Inside it, `Sites/cluster-sites/` is the **canonical cluster-site registry** —
 one pretty-printed JSON file per site, named by the site's id, and the single
-store both clients use. The app edits those files; `steerlab cluster sites
-import <profile.json>` writes into the same directory; `steerlab cluster sites
-list` reads it. **You sync it**: `Sites/` is normally a private git repository,
-and git is how your sites reach your other machines. SteerLab never runs git —
+store the app and `steerlab-cli` share. The app edits those files;
+`steerlab-cli cluster sites import <profile.json>` writes into the same
+directory; `steerlab-cli cluster sites list` reads it. **You sync it**:
+`Sites/` is normally a private git repository, and git is how your sites reach
+your other machines. SteerLab never runs git —
 its writes leave the tree dirty and committing/pushing is always your act. The
 directory also works perfectly well as a plain folder with no git at all.
 
@@ -248,12 +272,16 @@ do not transfer between substrates, so a shipped vector would be useless at best
 and misleading at worst. You derive it on your own machine, which is exactly
 what the firewall asks of every study.
 
+Every command from here through §7 is **`steerlab-cli`**, the Mac instrument of
+§4 — not the cross-platform `steerlab` client, which authors and submits but
+does not extract, sweep, or measure.
+
 ```bash
 cp -R SampleWorkspace ~/SteerLab/Workspaces/first-hour
 export STEERLAB_WORKSPACE=~/SteerLab/Workspaces/first-hour
 
-steerlab experiment create demo --model Qwen/Qwen3-4B-MLX-4bit
-steerlab experiment attach demo formality
+steerlab-cli experiment create demo --model Qwen/Qwen3-4B-MLX-4bit
+steerlab-cli experiment attach demo formality
 ```
 
 `create` writes a **draft** manifest pinned to a model. `attach` pins the
@@ -272,8 +300,8 @@ and `verify` fails loudly instead of quietly measuring something else.
 ### Extract and validate
 
 ```bash
-steerlab experiment extract demo
-steerlab experiment validate demo
+steerlab-cli experiment extract demo
+steerlab-cli experiment validate demo
 ```
 
 Extraction writes a vector into a new immutable run directory and pins the
@@ -304,8 +332,8 @@ compare. With one concept attached, the tool reports that the measurement was
 
 ### Ask what is still missing
 
-`steerlab data check demo` is the manifest-driven readiness checklist, and the
-fastest way to learn what a study needs:
+`steerlab-cli data check demo` is the manifest-driven readiness checklist, and
+the fastest way to learn what a study needs:
 
 ```text
 ✓ [present] stimuli / validation set / markers — formality
@@ -318,7 +346,7 @@ fastest way to learn what a study needs:
 Every row names the **path you must author** and why the requirement exists.
 Blockers are a refusal, not a warning: `data check` exits 65 when any blocker is
 present. The task-prompt file is the measured task, and the sample ships one:
-`steerlab experiment pin-prompts demo prompts/tasks/starter-prompts.jsonl`.
+`steerlab-cli experiment pin-prompts demo prompts/tasks/starter-prompts.jsonl`.
 
 The neutral corpus is the denominator that makes steering strength comparable,
 and the sample carries one (`prompts/neutral/corpus.jsonl`), along with the
@@ -326,9 +354,9 @@ default paired-judging rubric — so extraction, validation, norm-unit α, and a
 first judged comparison all work inside the sample. What the sample does NOT
 carry is the wider instrument library (sweep dev split, robustness sets,
 authoring templates); those come with a workspace created by
-`steerlab workspace init`. Past your first extraction, create a real workspace
-and copy the formality concept into it rather than growing the sample in
-place.
+`steerlab-cli workspace init`. Past your first extraction, create a real
+workspace and copy the formality concept into it rather than growing the sample
+in place.
 
 ### See a dose-response
 
@@ -339,7 +367,7 @@ layers, and model families, where a raw α would not. Declare an arm and you hav
 two conditions — the implicit baseline and one steered condition:
 
 ```bash
-steerlab experiment declare-condition demo formality-mid --slots formality:18:0.3
+steerlab-cli experiment declare-condition demo formality-mid --slots formality:18:0.3
 ```
 
 The intuition to build, in the app's Steering tab or across a sweep, is the
@@ -350,8 +378,8 @@ to adopt. Mid-network layers usually steer best. Two self-tests ship for exactly
 this, and they are what to run after touching the engine:
 
 ```bash
-steerlab --config prompts/configs/smoke-test.json   # steered ≠ baseline; α=0 == baseline
-steerlab --config prompts/configs/toy-french.json   # + concept beats a matched-norm random control
+steerlab-cli --config prompts/configs/smoke-test.json   # steered ≠ baseline; α=0 == baseline
+steerlab-cli --config prompts/configs/toy-french.json   # + concept beats a matched-norm random control
 ```
 
 ---
@@ -359,7 +387,7 @@ steerlab --config prompts/configs/toy-french.json   # + concept beats a matched-
 ## 6. Your first real study
 
 ```bash
-steerlab workspace init ~/SteerLab/Workspaces/register-pilot
+steerlab-cli workspace init ~/SteerLab/Workspaces/register-pilot
 export STEERLAB_WORKSPACE=~/SteerLab/Workspaces/register-pilot
 ```
 
@@ -406,24 +434,24 @@ at a time; templates live under your workspace's `prompts/templates/`.
 ### The lifecycle, in order
 
 ```bash
-steerlab experiment create <name> --model <model-id> [--revision <commit>]
-steerlab experiment attach <name> <concept>…          # pin stimuli + options
-steerlab experiment pin-prompts <name> prompts/tasks/<file>.jsonl
-steerlab experiment pin-rubric  <name> prompts/rubrics/<file>.md --judges a:local,b:claude
-steerlab experiment set-instruments <name> answerTokenLogprob
-steerlab experiment set-sweep-selection <name> --objective judgeScore
-steerlab experiment declare-condition <name> <arm> --slots <concept>:<layer>:<alpha>
+steerlab-cli experiment create <name> --model <model-id> [--revision <commit>]
+steerlab-cli experiment attach <name> <concept>…          # pin stimuli + options
+steerlab-cli experiment pin-prompts <name> prompts/tasks/<file>.jsonl
+steerlab-cli experiment pin-rubric  <name> prompts/rubrics/<file>.md --judges a:local,b:claude
+steerlab-cli experiment set-instruments <name> answerTokenLogprob
+steerlab-cli experiment set-sweep-selection <name> --objective judgeScore
+steerlab-cli experiment declare-condition <name> <arm> --slots <concept>:<layer>:<alpha>
 
-steerlab experiment extract  <name>                   # derive vectors
-steerlab experiment validate <name>                   # held-out probe + cosines
-steerlab experiment sweep    <name>                   # layer × α on the dev split
-steerlab experiment promote  <name> <concept>         # mint an arm from the winning cell
+steerlab-cli experiment extract  <name>                   # derive vectors
+steerlab-cli experiment validate <name>                   # held-out probe + cosines
+steerlab-cli experiment sweep    <name>                   # layer × α on the dev split
+steerlab-cli experiment promote  <name> <concept>         # mint an arm from the winning cell
 
-steerlab experiment freeze   <name>                   # ONE-WAY, and gated
-steerlab experiment run      <name>                   # generate every condition
-steerlab experiment evaluate <name>                   # paired judging
-steerlab experiment analyze  <name>                   # effect sizes, CIs, corrections
-steerlab experiment duplicate <name> <name>-2         # the only way to iterate after freeze
+steerlab-cli experiment freeze   <name>                   # ONE-WAY, and gated
+steerlab-cli experiment run      <name>                   # generate every condition
+steerlab-cli experiment evaluate <name>                   # paired judging
+steerlab-cli experiment analyze  <name>                   # effect sizes, CIs, corrections
+steerlab-cli experiment duplicate <name> <name>-2         # the only way to iterate after freeze
 ```
 
 Not every study needs every verb. `<family> --help` lists a family's verbs,
@@ -591,6 +619,16 @@ Every workspace gets an `AGENTS.md`, generated at creation: the lifecycle in
 order, the file shapes, the freeze gates with their repairs, the machine
 contract, and an explicit list of what not to do. Point an agent at the
 workspace and it has what it needs; you do not have to explain SteerLab to it.
+
+Tell it which command line it has. On a Mac that is `steerlab-cli`, the
+instrument this document types throughout, verified by `steerlab-cli --version`
+reporting **6/6 resource families resolved**. Elsewhere it is the `steerlab`
+client (§4), verified by `steerlab --version` printing `steerlab <version>
+(client)` — a smaller verb surface reached the same way, since everything below
+about `--json`, refusals, and exit codes holds identically on it. An agent that
+types a Mac lifecycle verb under the client's name gets `64`, which is the
+instrument being clear rather than the agent being unlucky. The repository
+root's `AGENTS.md` is the cold-start contract that picks between them.
 
 Every verb on the study path accepts `--json`. In JSON mode stdout carries
 exactly one envelope and nothing else, every diagnostic goes to stderr, there

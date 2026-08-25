@@ -12,6 +12,11 @@ below was read out of the dispatch code, not remembered:
   `api/executors.py`, `api/app.py`, `experiment/bundles.py` and
   `experiment/sharding.py` for the behavior behind the flags.
 
+A **third** command line, the cross-platform `steerlab` **client**, is §1.4. It
+is a different product from the Swift `steerlab-cli` — a smaller verb surface,
+no model loading, and no `workspace init` — and the generated regions below do
+not cover it.
+
 **Both CLIs have `--help`** (2026-08-18): `steerlab-cli experiment freeze
 --help`, `steerlab-server study submit --help`, `steerlab-cli cluster ensure
 --help`, and the family form (`steerlab-cli experiment --help`). It runs
@@ -86,6 +91,40 @@ of the portability program; `docs/PORTABILITY-CONTRACTS.md` §7–§10 are its
 reference, and this note exists so a reader of *this* document is not left
 believing there are only two.
 
+**`steerlab` and `steerlab-cli` are two products, not two spellings.** The
+Swift `steerlab-cli` is the Mac instrument — workspace bootstrap and the whole
+measured lifecycle (§3). The Python `steerlab` is this client — authoring, the
+bundle round trip, and `run`. Neither answers the other's verbs: there is no
+`steerlab workspace init`, no `steerlab experiment extract`, no
+`steerlab cluster …`, and typing one is a `64`, not a fallback. Nothing in this
+section asks you to run a Swift verb under `steerlab`.
+
+Each says which one it is, and the two answers are unmistakable:
+
+| you typed | a correct install answers |
+|---|---|
+| `steerlab-cli --version` | the install report, ending in **6/6 resource families resolved** |
+| `steerlab --version` | `steerlab <version> (client)` — one line, no resource families |
+
+If `steerlab --version` prints a resource-family report, the name on that PATH
+is a leftover symlink or shim to the Swift CLI. Remove it: the console script
+owns the spelling.
+
+**Platforms.** The client is the portable half, and one verb is not:
+
+| | macOS | Linux | Windows |
+|---|---|---|---|
+| authoring (`experiment`, `concept`, `bundle package`/`inspect`/`import`) | yes | yes | yes |
+| driving a remote runner (`runner …` except `serve`, and `run`) | yes | yes | yes |
+| **executing locally** (`runner serve`, the `[runner]` extra) | yes | yes | **no — refused** |
+| the Mac lifecycle (`steerlab-cli`: extract/validate/sweep/run/analyze, `cluster …`) | Apple silicon only | — | — |
+
+**Windows is client-only.** Authoring, freezing, packaging, submission and
+evidence import are supported there; `runner serve` refuses by name
+(`runnerPlatformUnsupported`) rather than starting an engine whose local
+execution path is not supported on that platform. A Windows author points `--runner <url>` at a runner on macOS, Linux,
+or a cluster, and the round trip is otherwise identical.
+
 What it is, in one table:
 
 | | `steerlab` (client) | `steerlab-server` (engine) |
@@ -153,10 +192,14 @@ steerlab bundle import <file.tar.gz> --sha256 <digest>   # the separate step
 | `runner submit` | `POST /api/bundles/inspect`, then `POST /api/studies/submit-bundle` | `--bundle-sha` is checked against the runner's own inspect of `--bundle-path` **before** anything is submitted. Reports the job id, the runner's identity, and the digest |
 | `runner jobs [<id>]` | `GET /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel` | `--cancel` needs an id — this client will not cancel a runner's whole queue |
 | `runner logs <id>` | `GET /api/jobs/{id}` (`logTail`), `GET /api/jobs/{id}/stream` with `--follow` | the default is a **tail** and says so; `--follow` streams until the job is terminal |
-| `runner evidence <id> --out <file>` | `GET /api/bundles/download` | downloads to a temp path beside `--out` (`--temp` overrides), verifies the outer sha256 the job record reported, then moves. **Does not import** — it prints the exact `steerlab bundle import … --sha256 …` |
+| `runner evidence <id> --out <file>` | `GET /api/bundles/download` | downloads to a **unique** temp file beside `--out` (`--temp` overrides), verifies the outer sha256 the job record reported, then commits with a **no-overwrite** primitive — a destination that appears mid-download is a `destinationExists` refusal, never a replacement. **Does not import** — it prints the exact `steerlab bundle import … --sha256 …` |
 
 Connection flags, identical on all six: `--runner <url>`, `--token-file
-<path>`, `--timeout <seconds>`, `--ca-bundle <path>`.
+<path>`, `--timeout <seconds>`, `--ca-bundle <path>`. A `--runner` URL must
+be plain `http`/`https` with a host and nothing else: embedded credentials
+(`user:pass@`), query strings, and fragments are refused
+(`runnerURLRefused`) — URL userinfo would otherwise flow into provenance
+and diagnostics, where bearer-token scrubbing cannot see it.
 
 #### `runner serve` — this machine as a managed local runner (Phase 3)
 
@@ -189,13 +232,14 @@ runner: http://127.0.0.1:59640
 | lifetime | foreground; v1 has no daemon management. ctrl-c (or SIGTERM) stops the engine too, with a one-line summary |
 | executor | `local`. An inherited `STEERLAB_EXECUTOR=slurm` cannot make a laptop sbatch |
 
-**The runner root, per platform** (override with `--runner-root <dir>`):
+**The runner root, per platform** (override with `--runner-root <dir>`) — and
+the platforms are the two that can serve:
 
 | platform | default |
 |---|---|
 | macOS | `~/Library/Application Support/SteerLab/local-runner` |
 | Linux / BSD | `$XDG_DATA_HOME/steerlab/local-runner` (default `~/.local/share/steerlab/local-runner`) |
-| Windows | `%LOCALAPPDATA%\SteerLab\local-runner` |
+| Windows | — `runner serve` is refused there; Windows is client-only (see the platform table above) |
 
 It holds `runner.token`, the artifact tree (`prompts/`, `experiments/`,
 `runs/`) and `.steerlab/` (the job database). All of it is a **cache**: delete
@@ -341,10 +385,12 @@ Three traps specific to this verb:
   `evidenceNotPackaged` (65) rather than pretending. Same for `--dry-run`,
   which reports stages 7–9 as `skipped`.
 
-**Do not carry a `~/.local/bin/steerlab` symlink to the Swift CLI once you
-install this.** `AGENTS.md` step 1 calls that alias temporary and reserved for
-exactly this binary; keeping both means `steerlab` means two different things
-on two machines.
+**Do not carry a `~/.local/bin/steerlab` symlink or shim to the Swift CLI on a
+machine that has this client.** `AGENTS.md` step 1 now tells the installing
+agent to give the Swift CLI its own name, `steerlab-cli`, and to leave this
+spelling to the console script; keeping both means `steerlab` means two
+different things on two machines, which is exactly the failure §1.4 exists to
+prevent.
 
 ### 1.3 Traps at a glance
 
@@ -647,6 +693,8 @@ never read by Python: `STEERLAB_MODULES`, `STEERLAB_CONDA_SH`,
 | Variable | Default | Effect |
 |---|---|---|
 | `STEERLAB_PURGE_DAYS` | `30` (example site scratch policy) | Purge-risk scan horizon. Unset on a cluster profile is a `warn` — set it to the site's real policy so the housekeeping card is honest. |
+| `STEERLAB_MAX_BUNDLE_TOTAL_BYTES` | 64 GiB | Aggregate uncompressed cap on a bundle import, checked against declared sizes in preflight AND actual bytes while streaming. Sibling of the per-member cap. |
+| `STEERLAB_MAX_BUNDLE_MEMBERS` | `10000` | Member-count cap on a bundle import; refused in preflight, before anything lands. |
 | `STEERLAB_PURGE_WARN_DAYS` | `20` | |
 | `STEERLAB_HOUSEKEEPING_SCAN_CAP` | `50000` files | |
 | `STEERLAB_MAINTENANCE_CALENDAR` | none | Windows the walltime preflight checks against; a session that would die mid-window refuses at submission. |
@@ -1809,7 +1857,7 @@ byte-identical and your `git status` clean.
 There is no `--activate-in-app`, and nothing replaces it: activation stopped
 being a separate step when the two stores became one. A site the CLI added is
 the app's site. A *running* app re-reads the registry when it becomes active
-and when the cluster UI opens, so a `steerlab cluster sites import` in a
+and when the cluster UI opens, so a `steerlab-cli cluster sites import` in a
 terminal shows up by clicking back into the app.
 
 On its first run a new build absorbs the two legacy stores — the app's
