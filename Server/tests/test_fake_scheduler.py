@@ -204,8 +204,14 @@ def _cleanup_probe(stage_dir_value):
         env = {}
         resources = SlurmResources(use_srun=False)
 
+    from steerlab_server.node_scratch import CANONICAL_FUNCTION
+
     script = render_slurm_script(_Bundle())
-    start = script.index("cleanup_node_scratch() {")
+    # From the CANONICALIZATION HELPER, not from `cleanup_node_scratch`: the
+    # trap's last gate resolves both the anchor and the target through the
+    # filesystem before it deletes anything, and that helper is defined just
+    # above the function that calls it.
+    start = script.index(f"{CANONICAL_FUNCTION}() {{")
     end = script.index("trap cleanup_node_scratch EXIT")
     body = script[start:end]
     probe = (

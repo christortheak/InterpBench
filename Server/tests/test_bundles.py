@@ -1,3 +1,4 @@
+import errno
 import json
 import os
 
@@ -1134,11 +1135,11 @@ def test_a_commit_phase_failure_rolls_the_whole_import_back(tmp_path,
     real_commit = bundles._commit_one
     calls: list[str] = []
 
-    def failing_commit(staged, dest):
+    def failing_commit(staged, dest, **kwargs):
         calls.append(dest)
         if len(calls) == 2:
             raise OSError("the disk went away mid-commit")
-        return real_commit(staged, dest)
+        return real_commit(staged, dest, **kwargs)
 
     monkeypatch.setattr(bundles, "_commit_one", failing_commit)
     with pytest.raises(OSError, match="went away"):
@@ -1166,11 +1167,11 @@ def test_rollback_restores_what_an_overwriting_import_replaced(tmp_path,
     calls: list[str] = []
     real_commit = bundles._commit_one
 
-    def failing_commit(staged, dest):
+    def failing_commit(staged, dest, **kwargs):
         calls.append(dest)
         if len(calls) == 2:
             raise OSError("the disk went away mid-commit")
-        return real_commit(staged, dest)
+        return real_commit(staged, dest, **kwargs)
 
     monkeypatch.setattr(bundles, "_commit_one", failing_commit)
     with pytest.raises(OSError, match="went away"):
@@ -1200,6 +1201,139 @@ def test_the_existing_file_refusal_fires_in_preflight(tmp_path, monkeypatch):
         bundles.import_bundle(bundle, target_root=str(target))
     assert (target / "runs" / "ok" / "first.jsonl").read_bytes() == payload
     _no_leftovers(target)
+
+
+def test_a_destination_that_appears_after_preflight_is_still_refused(
+        tmp_path, monkeypatch):
+    """The window between the two passes, closed (third-round review).
+
+    Preflight refuses an existing destination — but it is a check at a point
+    in time, and staging a multi-GB archive takes minutes. A file created in
+    that window used to be backed up and REPLACED by the commit, silently,
+    while the very rule that had just refused exactly this outcome sat one
+    pass earlier in the same call. The commit now enforces the answer
+    preflight gave: `os.link`, which cannot overwrite.
+    """
+    bundle = str(tmp_path / "two.tar.gz")
+    _bundle_with_members(bundle, [("runs/ok/first.jsonl", b'{"n":1}\n'),
+                                  ("runs/ok/second.jsonl", b'{"n":2}\n')])
+    target = tmp_path / "target"
+    interposed = target / "runs" / "ok" / "second.jsonl"
+    squatter = b"another writer got here between the passes\n"
+
+    real_stage = bundles._stage_plan
+
+    def stage_then_interpose(*args, **kwargs):
+        # The seam: everything is staged and verified, nothing has committed.
+        real_stage(*args, **kwargs)
+        interposed.parent.mkdir(parents=True, exist_ok=True)
+        interposed.write_bytes(squatter)
+
+    monkeypatch.setattr(bundles, "_stage_plan", stage_then_interpose)
+    with pytest.raises(bundles.BundleError,
+                       match="appeared AFTER preflight") as caught:
+        bundles.import_bundle(bundle, target_root=str(target))
+    # The refusal names the colliding member, not merely "a member".
+    assert "runs/ok/second.jsonl" in str(caught.value)
+    # The interposed file is not this import's to keep OR to destroy.
+    assert interposed.read_bytes() == squatter
+    # …and everything this call had already landed came back out.
+    assert not (target / "runs" / "ok" / "first.jsonl").exists()
+    _no_leftovers(target)
+
+
+def test_the_overwrite_permitted_path_still_replaces_with_a_backup(tmp_path,
+                                                                    monkeypatch):
+    """The other half of the ruling: a member that WAS granted permission keeps
+    `os.replace` plus the hardlink backup, unchanged.
+
+    That path's atomicity is load-bearing — concurrent shard jobs of one
+    submission read these artifacts while another shard rewrites them, which is
+    why the landing is a rename and never unlink-then-create (see the
+    shard-race note in `_stage_plan`).
+    """
+    original = b'{"n":"original"}\n'
+    first = str(tmp_path / "first.tar.gz")
+    _bundle_with_members(first, [("runs/ok/first.jsonl", original)])
+    target = tmp_path / "target"
+    bundles.import_bundle(first, target_root=str(target))
+
+    replacements: list[str] = []
+    real_replace = os.replace
+
+    def watched_replace(src, dst, *args, **kwargs):
+        replacements.append(str(dst))
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(bundles.os, "replace", watched_replace)
+    second = str(tmp_path / "second.tar.gz")
+    _bundle_with_members(second, [("runs/ok/first.jsonl", b'{"n":"new"}\n')])
+    result = bundles.import_bundle(second, target_root=str(target),
+                                   allow_overwrite=True)
+
+    assert result["extracted"] == ["runs/ok/first.jsonl"]
+    assert (target / "runs" / "ok" / "first.jsonl").read_bytes() \
+        == b'{"n":"new"}\n'
+    assert str(target / "runs" / "ok" / "first.jsonl") in replacements, \
+        "an overwrite-permitted member stopped landing as a rename"
+    _no_leftovers(target)
+
+
+def test_a_no_overwrite_member_lands_without_os_replace(tmp_path, monkeypatch):
+    """The positive control for the primitive split: an ordinary import into a
+    clean target must not reach `os.replace` at all, or the test above proves
+    nothing about which primitive carries which member."""
+    bundle = str(tmp_path / "one.tar.gz")
+    payload = b'{"n":1}\n'
+    _bundle_with_members(bundle, [("runs/ok/first.jsonl", payload)])
+    target = tmp_path / "target"
+
+    def _never(src, dst, *args, **kwargs):
+        raise AssertionError(f"a no-overwrite member was replaced onto {dst}")
+
+    monkeypatch.setattr(bundles.os, "replace", _never)
+    result = bundles.import_bundle(bundle, target_root=str(target))
+    assert result["extracted"] == ["runs/ok/first.jsonl"]
+    assert (target / "runs" / "ok" / "first.jsonl").read_bytes() == payload
+    _no_leftovers(target)
+
+
+def test_the_no_replace_commit_falls_back_when_hardlinks_are_unavailable(
+        tmp_path, monkeypatch):
+    """FAT/exFAT and some network mounts have no hardlinks. The fallback is an
+    O_EXCL reservation plus a copy — slower, and just as unable to overwrite."""
+    def _no_links(src, dst, *args, **kwargs):
+        raise OSError(errno.EPERM, "hardlinks unsupported here")
+
+    monkeypatch.setattr(bundles.os, "link", _no_links)
+
+    bundle = str(tmp_path / "one.tar.gz")
+    payload = b'{"n":1}\n'
+    _bundle_with_members(bundle, [("runs/ok/first.jsonl", payload)])
+    target = tmp_path / "target"
+    bundles.import_bundle(bundle, target_root=str(target))
+    assert (target / "runs" / "ok" / "first.jsonl").read_bytes() == payload
+    _no_leftovers(target)
+
+    # …and it still cannot overwrite: the same collision, on the same path.
+    second = str(tmp_path / "two.tar.gz")
+    _bundle_with_members(second, [("runs/ok/first.jsonl", b'{"n":1}\n'),
+                                  ("runs/ok/second.jsonl", b'{"n":2}\n')])
+    target2 = tmp_path / "target2"
+    interposed = target2 / "runs" / "ok" / "second.jsonl"
+    real_stage = bundles._stage_plan
+
+    def stage_then_interpose(*args, **kwargs):
+        real_stage(*args, **kwargs)
+        interposed.parent.mkdir(parents=True, exist_ok=True)
+        interposed.write_bytes(b"squatter\n")
+
+    monkeypatch.setattr(bundles, "_stage_plan", stage_then_interpose)
+    with pytest.raises(bundles.BundleError, match="appeared AFTER preflight"):
+        bundles.import_bundle(second, target_root=str(target2))
+    assert interposed.read_bytes() == b"squatter\n"
+    assert not (target2 / "runs" / "ok" / "first.jsonl").exists()
+    _no_leftovers(target2)
 
 
 # ==========================================================================

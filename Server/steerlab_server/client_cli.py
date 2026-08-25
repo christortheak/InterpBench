@@ -2433,7 +2433,11 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
         # The temp file lives BESIDE the destination by default, so the final
         # move is a same-filesystem rename and never a copy that could be
         # interrupted half way. `--temp` overrides it for a caller whose
-        # destination is on a small volume.
+        # destination is on a small volume. It names WHERE the bytes may wait,
+        # and nothing more: an explicit --temp path that already exists is a
+        # `tempPathExists` refusal, never a truncation (third-round review,
+        # 2026-08-24 — it used to be opened "wb"). "Somewhere with room" is
+        # exactly the kind of volume that already holds somebody's large file.
         #
         # None, not `<destination>.partial` (external review, 2026-08-24): a
         # PREDICTABLE staging name meant two downloads aimed at one

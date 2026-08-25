@@ -290,6 +290,14 @@ def normalize_base_url(raw: str) -> str:
       the moment a path is appended to it, and a caller who put a token in one
       would never learn it was ignored.
 
+    Every refusal here names the CATEGORY and never the value (third-round
+    review, 2026-08-24). Echoing the rejected component back is the same leak
+    the userinfo rule exists to prevent: ``?token=…`` and ``#token=…`` are
+    exactly where a caller puts a secret by mistake, so a message reading "the
+    URL carries a query string (``token=hunter2``)" would print the credential
+    into the envelope, the log line and the shell history — while warning about
+    it. The repair sentences carry the whole explanation instead.
+
     Returns the canonical form: lowercased scheme and host, port preserved,
     path preserved (a runner behind a proxy prefix is a real deployment) with
     any trailing slash removed.
@@ -301,7 +309,29 @@ def normalize_base_url(raw: str) -> str:
             repair_action=(
                 "--runner http://127.0.0.1:8080  (the port every `serve` "
                 "surface defaults to)"))
-    parts = urlsplit(text)
+    # The parse, and the PORT, before anything else reads either. `urlsplit`
+    # itself raises on a malformed authority (an unclosed IPv6 bracket), and
+    # `parts.port` raises only when the attribute is READ — non-numeric
+    # ("http://host:notaport") or out of range ("http://host:99999"). Every
+    # branch below reads it, `_redacted` included, so an uncaught ValueError
+    # used to escape this boundary as a generic malformed-invocation 64 with
+    # the raw locator in its traceback (third-round review, 2026-08-24). It is
+    # a typed refusal like every other thing wrong with a locator — and it
+    # names the CATEGORY only: a mistyped authority is precisely where a
+    # credential ends up.
+    try:
+        parts = urlsplit(text)
+        parts.port                     # noqa: B018 — reading it IS the check
+    except ValueError:
+        raise RunnerRefusal(
+            "the runner URL's port is not a number in 1–65535",
+            code=URL_REFUSED_CODE,
+            repair_action=(
+                "write the authority out as scheme://host:port — e.g. "
+                "--runner http://127.0.0.1:8080. Nothing of what you typed is "
+                "echoed here, deliberately: a malformed authority is where a "
+                "mistyped credential lands, and this refusal is recorded.")
+        ) from None
     scheme = parts.scheme.lower()
     if scheme not in ("http", "https"):
         raise RunnerRefusal(
@@ -330,23 +360,29 @@ def normalize_base_url(raw: str) -> str:
             code=URL_REFUSED_CODE,
             repair_action=(
                 "--runner http://127.0.0.1:8080 — scheme, host, and port"))
+    # The CATEGORY, never the value: `?token=…` is the commonest thing to find
+    # here, and a refusal that quoted it would put the secret in the envelope.
     if parts.query:
         raise RunnerRefusal(
-            f"the runner URL carries a query string ({parts.query!r}) — a "
-            "base URL is an origin plus an optional proxy prefix, and a query "
-            "on it is silently lost the moment a route path is appended",
+            "the runner URL carries a query string — a base URL is an origin "
+            "plus an optional proxy prefix, and a query on it is silently "
+            "lost the moment a route path is appended",
             code=URL_REFUSED_CODE,
             repair_action=(
                 "pass only scheme://host[:port][/prefix]. If that query was "
                 "meant as authentication, it is a token, and tokens travel in "
                 "the Authorization header this client builds from "
-                "--token-file / $STEERLAB_RUNNER_TOKEN."))
+                "--token-file / $STEERLAB_RUNNER_TOKEN. The query itself is "
+                "not repeated back here — if it held a secret, treat it as "
+                "having been typed into a shell history and rotate it."))
     if parts.fragment:
         raise RunnerRefusal(
-            f"the runner URL carries a fragment ({parts.fragment!r}) — a "
-            "fragment never reaches a server at all",
+            "the runner URL carries a fragment — a fragment never reaches a "
+            "server at all",
             code=URL_REFUSED_CODE,
-            repair_action="pass only scheme://host[:port][/prefix]")
+            repair_action=(
+                "pass only scheme://host[:port][/prefix]. The fragment is not "
+                "repeated back here, for the same reason userinfo is not."))
     host = parts.hostname
     if ":" in host:                    # an IPv6 literal, unbracketed by parse
         host = f"[{host}]"
@@ -916,6 +952,12 @@ class RunnerClient:
         unique per call for the same reason: a predictable ``<dest>.partial``
         made two concurrent downloads write the same staging path and hand each
         other's bytes to the digest check.
+
+        ``temp_path``, when named, is CREATED EXCLUSIVELY: an existing file
+        there is a ``tempPathExists`` refusal, never a truncation. Naming a
+        staging path says where the bytes may wait, not that anything already
+        standing there may be destroyed — and "somewhere with room" is exactly
+        the kind of path that holds somebody else's large file.
         """
         expected = (expected_sha256 or "").strip().lower()
         if not expected:
@@ -944,9 +986,29 @@ class RunnerClient:
         os.makedirs(destination_dir, exist_ok=True)
         if temp_path:
             # An operator who named a staging path owns it — the usual reason
-            # is a filesystem with room the destination's does not have.
+            # is a filesystem with room the destination's does not have. They
+            # do NOT thereby authorise destroying whatever is already there:
+            # the path was opened "wb" and silently truncated it (third-round
+            # review, 2026-08-24), which is the same overwrite the destination
+            # rule refuses, one path to the left. The name is RESERVED with an
+            # exclusive create, so an existing file is a typed refusal and a
+            # racing second download loses the reservation rather than the
+            # bytes.
             temp_path = os.path.abspath(os.path.expanduser(temp_path))
             os.makedirs(os.path.dirname(temp_path) or ".", exist_ok=True)
+            try:
+                open(temp_path, "xb").close()
+            except FileExistsError:
+                raise RunnerRefusal(
+                    f"{temp_path} already exists — this client will not "
+                    "truncate a file it was merely asked to stage through",
+                    code="tempPathExists",
+                    repair_action=(
+                        "name a --temp path that does not exist, or move that "
+                        "file aside. Omit --temp entirely and the client mints "
+                        "a unique staging file beside the destination, which "
+                        "is the path with no such question in it."),
+                    detail={"tempPath": temp_path}) from None
         else:
             handle_fd, temp_path = tempfile.mkstemp(
                 prefix=".steerlab-download-", suffix=".partial",
@@ -1084,6 +1146,16 @@ def _commit_no_replace(temp_path: str, destination: str) -> None:
     (FAT/exFAT, some network mounts), where it is slower and just as unable to
     overwrite anything.
 
+    RESIDUAL, on the fallback path only (third-round review, 2026-08-24): the
+    O_EXCL reservation makes ``destination`` VISIBLE — empty, then partially
+    written — for as long as the copy takes. Nothing can overwrite it and a
+    failed copy removes it again, but a concurrent reader on such a filesystem
+    can observe a short file under the final name. There is no way to close
+    that window without a rename, and a rename is precisely the primitive that
+    would clobber; the hardlink path (every filesystem this client actually
+    runs on) has no window at all. A reader who must be certain has the outer
+    digest to check, which is the same instrument this whole method exists for.
+
     Raises ``FileExistsError`` when ``destination`` exists; leaves
     ``temp_path`` in place for the caller to clean up when it does.
     """
@@ -1094,15 +1166,24 @@ def _commit_no_replace(temp_path: str, destination: str) -> None:
     except OSError:
         handle_fd = os.open(destination,
                             os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        # From here the destination NAME exists, so every exit from this block
+        # is accounted for in a `finally`: a copy that died half way (or an
+        # `os.fdopen` that never handed the descriptor over) must not leave a
+        # short file — or an empty one — wearing the destination's name. The
+        # reservation comes back out unless the copy completed.
+        landed = False
         try:
-            with os.fdopen(handle_fd, "wb") as landing, \
-                    open(temp_path, "rb") as staged:
+            try:
+                landing = os.fdopen(handle_fd, "wb")
+            except BaseException:
+                os.close(handle_fd)
+                raise
+            with landing, open(temp_path, "rb") as staged:
                 shutil.copyfileobj(staged, landing)
-        except BaseException:
-            # A copy that died half way must not leave a short file wearing
-            # the destination's name — the reservation comes back out.
-            _unlink_quietly(destination)
-            raise
+            landed = True
+        finally:
+            if not landed:
+                _unlink_quietly(destination)
     os.remove(temp_path)
 
 

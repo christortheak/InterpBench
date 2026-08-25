@@ -30,6 +30,7 @@ Fixtures are neutral throughout — a concept named ``signal`` with two
 one-word stimuli. Nothing here is about a study.
 """
 
+import errno
 import json
 import os
 import socket
@@ -1338,6 +1339,76 @@ def test_an_explicit_temp_path_is_still_honoured(adapter, service):
     assert os.path.isfile(destination)
 
 
+def test_an_explicit_temp_path_that_exists_is_refused_not_truncated(
+        adapter, service):
+    """Naming a staging path says WHERE the bytes may wait, not that whatever
+    is already there may be destroyed (third-round review, 2026-08-24).
+
+    It was opened ``"wb"``, which truncates. The usual reason to pass --temp is
+    "this volume has room the destination's has not" — which is exactly the
+    kind of volume that already holds somebody's large file. Exclusive create,
+    typed refusal, and the file is untouched.
+    """
+    _job_id, meta = _evidence_bearing_job(service)
+    destination = os.path.join(str(service["tmp"]), "home", "notrunc.tar.gz")
+    temp_path = os.path.join(str(service["tmp"]), "elsewhere", "occupied.part")
+    os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+    standing = b"somebody else's forty gigabytes, in miniature\n"
+    with open(temp_path, "wb") as handle:
+        handle.write(standing)
+
+    with pytest.raises(runner_api.RunnerRefusal) as caught:
+        adapter.download_bundle(remote_path=meta["bundlePath"],
+                                expected_sha256=meta["bundleSha256"],
+                                destination=destination, temp_path=temp_path)
+
+    assert caught.value.code == "tempPathExists"
+    assert caught.value.state == "refused"
+    assert temp_path in caught.value.reason
+    with open(temp_path, "rb") as handle:
+        assert handle.read() == standing, "--temp truncated a standing file"
+    assert not os.path.exists(destination), \
+        "the destination was created despite the refusal"
+
+
+def test_the_linkless_commit_leaves_no_short_file_behind(adapter, service,
+                                                          monkeypatch):
+    """The O_EXCL fallback (filesystems without hardlinks) RESERVES the
+    destination name before it has any bytes to put there. A copy that dies
+    half way must take the reservation back out rather than leave a short file
+    wearing the destination's name — every exit from that block, including one
+    that never got a file object at all."""
+    _job_id, meta = _evidence_bearing_job(service)
+    destination = os.path.join(str(service["tmp"]), "home", "linkless.tar.gz")
+
+    def _no_links(src, dst, *args, **kwargs):
+        raise OSError(errno.EPERM, "hardlinks unsupported here")
+
+    monkeypatch.setattr(runner_api.os, "link", _no_links)
+
+    def _dies_half_way(source, target, *args, **kwargs):
+        target.write(b"half of an archive")
+        raise OSError("the volume went away mid-copy")
+
+    monkeypatch.setattr(runner_api.shutil, "copyfileobj", _dies_half_way)
+    with pytest.raises(OSError, match="went away mid-copy"):
+        adapter.download_bundle(remote_path=meta["bundlePath"],
+                                expected_sha256=meta["bundleSha256"],
+                                destination=destination)
+    assert not os.path.exists(destination), \
+        "a short file kept the destination's name after a failed copy"
+
+    # The same fallback, working: it commits the whole archive and cannot
+    # overwrite — the reservation is the thing that makes it safe.
+    monkeypatch.undo()
+    monkeypatch.setattr(runner_api.os, "link", _no_links)
+    adapter.download_bundle(remote_path=meta["bundlePath"],
+                            expected_sha256=meta["bundleSha256"],
+                            destination=destination)
+    with open(destination, "rb") as got, open(meta["bundlePath"], "rb") as want:
+        assert got.read() == want.read()
+
+
 # =============================================================================
 # 10. The runner URL is NORMALIZED at the boundary
 # =============================================================================
@@ -1386,6 +1457,102 @@ def test_a_query_string_or_fragment_on_a_runner_url_is_refused():
         with pytest.raises(runner_api.RunnerRefusal) as caught:
             runner_api.normalize_base_url(locator)
         assert caught.value.code == runner_api.URL_REFUSED_CODE
+
+
+@pytest.mark.parametrize("shape", ["query", "fragment"])
+def test_a_query_or_fragment_refusal_never_echoes_what_it_refused(shape):
+    """The userinfo rule, applied to the other two places a secret lands.
+
+    ``?token=…`` and ``#token=…`` are the commonest way a credential ends up
+    in a locator by mistake — and the refusal used to interpolate the very
+    component it was warning about, putting the token into the envelope, the
+    diagnostic and the shell history while telling the caller not to do that
+    (third-round review, 2026-08-24). The message names the CATEGORY now.
+    """
+    secret = "hunter2-DO-NOT-LEAK-4c19ab"
+    separator = "?" if shape == "query" else "#"
+    locator = f"http://runner.example.edu:8443/{separator}token={secret}"
+
+    with pytest.raises(runner_api.RunnerRefusal) as caught:
+        runner_api.normalize_base_url(locator)
+    exc = caught.value
+    assert exc.code == runner_api.URL_REFUSED_CODE
+    assert exc.state == "refused"
+    for text in (exc.reason, exc.repair_action, json.dumps(exc.detail),
+                 str(exc), repr(exc)):
+        assert secret not in text, f"the {shape} escaped into: {text[:200]}"
+        assert "token=" not in text.replace("$STEERLAB_RUNNER_TOKEN", ""), \
+            f"the {shape} escaped into: {text[:200]}"
+    # It still says WHAT was wrong — a refusal that named nothing would be
+    # unrepairable.
+    assert shape in exc.reason
+
+    # …and the constructor is the boundary, so no client can hold one.
+    with pytest.raises(runner_api.RunnerRefusal):
+        runner_api.RunnerClient(base_url=locator)
+
+
+@pytest.mark.parametrize("shape", ["query", "fragment"])
+def test_a_secret_in_a_query_or_fragment_reaches_no_client_surface(
+        service, capsys, shape):
+    """The same nonappearance proof the userinfo case gets, driven through the
+    whole CLI: envelope, human mode, stderr, and the composite verb whose
+    provenance record is the durable surface."""
+    secret = "hunter2-DO-NOT-LEAK-71e0f5"
+    separator = "?" if shape == "query" else "#"
+    locator = f"http://testserver/{separator}token={secret}"
+    transcript: list[str] = []
+
+    code, document, err = _envelope(
+        ["runner", "capabilities", "--runner", locator], capsys)
+    assert code == 65, document
+    assert document["error"]["code"] == runner_api.URL_REFUSED_CODE
+    transcript.extend([json.dumps(document), err])
+
+    code, out, err = _cli(["runner", "capabilities", "--runner", locator],
+                          capsys)
+    assert code == 65
+    transcript.extend([out, err])
+
+    code, document, err = _envelope(
+        ["run", STUDY_NAME, "--runner", locator,
+         "--root", service["source"]], capsys)
+    assert code == 65, document
+    assert document["error"]["code"] == runner_api.URL_REFUSED_CODE, \
+        "the composite must refuse the locator BEFORE it reads the study"
+    transcript.extend([json.dumps(document), err])
+
+    for text in transcript:
+        assert secret not in text, (
+            f"a {shape}-embedded credential escaped into client output: "
+            + text[:400])
+    assert sum(len(t) for t in transcript) > 200
+
+
+@pytest.mark.parametrize("locator", [
+    "http://runner.example.edu:notaport",       # not a number at all
+    "http://runner.example.edu:99999",          # a number, out of range
+    "http://runner.example.edu:8080abc/prefix",
+])
+def test_a_malformed_port_is_a_typed_refusal_not_a_crash(locator):
+    """``parts.port`` raises only when the attribute is READ, and every branch
+    of the normalizer reads it — ``_redacted`` included. An uncaught
+    ``ValueError`` escaped this boundary as a generic malformed-invocation 64
+    with the raw locator in its traceback (third-round review, 2026-08-24). It
+    is a locator problem like any other: typed, 65, and naming the category
+    rather than the text."""
+    with pytest.raises(runner_api.RunnerRefusal) as caught:
+        runner_api.normalize_base_url(locator)
+    exc = caught.value
+    assert exc.code == runner_api.URL_REFUSED_CODE
+    assert exc.state == "refused"
+    assert "port" in exc.reason
+    for text in (exc.reason, exc.repair_action):
+        assert "runner.example.edu" not in text, \
+            "the malformed authority was echoed back"
+    # The constructor is the boundary here too.
+    with pytest.raises(runner_api.RunnerRefusal):
+        runner_api.RunnerClient(base_url=locator)
 
 
 def test_the_normalized_form_is_what_the_client_reports():

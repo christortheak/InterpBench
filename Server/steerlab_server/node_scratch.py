@@ -135,6 +135,55 @@ def _leading_variable_case(name: str) -> list[str]:
     ]
 
 
+#: The rendered canonicalization helper's name. Prefixed because these lines
+#: are injected into somebody else's job script and must collide with nothing.
+CANONICAL_FUNCTION = "steerlab_canonical_path"
+
+
+def _canonical_path_function() -> list[str]:
+    """The shell helper that resolves a path to its PHYSICAL form.
+
+    Every check in :func:`cleanup_lines` above this point is lexical, and a
+    lexical prefix test is exactly what a symlink defeats: with
+    ``<anchor>/alice`` a link into somebody else's tree,
+    ``<anchor>/alice/<job>`` passes the string comparison and ``rm -rf``
+    follows the link out of the anchor (third-round review, 2026-08-24).
+
+    ``readlink -f`` is NOT used, even though Slurm compute nodes are Linux and
+    would have it: BSD/macOS ``readlink -f`` fails outright on a path whose
+    last component does not exist, and the stage directory routinely does not
+    exist when the trap runs — a job that staged nothing, or that cleaned up
+    already. ``cd -P``/``pwd -P`` are bash builtins, need no coreutils, and
+    resolve the EXISTING part of the path, which is the only part a symlink can
+    live in; the not-yet-created tail is re-appended literally. That is enough,
+    because a symlink can only exist where a file exists.
+    """
+    return [
+        f"{CANONICAL_FUNCTION}() {{",
+        '  # Physical form of "$1": symlinks resolved through the part of the',
+        "  # path that exists, the rest appended as written. Prints it; fails",
+        "  # only if even the deepest existing ancestor will not resolve.",
+        "  local target rest name base",
+        '  target="$1"',
+        '  rest=""',
+        '  while [ ! -d "${target}" ]; do',
+        '    case "${target}" in /|"") break ;; esac',
+        '    name="${target##*/}"',
+        '    rest="${name}${rest:+/}${rest}"',
+        '    target="${target%/*}"',
+        '    [ -n "${target}" ] || target="/"',
+        "  done",
+        '  base="$(cd -P -- "${target}" 2>/dev/null && pwd -P)" || base=""',
+        '  [ -n "${base}" ] || return 1',
+        '  if [ -n "${rest}" ]; then',
+        "    printf '%s/%s\\n' \"${base%/}\" \"${rest}\"",
+        "  else",
+        "    printf '%s\\n' \"${base}\"",
+        "  fi",
+        "}",
+    ]
+
+
 def cleanup_lines(*, environ=None) -> list[str]:
     """THE node-scratch cleanup block, as script lines.
 
@@ -143,6 +192,16 @@ def cleanup_lines(*, environ=None) -> list[str]:
     job-scoped by construction (:data:`JOB_SCOPING_VARIABLES`) AND the job
     actually has a job id, so a shared node cache never matches and a
     non-Slurm shell never fires.
+
+    The guard is layered, and the layers are cumulative: the template must name
+    a job-scoping variable, carry no ``.``/``..`` component, expand to an
+    absolute path with nothing left unexpanded, and sit at or under its own
+    anchor. All of that is a judgement about TEXT. The last gate, immediately
+    before the removal, is the only one that asks the FILESYSTEM: both the
+    anchor and the target are resolved to their physical form and the
+    containment question is put again — because a symlink in the middle of an
+    otherwise blameless path is exactly what a string comparison cannot see
+    (third-round review, 2026-08-24).
 
     The function never calls ``exit`` and always ends successfully, which is
     what lets it be trapped on EXIT alongside the checkpoint trap without
@@ -159,6 +218,10 @@ def cleanup_lines(*, environ=None) -> list[str]:
         ]
     return [
         "",
+        "# The one filesystem-aware helper the trap below uses; see",
+        "# node_scratch._canonical_path_function for why it is not readlink -f.",
+        *_canonical_path_function(),
+        "",
         "# cluster-operator requirement (2026-08-19): a job that stages to",
         "# node-local scratch must remove its own directory — some sites do",
         "# NOT wipe it at job end, and unrequested/unremoved staging leaks",
@@ -171,7 +234,7 @@ def cleanup_lines(*, environ=None) -> list[str]:
         "# arrives single-quoted, so the case pattern sees the literal",
         "# variable text.",
         "cleanup_node_scratch() {",
-        "  local template stage_dir scoped anchor",
+        "  local template stage_dir scoped anchor canon_stage canon_anchor",
         f'  [ -n "${{{STAGE_DIR_ENV}:-}}" ] || return 0',
         '  [ -n "${SLURM_JOB_ID:-}" ] || return 0',
         f'  template="${{{STAGE_DIR_ENV}}}"',
@@ -226,6 +289,32 @@ def cleanup_lines(*, environ=None) -> list[str]:
         '    "${anchor}"|"${anchor}"/*) ;;',
         "    *) return 0 ;;",
         "  esac",
+        "  # CANONICAL CONTAINMENT, immediately before the delete (third-round",
+        "  # review, 2026-08-24). Everything above is a check on TEXT, and a",
+        "  # symlink is precisely what text cannot see: with '<anchor>/alice' a",
+        "  # link into another tree, '<anchor>/alice/<job>' passes the prefix",
+        "  # test above and 'rm -rf' follows the link straight out of the",
+        "  # anchor. So both sides are resolved to their physical form here and",
+        "  # the containment question is asked again of THOSE.",
+        "  #",
+        "  # A symlinked scratch ROOT ('/scratch -> /lustre/scratch') is",
+        "  # legitimate and common, and needs no exception: it resolves on BOTH",
+        "  # sides, so canonical containment still holds. Only a link that",
+        "  # LEAVES the anchor is refused — an intermediate symlink is not",
+        "  # suspicious in itself.",
+        "  #",
+        "  # A stage dir that does not exist canonicalizes to its own lexical",
+        "  # form (its nearest existing ancestor, resolved, plus the missing",
+        "  # tail), stays contained, and is handed to an 'rm -rf' that removes",
+        "  # nothing and says nothing — there was nothing to remove.",
+        f'  canon_stage="$({CANONICAL_FUNCTION} "${{stage_dir}}")" || return 0',
+        f'  canon_anchor="$({CANONICAL_FUNCTION} "${{anchor}}")" || return 0',
+        '  case "${canon_stage}" in',
+        '    "${canon_anchor}"|"${canon_anchor}"/*) ;;',
+        "    *) return 0 ;;",
+        "  esac",
+        "  # The path the SITE named is what is removed, not its canonical",
+        "  # form: resolving was the check, not a relocation of the delete.",
         '  rm -rf -- "${stage_dir}" 2>/dev/null || true',
         "}",
         "# EXIT only, so it composes with any checkpoint trap (USR1/TERM) and",
@@ -390,6 +479,7 @@ def write_wrapper(*, metadata_root: str | None = None, environ=None,
 
 
 __all__ = [
+    "CANONICAL_FUNCTION",
     "COMPANION_VARIABLES", "JOB_SCOPING_VARIABLES", "SCHEDULER_PURGES_ENV",
     "SCRATCH_GRES_ENV", "STAGE_DIR_ENV", "WRAPPER_NAME",
     "WRAPPER_STAMP_MARKER", "cleanup_lines", "render_wrapper",

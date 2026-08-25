@@ -66,13 +66,13 @@ Pick the first path that applies:
 2. **No app, but Xcode 27**: build and install from this checkout —
    `./scripts/install-cli.sh` (set `DEVELOPER_DIR` first if `xcode-select`
    points at an older Xcode). It writes the shim as
-   `~/.local/bin/steerlab-cli`, and adds a short `steerlab` alias only when
-   nothing else on the machine answers to that name — no client console
-   script in `Server/.venv.nosync`, no `steerlab` on PATH, no existing file
-   it did not write itself (`--short-name` opts in anyway, for a machine
-   that will never install the client). An install from before this policy
-   may have left a Swift-CLI shim at `~/.local/bin/steerlab`; if this
-   machine also gets the client, remove it so the name has one owner:
+   `~/.local/bin/steerlab-cli` and writes **no** `steerlab` alias — that name
+   is the client's, and an installer cannot know whether the client arrives
+   next week. `--short-name` takes the name anyway, for a machine that will
+   never install the client (and even then an existing file the installer did
+   not write is left alone). An install from before this policy may have left
+   a Swift-CLI shim at `~/.local/bin/steerlab`; if this machine also gets the
+   client, remove it so the name has one owner:
 
    ```sh
    rm ~/.local/bin/steerlab   # only if it is the old Swift-CLI shim

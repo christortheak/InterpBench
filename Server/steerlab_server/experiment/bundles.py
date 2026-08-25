@@ -758,6 +758,16 @@ class _PlannedMember:
     #: The pinned digest from the bundle's entry list (never ``None`` — a
     #: member without one is refused in preflight).
     expected: str | None
+    #: Whether OVERWRITING this destination was permitted at preflight, carried
+    #: into the commit pass so the commit can ENFORCE the preflight's answer
+    #: rather than assume it still holds (third-round review, 2026-08-24).
+    #: Preflight refuses an existing destination when the caller did not pass
+    #: ``allow_overwrite`` — but a file created in the window between that
+    #: check and the commit was then backed up and replaced anyway, which is
+    #: the refusal being worked around by the passage of time. A member that
+    #: was NOT granted permission commits with a primitive that cannot
+    #: overwrite, so the rule survives the race as well as the check.
+    may_overwrite: bool = False
     #: Where the verified bytes wait between staging and commit.
     staged: str = ""
 
@@ -843,11 +853,16 @@ def _plan_import(tar, meta: dict, members, *, target: str,
         # The never-overwrite rule is a PREFLIGHT refusal, not a commit-time
         # one: deciding it against the target here is what lets the commit
         # pass be a sequence of renames with nothing left to change its mind.
+        # The ANSWER travels with the member (`may_overwrite`), because the
+        # commit must be able to enforce it — the check below is a point in
+        # time, and a destination that appears after it must meet the same
+        # rule, not slip past it.
         if os.path.exists(dest) and not allow_overwrite:
             raise BundleError(
                 f"refusing to overwrite existing file: {member.name}")
         plan.append(_PlannedMember(member=member, dest=dest,
-                                   expected=expected))
+                                   expected=expected,
+                                   may_overwrite=bool(allow_overwrite)))
     return plan, portable_payload
 
 
@@ -942,10 +957,75 @@ def _backup_existing(dest: str, rollback_root: str, index: int) -> str | None:
     return backup
 
 
-def _commit_one(staged: str, dest: str) -> None:
+def _commit_one(staged: str, dest: str, *, may_overwrite: bool) -> None:
     """Land ONE staged member. The single mutating step of the commit pass,
-    factored out so a test can make the commit fail where nothing else can."""
-    os.replace(staged, dest)
+    factored out so a test can make the commit fail where nothing else can.
+
+    Two primitives, chosen by what PREFLIGHT decided about this member:
+
+    * ``may_overwrite`` — ``os.replace``, exactly as before. The rename is
+      atomic for a concurrent shard READING the artifact (see the shard-race
+      note in :func:`_stage_plan`), which is why an overwrite-permitted landing
+      must stay a rename and must not become unlink-then-create.
+    * otherwise — :func:`_commit_no_replace`, which CANNOT overwrite. Preflight
+      established that nothing stood at ``dest``; if something does now, it
+      arrived after the check, and ``os.replace`` would have silently destroyed
+      it in the name of a rule that had just refused exactly that
+      (third-round review, 2026-08-24).
+    """
+    if may_overwrite:
+        os.replace(staged, dest)
+        return
+    _commit_no_replace(staged, dest)
+
+
+def _commit_no_replace(staged: str, dest: str) -> None:
+    """Land a staged member onto ``dest``, incapable of overwriting it.
+
+    The TWIN of ``client.runner._commit_no_replace`` — same primitive, same
+    fallback, same reasoning — deliberately mirrored rather than shared: that
+    module is the thin HTTP client and must stay importable from an install
+    that has only httpx, while this one reaches the whole archive and workspace
+    machinery. (``sha256_file`` is duplicated across the same seam for the same
+    reason, and says so.) A change to either belongs in both.
+
+    ``os.link`` + ``os.remove``, not ``os.replace``: link raises
+    ``FileExistsError`` rather than clobbering, and it commits bytes that are
+    already on the disk instead of copying them a second time. The O_EXCL
+    reservation is the fallback for a filesystem without hardlinks, where it is
+    slower and just as unable to overwrite anything — with the same stated
+    residual as its twin: on that path the destination NAME is visible, empty
+    then partial, for as long as the copy takes. Nothing can overwrite it, and
+    a failed copy removes it again.
+
+    Raises ``FileExistsError`` when ``dest`` exists; leaves ``staged`` in place
+    for the caller (here, ``_rollback`` plus the staging teardown) when it does.
+    """
+    try:
+        os.link(staged, dest)
+    except FileExistsError:
+        raise
+    except OSError:
+        handle_fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        landed = False
+        try:
+            try:
+                landing = os.fdopen(handle_fd, "wb")
+            except BaseException:
+                os.close(handle_fd)
+                raise
+            with landing, open(staged, "rb") as source:
+                shutil.copyfileobj(source, landing)
+            landed = True
+        finally:
+            if not landed:
+                # A copy that died half way must not leave a short file wearing
+                # the destination's name — the reservation comes back out.
+                try:
+                    os.remove(dest)
+                except OSError:
+                    pass
+    os.remove(staged)
 
 
 def _rollback(landed: list[_Landed], created_dirs: list[str]) -> None:
@@ -1000,7 +1080,12 @@ def import_bundle(bundle_path: str, *, target_root: str | None = None,
        tree on the destination filesystem and is verified there, including the
        frozen- and draft-manifest firewalls;
     3. **commit** — the staged tree moves into place, member by member, with
-       every landing recorded; any failure rolls the whole call back.
+       every landing recorded; any failure rolls the whole call back. The
+       commit ENFORCES what preflight decided rather than trusting it to have
+       stayed true: a member that was not granted overwrite permission lands
+       with a primitive that cannot overwrite (:func:`_commit_no_replace`), so
+       a destination created in the window between the two passes is the same
+       refusal it would have been a second earlier — not a silent replacement.
 
     Before this was transactional, a refusal partway through installed
     everything before it and then the never-overwrite rule blocked the clean
@@ -1047,8 +1132,28 @@ def import_bundle(bundle_path: str, *, target_root: str | None = None,
             os.makedirs(rollback_root, exist_ok=True)
         for index, planned in enumerate(plan):
             _makedirs_tracked(os.path.dirname(planned.dest), created_dirs)
-            backup = _backup_existing(planned.dest, rollback_root, index)
-            _commit_one(planned.staged, planned.dest)
+            # Only an overwrite-permitted member has anything to preserve: for
+            # the others preflight established the destination was absent, and
+            # if something IS there the commit refuses without touching it, so
+            # copying it aside first would be work done on a file this call
+            # must leave exactly as it found it.
+            backup = (_backup_existing(planned.dest, rollback_root, index)
+                      if planned.may_overwrite else None)
+            try:
+                _commit_one(planned.staged, planned.dest,
+                            may_overwrite=planned.may_overwrite)
+            except FileExistsError:
+                # The window between preflight and commit, closed (third-round
+                # review, 2026-08-24). Everything landed by THIS call rolls
+                # back; the file that appeared is not this import's to keep or
+                # to destroy, and is left untouched.
+                raise BundleError(
+                    f"refusing to overwrite existing file: "
+                    f"{planned.member.name} — it appeared AFTER preflight "
+                    "checked the destination, between that check and this "
+                    "commit. Nothing of this bundle was kept: import into a "
+                    "clean target root, or move that file aside and "
+                    "retry") from None
             landed.append(_Landed(dest=planned.dest, backup=backup))
             extracted.append(planned.member.name)
         # Retain the (verified) portable ledger inside the imported pipeline

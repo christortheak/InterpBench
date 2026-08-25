@@ -140,13 +140,14 @@ shim at `~/.local/bin/steerlab-cli` — which is why the installed CLI needs no
 environment variables, unlike running out of a build directory. Set
 `DEVELOPER_DIR` first if `xcode-select` points at an older Xcode.
 
-**The short name `steerlab` is the Python client's**, so the installer writes
-it as an alias only when nothing else on this machine answers to it — no
-client console script in `Server/.venv.nosync`, no `steerlab` on PATH, and no
-existing `~/.local/bin/steerlab` it did not write itself (a foreign file
-there, such as a symlink you made to the app's bundled binary, is left alone).
-Pass `--short-name` to write the alias anyway on a machine that will never
-install the client. An install from before this policy may have left a
+**The short name `steerlab` is the Python client's**, so the installer never
+writes it as an alias unless you ask: pass `--short-name`, on a machine that
+will never install the client. (Even then, an existing `~/.local/bin/steerlab`
+the installer did not write itself — a symlink you made to the app's bundled
+binary, say — is left alone.) The rule used to be conditional, "write it when
+nothing else answers to the name", and that condition is evaluated the day you
+install: the client arriving a week later would find its own console script
+shadowed by PATH order. An install from before this policy may have left a
 Swift-CLI shim at `~/.local/bin/steerlab`; if this machine also gets the
 client, delete it so the name has one owner. `steerlab-cli install verify`
 re-hashes the installed tree against its own manifest and answers "is what I

@@ -620,6 +620,69 @@ def test_the_removal_must_stay_beneath_the_template_s_own_anchor():
     assert _cleanup_probe("/$SLURM_JOB_ID") == ""
 
 
+# --------------------------------------------------------------------------
+# Canonical containment: a lexical prefix test is what a SYMLINK defeats
+# (third-round review, 2026-08-24)
+# --------------------------------------------------------------------------
+
+
+def test_a_symlink_under_the_anchor_cannot_carry_the_delete_outside(tmp_path):
+    """The reviewer's reproduction, exactly.
+
+    ``<scratch>/alice`` is a symlink into another tree. The template
+    ``<scratch>/$USER/$SLURM_JOB_ID`` is job-scoped, has no '.'/'..' component,
+    expands to an absolute path with nothing left unexpanded, and its expansion
+    is a string prefixed by the anchor — every check that existed passes. And
+    ``rm -rf`` resolves the path through the link and deletes somebody else's
+    directory. The gate is now on the CANONICAL forms.
+    """
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    outside = tmp_path / "outside"
+    (outside / "12345").mkdir(parents=True)
+    (scratch / "alice").symlink_to(outside)
+
+    assert _cleanup_probe(f"{scratch}/$USER/$SLURM_JOB_ID", USER="alice") == ""
+    assert (outside / "12345").is_dir(), "nothing outside was touched"
+
+
+def test_a_stage_dir_that_is_itself_a_link_out_is_refused(tmp_path):
+    """The same escape one component deeper: the LAST component is the link."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (scratch / "12345").symlink_to(outside)
+
+    assert _cleanup_probe(f"{scratch}/$SLURM_JOB_ID") == ""
+    assert outside.is_dir()
+
+
+def test_a_symlinked_scratch_root_still_cleans_up(tmp_path):
+    """The nuance that makes canonical-compare the right instrument rather than
+    "refuse any symlink": ``/scratch -> /lustre/scratch`` is how a great many
+    sites are actually laid out. Both sides resolve THROUGH the root, so
+    containment holds and the job cleans up exactly as before."""
+    lustre = tmp_path / "lustre" / "scratch"
+    (lustre / "12345").mkdir(parents=True)
+    root = tmp_path / "scratch"
+    root.symlink_to(lustre)
+
+    assert _cleanup_probe(f"{root}/$SLURM_JOB_ID") == \
+        f"RM -rf -- {root}/12345"
+
+
+def test_a_stage_dir_that_was_never_created_is_quiet(tmp_path):
+    """A job that staged nothing (or already cleaned up) leaves the trap with
+    nothing to resolve. That is not an error and not a refusal: the path
+    canonicalizes to its own lexical form through its nearest existing
+    ancestor, stays contained, and the removal is a silent no-op."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    assert _cleanup_probe(f"{scratch}/$SLURM_JOB_ID") == \
+        f"RM -rf -- {scratch}/12345"
+
+
 def test_every_legitimate_template_still_cleans_up_byte_for_byte():
     """The containment rules must cost the sites that were already correct
     NOTHING: the same templates remove the same directories, character for

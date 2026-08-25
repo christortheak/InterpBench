@@ -20,6 +20,11 @@ licenses you to claim), [CLI-REFERENCE.md](CLI-REFERENCE.md) (every verb, flag
 and refusal), [Server/README.md](../Server/README.md) (the Python engine and
 the cluster path), [SECURITY.md](../SECURITY.md).
 
+Every Mac lifecycle command below is typed `steerlab-cli` — the Swift CLI's own
+name. `steerlab` and `steerlab-cli` are **two products, not two spellings**:
+the short name is the cross-platform Python client, with a smaller verb surface
+(CLI-REFERENCE §1.4), and `steerlab-server` is the Python engine (§7 here).
+
 ---
 
 ## 1. The decisions, and where each is made
@@ -121,7 +126,7 @@ Outcome instruments are **declared, never inferred**.
 | `repeReaderScore` | a fitted reader's score on the generation | reading-instrument studies (METHODS) |
 
 ```bash
-steerlab experiment set-instruments formality-pilot answerTokenLogprob
+steerlab-cli experiment set-instruments formality-pilot answerTokenLogprob
 ```
 
 **Categorical endpoints should prefer the log-probability instruments over
@@ -155,7 +160,7 @@ every study-data file you will author, an `AGENTS.md` for a coding agent) and
 deliberately no concepts.
 
 ```bash
-steerlab workspace init ~/SteerLab/Workspaces/formality-pilot
+steerlab-cli workspace init ~/SteerLab/Workspaces/formality-pilot
 export STEERLAB_WORKSPACE=~/SteerLab/Workspaces/formality-pilot
 ```
 
@@ -220,7 +225,7 @@ layer.
 ### 3.3 `data check` is the gate
 
 ```bash
-steerlab data check formality-pilot
+steerlab-cli data check formality-pilot
 ```
 
 One line per requirement, blockers first, each naming **the path you must
@@ -243,27 +248,27 @@ gone.
 ## 4. The lifecycle as preregistration
 
 ```bash
-steerlab experiment create formality-pilot --model <model-id> --revision <commit>
-steerlab experiment attach formality-pilot formality
-steerlab experiment pin-prompts formality-pilot prompts/tasks/formality-prompts.jsonl
-steerlab experiment pin-rubric  formality-pilot prompts/rubrics/default-paired-v1.md \
+steerlab-cli experiment create formality-pilot --model <model-id> --revision <commit>
+steerlab-cli experiment attach formality-pilot formality
+steerlab-cli experiment pin-prompts formality-pilot prompts/tasks/formality-prompts.jsonl
+steerlab-cli experiment pin-rubric  formality-pilot prompts/rubrics/default-paired-v1.md \
     --judges a:local,b:claude
-steerlab experiment set-instruments formality-pilot answerTokenLogprob
-steerlab experiment set-sweep-selection formality-pilot --objective logprobShift \
+steerlab-cli experiment set-instruments formality-pilot answerTokenLogprob
+steerlab-cli experiment set-sweep-selection formality-pilot --objective logprobShift \
     --choice-prompts prompts/dev/dev-choices.jsonl
 
-steerlab experiment extract formality-pilot     # derive the vectors
-steerlab experiment validate formality-pilot    # held-out probe + cosines
-steerlab experiment sweep formality-pilot       # layer × α on the dev split
-steerlab experiment promote formality-pilot formality
-steerlab experiment freeze formality-pilot      # ONE-WAY, and gated
-steerlab experiment run formality-pilot
-steerlab experiment evaluate formality-pilot    # paired judging
-steerlab experiment analyze formality-pilot     # effect sizes, CIs, corrections
+steerlab-cli experiment extract formality-pilot     # derive the vectors
+steerlab-cli experiment validate formality-pilot    # held-out probe + cosines
+steerlab-cli experiment sweep formality-pilot       # layer × α on the dev split
+steerlab-cli experiment promote formality-pilot formality
+steerlab-cli experiment freeze formality-pilot      # ONE-WAY, and gated
+steerlab-cli experiment run formality-pilot
+steerlab-cli experiment evaluate formality-pilot    # paired judging
+steerlab-cli experiment analyze formality-pilot     # effect sizes, CIs, corrections
 ```
 
-Not every study needs every verb. `steerlab experiment --help` lists the
-family, `steerlab experiment <verb> --help` prints one verb's arguments and
+Not every study needs every verb. `steerlab-cli experiment --help` lists the
+family, `steerlab-cli experiment <verb> --help` prints one verb's arguments and
 runs nothing, and `--json` belongs on anything you script.
 
 ### 4.1 `create` and `attach` — pinning the recipe
@@ -328,7 +333,7 @@ recommendation per concept in its own run directory. **Selection is manifest
 data**, declared before sweeping:
 
 ```bash
-steerlab experiment set-sweep-selection formality-pilot \
+steerlab-cli experiment set-sweep-selection formality-pilot \
     --objective judgeScore --capability-tolerance 0.15 --coherence-floor 0.45 \
     --control-margin 0.05 --control-apply-to topK --control-top-k 3
 ```
@@ -365,9 +370,9 @@ themselves manifest pins (`sweep.devPromptsHash`, `sweep.batteryHash`).
 ### 4.5 `promote` — arms are born from evidence
 
 ```bash
-steerlab experiment promote formality-pilot formality --agent-name formality-mid
+steerlab-cli experiment promote formality-pilot formality --agent-name formality-mid
 
-steerlab experiment promote formality-pilot formality --cell 18:0.35 \
+steerlab-cli experiment promote formality-pilot formality --cell 18:0.35 \
     --reason "coherence cliff at 0.45; chose the last stable cell"
 ```
 
@@ -387,7 +392,7 @@ as non-blocking freeze advisories.
 ### 4.6 `freeze` — the preregistration moment
 
 ```bash
-steerlab experiment freeze formality-pilot [--run-substrate local|server] [--force]
+steerlab-cli experiment freeze formality-pilot [--run-substrate local|server] [--force]
 ```
 
 Freeze re-verifies every pinned input against the bytes on disk, stamps the
@@ -429,14 +434,14 @@ After freeze the manifest is read-only and the writing verbs (`attach`,
 `confirm`) refuse. Two read-only verbs stay legal and surprise people:
 **`sweep`**, which records recommendations in its own run directory rather than
 the manifest, and **`promote`**, which mints into the mutable variant library.
-Iterate with `steerlab experiment duplicate formality-pilot formality-pilot-2`.
+Iterate with `steerlab-cli experiment duplicate formality-pilot formality-pilot-2`.
 
 ### 4.7 `run`, `evaluate`, `analyze`
 
 ```bash
-steerlab experiment run      formality-pilot [--prompts prompts/tasks/<override>.jsonl]
-steerlab experiment evaluate formality-pilot [--run <run-dir>]
-steerlab experiment analyze  formality-pilot [--allow-unverified-epoch]
+steerlab-cli experiment run      formality-pilot [--prompts prompts/tasks/<override>.jsonl]
+steerlab-cli experiment evaluate formality-pilot [--run <run-dir>]
+steerlab-cli experiment analyze  formality-pilot [--allow-unverified-epoch]
 ```
 
 **`run`** loads the model at the pinned revision, re-derives vectors from the
@@ -489,11 +494,11 @@ Declare each arm explicitly; `--alpha-units norm` (the default) is what makes α
 comparable across concepts.
 
 ```bash
-steerlab experiment declare-condition formality-pilot baseline --baseline
-steerlab experiment declare-condition formality-pilot formality-lo  --slots formality:18:0.25
-steerlab experiment declare-condition formality-pilot formality-hi  --slots formality:18:0.45
-steerlab experiment declare-condition formality-pilot formality-neg --slots formality:18:-0.35
-steerlab experiment declare-condition formality-pilot formality-rand \
+steerlab-cli experiment declare-condition formality-pilot baseline --baseline
+steerlab-cli experiment declare-condition formality-pilot formality-lo  --slots formality:18:0.25
+steerlab-cli experiment declare-condition formality-pilot formality-hi  --slots formality:18:0.45
+steerlab-cli experiment declare-condition formality-pilot formality-neg --slots formality:18:-0.35
+steerlab-cli experiment declare-condition formality-pilot formality-rand \
     --slots formality:18:0.35 --control randomMatchedNorm
 ```
 
@@ -564,7 +569,7 @@ the declared criterion and promoting the survivors. Then **confirm**:
 `duplicate` the frozen screen into a fresh draft and
 
 ```bash
-steerlab experiment confirm formality-pilot-2 --agent formality-mid --deltas 0.2
+steerlab-cli experiment confirm formality-pilot-2 --agent formality-mid --deltas 0.2
 ```
 
 declares a perturbation policy around the promoted arm's anchor cell (α and
@@ -594,12 +599,12 @@ byte-match MLX/Metal, so a study's vectors must be **re-extracted and
 re-validated on whichever substrate its measured runs execute on**. What *is*
 identical across engines is the structure: SHA-256 input hashes, the manifest
 and run schemas, the JSON envelope, and committed golden fixtures both sides
-check (`steerlab vectors compare <a.safetensors> <b.safetensors>` is the parity
+check (`steerlab-cli vectors compare <a.safetensors> <b.safetensors>` is the parity
 harness, key-identical on both CLIs). The consequence is an ordering rule:
 **freeze where you validated.** Validation and battery evidence count on the
 substrate the gates are matched against, so a study the server will run should
 be extracted, validated, and frozen with
-`steerlab experiment freeze formality-pilot --run-substrate server`, and a
+`steerlab-cli experiment freeze formality-pilot --run-substrate server`, and a
 fully local study validates and freezes locally; foreign-substrate evidence
 surfaces as a cross-substrate advisory rather than silently passing. Adapters
 are substrate-specific for the same reason, so report adapter format, base
@@ -661,9 +666,9 @@ Site profiles are workspace data, not repository data: keep your site's profile
 JSON beside the study data and import it.
 
 ```bash
-steerlab cluster sites import <profile.json>
-steerlab cluster preview  --site <id>      # read exactly what will run, offline
-steerlab cluster ensure   --site <id> --target connected --allow-push --allow-bootstrap
+steerlab-cli cluster sites import <profile.json>
+steerlab-cli cluster preview  --site <id>      # read exactly what will run, offline
+steerlab-cli cluster ensure   --site <id> --target connected --allow-push --allow-bootstrap
 ```
 
 `ensure` is the idempotent principal command, and its refusals are the design:
