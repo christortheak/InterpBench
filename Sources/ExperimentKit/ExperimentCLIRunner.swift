@@ -2004,7 +2004,21 @@ public struct ExperimentCLIRunner: Sendable {
                         + "[--method meanDifference|lat|emotionGrandMean|designatedReference] "
                         + "[--pool-from K] [--reference <stories-concept>] "
                         + "[--corpus a,b,c (emotionGrandMean: extra corpus members)] "
-                        + "[--project-neutral K (legacy; verification-blocked)]")
+                        + "[--project-neutral K (legacy; verification-blocked)] "
+                        + "[\(ExtractionRendering.declarationFlag) "
+                        + "'{\"mode\":\"chatTemplate\"}']")
+            }
+            // HOW the stimulus reaches the model, declared at ATTACH — the
+            // writer the option shipped without. Parsed BEFORE the manifest is
+            // even loaded: a malformed declaration, an unknown mode, or a form
+            // this engine cannot render is answered now, not hours later on a
+            // GPU, and nothing is written when it is.
+            let declaredRendering: ExtractionRendering?
+            do {
+                declaredRendering = try flag(ExtractionRendering.declarationFlag)
+                    .flatMap { try ExtractionRendering.declared($0) }
+            } catch let error as ExtractionRendering.DeclarationError {
+                throw ExperimentError.malformed(error.reason, repair: error.repair)
             }
             var manifest = try ExperimentStore.load(name: args[1])
             let neutralPCs = flag("--project-neutral").flatMap(Int.init)
@@ -2016,6 +2030,7 @@ public struct ExperimentCLIRunner: Sendable {
             }
             var options = ExtractionOptions()
             options.neutralPCCount = neutralPCs
+            options.extractionRendering = declaredRendering
             if let methodFlag = flag("--method") {
                 // Recipe methods only: pinnedArtifact pins bytes (attach an
                 // artifact instead) and optvec is server-trained — neither is an
@@ -2037,7 +2052,7 @@ public struct ExperimentCLIRunner: Sendable {
                 options.readingPosition = .meanFromToken(token)
             }
             let flagValues = ["--project-neutral", "--method", "--pool-from", "--corpus",
-                              "--reference"]
+                              "--reference", ExtractionRendering.declarationFlag]
                 .compactMap(flag)
             let concepts = args.dropFirst(2).filter { !$0.hasPrefix("--") }
                 .filter { !flagValues.contains($0) }
@@ -2058,6 +2073,7 @@ public struct ExperimentCLIRunner: Sendable {
                     Array(concepts),
                     corpusConcepts: corpusMembers,
                     poolFromToken: flag("--pool-from").flatMap(Int.init),
+                    extractionRendering: declaredRendering,
                     into: &manifest)
                 for concept in concepts {
                     let hash = manifest.grandMeanCorpus?.hashes[concept] ?? ""
@@ -2079,6 +2095,7 @@ public struct ExperimentCLIRunner: Sendable {
                         concept, method: .designatedReference,
                         poolFromToken: flag("--pool-from").flatMap(Int.init),
                         reference: flag("--reference"),
+                        extractionRendering: declaredRendering,
                         experimentName: manifest.name)
                     if let ref = updated.concepts.first(where: { $0.name == concept }) {
                         pinnedLines.append(
@@ -2131,6 +2148,14 @@ public struct ExperimentCLIRunner: Sendable {
                 "experiment": .string(manifest.name),
                 "pinned": .array(pinned),
             ]
+            // Reported only when DECLARED — an absent rendering is the legacy
+            // raw one and the manifest records nothing, so the envelope must
+            // not imply a declaration that is not there.
+            if let declaredRendering {
+                pinnedLines.append(
+                    "declared extractionRendering \(declaredRendering.label)")
+                payload["extractionRendering"] = .string(declaredRendering.label)
+            }
             if let hash = ExperimentStore.pinNeutralCorpus(into: &manifest) {
                 pinnedLines.append(
                     "pinned neutral corpus @ \(hash.prefix(12))… (norm denominator)")

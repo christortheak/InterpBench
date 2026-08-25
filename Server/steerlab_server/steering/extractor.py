@@ -16,7 +16,8 @@ import numpy as np
 import torch
 
 from . import vector_math as vm
-from .extraction_rendering import RAW_RENDERING, ExtractionRendering
+from .extraction_rendering import (DECLARATION_FLAG, RAW_RENDERING,
+                                   ExtractionRendering)
 from .model_loader import SteeredModel
 from .reading_position import LAST_TOKEN, ReadingPosition, ReadingPositionError
 from .recorder import ActivationBankRecorder, ActivationRecorder
@@ -204,9 +205,9 @@ def inert_declaration_advisory(
         + ", ".join(inert)
         + ". An experiment differing ONLY in them extracts byte-identical "
         "vectors (measured 2026-08-23, 30 concepts, two GPU jobs). To make "
-        'them effective, declare an extractionRendering of {"mode": '
-        '"chatTemplate"} on the concepts\' recipe; to compare against raw, '
-        "keep this one and say so in METHODS.")
+        f"them effective, re-attach the concepts with {DECLARATION_FLAG} "
+        '\'{"mode": "chatTemplate"}\'; to compare against raw, keep this one '
+        "and say so in METHODS.")
 
 
 @torch.no_grad()

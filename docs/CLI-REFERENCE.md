@@ -849,7 +849,7 @@ subverb errors with the usage line.
 ```
 steerlab-cli experiment list
 steerlab-cli experiment create <name> [--description <text>] --model <id> [--revision <commit>]
-steerlab-cli experiment attach <name> <concept>… [--corpus <a,b,c>] [--method <name>] [--pool-from <k>] [--project-neutral <k>] [--reference <concept>]
+steerlab-cli experiment attach <name> <concept>… [--corpus <a,b,c>] [--extraction-rendering <json>] [--method <name>] [--pool-from <k>] [--project-neutral <k>] [--reference <concept>]
 steerlab-cli experiment pin-prompts <name> <prompts/…/file.jsonl>
 steerlab-cli experiment pin-rubric <name> <prompts/rubrics/file.md> [--judges <spec>]
 steerlab-cli experiment declare-condition <name> <condition> [--alpha-units <norm|raw>] [--band-width <k>] [--baseline] [--control <name>] [--slots <spec>]

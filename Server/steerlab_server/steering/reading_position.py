@@ -38,6 +38,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .extraction_rendering import DECLARATION_FLAG
+
 #: This engine's name in refusals about an unresolvable position.
 ENGINE = "python-hf-transformers"
 
@@ -308,9 +310,10 @@ class _TemplateRole(ReadingPosition):
             raise ReadingPositionError(
                 f"reading position '{self.label}' needs templated rendering: "
                 f"a raw stimulus has no chat turn, so there is no "
-                f"{self._anchor_noun} to read at — repair: declare "
-                f'extractionRendering {{"mode": "chatTemplate"}} on this '
-                f"concept, or choose a rendering-independent position "
+                f"{self._anchor_noun} to read at — repair: re-attach the "
+                f"concept with {DECLARATION_FLAG} "
+                f'\'{{"mode": "chatTemplate"}}\', or choose a '
+                f"rendering-independent position "
                 f"('last token', 'offset from end k', 'mean from token k')")
 
     @property

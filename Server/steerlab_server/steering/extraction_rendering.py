@@ -43,6 +43,7 @@ re-declared here: there is ONE rendering definition, and extraction calls it.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 #: Today's behavior, and what an absent declaration means.
@@ -55,6 +56,11 @@ MODES = (RAW, CHAT_TEMPLATE)
 
 #: This engine's name in refusals about an unsupportable rendering form.
 ENGINE = "python-hf-transformers"
+
+#: The flag both engines' CLIs write a declaration with, and the name every
+#: refusal that asks for one must use. Swift twin:
+#: ``ExtractionRendering.declarationFlag``.
+DECLARATION_FLAG = "--extraction-rendering"
 
 
 class ExtractionRenderingError(ValueError):
@@ -166,6 +172,51 @@ def from_json(value) -> ExtractionRendering:
         qwen_thinking_enabled=(False if qwen_thinking is None
                                else qwen_thinking),
         system_prompt=system_prompt)
+
+
+def parse_declaration(value) -> ExtractionRendering | None:
+    """Parse an `extractionRendering` DECLARATION — a CLI flag value or a
+    route body field — into what a manifest should store.
+
+    The option shipped 2026-08-24 with every consumer live and no writer at
+    all: the refusals said "declare extractionRendering" and could name no
+    command to declare it with. This is the writer's parser, and it validates
+    at DECLARATION time rather than at extraction, so a malformed or
+    unsupportable rendering is answered while the person is still typing.
+
+    Accepts the JSON object the schema documents, a bare mode word
+    (``chatTemplate``) as the shell-friendly form of the same thing, or an
+    already-decoded object (the route's case). Every rule is
+    :func:`from_json`'s — one definition of what a rendering may say.
+
+    **Returns ``None`` for a RAW declaration, and that is the hash contract.**
+    An explicit ``{"mode": "raw"}`` is the legacy semantics said out loud, so
+    it must write exactly what saying nothing writes: absent. The same rule
+    :func:`canonical_identity_fragment` already applies to the identity hash.
+    Swift twin: ``ExtractionRendering.declared(_:)``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise ExtractionRenderingError(
+                f"{DECLARATION_FLAG} was given no value — repair: declare a "
+                f'rendering, e.g. {DECLARATION_FLAG} \'{{"mode": '
+                f'"chatTemplate"}}\' — or omit the flag entirely, which means '
+                "the legacy raw rendering")
+        if text.startswith("{") or text.startswith('"'):
+            try:
+                value = json.loads(text)
+            except ValueError:
+                raise ExtractionRenderingError(
+                    f"{DECLARATION_FLAG} is not valid JSON: {text} — repair: "
+                    f"quote the whole object in the shell, e.g. "
+                    f'{DECLARATION_FLAG} \'{{"mode": "chatTemplate"}}\'')
+        else:
+            value = {"mode": text}
+    rendering = from_json(value)
+    return None if rendering.is_raw else rendering
 
 
 def canonical_identity_fragment(rendering: "ExtractionRendering | None") -> dict | None:

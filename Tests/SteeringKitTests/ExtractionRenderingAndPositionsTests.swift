@@ -505,4 +505,131 @@ import Testing
                     "\(position.label) encoded as \(json)")
         }
     }
+
+    // MARK: - 6. THE WRITER: `--extraction-rendering`, parsed and refused here
+
+    /// The option shipped with every consumer live and no writer at all. This
+    /// section is the writer's contract: what the flag accepts, what it
+    /// refuses, and — the load-bearing one — that declaring RAW writes
+    /// exactly what declaring nothing writes.
+
+    @Test func aRawDeclarationCanonicalizesToNothingAtAll() throws {
+        // Every spelling of "the legacy rendering" resolves to nil, which is
+        // what keeps an explicit declaration byte-identical to silence.
+        for spelling in ["raw", "\"raw\"", "{\"mode\": \"raw\"}",
+                         "  {\"mode\":\"raw\"}  "] {
+            #expect(try ExtractionRendering.declared(spelling) == nil,
+                    "spelling \(spelling) did not canonicalize to absent")
+        }
+    }
+
+    @Test func aChatTemplateDeclarationComesBackWithItsDefaultsWrittenOut() throws {
+        let bare = try #require(
+            try ExtractionRendering.declared("{\"mode\": \"chatTemplate\"}"))
+        #expect(bare.mode == .chatTemplate)
+        // Resolved, not left to a reader to infer — the `stamp` discipline.
+        #expect(bare.addGenerationPrompt == true)
+        #expect(bare.qwenThinkingEnabled == false)
+        #expect(bare.systemPrompt == nil)
+
+        // The shell-friendly bare word is the same declaration.
+        #expect(try ExtractionRendering.declared("chatTemplate") == bare)
+
+        let full = try #require(
+            try ExtractionRendering.declared(
+                #"{"mode":"chatTemplate","qwenThinkingEnabled":true,"systemPrompt":"be brief"}"#))
+        #expect(full.qwenThinkingEnabled == true)
+        #expect(full.systemPrompt == "be brief")
+    }
+
+    /// Every parse refusal is typed and carries a repair — and NONE of them
+    /// falls back to raw, which is the whole reason the option exists.
+    @Test func everyMalformedDeclarationIsATypedRefusalWithARepair() {
+        let bad = [
+            "",                                     // no value
+            "{\"mode\": \"chatTemplate\"",         // unterminated JSON
+            "{\"mode\": \"templated\"}",           // out-of-vocabulary mode
+            "someFutureForm",                       // …and its bare-word form
+            "{\"mode\": \"raw\", \"systemPrompt\": \"x\"}",  // raw takes no parameters
+            "{\"mode\": \"chatTemplate\", \"addGenerationPrompt\": 1}",
+            "{\"mode\": \"chatTemplate\", \"qwenThinkingEnabled\": \"yes\"}",
+            "{\"mode\": \"chatTemplate\", \"systemPrompt\": 7}",
+        ]
+        for declaration in bad {
+            #expect(throws: ExtractionRendering.DeclarationError.self) {
+                try ExtractionRendering.declared(declaration)
+            }
+            do {
+                _ = try ExtractionRendering.declared(declaration)
+                Issue.record("\(declaration) parsed instead of refusing")
+            } catch let error as ExtractionRendering.DeclarationError {
+                #expect(!error.reason.isEmpty)
+                #expect(!error.repair.isEmpty, "\(declaration) refused with no repair")
+            } catch {
+                Issue.record("\(declaration) threw an untyped \(error)")
+            }
+        }
+    }
+
+    /// The unknown-mode refusal names THIS engine and the legal vocabulary —
+    /// the same sentence shape the server twin prints.
+    @Test func anUnknownModeNamesTheEngineAndTheVocabulary() {
+        do {
+            _ = try ExtractionRendering.declared("{\"mode\": \"templated\"}")
+            Issue.record("an unknown mode parsed")
+        } catch let error as ExtractionRendering.DeclarationError {
+            #expect(error.reason.contains("templated"))
+            #expect(error.reason.contains(ExtractionRendering.declarationEngine))
+            #expect(error.repair.contains("raw"))
+            #expect(error.repair.contains("chatTemplate"))
+        } catch {
+            Issue.record("untyped \(error)")
+        }
+    }
+
+    /// THE ENGINE ASYMMETRY, MOVED FORWARD. `addGenerationPrompt: false` is a
+    /// form this engine cannot render; it is refused where it is TYPED, with
+    /// the identical sentence the extraction path would have thrown — so the
+    /// declaration can never reach a frozen manifest and fail on a GPU.
+    @Test func addGenerationPromptFalseIsRefusedAtDeclarationTime() {
+        do {
+            _ = try ExtractionRendering.declared(
+                #"{"mode":"chatTemplate","addGenerationPrompt":false}"#)
+            Issue.record("addGenerationPrompt false was accepted")
+        } catch let error as ExtractionRendering.DeclarationError {
+            #expect(error.reason == PromptRendering.addGenerationPromptFalseReason)
+            #expect(error.repair.contains("python-hf-transformers"))
+        } catch {
+            Issue.record("untyped \(error)")
+        }
+        // …and the extraction path still throws the same sentence, so the two
+        // refusals cannot drift into two explanations.
+        #expect(PromptRendering.addGenerationPromptFalseReason
+                .contains("addGenerationPrompt false is not available"))
+    }
+
+    /// The route's form: an already-decoded object takes the identical path.
+    @Test func theObjectFormOfADeclarationSharesEveryRule() throws {
+        #expect(try ExtractionRendering.declared(object: ["mode": "raw"]) == nil)
+        let templated = try #require(
+            try ExtractionRendering.declared(object: ["mode": "chatTemplate"]))
+        #expect(templated.mode == .chatTemplate)
+        #expect(throws: ExtractionRendering.DeclarationError.self) {
+            try ExtractionRendering.declared(object: ["mode": "nope"])
+        }
+    }
+
+    /// Cross-engine spelling parity, pinned as a literal on both sides: the
+    /// flag, the mode words, and the parameter keys are ONE vocabulary.
+    @Test func theDeclarationVocabularyIsTheCrossEngineSpelling() throws {
+        #expect(ExtractionRendering.declarationFlag == "--extraction-rendering")
+        #expect(ExtractionRendering.Mode.allCases.map(\.rawValue)
+                == ["raw", "chatTemplate"])
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let declared = try #require(
+            try ExtractionRendering.declared("chatTemplate"))
+        #expect(String(decoding: try encoder.encode(declared), as: UTF8.self)
+                == #"{"addGenerationPrompt":true,"mode":"chatTemplate","qwenThinkingEnabled":false}"#)
+    }
 }

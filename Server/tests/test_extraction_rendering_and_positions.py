@@ -324,7 +324,9 @@ def test_named_roles_refuse_under_raw_rendering_naming_the_dependency():
             position.resolve(ids, tokenizer=tokenizer, rendering_is_raw=True)
         message = str(exc.value)
         assert "templated rendering" in message
-        assert 'extractionRendering {"mode": "chatTemplate"}' in message
+        # The repair names the FLAG that declares it — until 2026-08-24 this
+        # sentence asked for a declaration no command could write.
+        assert f'{er.DECLARATION_FLAG} \'{{"mode": "chatTemplate"}}\'' in message
         assert "offset from end k" in message   # the escape hatch is named
 
 
@@ -554,7 +556,9 @@ def test_raw_extraction_says_which_declarations_cannot_reach_it():
     assert "qwenThinkingEnabled true" in line
     assert "promptMode chatAssistant" in line
     assert "byte-identical" in line
-    assert "extractionRendering" in line
+    # The repair names the FLAG that makes them effective — a repair naming
+    # only the manifest key was one no command could carry out.
+    assert f'{er.DECLARATION_FLAG} \'{{"mode": "chatTemplate"}}\'' in line
 
 
 def test_a_chat_template_extraction_emits_no_inert_declaration_advisory():
@@ -590,3 +594,84 @@ def test_a_study_system_prompt_also_fires_it():
     assert "systemPrompt" in lines
     # rawCompletion is not a chat context, so it is not listed as inert.
     assert "promptMode" not in lines
+
+
+# --------------------------------------------------------------------------
+# 7. THE WRITER: `--extraction-rendering`, parsed and refused at declaration
+#
+# The option shipped 2026-08-24 with every CONSUMER live — recipe identity,
+# the denominator, the template-aware positions, the sidecar stamps — and no
+# WRITER at all: no flag, no route field, no store parameter. The refusals
+# above ask for a declaration, and until now they could name no command to
+# write it with. `parse_declaration` is that command's parser, and the rules
+# below are its contract (Swift twin: `ExtractionRendering.declared(_:)`).
+# --------------------------------------------------------------------------
+
+
+def test_the_declaration_flag_is_the_cross_engine_spelling():
+    assert er.DECLARATION_FLAG == "--extraction-rendering"
+    assert er.MODES == ("raw", "chatTemplate")
+
+
+def test_every_spelling_of_raw_canonicalizes_to_absent():
+    """THE HASH CONTRACT. An explicit raw is the legacy rendering said out
+    loud, so it must write exactly what saying nothing writes."""
+    for spelling in (None, "raw", '"raw"', '{"mode": "raw"}',
+                     '  {"mode":"raw"}  ', {"mode": "raw"}):
+        assert er.parse_declaration(spelling) is None, spelling
+
+
+def test_a_chat_template_declaration_resolves_its_defaults_explicitly():
+    bare = er.parse_declaration('{"mode": "chatTemplate"}')
+    assert bare.mode == er.CHAT_TEMPLATE
+    assert bare.add_generation_prompt is True
+    assert bare.qwen_thinking_enabled is False
+    assert bare.system_prompt is None
+    # The shell-friendly bare word is the same declaration…
+    assert er.parse_declaration("chatTemplate") == bare
+    # …and so is the already-decoded object a route body arrives in.
+    assert er.parse_declaration({"mode": "chatTemplate"}) == bare
+    # The block a manifest stores writes the resolved defaults out.
+    assert bare.to_dict() == {"mode": "chatTemplate",
+                              "addGenerationPrompt": True,
+                              "qwenThinkingEnabled": False}
+
+
+def test_every_rendering_parameter_survives_the_declaration():
+    full = er.parse_declaration(
+        '{"mode":"chatTemplate","addGenerationPrompt":false,'
+        '"qwenThinkingEnabled":true,"systemPrompt":"be brief"}')
+    assert full.add_generation_prompt is False
+    assert full.qwen_thinking_enabled is True
+    assert full.system_prompt == "be brief"
+    # This engine SUPPORTS addGenerationPrompt false — it is the engine a
+    # swift-mlx study is redirected to for exactly this form.
+    assert full.to_dict()["addGenerationPrompt"] is False
+
+
+@pytest.mark.parametrize("declaration", [
+    "",                                        # no value
+    '{"mode": "chatTemplate"',                 # unterminated JSON
+    '{"mode": "templated"}',                   # out-of-vocabulary mode
+    "someFutureForm",                          # …and its bare-word form
+    '{"mode":"raw","systemPrompt":"x"}',       # raw takes no parameters
+    '{"mode":"chatTemplate","addGenerationPrompt":1}',
+    '{"mode":"chatTemplate","qwenThinkingEnabled":"yes"}',
+    '{"mode":"chatTemplate","systemPrompt":7}',
+    ['{"mode": "raw"}'],                       # not an object or a string
+])
+def test_a_malformed_declaration_is_a_typed_refusal_carrying_a_repair(declaration):
+    """Never a fallback to raw: a silent fallback is precisely the ambiguity
+    the option exists to close."""
+    with pytest.raises(er.ExtractionRenderingError) as exc:
+        er.parse_declaration(declaration)
+    assert "repair" in str(exc.value).lower()
+
+
+def test_the_unknown_mode_refusal_names_the_engine_and_the_vocabulary():
+    with pytest.raises(er.ExtractionRenderingError) as exc:
+        er.parse_declaration('{"mode": "templated"}')
+    message = str(exc.value)
+    assert "templated" in message
+    assert er.ENGINE in message
+    assert "raw" in message and "chatTemplate" in message

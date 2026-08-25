@@ -371,8 +371,9 @@ extension ReadingPosition {
         throw ReadingPositionError(
             reason: "reading position '\(label)' needs templated rendering: a "
                 + "raw stimulus has no chat turn, so there is no turn boundary "
-                + "to read at — repair: declare extractionRendering "
-                + "{\"mode\": \"chatTemplate\"} on this concept, or choose a "
+                + "to read at — repair: re-attach the concept with "
+                + "\(ExtractionRendering.declarationFlag) "
+                + "'{\"mode\": \"chatTemplate\"}', or choose a "
                 + "rendering-independent position ('last token', 'offset from "
                 + "end k', 'mean from token k')")
     }

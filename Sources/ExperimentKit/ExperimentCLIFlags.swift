@@ -1,4 +1,5 @@
 import Foundation
+import SteeringKit
 
 // =============================================================================
 // Strict flag parsing and the agent-path invocation (WP0-AGENT-SURFACE-AUDIT
@@ -344,7 +345,7 @@ public enum ExperimentCLIParser {
                 + "options.",
             valueFlags: [
                 "--method", "--pool-from", "--corpus", "--reference",
-                "--project-neutral",
+                "--project-neutral", ExtractionRendering.declarationFlag,
             ]),
         // The headless authoring three (WP0 step 5½, punch-list P0-3): pin
         // the measured task, pin the judging instrument, declare an arm.

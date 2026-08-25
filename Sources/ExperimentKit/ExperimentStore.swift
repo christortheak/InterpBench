@@ -3458,6 +3458,10 @@ public enum ExperimentStore {
         poolFromToken: Int? = nil,
         corpusConcepts: [String] = [],
         reference: String? = nil,
+        /// HOW the stimulus reaches the model. nil is the legacy raw
+        /// rendering AND what an explicit `{"mode": "raw"}` canonicalizes to,
+        /// so an undeclared attach writes the bytes it always did.
+        extractionRendering: ExtractionRendering? = nil,
         experimentName: String
     ) throws -> ExperimentManifest {
         let name = concept.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3484,6 +3488,7 @@ public enum ExperimentStore {
                     [name],
                     corpusConcepts: corpusConcepts,
                     poolFromToken: poolFromToken,
+                    extractionRendering: extractionRendering,
                     into: &manifest)
             } else if method == .designatedReference {
                 // mean(concept stories) − mean(REFERENCE stories), both
@@ -3510,6 +3515,7 @@ public enum ExperimentStore {
                 }
                 var options = ExtractionOptions(method: method)
                 options.readingPosition = .meanFromToken(poolFromToken ?? 50)
+                options.extractionRendering = extractionRendering
                 manifest.concepts.removeAll { $0.name == name }
                 var ref = makeConceptRef(
                     name: name, stimulusSetHash: conceptHash, options: options)
@@ -3522,6 +3528,7 @@ public enum ExperimentStore {
                 if let token = poolFromToken {
                     options.readingPosition = .meanFromToken(token)
                 }
+                options.extractionRendering = extractionRendering
                 manifest.concepts.removeAll { $0.name == name }
                 manifest.concepts.append(
                     makeConceptRef(
@@ -6476,6 +6483,8 @@ public enum ExperimentStore {
         _ concepts: [String],
         corpusConcepts: [String] = [],
         poolFromToken: Int? = nil,
+        /// See `attachConcept` — nil is the legacy raw rendering.
+        extractionRendering: ExtractionRendering? = nil,
         into manifest: inout ExperimentManifest
     ) throws {
         var members: [String] = []
@@ -6497,7 +6506,8 @@ public enum ExperimentStore {
             guard let hash = hashes[concept] else { continue }  // targets are members
             let options = ExtractionOptions(
                 method: .emotionGrandMean,
-                readingPosition: .meanFromToken(poolFromToken ?? 50))
+                readingPosition: .meanFromToken(poolFromToken ?? 50),
+                extractionRendering: extractionRendering)
             manifest.concepts.removeAll { $0.name == concept }
             manifest.concepts.append(
                 makeConceptRef(name: concept, stimulusSetHash: hash, options: options))

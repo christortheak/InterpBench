@@ -4160,15 +4160,28 @@ def build_router(state: ServiceState) -> APIRouter:
         # workspaceRelativeID) and optional "sourceConcept": the artifact's
         # sidecar supplies everything else, and both file hashes are computed
         # and pinned here.
-        return _authoring(
-            lambda n: experiment_store.attach(
-                n, body.get("concepts", []), method=body.get("method", "meanDifference"),
-                pool_from_token=body.get("poolFromToken"),
-                corpus_concepts=body.get("corpusConcepts"),
-                reference=body.get("reference"),
-                vector_artifact=body.get("vectorArtifact"),
-                source_concept=body.get("sourceConcept"),
-                eval_run=body.get("evalRun")), name)
+        #
+        # "extractionRendering" is additive and optional: the object the
+        # schema documents ({"mode": "chatTemplate", …}) or a bare mode
+        # string. Absent — and an explicit {"mode": "raw"} — write nothing,
+        # so a body that never mentions it produces the manifest bytes it
+        # always did. A malformed declaration is the store's typed refusal,
+        # which `_authoring` already turns into a 400 carrying the repair.
+        from ..steering.extraction_rendering import ExtractionRenderingError
+        try:
+            return _authoring(
+                lambda n: experiment_store.attach(
+                    n, body.get("concepts", []),
+                    method=body.get("method", "meanDifference"),
+                    pool_from_token=body.get("poolFromToken"),
+                    corpus_concepts=body.get("corpusConcepts"),
+                    reference=body.get("reference"),
+                    vector_artifact=body.get("vectorArtifact"),
+                    source_concept=body.get("sourceConcept"),
+                    eval_run=body.get("evalRun"),
+                    extraction_rendering=body.get("extractionRendering")), name)
+        except ExtractionRenderingError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     @router.post("/api/authoring/{name}/protocol")
     def authoring_protocol(name: str, body: dict):

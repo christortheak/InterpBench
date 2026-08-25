@@ -1,4 +1,5 @@
 import Foundation
+import SteeringKit
 
 // =============================================================================
 // `--help`, rendered from the declarative verb tables (WP0-AGENT-SURFACE-AUDIT
@@ -50,6 +51,7 @@ public enum CLIFlagVocabulary {
         "--env-file": "<path>",
         "--env-prefix": "<path>",
         "--experiment": "<name>",
+        "--extraction-rendering": "<json>",
         "--file-slug": "<slug>",
         "--executor": "<local|slurm>",
         "--gres": "<spec>",
@@ -142,6 +144,9 @@ public enum CLIFlagVocabulary {
         "--env-prefix": "Remote path prefix for the created environment.",
         "--executor": "Where the server runs the job.",
         "--experiment": "The draft study the compiled scenario is pinned into.",
+        "--extraction-rendering":
+            "How the stimulus reaches the model: '{\"mode\": \"chatTemplate\"}' "
+            + "or '{\"mode\": \"raw\"}' (the default, and what absent means).",
         "--file-slug":
             "Name the compiled scenario file (default: the study's name).",
         "--follow": "Keep reading the log as it grows.",

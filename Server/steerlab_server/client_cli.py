@@ -248,7 +248,8 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
                      "pin an existing vector artifact.",
              value_flags=frozenset({"--method", "--pool-from", "--corpus",
                                     "--reference", "--artifact",
-                                    "--source-concept", "--eval-run"})),
+                                    "--source-concept", "--eval-run",
+                                    "--extraction-rendering"})),
     VerbSpec("experiment", "declare-condition",
              positional="<name> <condition>",
              purpose="Declare one measured arm of the study.",
@@ -445,6 +446,7 @@ METAVARS: dict = {
     "--dtype": "<auto|float16|bfloat16|float32>",
     "--eval-run": "<run-dir>",
     "--evidence-out": "<file.tar.gz>",
+    "--extraction-rendering": "<json>",
     "--executor": "<local|slurm>",
     "--file": "<path>",
     "--max-bytes": "<n>",
@@ -1096,6 +1098,24 @@ def _experiment(invocation: Invocation) -> CLIResult:
         pool = invocation.one("--pool-from")
         corpus = [c.strip() for c in (invocation.one("--corpus") or "").split(",")
                   if c.strip()]
+        # HOW the stimulus reaches the model, declared at attach. Parsed here
+        # so a malformed declaration is a `usage` refusal naming the flag —
+        # the store's own ExtractionRenderingError would land as a generic
+        # authoring refusal and never name what to retype.
+        rendering = invocation.one("--extraction-rendering")
+        if rendering is not None:
+            from .steering.extraction_rendering import (
+                ExtractionRenderingError, parse_declaration)
+            try:
+                parse_declaration(rendering)
+            except ExtractionRenderingError as exc:
+                reason = str(exc)
+                head, _, repair = reason.partition(" — repair: ")
+                raise ClientRefusal(
+                    code=USAGE_CODE, reason=head or reason,
+                    repair_action=repair or (
+                        'declare {"mode": "raw"} or {"mode": "chatTemplate"}')
+                ) from exc
         document = store.attach(
             name, list(concepts), method=method,
             pool_from_token=int(pool) if pool is not None else None,
@@ -1103,7 +1123,8 @@ def _experiment(invocation: Invocation) -> CLIResult:
             reference=invocation.one("--reference"),
             vector_artifact=artifact,
             source_concept=invocation.one("--source-concept"),
-            eval_run=invocation.one("--eval-run"))
+            eval_run=invocation.one("--eval-run"),
+            extraction_rendering=rendering)
         pinned = [{"concept": c.get("name"),
                    "stimulusSetHash": c.get("stimulusSetHash"),
                    "method": (c.get("options") or {}).get("method")}

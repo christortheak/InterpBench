@@ -118,6 +118,177 @@ public struct ExtractionRendering: Codable, Sendable, Equatable {
     }
 }
 
+// MARK: - The WRITER: a typed declaration off the command line
+
+/// Parsing an `extractionRendering` declaration typed by a person or an agent.
+///
+/// The option shipped 2026-08-24 with every CONSUMER live — recipe identity,
+/// the α denominator, the template-aware reading positions, the sidecar
+/// stamps, the refusals that name it — and no writer at all: no flag, no
+/// route field, nothing. The engines' own refusals said "declare
+/// extractionRendering" and could name no command to declare it with. This is
+/// that command's parser.
+///
+/// **Validation happens HERE, at parse time, not at extraction.** A malformed
+/// declaration, an unknown mode, a parameter this engine cannot honor: every
+/// one of them is answered before a single byte is written to a manifest, so
+/// the study never carries a declaration whose first refusal arrives hours
+/// later on a GPU. Server twin: `extraction_rendering.parse_declaration`.
+extension ExtractionRendering {
+
+    /// The flag both engines' CLIs spell this with. One constant, so a help
+    /// page, a refusal, and a parser cannot name three different flags.
+    public static let declarationFlag = "--extraction-rendering"
+
+    /// This engine's name in a refusal about an unsupportable declaration
+    /// (server twin: `extraction_rendering.ENGINE`).
+    public static let declarationEngine = "swift-mlx"
+
+    /// A declaration this engine will not accept. Typed and carrying a
+    /// repair, per house style — the CLI turns it into a malformed-invocation
+    /// refusal (exit 64: nothing ran, and retrying cannot help).
+    public struct DeclarationError: Error, CustomStringConvertible, Equatable {
+        public let reason: String
+        public let repair: String
+        public init(reason: String, repair: String) {
+            self.reason = reason
+            self.repair = repair
+        }
+        public var description: String { reason }
+    }
+
+    /// Parse what was typed after `--extraction-rendering`.
+    ///
+    /// Accepts the JSON object the schema documents (`{"mode":
+    /// "chatTemplate", "addGenerationPrompt": true, …}`) and, as the same
+    /// convenience the server twin offers, a bare mode word (`raw`,
+    /// `chatTemplate`) — a shell quoting a whole JSON object for the common
+    /// case is friction with no meaning.
+    ///
+    /// **Returns nil for a RAW declaration**, and that is the hash contract,
+    /// not an omission: an explicit `{"mode": "raw"}` is the legacy semantics
+    /// said out loud, so it must write exactly what saying nothing writes —
+    /// the same rule `RecipeIdentity` already applies when it canonicalizes
+    /// an explicit raw away. A chat-template declaration comes back as its
+    /// ``stamp``: every resolved default written out, so the manifest says
+    /// what the extraction will do without a reader knowing this type's
+    /// defaults.
+    public static func declared(_ text: String) throws -> ExtractionRendering? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw DeclarationError(
+                reason: "\(declarationFlag) was given no value",
+                repair: "declare a rendering, e.g. \(declarationFlag) "
+                    + "'{\"mode\": \"chatTemplate\"}' — or omit the flag "
+                    + "entirely, which means the legacy raw rendering")
+        }
+        let object: [String: Any]
+        if trimmed.hasPrefix("{") || trimmed.hasPrefix("\"") {
+            guard let data = trimmed.data(using: .utf8),
+                let parsed = try? JSONSerialization.jsonObject(
+                    with: data, options: [.fragmentsAllowed])
+            else {
+                throw DeclarationError(
+                    reason: "\(declarationFlag) is not valid JSON: \(trimmed)",
+                    repair: "quote the whole object in the shell, e.g. "
+                        + "\(declarationFlag) '{\"mode\": \"chatTemplate\"}'")
+            }
+            if let dictionary = parsed as? [String: Any] {
+                object = dictionary
+            } else if let mode = parsed as? String {
+                object = ["mode": mode]
+            } else {
+                throw DeclarationError(
+                    reason: "extractionRendering must be an object or a mode "
+                        + "string, got \(type(of: parsed))",
+                    repair: "declare {\"mode\": \"raw\"} or "
+                        + "{\"mode\": \"chatTemplate\"}")
+            }
+        } else {
+            object = ["mode": trimmed]
+        }
+        return try declared(object: object)
+    }
+
+    /// The same parse over an already-decoded object — the form a route body
+    /// arrives in. Shares every rule with the text form above.
+    public static func declared(object: [String: Any]) throws -> ExtractionRendering? {
+        let rawMode = object["mode"] ?? Mode.raw.rawValue
+        guard let modeText = rawMode as? String, let mode = Mode(rawValue: modeText)
+        else {
+            throw DeclarationError(
+                reason: "extraction rendering '\(rawMode)' is not supported by "
+                    + "the \(declarationEngine) engine",
+                repair: "declare one of "
+                    + Mode.allCases.map(\.rawValue).joined(separator: ", ")
+                    + " (absent means legacy raw)")
+        }
+        guard mode == .chatTemplate else {
+            // A raw rendering takes no parameters: accepting them silently
+            // would let a manifest look like it declared something it cannot
+            // get. Server twin: the same check in `from_json`.
+            let extra = object.keys
+                .filter { $0 != "mode" }
+                .filter { object[$0].map { !($0 is NSNull) } ?? false }
+                .sorted()
+            guard extra.isEmpty else {
+                throw DeclarationError(
+                    reason: "extractionRendering mode 'raw' takes no parameters "
+                        + "but declares \(extra.joined(separator: ", "))",
+                    repair: "drop the parameters, or declare mode "
+                        + "'chatTemplate' if you meant the template rendering")
+            }
+            // Explicit raw == absent, byte for byte.
+            return nil
+        }
+        let addGenerationPrompt = try strictBool(
+            object["addGenerationPrompt"], key: "addGenerationPrompt")
+        let qwenThinkingEnabled = try strictBool(
+            object["qwenThinkingEnabled"], key: "qwenThinkingEnabled")
+        var systemPrompt: String?
+        if let declaredSystem = object["systemPrompt"], !(declaredSystem is NSNull) {
+            guard let text = declaredSystem as? String else {
+                throw DeclarationError(
+                    reason: "extractionRendering.systemPrompt must be a string "
+                        + "or absent",
+                    repair: "drop the key when the render carries no system "
+                        + "prompt")
+            }
+            systemPrompt = text
+        }
+        let rendering = ExtractionRendering(
+            mode: .chatTemplate,
+            addGenerationPrompt: addGenerationPrompt,
+            qwenThinkingEnabled: qwenThinkingEnabled,
+            systemPrompt: systemPrompt)
+        // THE ENGINE ASYMMETRY, ANSWERED AT PARSE TIME. This engine cannot
+        // render without a generation prompt (see `PromptRendering.tokenIDs`),
+        // and the honest moment to say so is while the person is still typing
+        // — not after a frozen manifest reaches an extraction run.
+        guard rendering.resolvedAddGenerationPrompt else {
+            throw DeclarationError(
+                reason: PromptRendering.addGenerationPromptFalseReason,
+                repair: "extract this concept on the python-hf-transformers "
+                    + "engine, or declare \"addGenerationPrompt\": true here")
+        }
+        return rendering.stamp
+    }
+
+    /// Booleans only — JSON's `1` is not `true` here. `nil` when the key is
+    /// absent (the type's own default then applies).
+    private static func strictBool(_ value: Any?, key: String) throws -> Bool? {
+        guard let value, !(value is NSNull) else { return nil }
+        if let number = value as? NSNumber,
+            CFGetTypeID(number) == CFBooleanGetTypeID()
+        {
+            return number.boolValue
+        }
+        throw DeclarationError(
+            reason: "extractionRendering.\(key) must be a boolean",
+            repair: "use true or false")
+    }
+}
+
 /// The family-specific rules for turning a prompt into what the model sees.
 ///
 /// **One definition, two callers.** `ExperimentTasks.userInput` (measured
@@ -178,6 +349,21 @@ public enum PromptRendering {
         return text
     }
 
+    /// THE ENGINE ASYMMETRY, said once. Declared here rather than inline in
+    /// `tokenIDs` because two callers need the identical sentence: the
+    /// extraction path that would otherwise render the wrong thing, and
+    /// ``ExtractionRendering/declared(object:)``, which refuses the form the
+    /// moment someone types it rather than letting a manifest carry it to a
+    /// GPU. One string, so the two can never drift into two explanations.
+    public static let addGenerationPromptFalseReason =
+        "addGenerationPrompt false is not available through MLXLMCommon's "
+        + "tokenizer bridge, which exposes only the generation-prompt form of "
+        + "applyChatTemplate. Repair: extract this concept on the "
+        + "python-hf-transformers engine, which supports it, or declare "
+        + "addGenerationPrompt true here — never let it fall back, because the "
+        + "trailing template tokens change both the vector and every named "
+        + "reading position that lands on them."
+
     /// A declared rendering this engine cannot apply. Typed and carrying a
     /// repair, and never a silent fallback to raw — a silent fallback is the
     /// exact ambiguity the `extractionRendering` option exists to end.
@@ -212,16 +398,7 @@ public enum PromptRendering {
     ) throws -> [Int] {
         guard !rendering.isRaw else { return tokenizer.encode(text: text) }
         guard rendering.resolvedAddGenerationPrompt else {
-            throw UnsupportedForm(
-                reason: "addGenerationPrompt false is not available through "
-                    + "MLXLMCommon's tokenizer bridge, which exposes only the "
-                    + "generation-prompt form of applyChatTemplate. Repair: "
-                    + "extract this concept on the python-hf-transformers "
-                    + "engine, which supports it, or declare "
-                    + "addGenerationPrompt true here — never let it fall back, "
-                    + "because the trailing template tokens change both the "
-                    + "vector and every named reading position that lands on "
-                    + "them.")
+            throw UnsupportedForm(reason: addGenerationPromptFalseReason)
         }
         let messages = chatMessages(
             prompt: text, modelID: modelID,

@@ -272,12 +272,42 @@ def _reading_position_codable(method_opts: dict) -> dict:
     return {"lastToken": {}}
 
 
+def _options_block(method: str, pool_from_token, rendering_block: dict | None) -> dict:
+    """One concept pin's ``options``. The rendering key is written ONLY when a
+    chat-template rendering was declared, so an undeclared (or explicitly raw)
+    attach produces the exact bytes it always did."""
+    options = {"method": method,
+               "readingPosition": _reading_position_codable(
+                   {"poolFromToken": pool_from_token})}
+    if rendering_block is not None:
+        options["extractionRendering"] = rendering_block
+    return options
+
+
+def _extraction_rendering_block(declaration) -> dict | None:
+    """The ``extractionRendering`` block an attach writes, or ``None`` to omit
+    the key entirely.
+
+    ``None`` for both an absent declaration and an explicit ``{"mode":
+    "raw"}``: raw is the legacy rendering, so a manifest that declares it must
+    be byte-identical to one that says nothing — which is what keeps every
+    pre-option recipe's identity hash, validation scope, and freeze hash
+    exactly where they were. A chat-template declaration writes its resolved
+    defaults explicitly (``to_dict``), so the manifest says what extraction
+    will do without a reader knowing this module's defaults.
+    """
+    from ..steering.extraction_rendering import parse_declaration
+    rendering = parse_declaration(declaration)
+    return None if rendering is None else rendering.to_dict()
+
+
 def attach(name: str, concepts: list[str], *, method: str = "meanDifference",
            pool_from_token: int | None = None, corpus_concepts: list[str] | None = None,
            reference: str | None = None,
            vector_artifact: str | None = None,
            source_concept: str | None = None,
            eval_run: str | None = None,
+           extraction_rendering=None,
            root: str | None = None) -> dict:
     """Pin concepts into a draft manifest.
 
@@ -299,7 +329,18 @@ def attach(name: str, concepts: list[str], *, method: str = "meanDifference",
     validate task reads live is under the same drift firewall as the stimuli.
     """
     from .manifest import concept_validation_hash
+    # Parsed FIRST, before anything is read or written: a malformed or
+    # unsupportable declaration must not half-attach a study.
+    rendering_block = _extraction_rendering_block(extraction_rendering)
     if method == "pinnedArtifact":
+        if rendering_block is not None:
+            raise ExperimentStoreError(
+                "a pinned artifact carries the rendering it was EXTRACTED "
+                "under in its own sidecar — declaring extractionRendering on "
+                "the pin would claim a rendering the bytes may not have. "
+                "Repair: drop --extraction-rendering, or attach the concept "
+                "as a recipe (--method meanDifference|emotionGrandMean|…) if "
+                "you mean to re-derive it under that rendering")
         if len(concepts) != 1:
             raise ExperimentStoreError(
                 "pinnedArtifact attaches exactly one concept at a time — one "
@@ -350,9 +391,7 @@ def attach(name: str, concepts: list[str], *, method: str = "meanDifference",
         for concept in concepts:
             refs[concept] = {
                 "name": concept, "stimulusSetHash": hashes[concept],
-                "options": {"method": method,
-                            "readingPosition": _reading_position_codable(
-                                {"poolFromToken": pool})},
+                "options": _options_block(method, pool, rendering_block),
                 "validationHash": concept_validation_hash(
                     concept, paired=False, root=root),
             }
@@ -384,9 +423,7 @@ def attach(name: str, concepts: list[str], *, method: str = "meanDifference",
                     "prompts/emotions/")
             refs[concept] = {
                 "name": concept, "stimulusSetHash": live,
-                "options": {"method": method,
-                            "readingPosition": _reading_position_codable(
-                                {"poolFromToken": pool})},
+                "options": _options_block(method, pool, rendering_block),
                 "designatedReference": {"name": reference, "hash": ref_hash},
                 "validationHash": concept_validation_hash(
                     concept, paired=False, root=root),
@@ -397,8 +434,8 @@ def attach(name: str, concepts: list[str], *, method: str = "meanDifference",
             stimuli = StimulusSet.from_directory(directory)  # raises if missing/empty
             refs[concept] = {
                 "name": concept, "stimulusSetHash": stimuli.hash,
-                "options": {"method": method,
-                            "readingPosition": _reading_position_codable({"poolFromToken": pool_from_token})},
+                "options": _options_block(method, pool_from_token,
+                                          rendering_block),
                 "validationHash": concept_validation_hash(
                     concept, paired=True, root=root),
             }
