@@ -366,8 +366,9 @@ import Testing
                 renderedStandardError(outcome)
                     == "steerlab-cli experiment: experiment attach does not "
                         + "accept --bogus-flag\n  experiment attach accepts: "
-                        + "--corpus --help --json --method --out --pool-from "
-                        + "--project-neutral --reference\n")
+                        + "--corpus --extraction-rendering --help --json "
+                        + "--method --out --pool-from --project-neutral "
+                        + "--reference\n")
             let manifest = try ExperimentStore.load(name: "swallow")
             #expect(manifest.concepts.isEmpty)
 

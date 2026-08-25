@@ -3,7 +3,8 @@
 **Phase-0 deliverable of the portability program**, extended by **Phase 1a**,
 **Phase 1b** (§7), **Phase 2** (§8), **Phase 3** (§9) and **Phase 5** (§10 —
 the composite `steerlab run`, which completes the eleven-step round trip this
-document opened with).
+document opened with), and by the **route-ownership census** (§11 — step 1 of
+runner-profile narrowing, which restricts nothing).
 Phase 0 changed no production behaviour: its entire output was this page plus
 the golden tests it indexes — a record of what the two engines promise each
 other, so a later phase that breaks one of those promises fails a test instead
@@ -1199,3 +1200,112 @@ still" is now spent.
   the ones `runner submit` already exposes; the composite invented none.
 - **No second envelope.** `run` writes exactly one document, like every client
   verb except `runner serve` (§9.4) — the stage lines are diagnostics.
+
+---
+
+## 11. The route-ownership census — runner-profile narrowing, step 1
+
+§9.1 made the ruling: there are **two service roles**. A **runner** executes
+batches reached through the bundle protocol and owns a disposable root; a
+**workbench** serves a live, authored workspace interactively. What the ruling
+did not have was a list — one FastAPI app serves both roles, and nothing said
+which of its routes belongs to which.
+
+This step writes that list down. **It restricts nothing.**
+
+- `Server/tests/route_roles.py` — **the census**. Every HTTP route the app
+  exposes, with a declared role and one line of rationale.
+- `Server/tests/test_route_roles.py` — **the gate** and the sanity checks.
+
+### 11.1 The three roles
+
+| role | what it means | examples |
+|---|---|---|
+| `runner` | Batch execution reached through the bundle protocol, plus what keeps such a deployment alive: bundle upload / inspect / evidence / download, submission, jobs and logs, the scheduler, the model cache. Its artifact root is a **cache**; every input arrives hash-pinned. | `POST /api/bundles/upload`, `POST /api/studies/submit-bundle`, `GET /api/jobs/{job_id}/stream`, `POST /api/models/install`, `POST /api/housekeeping/maintenance` |
+| `workbench` | Interactive serving of a **live, authored** workspace: authoring writes, the workspace switch, concept and manifest writes, server-side freeze, the playground and every synchronous compute the app drives turn by turn, catalog browsing. | `POST /api/authoring/{name}/freeze`, `POST /api/workspace/switch`, `POST /api/generate`, `GET /api/concepts`, `PUT /api/experiment/{name}/manifest` |
+| `both` | Genuinely used by **both roles today**. Identity reads, and the cluster deployment's remote-workbench surface. | `GET /api/info`, `POST /api/experiment/{name}/{verb}`, `POST /api/variants/upload`, the `/api/session` family, the deferred-judging intake |
+
+**133 routes: 17 `runner`, 89 `workbench`, 27 `both`.**
+
+The census is **documentation of TODAY, not aspiration.** Where a cluster
+deployment legitimately serves the Mac app's interactive features, the route is
+censused `both` and the rationale says so, rather than being labelled `runner`
+because a tidier architecture would have wanted it that way. The four judgment
+calls worth naming:
+
+- **`POST /api/experiment/{name}/{verb}`** — genuine execution (runner-shaped),
+  but reached *without* the bundle protocol, against a **server-resident**
+  study. That is the app's remote-workbench path against a cluster, and it is
+  in use. `both`.
+- **The deferred-judging intake** (`…/sweep/awaiting`,
+  `…/sweep/complete-judgment`, and the `evaluate` twins) — the blinded packets
+  are the runner's own execution output; judging them and stamping the verdicts
+  back is the workbench's act, landing in the runner's run directory. Both
+  halves of the keyless-custody fork are real. `both`.
+- **`POST /api/variants/upload`** — the app's variant-library push *and* how an
+  agent artifact an execution needs reaches a cluster. `both`.
+- **The `/api/session` family** — a scheduler operation (runner-shaped) whose
+  entire product is an **interactive worker** for the playground. `both`.
+
+`POST /api/studies/submit` and `POST /api/bundles/run` fall the same way for
+the same reason: submission and packaging are runner acts, but these spellings
+name a study **resident in the served workspace**, which a cache does not have.
+`POST /api/studies/submit-bundle` is the pure-runner spelling beside them.
+
+### 11.2 The gate
+
+| Contract | Guarantees | Pinned by |
+|---|---|---|
+| **route-census-completeness** | Every `(method, template)` the **live app object** serves appears in the census — enumerated by walking the router tree, not by grepping the source, so `include_in_schema=False` routes are covered. A new route cannot ship undeclared. | `test_every_route_the_app_serves_is_censused` |
+| **route-census-no-fiction** | The other direction: a censused route that no longer exists fails too, so the table cannot rot into a description of code that is gone. | `test_the_census_has_no_entries_for_routes_that_are_gone`, `…_declares_each_route_exactly_once`, `…_uses_the_methods_and_templates_the_router_declares`, `test_every_entry_carries_a_real_rationale` |
+| **adapter-routes-are-runner-reachable** | Every route the Phase-2 client adapter speaks (§8.1) is censused `runner` or `both` — a narrowing that refused one would break submit-and-bring-evidence-home, which is the runner role's whole purpose. Both directions again: the adapter's **source** is scanned for `/api/` literals, so a new endpoint cannot escape the check. | `test_every_route_the_client_adapter_uses_is_runner_reachable`, `test_the_adapters_endpoint_scan_finds_nothing_undeclared` |
+| **census-agrees-with-WP-S** | The mutating-by-default classification (`api/app.py`) answers a *different* question about the same table, and the two must not contradict. Every deliberately-open mutating route is censused `workbench` (an open mutating route neither writes nor spends, which is not a shape runner work takes); every mutating route the runner role keeps is token-gated; the two explicitly gated **reads** are runner-reachable. | `test_every_deliberately_open_mutating_route_is_workbench`, `test_every_mutating_runner_route_is_token_gated`, `test_the_read_side_privileged_prefixes_are_runner_reachable` |
+| **no-restriction-is-active** | No production module references the census at all. If that changes, it must change in the diff that gives the table teeth. | `test_the_census_activates_no_restriction` |
+
+The walk-and-require-declaration mechanism is deliberately the one
+`Tests/ExperimentKitTests/CheckoutDependencyTests.swift` already uses for the
+baked-path census: the same problem (a table everybody reads as evidence,
+which is worthless the moment it silently falls behind the code) with the same
+answer.
+
+**Why the census lives beside the tests rather than in `steerlab_server/api/`.**
+Because it governs nothing. `_PRIVILEGED_PREFIXES` and `_OPEN_MUTATING_PATHS`
+live in `api/app.py` because `auth_middleware` branches on them; this table has
+no branch anywhere, and a table shipped inside the installed package that no
+code honours is a claim the package makes about itself and does not keep. It is
+also inside the light-import surface §7 and §8.6 measure, for nothing. When a
+runner profile really does refuse workbench routes, the table moves into the
+package as part of **that** change.
+
+### 11.3 One tension, recorded rather than forced
+
+A runner's job roster (`GET /api/jobs`), one job's record
+(`GET /api/jobs/{job_id}`) and its log stream (`GET /api/jobs/{job_id}/stream`)
+are the runner role's entire observable surface, and **none of the three is
+privileged** under WP-S — mutating-by-default gates writes, and these are
+reads. There is no open runner today, because a real runner runs in **token
+mode**, where `auth_mode == "token"` gates every `/api` route regardless of the
+classification. But a runner profile that narrowed a deployment to exactly
+these routes *without* token mode would be serving job logs to whoever can
+reach the socket. Pinned as an observation by
+`test_the_runner_reads_that_carry_no_token_gate_are_the_expected_three`, so a
+fourth one cannot join it quietly.
+
+### 11.4 What this step deliberately did NOT do
+
+- **No restriction of any kind.** No route refuses anything it did not refuse
+  before; the app's behaviour is byte-identical. There is no runner profile,
+  no `--role` flag, and no way to turn one on.
+- **No production module changed.** `api/routes.py`, `api/app.py` and every
+  other engine module are untouched; the whole change is two new test-tier
+  files and this section.
+- **No re-labelling to make the table tidier.** Twenty-seven routes are `both`
+  because they are used by both today. A census that recorded the architecture
+  we would like would be useless as the input to a narrowing.
+
+**The eventual runner profile** — the thing this census is step 1 of — would
+read the table and refuse `workbench` routes with **typed refusals** carrying a
+`repairAction`, in the vocabulary §4 already pins, so a client that reached for
+an authoring verb against a runner would be told which service role it wanted
+and where to find one. Every `both` route is a decision that profile still has
+to make. **That is future work, and explicitly not this change.**
