@@ -698,9 +698,136 @@ def system_prompt_composition() -> None:
             "advisories": advisories})
 
 
+#: Ids shaped like a Gemma render, shared verbatim with the Swift consumer
+#: (``ExtractionRenderingAndPositionsTests``). A fixture that carried only
+#: labels would pin vocabulary; carrying TOKEN IDS pins the arithmetic.
+_BOS, _START, _END, _NEWLINE, _MODEL, _USER = 2, 105, 106, 107, 108, 109
+
+
+class _FixtureTokenizer:
+    """The template-map questions a reading position asks, answered the way a
+    Gemma tokenizer answers them. No model, no download."""
+
+    eos_token_id = _END
+    unk_token_id = 3
+    _VOCAB = {"<bos>": _BOS, "<start_of_turn>": _START, "<end_of_turn>": _END,
+              "\n": _NEWLINE, "model": _MODEL, "user": _USER}
+    _PIECES = {v: k for k, v in _VOCAB.items()}
+
+    def convert_tokens_to_ids(self, token):
+        return self._VOCAB.get(token, self.unk_token_id)
+
+    def convert_ids_to_tokens(self, token_id):
+        return self._PIECES.get(token_id, f"tok{token_id}")
+
+
+def extraction_rendering_and_positions() -> None:
+    """The rendering VOICE and the content-coordinate reading positions.
+
+    Produced here and consumed by Swift, for the usual reason (B1): a Swift
+    test that hand-writes what it believes the server emits pins the Swift
+    author's belief. Three contracts travel:
+
+    1. **What a declaration canonicalizes to** — including the two spellings
+       that must canonicalize to NOTHING (`{"mode":"raw"}` and an explicit
+       `"voice":"user"`), which is the hash-compatibility rule stated as data.
+    2. **What each reading position contributes to a recipe identity.**
+    3. **Where each position RESOLVES on a fixed token sequence** — the
+       content mask included, so the two engines' template maps are compared
+       on arithmetic rather than on prose.
+    """
+    from steerlab_server.experiment import recipe_identity as ri
+    from steerlab_server.steering import extraction_rendering as er
+    from steerlab_server.steering import reading_position as rp
+
+    declarations = [
+        ("absent", None),
+        ("raw", {"mode": "raw"}),
+        ("chatTemplate", {"mode": "chatTemplate"}),
+        ("explicitUserVoice", {"mode": "chatTemplate", "voice": "user"}),
+        ("assistantVoice", {"mode": "chatTemplate", "voice": "assistant"}),
+        ("assistantVoiceThinking", {"mode": "chatTemplate",
+                                    "voice": "assistant",
+                                    "qwenThinkingEnabled": True}),
+        ("systemPrompt", {"mode": "chatTemplate", "systemPrompt": "be brief"}),
+    ]
+    renderings = []
+    for label, declaration in declarations:
+        parsed = er.parse_declaration(declaration)
+        renderings.append({
+            "label": label,
+            "declaration": declaration,
+            "stamp": parsed.to_dict() if parsed is not None else None,
+            "identityFragment": ri.rendering_fragment(parsed),
+            "humanLabel": (parsed or er.RAW_RENDERING).label,
+        })
+
+    positions = [
+        rp.LAST_TOKEN, rp.mean_from_token(50), rp.offset_from_end(0),
+        rp.offset_from_end(3), rp.LAST_CONTENT_TOKEN, rp.TURN_CLOSE_TOKEN,
+        rp.post_instruction(2), rp.content_offset(0), rp.content_offset(2),
+        rp.mean_content_from_token(0), rp.mean_content_from_token(1),
+    ]
+    position_cases = []
+    for position in positions:
+        mode, parameter = ri.canonical_reading(position)
+        position_cases.append({
+            "label": position.label,
+            "identityMode": position.identity_mode,
+            "identityParameter": position.identity_parameter,
+            "canonicalMode": mode,
+            "canonicalParameter": parameter,
+            "minimumTokenCount": position.minimum_token_count,
+            "requiresTemplatedRendering": position.requires_templated_rendering,
+        })
+
+    # `<bos><start_of_turn>user\n` · content 4…6 · `<end_of_turn>` ·
+    # `\n<start_of_turn>model\n` — one uniform Gemma-shaped render.
+    tokens = [_BOS, _START, _USER, _NEWLINE, 201, 202, 203, _END,
+              _NEWLINE, _START, _MODEL, _NEWLINE]
+    tokenizer = _FixtureTokenizer()
+    resolutions = []
+    for position in positions:
+        for raw in (True, False):
+            if raw and position.requires_templated_rendering:
+                continue
+            if position.minimum_token_count > len(tokens):
+                continue    # a short-sequence refusal, pinned by unit tests
+            resolved = position.resolve(tokens, tokenizer=tokenizer,
+                                        rendering_is_raw=raw)
+            resolutions.append({
+                "label": position.label,
+                "renderingIsRaw": raw,
+                "startIndex": resolved.start_index,
+                "endIndex": resolved.end_index,
+                "source": resolved.source,
+                "pooledIndices": (list(resolved.pooled_indices)
+                                  if resolved.pooled_indices else None),
+                "maskedTokenCount": resolved.masked_token_count,
+                "pooledTokenCount": resolved.pooled_token_count,
+            })
+
+    _write(os.path.join(FIXTURES, "extraction-rendering-and-positions.json"), {
+        "tokens": tokens,
+        "tokenIDs": {"bos": _BOS, "startOfTurn": _START, "endOfTurn": _END,
+                     "newline": _NEWLINE, "model": _MODEL, "user": _USER},
+        "contentIndices": rp.content_indices(tokens, tokenizer, "fixture"),
+        "renderings": renderings,
+        "positions": position_cases,
+        "resolutions": resolutions,
+        "refusals": {
+            "assistantVoiceGenerationPrompt":
+                er.ASSISTANT_VOICE_GENERATION_PROMPT_REASON,
+            "assistantVoiceSystemPrompt":
+                er.ASSISTANT_VOICE_SYSTEM_PROMPT_REASON,
+        },
+    })
+
+
 def main() -> int:
     os.makedirs(FIXTURES, exist_ok=True)
     promotion_keys()
+    extraction_rendering_and_positions()
     system_prompt_composition()
     server_minted_agent()
     server_minted_adapter_agent()

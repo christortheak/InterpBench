@@ -249,7 +249,8 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
              value_flags=frozenset({"--method", "--pool-from", "--corpus",
                                     "--reference", "--artifact",
                                     "--source-concept", "--eval-run",
-                                    "--extraction-rendering"})),
+                                    "--extraction-rendering",
+                                    "--reading-position"})),
     VerbSpec("experiment", "declare-condition",
              positional="<name> <condition>",
              purpose="Declare one measured arm of the study.",
@@ -447,6 +448,7 @@ METAVARS: dict = {
     "--eval-run": "<run-dir>",
     "--evidence-out": "<file.tar.gz>",
     "--extraction-rendering": "<json>",
+    "--reading-position": "<label>",
     "--executor": "<local|slurm>",
     "--file": "<path>",
     "--max-bytes": "<n>",
@@ -1116,6 +1118,32 @@ def _experiment(invocation: Invocation) -> CLIResult:
                     repair_action=repair or (
                         'declare {"mode": "raw"} or {"mode": "chatTemplate"}')
                 ) from exc
+        # WHERE in the stimulus the residual stream is read, declared at
+        # attach. Parsed here for the same reason the rendering is: a label
+        # this engine does not know must be a `usage` refusal naming the flag
+        # and the vocabulary, not a generic authoring refusal that names
+        # neither. The store re-runs every rule (one definition) — this is the
+        # translation, not a second parser.
+        reading = invocation.one("--reading-position")
+        if reading is not None:
+            from .steering.reading_position import (ReadingPositionError,
+                                                    declaration_conflict)
+            from .steering.reading_position import \
+                parse_declaration as parse_reading
+            conflict = declaration_conflict(
+                reading, int(pool) if pool is not None else None)
+            if conflict:
+                head, _, repair = conflict.partition(" — repair: ")
+                raise ClientRefusal(code=USAGE_CODE, reason=head,
+                                    repair_action=repair)
+            try:
+                parse_reading(reading)
+            except ReadingPositionError as exc:
+                reason = str(exc)
+                head, _, repair = reason.partition(" — repair: ")
+                raise ClientRefusal(
+                    code=USAGE_CODE, reason=head or reason,
+                    repair_action=repair or "name a reading position") from exc
         document = store.attach(
             name, list(concepts), method=method,
             pool_from_token=int(pool) if pool is not None else None,
@@ -1124,7 +1152,8 @@ def _experiment(invocation: Invocation) -> CLIResult:
             vector_artifact=artifact,
             source_concept=invocation.one("--source-concept"),
             eval_run=invocation.one("--eval-run"),
-            extraction_rendering=rendering)
+            extraction_rendering=rendering,
+            reading_position=reading)
         pinned = [{"concept": c.get("name"),
                    "stimulusSetHash": c.get("stimulusSetHash"),
                    "method": (c.get("options") or {}).get("method")}

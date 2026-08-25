@@ -1,0 +1,409 @@
+{
+  "contentIndices": [
+    4,
+    5,
+    6
+  ],
+  "positions": [
+    {
+      "canonicalMode": "lastToken",
+      "canonicalParameter": null,
+      "identityMode": "lastToken",
+      "identityParameter": null,
+      "label": "last token",
+      "minimumTokenCount": 1,
+      "requiresTemplatedRendering": false
+    },
+    {
+      "canonicalMode": "meanFromToken",
+      "canonicalParameter": 50,
+      "identityMode": "meanFromToken",
+      "identityParameter": 50,
+      "label": "mean from token 50",
+      "minimumTokenCount": 51,
+      "requiresTemplatedRendering": false
+    },
+    {
+      "canonicalMode": "lastToken",
+      "canonicalParameter": null,
+      "identityMode": "offsetFromEnd",
+      "identityParameter": 0,
+      "label": "offset from end 0",
+      "minimumTokenCount": 1,
+      "requiresTemplatedRendering": false
+    },
+    {
+      "canonicalMode": "offsetFromEnd",
+      "canonicalParameter": 3,
+      "identityMode": "offsetFromEnd",
+      "identityParameter": 3,
+      "label": "offset from end 3",
+      "minimumTokenCount": 4,
+      "requiresTemplatedRendering": false
+    },
+    {
+      "canonicalMode": "lastContentToken",
+      "canonicalParameter": null,
+      "identityMode": "lastContentToken",
+      "identityParameter": null,
+      "label": "last content token",
+      "minimumTokenCount": 1,
+      "requiresTemplatedRendering": true
+    },
+    {
+      "canonicalMode": "turnCloseToken",
+      "canonicalParameter": null,
+      "identityMode": "turnCloseToken",
+      "identityParameter": null,
+      "label": "turn close token",
+      "minimumTokenCount": 1,
+      "requiresTemplatedRendering": true
+    },
+    {
+      "canonicalMode": "postInstruction",
+      "canonicalParameter": 2,
+      "identityMode": "postInstruction",
+      "identityParameter": 2,
+      "label": "post-instruction 2",
+      "minimumTokenCount": 1,
+      "requiresTemplatedRendering": true
+    },
+    {
+      "canonicalMode": "lastContentToken",
+      "canonicalParameter": null,
+      "identityMode": "contentOffset",
+      "identityParameter": 0,
+      "label": "content offset 0",
+      "minimumTokenCount": 1,
+      "requiresTemplatedRendering": true
+    },
+    {
+      "canonicalMode": "contentOffset",
+      "canonicalParameter": 2,
+      "identityMode": "contentOffset",
+      "identityParameter": 2,
+      "label": "content offset 2",
+      "minimumTokenCount": 1,
+      "requiresTemplatedRendering": true
+    },
+    {
+      "canonicalMode": "meanContentFromToken",
+      "canonicalParameter": 0,
+      "identityMode": "meanContentFromToken",
+      "identityParameter": 0,
+      "label": "mean content from token 0",
+      "minimumTokenCount": 1,
+      "requiresTemplatedRendering": false
+    },
+    {
+      "canonicalMode": "meanContentFromToken",
+      "canonicalParameter": 1,
+      "identityMode": "meanContentFromToken",
+      "identityParameter": 1,
+      "label": "mean content from token 1",
+      "minimumTokenCount": 2,
+      "requiresTemplatedRendering": false
+    }
+  ],
+  "refusals": {
+    "assistantVoiceGenerationPrompt": "extractionRendering declares voice 'assistant' together with addGenerationPrompt: under the assistant voice the stimulus IS the generation, so there is no generation prompt to add or withhold and the key would reach nothing \u2014 repair: drop addGenerationPrompt, or declare voice 'user' if you meant the model READING the stimulus",
+    "assistantVoiceSystemPrompt": "extractionRendering declares voice 'assistant' together with a systemPrompt: the assistant-voice construction renders the assistant turn ALONE, with no preceding turn for system text to live in (injected context would confound the very contrast the voice exists to isolate) \u2014 repair: drop systemPrompt, or declare voice 'user' if the model is meant to read the stimulus under that system prompt"
+  },
+  "renderings": [
+    {
+      "declaration": null,
+      "humanLabel": "raw",
+      "identityFragment": null,
+      "label": "absent",
+      "stamp": null
+    },
+    {
+      "declaration": {
+        "mode": "raw"
+      },
+      "humanLabel": "raw",
+      "identityFragment": null,
+      "label": "raw",
+      "stamp": null
+    },
+    {
+      "declaration": {
+        "mode": "chatTemplate"
+      },
+      "humanLabel": "chatTemplate (addGenerationPrompt=true)",
+      "identityFragment": {
+        "addGenerationPrompt": true,
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": false,
+        "systemPrompt": null
+      },
+      "label": "chatTemplate",
+      "stamp": {
+        "addGenerationPrompt": true,
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": false
+      }
+    },
+    {
+      "declaration": {
+        "mode": "chatTemplate",
+        "voice": "user"
+      },
+      "humanLabel": "chatTemplate (addGenerationPrompt=true)",
+      "identityFragment": {
+        "addGenerationPrompt": true,
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": false,
+        "systemPrompt": null
+      },
+      "label": "explicitUserVoice",
+      "stamp": {
+        "addGenerationPrompt": true,
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": false
+      }
+    },
+    {
+      "declaration": {
+        "mode": "chatTemplate",
+        "voice": "assistant"
+      },
+      "humanLabel": "chatTemplate (voice=assistant)",
+      "identityFragment": {
+        "addGenerationPrompt": false,
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": false,
+        "systemPrompt": null,
+        "voice": "assistant"
+      },
+      "label": "assistantVoice",
+      "stamp": {
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": false,
+        "voice": "assistant"
+      }
+    },
+    {
+      "declaration": {
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": true,
+        "voice": "assistant"
+      },
+      "humanLabel": "chatTemplate (voice=assistant, qwenThinkingEnabled=true)",
+      "identityFragment": {
+        "addGenerationPrompt": false,
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": true,
+        "systemPrompt": null,
+        "voice": "assistant"
+      },
+      "label": "assistantVoiceThinking",
+      "stamp": {
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": true,
+        "voice": "assistant"
+      }
+    },
+    {
+      "declaration": {
+        "mode": "chatTemplate",
+        "systemPrompt": "be brief"
+      },
+      "humanLabel": "chatTemplate (addGenerationPrompt=true, systemPrompt=set)",
+      "identityFragment": {
+        "addGenerationPrompt": true,
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": false,
+        "systemPrompt": "be brief"
+      },
+      "label": "systemPrompt",
+      "stamp": {
+        "addGenerationPrompt": true,
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": false,
+        "systemPrompt": "be brief"
+      }
+    }
+  ],
+  "resolutions": [
+    {
+      "endIndex": 12,
+      "label": "last token",
+      "maskedTokenCount": null,
+      "pooledIndices": null,
+      "pooledTokenCount": 1,
+      "renderingIsRaw": true,
+      "source": "sequence end",
+      "startIndex": 11
+    },
+    {
+      "endIndex": 12,
+      "label": "last token",
+      "maskedTokenCount": null,
+      "pooledIndices": null,
+      "pooledTokenCount": 1,
+      "renderingIsRaw": false,
+      "source": "sequence end",
+      "startIndex": 11
+    },
+    {
+      "endIndex": 12,
+      "label": "offset from end 0",
+      "maskedTokenCount": null,
+      "pooledIndices": null,
+      "pooledTokenCount": 1,
+      "renderingIsRaw": true,
+      "source": "sequence end \u2212 0",
+      "startIndex": 11
+    },
+    {
+      "endIndex": 12,
+      "label": "offset from end 0",
+      "maskedTokenCount": null,
+      "pooledIndices": null,
+      "pooledTokenCount": 1,
+      "renderingIsRaw": false,
+      "source": "sequence end \u2212 0",
+      "startIndex": 11
+    },
+    {
+      "endIndex": 9,
+      "label": "offset from end 3",
+      "maskedTokenCount": null,
+      "pooledIndices": null,
+      "pooledTokenCount": 1,
+      "renderingIsRaw": true,
+      "source": "sequence end \u2212 3",
+      "startIndex": 8
+    },
+    {
+      "endIndex": 9,
+      "label": "offset from end 3",
+      "maskedTokenCount": null,
+      "pooledIndices": null,
+      "pooledTokenCount": 1,
+      "renderingIsRaw": false,
+      "source": "sequence end \u2212 3",
+      "startIndex": 8
+    },
+    {
+      "endIndex": 7,
+      "label": "last content token",
+      "maskedTokenCount": null,
+      "pooledIndices": null,
+      "pooledTokenCount": 1,
+      "renderingIsRaw": false,
+      "source": "token before the last end-of-turn marker",
+      "startIndex": 6
+    },
+    {
+      "endIndex": 8,
+      "label": "turn close token",
+      "maskedTokenCount": null,
+      "pooledIndices": null,
+      "pooledTokenCount": 1,
+      "renderingIsRaw": false,
+      "source": "last end-of-turn marker",
+      "startIndex": 7
+    },
+    {
+      "endIndex": 9,
+      "label": "post-instruction 2",
+      "maskedTokenCount": null,
+      "pooledIndices": null,
+      "pooledTokenCount": 1,
+      "renderingIsRaw": false,
+      "source": "last content token + 2",
+      "startIndex": 8
+    },
+    {
+      "endIndex": 7,
+      "label": "content offset 0",
+      "maskedTokenCount": null,
+      "pooledIndices": null,
+      "pooledTokenCount": 1,
+      "renderingIsRaw": false,
+      "source": "last content token \u2212 0",
+      "startIndex": 6
+    },
+    {
+      "endIndex": 5,
+      "label": "content offset 2",
+      "maskedTokenCount": null,
+      "pooledIndices": null,
+      "pooledTokenCount": 1,
+      "renderingIsRaw": false,
+      "source": "last content token \u2212 2",
+      "startIndex": 4
+    },
+    {
+      "endIndex": 12,
+      "label": "mean content from token 0",
+      "maskedTokenCount": 0,
+      "pooledIndices": null,
+      "pooledTokenCount": 12,
+      "renderingIsRaw": true,
+      "source": "token 0 through sequence end (raw rendering: every token is content)",
+      "startIndex": 0
+    },
+    {
+      "endIndex": 7,
+      "label": "mean content from token 0",
+      "maskedTokenCount": 9,
+      "pooledIndices": [
+        4,
+        5,
+        6
+      ],
+      "pooledTokenCount": 3,
+      "renderingIsRaw": false,
+      "source": "content token 0 through the last content token",
+      "startIndex": 4
+    },
+    {
+      "endIndex": 12,
+      "label": "mean content from token 1",
+      "maskedTokenCount": 0,
+      "pooledIndices": null,
+      "pooledTokenCount": 11,
+      "renderingIsRaw": true,
+      "source": "token 1 through sequence end (raw rendering: every token is content)",
+      "startIndex": 1
+    },
+    {
+      "endIndex": 7,
+      "label": "mean content from token 1",
+      "maskedTokenCount": 9,
+      "pooledIndices": [
+        5,
+        6
+      ],
+      "pooledTokenCount": 2,
+      "renderingIsRaw": false,
+      "source": "content token 1 through the last content token",
+      "startIndex": 5
+    }
+  ],
+  "tokenIDs": {
+    "bos": 2,
+    "endOfTurn": 106,
+    "model": 108,
+    "newline": 107,
+    "startOfTurn": 105,
+    "user": 109
+  },
+  "tokens": [
+    2,
+    105,
+    109,
+    107,
+    201,
+    202,
+    203,
+    106,
+    107,
+    105,
+    108,
+    107
+  ]
+}

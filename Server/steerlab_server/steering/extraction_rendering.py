@@ -39,6 +39,38 @@ the MEASUREMENT renderer (``prompt_render.render``) actually varies, and no
 more. Family handling (Gemma has no system role; Qwen's ``enable_thinking``)
 is derived from the pinned model id by that same renderer, so it is not
 re-declared here: there is ONE rendering definition, and extraction calls it.
+
+THE VOICE (2026-08-25, maintainer ruling)
+-----------------------------------------
+
+``voice`` names WHOSE TURN the stimulus is rendered as:
+
+.. code-block:: json
+
+    {"mode": "chatTemplate", "voice": "assistant"}
+
+- ``"user"`` — the stimulus is what the model READS. This is the legacy and
+  default behavior, and **absent ≡ "user" ≡ today's bytes**: an explicit
+  ``"voice": "user"`` canonicalizes away exactly as an explicit
+  ``{"mode": "raw"}`` does, so the manifest, the sidecar, the freeze hash and
+  the recipe identity of every existing recipe are untouched.
+- ``"assistant"`` — the stimulus is rendered as the model's OWN OUTPUT: the
+  template's assistant-turn markers wrap it, with NO preceding user content
+  (see :func:`prompt_render.render_assistant_turn` for the exact construction
+  and why the user turn is subtracted rather than injected).
+
+Two parameters are MEANINGLESS under the assistant voice and are typed
+refusals at declaration time rather than silent ignores — ``addGenerationPrompt``
+(the stimulus IS the generation) and ``systemPrompt`` (the construction carries
+no preceding turn to put it in). Both refusal texts are shared with the Swift
+twin verbatim.
+
+**Engine asymmetry:** the swift-mlx engine refuses the assistant voice
+outright — MLXLMCommon's tokenizer bridge exposes only the generation-prompt
+form of ``applyChatTemplate``, so a completed assistant turn cannot be rendered
+there without family-specific arithmetic that holds for Gemma and breaks for
+Qwen3's thinking scaffold. The refusal names this engine, exactly as the
+``addGenerationPrompt: false`` refusal does.
 """
 
 from __future__ import annotations
@@ -54,8 +86,39 @@ CHAT_TEMPLATE = "chatTemplate"
 
 MODES = (RAW, CHAT_TEMPLATE)
 
+#: The legacy voice, and what an absent ``voice`` means: the stimulus is what
+#: the model READS.
+VOICE_USER = "user"
+#: The stimulus is rendered as the model's OWN OUTPUT — an assistant turn with
+#: no preceding user content.
+VOICE_ASSISTANT = "assistant"
+
+VOICES = (VOICE_USER, VOICE_ASSISTANT)
+
 #: This engine's name in refusals about an unsupportable rendering form.
 ENGINE = "python-hf-transformers"
+
+#: Refusal text shared VERBATIM with the Swift twin
+#: (``ExtractionRendering.assistantVoiceGenerationPromptReason``). Under the
+#: assistant voice the stimulus IS the generation, so a generation prompt is
+#: not a choice that exists — and a declaration that looks like a recipe axis
+#: but reaches nothing is the exact failure this module was built to end.
+ASSISTANT_VOICE_GENERATION_PROMPT_REASON = (
+    "extractionRendering declares voice 'assistant' together with "
+    "addGenerationPrompt: under the assistant voice the stimulus IS the "
+    "generation, so there is no generation prompt to add or withhold and the "
+    "key would reach nothing — repair: drop addGenerationPrompt, or declare "
+    "voice 'user' if you meant the model READING the stimulus")
+
+#: Refusal text shared VERBATIM with the Swift twin
+#: (``ExtractionRendering.assistantVoiceSystemPromptReason``).
+ASSISTANT_VOICE_SYSTEM_PROMPT_REASON = (
+    "extractionRendering declares voice 'assistant' together with a "
+    "systemPrompt: the assistant-voice construction renders the assistant "
+    "turn ALONE, with no preceding turn for system text to live in (injected "
+    "context would confound the very contrast the voice exists to isolate) — "
+    "repair: drop systemPrompt, or declare voice 'user' if the model is meant "
+    "to read the stimulus under that system prompt")
 
 #: The flag both engines' CLIs write a declaration with, and the name every
 #: refusal that asks for one must use. Swift twin:
@@ -77,16 +140,30 @@ class ExtractionRendering:
     add_generation_prompt: bool = True
     qwen_thinking_enabled: bool = False
     system_prompt: str | None = None
+    #: WHOSE TURN the stimulus is rendered as. ``VOICE_USER`` is the legacy
+    #: value and what an absent key means; see the module docstring.
+    voice: str = VOICE_USER
 
     @property
     def is_raw(self) -> bool:
         return self.mode == RAW
 
     @property
+    def is_assistant_voice(self) -> bool:
+        return self.voice == VOICE_ASSISTANT
+
+    @property
     def label(self) -> str:
         """Short human label for logs and refusal messages."""
         if self.is_raw:
             return "raw"
+        if self.is_assistant_voice:
+            # addGenerationPrompt is not a knob under this voice, so naming it
+            # in a human label would invite the reader to look for it.
+            bits = ["voice=assistant"]
+            if self.qwen_thinking_enabled:
+                bits.append("qwenThinkingEnabled=true")
+            return "chatTemplate (" + ", ".join(bits) + ")"
         bits = [f"addGenerationPrompt={str(self.add_generation_prompt).lower()}"]
         if self.qwen_thinking_enabled:
             bits.append("qwenThinkingEnabled=true")
@@ -98,9 +175,22 @@ class ExtractionRendering:
         """The stamped/declared JSON block. Defaults are written EXPLICITLY on
         a chat-template rendering (the artifact must say what it did without a
         reader knowing this module's defaults); ``systemPrompt`` is omitted
-        when absent, matching the sidecar's drop-None convention."""
+        when absent, matching the sidecar's drop-None convention.
+
+        The USER voice writes no ``voice`` key at all — absent ≡ "user", and a
+        recipe that never heard of the voice must keep its bytes. The ASSISTANT
+        voice writes the key AND omits ``addGenerationPrompt``: that parameter
+        is refused at declaration time as meaningless there, so stamping the
+        internal ``false`` would be an artifact claiming a choice nobody made.
+        """
         if self.is_raw:
             return {"mode": RAW}
+        if self.is_assistant_voice:
+            return {
+                "mode": CHAT_TEMPLATE,
+                "qwenThinkingEnabled": self.qwen_thinking_enabled,
+                "voice": VOICE_ASSISTANT,
+            }
         block = {
             "mode": CHAT_TEMPLATE,
             "addGenerationPrompt": self.add_generation_prompt,
@@ -153,6 +243,23 @@ def from_json(value) -> ExtractionRendering:
     add_generation_prompt = value.get("addGenerationPrompt")
     qwen_thinking = value.get("qwenThinkingEnabled")
     system_prompt = value.get("systemPrompt")
+    voice = value.get("voice")
+    if voice is not None and (not isinstance(voice, str) or voice not in VOICES):
+        raise ExtractionRenderingError(
+            f"extraction rendering voice '{voice}' is not supported by the "
+            f"{ENGINE} engine — repair: declare one of {', '.join(VOICES)} "
+            f"(absent means '{VOICE_USER}', the legacy voice: the stimulus is "
+            f"what the model reads)")
+    if voice == VOICE_ASSISTANT:
+        # Both refusals are shared VERBATIM with the Swift twin, and both fire
+        # here rather than at extraction: a parameter that reaches nothing must
+        # be answered while the person is still typing, never hours later on a
+        # GPU (and never by silently ignoring it).
+        if add_generation_prompt is not None:
+            raise ExtractionRenderingError(
+                ASSISTANT_VOICE_GENERATION_PROMPT_REASON)
+        if system_prompt is not None:
+            raise ExtractionRenderingError(ASSISTANT_VOICE_SYSTEM_PROMPT_REASON)
     if add_generation_prompt is not None and not isinstance(add_generation_prompt, bool):
         raise ExtractionRenderingError(
             "extractionRendering.addGenerationPrompt must be a boolean — "
@@ -167,11 +274,18 @@ def from_json(value) -> ExtractionRendering:
             "repair: drop the key when the render carries no system prompt")
     return ExtractionRendering(
         mode=CHAT_TEMPLATE,
-        add_generation_prompt=(True if add_generation_prompt is None
-                               else add_generation_prompt),
+        # The assistant voice renders a COMPLETED assistant turn, which is the
+        # `add_generation_prompt=False` form of the template call; the field
+        # records what the construction actually does, and `to_dict` omits it
+        # because the declaration may not name it.
+        add_generation_prompt=(
+            False if voice == VOICE_ASSISTANT
+            else (True if add_generation_prompt is None
+                  else add_generation_prompt)),
         qwen_thinking_enabled=(False if qwen_thinking is None
                                else qwen_thinking),
-        system_prompt=system_prompt)
+        system_prompt=system_prompt,
+        voice=voice or VOICE_USER)
 
 
 def parse_declaration(value) -> ExtractionRendering | None:
@@ -228,15 +342,25 @@ def canonical_identity_fragment(rendering: "ExtractionRendering | None") -> dict
     its resolved parameters explicitly (the identity may not depend on a
     default that a later version could change). Swift twin:
     ``ExtractionRendering.canonicalIdentityFragment``.
+
+    ``voice`` is the SECOND optional key, and for the same reason the first
+    one exists: every chat-template recipe written before the voice existed
+    rendered the user voice, so the key appears ONLY for the assistant voice
+    and an explicit ``"voice": "user"`` canonicalizes away. In sorted-key order
+    it lands last (after ``systemPrompt``), which is where the Swift twin's
+    hand-built JSON appends it.
     """
     if rendering is None or rendering.is_raw:
         return None
-    return {
+    fragment = {
         "addGenerationPrompt": rendering.add_generation_prompt,
         "mode": CHAT_TEMPLATE,
         "qwenThinkingEnabled": rendering.qwen_thinking_enabled,
         "systemPrompt": rendering.system_prompt,
     }
+    if rendering.is_assistant_voice:
+        fragment["voice"] = VOICE_ASSISTANT
+    return fragment
 
 
 def rendered_token_ids(model, text: str,
@@ -249,6 +373,10 @@ def rendered_token_ids(model, text: str,
     rendering definition, not a second copy that could drift from it. The raw
     branch stays in ``extractor._encode``, byte-identical to what it always
     was.
+
+    Under the ASSISTANT voice the call goes to
+    :func:`prompt_render.render_assistant_turn` instead — still that module,
+    still the family's own chat template, and still one definition.
     """
     if rendering.is_raw:  # pragma: no cover - callers branch before this
         raise ExtractionRenderingError(
@@ -257,6 +385,18 @@ def rendered_token_ids(model, text: str,
     # Imported lazily: `steering` is the concept-agnostic core and must not
     # take a module-import dependency on the `experiment` layer.
     from ..experiment import prompt_render
+    if rendering.is_assistant_voice:
+        try:
+            rendered = prompt_render.render_assistant_turn(
+                model.tokenizer, text,
+                model_id=getattr(model, "model_id", "") or "",
+                qwen_thinking_enabled=rendering.qwen_thinking_enabled)
+        except prompt_render.AssistantVoiceUnsupported as exc:
+            # Typed and re-homed, so every caller of this module sees one
+            # error type — never a silent fallback to the user voice, which
+            # would answer a different question than the one declared.
+            raise ExtractionRenderingError(str(exc)) from exc
+        return list(rendered.input_ids)
     rendered = prompt_render.render(
         model.tokenizer, text,
         model_id=getattr(model, "model_id", "") or "",

@@ -71,6 +71,82 @@ def test_scenario_row_hashes_fixture_is_current():
             f"{case['label']}: {REGENERATE}"
 
 
+def test_extraction_rendering_and_positions_fixture_is_current():
+    """The rendering VOICE and the content-coordinate positions, re-derived.
+
+    Stale bytes here would be the worst kind of silent: Swift would keep
+    agreeing with an old canonicalization rule, and the two engines would
+    disagree about what a recipe IS — which is a promotion that matches the
+    wrong artifact, not a test failure.
+    """
+    from steerlab_server.experiment import recipe_identity as ri
+    from steerlab_server.steering import extraction_rendering as er
+    from steerlab_server.steering import reading_position as rp
+
+    fixture = _load("extraction-rendering-and-positions.json")
+
+    for entry in fixture["renderings"]:
+        parsed = er.parse_declaration(entry["declaration"])
+        stamp = parsed.to_dict() if parsed is not None else None
+        assert stamp == entry["stamp"], f"{entry['label']}: {REGENERATE}"
+        assert ri.rendering_fragment(parsed) == entry["identityFragment"], \
+            f"{entry['label']}: {REGENERATE}"
+        assert (parsed or er.RAW_RENDERING).label == entry["humanLabel"], \
+            f"{entry['label']}: {REGENERATE}"
+
+    assert fixture["refusals"] == {
+        "assistantVoiceGenerationPrompt":
+            er.ASSISTANT_VOICE_GENERATION_PROMPT_REASON,
+        "assistantVoiceSystemPrompt":
+            er.ASSISTANT_VOICE_SYSTEM_PROMPT_REASON,
+    }, REGENERATE
+
+    for entry in fixture["positions"]:
+        position = rp.parse_label_strict(entry["label"])
+        assert position is not None, f"{entry['label']}: {REGENERATE}"
+        mode, parameter = ri.canonical_reading(position)
+        assert [position.identity_mode, position.identity_parameter,
+                mode, parameter, position.minimum_token_count,
+                position.requires_templated_rendering] == \
+            [entry["identityMode"], entry["identityParameter"],
+             entry["canonicalMode"], entry["canonicalParameter"],
+             entry["minimumTokenCount"],
+             entry["requiresTemplatedRendering"]], \
+            f"{entry['label']}: {REGENERATE}"
+
+    tokenizer = _FixtureTokenizer()
+    tokens = fixture["tokens"]
+    assert rp.content_indices(tokens, tokenizer, "fixture") == \
+        fixture["contentIndices"], REGENERATE
+    for entry in fixture["resolutions"]:
+        resolved = rp.parse_label_strict(entry["label"]).resolve(
+            tokens, tokenizer=tokenizer,
+            rendering_is_raw=entry["renderingIsRaw"])
+        assert [resolved.start_index, resolved.end_index, resolved.source,
+                list(resolved.pooled_indices) if resolved.pooled_indices else None,
+                resolved.masked_token_count, resolved.pooled_token_count] == \
+            [entry["startIndex"], entry["endIndex"], entry["source"],
+             entry["pooledIndices"], entry["maskedTokenCount"],
+             entry["pooledTokenCount"]], f"{entry['label']}: {REGENERATE}"
+
+
+class _FixtureTokenizer:
+    """The generator's tokenizer, restated here so a drift in EITHER copy
+    shows up as a failure rather than as two quietly matching mistakes."""
+
+    eos_token_id = 106
+    unk_token_id = 3
+    _VOCAB = {"<bos>": 2, "<start_of_turn>": 105, "<end_of_turn>": 106,
+              "\n": 107, "model": 108, "user": 109}
+    _PIECES = {v: k for k, v in _VOCAB.items()}
+
+    def convert_tokens_to_ids(self, token):
+        return self._VOCAB.get(token, self.unk_token_id)
+
+    def convert_ids_to_tokens(self, token_id):
+        return self._PIECES.get(token_id, f"tok{token_id}")
+
+
 def test_auto_prompt_ids_fixture_is_current(tmp_path):
     from steerlab_server.experiment import experiment_store as es, tasks
     from steerlab_server.experiment.manifest import Manifest
@@ -186,6 +262,7 @@ def test_every_committed_fixture_has_a_staleness_test():
     covered = {
         "promotion-keys.json", "scenario-row-hashes.json",
         "auto-prompt-ids.json", "server-minted-agent.json",
+        "extraction-rendering-and-positions.json",
         "server-minted-adapter-agent.json",
         # Checked inline in their own suites.
         "scenario-diagnostics.json", "validation-layers.json",

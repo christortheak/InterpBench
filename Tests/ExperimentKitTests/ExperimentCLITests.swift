@@ -368,7 +368,7 @@ import Testing
                         + "accept --bogus-flag\n  experiment attach accepts: "
                         + "--corpus --extraction-rendering --help --json "
                         + "--method --out --pool-from --project-neutral "
-                        + "--reference\n")
+                        + "--reading-position --reference\n")
             let manifest = try ExperimentStore.load(name: "swallow")
             #expect(manifest.concepts.isEmpty)
 

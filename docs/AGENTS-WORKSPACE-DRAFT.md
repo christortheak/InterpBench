@@ -121,8 +121,15 @@ status **draft**, which is the only status any authoring verb accepts.
 ```bash
 steerlab-cli experiment attach <name> <concept>… \
   [--method meanDifference|lat|emotionGrandMean|designatedReference] \
-  [--pool-from K] [--reference <concept>] [--corpus a,b,c]
+  [--pool-from K] [--reading-position '<label>'] \
+  [--reference <concept>] [--corpus a,b,c]
 ```
+
+`--reading-position` pins WHERE the residual stream is read, by name (`last
+content token`, `content offset 2`, `mean content from token 0`, `offset from
+end 3`, …). `--pool-from K` is the legacy spelling of one of them (`mean from
+token K`); declaring both is refused, and a template-aware role declared under
+a raw rendering is refused here rather than hours later on a GPU.
 
 Pins each named concept's **current** stimulus hash plus its extraction
 options. It also pins the neutral corpus when one exists — that corpus

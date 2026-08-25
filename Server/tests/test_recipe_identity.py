@@ -83,6 +83,85 @@ def test_a_declared_chat_template_rendering_changes_the_identity():
         assert ri.identity_hash(varied) != ri.identity_hash(templated), change
 
 
+def test_an_explicit_user_voice_is_the_pre_voice_identity():
+    """THE VOICE'S HASH CONTRACT (2026-08-25). Every chat-template recipe
+    written before the voice existed rendered the USER voice, so an absent —
+    or an explicitly declared "user" — voice must reproduce the committed
+    fixture's bytes exactly. The fixture's ``templatedRendering`` case carries
+    its pre-voice hash verbatim."""
+    entry = _cases()["templatedRendering"]
+    assert "voice" not in entry["canonicalJSON"]
+    for declaration in ({"mode": "chatTemplate"},
+                        {"mode": "chatTemplate", "voice": "user"}):
+        components = dict(entry["components"])
+        components["extractionRendering"] = ri.rendering_fragment(
+            rendering_from_json(declaration))
+        assert ri.canonical_json(components) == entry["canonicalJSON"], declaration
+        assert ri.identity_hash(components) == entry["sha256"], declaration
+
+
+def test_the_assistant_voice_is_a_different_recipe_and_adds_only_its_key():
+    entry = _cases()["templatedRendering"]
+    components = dict(entry["components"])
+    components["extractionRendering"] = ri.rendering_fragment(
+        rendering_from_json({"mode": "chatTemplate", "voice": "assistant"}))
+    canonical = ri.canonical_json(components)
+    assert ri.identity_hash(components) != entry["sha256"]
+    assert '"voice":"assistant"' in canonical
+    # Sorted-key order puts it last inside the fragment, right after
+    # systemPrompt — which is where the Swift twin's hand-built JSON appends
+    # it.
+    assert '"systemPrompt":' in canonical
+    assert canonical.index('"systemPrompt":') < canonical.index('"voice":')
+
+
+def test_content_offset_zero_is_the_last_content_token_identity():
+    """The ``offsetFromEnd(0) ≡ lastToken`` rule in CONTENT coordinates: the
+    two declarations name the identical token, so they may not split an
+    identity."""
+    base = _cases()["templatedRendering"]["components"]
+
+    def hash_at(position):
+        mode, parameter = ri.canonical_reading(position)
+        components = dict(base)
+        components["readingPositionMode"] = mode
+        components["readingPositionParameter"] = parameter
+        return ri.identity_hash(components)
+
+    assert hash_at(rp.content_offset(0)) == hash_at(rp.LAST_CONTENT_TOKEN)
+    assert hash_at(rp.content_offset(1)) != hash_at(rp.LAST_CONTENT_TOKEN)
+
+
+def test_the_new_reading_positions_are_distinct_identities():
+    """A content-coordinate declaration is a different recipe from its
+    sequence-coordinate namesake — including under raw rendering, where
+    ``meanContentFromToken(n)`` reads the same rows as ``meanFromToken(n)``:
+    an identity records what the recipe DECLARED."""
+    base = _cases()["paired"]["components"]
+
+    def hash_at(position):
+        mode, parameter = ri.canonical_reading(position)
+        components = dict(base)
+        components["readingPositionMode"] = mode
+        components["readingPositionParameter"] = parameter
+        return ri.identity_hash(components)
+
+    hashes = {hash_at(p) for p in (rp.mean_from_token(4),
+                                   rp.mean_content_from_token(4),
+                                   rp.content_offset(3),
+                                   rp.offset_from_end(3))}
+    assert len(hashes) == 4
+
+
+def test_the_new_position_labels_round_trip_through_a_sidecar():
+    """A sidecar stamps the LABEL; the identity reader must parse it back
+    without guessing, or promotion would refuse an artifact this engine just
+    wrote."""
+    for position in (rp.content_offset(2), rp.mean_content_from_token(6)):
+        assert ri._parse_reading_label(position.label) == \
+            ri.canonical_reading(position)
+
+
 def test_offset_from_end_zero_is_the_last_token_identity():
     """``offsetFromEnd(0)`` names the identical token, so it must not split an
     identity away from a last-token recipe (maintainer ruling: offsets are the

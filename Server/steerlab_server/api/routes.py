@@ -4167,7 +4167,14 @@ def build_router(state: ServiceState) -> APIRouter:
         # so a body that never mentions it produces the manifest bytes it
         # always did. A malformed declaration is the store's typed refusal,
         # which `_authoring` already turns into a 400 carrying the repair.
+        #
+        # "readingPosition" is additive the same way: one of the cross-engine
+        # LABELS ("last content token", "content offset 2", …). Absent keeps
+        # the manifest's default, so a body that never mentions it writes the
+        # bytes it always did; "poolFromToken" is the legacy spelling of one
+        # position and declaring both is the store's typed refusal.
         from ..steering.extraction_rendering import ExtractionRenderingError
+        from ..steering.reading_position import ReadingPositionError
         try:
             return _authoring(
                 lambda n: experiment_store.attach(
@@ -4179,8 +4186,9 @@ def build_router(state: ServiceState) -> APIRouter:
                     vector_artifact=body.get("vectorArtifact"),
                     source_concept=body.get("sourceConcept"),
                     eval_run=body.get("evalRun"),
-                    extraction_rendering=body.get("extractionRendering")), name)
-        except ExtractionRenderingError as exc:
+                    extraction_rendering=body.get("extractionRendering"),
+                    reading_position=body.get("readingPosition")), name)
+        except (ExtractionRenderingError, ReadingPositionError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
     @router.post("/api/authoring/{name}/protocol")

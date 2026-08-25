@@ -98,6 +98,65 @@ import Testing
         bos, 201, 202, endOfTurn, newline, startOfTurn, model, newline,
     ]
 
+    /// The other role word, for the turn-structured tokenizer below.
+    static let userRole = 109
+
+    /// A fake whose vocabulary PIECES are real, so the content mask can find
+    /// the newline that ends a template's role tag. The flatter
+    /// `FakeTokenizer` above is enough for roles that only need a turn CLOSE;
+    /// the mask needs the turn's OPENING and its role tag to exist as tokens,
+    /// because excluding them is the whole point.
+    struct TurnFakeTokenizer: MLXLMCommon.Tokenizer {
+        var bosToken: String? { "<bos>" }
+        var eosToken: String? { "<end_of_turn>" }
+        var unknownToken: String? { "<unk>" }
+
+        func encode(text: String, addSpecialTokens: Bool) -> [Int] {
+            [ExtractionRenderingAndPositionsTests.bos]
+                + text.utf8.map { Int($0) + 200 }
+        }
+
+        func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
+            tokenIds.map { convertIdToToken($0) ?? "" }.joined()
+        }
+
+        func convertTokenToId(_ token: String) -> Int? {
+            switch token {
+            case "<bos>": ExtractionRenderingAndPositionsTests.bos
+            case "<end_of_turn>": ExtractionRenderingAndPositionsTests.endOfTurn
+            case "<start_of_turn>": ExtractionRenderingAndPositionsTests.startOfTurn
+            case "<unk>": 3
+            default: nil
+            }
+        }
+
+        func convertIdToToken(_ id: Int) -> String? {
+            switch id {
+            case ExtractionRenderingAndPositionsTests.bos: "<bos>"
+            case ExtractionRenderingAndPositionsTests.startOfTurn: "<start_of_turn>"
+            case ExtractionRenderingAndPositionsTests.endOfTurn: "<end_of_turn>"
+            case ExtractionRenderingAndPositionsTests.newline: "\n"
+            case ExtractionRenderingAndPositionsTests.model: "model"
+            case ExtractionRenderingAndPositionsTests.userRole: "user"
+            default: "tok\(id)"
+            }
+        }
+
+        func applyChatTemplate(
+            messages: [[String: any Sendable]],
+            tools: [[String: any Sendable]]?,
+            additionalContext: [String: any Sendable]?
+        ) throws -> [Int] { [] }
+    }
+
+    /// A full Gemma-shaped render with the turn's OPENING present:
+    /// `<bos><start_of_turn>user\n` · content 4…6 · `<end_of_turn>` at 7 ·
+    /// `\n<start_of_turn>model\n`.
+    static let turnTokens = [
+        bos, startOfTurn, userRole, newline, 201, 202, 203, endOfTurn,
+        newline, startOfTurn, model, newline,
+    ]
+
     // MARK: - 1. absent is legacy raw
 
     @Test func anAbsentDeclarationIsRaw() {
@@ -631,5 +690,290 @@ import Testing
             try ExtractionRendering.declared("chatTemplate"))
         #expect(String(decoding: try encoder.encode(declared), as: UTF8.self)
                 == #"{"addGenerationPrompt":true,"mode":"chatTemplate","qwenThinkingEnabled":false}"#)
+    }
+
+    // MARK: - 7. THE VOICE, and what this engine can honor of it
+
+    @Test func theVoiceVocabularyIsTheCrossEngineSpelling() {
+        #expect(ExtractionRendering.Voice.allCases.map(\.rawValue)
+                == ["user", "assistant"])
+        #expect(ExtractionRendering.raw.resolvedVoice == .user)
+    }
+
+    /// THE VOICE'S HASH CONTRACT on this engine: absent ≡ explicit "user" ≡
+    /// the exact bytes every chat-template recipe already encoded.
+    @Test func anExplicitUserVoiceEncodesToTheBytesItAlwaysDid() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let absent = try #require(try ExtractionRendering.declared("chatTemplate"))
+        let explicit = try #require(try ExtractionRendering.declared(
+            #"{"mode":"chatTemplate","voice":"user"}"#))
+        #expect(absent == explicit)
+        #expect(explicit.voice == nil)
+        #expect(String(decoding: try encoder.encode(explicit), as: UTF8.self)
+                == #"{"addGenerationPrompt":true,"mode":"chatTemplate","qwenThinkingEnabled":false}"#)
+    }
+
+    /// The engine asymmetry, at DECLARATION time — the
+    /// `addGenerationPrompt: false` precedent, one step further. It names the
+    /// engine that can, and never falls back to the user voice, because the
+    /// two voices are different directions.
+    @Test func theAssistantVoiceIsRefusedNamingThePythonEngine() {
+        do {
+            _ = try ExtractionRendering.declared(
+                #"{"mode":"chatTemplate","voice":"assistant"}"#)
+            Issue.record("the assistant voice was accepted on swift-mlx")
+        } catch let error as ExtractionRendering.DeclarationError {
+            #expect(error.reason == PromptRendering.assistantVoiceReason)
+            #expect(error.repair.contains("python-hf-transformers"))
+        } catch {
+            Issue.record("untyped \(error)")
+        }
+        #expect(PromptRendering.assistantVoiceReason.contains("swift-mlx"))
+        #expect(PromptRendering.assistantVoiceReason.contains("different directions"))
+    }
+
+    /// The MEANINGLESS parameters are refused FIRST, with the server's twin
+    /// texts: the declaration is malformed on both engines, so retyping is the
+    /// first repair and the engine question only arises after it.
+    @Test func theAssistantVoiceRefusesItsMeaninglessParametersFirst() {
+        let cases = [
+            (#"{"mode":"chatTemplate","voice":"assistant","addGenerationPrompt":true}"#,
+             ExtractionRendering.assistantVoiceGenerationPromptReason),
+            (#"{"mode":"chatTemplate","voice":"assistant","systemPrompt":"be brief"}"#,
+             ExtractionRendering.assistantVoiceSystemPromptReason),
+        ]
+        for (declaration, reason) in cases {
+            do {
+                _ = try ExtractionRendering.declared(declaration)
+                Issue.record("accepted \(declaration)")
+            } catch let error as ExtractionRendering.DeclarationError {
+                #expect(error.reason == reason, "\(declaration)")
+            } catch {
+                Issue.record("untyped \(error)")
+            }
+        }
+    }
+
+    @Test func anUnknownVoiceNamesTheEngineAndTheVocabulary() {
+        do {
+            _ = try ExtractionRendering.declared(
+                #"{"mode":"chatTemplate","voice":"system"}"#)
+            Issue.record("an unknown voice was accepted")
+        } catch let error as ExtractionRendering.DeclarationError {
+            #expect(error.reason.contains("system"))
+            #expect(error.reason.contains(ExtractionRendering.declarationEngine))
+            #expect(error.repair.contains("user") && error.repair.contains("assistant"))
+        } catch {
+            Issue.record("untyped \(error)")
+        }
+    }
+
+    @Test func aRawRenderingStillTakesNoVoice() {
+        #expect(throws: ExtractionRendering.DeclarationError.self) {
+            try ExtractionRendering.declared(#"{"mode":"raw","voice":"assistant"}"#)
+        }
+    }
+
+    /// This engine still UNDERSTANDS the voice everywhere but the renderer: a
+    /// Mac that promotes a server-extracted artifact must decode its sidecar
+    /// and stamp the voice back exactly as written.
+    @Test func aVoicedSidecarDecodesAndStampsItsVoice() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let decoded = try JSONDecoder().decode(
+            ExtractionRendering.self,
+            from: Data(#"{"mode":"chatTemplate","qwenThinkingEnabled":false,"voice":"assistant"}"#.utf8))
+        #expect(decoded.isAssistantVoice)
+        let stamped = try #require(decoded.stamp)
+        // addGenerationPrompt is NOT stamped under this voice — it is refused
+        // at declaration, so an artifact may not claim it.
+        #expect(String(decoding: try encoder.encode(stamped), as: UTF8.self)
+                == #"{"mode":"chatTemplate","qwenThinkingEnabled":false,"voice":"assistant"}"#)
+        #expect(decoded.label == "chatTemplate (voice=assistant)")
+    }
+
+    /// …and the render path refuses it too, so a hand-built rendering that
+    /// never went through `declared` cannot slip past either.
+    @Test func theRenderPathRefusesTheAssistantVoiceWithTheSameSentence() {
+        let rendering = ExtractionRendering(mode: .chatTemplate, voice: .assistant)
+        #expect(throws: PromptRendering.UnsupportedForm.self) {
+            try PromptRendering.tokenIDs(
+                tokenizer: FakeTokenizer(), modelID: "google/gemma-3-4b-it",
+                text: "a stimulus", rendering: rendering)
+        }
+    }
+
+    // MARK: - 8. contentOffset(k), and the content mask
+
+    @Test func contentOffsetCountsBackFromTheContentBoundary() throws {
+        let tokenizer = TurnFakeTokenizer()
+        func resolve(_ position: ReadingPosition) throws -> ResolvedReadingPosition {
+            try position.resolve(
+                tokens: Self.turnTokens, tokenizer: tokenizer, renderingIsRaw: false)
+        }
+        #expect(try (0 ... 2).map { try resolve(.contentOffset($0)).startIndex }
+                == [6, 5, 4])
+        // k = 0 IS the last content token — same index, same value.
+        #expect(try resolve(.contentOffset(0)).startIndex
+                == resolve(.lastContentToken).startIndex)
+        #expect(try resolve(.contentOffset(2)).source == "last content token − 2")
+    }
+
+    @Test func contentOffsetRefusesUnderflowInsteadOfClamping() {
+        #expect(throws: ReadingPositionError.self) {
+            try ReadingPosition.contentOffset(9).resolve(
+                tokens: Self.turnTokens, tokenizer: TurnFakeTokenizer(),
+                renderingIsRaw: false)
+        }
+        do {
+            _ = try ReadingPosition.contentOffset(9).resolve(
+                tokens: Self.turnTokens, tokenizer: TurnFakeTokenizer(),
+                renderingIsRaw: false)
+        } catch let error as ReadingPositionError {
+            #expect(error.reason.contains("no token 9 before it"))
+            #expect(error.reason.contains("never clamped"))
+        } catch {
+            Issue.record("untyped \(error)")
+        }
+    }
+
+    @Test func contentOffsetRefusesUnderRawRenderingLikeEveryNamedRole() {
+        #expect(ReadingPosition.contentOffset(1).requiresTemplatedRendering)
+        do {
+            _ = try ReadingPosition.contentOffset(1).resolve(
+                tokens: Self.turnTokens, tokenizer: TurnFakeTokenizer(),
+                renderingIsRaw: true)
+            Issue.record("content offset resolved under raw rendering")
+        } catch let error as ReadingPositionError {
+            #expect(error.reason.contains("templated rendering"))
+            #expect(error.reason.contains(ExtractionRendering.declarationFlag))
+        } catch {
+            Issue.record("untyped \(error)")
+        }
+    }
+
+    @Test func contentOffsetRefusesANegativeK() {
+        #expect(throws: ReadingPositionError.self) {
+            try ReadingPosition.contentOffset(-1).resolve(
+                tokens: Self.turnTokens, tokenizer: TurnFakeTokenizer(),
+                renderingIsRaw: false)
+        }
+    }
+
+    /// THE MASK, from ONE template map: the turn opens, its role tag is
+    /// structure, it closes, and the trailing generation scaffold is past the
+    /// content and therefore excluded by construction.
+    @Test func theContentMaskKeepsOnlyTheStimulusOwnTokens() throws {
+        let content = try ReadingPosition.contentIndices(
+            tokens: Self.turnTokens, tokenizer: TurnFakeTokenizer(),
+            label: "test")
+        #expect(content == [4, 5, 6])
+    }
+
+    // MARK: - 9. meanContentFromToken(n)
+
+    @Test func meanContentFromTokenPoolsContentAndCountsBothSides() throws {
+        let resolved = try ReadingPosition.meanContentFromToken(1).resolve(
+            tokens: Self.turnTokens, tokenizer: TurnFakeTokenizer(),
+            renderingIsRaw: false)
+        #expect(resolved.pooledIndices == [5, 6])
+        #expect(resolved.startIndex == 5 && resolved.endIndex == 7)
+        #expect(resolved.pooledTokenCount == 2)
+        // 12 tokens, 3 of them content: the mask called nine of them structure.
+        #expect(resolved.maskedTokenCount == 9)
+        #expect(resolved.isPooled)
+    }
+
+    /// Under raw every token IS content, so the honest behavior is
+    /// equivalence — the same window `meanFromToken(n)` reads, clamp included
+    /// — not a refusal.
+    @Test func meanContentFromTokenIsMeanFromTokenUnderRawRendering() throws {
+        let tokens = Array(0 ..< 10)
+        let masked = try ReadingPosition.meanContentFromToken(3).resolve(
+            tokens: tokens, tokenizer: TurnFakeTokenizer(), renderingIsRaw: true)
+        let plain = try ReadingPosition.meanFromToken(3).resolve(
+            tokens: tokens, tokenizer: TurnFakeTokenizer(), renderingIsRaw: true)
+        #expect(masked.startIndex == plain.startIndex)
+        #expect(masked.endIndex == plain.endIndex)
+        #expect(masked.pooledIndices == nil)      // a contiguous window
+        #expect(masked.maskedTokenCount == 0)     // …masking nothing
+        #expect(masked.source.contains("every token is content"))
+        // …and the DECLARATION still differs, which is what the identity
+        // records.
+        #expect(masked.mode == "meanContentFromToken")
+        #expect(!ReadingPosition.meanContentFromToken(3).requiresTemplatedRendering)
+    }
+
+    @Test func meanContentFromTokenRefusesWhenTheContentIsTooShort() {
+        do {
+            _ = try ReadingPosition.meanContentFromToken(5).resolve(
+                tokens: Self.turnTokens, tokenizer: TurnFakeTokenizer(),
+                renderingIsRaw: false)
+            Issue.record("pooled from a content token that does not exist")
+        } catch let error as ReadingPositionError {
+            #expect(error.reason.contains("3 content tokens"))
+            #expect(error.reason.contains("never clamped"))
+        } catch {
+            Issue.record("untyped \(error)")
+        }
+    }
+
+    /// The stamp says how much was averaged and how much the mask called
+    /// structure — and one uniform render is still ONE shapes row.
+    @Test func theMaskedPoolStampCarriesBothCounts() throws {
+        let tokenizer = TurnFakeTokenizer()
+        let resolutions = try (0 ..< 3).map { _ in
+            try ReadingPosition.meanContentFromToken(0).resolve(
+                tokens: Self.turnTokens, tokenizer: tokenizer,
+                renderingIsRaw: false)
+        }
+        let report = try #require(ReadingPositionResolutionReport.make(
+            position: .meanContentFromToken(0),
+            rendering: .chatTemplate(), resolutions: resolutions))
+        #expect(report.mode == "meanContentFromToken")
+        #expect(report.parameter == 0)
+        #expect(report.shapes.count == 1)
+        #expect(report.shapes[0].offsetFromEnd == nil)   // a pooled read
+        #expect(report.shapes[0].examplePooledTokenCount == 3)
+        #expect(report.shapes[0].exampleMaskedTokenCount == 9)
+    }
+
+    /// Every OTHER position's stamped bytes are untouched: the two counts are
+    /// encoded only for a content-masked pool.
+    @Test func theNewCountsAreAbsentFromEveryOtherStamp() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let resolutions = [try ReadingPosition.lastContentToken.resolve(
+            tokens: Self.turnTokens, tokenizer: TurnFakeTokenizer(),
+            renderingIsRaw: false)]
+        let report = try #require(ReadingPositionResolutionReport.make(
+            position: .lastContentToken, rendering: .chatTemplate(),
+            resolutions: resolutions))
+        let json = String(decoding: try encoder.encode(report), as: UTF8.self)
+        #expect(!json.contains("examplePooledTokenCount"))
+        #expect(!json.contains("exampleMaskedTokenCount"))
+    }
+
+    @Test func theNewPositionsRoundTripThroughLabelAndCodable() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let positions: [ReadingPosition] = [
+            .contentOffset(0), .contentOffset(4),
+            .meanContentFromToken(0), .meanContentFromToken(12),
+        ]
+        for position in positions {
+            #expect(ReadingPosition(label: position.label) == position)
+            let data = try encoder.encode(position)
+            #expect(try JSONDecoder().decode(ReadingPosition.self, from: data)
+                    == position)
+            #expect(String(decoding: data, as: UTF8.self)
+                    .contains("\"\(position.identityMode)\""))
+        }
+        // …and the label of the position each is named after still parses to
+        // that position, not to the new one.
+        #expect(ReadingPosition(label: "mean from token 3") == .meanFromToken(3))
+        #expect(ReadingPosition(label: "mean content from token 3")
+                == .meanContentFromToken(3))
     }
 }

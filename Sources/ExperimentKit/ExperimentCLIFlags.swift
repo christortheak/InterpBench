@@ -346,6 +346,7 @@ public enum ExperimentCLIParser {
             valueFlags: [
                 "--method", "--pool-from", "--corpus", "--reference",
                 "--project-neutral", ExtractionRendering.declarationFlag,
+                ReadingPosition.declarationFlag,
             ]),
         // The headless authoring three (WP0 step 5½, punch-list P0-3): pin
         // the measured task, pin the judging instrument, declare an arm.

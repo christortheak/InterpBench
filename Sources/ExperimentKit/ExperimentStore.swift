@@ -3452,6 +3452,53 @@ public enum ExperimentStore {
     }
 
     @discardableResult
+    /// The reading position an attach pins, or nil for the recipe's default.
+    ///
+    /// Every refusal fires HERE, before a manifest is loaded or written, and
+    /// in THIS order — most specific first, so the message names the thing
+    /// that is actually wrong: the two spellings together, a label this engine
+    /// does not know, then a TEMPLATE-AWARE role under a raw rendering, which
+    /// could never resolve and used to say so only at extraction time. Server
+    /// twin: `experiment_store._declared_reading_position`.
+    static func declaredReadingPosition(
+        _ declaration: String?, poolFromToken: Int?,
+        extractionRendering: ExtractionRendering?
+    ) throws -> ReadingPosition? {
+        if let conflict = ReadingPosition.declarationConflict(
+            declaration, poolFromToken: poolFromToken)
+        {
+            let (reason, repair) = splitRepair(conflict)
+            throw ExperimentError.malformed(reason, repair: repair)
+        }
+        let position: ReadingPosition?
+        do {
+            position = try ReadingPosition.declared(declaration)
+        } catch let error as ReadingPosition.DeclarationError {
+            throw ExperimentError.malformed(error.reason, repair: error.repair)
+        }
+        guard let position else { return nil }
+        // nil and an explicit `.raw` are the same condition — the one those
+        // roles cannot resolve under.
+        if extractionRendering?.isRaw ?? true,
+            let refusal = ReadingPosition.templatedRenderingRefusal(position)
+        {
+            let (reason, repair) = splitRepair(refusal)
+            throw ExperimentError.malformed(reason, repair: repair)
+        }
+        return position
+    }
+
+    /// Split a shared "<reason> — repair: <repair>" sentence into the two
+    /// halves the CLI envelope carries separately. The sentence is the
+    /// cross-engine text; the split is this engine's presentation of it.
+    private static func splitRepair(_ message: String) -> (String, String) {
+        guard let range = message.range(of: " — repair: ") else {
+            return (message, "retype the declaration")
+        }
+        return (String(message[message.startIndex ..< range.lowerBound]),
+                String(message[range.upperBound...]))
+    }
+
     public static func attachConcept(
         _ concept: String,
         method: ExtractionMethod,
@@ -3462,6 +3509,12 @@ public enum ExperimentStore {
         /// rendering AND what an explicit `{"mode": "raw"}` canonicalizes to,
         /// so an undeclared attach writes the bytes it always did.
         extractionRendering: ExtractionRendering? = nil,
+        /// WHERE in the stimulus the residual stream is read, as one of the
+        /// cross-engine LABELS ("last content token", "content offset 2", …).
+        /// nil keeps the recipe's default byte-identically; `poolFromToken` is
+        /// the legacy spelling of one position and the two may not both be
+        /// declared. Server twin: `experiment_store.attach(reading_position=)`.
+        readingPosition: String? = nil,
         experimentName: String
     ) throws -> ExperimentManifest {
         let name = concept.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3482,6 +3535,9 @@ public enum ExperimentStore {
             throw ExperimentError(
                 reason: "pool-from expects a token index ≥ 0 — got \(token)")
         }
+        let declaredPosition = try declaredReadingPosition(
+            readingPosition, poolFromToken: poolFromToken,
+            extractionRendering: extractionRendering)
         return try updateDraft(name: experimentName) { manifest in
             if method == .emotionGrandMean {
                 try attachGrandMeanConcepts(
@@ -3489,6 +3545,7 @@ public enum ExperimentStore {
                     corpusConcepts: corpusConcepts,
                     poolFromToken: poolFromToken,
                     extractionRendering: extractionRendering,
+                    readingPosition: declaredPosition,
                     into: &manifest)
             } else if method == .designatedReference {
                 // mean(concept stories) − mean(REFERENCE stories), both
@@ -3514,7 +3571,10 @@ public enum ExperimentStore {
                             + "prompts/emotions/")
                 }
                 var options = ExtractionOptions(method: method)
-                options.readingPosition = .meanFromToken(poolFromToken ?? 50)
+                // A DECLARED position wins over the method's pool policy —
+                // that is the point of declaring one.
+                options.readingPosition =
+                    declaredPosition ?? .meanFromToken(poolFromToken ?? 50)
                 options.extractionRendering = extractionRendering
                 manifest.concepts.removeAll { $0.name == name }
                 var ref = makeConceptRef(
@@ -3525,7 +3585,9 @@ public enum ExperimentStore {
                 let directory = VectorCatalog.conceptsDirectory.appending(component: name)
                 let stimuli = try StimulusSet(directory: directory)
                 var options = ExtractionOptions(method: method)
-                if let token = poolFromToken {
+                if let declaredPosition {
+                    options.readingPosition = declaredPosition
+                } else if let token = poolFromToken {
                     options.readingPosition = .meanFromToken(token)
                 }
                 options.extractionRendering = extractionRendering
@@ -6485,6 +6547,9 @@ public enum ExperimentStore {
         poolFromToken: Int? = nil,
         /// See `attachConcept` — nil is the legacy raw rendering.
         extractionRendering: ExtractionRendering? = nil,
+        /// An already-declared position (see `declaredReadingPosition`). nil
+        /// keeps the emotion recipe's own pooled policy, token 50.
+        readingPosition: ReadingPosition? = nil,
         into manifest: inout ExperimentManifest
     ) throws {
         var members: [String] = []
@@ -6506,7 +6571,10 @@ public enum ExperimentStore {
             guard let hash = hashes[concept] else { continue }  // targets are members
             let options = ExtractionOptions(
                 method: .emotionGrandMean,
-                readingPosition: .meanFromToken(poolFromToken ?? 50),
+                // A DECLARED position wins over the method's pool policy —
+                // that is the point of declaring one.
+                readingPosition: readingPosition
+                    ?? .meanFromToken(poolFromToken ?? 50),
                 extractionRendering: extractionRendering)
             manifest.concepts.removeAll { $0.name == concept }
             manifest.concepts.append(

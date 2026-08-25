@@ -28,7 +28,11 @@ import SteeringKit
 ///   {"addGenerationPrompt": bool, "mode": "chatTemplate",
 ///   "qwenThinkingEnabled": bool, "systemPrompt": string|null} with every
 ///   inner field explicit (an identity may not depend on a default a later
-///   version could change).
+///   version could change), plus `"voice": "assistant"` — and ONLY for that
+///   voice. The voice key follows the same absent-is-legacy rule one level
+///   down: every chat-template recipe written before the voice existed
+///   rendered the user voice, so an absent (or explicitly `"user"`) voice adds
+///   nothing and keeps those recipes' hashes exactly where they are.
 /// - "extractionMethod": the substrate-independent method name in the
 ///   MANIFEST vocabulary ("meanDifference" | "lat" | "emotionGrandMean").
 ///   Sidecar recipeMethod values map caaMeanDifference→meanDifference,
@@ -56,13 +60,16 @@ import SteeringKit
 ///   otherwise.
 /// - "readingPosition": {"mode": "lastToken" | "meanFromToken" |
 ///   "offsetFromEnd" | "lastContentToken" | "turnCloseToken" |
-///   "postInstruction", "parameter": int|null} — the pool-from token index
-///   for meanFromToken, the backward offset for offsetFromEnd, the
-///   post-instruction index for postInstruction, null for the rest.
+///   "postInstruction" | "contentOffset" | "meanContentFromToken",
+///   "parameter": int|null} — the pool-from token index for meanFromToken,
+///   the backward offset for offsetFromEnd, the post-instruction index for
+///   postInstruction, the backward CONTENT offset for contentOffset, the
+///   pool-from CONTENT index for meanContentFromToken, null for the rest.
 ///   `offsetFromEnd` with parameter 0 canonicalizes to
-///   {"mode": "lastToken", "parameter": null}: it names the identical token,
-///   so declaring it that way must not split an identity away from an
-///   otherwise-identical last-token recipe.
+///   {"mode": "lastToken", "parameter": null} and `contentOffset` with
+///   parameter 0 to {"mode": "lastContentToken", "parameter": null}: each
+///   names the identical token, so declaring it that way must not split an
+///   identity away from an otherwise-identical recipe.
 /// - "residualNormSource": the canonical source token ("neutral-corpus" |
 ///   "extraction-stimuli" | "neutral-token-bank"). A sidecar value is
 ///   canonicalized by truncating at the first space (the Swift experiment
@@ -159,7 +166,12 @@ public enum RecipeIdentity {
                 mode: .chatTemplate,
                 addGenerationPrompt: rendering.resolvedAddGenerationPrompt,
                 qwenThinkingEnabled: rendering.resolvedQwenThinkingEnabled,
-                systemPrompt: rendering.systemPrompt)
+                systemPrompt: rendering.systemPrompt,
+                // nil for the USER voice — the second optional key, and the
+                // reason is the first one's: every chat-template recipe
+                // written before the voice existed rendered the user voice,
+                // so an absent (or explicitly "user") voice must add nothing.
+                voice: rendering.isAssistantVoice ? .assistant : nil)
         }
     }
 
@@ -191,7 +203,14 @@ public enum RecipeIdentity {
             out += "\"addGenerationPrompt\":\(rendering.resolvedAddGenerationPrompt)"
             out += ",\"mode\":\(jsonString(rendering.mode.rawValue))"
             out += ",\"qwenThinkingEnabled\":\(rendering.resolvedQwenThinkingEnabled)"
-            out += ",\"systemPrompt\":\(jsonOptionalString(rendering.systemPrompt))}"
+            out += ",\"systemPrompt\":\(jsonOptionalString(rendering.systemPrompt))"
+            // The second optional key, in sorted position AFTER systemPrompt
+            // (s < v) and present only for the assistant voice — absent ≡
+            // user ≡ the bytes every pre-voice chat-template recipe hashed.
+            if let voice = rendering.voice, voice != .user {
+                out += ",\"voice\":\(jsonString(voice.rawValue))"
+            }
+            out += "}"
         }
         out += ",\"grandMeanPopulation\":"
         if let population = c.grandMeanPopulation {
@@ -320,10 +339,14 @@ public enum RecipeIdentity {
     /// rendering.
     static func renderingJSON(_ rendering: ExtractionRendering?) -> String? {
         guard let rendering else { return nil }
-        return "{\"addGenerationPrompt\":\(rendering.resolvedAddGenerationPrompt)"
+        var out = "{\"addGenerationPrompt\":\(rendering.resolvedAddGenerationPrompt)"
             + ",\"mode\":\(jsonString(rendering.mode.rawValue))"
             + ",\"qwenThinkingEnabled\":\(rendering.resolvedQwenThinkingEnabled)"
-            + ",\"systemPrompt\":\(jsonOptionalString(rendering.systemPrompt))}"
+            + ",\"systemPrompt\":\(jsonOptionalString(rendering.systemPrompt))"
+        if let voice = rendering.voice, voice != .user {
+            out += ",\"voice\":\(jsonString(voice.rawValue))"
+        }
+        return out + "}"
     }
 
     /// The population's canonical JSON fragment (sorted, compact) — the same
@@ -414,6 +437,9 @@ public enum RecipeIdentity {
         _ position: ReadingPosition
     ) -> (mode: String, parameter: Int?) {
         if case .offsetFromEnd(0) = position { return ("lastToken", nil) }
+        // The same rule in CONTENT coordinates: `contentOffset(0)` names the
+        // identical token `lastContentToken` does.
+        if case .contentOffset(0) = position { return ("lastContentToken", nil) }
         return (position.identityMode, position.identityParameter)
     }
 

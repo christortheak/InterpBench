@@ -253,7 +253,8 @@ def activations_multi(model: SteeredModel, texts: list[str],
                     raise ConceptExtractorError(
                         f"{exc} (stimulus: {text[:60]!r})") from exc
                 resolutions[i].append(resolved)
-                recorder.set_window(resolved.start_index, resolved.end_index)
+                recorder.set_window(resolved.start_index, resolved.end_index,
+                                    resolved.pooled_indices)
             model.hooked.reset_offsets()
             model.model(input_ids=input_ids, use_cache=False)
             for i, recorder in enumerate(recorders):
@@ -514,10 +515,16 @@ def resolution_report(position: ReadingPosition, rendering: ExtractionRendering,
     ``None`` — the key omitted entirely — for the legacy pair (a shape-only
     position under raw rendering), whose resolved index is fully implied by
     its label. Legacy artifacts therefore keep byte-identical sidecars.
+
+    A CONTENT-MASKED pool adds two keys to its shape row —
+    ``examplePooledTokenCount`` and ``exampleMaskedTokenCount`` — because its
+    window alone says neither how much was averaged nor how much of the render
+    was structure. They appear for that reading and nowhere else.
     """
     rendering = rendering or RAW_RENDERING
     stamped_modes = ("offsetFromEnd", "lastContentToken", "turnCloseToken",
-                     "postInstruction")
+                     "postInstruction", "contentOffset",
+                     "meanContentFromToken")
     if rendering.is_raw and position.identity_mode not in stamped_modes:
         return None
     if not resolutions:
@@ -534,6 +541,17 @@ def resolution_report(position: ReadingPosition, rendering: ExtractionRendering,
                 "exampleEndIndex": resolved.end_index,
                 "exampleTokenCount": resolved.token_count,
             }
+            if resolved.masked_token_count is not None:
+                # A content-masked pool reads a non-contiguous set, so the
+                # window alone does not say how much was averaged, nor how
+                # much of the render was structure. Both counts are EXAMPLES,
+                # like every other example* field: they vary with stimulus
+                # length, and grouping by them would turn one honest "every
+                # stimulus read the same way" row into one row per stimulus.
+                shapes[key]["examplePooledTokenCount"] = \
+                    resolved.pooled_token_count
+                shapes[key]["exampleMaskedTokenCount"] = \
+                    resolved.masked_token_count
         else:
             row["sequenceCount"] += 1
     block = {

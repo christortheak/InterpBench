@@ -357,7 +357,9 @@ public enum ConceptExtractor {
                         reason: error.reason, text: text)
                 }
                 resolutions.append(resolved)
-                recorder.setWindow(start: resolved.startIndex, end: resolved.endIndex)
+                recorder.setWindow(
+                    start: resolved.startIndex, end: resolved.endIndex,
+                    indices: resolved.pooledIndices)
 
                 let input = MLXArray(tokens.map { Int32($0) }).reshaped([1, tokens.count])
                 let logits = context.model(input, cache: nil)

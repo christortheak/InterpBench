@@ -39,6 +39,8 @@ TEXTS = ["a steady voice in a difficult and unfamiliar meeting room",
 #: <bos> … content … <end_of_turn> \n <start_of_turn> model \n
 BOS, END_OF_TURN, NEWLINE, START_OF_TURN, MODEL = 2, 106, 107, 105, 108
 SPECIALS = {BOS, END_OF_TURN, NEWLINE, START_OF_TURN, MODEL}
+#: The other role word, for the turn-structured tokenizer below.
+USER_ROLE = 109
 
 
 class _FakeTokenizer:
@@ -106,6 +108,77 @@ class _TemplateAwareTokenizer(_FakeTokenizer):
         ids = [BOS] + content + [END_OF_TURN]
         if text.endswith(self.GENERATION_SCAFFOLD):
             ids += [NEWLINE, START_OF_TURN, MODEL, NEWLINE]
+        return self._wrap(ids, return_tensors)
+
+
+class _TurnStructuredTokenizer(_FakeTokenizer):
+    """A fake that renders and tokenizes PER-TURN markers the way Gemma 3's
+    template does::
+
+        <bos><start_of_turn>user\\n{content}<end_of_turn>\\n<start_of_turn>model\\n
+
+    The flatter ``_TemplateAwareTokenizer`` above is enough for the roles that
+    only need a turn CLOSE. The content mask and the assistant voice need the
+    turn's OPENING and its role tag to exist as real tokens, because excluding
+    them is the whole point.
+    """
+
+    #: The role word each turn opens with, as its own token — exactly the
+    #: shape `content_indices` skips (`<start_of_turn>` `role` `\\n`).
+    ROLE_IDS = {"user": USER_ROLE, "model": MODEL}
+    _PIECES = {BOS: "<bos>", START_OF_TURN: "<start_of_turn>",
+               END_OF_TURN: "<end_of_turn>", NEWLINE: "\n",
+               MODEL: "model", USER_ROLE: "user"}
+
+    def get_added_vocab(self):
+        return {"<bos>": BOS, "<start_of_turn>": START_OF_TURN,
+                "<end_of_turn>": END_OF_TURN, "model": MODEL,
+                "user": USER_ROLE, "\n": NEWLINE}
+
+    def convert_ids_to_tokens(self, token_id):
+        return self._PIECES.get(token_id, f"tok{token_id}")
+
+    def apply_chat_template(self, messages, **kwargs):
+        text = "<bos>"
+        for message in messages:
+            role = "model" if message["role"] == "assistant" else message["role"]
+            text += (f"<start_of_turn>{role}\n{message['content']}"
+                     "<end_of_turn>\n")
+        if kwargs.get("add_generation_prompt"):
+            text += "<start_of_turn>model\n"
+        return text
+
+    def __call__(self, text, return_tensors=None, add_special_tokens=True):
+        ids: list[int] = []
+        rest = text
+        if rest.startswith("<bos>"):
+            ids.append(BOS)
+            rest = rest[len("<bos>"):]
+        elif add_special_tokens:
+            # The tokenizer's own single BOS — what the assistant-voice
+            # construction relies on after it subtracts the template's.
+            ids.append(BOS)
+        while rest:
+            if rest.startswith("<start_of_turn>"):
+                rest = rest[len("<start_of_turn>"):]
+                role, _, rest = rest.partition("\n")
+                ids += [START_OF_TURN,
+                        self.ROLE_IDS.get(role, self.unk_token_id), NEWLINE]
+                continue
+            if rest.startswith("<end_of_turn>"):
+                ids.append(END_OF_TURN)
+                rest = rest[len("<end_of_turn>"):]
+                continue
+            if rest.startswith("\n"):
+                ids.append(NEWLINE)
+                rest = rest[1:]
+                continue
+            cuts = [i for i in (rest.find("<start_of_turn>"),
+                                rest.find("<end_of_turn>"), rest.find("\n"))
+                    if i >= 0]
+            cut = min(cuts) if cuts else len(rest)
+            ids += self._content_ids(rest[:cut])
+            rest = rest[cut:]
         return self._wrap(ids, return_tensors)
 
 
@@ -675,3 +748,407 @@ def test_the_unknown_mode_refusal_names_the_engine_and_the_vocabulary():
     assert "templated" in message
     assert er.ENGINE in message
     assert "raw" in message and "chatTemplate" in message
+
+
+# --------------------------------------------------------------------------
+# 8. THE VOICE: rendering the stimulus as the model's OWN OUTPUT
+#
+# The rendering×position grid asks a question the user voice cannot: is the
+# direction about text the model READS or text the model PRODUCES? The voice
+# is the fork. Absent ≡ "user" ≡ every byte this engine ever wrote, and the
+# assistant voice renders the template's own assistant-turn markers around the
+# stimulus with NO preceding user content.
+# --------------------------------------------------------------------------
+
+
+def _voiced_model():
+    return _model(_TurnStructuredTokenizer())
+
+
+def test_the_voice_vocabulary_is_the_cross_engine_spelling():
+    assert er.VOICES == ("user", "assistant")
+    assert er.VOICE_USER == "user" and er.VOICE_ASSISTANT == "assistant"
+
+
+def test_an_absent_voice_is_the_user_voice_and_writes_nothing():
+    """THE HASH CONTRACT, one level down. An explicit "user" is the legacy
+    voice said out loud, so it must produce exactly what saying nothing
+    produces — at the stamp, at the identity fragment, and at the parse."""
+    absent = er.parse_declaration('{"mode": "chatTemplate"}')
+    explicit = er.parse_declaration('{"mode": "chatTemplate", "voice": "user"}')
+    assert absent == explicit
+    assert absent.voice == er.VOICE_USER
+    assert "voice" not in absent.to_dict()
+    assert "voice" not in explicit.to_dict()
+    assert er.canonical_identity_fragment(explicit) == \
+        er.canonical_identity_fragment(absent)
+    assert "voice" not in er.canonical_identity_fragment(absent)
+
+
+def test_the_assistant_voice_stamps_itself_and_nothing_it_cannot_honor():
+    declared = er.parse_declaration(
+        '{"mode": "chatTemplate", "voice": "assistant"}')
+    assert declared.is_assistant_voice
+    # addGenerationPrompt is refused at declaration time, so the artifact must
+    # not claim a choice nobody made.
+    assert declared.to_dict() == {"mode": "chatTemplate",
+                                  "qwenThinkingEnabled": False,
+                                  "voice": "assistant"}
+    assert declared.label == "chatTemplate (voice=assistant)"
+
+
+def test_the_assistant_voice_is_the_only_voice_that_reaches_the_identity():
+    user = er.canonical_identity_fragment(
+        er.parse_declaration('{"mode": "chatTemplate"}'))
+    assistant = er.canonical_identity_fragment(
+        er.parse_declaration('{"mode": "chatTemplate", "voice": "assistant"}'))
+    assert assistant["voice"] == "assistant"
+    # …and it is ADDITIVE: every other key keeps its meaning, so a reader (and
+    # a diff) sees one field change rather than a new shape.
+    assert set(assistant) - set(user) == {"voice"}
+    assert assistant["mode"] == user["mode"]
+
+
+def test_the_assistant_voice_renders_the_turn_alone_and_the_probe_never_lands():
+    """The exact rendered form, on a Gemma-shaped template:
+    ``<bos><start_of_turn>model\\n{stimulus}<end_of_turn>\\n`` — the assistant
+    turn's own markers, no user turn, one BOS."""
+    from steerlab_server.experiment import prompt_render
+
+    tokenizer = _TurnStructuredTokenizer()
+    rendered = prompt_render.render_assistant_turn(
+        tokenizer, TEXTS[0], model_id="google/gemma-3-4b-it")
+    assert rendered.text == (f"<start_of_turn>model\n{TEXTS[0]}"
+                             "<end_of_turn>\n")
+    # The probe user turn is the scaffolding of the CONSTRUCTION, never of the
+    # render: injected user text would confound the very contrast the voice
+    # isolates.
+    assert prompt_render.ASSISTANT_VOICE_PROBE_TURN not in rendered.text
+    ids = rendered.input_ids
+    # One BOS (the template's went with the subtracted prefix), then the
+    # assistant turn's opening, its role tag, the content, and its close.
+    assert ids[:4] == [BOS, START_OF_TURN, MODEL, NEWLINE]
+    assert ids[-2:] == [END_OF_TURN, NEWLINE]
+    assert ids.count(BOS) == 1
+    # …and no user role token anywhere.
+    assert USER_ROLE not in ids
+
+
+def test_the_two_voices_are_two_directions():
+    """The whole point of the fork, in miniature: reading the same stimuli at
+    the same position under the two voices is two different vectors."""
+    model = _voiced_model()
+    user = extractor.extract(
+        model, _stimuli(),
+        extractor.ExtractionOptions(
+            extraction_rendering=er.from_json({"mode": "chatTemplate"})))
+    assistant = extractor.extract(
+        model, _stimuli(),
+        extractor.ExtractionOptions(
+            extraction_rendering=er.from_json(
+                {"mode": "chatTemplate", "voice": "assistant"})))
+    assert user.vectors.per_layer != assistant.vectors.per_layer
+    assert assistant.residual_norm_rendering == "chatTemplate"
+
+
+def test_the_denominator_follows_the_assistant_voice_too():
+    """α in norm units divides by a number from the distribution the vector
+    was read from — the voice is part of that distribution."""
+    model = _voiced_model()
+    neutral = ["a quiet street", "a folded map", "an open window",
+               "a wooden chair"]
+    user = extractor.extract(
+        model, _stimuli(),
+        extractor.ExtractionOptions(
+            extraction_rendering=er.from_json({"mode": "chatTemplate"})),
+        neutral_texts=neutral)
+    assistant = extractor.extract(
+        model, _stimuli(),
+        extractor.ExtractionOptions(
+            extraction_rendering=er.from_json(
+                {"mode": "chatTemplate", "voice": "assistant"})),
+        neutral_texts=neutral)
+    assert user.residual_norm_per_layer != assistant.residual_norm_per_layer
+
+
+def test_named_roles_resolve_against_the_assistant_turns_content():
+    """The roles keep meaning what they say: under the assistant voice the
+    content IS the model's own output, and one uniform render is one shapes
+    row."""
+    model = _voiced_model()
+    result = extractor.extract(
+        model, _stimuli(),
+        extractor.ExtractionOptions(
+            reading_position=rp.LAST_CONTENT_TOKEN,
+            extraction_rendering=er.from_json(
+                {"mode": "chatTemplate", "voice": "assistant"})))
+    stamp = result.reading_position_resolution
+    assert stamp["requested"] == "last content token"
+    assert stamp["rendering"] == "chatTemplate"
+    assert len(stamp["shapes"]) == 1
+    # `<end_of_turn> \n` follow the content, so the content boundary sits two
+    # back from the end of the assistant-voice render.
+    assert stamp["shapes"][0]["offsetFromEnd"] == 2
+
+
+def test_add_generation_prompt_under_the_assistant_voice_is_a_typed_refusal():
+    """It is not a silent ignore: under this voice the stimulus IS the
+    generation, so the key would reach nothing at all."""
+    with pytest.raises(er.ExtractionRenderingError) as exc:
+        er.parse_declaration('{"mode":"chatTemplate","voice":"assistant",'
+                             '"addGenerationPrompt":true}')
+    assert str(exc.value) == er.ASSISTANT_VOICE_GENERATION_PROMPT_REASON
+    assert "repair:" in str(exc.value)
+    # false is refused identically — the refusal is about the KEY, not a value.
+    with pytest.raises(er.ExtractionRenderingError):
+        er.parse_declaration('{"mode":"chatTemplate","voice":"assistant",'
+                             '"addGenerationPrompt":false}')
+
+
+def test_a_system_prompt_under_the_assistant_voice_is_a_typed_refusal():
+    with pytest.raises(er.ExtractionRenderingError) as exc:
+        er.parse_declaration('{"mode":"chatTemplate","voice":"assistant",'
+                             '"systemPrompt":"be brief"}')
+    assert str(exc.value) == er.ASSISTANT_VOICE_SYSTEM_PROMPT_REASON
+    assert "confound" in str(exc.value)
+
+
+def test_an_unknown_voice_is_a_typed_refusal_naming_the_engine():
+    with pytest.raises(er.ExtractionRenderingError) as exc:
+        er.parse_declaration('{"mode":"chatTemplate","voice":"system"}')
+    message = str(exc.value)
+    assert "system" in message and er.ENGINE in message
+    assert "user" in message and "assistant" in message
+
+
+def test_a_raw_rendering_still_takes_no_voice():
+    with pytest.raises(er.ExtractionRenderingError, match="takes no parameters"):
+        er.parse_declaration('{"mode":"raw","voice":"assistant"}')
+
+
+def test_a_template_that_cannot_place_the_turn_refuses_rather_than_falling_back():
+    """A family whose template does not append the assistant turn as a suffix
+    cannot be rendered this way — and saying so is the answer, because a
+    fallback to the user voice would silently measure the other thing."""
+    from steerlab_server.experiment import prompt_render
+
+    with pytest.raises(prompt_render.AssistantVoiceUnsupported) as exc:
+        # The flatter fake joins turn contents instead of wrapping each in its
+        # own markers, so the prefix relation does not hold.
+        prompt_render.render_assistant_turn(
+            _TemplateAwareTokenizer(), TEXTS[0],
+            model_id="google/gemma-3-4b-it")
+    assert "repair:" in str(exc.value)
+    assert "voice 'user'" in str(exc.value)
+
+
+def test_the_manifest_round_trips_a_voiced_rendering():
+    from steerlab_server.experiment.manifest import ExtractionOptions
+    parsed = ExtractionOptions.from_json(
+        {"extractionRendering": {"mode": "chatTemplate",
+                                 "voice": "assistant"}}).extraction_rendering
+    assert parsed.is_assistant_voice
+    assert parsed.to_dict()["voice"] == "assistant"
+
+
+# --------------------------------------------------------------------------
+# 9. contentOffset(k) — the offset that counts in CONTENT coordinates
+# --------------------------------------------------------------------------
+
+#: A Gemma-shaped render: content at 4…6, close at 7, four scaffold ids after.
+_TURN_IDS = [BOS, START_OF_TURN, USER_ROLE, NEWLINE, 201, 202, 203,
+             END_OF_TURN, NEWLINE, START_OF_TURN, MODEL, NEWLINE]
+
+
+def _turn_tokenizer():
+    return _TurnStructuredTokenizer()
+
+
+def test_content_offset_counts_back_from_the_content_boundary():
+    tokenizer = _turn_tokenizer()
+
+    def resolve(position):
+        return position.resolve(_TURN_IDS, tokenizer=tokenizer,
+                                rendering_is_raw=False)
+
+    assert [resolve(rp.content_offset(k)).start_index for k in range(3)] \
+        == [6, 5, 4]
+    # k = 0 IS the last content token — same index, same value.
+    assert resolve(rp.content_offset(0)).start_index == \
+        resolve(rp.LAST_CONTENT_TOKEN).start_index
+    assert resolve(rp.content_offset(2)).source == "last content token − 2"
+
+
+def test_content_offset_refuses_underflow_instead_of_clamping():
+    with pytest.raises(rp.ReadingPositionError) as exc:
+        rp.content_offset(9).resolve(_TURN_IDS, tokenizer=_turn_tokenizer(),
+                                     rendering_is_raw=False)
+    message = str(exc.value)
+    assert "no token 9 before it" in message
+    assert "never clamped" in message
+
+
+def test_content_offset_refuses_a_negative_k():
+    with pytest.raises(rp.ReadingPositionError, match="k ≥ 0"):
+        rp.content_offset(-1)
+
+
+def test_content_offset_refuses_under_raw_rendering():
+    """A raw stimulus has no turn, so it has no content BOUNDARY to count
+    back from — the same dependency the other named roles name."""
+    with pytest.raises(rp.ReadingPositionError) as exc:
+        rp.content_offset(1).resolve(_TURN_IDS, tokenizer=_turn_tokenizer(),
+                                     rendering_is_raw=True)
+    message = str(exc.value)
+    assert "templated rendering" in message
+    assert f'{er.DECLARATION_FLAG} \'{{"mode": "chatTemplate"}}\'' in message
+
+
+def test_content_offset_zero_canonicalizes_to_the_role_it_names():
+    """The ``offsetFromEnd(0) ≡ lastToken`` rule, in content coordinates:
+    declaring the offset form must never split an identity away from an
+    otherwise-identical last-content-token recipe."""
+    from steerlab_server.experiment.recipe_identity import canonical_reading
+
+    assert canonical_reading(rp.content_offset(0)) == ("lastContentToken", None)
+    assert canonical_reading(rp.content_offset(2)) == ("contentOffset", 2)
+    assert canonical_reading(rp.LAST_CONTENT_TOKEN) == ("lastContentToken", None)
+
+
+def test_the_content_offset_stamp_records_both_halves():
+    model = _voiced_model()
+    result = extractor.extract(
+        model, _stimuli(),
+        extractor.ExtractionOptions(
+            reading_position=rp.content_offset(1),
+            extraction_rendering=er.from_json({"mode": "chatTemplate"})))
+    stamp = result.reading_position_resolution
+    assert stamp["requested"] == "content offset 1"
+    assert stamp["mode"] == "contentOffset"
+    assert stamp["parameter"] == 1
+    assert stamp["source"] == "last content token − 1"
+    assert len(stamp["shapes"]) == 1
+
+
+# --------------------------------------------------------------------------
+# 10. meanContentFromToken(n) — pooling over CONTENT only
+# --------------------------------------------------------------------------
+
+
+def test_the_content_mask_keeps_only_the_stimulus_own_tokens():
+    """The mask derives from ONE template map: the turn opens, its role tag is
+    structure, it closes, and the trailing generation scaffold is past the
+    content and therefore excluded by construction."""
+    content = rp.content_indices(_TURN_IDS, _turn_tokenizer(), "test")
+    assert content == [4, 5, 6]
+
+
+def test_mean_content_from_token_pools_content_and_stamps_both_counts():
+    tokenizer = _turn_tokenizer()
+    resolved = rp.mean_content_from_token(1).resolve(
+        _TURN_IDS, tokenizer=tokenizer, rendering_is_raw=False)
+    assert resolved.pooled_indices == (5, 6)
+    assert resolved.start_index == 5 and resolved.end_index == 7
+    assert resolved.pooled_token_count == 2
+    # 12 tokens, 3 of them content: the mask called nine of them structure.
+    assert resolved.masked_token_count == 9
+    assert resolved.is_pooled
+
+
+def test_mean_content_from_token_is_mean_from_token_under_raw_rendering():
+    """Under raw every token IS content, so the honest behavior is
+    equivalence, not a refusal — and equivalence has to be true of the
+    NUMBERS, not just the docstring."""
+    model = _model(_FakeTokenizer())
+    masked = extractor.extract(
+        model, _stimuli(),
+        extractor.ExtractionOptions(
+            reading_position=rp.mean_content_from_token(3)))
+    plain = extractor.extract(
+        model, _stimuli(),
+        extractor.ExtractionOptions(reading_position=rp.mean_from_token(3)))
+    assert masked.vectors.per_layer == plain.vectors.per_layer
+    assert masked.residual_norm_per_layer == plain.residual_norm_per_layer
+    # …and the artifact still says which was DECLARED: an identity records the
+    # recipe, not what one rendering made of it.
+    assert masked.reading_position_resolution["mode"] == "meanContentFromToken"
+    assert "raw rendering: every token is content" in \
+        masked.reading_position_resolution["source"]
+    assert masked.reading_position_resolution["shapes"][0][
+        "exampleMaskedTokenCount"] == 0
+
+
+def test_a_masked_pool_reads_exactly_the_pooled_positions():
+    """The mask has to reach the RECORDER, not just the stamp: pooling the
+    whole window would quietly average the template's structure back in."""
+    model = _voiced_model()
+    masked = extractor.activations(
+        model, [TEXTS[0]], rp.mean_content_from_token(0),
+        er.from_json({"mode": "chatTemplate"}))
+    resolved = masked.resolutions[0]
+    # A hand-rolled mean over the same positions, from a window read.
+    window = extractor.activations(
+        model, [TEXTS[0]], rp.mean_from_token(resolved.start_index),
+        er.from_json({"mode": "chatTemplate"}))
+    # The window read runs to the sequence end (through the scaffold), so the
+    # two must NOT agree — that difference is the mask doing its job.
+    assert masked.values[0][0] != window.values[0][0]
+    assert resolved.pooled_indices[-1] + 1 < resolved.token_count
+
+
+def test_mean_content_from_token_refuses_when_the_content_is_too_short():
+    with pytest.raises(rp.ReadingPositionError) as exc:
+        rp.mean_content_from_token(5).resolve(
+            _TURN_IDS, tokenizer=_turn_tokenizer(), rendering_is_raw=False)
+    message = str(exc.value)
+    assert "3 content tokens" in message
+    assert "never clamped" in message
+
+
+def test_mean_content_from_token_refuses_a_negative_n():
+    with pytest.raises(rp.ReadingPositionError, match="n ≥ 0"):
+        rp.mean_content_from_token(-1)
+
+
+def test_the_masked_pool_stamp_carries_the_pooled_and_masked_counts():
+    model = _voiced_model()
+    result = extractor.extract(
+        model, _stimuli(),
+        extractor.ExtractionOptions(
+            reading_position=rp.mean_content_from_token(1),
+            extraction_rendering=er.from_json({"mode": "chatTemplate"})))
+    stamp = result.reading_position_resolution
+    assert stamp["mode"] == "meanContentFromToken"
+    assert stamp["parameter"] == 1
+    shape = stamp["shapes"][0]
+    assert shape["offsetFromEnd"] is None          # a pooled read has none
+    assert shape["examplePooledTokenCount"] >= 1
+    # BOS + open + role + newline + close + newline + open + model + newline
+    assert shape["exampleMaskedTokenCount"] == 9
+
+
+def test_the_new_positions_round_trip_through_their_labels():
+    for position in (rp.content_offset(0), rp.content_offset(4),
+                     rp.mean_content_from_token(0),
+                     rp.mean_content_from_token(12)):
+        assert rp.from_label(position.label).label == position.label
+    # …and they do not collide with the position they are named after.
+    assert rp.parse_label_strict("mean from token 3").identity_mode == \
+        "meanFromToken"
+    assert rp.parse_label_strict("mean content from token 3").identity_mode == \
+        "meanContentFromToken"
+    assert rp.parse_label_strict("content offset x") is None
+
+
+def test_the_manifest_parses_both_wire_forms_of_the_new_positions():
+    from steerlab_server.experiment.manifest import ExtractionOptions
+    cases = {
+        "contentOffset": ({"contentOffset": {"_0": 2}}, "content offset 2"),
+        "meanContentFromToken": ({"meanContentFromToken": {"_0": 4}},
+                                 "mean content from token 4"),
+    }
+    for name, (swift_form, label) in cases.items():
+        assert ExtractionOptions.from_json(
+            {"readingPosition": swift_form}).reading_position.label == label, name
+        assert ExtractionOptions.from_json(
+            {"readingPosition": label}).reading_position.label == label, name

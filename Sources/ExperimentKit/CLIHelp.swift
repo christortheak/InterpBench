@@ -70,6 +70,7 @@ public enum CLIFlagVocabulary {
         "--payload": "<path>",
         "--plan-hash": "<sha256>",
         "--pool-from": "<k>",
+        "--reading-position": "<label>",
         "--python-version": "<version>",
         "--prompt": "<text>",
         "--prompt-mode": "<mode>",
@@ -146,7 +147,10 @@ public enum CLIFlagVocabulary {
         "--experiment": "The draft study the compiled scenario is pinned into.",
         "--extraction-rendering":
             "How the stimulus reaches the model: '{\"mode\": \"chatTemplate\"}' "
-            + "or '{\"mode\": \"raw\"}' (the default, and what absent means).",
+            + "or '{\"mode\": \"raw\"}' (the default, and what absent means). "
+            + "A chat-template rendering may add '\"voice\": \"assistant\"' — "
+            + "the stimulus as the model's own output — which this engine "
+            + "refuses and the python-hf-transformers engine runs.",
         "--file-slug":
             "Name the compiled scenario file (default: the study's name).",
         "--follow": "Keep reading the log as it grows.",
@@ -179,6 +183,11 @@ public enum CLIFlagVocabulary {
         "--payload": "Local directory pushed as the server payload.",
         "--plan-hash": "The reviewed plan this apply is allowed to run.",
         "--pool-from": "Read from token K onward instead of the last token.",
+        "--reading-position":
+            "Where the residual stream is read, by name: 'last content token', "
+            + "'content offset 2', 'mean content from token 0', 'offset from "
+            + "end 3', … (the legacy spelling of one of them is --pool-from; "
+            + "declaring both is refused).",
         "--python-version": "Python version the remote environment is built with.",
         "--project-neutral":
             "Legacy pooled projection — draft-only and verification-blocked.",

@@ -113,6 +113,64 @@ def test_every_rendering_parameter_survives_the_attach(tmp_path):
         "qwenThinkingEnabled": True, "systemPrompt": "be brief"}
 
 
+def test_the_voice_survives_the_attach_and_reaches_the_identity(tmp_path):
+    """The grid's fork is declarable with the flag that already exists: the
+    voice is an ordinary key of the same JSON object, so no new surface was
+    needed on any of the three."""
+    root = str(tmp_path)
+    _concept(root)
+    es.create("v", model_id="org/m", root=root)
+    document = es.attach(
+        "v", ["french"], root=root,
+        extraction_rendering='{"mode":"chatTemplate","voice":"assistant"}')
+    assert _options(document)["extractionRendering"] == {
+        "mode": "chatTemplate", "qwenThinkingEnabled": False,
+        "voice": "assistant"}
+    manifest = Manifest.load("v", root)
+    fragment = ri.rendering_fragment(
+        manifest.concepts[0].options.extraction_rendering)
+    assert fragment["voice"] == "assistant"
+
+
+def test_an_explicit_user_voice_attach_is_byte_identical_to_omitting_it(
+        tmp_path):
+    """THE VOICE'S HALF OF THE HARD CONSTRAINT, at the writer: "user" is the
+    legacy voice said out loud, exactly as "raw" is the legacy mode said out
+    loud, so it may not move a single byte."""
+    root = str(tmp_path)
+    _concept(root)
+    es.create("quiet", model_id="org/m", root=root)
+    es.create("spoken", model_id="org/m", root=root)
+    quiet = es.attach("quiet", ["french"], extraction_rendering=CHAT_TEMPLATE,
+                      root=root)
+    spoken = es.attach(
+        "spoken", ["french"], root=root,
+        extraction_rendering='{"mode":"chatTemplate","voice":"user"}')
+    assert "voice" not in _options(spoken)["extractionRendering"]
+    assert _options(spoken) == _options(quiet)
+
+
+def test_an_assistant_voice_declaration_refuses_its_meaningless_parameters(
+        tmp_path):
+    """Refused BEFORE anything is written — the same discipline every other
+    malformed declaration follows."""
+    root = str(tmp_path)
+    _concept(root)
+    es.create("bad", model_id="org/m", root=root)
+    for declaration, reason in (
+            ('{"mode":"chatTemplate","voice":"assistant",'
+             '"addGenerationPrompt":true}',
+             er.ASSISTANT_VOICE_GENERATION_PROMPT_REASON),
+            ('{"mode":"chatTemplate","voice":"assistant",'
+             '"systemPrompt":"be brief"}',
+             er.ASSISTANT_VOICE_SYSTEM_PROMPT_REASON)):
+        with pytest.raises(er.ExtractionRenderingError) as exc:
+            es.attach("bad", ["french"], extraction_rendering=declaration,
+                      root=root)
+        assert str(exc.value) == reason
+    assert not Manifest.load("bad", root).concepts
+
+
 def test_the_grand_mean_attach_path_carries_the_declaration(tmp_path):
     """A different constructor, the same recipe obligation: a grand-mean
     vector is mean(concept) − mean(corpus), and WHICH rendering both means

@@ -69,7 +69,8 @@ struct RecipeIdentityTests {
             mode: parsed,
             addGenerationPrompt: raw["addGenerationPrompt"] as? Bool,
             qwenThinkingEnabled: raw["qwenThinkingEnabled"] as? Bool,
-            systemPrompt: raw["systemPrompt"] as? String)
+            systemPrompt: raw["systemPrompt"] as? String,
+            voice: (raw["voice"] as? String).flatMap(ExtractionRendering.Voice.init))
     }
 
     // MARK: - cross-engine golden parity
@@ -409,6 +410,74 @@ struct RecipeIdentityTests {
         }
     }
 
+    /// THE VOICE'S HASH CONTRACT (2026-08-25). Every chat-template recipe
+    /// written before the voice existed rendered the USER voice, so an absent
+    /// — or an explicitly declared "user" — voice must reproduce the committed
+    /// fixture's bytes exactly. The fixture's `templatedRendering` case
+    /// carries its pre-voice hash verbatim.
+    @Test func anExplicitUserVoiceIsThePreVoiceIdentity() throws {
+        let entry = try #require(try loadFixtureCases()["templatedRendering"])
+        #expect(!entry.canonicalJSON.contains("voice"),
+                "the pre-voice canonical form grew a key")
+        for voice: ExtractionRendering.Voice? in [nil, .user] {
+            var declared = entry.components
+            declared.extractionRendering =
+                RecipeIdentity.Components.canonicalRendering(
+                    .chatTemplate(voice: voice))
+            #expect(RecipeIdentity.canonicalJSON(declared) == entry.canonicalJSON,
+                    "voice \(String(describing: voice)) moved the bytes")
+            #expect(RecipeIdentity.hash(declared) == entry.sha256)
+        }
+    }
+
+    /// The other half: the assistant voice is a different recipe, and it adds
+    /// exactly one key, in sorted position after `systemPrompt`.
+    @Test func theAssistantVoiceIsADifferentRecipeAndAddsOnlyItsKey() throws {
+        let entry = try #require(try loadFixtureCases()["templatedRendering"])
+        var declared = entry.components
+        declared.extractionRendering =
+            RecipeIdentity.Components.canonicalRendering(
+                .chatTemplate(voice: .assistant))
+        let canonical = RecipeIdentity.canonicalJSON(declared)
+        #expect(RecipeIdentity.hash(declared) != entry.sha256)
+        #expect(canonical.contains(#""voice":"assistant""#))
+        let systemRange = try #require(canonical.range(of: #""systemPrompt":"#))
+        let voiceRange = try #require(canonical.range(of: #""voice":"#))
+        #expect(systemRange.lowerBound < voiceRange.lowerBound)
+    }
+
+    /// The `offsetFromEnd(0) ≡ lastToken` rule in CONTENT coordinates.
+    @Test func contentOffsetZeroIsTheLastContentTokenIdentity() {
+        #expect(RecipeIdentity.canonicalReading(.contentOffset(0)).mode
+                == "lastContentToken")
+        #expect(RecipeIdentity.canonicalReading(.contentOffset(0)).parameter == nil)
+        #expect(RecipeIdentity.canonicalReading(.contentOffset(2)).mode
+                == "contentOffset")
+        #expect(RecipeIdentity.canonicalReading(.contentOffset(2)).parameter == 2)
+        #expect(RecipeIdentity.canonicalReading(.meanContentFromToken(4))
+                == ("meanContentFromToken", 4))
+    }
+
+    /// A content-coordinate declaration is a different recipe from its
+    /// sequence-coordinate namesake — including under raw rendering, where
+    /// `meanContentFromToken(n)` reads the same rows as `meanFromToken(n)`:
+    /// an identity records what the recipe DECLARED.
+    @Test func theNewReadingPositionsAreDistinctIdentities() throws {
+        let base = try #require(try loadFixtureCases()["paired"]).components
+        func hash(_ position: ReadingPosition) -> String {
+            var components = base
+            let canonical = RecipeIdentity.canonicalReading(position)
+            components.readingPositionMode = canonical.mode
+            components.readingPositionParameter = canonical.parameter
+            return RecipeIdentity.hash(components)
+        }
+        let hashes = Set([
+            hash(.meanFromToken(4)), hash(.meanContentFromToken(4)),
+            hash(.contentOffset(3)), hash(.offsetFromEnd(3)),
+        ])
+        #expect(hashes.count == 4)
+    }
+
     /// `offsetFromEnd(0)` names the identical token, so it must not split an
     /// identity away from a last-token recipe (maintainer ruling: offsets are
     /// the mechanism, roles are the portable form — neither may quietly
@@ -429,6 +498,7 @@ struct RecipeIdentityTests {
         let positions: [ReadingPosition] = [
             .lastToken, .meanFromToken(50), .offsetFromEnd(3),
             .lastContentToken, .turnCloseToken, .postInstruction(1),
+            .contentOffset(2), .meanContentFromToken(6),
         ]
         for position in positions {
             let parsed = ReadingPosition(label: position.label)

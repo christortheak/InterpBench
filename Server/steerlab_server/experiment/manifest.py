@@ -2750,7 +2750,19 @@ _READING_POSITION_CASES = {
     "lastContentToken": lambda _: _last_content_token(),
     "turnCloseToken": lambda _: _turn_close_token(),
     "postInstruction": lambda i: _post_instruction(int(i)),
+    "contentOffset": lambda k: _content_offset(int(k)),
+    "meanContentFromToken": lambda n: _mean_content_from_token(int(n)),
 }
+
+
+def _content_offset(k):
+    from ..steering.reading_position import content_offset
+    return content_offset(k)
+
+
+def _mean_content_from_token(n):
+    from ..steering.reading_position import mean_content_from_token
+    return mean_content_from_token(n)
 
 
 def _offset_from_end(k):

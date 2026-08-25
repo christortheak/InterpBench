@@ -111,7 +111,10 @@ class SteeringVectorSidecar:
     # The requested reading position AND what it RESOLVED to, per sequence
     # shape — {"requested", "mode", "parameter"?, "rendering", "source",
     # "shapes": [{"offsetFromEnd", "sequenceCount", "exampleIndex",
-    # "exampleEndIndex", "exampleTokenCount"}]}. `readingPosition` says what
+    # "exampleEndIndex", "exampleTokenCount", and for a CONTENT-MASKED pool
+    # only, "examplePooledTokenCount"/"exampleMaskedTokenCount"}]}. Those two
+    # are additive and absent everywhere else, so no other position's stamped
+    # bytes moved when they landed. `readingPosition` says what
     # was ASKED for; this says where that landed, so a reader never has to
     # re-derive a template's internals to know what was read. Stamped only
     # when the label does not already imply the index (a template-aware role,

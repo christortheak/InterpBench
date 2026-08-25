@@ -40,6 +40,7 @@ class ActivationRecorder(LayerIntervention):
         self._position = position
         self._captures: list[Capture] = []
         self._window: tuple[int, int] | None = None
+        self._indices: tuple[int, ...] | None = None
 
     @property
     def captures(self) -> list[Capture]:
@@ -48,8 +49,9 @@ class ActivationRecorder(LayerIntervention):
     def reset(self) -> None:
         self._captures.clear()
 
-    def set_window(self, start: int, end: int | None) -> None:
-        """Pin the half-open read window for the NEXT forward pass.
+    def set_window(self, start: int, end: int | None,
+                   indices=None) -> None:
+        """Pin the read window for the NEXT forward pass.
 
         Template-aware reading positions ("turn close token",
         "post-instruction 2") resolve against the TOKEN IDS, which only the
@@ -57,11 +59,19 @@ class ActivationRecorder(LayerIntervention):
         resolves and pins the window here, and this recorder stays free of
         template knowledge. Unset (the default) keeps the historical
         length-only behavior for the two shape-only positions, byte-for-byte.
+
+        ``indices`` pins a CONTENT-MASKED pool: the exact positions to average,
+        for a reading whose window is not contiguous ("mean content from token
+        n" skips the template's structure). ``None`` — every caller before
+        2026-08-25 and every position but that one — reads the contiguous
+        window exactly as before.
         """
         self._window = (start, end if end is not None else -1)
+        self._indices = tuple(int(i) for i in indices) if indices else None
 
     def clear_window(self) -> None:
         self._window = None
+        self._indices = None
 
     def apply(self, h: torch.Tensor, layer: int, offset: int) -> torch.Tensor:
         if layer not in self._layers:
@@ -77,9 +87,22 @@ class ActivationRecorder(LayerIntervention):
             start_index = length - 1
             end_index = length
 
-        # `h[0, start:length, :]` is the same tensor `h[0, start:, :]` was, so
-        # the pooled-reading numbers are unchanged for every legacy recipe.
-        rows = h[0, start_index:end_index, :].to(torch.float32)   # [positions, hidden]
+        if self._indices is not None:
+            # A content-masked pool: gather exactly the pinned positions. The
+            # window still bounds them, so a pass that came out shorter than
+            # the resolution expected drops the out-of-range tail rather than
+            # indexing past the end.
+            kept = [i for i in self._indices if i < length]
+            if not kept:
+                return h
+            index = torch.tensor(kept, device=h.device, dtype=torch.long)
+            rows = h[0].index_select(0, index).to(torch.float32)
+            start_index = kept[0]
+        else:
+            # `h[0, start:length, :]` is the same tensor `h[0, start:, :]` was,
+            # so the pooled-reading numbers are unchanged for every legacy
+            # recipe.
+            rows = h[0, start_index:end_index, :].to(torch.float32)   # [positions, hidden]
         pooled = rows.mean(dim=0)                                  # [hidden]
         norms = torch.sqrt(rows.square().sum(dim=-1)).mean()      # scalar
         self._captures.append(Capture(

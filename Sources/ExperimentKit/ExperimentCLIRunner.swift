@@ -2006,7 +2006,9 @@ public struct ExperimentCLIRunner: Sendable {
                         + "[--corpus a,b,c (emotionGrandMean: extra corpus members)] "
                         + "[--project-neutral K (legacy; verification-blocked)] "
                         + "[\(ExtractionRendering.declarationFlag) "
-                        + "'{\"mode\":\"chatTemplate\"}']")
+                        + "'{\"mode\":\"chatTemplate\"}'] "
+                        + "[\(ReadingPosition.declarationFlag) "
+                        + "'last content token']")
             }
             // HOW the stimulus reaches the model, declared at ATTACH — the
             // writer the option shipped without. Parsed BEFORE the manifest is
@@ -2051,8 +2053,21 @@ public struct ExperimentCLIRunner: Sendable {
                 }
                 options.readingPosition = .meanFromToken(token)
             }
+            // WHERE in the stimulus the residual stream is read, declared at
+            // ATTACH — the study-path writer the vocabulary shipped without.
+            // Parsed here so a conflicting or unknown declaration is exit 64
+            // naming the flag and the vocabulary; the store re-runs every rule
+            // (one definition), so a panel caller gets the same refusals.
+            let declaredPosition = try ExperimentStore.declaredReadingPosition(
+                flag(ReadingPosition.declarationFlag),
+                poolFromToken: flag("--pool-from").flatMap(Int.init),
+                extractionRendering: declaredRendering)
+            if let declaredPosition {
+                options.readingPosition = declaredPosition
+            }
             let flagValues = ["--project-neutral", "--method", "--pool-from", "--corpus",
-                              "--reference", ExtractionRendering.declarationFlag]
+                              "--reference", ExtractionRendering.declarationFlag,
+                              ReadingPosition.declarationFlag]
                 .compactMap(flag)
             let concepts = args.dropFirst(2).filter { !$0.hasPrefix("--") }
                 .filter { !flagValues.contains($0) }
@@ -2074,6 +2089,7 @@ public struct ExperimentCLIRunner: Sendable {
                     corpusConcepts: corpusMembers,
                     poolFromToken: flag("--pool-from").flatMap(Int.init),
                     extractionRendering: declaredRendering,
+                    readingPosition: declaredPosition,
                     into: &manifest)
                 for concept in concepts {
                     let hash = manifest.grandMeanCorpus?.hashes[concept] ?? ""
@@ -2096,6 +2112,7 @@ public struct ExperimentCLIRunner: Sendable {
                         poolFromToken: flag("--pool-from").flatMap(Int.init),
                         reference: flag("--reference"),
                         extractionRendering: declaredRendering,
+                        readingPosition: flag(ReadingPosition.declarationFlag),
                         experimentName: manifest.name)
                     if let ref = updated.concepts.first(where: { $0.name == concept }) {
                         pinnedLines.append(
@@ -2155,6 +2172,14 @@ public struct ExperimentCLIRunner: Sendable {
                 pinnedLines.append(
                     "declared extractionRendering \(declaredRendering.label)")
                 payload["extractionRendering"] = .string(declaredRendering.label)
+            }
+            // Same rule for the position: reported only when DECLARED, because
+            // an absent declaration keeps the recipe's default and the
+            // envelope must not imply a choice nobody made.
+            if let declaredPosition {
+                pinnedLines.append(
+                    "declared readingPosition \(declaredPosition.label)")
+                payload["readingPosition"] = .string(declaredPosition.label)
             }
             if let hash = ExperimentStore.pinNeutralCorpus(into: &manifest) {
                 pinnedLines.append(

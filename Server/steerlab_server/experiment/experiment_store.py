@@ -265,23 +265,82 @@ def create(name: str, *, model_id: str, revision: str | None = None,
     return manifest
 
 
-def _reading_position_codable(method_opts: dict) -> dict:
+def _reading_position_codable(method_opts: dict, position=None) -> dict:
+    """The manifest's ``readingPosition`` block — Swift's synthesized Codable
+    enum form, which is what every consumer already reads.
+
+    A DECLARED position (2026-08-25) encodes generically from its identity
+    mode and parameter, so ``--reading-position 'mean from token 50'`` and
+    ``--pool-from 50`` write the identical bytes: one recipe, one encoding.
+    With none declared the legacy pool-only branch runs unchanged, which is
+    what keeps every existing manifest byte-identical.
+    """
+    if position is not None:
+        parameter = position.identity_parameter
+        return {position.identity_mode:
+                ({} if parameter is None else {"_0": parameter})}
     pool = method_opts.get("poolFromToken")
     if pool not in (None, "", 0, "0"):
         return {"meanFromToken": {"_0": int(pool)}}
     return {"lastToken": {}}
 
 
-def _options_block(method: str, pool_from_token, rendering_block: dict | None) -> dict:
+def _options_block(method: str, pool_from_token, rendering_block: dict | None,
+                   position=None) -> dict:
     """One concept pin's ``options``. The rendering key is written ONLY when a
     chat-template rendering was declared, so an undeclared (or explicitly raw)
-    attach produces the exact bytes it always did."""
+    attach produces the exact bytes it always did. A declared reading position
+    wins over the method's pool default, which is the point of declaring it."""
     options = {"method": method,
                "readingPosition": _reading_position_codable(
-                   {"poolFromToken": pool_from_token})}
+                   {"poolFromToken": pool_from_token}, position)}
     if rendering_block is not None:
         options["extractionRendering"] = rendering_block
     return options
+
+
+def _declared_reading_position(declaration, pool_from_token,
+                               rendering_block: dict | None, method: str):
+    """The reading position an attach pins, or ``None`` for the default.
+
+    Every refusal fires HERE, before a manifest is loaded or written, and in
+    THIS order — most specific first, so the message names the thing that is
+    actually wrong:
+
+    - the two spellings together (:func:`reading_position.declaration_conflict`);
+    - a label this engine does not know (typed, naming the vocabulary);
+    - any declaration at all on a PINNED ARTIFACT, which carries the position
+      it was read at in its own sidecar (checked before the rendering rule
+      below, because a pin has no rendering and would otherwise collect the
+      wrong refusal);
+    - a TEMPLATE-AWARE role under a raw rendering — the declaration-time half
+      of a refusal that used to arrive only at extraction. ``rendering_block``
+      is ``None`` for both an absent and an explicitly-raw declaration, which
+      is exactly the condition those roles cannot resolve under, so the pin is
+      answered while the person is still typing.
+    """
+    from ..steering import reading_position as rp
+
+    conflict = rp.declaration_conflict(declaration, pool_from_token)
+    if conflict:
+        raise ExperimentStoreError(conflict)
+    position = rp.parse_declaration(declaration)
+    if position is None:
+        return None
+    if method == "pinnedArtifact":
+        raise ExperimentStoreError(
+            "a pinned artifact carries the reading position it was EXTRACTED "
+            "at in its own sidecar — declaring "
+            f"{rp.DECLARATION_FLAG} on the pin would claim a reading the "
+            "bytes do not have. Repair: drop "
+            f"{rp.DECLARATION_FLAG}, or attach the concept as a recipe "
+            "(--method meanDifference|emotionGrandMean|…) if you mean to "
+            "re-derive it at that position")
+    if rendering_block is None:
+        refusal = rp.templated_rendering_refusal(position)
+        if refusal:
+            raise ExperimentStoreError(refusal)
+    return position
 
 
 def _extraction_rendering_block(declaration) -> dict | None:
@@ -308,6 +367,7 @@ def attach(name: str, concepts: list[str], *, method: str = "meanDifference",
            source_concept: str | None = None,
            eval_run: str | None = None,
            extraction_rendering=None,
+           reading_position: str | None = None,
            root: str | None = None) -> dict:
     """Pin concepts into a draft manifest.
 
@@ -323,6 +383,16 @@ def attach(name: str, concepts: list[str], *, method: str = "meanDifference",
     hashes instead of a stimulus recipe (see :func:`attach_artifact`); it
     takes exactly one concept and ``vector_artifact``.
 
+    ``reading_position`` (2026-08-25) pins WHERE in the stimulus the residual
+    stream is read, as one of the cross-engine LABELS (``"last content
+    token"``, ``"content offset 2"``, ``"mean content from token 0"``, …). It
+    is the study-path writer for the whole vocabulary: before it, a manifest
+    could pin only ``lastToken`` or — through ``pool_from_token`` —
+    ``meanFromToken``, so every other position was reachable only from the
+    ad-hoc ``/api/extract`` route, which pins nothing. Absent keeps the
+    default byte-identically; ``pool_from_token`` is the legacy spelling of
+    one position and the two may not both be declared.
+
     Measurement-side pin (2026-07-13): every attach also stamps
     ``validationHash`` — SHA-256 of the concept's held-out validation.jsonl,
     or null when it has none — into the concept's pin block, so the file the
@@ -332,6 +402,8 @@ def attach(name: str, concepts: list[str], *, method: str = "meanDifference",
     # Parsed FIRST, before anything is read or written: a malformed or
     # unsupportable declaration must not half-attach a study.
     rendering_block = _extraction_rendering_block(extraction_rendering)
+    position = _declared_reading_position(
+        reading_position, pool_from_token, rendering_block, method)
     if method == "pinnedArtifact":
         if rendering_block is not None:
             raise ExperimentStoreError(
@@ -391,7 +463,8 @@ def attach(name: str, concepts: list[str], *, method: str = "meanDifference",
         for concept in concepts:
             refs[concept] = {
                 "name": concept, "stimulusSetHash": hashes[concept],
-                "options": _options_block(method, pool, rendering_block),
+                "options": _options_block(method, pool, rendering_block,
+                                          position),
                 "validationHash": concept_validation_hash(
                     concept, paired=False, root=root),
             }
@@ -423,7 +496,8 @@ def attach(name: str, concepts: list[str], *, method: str = "meanDifference",
                     "prompts/emotions/")
             refs[concept] = {
                 "name": concept, "stimulusSetHash": live,
-                "options": _options_block(method, pool, rendering_block),
+                "options": _options_block(method, pool, rendering_block,
+                                          position),
                 "designatedReference": {"name": reference, "hash": ref_hash},
                 "validationHash": concept_validation_hash(
                     concept, paired=False, root=root),
@@ -435,7 +509,7 @@ def attach(name: str, concepts: list[str], *, method: str = "meanDifference",
             refs[concept] = {
                 "name": concept, "stimulusSetHash": stimuli.hash,
                 "options": _options_block(method, pool_from_token,
-                                          rendering_block),
+                                          rendering_block, position),
                 "validationHash": concept_validation_hash(
                     concept, paired=True, root=root),
             }

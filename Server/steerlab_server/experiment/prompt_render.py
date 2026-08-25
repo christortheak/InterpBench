@@ -330,6 +330,98 @@ def render(tokenizer, prompt: str, *, model_id: str,
     return RenderedPrompt(text=text, input_ids=list(ids), prompt_token_count=len(ids))
 
 
+# --- the ASSISTANT VOICE (extraction only) -----------------------------------
+
+#: The throwaway user turn the assistant-voice construction renders WITH and
+#: then subtracts. It exists only because chat templates are written around a
+#: conversation (Gemma 3's raises outright on an assistant-first history — see
+#: :func:`conversation_constraints`), and it never reaches the model: the
+#: rendered prefix that contains it is removed by string subtraction below.
+#: A single ASCII letter, so no family's template can transform it.
+ASSISTANT_VOICE_PROBE_TURN = "x"
+
+
+class AssistantVoiceUnsupported(ValueError):
+    """This family's chat template cannot express the assistant-voice render.
+
+    Typed and carrying a repair, per house style — never a silent fallback to
+    the user voice, which would answer a different question than the one the
+    recipe declared.
+    """
+
+
+def render_assistant_turn(tokenizer, text: str, *, model_id: str,
+                          qwen_thinking_enabled: bool = False) -> RenderedPrompt:
+    """Render one stimulus as the model's OWN OUTPUT — the assistant voice.
+
+    THE EXACT RENDERED FORM. On Gemma 3 this produces, and nothing else::
+
+        <bos><start_of_turn>model\\n{stimulus}<end_of_turn>\\n
+
+    On a ChatML family (Qwen 3)::
+
+        <|im_start|>assistant\\n{stimulus}<|im_end|>\\n
+
+    — the template's own assistant-turn markers wrapping the stimulus, with NO
+    preceding user content, and the family's BOS added exactly once by the
+    tokenizer's defaults (the template's own BOS lives in the prefix this
+    construction subtracts, so ``add_special_tokens=True`` restores one and
+    only one).
+
+    HOW, and why not otherwise. Chat templates are functions of a
+    CONVERSATION, and most of them refuse an assistant-first one outright
+    (Gemma 3 raises ``Conversation roles must alternate…``). Hand-writing the
+    markers per family would be a SECOND rendering definition, which is the
+    exact drift ``extractionRendering`` exists to make impossible. So the
+    turn's markers are obtained from the template itself, by subtraction:
+
+    1. render ``[user(probe)]`` with no generation prompt → ``prefix``;
+    2. render ``[user(probe), assistant(stimulus)]`` with no generation
+       prompt → ``full``;
+    3. ``full`` begins with ``prefix`` — everything after it is precisely the
+       assistant turn the template writes, markers included.
+
+    Injecting real user content instead of subtracting the probe would
+    confound the contrast the voice exists to isolate: the vector would carry
+    whatever the user turn said. The probe never reaches the model.
+
+    The Swift twin REFUSES this voice (``PromptRendering.assistantVoiceReason``):
+    MLXLMCommon's tokenizer bridge exposes only the generation-prompt form of
+    ``applyChatTemplate``, so step 1 is unavailable there and reconstructing it
+    by token arithmetic holds for Gemma but breaks on Qwen3's thinking
+    scaffold. A study that needs this voice extracts here.
+    """
+    template_kwargs = {}
+    if _is_qwen(model_id):
+        template_kwargs["enable_thinking"] = qwen_thinking_enabled
+    probe = [{"role": "user", "content": ASSISTANT_VOICE_PROBE_TURN}]
+    prefix = _apply_chat_template(
+        tokenizer, probe, model_id=model_id, tokenize=False,
+        add_generation_prompt=False, **template_kwargs)
+    full = _apply_chat_template(
+        tokenizer, probe + [{"role": "assistant", "content": text}],
+        model_id=model_id, tokenize=False, add_generation_prompt=False,
+        **template_kwargs)
+    if not isinstance(prefix, str) or not isinstance(full, str) \
+            or not full.startswith(prefix) or len(full) == len(prefix):
+        raise AssistantVoiceUnsupported(
+            f"the chat template for '{model_id}' does not render an assistant "
+            "turn as a suffix of the conversation before it, so the "
+            "assistant-voice construction cannot isolate the turn's own "
+            "markers — repair: extract this concept with voice 'user', or "
+            "with mode 'raw', and say in METHODS which voice the direction "
+            "came from (never let a voice fall back silently: the two voices "
+            "are different directions)")
+    rendered = full[len(prefix):]
+    # add_special_tokens=True, DELIBERATELY, and only here: the subtraction
+    # above removed the template's own leading BOS along with the probe turn,
+    # so the tokenizer's default re-adds exactly one. The user-voice path
+    # keeps add_special_tokens=False because there the template's BOS survives.
+    ids = tokenizer(rendered, add_special_tokens=True).input_ids
+    return RenderedPrompt(text=rendered, input_ids=list(ids),
+                          prompt_token_count=len(ids))
+
+
 # --- RepE reader scaffolds ---------------------------------------------------
 
 READER_RENDERING_CONVENTION = (

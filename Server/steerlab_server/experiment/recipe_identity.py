@@ -24,7 +24,11 @@ escaping). Top-level keys, in sorted order:
   {"addGenerationPrompt": bool, "mode": "chatTemplate",
   "qwenThinkingEnabled": bool, "systemPrompt": string|null} with every inner
   field explicit (an identity may not depend on a default a later version
-  could change).
+  could change), plus ``"voice": "assistant"`` — and ONLY for that voice. The
+  voice key follows the same absent-is-legacy rule one level down: every
+  chat-template recipe written before the voice existed rendered the user
+  voice, so an absent (or explicitly ``"user"``) voice adds nothing and keeps
+  those recipes' hashes exactly where they are.
 - "extractionMethod": the substrate-independent method name in the MANIFEST
   vocabulary ("meanDifference" | "lat" | "emotionGrandMean"). Sidecar
   recipeMethod values map caaMeanDifference→meanDifference, repeLAT→lat,
@@ -51,12 +55,16 @@ escaping). Top-level keys, in sorted order:
   otherwise.
 - "readingPosition": {"mode": "lastToken" | "meanFromToken" |
   "offsetFromEnd" | "lastContentToken" | "turnCloseToken" |
-  "postInstruction", "parameter": int|null} — the pool-from token index for
-  meanFromToken, the backward offset for offsetFromEnd, the post-instruction
-  index for postInstruction, null for the rest. ``offsetFromEnd`` with
-  parameter 0 canonicalizes to ``{"mode": "lastToken", "parameter": null}``:
-  it names the identical token, so declaring it that way must not split an
-  identity away from an otherwise-identical last-token recipe.
+  "postInstruction" | "contentOffset" | "meanContentFromToken",
+  "parameter": int|null} — the pool-from token index for meanFromToken, the
+  backward offset for offsetFromEnd, the post-instruction index for
+  postInstruction, the backward CONTENT offset for contentOffset, the
+  pool-from CONTENT index for meanContentFromToken, null for the rest.
+  ``offsetFromEnd`` with parameter 0 canonicalizes to ``{"mode": "lastToken",
+  "parameter": null}`` and ``contentOffset`` with parameter 0 to
+  ``{"mode": "lastContentToken", "parameter": null}``: each names the
+  identical token, so declaring it that way must not split an identity away
+  from an otherwise-identical recipe.
 - "residualNormSource": the canonical source token ("neutral-corpus" |
   "extraction-stimuli" | "neutral-token-bank"). A sidecar value is
   canonicalized by truncating at the first space (the Swift experiment writer
@@ -256,13 +264,17 @@ def canonical_reading(position) -> tuple[str, int | None]:
 
     ``offsetFromEnd(0)`` canonicalizes to ``("lastToken", None)``: it names
     the identical token, so declaring the offset form must not split an
-    identity away from an otherwise-identical last-token recipe. Swift twin:
+    identity away from an otherwise-identical last-token recipe.
+    ``contentOffset(0)`` canonicalizes to ``("lastContentToken", None)`` for
+    exactly the same reason, in content coordinates. Swift twin:
     ``RecipeIdentity.canonicalReading``.
     """
     mode = position.identity_mode
     parameter = position.identity_parameter
     if mode == "offsetFromEnd" and parameter == 0:
         return ("lastToken", None)
+    if mode == "contentOffset" and parameter == 0:
+        return ("lastContentToken", None)
     return (mode, parameter)
 
 

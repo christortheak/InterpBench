@@ -40,6 +40,21 @@ import MLXLMCommon
 /// Qwen's `enable_thinking`) is derived from the pinned model id by
 /// ``PromptRendering``, the single definition both extraction and generation
 /// call, so it is not re-declared here.
+///
+/// ## The voice (2026-08-25, maintainer ruling)
+///
+/// `voice` names WHOSE TURN the stimulus is rendered as: `"user"` (the model
+/// READS it — the legacy behavior) or `"assistant"` (the model PRODUCED it).
+/// **Absent ≡ `"user"` ≡ today's bytes**, and an explicit `"user"`
+/// canonicalizes away exactly as an explicit `{"mode": "raw"}` does, so no
+/// existing manifest, sidecar, freeze hash or recipe identity moves.
+///
+/// **This engine REFUSES the assistant voice** (see
+/// ``PromptRendering/assistantVoiceReason``) and names the server engine, the
+/// `addGenerationPrompt: false` precedent exactly. It still UNDERSTANDS the
+/// voice everywhere else — decoding it, hashing it into a recipe identity,
+/// diffing it — because a Mac that promotes an artifact the server extracted
+/// under the assistant voice must compute the identical identity for it.
 public struct ExtractionRendering: Codable, Sendable, Equatable {
 
     public enum Mode: String, Codable, Sendable, CaseIterable {
@@ -51,13 +66,29 @@ public struct ExtractionRendering: Codable, Sendable, Equatable {
         case chatTemplate
     }
 
+    /// WHOSE TURN the stimulus is rendered as. Server twin:
+    /// `extraction_rendering.VOICES`.
+    public enum Voice: String, Codable, Sendable, CaseIterable {
+        /// The stimulus is what the model READS. The legacy voice, and what
+        /// an absent `voice` means.
+        case user
+        /// The stimulus is the model's OWN OUTPUT — the template's
+        /// assistant-turn markers around it, no preceding user content.
+        case assistant
+    }
+
     public var mode: Mode
     /// chatTemplate only. nil resolves to `true` — what generation does.
+    /// Meaningless (and refused) under the assistant voice.
     public var addGenerationPrompt: Bool?
     /// chatTemplate only. nil resolves to `false`.
     public var qwenThinkingEnabled: Bool?
     /// chatTemplate only. The system text included in the render, if any.
+    /// Meaningless (and refused) under the assistant voice.
     public var systemPrompt: String?
+    /// chatTemplate only. nil resolves to `.user` — and STAYS nil there, so a
+    /// recipe that never heard of the voice keeps its bytes.
+    public var voice: Voice?
 
     /// The legacy rendering, and the value an absent declaration means.
     public static let raw = ExtractionRendering(mode: .raw)
@@ -65,31 +96,49 @@ public struct ExtractionRendering: Codable, Sendable, Equatable {
     public static func chatTemplate(
         addGenerationPrompt: Bool = true,
         qwenThinkingEnabled: Bool = false,
-        systemPrompt: String? = nil
+        systemPrompt: String? = nil,
+        voice: Voice? = nil
     ) -> ExtractionRendering {
         ExtractionRendering(
             mode: .chatTemplate,
             addGenerationPrompt: addGenerationPrompt,
             qwenThinkingEnabled: qwenThinkingEnabled,
-            systemPrompt: systemPrompt)
+            systemPrompt: systemPrompt,
+            voice: voice)
     }
 
     public init(
         mode: Mode = .raw,
         addGenerationPrompt: Bool? = nil,
         qwenThinkingEnabled: Bool? = nil,
-        systemPrompt: String? = nil
+        systemPrompt: String? = nil,
+        voice: Voice? = nil
     ) {
         self.mode = mode
         self.addGenerationPrompt = addGenerationPrompt
         self.qwenThinkingEnabled = qwenThinkingEnabled
         self.systemPrompt = systemPrompt
+        self.voice = voice
     }
 
     public var isRaw: Bool { mode == .raw }
 
+    /// What the renderer actually speaks in. nil ≡ `.user`.
+    public var resolvedVoice: Voice { voice ?? .user }
+
+    public var isAssistantVoice: Bool { resolvedVoice == .assistant }
+
     /// What the renderer actually passes for `add_generation_prompt`.
-    public var resolvedAddGenerationPrompt: Bool { addGenerationPrompt ?? true }
+    ///
+    /// `false` under the ASSISTANT voice, always: that construction renders a
+    /// COMPLETED assistant turn, which is the no-generation-prompt form of the
+    /// template call. The declaration refuses the key there (it is not a
+    /// choice), but the recipe identity still records what the render did —
+    /// and it must record the same thing the server does, or a Mac and the
+    /// server would compute two identities for one artifact.
+    public var resolvedAddGenerationPrompt: Bool {
+        isAssistantVoice ? false : (addGenerationPrompt ?? true)
+    }
 
     /// What the renderer actually passes for the Qwen thinking switch.
     public var resolvedQwenThinkingEnabled: Bool { qwenThinkingEnabled ?? false }
@@ -98,6 +147,13 @@ public struct ExtractionRendering: Codable, Sendable, Equatable {
     /// `ExtractionRendering.label`).
     public var label: String {
         guard !isRaw else { return "raw" }
+        if isAssistantVoice {
+            // addGenerationPrompt is not a knob under this voice, so naming
+            // it in a human label would invite a reader to look for it.
+            var bits = ["voice=assistant"]
+            if resolvedQwenThinkingEnabled { bits.append("qwenThinkingEnabled=true") }
+            return "chatTemplate (" + bits.joined(separator: ", ") + ")"
+        }
         var bits = ["addGenerationPrompt=\(resolvedAddGenerationPrompt)"]
         if resolvedQwenThinkingEnabled { bits.append("qwenThinkingEnabled=true") }
         if systemPrompt?.isEmpty == false { bits.append("systemPrompt=set") }
@@ -108,8 +164,20 @@ public struct ExtractionRendering: Codable, Sendable, Equatable {
     /// never has to know this type's defaults to know what happened. nil for
     /// a raw rendering — absent is the legacy meaning, and a raw artifact's
     /// sidecar bytes must stay identical to what this engine always wrote.
+    ///
+    /// The USER voice stamps no `voice` key (absent ≡ user); the ASSISTANT
+    /// voice stamps the key and OMITS `addGenerationPrompt`, which is refused
+    /// at declaration time as meaningless there — stamping the internal
+    /// `false` would be an artifact claiming a choice nobody made. Server
+    /// twin: `ExtractionRendering.to_dict`.
     public var stamp: ExtractionRendering? {
         guard !isRaw else { return nil }
+        if isAssistantVoice {
+            return ExtractionRendering(
+                mode: .chatTemplate,
+                qwenThinkingEnabled: resolvedQwenThinkingEnabled,
+                voice: .assistant)
+        }
         return ExtractionRendering(
             mode: .chatTemplate,
             addGenerationPrompt: resolvedAddGenerationPrompt,
@@ -143,6 +211,29 @@ extension ExtractionRendering {
     /// This engine's name in a refusal about an unsupportable declaration
     /// (server twin: `extraction_rendering.ENGINE`).
     public static let declarationEngine = "swift-mlx"
+
+    /// Refusal text shared VERBATIM with the server twin
+    /// (`extraction_rendering.ASSISTANT_VOICE_GENERATION_PROMPT_REASON`).
+    /// A MALFORMED declaration on both engines, so it is checked before the
+    /// engine-asymmetry refusal below: retyping without the key is the first
+    /// repair, and only then does the question of which engine can render it
+    /// arise.
+    public static let assistantVoiceGenerationPromptReason =
+        "extractionRendering declares voice 'assistant' together with "
+        + "addGenerationPrompt: under the assistant voice the stimulus IS the "
+        + "generation, so there is no generation prompt to add or withhold and "
+        + "the key would reach nothing — repair: drop addGenerationPrompt, or "
+        + "declare voice 'user' if you meant the model READING the stimulus"
+
+    /// Refusal text shared VERBATIM with the server twin
+    /// (`extraction_rendering.ASSISTANT_VOICE_SYSTEM_PROMPT_REASON`).
+    public static let assistantVoiceSystemPromptReason =
+        "extractionRendering declares voice 'assistant' together with a "
+        + "systemPrompt: the assistant-voice construction renders the assistant "
+        + "turn ALONE, with no preceding turn for system text to live in "
+        + "(injected context would confound the very contrast the voice exists "
+        + "to isolate) — repair: drop systemPrompt, or declare voice 'user' if "
+        + "the model is meant to read the stimulus under that system prompt"
 
     /// A declaration this engine will not accept. Typed and carrying a
     /// repair, per house style — the CLI turns it into a malformed-invocation
@@ -256,11 +347,49 @@ extension ExtractionRendering {
             }
             systemPrompt = text
         }
+        var voice: Voice?
+        if let declaredVoice = object["voice"], !(declaredVoice is NSNull) {
+            guard let text = declaredVoice as? String,
+                let parsed = Voice(rawValue: text)
+            else {
+                throw DeclarationError(
+                    reason: "extraction rendering voice '\(declaredVoice)' is "
+                        + "not supported by the \(declarationEngine) engine",
+                    repair: "declare one of "
+                        + Voice.allCases.map(\.rawValue).joined(separator: ", ")
+                        + " (absent means '\(Voice.user.rawValue)', the legacy "
+                        + "voice: the stimulus is what the model reads)")
+            }
+            voice = parsed
+        }
+        if voice == .assistant {
+            // MALFORMED ON BOTH ENGINES, and therefore answered before the
+            // engine question below: these parameters reach nothing under this
+            // voice, and a declaration that looks like a recipe axis but does
+            // nothing is the failure this option exists to end. Twin texts.
+            guard addGenerationPrompt == nil else {
+                throw DeclarationError(
+                    reason: assistantVoiceGenerationPromptReason,
+                    repair: "drop addGenerationPrompt, or declare voice 'user'")
+            }
+            guard systemPrompt == nil else {
+                throw DeclarationError(
+                    reason: assistantVoiceSystemPromptReason,
+                    repair: "drop systemPrompt, or declare voice 'user'")
+            }
+            // THE ENGINE ASYMMETRY, ANSWERED AT PARSE TIME (the
+            // addGenerationPrompt-false precedent, one step further).
+            throw DeclarationError(
+                reason: PromptRendering.assistantVoiceReason,
+                repair: "extract this concept on the python-hf-transformers "
+                    + "engine, or declare \"voice\": \"user\" here")
+        }
         let rendering = ExtractionRendering(
             mode: .chatTemplate,
             addGenerationPrompt: addGenerationPrompt,
             qwenThinkingEnabled: qwenThinkingEnabled,
-            systemPrompt: systemPrompt)
+            systemPrompt: systemPrompt,
+            voice: voice)
         // THE ENGINE ASYMMETRY, ANSWERED AT PARSE TIME. This engine cannot
         // render without a generation prompt (see `PromptRendering.tokenIDs`),
         // and the honest moment to say so is while the person is still typing
@@ -355,6 +484,36 @@ public enum PromptRendering {
     /// ``ExtractionRendering/declared(object:)``, which refuses the form the
     /// moment someone types it rather than letting a manifest carry it to a
     /// GPU. One string, so the two can never drift into two explanations.
+    /// THE OTHER ENGINE ASYMMETRY, said once, for the same two callers:
+    /// ``ExtractionRendering/declared(object:)`` (which refuses the voice the
+    /// moment it is typed) and ``tokenIDs(tokenizer:modelID:text:rendering:)``
+    /// (the guard that can never be reached through a declaration, and exists
+    /// so a hand-built rendering cannot slip past either).
+    ///
+    /// WHY THIS ENGINE CANNOT. The assistant voice needs the template's own
+    /// assistant-turn markers around the stimulus and NOTHING before them,
+    /// which the server obtains by rendering the conversation with and
+    /// without the turn (`add_generation_prompt=False` both times) and
+    /// subtracting the strings. MLXLMCommon's tokenizer bridge — the one a
+    /// loaded `ModelContext` hands us — exposes only the generation-prompt
+    /// form, and only as token ids: the first render is unavailable, and
+    /// reconstructing the turn by id arithmetic holds for Gemma 3 (whose
+    /// generation prompt IS the assistant turn's opening) and breaks for
+    /// Qwen 3, whose generation prompt injects a thinking scaffold the
+    /// assistant turn does not carry. Rather than render the WRONG sequence
+    /// on some families and stamp that the recipe asked for the assistant
+    /// voice, the form is a named refusal.
+    public static let assistantVoiceReason =
+        "extractionRendering voice 'assistant' is not available on the "
+        + "swift-mlx engine: MLXLMCommon's tokenizer bridge exposes only the "
+        + "generation-prompt form of applyChatTemplate, so a COMPLETED "
+        + "assistant turn cannot be rendered here, and reconstructing one by "
+        + "token arithmetic holds for Gemma 3 but breaks on Qwen 3's thinking "
+        + "scaffold. Repair: extract this concept on the "
+        + "python-hf-transformers engine, which supports it, or declare voice "
+        + "'user' here — never let it fall back, because the two voices are "
+        + "different directions, not two spellings of one."
+
     public static let addGenerationPromptFalseReason =
         "addGenerationPrompt false is not available through MLXLMCommon's "
         + "tokenizer bridge, which exposes only the generation-prompt form of "
@@ -397,6 +556,9 @@ public enum PromptRendering {
         rendering: ExtractionRendering
     ) throws -> [Int] {
         guard !rendering.isRaw else { return tokenizer.encode(text: text) }
+        guard !rendering.isAssistantVoice else {
+            throw UnsupportedForm(reason: assistantVoiceReason)
+        }
         guard rendering.resolvedAddGenerationPrompt else {
             throw UnsupportedForm(reason: addGenerationPromptFalseReason)
         }
