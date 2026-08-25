@@ -231,6 +231,8 @@ public enum CLIFlagVocabulary {
         "remote fetch --out": "Download into this directory (default `.`).",
         "remote import --out": "Download into this directory (default .steerlab-downloads).",
         "docs cli-reference --path": "The document to read or rewrite.",
+        "cluster controller start --allow-controller-start":
+            "Accepted and ignored: typing this verb IS the authorization.",
         "cluster sites export --out": "Write the profile to this file.",
         "cluster sites import --force":
             "Replace a site the registry already holds (default: refuse).",

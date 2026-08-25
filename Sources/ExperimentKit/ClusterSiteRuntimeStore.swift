@@ -43,6 +43,28 @@ public struct ClusterSiteRuntimeState: Codable, Sendable, Equatable {
     /// and a site that arrived from a pull with no slot yet simply sorts after
     /// the ordered ones, by id.
     public var order: Int?
+    /// The `sourceRevision` of the payload THIS MACHINE last pushed to the
+    /// site — the deploy INTENT, and the identity the staleness gate compares
+    /// the deployed manifest against when one is recorded.
+    ///
+    /// Per machine, and never in `Sites/`: it is a fact about what this Mac
+    /// did, not about the cluster. Recording it is what lets `cluster status`
+    /// tell "the engine is older than my app bundle" (push) apart from "the
+    /// engine is NEWER than my app bundle because I deployed it from a
+    /// generated payload" (nothing is wrong) — the 2026-08-24 field report's
+    /// highest-priority finding, where the bundle-only comparison offered
+    /// `--allow-push` as the repair for a forward skew and would have rolled
+    /// the engine back.
+    public var pushedPayloadRevision: String?
+    /// The `BUILD_COMMIT` stamp that same push wrote on the far side. The dev
+    /// (no-manifest) comparison reads the stamp, so intent for THAT path is
+    /// the stamp, not the manifest revision — they can differ when a payload
+    /// carries a manifest and sits in a checkout.
+    public var pushedBuildStamp: String?
+    /// When that push landed. Reported, never compared: two revisions with no
+    /// common repository cannot be ordered, which is why intent is recorded
+    /// rather than inferred.
+    public var pushedPayloadAt: Date?
     /// When this machine first saw the site, and when it last wrote its file.
     public var firstSeenAt: Date?
     public var updatedAt: Date?
@@ -51,6 +73,8 @@ public struct ClusterSiteRuntimeState: Codable, Sendable, Equatable {
     public init(
         lastEndpoint: String? = nil, lastServerBuild: String? = nil,
         entryID: UUID? = nil, aliasEntryIDs: [UUID] = [], order: Int? = nil,
+        pushedPayloadRevision: String? = nil, pushedBuildStamp: String? = nil,
+        pushedPayloadAt: Date? = nil,
         firstSeenAt: Date? = nil, updatedAt: Date? = nil,
         lastConnectedAt: Date? = nil
     ) {
@@ -59,6 +83,9 @@ public struct ClusterSiteRuntimeState: Codable, Sendable, Equatable {
         self.entryID = entryID
         self.aliasEntryIDs = aliasEntryIDs
         self.order = order
+        self.pushedPayloadRevision = pushedPayloadRevision
+        self.pushedBuildStamp = pushedBuildStamp
+        self.pushedPayloadAt = pushedPayloadAt
         self.firstSeenAt = firstSeenAt
         self.updatedAt = updatedAt
         self.lastConnectedAt = lastConnectedAt
@@ -73,6 +100,12 @@ public struct ClusterSiteRuntimeState: Codable, Sendable, Equatable {
         aliasEntryIDs =
             try container.decodeIfPresent([UUID].self, forKey: .aliasEntryIDs) ?? []
         order = try container.decodeIfPresent(Int.self, forKey: .order)
+        pushedPayloadRevision = try container.decodeIfPresent(
+            String.self, forKey: .pushedPayloadRevision)
+        pushedBuildStamp = try container.decodeIfPresent(
+            String.self, forKey: .pushedBuildStamp)
+        pushedPayloadAt = try container.decodeIfPresent(
+            Date.self, forKey: .pushedPayloadAt)
         firstSeenAt = try container.decodeIfPresent(Date.self, forKey: .firstSeenAt)
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
         lastConnectedAt = try container.decodeIfPresent(
@@ -175,6 +208,31 @@ public struct ClusterSiteRuntimeStore: Sendable {
         document.sites[siteID] = state
         try write(document)
         return state
+    }
+
+    /// Record what a SUCCESSFUL push deployed — the site's intended engine
+    /// identity, from this machine.
+    ///
+    /// Called only after the bytes landed, and only with identities read out
+    /// of the payload that landed (its manifest's `sourceRevision`, and the
+    /// `BUILD_COMMIT` the same push stamped). A push that deployed neither is
+    /// recorded as neither: nothing here is ever invented, because a wrong
+    /// intent would license exactly the silent rollback this record exists to
+    /// prevent.
+    @discardableResult
+    public func recordPush(
+        siteID: String, payloadRevision: String?, buildStamp: String?,
+        at date: Date = Date()
+    ) throws -> ClusterSiteRuntimeState {
+        try update(siteID: siteID) { state in
+            if let payloadRevision, !payloadRevision.isEmpty {
+                state.pushedPayloadRevision = payloadRevision
+            }
+            if let buildStamp, !buildStamp.isEmpty {
+                state.pushedBuildStamp = buildStamp
+            }
+            state.pushedPayloadAt = date
+        }
     }
 
     public func remove(siteID: String) throws {

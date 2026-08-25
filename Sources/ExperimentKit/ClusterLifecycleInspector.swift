@@ -443,12 +443,20 @@ public struct ClusterLifecycleInspector: Sendable {
     /// Validation is remembered rather than re-run — it is a remote command
     /// whose answer only changes when the environment or the profile does,
     /// and the caller scopes it by the profile hash it was recorded against.
+    ///
+    /// `recordedDeployIntent` is the same shape of fact from the PER-MACHINE
+    /// runtime cache: what this Mac last pushed to the site. The payload
+    /// comparison prefers it over the app bundle's own identity, so a site
+    /// deployed from a generated payload reads `current` instead of offering a
+    /// push that would roll it back (2026-08-24 field report §2.1).
     public func observe(
         site: ClusterSiteRecord,
         configuration: ClusterProvisioningConfiguration,
         recordedControllerJobID: String? = nil,
         recordedValidation: ClusterProfileValidationObservation = .notRun,
         recordedBootstrapPlanHash: String? = nil,
+        recordedDeployIntent: ClusterProvisioningOperations.ClusterDeployIntent =
+            .init(),
         registrationDuplicates: Int = 1
     ) async -> ClusterObservedState {
         let profile = site.profile
@@ -492,7 +500,8 @@ public struct ClusterLifecycleInspector: Sendable {
         } else {
             // 2. Deployment identity, 3. bootstrap environment.
             state.payload = await operations.observePayload(
-                site: profile, configuration: configuration)
+                site: profile, configuration: configuration,
+                intent: recordedDeployIntent)
             state.bootstrap = await operations.observeBootstrap(
                 site: profile, configuration: configuration,
                 envFile: Self.envFile(for: configuration))

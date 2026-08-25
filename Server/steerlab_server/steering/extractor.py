@@ -150,6 +150,65 @@ def _encode(model: SteeredModel, text: str,
     return ids.to(model.device)
 
 
+#: What ``_encode``'s RAW branch reads: the stimulus string, through
+#: ``model.tokenizer(text)``. Nothing else. No chat template is applied, so no
+#: template PARAMETER — the family's system role, the generation prompt, Qwen's
+#: ``enable_thinking`` — can reach the forward pass at all. These are the
+#: manifest fields that describe a chat context and are therefore inert under
+#: raw extraction; keep this list in step with `_encode`.
+RAW_IGNORES_DECLARATIONS = ("promptMode", "systemPrompt", "qwenThinkingEnabled")
+
+
+def inert_declaration_advisory(
+        rendering: ExtractionRendering | None, *,
+        qwen_thinking_enabled: bool = False,
+        prompt_mode: str | None = None,
+        system_prompt: str | None = None) -> str | None:
+    """One loud line when a manifest declares chat context that raw extraction
+    provably ignores — or ``None``, which is the common case.
+
+    An ADVISORY, never a gate: a raw extraction under a chat-y manifest is
+    legal, is the historical default, and is what most studies want. What is
+    not fine is silence, because the declaration LOOKS like a recipe axis. Two
+    experiments differing only in ``qwenThinkingEnabled`` ran overnight on
+    2026-08-23 (jobs 47630881/47630882, 30 concepts each) and produced
+    byte-identical vectors with held-out probe AUCs matching to three decimals:
+    the think-vs-nothink comparison measured nothing, at the cost of two GPU
+    jobs, and a null that looks like a finding is the expensive failure mode.
+
+    The trigger is deliberately the DIFFERENTIATING declarations —
+    ``qwenThinkingEnabled: true`` or a study system prompt — and not
+    ``promptMode``, whose default (``chatAssistant``) would fire this on nearly
+    every experiment. An advisory channel that always speaks is one nobody
+    reads. When it does fire it names every inert declaration, promptMode
+    included, because the reader's next question is what else did not reach the
+    extraction.
+    """
+    if rendering is not None and not rendering.is_raw:
+        return None
+    from ..experiment import prompt_render
+
+    system = (system_prompt or "").strip()
+    if not qwen_thinking_enabled and not system:
+        return None
+    inert = []
+    if prompt_mode and prompt_mode != prompt_render.RAW_COMPLETION:
+        inert.append(f"promptMode {prompt_mode}")
+    if system:
+        inert.append("systemPrompt")
+    if qwen_thinking_enabled:
+        inert.append("qwenThinkingEnabled true")
+    return (
+        "extraction is running under RAW rendering, which tokenizes the "
+        "stimulus string alone — these declarations do not reach it: "
+        + ", ".join(inert)
+        + ". An experiment differing ONLY in them extracts byte-identical "
+        "vectors (measured 2026-08-23, 30 concepts, two GPU jobs). To make "
+        'them effective, declare an extractionRendering of {"mode": '
+        '"chatTemplate"} on the concepts\' recipe; to compare against raw, '
+        "keep this one and say so in METHODS.")
+
+
 @torch.no_grad()
 def activations_multi(model: SteeredModel, texts: list[str],
                       positions: list[ReadingPosition],

@@ -192,14 +192,25 @@ steerlab bundle import <file.tar.gz> --sha256 <digest>   # the separate step
 | `runner submit` | `POST /api/bundles/inspect`, then `POST /api/studies/submit-bundle` | `--bundle-sha` is checked against the runner's own inspect of `--bundle-path` **before** anything is submitted. Reports the job id, the runner's identity, and the digest |
 | `runner jobs [<id>]` | `GET /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel` | `--cancel` needs an id — this client will not cancel a runner's whole queue |
 | `runner logs <id>` | `GET /api/jobs/{id}` (`logTail`), `GET /api/jobs/{id}/stream` with `--follow` | the default is a **tail** and says so; `--follow` streams until the job is terminal |
-| `runner evidence <id> --out <file>` | `GET /api/bundles/download` | downloads to a **unique** temp file beside `--out` (`--temp` overrides), verifies the outer sha256 the job record reported, then commits with a **no-overwrite** primitive — a destination that appears mid-download is a `destinationExists` refusal, never a replacement. **Does not import** — it prints the exact `steerlab bundle import … --sha256 …` |
+| `runner evidence <id> --out <file>` | `GET /api/bundles/download` | downloads to a **unique** temp file beside `--out` (`--temp` overrides), verifies the outer sha256 the job record reported, then commits with a **no-overwrite** primitive — a destination that appears mid-download is a `destinationExists` refusal, never a replacement. An explicit `--temp` path is created **exclusively**: a file already there is a `tempPathExists` refusal, not a truncation. **Does not import** — it prints the exact `steerlab bundle import … --sha256 …` |
+
+The commit is `link` + `unlink`, which cannot overwrite and has no window in
+which a partial file wears the destination's name. One stated residual: on a
+filesystem without hardlinks (FAT/exFAT, some network mounts) the client falls
+back to an `O_EXCL` reservation and copies into it, so the destination is
+visible — empty, then partial — while the copy runs. It still cannot overwrite
+anything, and a failed copy removes it again; a reader who must be certain has
+the outer digest.
 
 Connection flags, identical on all six: `--runner <url>`, `--token-file
 <path>`, `--timeout <seconds>`, `--ca-bundle <path>`. A `--runner` URL must
 be plain `http`/`https` with a host and nothing else: embedded credentials
-(`user:pass@`), query strings, and fragments are refused
-(`runnerURLRefused`) — URL userinfo would otherwise flow into provenance
-and diagnostics, where bearer-token scrubbing cannot see it.
+(`user:pass@`), query strings, fragments, and a port that is not a number in
+1–65535 are all refused (`runnerURLRefused`) — URL userinfo would otherwise
+flow into provenance and diagnostics, where bearer-token scrubbing cannot see
+it. **These refusals name the category, never the value.** A token typed into
+`?token=…` or `#token=…` is not echoed back into the envelope, the log line, or
+your shell history; if one was, treat it as exposed and rotate it.
 
 #### `runner serve` — this machine as a managed local runner (Phase 3)
 
@@ -1549,7 +1560,7 @@ steerlab-cli cluster bootstrap plan [--bootstrap-partition <partition>] [--env-f
 steerlab-cli cluster bootstrap apply [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--plan-hash <sha256>] [--python-version <version>] [--remote-repo <path>] --site <id> [--squeue <command>]
 steerlab-cli cluster bootstrap status [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--remote-repo <path>] --site <id> [--squeue <command>]
 steerlab-cli cluster validate [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--remote-repo <path>] --site <id> [--squeue <command>]
-steerlab-cli cluster controller start [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--remote-repo <path>] [--render-only] --site <id> [--squeue <command>]
+steerlab-cli cluster controller start [--allow-controller-start] [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--remote-repo <path>] [--render-only] --site <id> [--squeue <command>]
 steerlab-cli cluster controller status [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--job-id <id>] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--remote-repo <path>] --site <id> [--squeue <command>]
 steerlab-cli cluster controller logs [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--follow] [--help] [--job-id <id>] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--remote-repo <path>] --site <id> [--squeue <command>]
 steerlab-cli cluster controller stop [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--job-id <id>] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--remote-repo <path>] --site <id> [--squeue <command>]
@@ -2028,12 +2039,12 @@ SHA-256.
 
 The shim's name is `steerlab-cli` — the binary's own. The short spelling
 `steerlab` belongs to the cross-platform Python **client** (§1.4), so the
-installer adds it as an alias only when nothing else on the machine answers to
-it: no client console script in `Server/.venv.nosync`, no `steerlab` on PATH,
-no existing `~/.local/bin/steerlab` it did not write itself (a foreign file
-there is never overwritten). `--short-name` opts in anyway, for a machine that
-will never install the client; when the alias is skipped, the installer says
-why.
+installer **never** writes it by default: `--short-name` is the only way to get
+the alias, and even then an existing `~/.local/bin/steerlab` it did not write
+itself is left alone. The default report says the alias was skipped, in one
+line. (The rule used to be conditional — "write it when nothing else answers to
+the name" — which cannot account for a client installed later, where the alias
+would then shadow the client's own console script by PATH order.)
 
 | Verb | What it does | Cost |
 |---|---|---|

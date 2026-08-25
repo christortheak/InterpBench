@@ -501,11 +501,8 @@ public enum WorkspaceRunImport {
             } catch {
                 return .failed(message: String(describing: error))
             }
-            let findings = verifyLanded(name, remote: remote, rules: rules, engine: engine)
-            let problems = findings.filter { finding in
-                if case .localOnly = finding { return false }
-                return true
-            }
+            let problems = Self.transferProblems(
+                verifyLanded(name, remote: remote, rules: rules, engine: engine))
             guard problems.isEmpty else {
                 return .verificationFailed(findings: problems.map(describe))
             }
@@ -555,15 +552,31 @@ public enum WorkspaceRunImport {
         } catch {
             return .failed(message: String(describing: error))
         }
-        let after = verifyLanded(name, remote: remote, rules: rules, engine: engine)
-        let remaining = after.filter { finding in
-            if case .localOnly = finding { return false }
-            return true
-        }
+        let remaining = Self.transferProblems(
+            verifyLanded(name, remote: remote, rules: rules, engine: engine))
         guard remaining.isEmpty else {
             return .verificationFailed(findings: remaining.map(describe))
         }
         return .imported(files: gaps.count, bytes: gaps.reduce(0) { $0 + $1.size })
+    }
+
+    /// The findings that indict a TRANSFER, from everything verification saw.
+    ///
+    /// ONE definition for both import paths (the fresh one and the gap-fill
+    /// one). They used to filter separately — and the 2026-08-24 repair pass
+    /// reported 175 violations where 17 were real, because a local-only file
+    /// and the count row it implied were judged on one path and not the other.
+    /// A file that is here and not on the cluster says nothing about whether
+    /// the bytes that ARE on the cluster arrived: scratch may have purged it,
+    /// a later stage may have written it, or (in every one of the 158 false
+    /// cases) our own import machinery wrote it.
+    static func transferProblems(
+        _ findings: [WorkspaceImportPolicy.Finding]
+    ) -> [WorkspaceImportPolicy.Finding] {
+        findings.filter { finding in
+            if case .localOnly = finding { return false }
+            return true
+        }
     }
 
     /// Both sides through `WorkspaceImportPolicy.verify`, which applies the

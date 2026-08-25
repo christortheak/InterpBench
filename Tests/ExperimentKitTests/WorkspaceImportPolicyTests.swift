@@ -356,16 +356,51 @@ struct WorkspaceImportVerificationTests {
         #expect(findings.contains { $0.isViolation })
     }
 
-    /// A count mismatch is stated in its own right, so a report can never say
-    /// "verified" over totals that disagree.
-    @Test func aCountMismatchIsReportedSeparately() {
-        // One extra local file that the remote does not have: counts differ,
-        // and nothing is a gap.
+    /// A local-only file is REPORTED and never counted against the transfer.
+    ///
+    /// It used to also produce a `remote 1, local 2` count row, which the
+    /// fresh-import path judged as a verification failure — 158 of them on
+    /// 2026-08-24, over correctly landed directories. A file that is here and
+    /// not on the cluster says nothing about whether the bytes that ARE on the
+    /// cluster arrived.
+    @Test func aLocalOnlyFileIsReportedButNeverACountMismatch() {
         let findings = WorkspaceImportPolicy.verify(
             remote: [stat("a.json", 10)],
             local: [stat("a.json", 10), stat("stray.json", 5)], exclusions: [])
-        #expect(findings.contains(.localOnly(relativePath: "stray.json")))
-        #expect(findings.contains(.countMismatch(remote: 1, local: 2)))
+        #expect(findings == [.localOnly(relativePath: "stray.json")])
+        #expect(findings.allSatisfy { !$0.isViolation })
+    }
+
+    /// …and the count row still fires for totals the per-file walk cannot
+    /// explain, which is the only thing counts were ever for.
+    @Test func totalsThePerFileWalkCannotExplainStillMismatch() {
+        // A duplicated path in an inventory: two local rows, one file.
+        let findings = WorkspaceImportPolicy.verify(
+            remote: [stat("a.json", 10)],
+            local: [stat("a.json", 10), stat("a.json", 10)], exclusions: [])
+        #expect(findings == [.countMismatch(remote: 1, local: 2)])
+    }
+
+    /// Junk and locally-generated artifacts are inert on BOTH sides: neither a
+    /// local-only row nor a count. `.DS_Store` is the sharpest case — the
+    /// import's own rules never carry it, so verification failing over it was
+    /// failing over a file the transfer is designed never to move.
+    @Test func junkAndLocallyGeneratedFilesAreInertOnBothSides() {
+        let findings = WorkspaceImportPolicy.verify(
+            remote: [stat("config.json", 10)],
+            local: [
+                stat("config.json", 10),
+                stat(".DS_Store", 6148),
+                stat("pipeline-portable.json", 900),
+                stat("nested/.DS_Store", 6148),
+            ],
+            exclusions: [])
+        #expect(findings.isEmpty)
+        #expect(WorkspaceImportPolicy.isVerificationInert(relativePath: ".DS_Store"))
+        #expect(WorkspaceImportPolicy.isVerificationInert(
+            relativePath: "a/b/pipeline-portable.json"))
+        #expect(!WorkspaceImportPolicy.isVerificationInert(
+            relativePath: "generations.jsonl"))
     }
 
     /// A pinned hash that disagrees refuses, wherever the pin exists.
@@ -463,6 +498,11 @@ private final class FakeImportRemote: @unchecked Sendable {
     var liveArms: [String: WorkspaceImportPolicy.ManifestArms] = [:]
     private(set) var transferred: [String] = []
     private(set) var catalogRebuilds = 0
+    /// Runs AFTER the modelled rsync — what the landing writes locally
+    /// (`pipeline-portable.json`) and what the filesystem adds (`.DS_Store`).
+    var transferHook: (@Sendable () -> Void)?
+    /// Replaces the modelled rsync entirely, for the imperfect-transfer cases.
+    var transferOverride: (@Sendable () -> Void)?
 
     func engine() -> WorkspaceRunImport.Engine {
         WorkspaceRunImport.Engine(
@@ -475,6 +515,10 @@ private final class FakeImportRemote: @unchecked Sendable {
             },
             transfer: { name, rules in
                 self.transferred.append(name)
+                if let override = self.transferOverride {
+                    override()
+                    return
+                }
                 // The live transfer is `rsync --ignore-existing`: it can only
                 // ever ADD files the policy keeps. The fake obeys the same
                 // rule, so a re-import over a complete tree is a no-op here
@@ -489,6 +533,7 @@ private final class FakeImportRemote: @unchecked Sendable {
                     local.append(file)
                 }
                 self.localFiles[name] = local
+                self.transferHook?()
             },
             localExists: { self.localFiles[$0] != nil },
             localInventory: { self.localFiles[$0] ?? [] },
@@ -636,6 +681,69 @@ struct WorkspaceRunImportOperationTests {
                 "expected alreadyComplete, got \(String(describing: second.directories.first))")
             return
         }
+    }
+
+    /// §2.4, the fresh-import path: a file our OWN machinery writes into the
+    /// landed directory is not a failed transfer.
+    ///
+    /// The repair pass of 2026-08-24 reported 175 violations where 17 were
+    /// real. All 158 false ones were `remote N / local N+1` — the extra file a
+    /// locally written `pipeline-portable.json` (151 directories) or a
+    /// `.DS_Store` (7). The bytes had landed correctly in every one.
+    @Test func aLocallyGeneratedFileNeverFailsAFreshImport() async {
+        let fake = FakeImportRemote()
+        let run = "\(stamp)-exp-alpha-pipeline"
+        fake.directories = [run]
+        fake.inventories[run] = remote(files: [
+            ("pipeline.json", 512), ("stage-1/report.json", 128),
+        ])
+        // The transfer lands the remote files; the import machinery then
+        // writes its portable ledger, and Finder leaves its droppings.
+        fake.transferHook = {
+            fake.localFiles[run] = (fake.localFiles[run] ?? []) + [
+                WorkspaceImportPolicy.FileStat(
+                    relativePath: "pipeline-portable.json", size: 900),
+                WorkspaceImportPolicy.FileStat(relativePath: ".DS_Store", size: 6148),
+            ]
+        }
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.transferred == [run])
+        #expect(report.violations.isEmpty, "\(report.violations)")
+        guard case .imported = report.directories.first?.outcome else {
+            Issue.record(
+                "expected a clean import, got \(String(describing: report.directories.first))")
+            return
+        }
+    }
+
+    /// …and a genuine remote-side gap after a transfer still FAILS. The filter
+    /// is about the local side only; a file the cluster has and we do not is
+    /// exactly what verification exists to catch.
+    @Test func aRemoteGapAfterTransferStillFailsTheFreshImport() async {
+        let fake = FakeImportRemote()
+        let run = "\(stamp)-exp-alpha-run"
+        fake.directories = [run]
+        fake.inventories[run] = remote(files: [
+            ("config.json", 120), ("generations.jsonl", 4096),
+        ])
+        // A transfer that drops one file, and writes a local artifact besides.
+        fake.transferOverride = {
+            fake.localFiles[run] = [
+                WorkspaceImportPolicy.FileStat(relativePath: "config.json", size: 120),
+                WorkspaceImportPolicy.FileStat(relativePath: ".DS_Store", size: 6148),
+            ]
+        }
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        guard case .verificationFailed(let findings)? = report.directories.first?.outcome
+        else {
+            Issue.record(
+                "a missing remote file must fail, got \(String(describing: report.directories.first))")
+            return
+        }
+        #expect(findings.contains { $0.contains("generations.jsonl") })
+        #expect(!findings.contains { $0.contains(".DS_Store") })
     }
 
     /// A partial earlier import is FILLED, not refused.

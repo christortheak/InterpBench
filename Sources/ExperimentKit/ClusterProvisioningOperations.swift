@@ -338,6 +338,10 @@ public struct ClusterOperationOutcome: Sendable, Equatable {
     /// distinct from success so the wizard can stamp it LOUDLY — a skip is
     /// never silent.
     public var wasSkipped: Bool
+    /// What a successful `push` DEPLOYED, for the caller to record as the
+    /// site's per-machine deploy intent. Nil on every other operation, and on
+    /// a push whose payload names no revision at all.
+    public var deployed: ClusterProvisioningOperations.ClusterDeployIntent?
 
     public init(
         succeeded: Bool, message: String, transcript: [String] = [],
@@ -679,6 +683,21 @@ public struct ClusterProvisioningOperations: Sendable {
         return dirty ? sha + "-dirty" : sha
     }
 
+    /// The identity a push STAMPS as `BUILD_COMMIT`, for any payload shape.
+    ///
+    /// Git first (a dev checkout, where `-dirty` is the warning label), then
+    /// the payload's own `deployment-manifest.json` `sourceRevision`. The
+    /// second source is what a `cluster push --payload <dir>` deploy has: a
+    /// generated payload is not a checkout, so the git probe finds nothing and
+    /// the push used to skip the stamp entirely ("no git identity to stamp"),
+    /// leaving the deployed engine to record runs with no build identity — on
+    /// the exact route the contract documents. The manifest is not a guess: it
+    /// is the payload's own statement of which revision built it.
+    func payloadBuildStamp(payloadRoot: String) async -> String? {
+        if let git = await devPayloadStamp(payloadRoot: payloadRoot) { return git }
+        return Self.localPayloadRevision(payloadRoot: payloadRoot)
+    }
+
     /// The remote path of the engine's `BUILD_COMMIT` stamp for this
     /// configuration, or nil when the local payload carries no package (there
     /// is then nothing to stamp or compare).
@@ -693,9 +712,46 @@ public struct ClusterProvisioningOperations: Sendable {
         return configuration.remoteRepoPath + "/" + subpath + "/BUILD_COMMIT"
     }
 
-    /// Compare the local payload against the deployed marker.
+    /// What this machine last deployed to a site — the recorded deploy INTENT
+    /// the staleness comparison prefers over the app bundle's own identity.
+    ///
+    /// Read from the per-machine runtime cache by the caller and passed in, the
+    /// same way the durably recorded controller job id is: these operations
+    /// stay a pure value type over a shell.
+    public struct ClusterDeployIntent: Sendable, Equatable {
+        /// `sourceRevision` of the payload that was pushed (manifest form).
+        public var payloadRevision: String?
+        /// The `BUILD_COMMIT` that push stamped (dev/no-manifest form).
+        public var buildStamp: String?
+
+        public init(payloadRevision: String? = nil, buildStamp: String? = nil) {
+            self.payloadRevision = payloadRevision
+            self.buildStamp = buildStamp
+        }
+
+        public var isEmpty: Bool {
+            (payloadRevision?.isEmpty ?? true) && (buildStamp?.isEmpty ?? true)
+        }
+    }
+
+    /// Compare the deployed payload against what this machine INTENDED to
+    /// deploy — falling back to the app bundle's payload only for a site this
+    /// machine has never pushed to.
+    ///
+    /// The fallback is the whole of what this check used to be, and it is
+    /// direction-blind: it asks "was the deployed engine built from the binary
+    /// I am running?", which is false both when the engine is OLDER than the
+    /// bundle (a push is genuinely wanted) and when it is NEWER (deployed from
+    /// a generated payload, per the documented route — nothing is wrong). On
+    /// 2026-08-24 that made `ensure --target connected` and `connect` refuse on
+    /// the happy path and recommend a flag that would have replaced a
+    /// just-deployed engine with an older one. Neither revision can be ordered
+    /// against the other (two identities, no shared repository to ask), so the
+    /// answer is not a comparison to invent — it is a fact to record, at push
+    /// time, and read back here.
     public func observePayload(
-        site: ClusterSiteProfile, configuration: ClusterProvisioningConfiguration
+        site: ClusterSiteProfile, configuration: ClusterProvisioningConfiguration,
+        intent: ClusterDeployIntent = ClusterDeployIntent()
     ) async -> ClusterPayloadObservation {
         guard site.isSSHTransport else { return .notApplicable }
         let localPath = configuration.localPayloadPath
@@ -720,7 +776,7 @@ public struct ClusterProvisioningOperations: Sendable {
             // 2026-08-11 shakedown).
             return await observeDevPayload(
                 site: site, configuration: configuration,
-                payloadRoot: localPath)
+                payloadRoot: localPath, intent: intent)
         }
         guard result.succeeded, !result.text.isEmpty else {
             return .absent
@@ -736,9 +792,43 @@ public struct ClusterProvisioningOperations: Sendable {
         let deployedRevision = Self.payloadRevision(inManifestText: result.text)
         let deployed = deployedRevision ?? ClusterProvisioner.shortDigest(remote)
         let mine = localRevision ?? ClusterProvisioner.shortDigest(local)
-        return .stale(
-            reason: "deployed \(deployed) does not match the local payload "
-                + "\(mine)")
+        // The deployed engine IS what this machine last pushed: current, and
+        // no push is offered. The bundle's identity is still printed — a
+        // reader must be able to see that the two differ and why that is fine.
+        if let pushed = intent.payloadRevision, !pushed.isEmpty,
+            let deployedRevision, deployedRevision == pushed
+        {
+            return .current(
+                deploymentHash: remote, localIdentity: localRevision,
+                detail: "deployed \(deployed) = last pushed; app bundle \(mine)")
+        }
+        return .stale(reason: Self.forwardSkewReason(
+            deployed: deployed, bundle: mine,
+            lastPushed: intent.payloadRevision))
+    }
+
+    /// The staleness sentence, which must state the CONSEQUENCE rather than
+    /// the symmetric fact.
+    ///
+    /// "deployed X does not match the local payload Y — re-run with
+    /// `--allow-push`" reads as a repair in either direction. It is one only
+    /// when the deployed engine is older; when it is newer, following it
+    /// replaces a good engine with an old one. The message therefore says what
+    /// pushing WOULD DO, and names the last push from this machine when there
+    /// was one (a deployed engine matching neither is a third machine's, or a
+    /// hand deploy).
+    static func forwardSkewReason(
+        deployed: String, bundle: String, lastPushed: String?,
+        localLabel: String = "this app bundle"
+    ) -> String {
+        var reason = "deployed \(deployed) was not produced by \(localLabel) "
+            + "(\(bundle))"
+        if let lastPushed, !lastPushed.isEmpty {
+            reason += ", and does not match the payload this Mac last pushed "
+                + "(\(lastPushed))"
+        }
+        return reason + " — pushing will REPLACE deployed \(deployed) with "
+            + "the bundle's \(bundle)"
     }
 
     /// Dev-checkout payload comparison: local git stamp vs the deployed
@@ -747,7 +837,8 @@ public struct ClusterProvisioningOperations: Sendable {
     private func observeDevPayload(
         site: ClusterSiteProfile,
         configuration: ClusterProvisioningConfiguration,
-        payloadRoot: String
+        payloadRoot: String,
+        intent: ClusterDeployIntent = ClusterDeployIntent()
     ) async -> ClusterPayloadObservation {
         guard let local = await devPayloadStamp(payloadRoot: payloadRoot) else {
             return .unknown(
@@ -778,10 +869,19 @@ public struct ClusterProvisioningOperations: Sendable {
                 reason: "the deployed BUILD_COMMIT stamp is empty — one push "
                     + "restamps it")
         }
-        return remote == local
-            ? .current(deploymentHash: local, localIdentity: local)
-            : .stale(
-                reason: "deployed \(remote) does not match local \(local)")
+        if remote == local {
+            return .current(deploymentHash: local, localIdentity: local)
+        }
+        // Same intent rule as the manifest path: a deployed stamp this machine
+        // wrote is current, whatever the local checkout is sitting on now.
+        if let pushed = intent.buildStamp, !pushed.isEmpty, remote == pushed {
+            return .current(
+                deploymentHash: remote, localIdentity: local,
+                detail: "deployed \(remote) = last pushed; local payload \(local)")
+        }
+        return .stale(reason: Self.forwardSkewReason(
+            deployed: remote, bundle: local, lastPushed: intent.buildStamp,
+            localLabel: "the local development payload"))
     }
 
     // MARK: Push
@@ -838,8 +938,9 @@ public struct ClusterProvisioningOperations: Sendable {
         // also the deployed-payload marker `observePayload` compares dev
         // checkouts against, so a stamped push reads back `current`.
         var stampNote = ""
+        var stampedIdentity: String?
         if let remotePath = remoteBuildCommitPath(configuration: configuration) {
-            if let stamp = await devPayloadStamp(payloadRoot: localPath) {
+            if let stamp = await payloadBuildStamp(payloadRoot: localPath) {
                 // Both words are shell-safe by construction (a short git hex
                 // stamp; a config path) and the path must stay UNQUOTED in
                 // the far shell so a `~/` prefix still expands there.
@@ -852,6 +953,7 @@ public struct ClusterProvisioningOperations: Sendable {
                     "$ " + ClusterProvisioner.displayCommand(stampArgv))
                 if stamped.succeeded {
                     stampNote = ", BUILD_COMMIT stamped \(stamp)"
+                    stampedIdentity = stamp
                 } else {
                     transcript.append(contentsOf: stamped.lines)
                     stampNote = " — WARNING: the BUILD_COMMIT stamp could not "
@@ -859,8 +961,8 @@ public struct ClusterProvisioningOperations: Sendable {
                         + "engine has no build identity until it is"
                 }
             } else {
-                stampNote = " — note: no git identity to stamp (payload is "
-                    + "neither packaged nor a git checkout)"
+                stampNote = " — note: no identity to stamp (the payload carries "
+                    + "neither a deployment manifest nor a git checkout)"
             }
         }
         // A deploy ships a new controller-job TEMPLATE and leaves last week's
@@ -873,12 +975,19 @@ public struct ClusterProvisioningOperations: Sendable {
         // reads the file at USR1 time, which is the point).
         let renderNote = await refreshRenderedControllerScript(
             site: site, configuration: configuration, transcript: &transcript)
-        return ClusterOperationOutcome(
+        var outcome = ClusterOperationOutcome(
             succeeded: true,
             message: "server bundle pushed to "
                 + "\(hostLabel):\(configuration.remoteRepoPath)\(stampNote)"
                 + renderNote,
             transcript: transcript)
+        // What was deployed, for the caller to record as this site's intended
+        // engine identity (see `ClusterDeployIntent`). Read from the payload
+        // that landed and from the stamp that was written — never invented.
+        outcome.deployed = ClusterDeployIntent(
+            payloadRevision: Self.localPayloadRevision(payloadRoot: localPath),
+            buildStamp: stampedIdentity)
+        return outcome
     }
 
     /// Post-deploy repair of the rendered controller script. Returns the

@@ -299,6 +299,7 @@ public struct ClusterCLIRunner: Sendable {
             recordedValidation: recordedValidation,
             recordedBootstrapPlanHash: operationStore.lastBootstrapPlanHash(
                 forSite: site.id),
+            recordedDeployIntent: repository.deployIntent(forSite: site.id),
             registrationDuplicates: duplicates)
     }
 
@@ -725,9 +726,29 @@ public struct ClusterCLIRunner: Sendable {
             return envelope
         }
         let outcome = await operations.push(site: site.profile, configuration: configuration)
+        recordDeployIntent(outcome, site: site)
         return operationEnvelope(
             invocation, site: site, step: .pushCode, target: .codeDeployed,
             outcome: outcome)
+    }
+
+    /// Record a successful push as this site's intended engine identity.
+    ///
+    /// Written to the PER-MACHINE runtime cache (`site-runtime.json`) and
+    /// never to the shared registry: what this Mac deployed is not a property
+    /// of the cluster, and a connect/push cycle must leave `Sites/`
+    /// byte-identical. A failure to record is not a failure to push — the
+    /// bytes landed either way — so it degrades to the bundle comparison
+    /// rather than throwing over a cache.
+    private func recordDeployIntent(
+        _ outcome: ClusterOperationOutcome, site: ClusterSiteRecord
+    ) {
+        guard outcome.succeeded, !outcome.wasSkipped,
+            let deployed = outcome.deployed, !deployed.isEmpty
+        else { return }
+        _ = try? repository.runtime.recordPush(
+            siteID: site.id, payloadRevision: deployed.payloadRevision,
+            buildStamp: deployed.buildStamp, at: now())
     }
 
     // MARK: import (open-issues §20)

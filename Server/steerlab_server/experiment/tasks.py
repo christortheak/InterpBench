@@ -1286,6 +1286,7 @@ def extract(name: str, root: str | None = None, dtype: str = "auto",
     _log = log or print
     manifest = Manifest.load(name, root)
     _verify_or_warn(manifest, root)
+    _advise_inert_declarations(manifest, _log)
     with _acquire_model(manifest, dtype, device, model_provider) as model:
         manifest = _pin_model_revision(name, manifest, model, root, _log)
         bundles = _extract_all(model, manifest, root)
@@ -1295,6 +1296,37 @@ def extract(name: str, root: str | None = None, dtype: str = "auto",
         _write_reading_position_diagnostics(bundles, run_directory, _log)
     _log(f"extracted {len(bundles)} concept vectors → {run_directory}")
     return run_directory
+
+
+def _advise_inert_declarations(manifest: Manifest, _log) -> None:
+    """Loud, non-blocking extract-time advisory (2026-08-24 field finding):
+    say when this manifest's chat-context declarations cannot reach the
+    extraction that is about to run.
+
+    Fires only when EVERY extracting concept renders raw — a mixed recipe does
+    reach the template somewhere, and the per-concept rendering is already
+    stamped. Pinned-artifact concepts materialize bytes rather than extracting,
+    so they do not vote.
+
+    Never a gate. The declarations are legal; what was not survivable is
+    silence about them: two experiments differing only in the thinking flag
+    produced byte-identical vectors, and the comparison read as a null result
+    rather than as a measurement that never happened.
+    """
+    from ..steering import extractor as _extractor
+
+    renderings = [c.options.extraction_rendering for c in manifest.concepts
+                  if not c.is_pinned_artifact]
+    if not renderings or not all(
+            r is None or r.is_raw for r in renderings):
+        return
+    advisory = _extractor.inert_declaration_advisory(
+        None,
+        qwen_thinking_enabled=manifest.qwen_thinking_enabled,
+        prompt_mode=manifest.prompt_mode,
+        system_prompt=manifest.system_prompt)
+    if advisory:
+        _log(f"ADVISORY: {advisory}")
 
 
 def _write_reading_position_diagnostics(bundles, run_directory: str, _log) -> None:

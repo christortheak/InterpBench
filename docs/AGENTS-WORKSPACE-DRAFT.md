@@ -681,6 +681,28 @@ the `sourceRevision` of a `deployment-manifest.json` — one in the app's
 them beside `payload:`, so `current` visibly means *these two agree*. It still
 says nothing about your checkout.
 
+**The staleness check compares against INTENT, not against your app.** A
+successful `cluster push` records — per machine, never in the shared `Sites/`
+registry — the revision it deployed, and `cluster status` compares the engine
+against *that*, naming every identity involved: `current (deployed e9a93c9a =
+last pushed; app bundle 5686c2ee)`. So the `--payload` route above reads
+`current` even though the deployed engine is newer than the app you are
+running. Only a site this machine has never pushed to falls back to comparing
+against the app bundle alone. When the deployed engine matches neither, the
+message says what a push would DO — *pushing will REPLACE deployed X with the
+bundle's Y* — because that flag is a repair in one direction and a silent
+rollback in the other. If a payload gate ever refuses on a site you have
+reason to believe is current, the granular verbs reach `connected` without
+evaluating the payload at all:
+
+```bash
+steerlab-cli cluster controller start --site <id> --json
+steerlab-cli cluster tunnel open --site <id> --json
+```
+
+`controller start` accepts `--allow-controller-start` and ignores it — typing
+the granular verb is itself the authorization.
+
 **A push does not restart the engine.** The running controller keeps the code
 it loaded; a push only replaces files on disk. Cycle the controller and
 re-open the tunnel before importing anything:

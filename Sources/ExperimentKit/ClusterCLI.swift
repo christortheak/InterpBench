@@ -118,7 +118,15 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
         case .sitesImport: flags = ["--force"]
         // §1 field report (2026-08-20): the render half of `controller start`,
         // on its own. THE re-render command every other surface names.
-        case .controllerStart: flags = ["--render-only"]
+        //
+        // `--allow-controller-start` is accepted and IGNORED here (2026-08-24
+        // field report §2.3). The granular verb is its own authorization — it
+        // submits because you typed it — but `ensure` REQUIRES the flag, and
+        // the documented escape from a payload-gate refusal sends a runner
+        // from the `ensure` form to this one. Exiting 64 on the flag they were
+        // just told to pass is a papercut on the one path that exists for
+        // people already stuck.
+        case .controllerStart: flags = ["--render-only", "--allow-controller-start"]
         case .ensure: flags = [
             "--allow-push", "--allow-bootstrap", "--allow-controller-start",
             "--open-auth-terminal", "--allow-open-auth-terminal",

@@ -517,3 +517,76 @@ def test_the_manifest_reads_an_absent_rendering_as_raw():
     assert ExtractionOptions.from_json(
         {"extractionRendering": "chatTemplate"}).extraction_rendering.mode \
         == "chatTemplate"
+
+
+# --------------------------------------------------------------------------
+# The inert-declaration advisory (2026-08-24 field finding)
+#
+# Two experiments differing ONLY in the Qwen thinking flag ran overnight on
+# 2026-08-23 and produced byte-identical vectors across 30 concepts: raw
+# extraction never sees the chat template, so the flag could not reach it.
+# Two GPU jobs measured nothing, and the comparison read as a null result.
+# The instrument's answer is a loud line at extract time — an advisory, never
+# a gate, because the declaration is legal and only the silence was not.
+# --------------------------------------------------------------------------
+
+
+def _manifest_with(rendering, *, thinking=False, prompt_mode="chatAssistant",
+                   system=None, pinned=False):
+    concept = SimpleNamespace(
+        is_pinned_artifact=pinned,
+        options=SimpleNamespace(extraction_rendering=rendering))
+    return SimpleNamespace(
+        concepts=[concept], qwen_thinking_enabled=thinking,
+        prompt_mode=prompt_mode, system_prompt=system)
+
+
+def test_raw_extraction_says_which_declarations_cannot_reach_it():
+    from steerlab_server.experiment import tasks
+
+    lines = []
+    tasks._advise_inert_declarations(
+        _manifest_with(er.RAW_RENDERING, thinking=True), lines.append)
+    assert len(lines) == 1, lines
+    line = lines[0]
+    assert line.startswith("ADVISORY:")
+    # It names the inert declarations, the consequence, and the repair.
+    assert "qwenThinkingEnabled true" in line
+    assert "promptMode chatAssistant" in line
+    assert "byte-identical" in line
+    assert "extractionRendering" in line
+
+
+def test_a_chat_template_extraction_emits_no_inert_declaration_advisory():
+    from steerlab_server.experiment import tasks
+
+    lines = []
+    tasks._advise_inert_declarations(
+        _manifest_with(er.ExtractionRendering(mode=er.CHAT_TEMPLATE),
+                       thinking=True, system="You are a careful assistant."),
+        lines.append)
+    assert lines == []
+    # …and the pure helper agrees: the declarations DO reach a rendered
+    # extraction, so there is nothing to warn about.
+    assert extractor.inert_declaration_advisory(
+        er.ExtractionRendering(mode=er.CHAT_TEMPLATE),
+        qwen_thinking_enabled=True) is None
+
+
+def test_an_ordinary_raw_recipe_stays_silent():
+    from steerlab_server.experiment import tasks
+
+    lines = []
+    tasks._advise_inert_declarations(_manifest_with(er.RAW_RENDERING), lines.append)
+    assert lines == [], "an advisory channel that always speaks is unread"
+    assert extractor.inert_declaration_advisory(er.RAW_RENDERING) is None
+
+
+def test_a_study_system_prompt_also_fires_it():
+    lines = extractor.inert_declaration_advisory(
+        er.RAW_RENDERING, system_prompt="You are a careful assistant.",
+        prompt_mode="rawCompletion")
+    assert lines is not None
+    assert "systemPrompt" in lines
+    # rawCompletion is not a chat context, so it is not listed as inert.
+    assert "promptMode" not in lines

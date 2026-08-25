@@ -414,6 +414,40 @@ public enum WorkspaceImportPolicy {
         }
     }
 
+    /// Filesystem litter that is evidence of nothing, on either side.
+    /// macOS writes `.DS_Store` into any directory a Finder window opens, and
+    /// it appears in a landed run minutes after the import that "verified" it.
+    public static let junkFileNames: Set<String> = [
+        ".DS_Store", ".localized", "Thumbs.db",
+    ]
+
+    /// Files OUR OWN machinery writes into a landed directory after the
+    /// transfer. `pipeline-portable.json` is written by the import itself (see
+    /// `ClusterClient` bundle import / `LocalPipelineCatalog`), so it exists
+    /// locally and — for a run that never went through a server-side bundle
+    /// export — nowhere on the cluster. It is a derived local artifact, never
+    /// a missing or extra transfer.
+    public static let locallyGeneratedFileNames: Set<String> = [
+        "pipeline-portable.json",
+    ]
+
+    /// Whether a path is inert for VERIFICATION on both sides: junk, or an
+    /// artifact this workspace generated locally.
+    ///
+    /// Separate from `ExclusionRule` on purpose. The rules say what never
+    /// TRAVELS (and each carries the rsync filter that enforces it); this says
+    /// what is never EVIDENCE. On 2026-08-24 the difference produced 158 false
+    /// verification failures — every one `remote N / local N+1`, the extra
+    /// file being a `pipeline-portable.json` this machine wrote or a
+    /// `.DS_Store` Finder did. The bytes had landed correctly in all 158;
+    /// only the verdict was wrong. A local-only file in an append-only tree is
+    /// never evidence of a failed transfer.
+    public static func isVerificationInert(relativePath path: String) -> Bool {
+        let name = String(path.split(separator: "/").last ?? "")
+        return junkFileNames.contains(name)
+            || locallyGeneratedFileNames.contains(name)
+    }
+
     /// Whether a directory-relative path is excluded by the given rules. The
     /// verification pass uses this so an excluded remote file is never
     /// counted as a local gap.
@@ -683,6 +717,11 @@ public enum WorkspaceImportPolicy {
     /// otherwise fail its own count comparison for ever (2026-08-24 field
     /// report). One definition — `isExcluded` — decides both sides.
     ///
+    /// `isVerificationInert` drops the second category the same way: junk
+    /// (`.DS_Store`) and artifacts this workspace generates locally
+    /// (`pipeline-portable.json`). Neither is evidence about a transfer, and
+    /// counting them turned 158 correct imports into failures on the same day.
+    ///
     /// `localHash` is consulted only for paths that already carry a pin, and
     /// only when the file exists locally and the rules keep it.
     public static func verify(
@@ -694,9 +733,11 @@ public enum WorkspaceImportPolicy {
     ) -> [Finding] {
         let remoteKept = remote.filter {
             !isExcluded(relativePath: $0.relativePath, rules: rules)
+                && !isVerificationInert(relativePath: $0.relativePath)
         }
         let localKept = local.filter {
             !isExcluded(relativePath: $0.relativePath, rules: rules)
+                && !isVerificationInert(relativePath: $0.relativePath)
         }
         let localBySize = Dictionary(
             localKept.map { ($0.relativePath, $0.size) },
@@ -722,10 +763,22 @@ public enum WorkspaceImportPolicy {
         // Counts, stated independently of the per-file walk: a report that
         // only ever prints per-file rows can still leave a caller wondering
         // whether the totals agreed. Both counts are post-exclusion.
+        //
+        // LOCAL-ONLY files are subtracted from the local side. They are
+        // already reported in their own right, and counting them here made
+        // "the remote has 40 files, you have 41" a verification FAILURE on
+        // the fresh-import path — 158 of them on 2026-08-24, every one over a
+        // file the transfer is not supposed to carry. What remains is the
+        // check counts are actually for: totals the per-file walk cannot
+        // explain (a duplicated path in an inventory), which no row shows.
         let gaps = findings.filter { if case .gap = $0 { return true } else { return false } }
-        if remoteKept.count != localKept.count + gaps.count {
+        let localOnly = findings.filter {
+            if case .localOnly = $0 { return true } else { return false }
+        }
+        let localAccountedFor = localKept.count - localOnly.count
+        if remoteKept.count != localAccountedFor + gaps.count {
             findings.append(
-                .countMismatch(remote: remoteKept.count, local: localKept.count))
+                .countMismatch(remote: remoteKept.count, local: localAccountedFor))
         }
         // `localBySize` is already post-exclusion, so a pin on an excluded
         // path is silently out of scope here — which is right: the bytes it

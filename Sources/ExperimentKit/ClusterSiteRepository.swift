@@ -787,6 +787,23 @@ public struct ClusterSiteRepository: Sendable {
         return record
     }
 
+    /// What THIS MACHINE last deployed to a site, as the payload comparison
+    /// consumes it.
+    ///
+    /// Read from the runtime cache, never from `Sites/`: a deploy is something
+    /// this Mac did, and a shared registry carrying it would let one
+    /// researcher's push certify another's engine. An empty intent is the
+    /// honest answer for a site this machine never pushed to — the comparison
+    /// then falls back to the app bundle's own payload.
+    public func deployIntent(
+        forSite siteID: String
+    ) -> ClusterProvisioningOperations.ClusterDeployIntent {
+        let state = runtime.state(forSite: siteID)
+        return ClusterProvisioningOperations.ClusterDeployIntent(
+            payloadRevision: state.pushedPayloadRevision,
+            buildStamp: state.pushedBuildStamp)
+    }
+
     /// Delete a site: its file leaves the registry (a deletion the researcher
     /// then commits) and its runtime slot leaves this machine's cache.
     public func remove(id: String) throws {

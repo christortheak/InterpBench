@@ -206,6 +206,22 @@ struct ClusterCLIParsingTests {
         }
     }
 
+    /// §2.3: `ensure` REQUIRES `--allow-controller-start`, and the documented
+    /// escape from a payload-gate refusal sends a runner to the granular verb.
+    /// Exiting 64 there on the flag they were just told to pass is a papercut
+    /// on the one path that exists for people already stuck — so the granular
+    /// verb accepts it and ignores it, and its help says so.
+    @Test func controllerStartToleratesTheEnsurePermissionFlag() throws {
+        let parsed = try ClusterCLIParser.parse([
+            "controller", "start", "--site", "s", "--allow-controller-start",
+        ])
+        #expect(parsed.verb == .controllerStart)
+        #expect(parsed.siteReference == "s")
+        let help = ClusterCLIVerb.controllerStart.helpText
+        #expect(help.contains("--allow-controller-start"))
+        #expect(help.contains("Accepted and ignored"))
+    }
+
     @Test func anUnknownVerbOrFlagIsAUsageErrorWithARepairAction() throws {
         for arguments in [["bogus"], ["sites"], ["--site", "s"]] {
             do {
@@ -988,6 +1004,80 @@ struct ClusterCLIRunnerTests {
         #expect(argv.first == ClusterProvisioner.rsyncExecutablePath)
         #expect(await harness.shell.callCount(containing: "/usr/bin/rsync") == 0)
         #expect(!outcome.envelope.changed)
+    }
+
+    /// The 2026-08-24 field report's §2.1, end to end through the verbs.
+    ///
+    /// A `cluster push --payload <generated dir>` deploys an engine NEWER than
+    /// the app bundle's own payload — the route the contract documents. The
+    /// push records what it deployed in this machine's runtime cache, and the
+    /// next `status` compares the deployed engine against THAT rather than
+    /// against the running binary: current, no push offered, no rollback one
+    /// flag away. `Sites/` is not touched by any of it.
+    @Test func aPushRecordsWhatItDeployedAndStatusComparesAgainstIt() async throws {
+        let harness = try makeHarness("push-intent")
+        // The generated payload: a manifest naming its revision and a package
+        // subtree to stamp — and NOT a git checkout, which is why the stamp
+        // has to come from the manifest (§2.2).
+        let generated = harness.root.appending(component: "generated-payload")
+        let package = generated.appending(path: "Server/steerlab_server")
+        try FileManager.default.createDirectory(
+            at: package, withIntermediateDirectories: true)
+        try Data("# engine\n".utf8).write(to: package.appending(component: "__init__.py"))
+        let deployedManifest = try ResourceManifest.generate(
+            over: generated, serverVersion: "0.9.1", protocolVersion: 1,
+            sourceRevision: "e9a93c9a")
+        try deployedManifest.write(
+            to: generated.appending(
+                component: ClusterProvisioner.deploymentManifestFileName))
+        // The app bundle's own payload, which is OLDER.
+        let bundleManifest = ResourceManifest(
+            appVersion: "0.9.1", serverVersion: "0.9.1", protocolVersion: 1,
+            sourceRevision: "5686c2ee", files: [:])
+        try bundleManifest.write(
+            to: harness.payloadRoot.appending(
+                component: ClusterProvisioner.deploymentManifestFileName))
+
+        await harness.shell.on("/usr/bin/rsync", exit: 0)
+        await harness.shell.on("BUILD_COMMIT", exit: 0)
+        var pushOverrides = overrides(harness)
+        pushOverrides.localPayloadPath = generated.path
+        let pushed = await harness.runner.run(
+            ClusterCLIInvocation(
+                verb: .push, siteReference: "test-cluster",
+                overrides: pushOverrides))
+        #expect(pushed.exitCode == 0)
+        #expect(pushed.envelope.message.contains("BUILD_COMMIT stamped e9a93c9a"))
+
+        // Recorded per machine, in the runtime cache — never in `Sites/`.
+        let state = harness.repository.runtime.state(forSite: "test-cluster")
+        #expect(state.pushedPayloadRevision == "e9a93c9a")
+        #expect(state.pushedBuildStamp == "e9a93c9a")
+        let siteFile = try String(
+            contentsOf: harness.repository.fileURL(forSite: "test-cluster"),
+            encoding: .utf8)
+        #expect(!siteFile.contains("e9a93c9a"))
+
+        // Now observe with the APP BUNDLE's payload configured, as every
+        // later invocation does. The deployed engine differs from it — and is
+        // exactly what this Mac pushed.
+        await scriptHealthySite(harness)
+        await harness.shell.on(
+            ClusterProvisioner.deploymentManifestFileName, exit: 0,
+            lines: [String(decoding: try deployedManifest.canonicalJSON(), as: UTF8.self)])
+        let status = await harness.runner.run(invocation(harness, .status))
+        let payload = try #require(
+            status.envelope.layers?.first { $0.layer == "payload" }?.state)
+        #expect(payload.hasPrefix("current"), "got \(payload)")
+        #expect(payload.contains("e9a93c9a"))
+        #expect(payload.contains("5686c2ee"))
+
+        // …and the ladder therefore wants no push at all: the repair that
+        // would have REPLACED the deployed engine is not offered.
+        let planned = await harness.runner.run(invocation(harness, .plan))
+        let push = try #require(planned.envelope.plan?.first { $0.step == "pushCode" })
+        #expect(push.satisfied, "a rollback must never be planned: \(push.reason)")
+        #expect(push.requiredPermissionFlags.isEmpty)
     }
 
     @Test func bootstrapApplyRefusesAStalePlanHashBeforeAnythingRuns() async throws {

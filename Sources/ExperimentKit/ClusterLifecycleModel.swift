@@ -224,7 +224,15 @@ public enum ClusterPayloadObservation: Sendable, Equatable {
     /// `localIdentity` is the LOCAL payload's own name for itself — its
     /// manifest `sourceRevision`, or a dev checkout's git stamp — nil when the
     /// payload carries neither and only a content hash could be compared.
-    case current(deploymentHash: String?, localIdentity: String? = nil)
+    ///
+    /// `detail` replaces the parenthetical when the two identities are NOT the
+    /// same string and currency was established some other way — the deployed
+    /// engine matching the payload this machine last pushed. It names all
+    /// three identities, because "current" over two different revisions is
+    /// unreadable without them.
+    case current(
+        deploymentHash: String?, localIdentity: String? = nil,
+        detail: String? = nil)
     case stale(reason: String)
     /// The comparison could not be made (no master, unreadable marker). NOT a
     /// licence to skip the push — but not proof one is needed either.
@@ -234,8 +242,10 @@ public enum ClusterPayloadObservation: Sendable, Equatable {
     public var summary: String {
         switch self {
         case .absent: "absent"
-        case .current(let hash, let identity):
-            if let identity {
+        case .current(let hash, let identity, let detail):
+            if let detail {
+                "current (\(detail))"
+            } else if let identity {
                 "current (local \(identity) = deployed \(identity))"
             } else if let hash {
                 "current (\(ClusterProvisioner.shortDigest(hash)))"

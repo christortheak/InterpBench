@@ -835,7 +835,163 @@ struct ClusterProvisioningOperationsTests {
             return
         }
         #expect(reason.contains("deployed cc33dd44"))
-        #expect(reason.contains("local payload aa11bb22"))
+        #expect(reason.contains("aa11bb22"))
+    }
+
+    // MARK: The staleness gate compares against INTENT (field report §2.1)
+
+    /// A payload dir with a manifest naming `revision`, and a package subtree
+    /// so the push has something to stamp. NOT a git checkout — which is the
+    /// shape `scripts/make-server-payload.sh` produces and `cluster push
+    /// --payload <dir>` deploys.
+    private func generatedPayload(revision: String) throws -> URL {
+        let payload = FileManager.default.temporaryDirectory
+            .appending(component: "steerlab-payload-\(UUID().uuidString)")
+        let package = payload.appending(path: "Server/steerlab_server")
+        try FileManager.default.createDirectory(
+            at: package, withIntermediateDirectories: true)
+        try Data("# engine\n".utf8).write(to: package.appending(component: "__init__.py"))
+        let manifest = try ResourceManifest.generate(
+            over: payload, serverVersion: "0.9.1", protocolVersion: 1,
+            sourceRevision: revision)
+        try manifest.write(
+            to: payload.appending(
+                component: ClusterProvisioner.deploymentManifestFileName))
+        return payload
+    }
+
+    private func deployedManifestText(revision: String) throws -> String {
+        let manifest = ResourceManifest(
+            appVersion: "0.9.1", serverVersion: "0.9.1", protocolVersion: 1,
+            sourceRevision: revision, files: [:])
+        return String(decoding: try manifest.canonicalJSON(), as: UTF8.self)
+    }
+
+    /// The field report's highest-priority defect. The engine deployed by the
+    /// documented route is NEWER than the app bundle's payload; comparing
+    /// against the bundle alone called that stale and offered `--allow-push`,
+    /// which would have replaced the deployed engine with an older one.
+    /// Compared against what this machine actually pushed, it is current.
+    @Test func aDeployedPayloadThisMachinePushedIsCurrentEvenWhenTheBundleDiffers()
+        async throws
+    {
+        let payload = try generatedPayload(revision: "5686c2ee")
+        defer { try? FileManager.default.removeItem(at: payload) }
+        var configuration = configuration()
+        configuration.localPayloadPath = payload.path
+        let deployed = try deployedManifestText(revision: "e9a93c9a")
+
+        let operations = ClusterProvisioningOperations(
+            shell: RecordingShell([ClusterShellResult(exitCode: 0, lines: [deployed])]),
+            secrets: RecordingSecretStore())
+        let observation = await operations.observePayload(
+            site: site(), configuration: configuration,
+            intent: .init(payloadRevision: "e9a93c9a"))
+        guard case .current = observation else {
+            Issue.record("a push this machine made must read current: \(observation)")
+            return
+        }
+        // All three identities, so a reader can see WHY two different
+        // revisions are nonetheless current.
+        #expect(observation.summary.contains("deployed e9a93c9a"))
+        #expect(observation.summary.contains("last pushed"))
+        #expect(observation.summary.contains("5686c2ee"))
+    }
+
+    /// With no recorded push, the app-bundle comparison is still the fallback
+    /// — and its message names the CONSEQUENCE instead of a bare mismatch.
+    @Test func aStaleMessageNamesWhatPushingWouldReplace() async throws {
+        let payload = try generatedPayload(revision: "5686c2ee")
+        defer { try? FileManager.default.removeItem(at: payload) }
+        var configuration = configuration()
+        configuration.localPayloadPath = payload.path
+        let deployed = try deployedManifestText(revision: "ff99aa88")
+
+        let never = ClusterProvisioningOperations(
+            shell: RecordingShell([ClusterShellResult(exitCode: 0, lines: [deployed])]),
+            secrets: RecordingSecretStore())
+        guard case .stale(let reason) = await never.observePayload(
+            site: site(), configuration: configuration)
+        else {
+            Issue.record("a site this machine never pushed to falls back to the bundle")
+            return
+        }
+        #expect(reason.contains("deployed ff99aa88"))
+        #expect(reason.contains("5686c2ee"))
+        #expect(reason.contains("REPLACE"))
+        #expect(!reason.contains("does not match the local payload"))
+
+        // Deployed matches NEITHER the bundle nor the last push: still stale,
+        // and the message names the push that did not produce it.
+        let third = ClusterProvisioningOperations(
+            shell: RecordingShell([ClusterShellResult(exitCode: 0, lines: [deployed])]),
+            secrets: RecordingSecretStore())
+        guard case .stale(let both) = await third.observePayload(
+            site: site(), configuration: configuration,
+            intent: .init(payloadRevision: "e9a93c9a"))
+        else {
+            Issue.record("an engine matching neither identity is stale")
+            return
+        }
+        #expect(both.contains("last pushed (e9a93c9a)"))
+        #expect(both.contains("REPLACE"))
+    }
+
+    /// §2.2: a `--payload` push stamps the build identity from the payload's
+    /// own manifest when there is no git checkout to ask — the stamp §8
+    /// advertises happens on the route the contract documents, and the same
+    /// identity comes back for the caller to record as deploy intent.
+    @Test func aGeneratedPayloadStampsItsManifestRevision() async throws {
+        let payload = try generatedPayload(revision: "e9a93c9a")
+        defer { try? FileManager.default.removeItem(at: payload) }
+        var configuration = configuration()
+        configuration.localPayloadPath = payload.path
+
+        let operations = ClusterProvisioningOperations(
+            shell: RecordingShell([
+                ClusterShellResult(exitCode: 0),  // rsync
+                ClusterShellResult(exitCode: 1),  // git rev-parse: not a checkout
+                ClusterShellResult(exitCode: 0),  // the BUILD_COMMIT stamp
+            ]),
+            secrets: RecordingSecretStore())
+        let outcome = await operations.push(site: site(), configuration: configuration)
+        #expect(outcome.succeeded)
+        #expect(outcome.message.contains("BUILD_COMMIT stamped e9a93c9a"))
+        #expect(!outcome.message.contains("no identity to stamp"))
+        #expect(outcome.deployed?.payloadRevision == "e9a93c9a")
+        #expect(outcome.deployed?.buildStamp == "e9a93c9a")
+    }
+
+    /// The dev (no-manifest) comparison reads the deployed `BUILD_COMMIT`, so
+    /// its intent is the stamp the last push wrote — same rule, other path.
+    @Test func aDeployedBuildStampThisMachineWroteIsCurrent() async throws {
+        let payload = FileManager.default.temporaryDirectory
+            .appending(component: "steerlab-dev-\(UUID().uuidString)")
+        let package = payload.appending(path: "Server/steerlab_server")
+        try FileManager.default.createDirectory(
+            at: package, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: payload) }
+        var configuration = configuration()
+        configuration.localPayloadPath = payload.path
+
+        // No deployed manifest to read, then git rev-parse + status for the
+        // local checkout, then the deployed BUILD_COMMIT stamp.
+        let operations = ClusterProvisioningOperations(
+            shell: RecordingShell([
+                ClusterShellResult(exitCode: 1),
+                ClusterShellResult(exitCode: 0, lines: ["5686c2ee"]),
+                ClusterShellResult(exitCode: 0, lines: []),
+                ClusterShellResult(exitCode: 0, lines: ["e9a93c9a"]),
+            ]),
+            secrets: RecordingSecretStore())
+        let observation = await operations.observePayload(
+            site: site(), configuration: configuration,
+            intent: .init(buildStamp: "e9a93c9a"))
+        guard case .current = observation else {
+            Issue.record("a stamp this machine wrote must read current, got \(observation)")
+            return
+        }
+        #expect(observation.summary.contains("e9a93c9a"))
     }
 
     // MARK: Controller reconciliation (the doctrine, at the operation level)

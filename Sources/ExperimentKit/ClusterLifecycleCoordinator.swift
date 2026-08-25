@@ -221,6 +221,16 @@ public actor ClusterLifecycleCoordinator {
             record.note(step: step, status: .running, now: now())
             let outcome = await operations.push(
                 site: site.profile, configuration: configuration)
+            // The deploy INTENT, recorded per machine the moment it becomes
+            // true: the next observation compares the deployed engine against
+            // this rather than against whatever binary is running.
+            if outcome.succeeded, !outcome.wasSkipped,
+                let deployed = outcome.deployed, !deployed.isEmpty
+            {
+                _ = try? repository.runtime.recordPush(
+                    siteID: site.id, payloadRevision: deployed.payloadRevision,
+                    buildStamp: deployed.buildStamp, at: now())
+            }
             record.note(
                 step: step, status: outcome.succeeded ? .succeeded : .failed,
                 message: outcome.message, now: now())
@@ -456,6 +466,11 @@ public actor ClusterLifecycleCoordinator {
             recordedValidation: validation,
             recordedBootstrapPlanHash: reviewedBootstrapPlanHash
                 ?? operationStore.lastBootstrapPlanHash(forSite: site.id),
+            // What THIS machine last deployed here (per-machine runtime cache).
+            // Without it the payload check compares the deployed engine only
+            // against the app bundle, which cannot tell a needed push from a
+            // rollback — see `observePayload`.
+            recordedDeployIntent: repository.deployIntent(forSite: site.id),
             registrationDuplicates: duplicates)
     }
 
