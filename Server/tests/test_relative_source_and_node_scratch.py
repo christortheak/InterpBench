@@ -567,6 +567,77 @@ def test_cleanup_removes_nothing_when_expansion_collapses_the_path():
     assert _cleanup_probe("/local_scratch/$USER/$SLURM_JOB_ID", USER="") == ""
 
 
+# --------------------------------------------------------------------------
+# Traversal: job-scoped is not the same as CONTAINED (external review
+# 2026-08-24)
+# --------------------------------------------------------------------------
+
+
+def test_a_traversing_template_is_refused_even_though_it_is_job_scoped():
+    """The reviewer's reproduction, exactly.
+
+    ``/lscratch/$SLURM_JOB_ID/../../shared`` passes every guard that existed:
+    it names ``$SLURM_JOB_ID``, so it is job-scoped by construction; it
+    expands to an absolute path; nothing is left unexpanded. And it resolves
+    to ``/shared`` — somebody else's directory, handed to ``rm -rf``.
+    """
+    assert _cleanup_probe("/lscratch/$SLURM_JOB_ID/../../shared") == ""
+    assert _cleanup_probe("/lscratch/${SLURM_JOB_ID}/../../shared") == ""
+    # The variable-leading spelling of the same escape: `$SLURM_TMPDIR/..` is
+    # the job directory's PARENT, which Slurm did not allocate to this job.
+    assert _cleanup_probe("$SLURM_TMPDIR/..",
+                          SLURM_TMPDIR="/tmp/job.12345") == ""
+    assert _cleanup_probe("$SLURM_TMPDIR/../sibling",
+                          SLURM_TMPDIR="/tmp/job.12345") == ""
+    # A `.` component is refused on the same rule rather than normalized: a
+    # staging template never needs one, so it is a signal, not a spelling.
+    assert _cleanup_probe("/lscratch/$SLURM_JOB_ID/./stage") == ""
+    assert _cleanup_probe("./lscratch/$SLURM_JOB_ID") == ""
+
+
+def test_a_variable_whose_value_traverses_is_refused_too():
+    """The template can be spotless while the VALUE carries the escape — the
+    check therefore runs on the expanded result as well as on the template."""
+    assert _cleanup_probe("/lscratch/$SLURM_JOB_ID",
+                          SLURM_JOB_ID="12345/../../etc") == ""
+    assert _cleanup_probe("/local_scratch/$USER/$SLURM_JOB_ID",
+                          USER="../../root") == ""
+
+
+def test_the_removal_must_stay_beneath_the_template_s_own_anchor():
+    """Containment, stated positively: a path is removed only when it IS the
+    template's anchor directory or sits under it. The anchor is the literal
+    text before the first variable — or, for a template that begins with one,
+    that variable's own expansion, which is what keeps a bare
+    ``$SLURM_TMPDIR`` removable while ``$SLURM_TMPDIR/..`` is not."""
+    assert _cleanup_probe("/lscratch/$SLURM_JOB_ID/stage") == \
+        "RM -rf -- /lscratch/12345/stage"
+    assert _cleanup_probe("$SLURM_TMPDIR/work",
+                          SLURM_TMPDIR="/tmp/job.12345") == \
+        "RM -rf -- /tmp/job.12345/work"
+    # An anchor of `/` would contain everything, which is not a containment
+    # check at all.
+    assert _cleanup_probe("/$SLURM_JOB_ID") == ""
+
+
+def test_every_legitimate_template_still_cleans_up_byte_for_byte():
+    """The containment rules must cost the sites that were already correct
+    NOTHING: the same templates remove the same directories, character for
+    character, as before this landed."""
+    assert _cleanup_probe("/lscratch/$SLURM_JOB_ID") == \
+        "RM -rf -- /lscratch/12345"
+    assert _cleanup_probe("/lscratch/${SLURM_JOB_ID}") == \
+        "RM -rf -- /lscratch/12345"
+    assert _cleanup_probe("$SLURM_TMPDIR", SLURM_TMPDIR="/tmp/job.12345") == \
+        "RM -rf -- /tmp/job.12345"
+    assert _cleanup_probe("${SLURM_TMPDIR}", SLURM_TMPDIR="/tmp/job.12345") \
+        == "RM -rf -- /tmp/job.12345"
+    assert _cleanup_probe("/local_scratch/$USER/$SLURM_JOB_ID") == \
+        "RM -rf -- /local_scratch/someuser/12345"
+    assert _cleanup_probe("/lscratch/$SLURM_JOBID", SLURM_JOBID="99") == \
+        "RM -rf -- /lscratch/99"
+
+
 def test_a_site_whose_scheduler_purges_scratch_gets_no_trap():
     from steerlab_server.node_scratch import (SCHEDULER_PURGES_ENV,
                                               cleanup_lines)

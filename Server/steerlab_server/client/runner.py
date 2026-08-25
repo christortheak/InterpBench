@@ -121,7 +121,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from urllib.parse import quote
+import shutil
+import tempfile
+from urllib.parse import quote, urlsplit, urlunsplit
 
 #: Read/connect/write budget for one request, in seconds. Generous: a runner
 #: on a cluster login node can be slow to answer while its filesystem is busy,
@@ -238,6 +240,122 @@ class RunnerUnreachable(RunnerError):
     code = "runnerUnreachable"
 
 
+# --- the address ----------------------------------------------------------
+
+
+#: The envelope code every URL refusal carries. Its own code, not the generic
+#: ``runnerRefused``: the repair is "fix the locator you typed", which is
+#: nothing like "the runner declined your request".
+URL_REFUSED_CODE = "runnerURLRefused"
+
+
+def _redacted(parts) -> str:
+    """A locator safe to print: same shape, with any userinfo replaced.
+
+    A refusal that echoed the URL back verbatim would put the very credential
+    it is refusing into the envelope, the log line, and the shell history —
+    which is precisely the leak the refusal exists to prevent.
+    """
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    if parts.username or parts.password:
+        host = f"<credentials redacted>@{host}"
+    return urlunsplit((parts.scheme.lower(), host, parts.path, "", ""))
+
+
+def normalize_base_url(raw: str) -> str:
+    """The ONE spelling of a runner's address, or a typed refusal.
+
+    Every surface downstream — the ``runner`` key of every envelope, the
+    ``remote-execution.json`` provenance record, every error sentence, the
+    ``repr`` of the client — reproduces whatever string arrived here. Until
+    this function existed the constructor accepted any non-empty text, so
+    ``https://user:hunter2@runner.example.edu/`` flowed straight into a
+    provenance document that is deliberately written once, kept forever, and
+    read by anyone who reads the run (external review, 2026-08-24).
+
+    So the boundary NORMALIZES, and refuses what it cannot normalize safely:
+
+    - the scheme must be ``http`` or ``https`` — this adapter speaks HTTP, and
+      a ``file:``/``ssh:``/typo locator that reached httpx would fail somewhere
+      much less legible;
+    - **userinfo is refused**, not stripped. Silently dropping a password
+      would send an unauthenticated request that fails in a way nobody can
+      trace back to the credential they thought they were using; this surface
+      carries its credential in one place, an ``Authorization`` header built
+      from ``--token-file`` or ``$STEERLAB_RUNNER_TOKEN``;
+    - a **query string** and a **fragment** are refused: a base URL is an
+      origin plus an optional proxy prefix, both of these are silently lost
+      the moment a path is appended to it, and a caller who put a token in one
+      would never learn it was ignored.
+
+    Returns the canonical form: lowercased scheme and host, port preserved,
+    path preserved (a runner behind a proxy prefix is a real deployment) with
+    any trailing slash removed.
+    """
+    text = (raw or "").strip()
+    if not text:
+        raise RunnerRefusal(
+            "no runner URL was supplied", code=URL_REFUSED_CODE,
+            repair_action=(
+                "--runner http://127.0.0.1:8080  (the port every `serve` "
+                "surface defaults to)"))
+    parts = urlsplit(text)
+    scheme = parts.scheme.lower()
+    if scheme not in ("http", "https"):
+        raise RunnerRefusal(
+            f"a runner URL must be http:// or https:// — "
+            f"{_redacted(parts)!r} is not",
+            code=URL_REFUSED_CODE,
+            repair_action=(
+                "write the scheme out: --runner http://127.0.0.1:8080, or "
+                "--runner https://runner.example.edu:8443. A bare host is "
+                "ambiguous and this client will not guess TLS on or off."))
+    if parts.username or parts.password:
+        raise RunnerRefusal(
+            f"the runner URL carries credentials in its userinfo "
+            f"({_redacted(parts)}) — this client will not accept a secret in "
+            "a locator it records and prints",
+            code=URL_REFUSED_CODE,
+            repair_action=(
+                "drop the user:password@ prefix and present the bearer token "
+                "the way this surface carries one: $STEERLAB_RUNNER_TOKEN, or "
+                "--token-file <path>. A URL is written into the run's "
+                "remote-execution.json provenance record and into every "
+                "envelope and diagnostic; a header is not."))
+    if not parts.hostname:
+        raise RunnerRefusal(
+            f"the runner URL names no host: {_redacted(parts)!r}",
+            code=URL_REFUSED_CODE,
+            repair_action=(
+                "--runner http://127.0.0.1:8080 — scheme, host, and port"))
+    if parts.query:
+        raise RunnerRefusal(
+            f"the runner URL carries a query string ({parts.query!r}) — a "
+            "base URL is an origin plus an optional proxy prefix, and a query "
+            "on it is silently lost the moment a route path is appended",
+            code=URL_REFUSED_CODE,
+            repair_action=(
+                "pass only scheme://host[:port][/prefix]. If that query was "
+                "meant as authentication, it is a token, and tokens travel in "
+                "the Authorization header this client builds from "
+                "--token-file / $STEERLAB_RUNNER_TOKEN."))
+    if parts.fragment:
+        raise RunnerRefusal(
+            f"the runner URL carries a fragment ({parts.fragment!r}) — a "
+            "fragment never reaches a server at all",
+            code=URL_REFUSED_CODE,
+            repair_action="pass only scheme://host[:port][/prefix]")
+    host = parts.hostname
+    if ":" in host:                    # an IPv6 literal, unbracketed by parse
+        host = f"[{host}]"
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    path = parts.path.rstrip("/")
+    return urlunsplit((scheme, host, path, "", ""))
+
+
 # --- the adapter ----------------------------------------------------------
 
 
@@ -252,9 +370,11 @@ class RunnerClient:
     from the call site, which is the wrong property for the object that carries
     a bearer token.
 
-    :param base_url: e.g. ``https://runner.example.edu:8080``. A trailing
-        slash is tolerated; a path component is preserved (a runner behind a
-        proxy prefix is a real deployment).
+    :param base_url: e.g. ``https://runner.example.edu:8080``. NORMALIZED by
+        :func:`normalize_base_url` — a trailing slash is tolerated, a path
+        component is preserved (a runner behind a proxy prefix is a real
+        deployment), and userinfo, a query string or a fragment is a typed
+        refusal rather than something this object would go on to print.
     :param token: the bearer token, or ``None`` for an unauthenticated runner
         (a loopback dev process). Never logged, never echoed, never in a URL.
     :param timeout: seconds, applied to connect/read/write alike. Set on the
@@ -278,9 +398,11 @@ class RunnerClient:
                  timeout: float = DEFAULT_TIMEOUT,
                  verify=True, http_client=None,
                  max_download_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES) -> None:
-        if not (base_url or "").strip():
-            raise ValueError("base_url is required")
-        self.base_url = base_url.strip().rstrip("/")
+        # NORMALIZED at the boundary, never merely accepted: `self.base_url`
+        # is what every envelope, provenance record and error sentence
+        # downstream reproduces, so this is the one place that can guarantee
+        # none of them ever carries a credential (:func:`normalize_base_url`).
+        self.base_url = normalize_base_url(base_url)
         self.timeout = float(timeout)
         self.verify = verify
         self.max_download_bytes = int(max_download_bytes)
@@ -760,7 +882,7 @@ class RunnerClient:
         return None
 
     def download_bundle(self, *, remote_path: str, expected_sha256: str,
-                        destination: str, temp_path: str,
+                        destination: str, temp_path: str | None = None,
                         max_bytes: int | None = None) -> dict:
         """``GET /api/bundles/download`` — fetch an archive and verify it
         before it reaches ``destination``.
@@ -768,14 +890,16 @@ class RunnerClient:
         The order is the whole point and it is the client half of
         ``evidence-outer-hash-pre-extraction`` (contracts §3, Phase 1a G3):
 
-        1. stream into ``temp_path`` — supplied by the CALLER, so the client
-           decides where a half-verified file may live (the same filesystem as
-           the destination, so the final move is atomic);
+        1. stream into a temp file — by default a UNIQUE one this method
+           creates in the destination's own directory (same filesystem, so the
+           final commit is a cheap metadata operation), or ``temp_path`` when
+           the caller names one explicitly;
         2. hash and count bytes as the chunks arrive, refusing the moment the
            cap is exceeded rather than after;
         3. compare against ``expected_sha256`` — the digest the RUNNER
            reported out of band, in the job record;
-        4. only then ``os.replace`` into ``destination``.
+        4. only then commit onto ``destination``, with a primitive that CANNOT
+           overwrite (:func:`_commit_no_replace`).
 
         A mismatch deletes the temp file and leaves ``destination`` untouched
         and non-existent. Nothing is ever extracted here: importing is a
@@ -784,7 +908,14 @@ class RunnerClient:
 
         Refuses rather than overwrites when ``destination`` already exists.
         Evidence is immutable; a silent overwrite is how one run's results
-        quietly become another's.
+        quietly become another's — and that rule now survives the RACE as well
+        as the check (external review, 2026-08-24). The existence check happens
+        before a download that can take minutes; a second client, or the same
+        one run twice, can create the destination inside that window, and
+        ``os.replace`` would have silently clobbered it. The temp file is
+        unique per call for the same reason: a predictable ``<dest>.partial``
+        made two concurrent downloads write the same staging path and hand each
+        other's bytes to the digest check.
         """
         expected = (expected_sha256 or "").strip().lower()
         if not expected:
@@ -800,7 +931,6 @@ class RunnerClient:
                     "package it there."))
         cap = int(self.max_download_bytes if max_bytes is None else max_bytes)
         destination = os.path.abspath(os.path.expanduser(destination))
-        temp_path = os.path.abspath(os.path.expanduser(temp_path))
         if os.path.exists(destination):
             raise RunnerRefusal(
                 f"{destination} already exists",
@@ -810,7 +940,18 @@ class RunnerClient:
                     "and overwriting one bundle with another is how a run's "
                     "results quietly become a different run's. Move the "
                     "existing file aside if you meant to replace it."))
-        os.makedirs(os.path.dirname(temp_path) or ".", exist_ok=True)
+        destination_dir = os.path.dirname(destination) or "."
+        os.makedirs(destination_dir, exist_ok=True)
+        if temp_path:
+            # An operator who named a staging path owns it — the usual reason
+            # is a filesystem with room the destination's does not have.
+            temp_path = os.path.abspath(os.path.expanduser(temp_path))
+            os.makedirs(os.path.dirname(temp_path) or ".", exist_ok=True)
+        else:
+            handle_fd, temp_path = tempfile.mkstemp(
+                prefix=".steerlab-download-", suffix=".partial",
+                dir=destination_dir)
+            os.close(handle_fd)
 
         import httpx
         url = self._url("/api/bundles/download")
@@ -881,8 +1022,22 @@ class RunnerClient:
                     "runner is the problem."),
                 detail={"expectedSha256": expected, "downloadedSha256": digest,
                         "bytes": total, "destination": destination})
-        os.makedirs(os.path.dirname(destination) or ".", exist_ok=True)
-        os.replace(temp_path, destination)
+        try:
+            _commit_no_replace(temp_path, destination)
+        except FileExistsError:
+            _unlink_quietly(temp_path)
+            raise RunnerRefusal(
+                f"{destination} appeared while this download was in flight — "
+                "refused rather than overwritten",
+                code="destinationExists",
+                repair_action=(
+                    "another download (or another process) created that path "
+                    "between this client's check and its commit. Evidence is "
+                    "immutable: name a path that does not exist, or move the "
+                    "file that appeared aside. Nothing of this download was "
+                    "kept."),
+                detail={"destination": destination, "sha256": digest,
+                        "bytes": total}) from None
         return {"path": destination, "sha256": digest, "bytes": total,
                 "remotePath": remote_path, "verified": True,
                 # Stated in the document, not only in the docs: this adapter
@@ -908,6 +1063,47 @@ def sha256_file(path: str, *, chunk: int = 1024 * 1024) -> str:
                 break
             hasher.update(block)
     return hasher.hexdigest()
+
+
+def _commit_no_replace(temp_path: str, destination: str) -> None:
+    """Move a VERIFIED download onto ``destination``, incapable of overwriting.
+
+    ``os.link`` + ``os.remove``, not ``os.replace``. Replace clobbers, and the
+    destination-exists check upstream runs BEFORE a download that may take
+    minutes — so between the check and the move there is a window in which a
+    second client, or the same one run twice, can create the file. ``link``
+    raises ``FileExistsError`` in exactly that case, which lets the caller turn
+    the race into the same refusal the up-front check gives instead of a silent
+    overwrite of somebody's evidence.
+
+    ``open(destination, "x")`` would reserve the name just as atomically, but
+    it reserves an EMPTY file that then has to be filled by copying every byte
+    a second time; ``link`` commits the bytes that are already on the disk and
+    is a metadata operation. It is therefore the primary path — and the O_EXCL
+    reservation is the fallback for the few filesystems without hardlinks
+    (FAT/exFAT, some network mounts), where it is slower and just as unable to
+    overwrite anything.
+
+    Raises ``FileExistsError`` when ``destination`` exists; leaves
+    ``temp_path`` in place for the caller to clean up when it does.
+    """
+    try:
+        os.link(temp_path, destination)
+    except FileExistsError:
+        raise
+    except OSError:
+        handle_fd = os.open(destination,
+                            os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        try:
+            with os.fdopen(handle_fd, "wb") as landing, \
+                    open(temp_path, "rb") as staged:
+                shutil.copyfileobj(staged, landing)
+        except BaseException:
+            # A copy that died half way must not leave a short file wearing
+            # the destination's name — the reservation comes back out.
+            _unlink_quietly(destination)
+            raise
+    os.remove(temp_path)
 
 
 def _unlink_quietly(path: str) -> None:

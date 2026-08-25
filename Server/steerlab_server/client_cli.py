@@ -523,6 +523,15 @@ RUNNER_PORT_UNAVAILABLE_CODE = "runnerPortUnavailable"
 #: The engine process started and then died, or never answered ``/api/info``
 #: inside the deadline. An operational failure — nothing declined anything.
 RUNNER_START_FAILED_CODE = "runnerStartFailed"
+#: ``runner serve`` on a platform the ENGINE cannot serve on. Windows, today
+#: and by maintainer ruling: the engine's file-locking chain is ``fcntl``, which
+#: does not exist there, and a platform abstraction is not being invested in.
+#: A typed refusal that says so — before any filesystem work — is honest;
+#: minting a token, making a runner root, and then dying inside a child
+#: process on ``import fcntl`` is not. Nothing else on this surface is
+#: affected: authoring locally and submitting to a REMOTE runner both work on
+#: Windows, and the refusal names that path.
+RUNNER_PLATFORM_UNSUPPORTED_CODE = "runnerPlatformUnsupported"
 #: ``run`` was pointed at a study that is not frozen. The composite hands a
 #: bundle to a machine that will execute it and cite the result; a draft has no
 #: freeze hash for that citation to rest on, and the repair is one verb.
@@ -1667,6 +1676,43 @@ def _refuse_workspace_as_runner_root(runner_root: str) -> None:
             "cache; your workspace keeps only what `bundle import` puts there"))
 
 
+def _refuse_serve_on_unsupported_platform() -> None:
+    """Windows cannot SERVE, and says so out loud rather than half-trying.
+
+    The engine's advisory-lock chain is built on ``fcntl`` (workspace lock, job
+    database, run-status writes), which is POSIX-only, so
+    ``python -m steerlab_server.cli serve`` cannot start on Windows at all. The
+    maintainer has ruled against investing in a platform abstraction for it.
+    That leaves two possible behaviours and only one honest one: refuse here,
+    with a code and a sentence, BEFORE a runner root is created and a bearer
+    token minted for a service that was never going to answer.
+
+    What this does NOT say is "SteerLab does not work on Windows", because
+    that is false and the refusal must not imply it. Authoring — create,
+    attach, extract inputs, freeze, package — and the whole remote round trip
+    (``steerlab run --runner <url>``, ``runner upload/submit/jobs/evidence``,
+    ``bundle import``) are pure client work and are fully supported there. The
+    only thing Windows cannot be is the machine that executes.
+    """
+    if sys.platform != "win32":
+        return
+    raise ClientRefusal(
+        code=RUNNER_PLATFORM_UNSUPPORTED_CODE, state="refused",
+        reason=(
+            "`runner serve` starts the ENGINE, and the engine does not run on "
+            "Windows — its file-locking chain is POSIX `fcntl`, so local "
+            "execution is macOS and Linux only. Nothing was created: no "
+            "runner root, no token"),
+        repair_action=(
+            "author here and execute elsewhere — that path is fully supported "
+            f"on Windows. Point `{PROGRAM} run <experiment> --runner <url>` at "
+            "a runner on a Mac, a Linux box, or a cluster login node; "
+            f"`{PROGRAM} runner upload/submit/jobs/evidence` and `{PROGRAM} "
+            "bundle import` all speak to it from here. To run a local runner "
+            "on this machine, serve it from WSL2 or a Linux container and "
+            "give it a workspace path that side"))
+
+
 def _require_runner_extra() -> None:
     """Refuse a light install BEFORE anything starts.
 
@@ -1996,6 +2042,13 @@ def _runner_serve(invocation: Invocation) -> CLIResult:
     import threading
     import time
 
+    # FIRST, before argument checks and before anything touches a filesystem:
+    # on Windows this verb cannot work, and the honest answer is a sentence
+    # rather than a half-made runner root plus a child process that dies on
+    # `import fcntl`. Maintainer ruling: local execution is macOS/Linux, and
+    # the engine will not grow a platform abstraction to change that.
+    _refuse_serve_on_unsupported_platform()
+
     if invocation.positionals:
         raise ClientRefusal(
             code=USAGE_CODE,
@@ -2102,6 +2155,25 @@ def _runner_serve(invocation: Invocation) -> CLIResult:
     raise ServeCompleted(0 if stopped_by_signal or code == 0 else 70)
 
 
+def _normalized_runner_url(runner_api, raw: str, *, payload: dict) -> str:
+    """The runner locator, canonical — or this client's typed refusal.
+
+    Called before ``common`` is built and before anything is sent, so the ONE
+    string every downstream surface reproduces (the envelope's ``runner`` key,
+    the ``remote-execution.json`` provenance record, every diagnostic) is the
+    normalized form and never the raw argv text. The rules, and why each one
+    refuses rather than silently repairs, live in
+    ``client.runner.normalize_base_url``.
+    """
+    try:
+        return runner_api.normalize_base_url(raw)
+    except runner_api.RunnerError as exc:
+        raise ClientRefusal(
+            code=exc.code, reason=exc.reason,
+            repair_action=exc.repair_action, state=exc.state,
+            payload={**payload, **exc.detail}) from exc
+
+
 def _runner(invocation: Invocation) -> CLIResult:
     """The runner verbs. Every call is a route that already exists in
     ``api/routes.py``; :mod:`steerlab_server.client.runner` holds the mapping
@@ -2129,6 +2201,7 @@ def _runner(invocation: Invocation) -> CLIResult:
                 f"{PROGRAM} {spec.family} {spec.verb} --runner "
                 "http://127.0.0.1:8080 …  (the port every `serve` surface "
                 "defaults to)"))
+    base_url = _normalized_runner_url(runner_api, base_url, payload={})
 
     token = _runner_token(invocation)
     ca_bundle = invocation.one("--ca-bundle")
@@ -2361,7 +2434,13 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
         # move is a same-filesystem rename and never a copy that could be
         # interrupted half way. `--temp` overrides it for a caller whose
         # destination is on a small volume.
-        temp_path = invocation.one("--temp") or f"{destination}.partial"
+        #
+        # None, not `<destination>.partial` (external review, 2026-08-24): a
+        # PREDICTABLE staging name meant two downloads aimed at one
+        # destination wrote the same file, and each verified bytes the other
+        # was still writing. The adapter mints a unique one in the
+        # destination's directory instead.
+        temp_path = invocation.one("--temp")
         downloaded = client.download_bundle(
             remote_path=reference["bundlePath"],
             expected_sha256=reference.get("bundleSha256") or "",
@@ -2611,7 +2690,7 @@ def _poll_to_terminal(client, job_id: str, *, deadline: float):
 
 
 def _download_evidence(client, *, reference: dict, destination: str,
-                       temp_path: str, max_bytes: int | None) -> dict:
+                       temp_path: str | None, max_bytes: int | None) -> dict:
     """Fetch and verify one evidence archive. Verify-then-move is the
     adapter's; the retry is this machine's, and it is safe for the reason
     :func:`_retry_once` gives."""
@@ -2722,6 +2801,12 @@ def _run(invocation: Invocation) -> CLIResult:
                 f"{PROGRAM} run {name} --runner http://127.0.0.1:8080  (start "
                 f"one with `{PROGRAM} runner serve`, which prints its URL)"),
             payload={"experiment": name, "stages": _stage_table(stages)})
+    # Normalized BEFORE `common` is built: this string becomes the envelope's
+    # `runner` key and the provenance record's `runner.url`, both of which are
+    # written once and read forever.
+    base_url = _normalized_runner_url(
+        runner_api, base_url,
+        payload={"experiment": name, "stages": _stage_table(stages)})
 
     study_verb = (invocation.one("--verb") or DEFAULT_STUDY_VERB).strip()
     executor = (invocation.one("--executor") or "").strip() or None
@@ -3100,9 +3185,13 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
                     stage_facts={"jobId": job_id, "status": status})
         else:
             temporary_directory: str | None = None
+            # `None` staging in both branches: the adapter mints a unique temp
+            # file in the destination's own directory, so two `run`s racing to
+            # one `--evidence-out` cannot write each other's bytes (external
+            # review, 2026-08-24).
+            temp_path = None
             if evidence_out:
                 destination = os.path.abspath(os.path.expanduser(evidence_out))
-                temp_path = f"{destination}.partial"
             else:
                 import tempfile
                 # A temp directory of our own, removed after the import: the
@@ -3113,7 +3202,6 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
                 destination = os.path.join(temporary_directory,
                                            os.path.basename(
                                                reference["bundlePath"]))
-                temp_path = f"{destination}.partial"
             try:
                 downloaded = _download_evidence(
                     client, reference=reference, destination=destination,

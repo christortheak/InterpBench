@@ -698,6 +698,37 @@ def test_the_token_never_reaches_any_envelope_log_line_or_exception(
         assert client.scrub(f"oops {FAKE_TOKEN} oops") == \
             "oops <token redacted> oops"
 
+    # (6) a credential smuggled in the LOCATOR rather than the header.
+    # `--runner https://user:pass@host/` used to be accepted verbatim and then
+    # reproduced by every surface above — including the `remote-execution.json`
+    # provenance record, which is written once and read forever. It is now a
+    # typed refusal, and the refusal redacts what it refused.
+    url_secret = "hunter2-DO-NOT-LEAK-9d41b7"
+    embedded = f"https://someone:{url_secret}@testserver/"
+    code, document, err = _envelope(
+        ["runner", "capabilities", "--runner", embedded], capsys)
+    assert code == 65, document
+    assert document["error"]["code"] == runner_api.URL_REFUSED_CODE
+    transcript.extend([json.dumps(document), err])
+    code, out, err = _cli(["runner", "capabilities", "--runner", embedded],
+                          capsys)
+    assert code == 65
+    transcript.extend([out, err])
+    # …and the composite verb, whose provenance record is the durable surface.
+    code, document, err = _envelope(
+        ["run", STUDY_NAME, "--runner", embedded,
+         "--root", service["source"]], capsys)
+    assert code == 65, document
+    assert document["error"]["code"] == runner_api.URL_REFUSED_CODE, \
+        "the composite must refuse the locator BEFORE it reads the study"
+    transcript.extend([json.dumps(document), err])
+    for text in transcript:
+        assert url_secret not in text, (
+            "a URL-embedded credential escaped into client output: "
+            + text[:400])
+        assert "someone" not in text, (
+            "the userinfo escaped into client output: " + text[:400])
+
     for text in transcript:
         assert FAKE_TOKEN not in text, (
             "the bearer token escaped into client output: "
@@ -1212,3 +1243,169 @@ sys.__stderr__.write(json.dumps({
     report = json.loads(proc.stderr[proc.stderr.rindex("{"):])
     assert report["leaked"] == [], report
     assert report["version"]
+
+
+# =============================================================================
+# 9. The download COMMITS without ever overwriting (external review 2026-08-24)
+# =============================================================================
+
+
+def test_a_destination_that_appears_mid_download_is_refused_not_overwritten(
+        service):
+    """The existence check runs before a transfer that can take minutes.
+
+    Between that check and the move there is a window, and ``os.replace``
+    would have walked straight through it — silently replacing evidence
+    another process had just landed. The commit primitive cannot overwrite, so
+    the race ends in the SAME refusal the up-front check gives.
+    """
+    _job_id, meta = _evidence_bearing_job(service)
+    with open(meta["bundlePath"], "rb") as handle:
+        body = handle.read()
+    destination = os.path.join(str(service["tmp"]), "home", "raced.tar.gz")
+    intruder = b"somebody else's evidence"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # The window itself: another client lands its own file at the
+        # destination while this download is in flight.
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        with open(destination, "wb") as handle:
+            handle.write(intruder)
+        return httpx.Response(200, content=body)
+
+    with runner_api.RunnerClient(base_url="http://runner.invalid", token=None,
+                                 http_client=_mock_client(handler)) as client:
+        with pytest.raises(runner_api.RunnerRefusal) as caught:
+            client.download_bundle(remote_path=meta["bundlePath"],
+                                   expected_sha256=meta["bundleSha256"],
+                                   destination=destination)
+
+    assert caught.value.code == "destinationExists"
+    assert "appeared while this download was in flight" in caught.value.reason
+    with open(destination, "rb") as handle:
+        assert handle.read() == intruder, \
+            "the download overwrote a file that appeared after its check"
+    assert os.listdir(os.path.dirname(destination)) == ["raced.tar.gz"], \
+        "the refusal left staging debris beside the destination"
+
+
+def test_the_staging_file_is_unique_so_concurrent_downloads_cannot_collide(
+        adapter, service):
+    """Two downloads aimed at one destination used to write the SAME staging
+    path — ``<destination>.partial`` — so each verified bytes the other was
+    still writing. Simulated by pre-creating that predictable name: the
+    adapter must not touch it, must not read it, and must not delete it.
+    """
+    _job_id, meta = _evidence_bearing_job(service)
+    destination = os.path.join(str(service["tmp"]), "home", "shared.tar.gz")
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    rival = destination + ".partial"
+    rival_bytes = b"the other download's half-written archive"
+    with open(rival, "wb") as handle:
+        handle.write(rival_bytes)
+
+    downloaded = adapter.download_bundle(
+        remote_path=meta["bundlePath"],
+        expected_sha256=meta["bundleSha256"], destination=destination)
+
+    assert downloaded["verified"] is True
+    with open(rival, "rb") as handle:
+        assert handle.read() == rival_bytes, \
+            "the adapter reused the predictable staging name"
+    with open(destination, "rb") as got, open(meta["bundlePath"], "rb") as want:
+        assert got.read() == want.read()
+    # …and its OWN staging file is gone.
+    debris = [name for name in os.listdir(os.path.dirname(destination))
+              if name.startswith(".steerlab-download-")]
+    assert debris == []
+
+
+def test_an_explicit_temp_path_is_still_honoured(adapter, service):
+    """``--temp`` exists for a destination on a small volume, and an operator
+    who names a staging path owns it. The default merely stops being a
+    guessable one."""
+    _job_id, meta = _evidence_bearing_job(service)
+    destination = os.path.join(str(service["tmp"]), "home", "explicit.tar.gz")
+    temp_path = os.path.join(str(service["tmp"]), "elsewhere", "stage.part")
+
+    downloaded = adapter.download_bundle(
+        remote_path=meta["bundlePath"],
+        expected_sha256=meta["bundleSha256"], destination=destination,
+        temp_path=temp_path)
+
+    assert downloaded["verified"] is True
+    assert not os.path.exists(temp_path)
+    assert os.path.isfile(destination)
+
+
+# =============================================================================
+# 10. The runner URL is NORMALIZED at the boundary
+# =============================================================================
+
+
+def test_a_runner_url_with_userinfo_is_refused_and_never_echoed():
+    """A credential in a locator is a credential in the provenance record.
+
+    ``remote-execution.json`` is written once and read forever; the envelope
+    and every diagnostic reproduce the same string. So userinfo is REFUSED —
+    not stripped, because a silently unauthenticated request fails in a way
+    nobody can trace back to the password they thought they were using — and
+    the refusal itself redacts what it is refusing.
+    """
+    secret = "hunter2-DO-NOT-LEAK"
+    with pytest.raises(runner_api.RunnerRefusal) as caught:
+        runner_api.normalize_base_url(
+            f"https://someone:{secret}@runner.example.edu:8443/")
+    exc = caught.value
+    assert exc.code == runner_api.URL_REFUSED_CODE
+    assert exc.state == "refused"
+    for text in (exc.reason, exc.repair_action, json.dumps(exc.detail)):
+        assert secret not in text
+        assert "someone" not in text
+    assert "<credentials redacted>" in exc.reason
+    assert "--token-file" in exc.repair_action
+
+    # …and the constructor is the boundary, so no client can hold one.
+    with pytest.raises(runner_api.RunnerRefusal):
+        runner_api.RunnerClient(base_url=f"http://u:{secret}@host:8080")
+
+
+def test_a_runner_url_must_name_http_or_https_and_a_host():
+    for locator in ("runner.example.edu:8080", "ssh://runner.example.edu",
+                    "file:///tmp/runner", "http://", ""):
+        with pytest.raises(runner_api.RunnerRefusal) as caught:
+            runner_api.normalize_base_url(locator)
+        assert caught.value.code == runner_api.URL_REFUSED_CODE
+
+
+def test_a_query_string_or_fragment_on_a_runner_url_is_refused():
+    """Both are silently lost the moment a route path is appended, so a caller
+    who put a token in one would never learn it was ignored."""
+    for locator in ("http://runner.example.edu/?token=abc",
+                    "http://runner.example.edu/#frag"):
+        with pytest.raises(runner_api.RunnerRefusal) as caught:
+            runner_api.normalize_base_url(locator)
+        assert caught.value.code == runner_api.URL_REFUSED_CODE
+
+
+def test_the_normalized_form_is_what_the_client_reports():
+    """One spelling reaches every surface: lowercased scheme and host, port
+    kept, proxy prefix kept, trailing slash gone."""
+    assert runner_api.normalize_base_url("HTTP://Runner.Example.EDU:8080/") \
+        == "http://runner.example.edu:8080"
+    assert runner_api.normalize_base_url("https://host/steerlab/") \
+        == "https://host/steerlab"
+    assert runner_api.normalize_base_url("http://127.0.0.1:8080") \
+        == "http://127.0.0.1:8080"
+    # Idempotent, so normalizing at more than one boundary is safe.
+    once = runner_api.normalize_base_url("HTTP://Host:8080/prefix/")
+    assert runner_api.normalize_base_url(once) == once
+
+    client = runner_api.RunnerClient(base_url="HTTP://TestServer/",
+                                     http_client=_mock_client(
+                                         lambda request: httpx.Response(200)))
+    try:
+        assert client.base_url == "http://testserver"
+        assert "http://testserver" in repr(client)
+    finally:
+        client.close()

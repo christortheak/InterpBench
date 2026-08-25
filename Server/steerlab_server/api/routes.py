@@ -3348,6 +3348,18 @@ def build_router(state: ServiceState) -> APIRouter:
         ``UploadFile`` so the core server does not require the optional
         python-multipart package. Clients should send ``application/octet-stream``
         plus ``X-SteerLab-Filename``.
+
+        **Staged, then committed** (external review, 2026-08-24). The body used
+        to be written straight to its final name, so a client that disconnected
+        mid-upload — or any exception out of ``request.stream()`` — left a
+        truncated file sitting at the destination inside the runner's runs
+        tree, indistinguishable from a complete one to anything that later
+        listed the directory. The three explicit refusals cleaned up after
+        themselves; the one nobody raises did not. Now the bytes land in a temp
+        file beside the destination and are renamed into place only after the
+        archive has been inspected, and a ``finally`` removes the temp — and
+        the staging directory, when it is empty — on EVERY unsuccessful exit.
+        The success path, and the response shape, are unchanged.
         """
         from ..experiment import bundles
         filename = request.headers.get("x-steerlab-filename", "upload.bundle")
@@ -3355,43 +3367,64 @@ def build_router(state: ServiceState) -> APIRouter:
             raise HTTPException(status_code=400, detail="invalid upload filename")
         run_dir = paths.make_unique_run_directory("uploaded-bundle")
         dest = os.path.join(run_dir, filename)
-        total = 0
-        hasher = hashlib.sha256()
-        oversize = False
-        cap = _max_upload_bytes()
-        with open(dest, "wb") as handle:
-            async for chunk in request.stream():
-                if not chunk:
-                    continue
-                total += len(chunk)
-                if total > cap:
-                    oversize = True
-                    break
-                hasher.update(chunk)
-                handle.write(chunk)
-        if oversize:
-            os.remove(dest)
-            raise HTTPException(
-                status_code=413,
-                detail=f"upload exceeds {cap} bytes (STEERLAB_MAX_UPLOAD_BYTES)")
-        if total == 0:
-            os.remove(dest)
-            raise HTTPException(status_code=400, detail="empty upload")
+        handle_fd, temp = tempfile.mkstemp(prefix=".upload-", suffix=".part",
+                                           dir=run_dir)
+        os.close(handle_fd)
+        committed = False
         try:
-            inspected = bundles.inspect_bundle(dest)
-        except (OSError, bundles.BundleError, tarfile.TarError, json.JSONDecodeError) as exc:
-            os.remove(dest)
-            raise HTTPException(status_code=400, detail=f"not a SteerLab bundle: {exc}")
-        executable = inspected.get("kind") == "runBundle"
-        return {
-            "path": dest,
-            "filename": filename,
-            "sha256": hasher.hexdigest(),
-            "bytes": total,
-            "bundle": inspected,
-            "executable": executable,
-            "stagingDirectory": run_dir,
-        }
+            total = 0
+            hasher = hashlib.sha256()
+            oversize = False
+            cap = _max_upload_bytes()
+            with open(temp, "wb") as handle:
+                async for chunk in request.stream():
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > cap:
+                        oversize = True
+                        break
+                    hasher.update(chunk)
+                    handle.write(chunk)
+            if oversize:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"upload exceeds {cap} bytes (STEERLAB_MAX_UPLOAD_BYTES)")
+            if total == 0:
+                raise HTTPException(status_code=400, detail="empty upload")
+            try:
+                inspected = bundles.inspect_bundle(temp)
+            except (OSError, bundles.BundleError, tarfile.TarError,
+                    json.JSONDecodeError) as exc:
+                raise HTTPException(
+                    status_code=400, detail=f"not a SteerLab bundle: {exc}")
+            os.replace(temp, dest)
+            committed = True
+            # `inspect_bundle` stamps the path it was handed; the document
+            # must name where the archive actually IS, not where it waited.
+            inspected["bundlePath"] = dest
+            executable = inspected.get("kind") == "runBundle"
+            return {
+                "path": dest,
+                "filename": filename,
+                "sha256": hasher.hexdigest(),
+                "bytes": total,
+                "bundle": inspected,
+                "executable": executable,
+                "stagingDirectory": run_dir,
+            }
+        finally:
+            if not committed:
+                try:
+                    os.remove(temp)
+                except OSError:
+                    pass
+                try:
+                    # Only when empty — a staging directory that somehow holds
+                    # something else is not this handler's to remove.
+                    os.rmdir(run_dir)
+                except OSError:
+                    pass
 
     @router.get("/api/bundles/download")
     def download_bundle(path: str):

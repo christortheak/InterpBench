@@ -114,6 +114,27 @@ def _variable_case(name: str, *, scoping: bool) -> list[str]:
     ]
 
 
+def _leading_variable_case(name: str) -> list[str]:
+    """The containment ANCHOR for a template that BEGINS with ``name``.
+
+    A template like ``$SLURM_TMPDIR`` or ``$SLURM_TMPDIR/models`` has no
+    static literal prefix to anchor containment against, and refusing every
+    such template would silently drop cleanup for the sites that spell their
+    scratch that way — the exact failure this module was written to end. The
+    honest anchor there is the leading variable's own expansion: the removal
+    must land on that directory or inside it, so ``$SLURM_TMPDIR`` cleans up
+    and ``$SLURM_TMPDIR/..`` (which resolves to its PARENT) does not.
+
+    Both spellings, for the same reason :func:`_variable_case` handles both.
+    """
+    return [
+        f'    case "${{template}}" in',
+        f"      '${name}'|'${name}'/*|'${{{name}}}'|'${{{name}}}'/*)",
+        f'        anchor="${{{name}}}" ;;',
+        "    esac",
+    ]
+
+
 def cleanup_lines(*, environ=None) -> list[str]:
     """THE node-scratch cleanup block, as script lines.
 
@@ -150,22 +171,61 @@ def cleanup_lines(*, environ=None) -> list[str]:
         "# arrives single-quoted, so the case pattern sees the literal",
         "# variable text.",
         "cleanup_node_scratch() {",
-        "  local stage_dir scoped",
+        "  local template stage_dir scoped anchor",
         f'  [ -n "${{{STAGE_DIR_ENV}:-}}" ] || return 0',
         '  [ -n "${SLURM_JOB_ID:-}" ] || return 0',
-        f'  stage_dir="${{{STAGE_DIR_ENV}}}"',
+        f'  template="${{{STAGE_DIR_ENV}}}"',
+        '  stage_dir="${template}"',
         "  scoped=0",
+        "  # TRAVERSAL, in the template itself (external review, 2026-08-24).",
+        "  # '/lscratch/$SLURM_JOB_ID/../../shared' is job-scoped by every",
+        "  # test below — it names $SLURM_JOB_ID, it expands to an absolute",
+        "  # path, nothing is left unexpanded — and it resolves to a shared",
+        "  # directory this job does not own. A '.' or '..' COMPONENT is",
+        "  # never anything a staging template needs, so it is refused",
+        "  # outright rather than normalized away.",
+        '  case "/${template}/" in */../*|*/./*) return 0 ;; esac',
         *[line for name in JOB_SCOPING_VARIABLES
           for line in _variable_case(name, scoping=True)],
         *[line for name in COMPANION_VARIABLES
           for line in _variable_case(name, scoping=False)],
         "  # Job-scoped by construction, or nobody's to remove.",
         '  [ "${scoped}" = 1 ] || return 0',
+        "  # …and the same traversal check on the RESULT: the template may be",
+        "  # clean while a variable's VALUE carries the '..' instead.",
+        '  case "/${stage_dir}/" in */../*|*/./*) return 0 ;; esac',
         "  # Belt and braces: an absolute path, with nothing left unexpanded.",
         "  # Neither can fail given the checks above; both are cheap, and the",
         "  # cost of being wrong here is somebody else's data.",
         '  case "${stage_dir}" in /*[!/]*) ;; *) return 0 ;; esac',
         '  [ "${stage_dir#*\\$}" = "${stage_dir}" ] || return 0',
+        "  # CONTAINMENT. The anchor is the template's static literal prefix —",
+        "  # the text before its first variable — and the path about to be",
+        "  # removed must BE that directory or sit under it. For a template",
+        "  # that begins with a variable there is no literal prefix, so the",
+        "  # anchor is that leading variable's own expansion (which is what",
+        "  # makes a bare $SLURM_TMPDIR removable and $SLURM_TMPDIR/.. not).",
+        "  # With '.' and '..' components already refused above, the expanded",
+        "  # path is normalized by construction, so this prefix test IS the",
+        "  # normalized-containment test.",
+        '  anchor="${template%%\\$*}"',
+        '  while [ -n "${anchor}" ] && [ "${anchor}" != "${anchor%/}" ]; do',
+        '    anchor="${anchor%/}"',
+        "  done",
+        '  if [ -z "${anchor}" ]; then',
+        *[line for name in (*JOB_SCOPING_VARIABLES, *COMPANION_VARIABLES)
+          for line in _leading_variable_case(name)],
+        "  fi",
+        "  # The anchor must itself be a real absolute directory, never '/':",
+        "  # an empty or root anchor would contain everything, which is not a",
+        "  # containment check at all.",
+        '  case "${anchor}" in /*[!/]*) ;; *) return 0 ;; esac',
+        '  case "/${anchor}/" in */../*|*/./*) return 0 ;; esac',
+        '  [ "${anchor#*\\$}" = "${anchor}" ] || return 0',
+        '  case "${stage_dir}" in',
+        '    "${anchor}"|"${anchor}"/*) ;;',
+        "    *) return 0 ;;",
+        "  esac",
         '  rm -rf -- "${stage_dir}" 2>/dev/null || true',
         "}",
         "# EXIT only, so it composes with any checkpoint trap (USR1/TERM) and",

@@ -933,3 +933,60 @@ def test_the_new_client_dependency_was_already_in_the_locks(lock):
             f"{lock} does not pin {package} — adding httpx to the client's "
             "dependencies is no longer free and the locks must be regenerated "
             "(Server/scripts/update-locks.sh)")
+
+
+# =============================================================================
+# Windows honesty: `runner serve` refuses, and says what DOES work
+# =============================================================================
+
+
+def test_runner_serve_refuses_on_windows_before_touching_the_filesystem(
+        tmp_path, monkeypatch, capsys):
+    """The engine's advisory-lock chain is POSIX ``fcntl``, so
+    ``python -m steerlab_server.cli serve`` cannot start on Windows at all, and
+    the maintainer has ruled against a platform abstraction for it. The honest
+    behaviour is therefore a typed refusal BEFORE a runner root is created and
+    a bearer token minted for a service that was never going to answer.
+
+    What this test proves is OUR refusal — that it is typed, that it fires
+    first, and that it names the supported path. It does NOT prove the client
+    is importable on Windows: only Windows CI could prove that, and by the
+    same ruling that is out of scope. The platform is monkeypatched, which is
+    the whole point: the refusal must not depend on being run there.
+    """
+    runner_root = tmp_path / "should-never-exist"
+    monkeypatch.setattr(client_cli.sys, "platform", "win32")
+
+    def _never(*args, **kwargs):
+        raise AssertionError("the refusal did not fire before filesystem work")
+
+    monkeypatch.setattr(client_cli, "_require_runner_extra", _never)
+    monkeypatch.setattr(client_cli, "_runner_root_layout", _never)
+    monkeypatch.setattr(client_cli, "_mint_runner_token", _never)
+
+    code = client_cli.main(["runner", "serve", "--runner-root",
+                            str(runner_root), "--json"])
+    document = _document(capsys)
+
+    assert code == 65, document
+    assert document["state"] == "refused"
+    assert document["error"]["code"] == "runnerPlatformUnsupported"
+    assert document["error"]["code"] == \
+        client_cli.RUNNER_PLATFORM_UNSUPPORTED_CODE
+    reason = document["error"]["reason"]
+    assert "Windows" in reason
+    assert "macOS and Linux" in reason
+    repair = document["error"]["repairAction"]
+    assert "--runner" in repair, \
+        "the refusal must name the path that DOES work from Windows"
+    assert "bundle import" in repair
+    assert not runner_root.exists(), \
+        "a refused serve created a runner root anyway"
+
+
+def test_runner_serve_is_not_refused_on_this_platform(monkeypatch):
+    """The guard is platform-specific, not a blanket disable: on macOS and
+    Linux it returns and the verb goes on to do its real work."""
+    for platform in ("darwin", "linux"):
+        monkeypatch.setattr(client_cli.sys, "platform", platform)
+        assert client_cli._refuse_serve_on_unsupported_platform() is None

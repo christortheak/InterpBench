@@ -12,8 +12,10 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import tarfile
+import tempfile
 import time
 import traceback
 from dataclasses import dataclass
@@ -52,6 +54,44 @@ def max_member_bytes() -> int:
                               str(16 * 1024**3)))
 
 
+def max_total_bytes() -> int:
+    """Upper bound on what the WHOLE archive expands to, in bytes.
+
+    :func:`max_member_bytes` bounds ONE member, which is exactly the wrong
+    shape for the cheapest expansion attack there is: ten thousand members of
+    15 GiB each are individually inside a 16-GiB per-member cap and together
+    fill any disk on earth. A cap that is only per-member is a cap on the
+    largest brick, not on the wall.
+
+    Checked twice, because a tar header is a claim and the sum of claims is
+    still only a claim: against the DECLARED sizes in preflight (so a hostile
+    archive is refused before a byte is written) and against the ACTUAL bytes
+    while members stream (so understated headers are caught on the way past).
+
+    Generous by design — a sharded multi-GB study bundle must import without
+    anyone touching a knob. Read per call and tunable beside its siblings:
+    ``STEERLAB_MAX_BUNDLE_TOTAL_BYTES``; default 64 GiB.
+    """
+    return int(os.environ.get("STEERLAB_MAX_BUNDLE_TOTAL_BYTES",
+                              str(64 * 1024**3)))
+
+
+def max_member_count() -> int:
+    """Upper bound on HOW MANY members one archive may carry.
+
+    The companion to :func:`max_total_bytes`, and not redundant with it: a
+    million empty members costs almost no uncompressed bytes and still spends
+    a million inode creations, a million path walks, and however long the
+    metadata pass takes. Members that this importer SKIPS (``._`` resource
+    forks, ``.DS_Store``) count too — they are skipped after the tar index has
+    already been read, so they are work whether or not they land.
+
+    Read per call and tunable beside its siblings:
+    ``STEERLAB_MAX_BUNDLE_MEMBERS``; default 10000.
+    """
+    return int(os.environ.get("STEERLAB_MAX_BUNDLE_MEMBERS", "10000"))
+
+
 def max_metadata_bytes() -> int:
     """The same bound for the bundle's own JSON documents
     (``steerlab-bundle.json``, ``steerlab-evidence.json``,
@@ -77,6 +117,28 @@ def _refuse_oversized_member(member, limit: int, *, what: str = "member") -> Non
             "STEERLAB_MAX_BUNDLE_METADATA_BYTES) — refusing to expand it")
 
 
+def _refuse_oversized_archive(members) -> None:
+    """The AGGREGATE bounds, on the DECLARED archive, before anything lands.
+
+    Per-member caps answer "is this one brick too big"; these answer "is this
+    wall too big", which is the question a bundle of ten thousand
+    just-under-the-cap members exists to dodge.
+    """
+    count_limit = max_member_count()
+    if len(members) > count_limit:
+        raise BundleError(
+            f"bundle carries {len(members)} members, over the "
+            f"{count_limit}-member limit (STEERLAB_MAX_BUNDLE_MEMBERS) — "
+            "refusing to expand it")
+    total_limit = max_total_bytes()
+    declared = sum(member.size for member in members if member.isfile())
+    if declared > total_limit:
+        raise BundleError(
+            f"bundle declares {declared} uncompressed bytes across "
+            f"{len(members)} member(s), over the {total_limit}-byte limit "
+            "(STEERLAB_MAX_BUNDLE_TOTAL_BYTES) — refusing to expand it")
+
+
 def _read_metadata_member(tar, member) -> bytes:
     """Whole-member read for a bundle's own JSON, with the size refusal in
     front of it (these must be parsed as one document, so they cannot stream)."""
@@ -88,7 +150,9 @@ def _read_metadata_member(tar, member) -> bytes:
         return handle.read()
 
 
-def _stream_member(tar, member, temp_path: str, limit: int) -> tuple[str, int]:
+def _stream_member(tar, member, temp_path: str, limit: int, *,
+                   total_before: int = 0,
+                   total_limit: int | None = None) -> tuple[str, int]:
     """Copy one member to ``temp_path`` in chunks; return ``(sha256, bytes)``.
 
     The member is never materialized: ``source.read()`` with no argument
@@ -99,7 +163,10 @@ def _stream_member(tar, member, temp_path: str, limit: int) -> tuple[str, int]:
     tamper firewall neither weakens nor starts racing a sibling shard.
 
     The declared size was already refused above; this re-checks the ACTUAL
-    byte count, because a tar header is just a claim.
+    byte count, because a tar header is just a claim. ``total_before`` /
+    ``total_limit`` carry the same re-check for the WHOLE archive
+    (:func:`max_total_bytes`): the declared sum was refused in preflight, and
+    this is the running total that catches headers which understated it.
     """
     digest = hashlib.sha256()
     written = 0
@@ -117,6 +184,13 @@ def _stream_member(tar, member, temp_path: str, limit: int) -> tuple[str, int]:
                     f"bundle member {member.name!r} expands past the "
                     f"{limit}-byte limit (STEERLAB_MAX_BUNDLE_MEMBER_BYTES) — "
                     "its tar header understated its size; refusing")
+            if total_limit is not None \
+                    and total_before + written > total_limit:
+                raise BundleError(
+                    f"bundle expands past the {total_limit}-byte total limit "
+                    f"(STEERLAB_MAX_BUNDLE_TOTAL_BYTES) while streaming "
+                    f"{member.name!r} — its tar headers understated the "
+                    "archive; refusing")
             digest.update(chunk)
             handle.write(chunk)
     return digest.hexdigest(), written
@@ -668,10 +742,270 @@ def _refuse_outer_hash_mismatch(bundle_path: str, expected: str) -> None:
             "you fetched the archive over a channel you already trust")
 
 
+#: The staging directory's name prefix. Created INSIDE the target root, so the
+#: commit below is a same-volume rename rather than a copy, and removed in a
+#: ``finally`` whatever happens.
+_STAGING_PREFIX = ".steerlab-import-"
+
+
+@dataclass
+class _PlannedMember:
+    """One member that PASSED preflight and is therefore going to land."""
+
+    member: object                       # tarfile.TarInfo
+    #: Absolute path in the target root this member commits to.
+    dest: str
+    #: The pinned digest from the bundle's entry list (never ``None`` — a
+    #: member without one is refused in preflight).
+    expected: str | None
+    #: Where the verified bytes wait between staging and commit.
+    staged: str = ""
+
+
+@dataclass
+class _Landed:
+    """One member that HAS landed this call, and how to put it back."""
+
+    dest: str
+    #: A hardlink (or, on a filesystem without them, a copy) of whatever stood
+    #: at ``dest`` before this call overwrote it — ``None`` when nothing did,
+    #: in which case rollback simply removes ``dest``.
+    backup: str | None
+
+
+def _plan_import(tar, meta: dict, members, *, target: str,
+                 allow_overwrite: bool) -> tuple[list[_PlannedMember], bytes | None]:
+    """PREFLIGHT the complete archive: every refusal that can be decided
+    without the member's bytes, decided before a single byte lands.
+
+    The bug this closes (external review, 2026-08-24). Members used to be
+    verified-and-landed one at a time, so an archive whose second member
+    escaped the target root left the FIRST one installed in the canonical
+    workspace — and the never-overwrite rule then refused the clean retry,
+    leaving the workspace in a state only manual surgery could clear. A
+    refusal must leave the workspace exactly as it found it, which means the
+    whole archive is judged before any of it is committed.
+
+    Returns the members that will land, in archive order, plus the verified
+    portable pipeline ledger (or ``None``). Reads nothing but tar metadata and
+    the bundle's own small JSON documents.
+    """
+    plan: list[_PlannedMember] = []
+    portable_payload: bytes | None = None
+    member_limit = max_member_bytes()
+    for member in members:
+        if member.isdir() or member.name in {"steerlab-bundle.json",
+                                             "steerlab-evidence.json"}:
+            continue
+        if member.name == "steerlab-pipeline.json":
+            # The portable pipeline ledger: pin REQUIRED (seventh round — an
+            # unpinned member is unverifiable), verified, and RETAINED inside
+            # the imported pipeline run dir after extraction so local readers
+            # resolve stage references without cluster paths.
+            expected = meta.get("pipelinePortableSha256")
+            payload = _read_metadata_member(tar, member)
+            if not expected:
+                raise BundleError(
+                    "portable pipeline ledger carries no hash pin — "
+                    "refusing an unverifiable bundle")
+            if hashlib.sha256(payload).hexdigest() != expected:
+                raise BundleError(
+                    "portable pipeline ledger failed its hash pin — "
+                    "refusing a tampered bundle")
+            portable_payload = payload
+            continue
+        basename = os.path.basename(member.name)
+        if basename.startswith("._") or basename == ".DS_Store":
+            # macOS tar resource-fork metadata — never workspace data, and
+            # never listed in the hash entries. Skip, don't refuse: bundles
+            # packed by older Swift builds carry these.
+            continue
+        # Every imported file must be hash-verifiable: a member the bundle's
+        # entry list does not name would otherwise land in the workspace
+        # unchecked (parallel to the Swift evidence importer's
+        # ensureAllVerified).
+        expected = _entry_hash(meta, member.name)
+        if expected is None:
+            raise BundleError(
+                f"bundle member not listed in the bundle's hash entries "
+                f"(unverifiable): {member.name}")
+        dest = os.path.realpath(os.path.join(target, member.name))
+        if os.path.commonpath([target, dest]) != target:
+            raise BundleError(
+                f"bundle member escapes target root: {member.name}")
+        # Refuse on the DECLARED uncompressed size before opening the member
+        # at all: the 4-GiB upload cap counts compressed bytes, so a bundle
+        # inside it can still declare a member nothing on this machine can
+        # hold (see ``max_member_bytes``).
+        _refuse_oversized_member(member, member_limit)
+        if tar.extractfile(member) is None:
+            continue
+        # The never-overwrite rule is a PREFLIGHT refusal, not a commit-time
+        # one: deciding it against the target here is what lets the commit
+        # pass be a sequence of renames with nothing left to change its mind.
+        if os.path.exists(dest) and not allow_overwrite:
+            raise BundleError(
+                f"refusing to overwrite existing file: {member.name}")
+        plan.append(_PlannedMember(member=member, dest=dest,
+                                   expected=expected))
+    return plan, portable_payload
+
+
+def _stage_plan(tar, plan: list[_PlannedMember], *, staging: str,
+                target: str) -> None:
+    """Stream every planned member into ``staging`` and verify it there.
+
+    Nothing under the target's real layout is touched by this pass: a failure
+    anywhere in it leaves the workspace untouched and the staging tree is
+    thrown away whole. The digest check, the frozen-manifest firewall and the
+    draft-manifest firewall all run HERE — before the commit pass — so the
+    commit has no refusal left in it.
+    """
+    member_limit = max_member_bytes()
+    total_limit = max_total_bytes()
+    total_written = 0
+    for planned in plan:
+        member = planned.member
+        # Mirror the member's own relative path under the staging root, plus
+        # the historical `.tmp` suffix: same volume as `dest`, so the commit
+        # is a rename, and unique per call because `staging` is.
+        relative = os.path.relpath(planned.dest, target)
+        planned.staged = os.path.join(staging, relative) + ".tmp"
+        os.makedirs(os.path.dirname(planned.staged), exist_ok=True)
+        # The member streams into the staged file in chunks and is hashed on
+        # the way past (never held whole in memory).
+        digest, written = _stream_member(
+            tar, member, planned.staged, member_limit,
+            total_before=total_written, total_limit=total_limit)
+        total_written += written
+        # The integrity check runs on the STAGED bytes, BEFORE `dest` is
+        # touched (shard race, 2026-08-04): the old order wrote dest and then
+        # re-hashed it from disk — but concurrent shard jobs of one submission
+        # extract the same bundle into the same workspace, so another shard's
+        # in-progress (identical) rewrite could be read torn, refusing a
+        # perfectly good bundle after 3 seconds ("hash mismatch after
+        # extracting …"). Hashing what the tar actually carried is the tamper
+        # firewall this check exists for, and it cannot race.
+        if planned.expected and digest != planned.expected:
+            raise BundleError(
+                f"hash mismatch after extracting {member.name}")
+        if os.path.exists(planned.dest) and _is_manifest_path(planned.dest,
+                                                              target):
+            # Manifests are small JSON documents, and both firewalls below
+            # compare whole documents — so this is the one place the staged
+            # bytes are read back.
+            with open(planned.staged, "rb") as staged_handle:
+                payload = staged_handle.read()
+            # Circularity firewall: never silently replace a FROZEN manifest
+            # with different content, even when allow_overwrite is set (which
+            # bundle-execute does for run artifacts). Re-importing the
+            # identical frozen manifest is fine; changed content is a
+            # freeze/verify violation surfaced as an error, not a silent stomp.
+            if _is_frozen_manifest(planned.dest):
+                with open(planned.dest, "rb") as existing:
+                    if existing.read() != payload:
+                        raise BundleError(
+                            f"refusing to overwrite frozen manifest "
+                            f"{member.name} with different content (freeze "
+                            "firewall)")
+            # The same firewall one tier down, for DRAFTS (open-issues §8): a
+            # bundle carrying a skeleton manifest must not silently take a
+            # draft that has since gained concepts and conditions to
+            # both-empty. `_is_frozen_manifest` is False for a draft, so the
+            # check above never saw this; the arms simply vanished and only
+            # the run directory's snapshot remembered them.
+            if _clears_every_arm(planned.dest, payload):
+                raise BundleError(
+                    f"refusing to overwrite draft manifest {member.name} with a "
+                    "document that has no concepts and no conditions — the "
+                    "workspace copy holds arms this bundle does not (import "
+                    "into a clean target root, or duplicate the workspace "
+                    "study before re-importing)")
+
+
+def _backup_existing(dest: str, rollback_root: str, index: int) -> str | None:
+    """Preserve whatever stands at ``dest`` so the commit can be undone.
+
+    A hardlink, not a move: moving the old file aside would open a window in
+    which ``dest`` does not exist at all, and the whole reason the landing is
+    a rename is that a concurrent shard READING this artifact must never
+    observe an in-between state. A filesystem without hardlinks falls back to
+    a copy, which is slower and just as correct.
+    """
+    if not os.path.exists(dest):
+        return None
+    backup = os.path.join(rollback_root, f"{index:06d}-{os.path.basename(dest)}")
+    try:
+        os.link(dest, backup)
+    except OSError:
+        shutil.copy2(dest, backup)
+    return backup
+
+
+def _commit_one(staged: str, dest: str) -> None:
+    """Land ONE staged member. The single mutating step of the commit pass,
+    factored out so a test can make the commit fail where nothing else can."""
+    os.replace(staged, dest)
+
+
+def _rollback(landed: list[_Landed], created_dirs: list[str]) -> None:
+    """Undo everything this call landed, newest first.
+
+    Best effort by necessity — the refusal the caller is about to see is the
+    news, and a rollback that raised would replace it with something less
+    useful. Directories are removed only when empty, so a directory that
+    already held workspace data is never touched.
+    """
+    for entry in reversed(landed):
+        try:
+            if entry.backup is not None:
+                os.replace(entry.backup, entry.dest)
+            else:
+                os.remove(entry.dest)
+        except OSError:
+            pass
+    for directory in sorted(created_dirs, key=len, reverse=True):
+        try:
+            os.rmdir(directory)
+        except OSError:
+            pass
+
+
+def _makedirs_tracked(directory: str, created: list[str]) -> None:
+    """``os.makedirs(exist_ok=True)``, remembering what it actually made, so a
+    rollback removes the empty scaffolding it created and nothing else."""
+    missing: list[str] = []
+    cursor = directory
+    while cursor and not os.path.isdir(cursor):
+        missing.append(cursor)
+        parent = os.path.dirname(cursor)
+        if parent == cursor:
+            break
+        cursor = parent
+    os.makedirs(directory, exist_ok=True)
+    created.extend(missing)
+
+
 def import_bundle(bundle_path: str, *, target_root: str | None = None,
                   allow_overwrite: bool = False,
                   expected_sha256: str | None = None) -> dict:
-    """Extract a bundle into ``target_root``.
+    """Extract a bundle into ``target_root``, as ONE transaction.
+
+    Three passes, and the split is the whole point:
+
+    1. **preflight** (:func:`_plan_import`) — closure, per-member containment,
+       hash-entry coverage, the size caps, and the never-overwrite rule, all
+       decided against the real target before anything is written;
+    2. **stage** (:func:`_stage_plan`) — every member streams into a temporary
+       tree on the destination filesystem and is verified there, including the
+       frozen- and draft-manifest firewalls;
+    3. **commit** — the staged tree moves into place, member by member, with
+       every landing recorded; any failure rolls the whole call back.
+
+    Before this was transactional, a refusal partway through installed
+    everything before it and then the never-overwrite rule blocked the clean
+    retry — a workspace that could only be repaired by hand. Now a refused
+    import is a no-op and retrying it is ordinary.
 
     ``expected_sha256`` is the OPTIONAL out-of-band outer pin (G3): when
     supplied it is verified before the archive is opened, and a mismatch
@@ -687,134 +1021,56 @@ def import_bundle(bundle_path: str, *, target_root: str | None = None,
         _refuse_outer_hash_mismatch(bundle_path, expected_sha256)
     meta = inspect_bundle(bundle_path)
     extracted: list[str] = []
-    portable_payload: bytes | None = None
-    with tarfile.open(bundle_path, "r:gz") as tar:
-        _check_bundle_closure(meta, tar.getmembers())
-        for member in tar.getmembers():
-            if member.isdir() or member.name in {"steerlab-bundle.json", "steerlab-evidence.json"}:
-                continue
-            if member.name == "steerlab-pipeline.json":
-                # The portable pipeline ledger: pin REQUIRED (seventh
-                # round — an unpinned member is unverifiable), verified,
-                # and RETAINED inside the imported pipeline run dir after
-                # extraction so local readers resolve stage references
-                # without cluster paths.
-                expected = meta.get("pipelinePortableSha256")
-                payload = _read_metadata_member(tar, member)
-                if not expected:
-                    raise BundleError(
-                        "portable pipeline ledger carries no hash pin — "
-                        "refusing an unverifiable bundle")
-                if hashlib.sha256(payload).hexdigest() != expected:
-                    raise BundleError(
-                        "portable pipeline ledger failed its hash pin — "
-                        "refusing a tampered bundle")
-                portable_payload = payload
-                continue
-            basename = os.path.basename(member.name)
-            if basename.startswith("._") or basename == ".DS_Store":
-                # macOS tar resource-fork metadata — never workspace data,
-                # and never listed in the hash entries. Skip, don't refuse:
-                # bundles packed by older Swift builds carry these.
-                continue
-            # Every imported file must be hash-verifiable: a member the
-            # bundle's entry list does not name would otherwise land in the
-            # workspace unchecked (parallel to the Swift evidence importer's
-            # ensureAllVerified).
-            if _entry_hash(meta, member.name) is None:
-                raise BundleError(
-                    f"bundle member not listed in the bundle's hash entries "
-                    f"(unverifiable): {member.name}")
-            dest = os.path.realpath(os.path.join(target, member.name))
-            if os.path.commonpath([target, dest]) != target:
-                raise BundleError(f"bundle member escapes target root: {member.name}")
-            # Refuse on the DECLARED uncompressed size before opening the
-            # member at all: the 4-GiB upload cap counts compressed bytes, so
-            # a bundle inside it can still declare a member nothing on this
-            # machine can hold (see ``max_member_bytes``).
-            member_limit = max_member_bytes()
-            _refuse_oversized_member(member, member_limit)
-            if tar.extractfile(member) is None:
-                continue
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
-            # Atomic landing (2026-08-04 shard race): a plain open(dest, "wb")
-            # truncates in place, so a concurrent extractor — or a running
-            # shard READING this artifact — could observe a torn file.
-            # Temp-in-same-directory + os.replace means every observer sees
-            # either the old complete file or the new complete file (which,
-            # for sibling shards of one submission, are the same bytes).
-            temp = f"{dest}.extract-{os.getpid()}.tmp"
-            try:
-                # The member streams into the temp file in chunks and is
-                # hashed on the way past (never held whole in memory).
-                digest, _written = _stream_member(tar, member, temp, member_limit)
-                # The integrity check runs on the STAGED bytes, BEFORE `dest`
-                # is touched (same incident): the old order wrote dest and
-                # then re-hashed it from disk — but concurrent shard jobs of
-                # one submission extract the same bundle into the same
-                # workspace, so another shard's in-progress (identical)
-                # rewrite could be read torn, refusing a perfectly good bundle
-                # after 3 seconds ("hash mismatch after extracting …").
-                # Hashing what the tar actually carried is the tamper firewall
-                # this check exists for, and it cannot race.
-                expected = _entry_hash(meta, member.name)
-                if expected and digest != expected:
-                    raise BundleError(f"hash mismatch after extracting {member.name}")
-                if os.path.exists(dest):
-                    if not allow_overwrite:
-                        raise BundleError(f"refusing to overwrite existing file: {member.name}")
-                    if _is_manifest_path(dest, target):
-                        # Manifests are small JSON documents, and both
-                        # firewalls below compare whole documents — so this is
-                        # the one place the staged bytes are read back.
-                        with open(temp, "rb") as staged:
-                            payload = staged.read()
-                        # Circularity firewall: never silently replace a FROZEN
-                        # manifest with different content, even when
-                        # allow_overwrite is set (which bundle-execute does for
-                        # run artifacts). Re-importing the identical frozen
-                        # manifest is fine; changed content is a freeze/verify
-                        # violation surfaced as an error, not a silent stomp.
-                        if _is_frozen_manifest(dest):
-                            with open(dest, "rb") as existing:
-                                if existing.read() != payload:
-                                    raise BundleError(
-                                        f"refusing to overwrite frozen manifest {member.name} with "
-                                        "different content (freeze firewall)")
-                        # The same firewall one tier down, for DRAFTS
-                        # (open-issues §8): a bundle carrying a skeleton
-                        # manifest must not silently take a draft that has since
-                        # gained concepts and conditions to both-empty.
-                        # `_is_frozen_manifest` is False for a draft, so the
-                        # check above never saw this; the arms simply vanished
-                        # and only the run directory's snapshot remembered them.
-                        if _clears_every_arm(dest, payload):
-                            raise BundleError(
-                                f"refusing to overwrite draft manifest {member.name} with a "
-                                "document that has no concepts and no conditions — the "
-                                "workspace copy holds arms this bundle does not (import "
-                                "into a clean target root, or duplicate the workspace "
-                                "study before re-importing)")
-                os.replace(temp, dest)
-            except BaseException:
-                try:
-                    os.remove(temp)
-                except OSError:
-                    pass
-                raise
-            extracted.append(member.name)
-    # Retain the (verified) portable ledger inside the imported pipeline
-    # run dir — parallel to the Swift importer — so local readers resolve
-    # stage references by run ID, never by cluster path.
-    if portable_payload is not None:
-        run_id = str(meta.get("runID") or "")
-        run_dir = os.path.join(target, "runs", run_id)
-        if run_id and os.path.isdir(run_dir):
-            local = os.path.join(run_dir, "pipeline-portable.json")
-            if not os.path.exists(local):
-                with open(local, "wb") as handle:
-                    handle.write(portable_payload)
-                extracted.append(f"runs/{run_id}/pipeline-portable.json")
+    staging: str | None = None
+    landed: list[_Landed] = []
+    created_dirs: list[str] = []
+    try:
+        with tarfile.open(bundle_path, "r:gz") as tar:
+            members = tar.getmembers()
+            # The AGGREGATE caps come first: they are the cheapest refusal in
+            # the file and the one a hostile archive is built to outrun.
+            _refuse_oversized_archive(members)
+            _check_bundle_closure(meta, members)
+            plan, portable_payload = _plan_import(
+                tar, meta, members, target=target,
+                allow_overwrite=allow_overwrite)
+            if plan:
+                os.makedirs(target, exist_ok=True)
+                # Same volume as every destination, because it is INSIDE the
+                # target root — which is what makes the commit a rename.
+                staging = tempfile.mkdtemp(prefix=_STAGING_PREFIX, dir=target)
+                _stage_plan(tar, plan, staging=staging, target=target)
+        # ---- commit -------------------------------------------------------
+        rollback_root = None
+        if staging is not None:
+            rollback_root = os.path.join(staging, "rollback")
+            os.makedirs(rollback_root, exist_ok=True)
+        for index, planned in enumerate(plan):
+            _makedirs_tracked(os.path.dirname(planned.dest), created_dirs)
+            backup = _backup_existing(planned.dest, rollback_root, index)
+            _commit_one(planned.staged, planned.dest)
+            landed.append(_Landed(dest=planned.dest, backup=backup))
+            extracted.append(planned.member.name)
+        # Retain the (verified) portable ledger inside the imported pipeline
+        # run dir — parallel to the Swift importer — so local readers resolve
+        # stage references by run ID, never by cluster path. Part of the same
+        # transaction: it lands in the canonical workspace like anything else.
+        if portable_payload is not None:
+            run_id = str(meta.get("runID") or "")
+            run_dir = os.path.join(target, "runs", run_id)
+            if run_id and os.path.isdir(run_dir):
+                local = os.path.join(run_dir, "pipeline-portable.json")
+                if not os.path.exists(local):
+                    with open(local, "wb") as handle:
+                        handle.write(portable_payload)
+                    landed.append(_Landed(dest=local, backup=None))
+                    extracted.append(f"runs/{run_id}/pipeline-portable.json")
+    except BaseException:
+        _rollback(landed, created_dirs)
+        raise
+    finally:
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
     result = {"bundle": meta, "targetRoot": target, "extracted": extracted}
     if meta.get("kind") == "evidenceBundle":
         # The adoption reconciliation the Swift auto-import always ran and

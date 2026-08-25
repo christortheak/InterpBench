@@ -1035,3 +1035,350 @@ def test_bundle_metadata_has_its_own_bound(tmp_path, monkeypatch):
         bundles.inspect_bundle(bundle)
     monkeypatch.delenv("STEERLAB_MAX_BUNDLE_METADATA_BYTES")
     assert bundles.inspect_bundle(bundle)["experiment"] == "member-cap"
+
+
+# ==========================================================================
+# Import is ONE transaction (external review, 2026-08-24)
+# ==========================================================================
+# Members used to be verified-and-landed one at a time, so a refusal partway
+# through an archive left every earlier member installed in the canonical
+# workspace — and the never-overwrite rule then blocked the clean retry. The
+# repair is a three-pass import: preflight the whole archive, stage every
+# member on the destination filesystem, then commit with rollback.
+
+def _bundle_with_members(path, members, *, extra=None, kind="runBundle"):
+    """A minimal, well-formed bundle carrying several payload members."""
+    import hashlib
+    import io
+    import tarfile
+    import time
+
+    meta = {
+        "schemaVersion": bundles.BUNDLE_SCHEMA,
+        "kind": kind,
+        "createdAt": time.time(),
+        "experiment": "transaction",
+        "entries": [{"path": name,
+                     "sha256": hashlib.sha256(payload).hexdigest(),
+                     "bytes": len(payload)}
+                    for name, payload in members],
+    }
+    meta.update(extra or {})
+    document = ("steerlab-bundle.json" if kind == "runBundle"
+                else "steerlab-evidence.json")
+    with tarfile.open(path, "w:gz") as tar:
+        for member_name, blob in ((document,
+                                   json.dumps(meta).encode("utf-8")),
+                                  *[(name, payload)
+                                    for name, payload in members]):
+            info = tarfile.TarInfo(member_name)
+            info.size = len(blob)
+            tar.addfile(info, io.BytesIO(blob))
+    return meta
+
+
+def _no_leftovers(target):
+    """No staged bytes and no staging directory survive any exit."""
+    leftovers = sorted(str(p) for p in target.rglob("*")
+                       if p.name.startswith(".steerlab-import-")
+                       or p.name.endswith(".tmp"))
+    assert leftovers == [], f"staging survived the call: {leftovers}"
+
+
+def test_a_refused_member_leaves_no_earlier_member_installed(tmp_path):
+    """THE reproduction. Member 1 is perfectly good; member 2 escapes the
+    target root. Before the transaction, member 1 stayed — installed in the
+    canonical workspace by a call that reported a refusal, and unremovable by
+    a retry, because the never-overwrite rule then refused THAT too."""
+    bundle = str(tmp_path / "escaping.tar.gz")
+    _bundle_with_members(bundle, [("runs/ok/first.jsonl", b'{"n":1}\n'),
+                                  ("../escape.txt", b"outside\n")])
+    target = tmp_path / "target"
+    with pytest.raises(bundles.BundleError, match="escapes target root"):
+        bundles.import_bundle(bundle, target_root=str(target))
+    assert not (target / "runs" / "ok" / "first.jsonl").exists(), \
+        "the good member landed anyway — the import was not transactional"
+    assert not (tmp_path / "escape.txt").exists()
+    _no_leftovers(target)
+
+
+def test_a_clean_retry_after_a_refused_import_succeeds(tmp_path):
+    """The second half of the same bug: nothing partial is left to block the
+    repaired archive, so the retry needs no --force and no hand surgery."""
+    escaping = str(tmp_path / "escaping.tar.gz")
+    payload = b'{"n":1}\n'
+    _bundle_with_members(escaping, [("runs/ok/first.jsonl", payload),
+                                    ("../escape.txt", b"outside\n")])
+    target = tmp_path / "target"
+    with pytest.raises(bundles.BundleError, match="escapes target root"):
+        bundles.import_bundle(escaping, target_root=str(target))
+
+    repaired = str(tmp_path / "repaired.tar.gz")
+    _bundle_with_members(repaired, [("runs/ok/first.jsonl", payload)])
+    result = bundles.import_bundle(repaired, target_root=str(target))
+    assert result["extracted"] == ["runs/ok/first.jsonl"]
+    assert (target / "runs" / "ok" / "first.jsonl").read_bytes() == payload
+    _no_leftovers(target)
+
+
+def test_a_commit_phase_failure_rolls_the_whole_import_back(tmp_path,
+                                                            monkeypatch):
+    """Preflight and staging cannot catch a filesystem that fails DURING the
+    commit. When one does, the members already landed by this call come back
+    out — a half-imported workspace is the state nothing downstream can read
+    honestly."""
+    bundle = str(tmp_path / "two.tar.gz")
+    _bundle_with_members(bundle, [("runs/ok/first.jsonl", b'{"n":1}\n'),
+                                  ("runs/ok/second.jsonl", b'{"n":2}\n')])
+    target = tmp_path / "target"
+    real_commit = bundles._commit_one
+    calls: list[str] = []
+
+    def failing_commit(staged, dest):
+        calls.append(dest)
+        if len(calls) == 2:
+            raise OSError("the disk went away mid-commit")
+        return real_commit(staged, dest)
+
+    monkeypatch.setattr(bundles, "_commit_one", failing_commit)
+    with pytest.raises(OSError, match="went away"):
+        bundles.import_bundle(bundle, target_root=str(target))
+    assert not (target / "runs" / "ok" / "first.jsonl").exists(), \
+        "the first member survived a rolled-back commit"
+    assert not (target / "runs" / "ok" / "second.jsonl").exists()
+    _no_leftovers(target)
+
+
+def test_rollback_restores_what_an_overwriting_import_replaced(tmp_path,
+                                                               monkeypatch):
+    """`allow_overwrite` imports (bundle-execute uses one) may replace files
+    that were already there. A rolled-back commit must put the ORIGINAL bytes
+    back, not merely delete what it wrote."""
+    original = b'{"n":"original"}\n'
+    first = str(tmp_path / "first.tar.gz")
+    _bundle_with_members(first, [("runs/ok/first.jsonl", original)])
+    target = tmp_path / "target"
+    bundles.import_bundle(first, target_root=str(target))
+
+    second = str(tmp_path / "second.tar.gz")
+    _bundle_with_members(second, [("runs/ok/first.jsonl", b'{"n":"new"}\n'),
+                                  ("runs/ok/second.jsonl", b'{"n":2}\n')])
+    calls: list[str] = []
+    real_commit = bundles._commit_one
+
+    def failing_commit(staged, dest):
+        calls.append(dest)
+        if len(calls) == 2:
+            raise OSError("the disk went away mid-commit")
+        return real_commit(staged, dest)
+
+    monkeypatch.setattr(bundles, "_commit_one", failing_commit)
+    with pytest.raises(OSError, match="went away"):
+        bundles.import_bundle(second, target_root=str(target),
+                              allow_overwrite=True)
+    assert (target / "runs" / "ok" / "first.jsonl").read_bytes() == original
+    assert not (target / "runs" / "ok" / "second.jsonl").exists()
+    _no_leftovers(target)
+
+
+def test_the_existing_file_refusal_fires_in_preflight(tmp_path, monkeypatch):
+    """Never-overwrite is decided against the TARGET before anything streams:
+    the sentence is the historical one, and no member of the archive was
+    expanded to produce it."""
+    payload = b'{"n":1}\n'
+    bundle = str(tmp_path / "one.tar.gz")
+    _bundle_with_members(bundle, [("runs/ok/first.jsonl", payload)])
+    target = tmp_path / "target"
+    bundles.import_bundle(bundle, target_root=str(target))
+
+    def _never(*args, **kwargs):
+        raise AssertionError("a member was streamed despite the refusal")
+
+    monkeypatch.setattr(bundles, "_stream_member", _never)
+    with pytest.raises(bundles.BundleError,
+                       match="refusing to overwrite existing file"):
+        bundles.import_bundle(bundle, target_root=str(target))
+    assert (target / "runs" / "ok" / "first.jsonl").read_bytes() == payload
+    _no_leftovers(target)
+
+
+# ==========================================================================
+# The AGGREGATE expansion bounds (external review, 2026-08-24)
+# ==========================================================================
+# A per-member cap bounds the largest brick, not the wall: ten thousand
+# members just inside it fill any disk, and a million empty ones spend a
+# million inode creations for no bytes at all.
+
+def test_too_many_members_are_refused_in_preflight(tmp_path, monkeypatch):
+    """Many small members, over the COUNT cap. Refused before a byte lands."""
+    bundle = str(tmp_path / "swarm.tar.gz")
+    _bundle_with_members(bundle, [(f"runs/swarm/{i:04d}.txt", b"x")
+                                  for i in range(24)])
+    monkeypatch.setenv("STEERLAB_MAX_BUNDLE_MEMBERS", "8")
+
+    def _never(*args, **kwargs):
+        raise AssertionError("a member was streamed despite the count cap")
+
+    monkeypatch.setattr(bundles, "_stream_member", _never)
+    target = tmp_path / "target"
+    with pytest.raises(bundles.BundleError) as excinfo:
+        bundles.import_bundle(bundle, target_root=str(target))
+    detail = str(excinfo.value)
+    assert "STEERLAB_MAX_BUNDLE_MEMBERS" in detail
+    assert "8-member limit" in detail
+    assert not (target / "runs" / "swarm").exists()
+    _no_leftovers(target)
+
+
+def test_the_declared_total_is_refused_in_preflight(tmp_path, monkeypatch):
+    """Three members, each comfortably inside the PER-MEMBER cap, together
+    over the total. Refused on the declared sum, before expansion."""
+    bundle = str(tmp_path / "sum.tar.gz")
+    chunk = b"\0" * (1024 * 1024)
+    _bundle_with_members(bundle, [(f"runs/big/{i}.bin", chunk)
+                                  for i in range(3)])
+    assert os.path.getsize(bundle) < 64 * 1024, "the fixture must be tiny"
+    monkeypatch.setenv("STEERLAB_MAX_BUNDLE_MEMBER_BYTES", str(4 * 1024**2))
+    monkeypatch.setenv("STEERLAB_MAX_BUNDLE_TOTAL_BYTES", str(2 * 1024**2))
+
+    def _never(*args, **kwargs):
+        raise AssertionError("a member was streamed despite the total cap")
+
+    monkeypatch.setattr(bundles, "_stream_member", _never)
+    target = tmp_path / "target"
+    with pytest.raises(bundles.BundleError) as excinfo:
+        bundles.import_bundle(bundle, target_root=str(target))
+    detail = str(excinfo.value)
+    assert "STEERLAB_MAX_BUNDLE_TOTAL_BYTES" in detail
+    assert "uncompressed bytes across" in detail
+    assert not (target / "runs" / "big").exists()
+    _no_leftovers(target)
+
+
+def test_lying_headers_are_caught_against_the_total_while_streaming(
+        tmp_path, monkeypatch):
+    """The declared sum is still only a claim. With the header checks
+    neutralized — which is what a forged tar achieves — the running byte
+    count is what stops the archive, and it stops it mid-stream."""
+    bundle = str(tmp_path / "liars.tar.gz")
+    chunk = b"\0" * (256 * 1024)
+    _bundle_with_members(bundle, [(f"runs/big/{i}.bin", chunk)
+                                  for i in range(4)])
+    monkeypatch.setattr(bundles, "MEMBER_CHUNK_BYTES", 4096)
+    monkeypatch.setattr(bundles, "_refuse_oversized_member",
+                        lambda member, limit, what="member": None)
+    monkeypatch.setattr(bundles, "_refuse_oversized_archive",
+                        lambda members: None)
+    monkeypatch.setenv("STEERLAB_MAX_BUNDLE_TOTAL_BYTES", str(300 * 1024))
+
+    target = tmp_path / "target"
+    with pytest.raises(bundles.BundleError) as excinfo:
+        bundles.import_bundle(bundle, target_root=str(target))
+    detail = str(excinfo.value)
+    assert "STEERLAB_MAX_BUNDLE_TOTAL_BYTES" in detail
+    assert "understated the archive" in detail
+    assert not (target / "runs" / "big").exists()
+    _no_leftovers(target)
+
+
+def test_the_generous_defaults_leave_an_ordinary_bundle_alone(tmp_path):
+    """The knobs are bounds, not budgets: nothing a real study packages comes
+    anywhere near them, and the defaults are never in a researcher's way."""
+    assert bundles.max_total_bytes() == 64 * 1024**3
+    assert bundles.max_member_count() == 10000
+    bundle = str(tmp_path / "ordinary.tar.gz")
+    _bundle_with_members(bundle, [("runs/ok/a.jsonl", b'{"n":1}\n'),
+                                  ("runs/ok/b.jsonl", b'{"n":2}\n')])
+    target = tmp_path / "target"
+    result = bundles.import_bundle(bundle, target_root=str(target))
+    assert result["extracted"] == ["runs/ok/a.jsonl", "runs/ok/b.jsonl"]
+    _no_leftovers(target)
+
+
+# ==========================================================================
+# The upload route stages, and cleans up after a stream that dies
+# ==========================================================================
+
+def _upload_endpoint():
+    """The route function itself, called directly.
+
+    A TestClient cannot express "the body stops arriving": httpx would raise
+    on the CLIENT side, which is not the situation. The handler is driven with
+    a stub request instead, which is the only way to reach its except/finally
+    path at all. FastAPI mounts the router lazily, so the search walks the
+    included router as well as the app's own routes.
+    """
+    from steerlab_server.api.app import app
+
+    def _walk(routes):
+        for route in routes:
+            if getattr(route, "path", None) == "/api/bundles/upload":
+                return route.endpoint
+            original = getattr(route, "original_router", None)
+            if original is not None:
+                found = _walk(original.routes)
+                if found is not None:
+                    return found
+        return None
+
+    endpoint = _walk(app.routes)
+    assert endpoint is not None, "POST /api/bundles/upload is not registered"
+    return endpoint
+
+
+class _ExplodingRequest:
+    """A client that disconnects mid-body. ``request.stream()`` raising is
+    the case no explicit refusal covers, which is exactly why it leaked."""
+
+    def __init__(self, headers=None):
+        self.headers = headers or {}
+
+    async def stream(self):
+        yield b"the first half of an archive"
+        raise RuntimeError("client disconnected mid-upload")
+
+
+def test_a_dead_upload_stream_leaves_no_file_and_no_empty_directory(
+        tmp_path, monkeypatch):
+    """A partial file at the destination name is indistinguishable from a
+    complete one to anything that later lists the runner's runs tree — and a
+    staging directory holding nothing is litter nobody reclaims."""
+    import asyncio
+
+    pytest.importorskip("fastapi")
+    monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path))
+    endpoint = _upload_endpoint()
+    request = _ExplodingRequest({"x-steerlab-filename": "study.tar.gz"})
+    with pytest.raises(RuntimeError, match="client disconnected"):
+        asyncio.run(endpoint(request))
+
+    runs = tmp_path / "runs"
+    staged = sorted(p for p in runs.glob("*uploaded-bundle*")) \
+        if runs.is_dir() else []
+    for directory in staged:
+        raise AssertionError(
+            f"the staging directory survived: {directory} "
+            f"holding {sorted(p.name for p in directory.rglob('*'))}")
+    assert not (runs / "study.tar.gz").exists()
+
+
+def test_a_refused_upload_leaves_nothing_either(tmp_path, monkeypatch):
+    """The explicit refusals kept cleaning up after themselves; they still
+    do, and now the staging directory goes with them."""
+    import asyncio
+
+    pytest.importorskip("fastapi")
+    from fastapi import HTTPException
+
+    monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path))
+    endpoint = _upload_endpoint()
+
+    class _NotABundle(_ExplodingRequest):
+        async def stream(self):
+            yield b"this is not a tar archive at all"
+
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(endpoint(_NotABundle({"x-steerlab-filename": "x.tar.gz"})))
+    assert excinfo.value.status_code == 400
+    runs = tmp_path / "runs"
+    assert not (runs.is_dir() and list(runs.glob("*uploaded-bundle*")))
