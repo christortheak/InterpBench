@@ -351,30 +351,132 @@ public final class WorkspaceStore {
     /// (UserDefaults), and sets the runtime override. `defaults` and
     /// `setOverride` are injection seams so tests never mutate process-global
     /// state; production callers use the defaults.
+    @discardableResult
     public nonisolated static func open(
         at url: URL,
         defaults: UserDefaults = .standard,
         setOverride: (URL) -> Void = { WorkspaceRoot.programmaticOverride = $0 }
-    ) throws {
+    ) throws -> AgentContractUpkeep {
         let root = url.standardizedFileURL
         guard isWorkspace(url: root) else {
             throw ExperimentError(
                 reason: "\(root.path) does not look like a SteerLab workspace "
                     + "(no prompts/ directory or \(markerFileName) marker)")
         }
-        ensureAgentContract(at: root)
+        let upkeep = upkeepAgentContract(at: root)
         defaults.set(root.path, forKey: WorkspaceRoot.defaultsKey)
         setOverride(root)
+        // Returned rather than announced: `switchTo` is the surface that
+        // speaks, and handing the outcome up is what keeps it from having to
+        // classify a file this call has already rewritten.
+        return upkeep
     }
 
-    /// Writes `AGENTS.md` if the workspace has none. `create` runs once and
-    /// thousands of workspace-days predate the contract, so opening an older
-    /// workspace is what hands it the file (audit §4.3).
+    /// What one pass of contract upkeep DID, and therefore what the surface
+    /// that asked for it should say. Both the app and the CLI drive the same
+    /// pass and read the same answer, so the two cannot drift.
+    public enum AgentContractUpkeep: Sendable, Equatable {
+
+        /// Nothing to do, or nothing we are allowed to do: the contract is
+        /// current, or the file is the researcher's and stays theirs. Silent.
+        case unchanged
+
+        /// The file was absent and has been written. Silent by design — a
+        /// missing machine file is trivially safe to write and there is
+        /// nothing for anyone to repair.
+        case regenerated
+
+        /// A file whose hashed header PROVED it machine-written and unedited
+        /// was rewritten to this build's contract. One notice, once per open.
+        case refreshed(linesChanged: Int)
+
+        /// A file with a pre-hash header is behind, and this build will not
+        /// touch it: the header is a heuristic, not a proof. One advisory,
+        /// once per open, naming the manual regeneration that graduates the
+        /// file into the hashed regime.
+        case legacyStale(linesBehind: Int)
+
+        /// The ONE sentence this outcome is worth, or nil when it is silent.
+        /// Prefix-free — the CLI stamps its own label, the app carries a
+        /// severity.
+        public func sentence(at root: URL) -> String? {
+            switch self {
+            case .unchanged, .regenerated:
+                return nil
+            case .refreshed(let linesChanged):
+                return AgentContract.refreshNotice(
+                    linesChanged: linesChanged, at: root)
+            case .legacyStale(let linesBehind):
+                return AgentContract.stalenessAdvisory(
+                    for: .staleUnedited(linesBehind: linesBehind), at: root)
+            }
+        }
+
+        /// How loud the app's notice feed should be. A refresh is a report of
+        /// completed work; the legacy advisory asks for a gesture.
+        public var severity: PanelNotice.Severity {
+            if case .legacyStale = self { return .warning }
+            return .info
+        }
+    }
+
+    /// Classify this workspace's `AGENTS.md`, then do the one thing that
+    /// classification permits.
     ///
-    /// **An existing `AGENTS.md` is never touched** — the researcher may have
-    /// edited it, and a workspace is data, not a managed install. Failures are
-    /// swallowed: a read-only or otherwise unwritable workspace must still
-    /// open.
+    /// Two outcomes write, and only two:
+    ///
+    /// - **absent** → write the contract. `create` runs once and thousands of
+    ///   workspace-days predate the contract, so opening an older workspace is
+    ///   what hands it the file (audit §4.3).
+    /// - **`staleProven`** → rewrite it, atomically, in place. The header
+    ///   carries a SHA-256 of the body it wrote and that hash still matches,
+    ///   so the file provably holds no human text: the contract is
+    ///   documentation, it alters no run, and keeping it current is what the
+    ///   researcher would have done by hand.
+    /// - everything else → **nothing**. `current` needs no work;
+    ///   `staleUnedited` is a pre-hash file whose header is a heuristic rather
+    ///   than a proof, so it gets the advisory and keeps its bytes; `edited`
+    ///   is the researcher's file and is never touched on any path.
+    ///
+    /// Failures are swallowed: a read-only or otherwise unwritable workspace
+    /// must still open, and a contract refresh is the last thing that should
+    /// stop it.
+    @discardableResult
+    public nonisolated static func upkeepAgentContract(at root: URL) -> AgentContractUpkeep {
+        let url = root.appending(component: AgentContract.fileName)
+        switch AgentContract.status(at: root) {
+        case .absent:
+            do {
+                try agentContractContents().write(
+                    to: url, atomically: true, encoding: .utf8)
+                return .regenerated
+            } catch {
+                return .unchanged
+            }
+        case .staleProven:
+            // Counted over the BODIES, not the files: the header line always
+            // differs (its hash moved with the text), and reporting that as
+            // two changed lines would inflate every count by two.
+            let previous = AgentContract.bodyText(
+                of: (try? String(contentsOf: url, encoding: .utf8)) ?? "")
+            do {
+                try atomicallyReplace(url, with: agentContractContents())
+            } catch {
+                return .unchanged
+            }
+            return .refreshed(
+                linesChanged: AgentContract.changedLineCount(
+                    from: previous, to: AgentContract.body))
+        case .staleUnedited(let linesBehind):
+            return .legacyStale(linesBehind: linesBehind)
+        case .current, .edited:
+            return .unchanged
+        }
+    }
+
+    /// Writes `AGENTS.md` if the workspace has none — the absent-only half of
+    /// `upkeepAgentContract`, kept as its own verb for the callers that want
+    /// exactly that and nothing else. Returns whether it wrote.
     @discardableResult
     public nonisolated static func ensureAgentContract(at root: URL) -> Bool {
         let url = root.appending(component: AgentContract.fileName)
@@ -384,6 +486,25 @@ public final class WorkspaceStore {
             return true
         } catch {
             return false
+        }
+    }
+
+    /// Replace an EXISTING file's contents without a window in which the path
+    /// holds a half-written contract: a temp file beside it (same directory,
+    /// so the rename cannot cross a filesystem), then an atomic exchange. A
+    /// failure anywhere leaves the original exactly as it was.
+    private nonisolated static func atomicallyReplace(
+        _ url: URL, with text: String
+    ) throws {
+        let fm = FileManager.default
+        let staging = url.deletingLastPathComponent()
+            .appending(component: ".\(url.lastPathComponent).\(UUID().uuidString).tmp")
+        do {
+            try Data(text.utf8).write(to: staging, options: .atomic)
+            _ = try fm.replaceItemAt(url, withItemAt: staging)
+        } catch {
+            try? fm.removeItem(at: staging)
+            throw error
         }
     }
 
@@ -518,10 +639,9 @@ public final class WorkspaceStore {
     /// live ring.
     public var notices: PanelNotices = .shared
 
-    /// **One notice per workspace OPEN**, never per action: this workspace's
-    /// `AGENTS.md` is behind the contract this build ships, and its machine
-    /// header shows nobody has edited it. Returns what it recorded, or nil
-    /// when there was nothing to say.
+    /// **One line per workspace OPEN**, never per action: perform contract
+    /// upkeep and record the single sentence it earned. Returns what it
+    /// recorded, or nil when there was nothing to say.
     ///
     /// Deliberately on the OPEN path and not on any read path. The contract is
     /// consulted by the researcher's agent, not by the app, so the moment
@@ -529,8 +649,12 @@ public final class WorkspaceStore {
     /// and a notice that reappeared on every panel refresh would train them to
     /// dismiss the bell.
     ///
-    /// Silent for `current`; for `absent`, which `open` has already rewritten
-    /// by the time `switchTo` reaches this line and which nobody has to
+    /// Two things can be worth saying. A **refresh** — a hashed, provably
+    /// unedited contract brought up to this build — is `.info`: work already
+    /// done, nothing to repair. A **legacy stale** file is `.warning`: this
+    /// build will not touch it, and the one manual regeneration is the
+    /// gesture that ends the nagging for good. Silent for `current`; for
+    /// `absent`, which upkeep has just rewritten and which nobody has to
     /// repair by hand in any case; and for `edited` — the researcher's own
     /// text is not a defect and gets no notice on any surface. Non-blocking:
     /// the open has already succeeded when this runs.
@@ -539,17 +663,26 @@ public final class WorkspaceStore {
     /// `open(at:defaults:setOverride:)` takes its two — so a test can point
     /// the check at a fixture without moving the process's workspace.
     @discardableResult
-    public func noteAgentContractStaleness(at root: URL? = nil) -> String? {
-        guard let advisory = AgentContract.stalenessAdvisory(at: root ?? rootURL)
-        else { return nil }
-        notices.record(source: "Workspace", severity: .warning, message: advisory)
-        return advisory
+    public func noteAgentContractUpkeep(at root: URL? = nil) -> String? {
+        let root = root ?? rootURL
+        return record(Self.upkeepAgentContract(at: root), at: root)
+    }
+
+    /// Record an upkeep outcome `open` already performed — so `switchTo` does
+    /// not classify (and could not possibly rewrite) a file the open path has
+    /// just handled.
+    @discardableResult
+    private func record(_ upkeep: AgentContractUpkeep, at root: URL) -> String? {
+        guard let sentence = upkeep.sentence(at: root) else { return nil }
+        notices.record(
+            source: "Workspace", severity: upkeep.severity, message: sentence)
+        return sentence
     }
 
     public func switchTo(_ url: URL) throws {
-        try Self.open(at: url)
+        let upkeep = try Self.open(at: url)
         rootURL = WorkspaceRoot.current
-        noteAgentContractStaleness()
+        record(upkeep, at: rootURL)
         onRootChange?(rootURL)
     }
 

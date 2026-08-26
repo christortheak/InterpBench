@@ -171,8 +171,8 @@ public struct ExperimentCLIRunner: Sendable {
         // contract check belongs here and nowhere deeper: a helper on the read
         // path would print the same line on every artifact load, which is how
         // an advisory becomes noise and then becomes ignored.
-        if let advisory = Self.agentContractAdvisory(root: ExperimentStore.workspaceRoot) {
-            sink.err(advisory + "\n")
+        if let line = Self.agentContractUpkeepLine(root: ExperimentStore.workspaceRoot) {
+            sink.err(line + "\n")
         }
 
         do {
@@ -442,28 +442,30 @@ public struct ExperimentCLIRunner: Sendable {
     /// answer from a wrong answer.
     private var workspacePath: String { ExperimentStore.workspaceRoot.path }
 
-    /// Workspace-contract upkeep for ONE invocation: regenerate an absent
-    /// `AGENTS.md`, then return the staleness advisory if there is one.
+    /// Workspace-contract upkeep for ONE invocation: classify this
+    /// workspace's `AGENTS.md`, do the one thing the classification permits,
+    /// and return the single stderr line it earned.
     ///
-    /// Two things, deliberately in this order and deliberately together.
+    /// **The write** is what makes the wording TRUE on this surface.
+    /// `WorkspaceStore.open` gives an app-opened workspace its upkeep, but the
+    /// CLI never calls `open` — it resolves a root and reads it — so a
+    /// CLI-only workspace would otherwise never regenerate an absent contract
+    /// nor pick up a revised one. `upkeepAgentContract` is the same primitive
+    /// the app drives, with the same asymmetry: it writes an absent contract,
+    /// it rewrites one whose hashed header PROVES it machine-written and
+    /// unedited, and it touches nothing else — not a pre-hash file, not the
+    /// researcher's own text. Failure is swallowed, so a read-only workspace
+    /// still answers verbs. Restricted to directories that actually ARE
+    /// workspaces, so a resolved root that is some other folder is never
+    /// seeded with a contract for a workspace it is not.
     ///
-    /// **The regeneration** is what makes the advisory's repair TRUE on this
-    /// surface. `WorkspaceStore.open` gives an older workspace its contract
-    /// lazily, but the CLI never calls `open` — it resolves a root and reads
-    /// it — so before this a CLI-only workspace could delete `AGENTS.md` and
-    /// never see it again. `ensureAgentContract` is the same never-overwrite
-    /// primitive the app uses: it writes only when the file is absent, and
-    /// swallows failure so a read-only workspace still answers verbs.
-    /// Restricted to directories that actually ARE workspaces, so a resolved
-    /// root that is some other folder is never seeded with a contract for a
-    /// workspace it is not.
-    ///
-    /// **The advisory** is classified BEFORE the regeneration, so the write
-    /// cannot change the answer: `absent` stays silent (it was just repaired,
-    /// there is nothing to tell anyone), `edited` stays silent (the
-    /// researcher's file), `current` has nothing to say, and only
-    /// `staleUnedited` speaks — one non-blocking stderr line, no exit-code
-    /// effect, no envelope field.
+    /// **The line** is prefixed by what it is. A refresh is `notice: ` — it
+    /// reports completed work and asks for nothing. A pre-hash file that is
+    /// behind is `advisory: `, exactly as before, because that one still needs
+    /// a human gesture. `absent` stays silent (it was just written, there is
+    /// nothing to tell anyone), `edited` stays silent (the researcher's file),
+    /// and `current` has nothing to say. Either way: one non-blocking stderr
+    /// line, no exit-code effect, no envelope field.
     ///
     /// It gets no `advisories[]` entry on purpose. `CLIAdvisory` is a CLOSED
     /// cross-engine vocabulary pinned literal-for-literal against the Python
@@ -471,13 +473,12 @@ public struct ExperimentCLIRunner: Sendable {
     /// this fact is about the local checkout's shipped text, which the other
     /// engine has no view of. Minting a code here would either break parity or
     /// force a synchronized change to a surface this fact does not belong on.
-    static func agentContractAdvisory(root: URL) -> String? {
+    static func agentContractUpkeepLine(root: URL) -> String? {
         guard WorkspaceStore.isWorkspace(url: root) else { return nil }
-        let status = AgentContract.status(at: root)
-        WorkspaceStore.ensureAgentContract(at: root)
-        guard let sentence = AgentContract.stalenessAdvisory(for: status, at: root)
-        else { return nil }
-        return "advisory: " + sentence
+        let upkeep = WorkspaceStore.upkeepAgentContract(at: root)
+        guard let sentence = upkeep.sentence(at: root) else { return nil }
+        if case .legacyStale = upkeep { return "advisory: " + sentence }
+        return "notice: " + sentence
     }
 
     /// Is this thrown prose a MALFORMED INVOCATION rather than a failure? The

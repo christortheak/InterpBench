@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 // =============================================================================
@@ -21,19 +22,84 @@ import Foundation
 // =============================================================================
 
 /// The workspace-facing agent contract: what `AGENTS.md` says, and the file
-/// name it is written under. `WorkspaceStore` writes it at creation and
-/// lazily on open; an existing file is never overwritten.
+/// name it is written under. `WorkspaceStore` writes it at creation, lazily on
+/// open, and — since the file's header started carrying a hash of its own body
+/// — refreshes it in place while that hash proves nobody has edited it. A file
+/// the hash does not vouch for is never touched.
 public enum AgentContract {
 
     /// The file, at the workspace root.
     public static let fileName = "AGENTS.md"
 
-    /// One line, first in the file. An HTML comment so it does not render as
-    /// prose, and so stripping comment lines recovers the draft exactly.
-    public static let generatedHeader =
+    // MARK: - The header line
+
+    /// **The header format.** One line, first in the file, one HTML comment so
+    /// it does not render as prose and so stripping comment lines recovers the
+    /// draft exactly. Shape:
+    ///
+    /// ```
+    /// <!-- …fixed prose… sha256:<64 lowercase hex> -->
+    /// ```
+    ///
+    /// The hex is the SHA-256 of **the body bytes this writer emitted after
+    /// the header**, in the same normalized form `classify` compares: the
+    /// file's text after the header line's newline, with at most one leading
+    /// blank line removed. So `contents()` — header, blank line, body — hashes
+    /// exactly `body`, and a copy that lost the blank line still verifies.
+    ///
+    /// That hash is what turns the old header-intact HEURISTIC into a proof:
+    /// a file whose header hash matches its body is one SteerLab wrote and
+    /// nobody has edited, which is the only condition under which this build
+    /// rewrites it.
+    static let headerPrefix =
+        "<!-- Written by SteerLab workspace seeding. SteerLab keeps this file "
+        + "current for you while this line's hash still matches the text under "
+        + "it, and never touches it once you edit that text. sha256:"
+
+    /// Closes the HTML comment. Everything between prefix and suffix is hex.
+    static let headerSuffix = " -->"
+
+    /// The header builds before the hash existed: the same promise, no proof,
+    /// and it named a manual repair (delete + reopen) because that was the
+    /// only one there was. **Recognised forever, never written again.** A file
+    /// carrying it is treated exactly as this build's predecessors treated it
+    /// — heuristic classification, advisory only, never rewritten — and the
+    /// one manual regeneration the advisory names is what graduates it into
+    /// the hashed regime.
+    static let legacyGeneratedHeader =
         "<!-- Written by SteerLab workspace seeding; safe to regenerate — "
         + "delete this file and reopen the workspace to get it back. SteerLab "
         + "never overwrites an existing AGENTS.md, so local edits survive. -->"
+
+    /// The header line for a given body — the writer's half of the format
+    /// above, and the seam a test uses to age a fixture backwards honestly
+    /// (an older build's body under an older build's *correct* hash).
+    public static func header(for body: String) -> String {
+        headerPrefix + sha256Hex(body) + headerSuffix
+    }
+
+    /// The header line this build writes, over the body this build ships.
+    public static var generatedHeader: String { header(for: body) }
+
+    /// The hash a header line declares, or nil when the line is not one of
+    /// ours in the hashed format (a legacy header, a tampered one, prose).
+    static func declaredBodyHash(inHeaderLine line: String) -> String? {
+        guard line.hasPrefix(headerPrefix), line.hasSuffix(headerSuffix),
+            line.count >= headerPrefix.count + headerSuffix.count + 64
+        else { return nil }
+        let hex = line.dropFirst(headerPrefix.count).dropLast(headerSuffix.count)
+        guard hex.count == 64, hex.allSatisfy(\.isHexDigit),
+            hex.lowercased() == hex
+        else { return nil }
+        return String(hex)
+    }
+
+    /// Lowercase hex SHA-256 of a string's UTF-8 bytes.
+    static func sha256Hex(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
 
     /// The contract text, byte-identical to `docs/AGENTS-WORKSPACE-DRAFT.md`
     /// with its draft-only comment markers removed. Ends with exactly one
@@ -50,72 +116,114 @@ public enum AgentContract {
     /// What a workspace's `AGENTS.md` is, relative to the contract THIS build
     /// ships.
     ///
-    /// The contract is written once, at workspace creation or on the first
-    /// open of an older workspace, and is **never overwritten**
-    /// (`WorkspaceStore.ensureAgentContract`). That rule is right — the file
-    /// is data in the researcher's own repository — and it has one cost: a
-    /// workspace made before a contract revision keeps the old text forever,
-    /// silently, while its runner agent reads instructions that no longer
-    /// describe the CLI. This type is the awareness that costs nothing: a
-    /// cheap read, a classification, and an advisory. Nothing here writes.
+    /// The contract is written at workspace creation or on the first open of
+    /// an older workspace. A file that is **provably** still the machine's —
+    /// its header hash matches its body — is refreshed in place when the
+    /// shipped contract moves on; anything else is never overwritten. That
+    /// asymmetry is the whole design: the contract is documentation, it alters
+    /// no run, and a workspace made before a contract revision otherwise keeps
+    /// the old text forever, silently, while its runner agent reads
+    /// instructions that no longer describe the CLI.
+    ///
+    /// Nothing in *this* type writes: it is a cheap read, a classification and
+    /// two sentences. `WorkspaceStore` owns the one write it enables.
     public enum Status: Sendable, Equatable {
 
         /// No `AGENTS.md` at the workspace root. Silent by design: the
-        /// ensure-path regenerates an absent contract on its own, so there is
+        /// upkeep path regenerates an absent contract on its own, so there is
         /// nothing for a person to repair.
         case absent
 
-        /// Byte-identical to what this build would write.
+        /// Byte-identical to what this build would write. (Also the answer for
+        /// a legacy hashless header over the current body: there is nothing to
+        /// do and nothing to say.)
         case current
 
-        /// The machine header is present and intact, so SteerLab wrote this
-        /// file and no one has touched the part that says so — but the body
-        /// is not the shipped body. Safe to regenerate: delete and reopen.
+        /// **Proven machine-owned and behind.** The header carries a hash, and
+        /// that hash is the hash of this file's own body — so SteerLab wrote
+        /// these exact bytes and nobody has changed them since — but the body
+        /// is not the body this build ships. This is the one state that gets
+        /// rewritten automatically.
         ///
         /// `linesBehind` counts lines of the SHIPPED body that this copy does
         /// not have (see `missingLineCount` for exactly what that means and
         /// what it deliberately is not).
+        case staleProven(linesBehind: Int)
+
+        /// **A legacy header, intact, over an older body.** Written by a build
+        /// from before the hash: the header says SteerLab wrote the file and
+        /// nobody has touched the line that says so, which is a heuristic and
+        /// not a proof. Advisory only — this state is never rewritten, and the
+        /// one manual regeneration the advisory names graduates the file into
+        /// the hashed regime, after which it refreshes itself.
         case staleUnedited(linesBehind: Int)
 
-        /// The header is gone or altered — or the file is there but
-        /// unreadable as text. **The researcher owns this file now.** Silent
-        /// on every surface: they chose their text, and a tool that nags
-        /// about a file it promised never to touch is a tool that will be
-        /// worked around.
+        /// The header is gone, altered, or hashed-but-not-matching — or the
+        /// file is there but unreadable as text. **The researcher owns this
+        /// file now.** Silent on every surface and never written: they chose
+        /// their text, and a tool that nags about a file it promised never to
+        /// touch is a tool that will be worked around.
         case edited
     }
 
-    /// **The header-intact heuristic — the deliberate line between "safe to
-    /// regenerate" and "hands off".**
+    /// **Proof where there used to be a heuristic.**
     ///
-    /// `generatedHeader` is one line of machine-written HTML comment at the
-    /// top of the file. If it is there, byte-for-byte, we treat the file as
-    /// ours: SteerLab wrote it, and whoever has been in the file since left
-    /// the line that says so alone. If it is absent or altered — a researcher
-    /// who rewrote the contract for their own study, deleted the comment, or
-    /// started from their own text — the file is theirs, and the only correct
-    /// behaviour is silence.
+    /// The first line of the file decides everything, and there are three
+    /// kinds of it:
     ///
-    /// This is a heuristic and not a proof, and it is wrong in exactly one
-    /// direction: a researcher who edits the BODY while leaving the header
-    /// intact is classified `staleUnedited` and gets told their file is
-    /// behind. That is the failure we choose. The advisory never modifies
-    /// anything — it names a repair the person performs by hand — so the cost
-    /// of the wrong guess is one line of stderr they can ignore, while the
-    /// cost of the opposite bias (treating a drifted machine file as
-    /// hand-owned) is the silent drift this whole type exists to end.
+    /// 1. **Hashed header** (`headerPrefix … sha256:<hex> -->`). Recompute the
+    ///    hash over the body actually present. Match → SteerLab wrote these
+    ///    exact bytes and nobody has edited them: `current` if the body is the
+    ///    shipped body, else `staleProven` — the state that is safe to rewrite
+    ///    without asking, because we can *show* no human text is at risk.
+    ///    Mismatch → someone edited the body under our header: `edited`, hands
+    ///    off, no notice.
+    /// 2. **Legacy hashless header**, byte-for-byte. Exactly the pre-hash
+    ///    behaviour, deliberately unchanged: `current` or `staleUnedited`,
+    ///    advisory only, never written. The heuristic's one wrong direction —
+    ///    a body edited under an intact header reads as `staleUnedited` — is
+    ///    still wrong in the harmless direction *because nothing writes here*.
+    /// 3. **Anything else**, including a tampered header and a file with no
+    ///    newline at all: `edited`.
     ///
     /// A pure seam: text in, classification out, no filesystem.
     public static func classify(_ text: String) -> Status {
-        let headerLine = generatedHeader + "\n"
-        guard text.hasPrefix(headerLine) else { return .edited }
-        var rest = String(text.dropFirst(headerLine.count))
-        // `contents()` puts one blank line between header and body; tolerate
-        // its absence rather than calling a body-only difference an edit.
-        if rest.hasPrefix("\n") { rest.removeFirst() }
+        guard let split = splitHeader(text) else { return .edited }
+        let (headerLine, rest) = split
+
+        if let declared = declaredBodyHash(inHeaderLine: headerLine) {
+            guard declared == sha256Hex(rest) else { return .edited }
+            if rest == body { return .current }
+            return .staleProven(
+                linesBehind: missingLineCount(shipped: body, workspace: rest))
+        }
+
+        guard headerLine == legacyGeneratedHeader else { return .edited }
         if rest == body { return .current }
         return .staleUnedited(
             linesBehind: missingLineCount(shipped: body, workspace: rest))
+    }
+
+    /// A contract file's first line and the body under it, in the ONE
+    /// normalized form everything downstream uses: the text after the header
+    /// line's newline, with at most one leading blank line removed
+    /// (`contents()` writes that blank line; a copy that lost it is not an
+    /// edit). Nil when there is no first line to speak of.
+    ///
+    /// The header's hash is computed over exactly this, which is what makes
+    /// the proof survive the same normalization the comparison does.
+    static func splitHeader(_ text: String) -> (header: String, body: String)? {
+        guard let breakIndex = text.firstIndex(of: "\n") else { return nil }
+        var rest = String(text[text.index(after: breakIndex)...])
+        if rest.hasPrefix("\n") { rest.removeFirst() }
+        return (String(text[text.startIndex..<breakIndex]), rest)
+    }
+
+    /// The body a contract file carries, normalized as above — the text a
+    /// refresh is replacing, and therefore the text a "lines changed" count
+    /// must be about. Empty for a file with no header line at all.
+    static func bodyText(of fileText: String) -> String {
+        splitHeader(fileText)?.body ?? ""
     }
 
     /// Classify the `AGENTS.md` at a workspace root. Never throws and never
@@ -163,12 +271,26 @@ public enum AgentContract {
         return missing
     }
 
+    /// How many lines differ between two bodies, in both directions —
+    /// `missingLineCount` symmetrized, so a refresh that only ADDS lines still
+    /// reports a number rather than 0.
+    ///
+    /// Same honesty caveat as its half: a multiset difference, not an LCS
+    /// diff. Two bodies with the same lines in a different order report 0, and
+    /// `refreshNotice` words that case rather than printing "0 lines changed".
+    static func changedLineCount(from old: String, to new: String) -> Int {
+        missingLineCount(shipped: new, workspace: old)
+            + missingLineCount(shipped: old, workspace: new)
+    }
+
     /// The one advisory sentence, or nil when there is nothing to say.
     ///
-    /// Fires for `staleUnedited` ONLY. `current` has nothing to report,
-    /// `absent` regenerates itself, and `edited` is the researcher's file.
-    /// Non-blocking everywhere it is used: it changes no exit code and gates
-    /// nothing.
+    /// Fires for `staleUnedited` ONLY — the LEGACY hashless header, the one
+    /// state we can neither vouch for nor rewrite. `current` has nothing to
+    /// report, `absent` regenerates itself, `staleProven` is refreshed in
+    /// place and speaks through `refreshNotice`, and `edited` is the
+    /// researcher's file. Non-blocking everywhere it is used: it changes no
+    /// exit code and gates nothing.
     ///
     /// Prefix-free on purpose — the CLI stamps its own `advisory: ` in front,
     /// the app's notice feed carries a severity instead, and neither surface
@@ -177,15 +299,17 @@ public enum AgentContract {
     /// The repair it names is real on both surfaces — the app rewrites an
     /// absent contract on open (`WorkspaceStore.open`), and the CLI does the
     /// same once per invocation on its resolution path
-    /// (`ExperimentCLIRunner.agentContractAdvisory`). Delete the file, run
-    /// anything, get the current contract back.
+    /// (`ExperimentCLIRunner.agentContractUpkeepLine`). Delete the file, run
+    /// anything, get the current contract back — and the file that comes back
+    /// carries a hashed header, so this is the last time the repair is
+    /// manual.
     public static func stalenessAdvisory(at workspaceRoot: URL) -> String? {
         stalenessAdvisory(for: status(at: workspaceRoot), at: workspaceRoot)
     }
 
     /// The wording, from an already-computed status — so a caller that has to
-    /// classify before acting (the CLI, which regenerates an absent file in
-    /// the same breath) does not read the file twice.
+    /// classify before acting (both surfaces do: they classify, then write)
+    /// does not read the file twice.
     public static func stalenessAdvisory(
         for status: Status, at workspaceRoot: URL
     ) -> String? {
@@ -198,7 +322,34 @@ public enum AgentContract {
         return "this workspace's \(fileName) is \(extent) the agent contract "
             + "this build ships, and its machine header shows it unedited — "
             + "delete \(path) and reopen the workspace (or run any workspace "
-            + "verb) to regenerate it"
+            + "verb) to regenerate it. That one manual refresh is the last: "
+            + "the regenerated file carries a hashed header, and SteerLab "
+            + "refreshes a hashed, unedited contract for you from then on"
+    }
+
+    /// The one notice sentence for a contract this build just rewrote.
+    ///
+    /// Fires for `staleProven` and nothing else, once per open on each
+    /// surface — the same discipline and the same channels as the advisory
+    /// above (CLI stderr, the app's `"Workspace"` notice feed), and the same
+    /// prefix-free wording for the same reason.
+    ///
+    /// It is a report, not a request: the work is already done and there is
+    /// nothing for the reader to repair. It says so, and it says why the
+    /// rewrite was safe — the header hashed the text it wrote, and that hash
+    /// still matched.
+    public static func refreshNotice(
+        linesChanged: Int, at workspaceRoot: URL
+    ) -> String {
+        let extent =
+            linesChanged > 0
+            ? "\(linesChanged) line\(linesChanged == 1 ? "" : "s") changed"
+            : "same lines, reordered"
+        let path = workspaceRoot.appending(component: fileName).path
+        return "refreshed \(path) to the agent contract this build ships "
+            + "(\(extent)) — its machine header hashed the text it wrote and "
+            + "that hash still matched, so nobody had edited it; nothing else "
+            + "in the workspace was touched"
     }
 
     // Raw literal (`#"""`) on purpose: the contract is full of shell

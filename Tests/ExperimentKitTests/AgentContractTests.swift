@@ -320,8 +320,15 @@ import Testing
         // the emitted file must carry none of them.
         #expect(draft.contains("<!--"))
         #expect(!AgentContract.body.contains("<!--"))
-        // The header is the one line the emitted file adds.
+        // The header is the one line the emitted file adds, and it carries the
+        // hash of exactly the body under it — the proof that lets a later
+        // build refresh this file without asking.
         #expect(AgentContract.contents() == AgentContract.generatedHeader + "\n\n" + stripped)
         #expect(AgentContract.generatedHeader.hasPrefix("<!--"))
+        #expect(AgentContract.generatedHeader.hasSuffix("-->"))
+        #expect(!AgentContract.generatedHeader.contains("\n"))
+        #expect(
+            AgentContract.declaredBodyHash(inHeaderLine: AgentContract.generatedHeader)
+                == AgentContract.sha256Hex(stripped))
     }
 }
