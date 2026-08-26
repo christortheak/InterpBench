@@ -164,6 +164,64 @@ import Testing
                 == refusals["assistantVoiceSystemPrompt"])
     }
 
+    /// …and so does the MISSPELLING refusal (review 2026-08-26), together with
+    /// the vocabulary its repair offers. A parameter added on one engine and
+    /// not the other would show up here as a fixture diff rather than as two
+    /// engines quietly accepting different declarations.
+    @Test func theUnknownChatTemplateKeyRefusalTextIsATwin() throws {
+        let root = try #require(
+            try JSONSerialization.jsonObject(
+                with: try Data(
+                    contentsOf: CodeResources.compiledCheckoutPath.appending(
+                        components: "Tests", "Fixtures", "cross-engine",
+                        "extraction-rendering-and-positions.json")))
+                as? [String: Any])
+        let refusals = try #require(root["refusals"] as? [String: String])
+        #expect(ExtractionRendering
+            .unknownChatTemplateKeyError(["addGenerationPromt"]).message
+            == refusals["unknownChatTemplateKey"])
+        #expect(ExtractionRendering.chatTemplateKeys
+                == root["chatTemplateKeys"] as? [String])
+    }
+
+    /// The refusal fires at DECLARATION and at READ, in both directions of the
+    /// same rule — and an explicitly null stranger still declares nothing, so
+    /// it is accepted exactly as the raw branch accepts one.
+    @Test func aStrangerUnderChatTemplateRefusesAtDeclarationAndAtDecode() throws {
+        do {
+            _ = try ExtractionRendering.declared(
+                object: ["mode": "chatTemplate", "addGenerationPromt": false])
+            Issue.record("the misspelling was accepted at declaration")
+        } catch let error as ExtractionRendering.DeclarationError {
+            #expect(error.reason.contains("addGenerationPromt"))
+            #expect(error.repair.contains("addGenerationPrompt"))
+        }
+        // Every stranger, listed sorted, in one refusal.
+        do {
+            _ = try ExtractionRendering.declared(
+                object: ["mode": "chatTemplate", "zeta": 1, "alpha": 2])
+            Issue.record("the strangers were accepted")
+        } catch let error as ExtractionRendering.DeclarationError {
+            #expect(error.reason.contains("alpha, zeta"))
+        }
+        // The DECODE path — a manifest's block, an artifact's stamp — is as
+        // strict, because a stranger there is a newer engine's field.
+        let stranger = Data(
+            #"{"mode":"chatTemplate","addGenerationPromt":false}"#.utf8)
+        #expect(throws: ExtractionRendering.DeclarationError.self) {
+            try JSONDecoder().decode(ExtractionRendering.self, from: stranger)
+        }
+        // …while an explicit null declares nothing, and decodes.
+        let nulled = Data(#"{"mode":"chatTemplate","somethingElse":null}"#.utf8)
+        let decoded = try JSONDecoder().decode(
+            ExtractionRendering.self, from: nulled)
+        #expect(decoded.resolvedAddGenerationPrompt == true)
+        // …and a raw block is untouched by the chat-template vocabulary.
+        let raw = try JSONDecoder().decode(
+            ExtractionRendering.self, from: Data(#"{"mode":"raw"}"#.utf8))
+        #expect(raw.isRaw)
+    }
+
     // MARK: - 2. reading positions contribute the same identity
 
     @Test func everyReadingPositionAgreesWithThePythonEngine() throws {

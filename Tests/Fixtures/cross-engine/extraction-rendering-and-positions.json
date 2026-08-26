@@ -1,4 +1,11 @@
 {
+  "chatTemplateKeys": [
+    "addGenerationPrompt",
+    "mode",
+    "qwenThinkingEnabled",
+    "systemPrompt",
+    "voice"
+  ],
   "contentIndices": [
     4,
     5,
@@ -107,7 +114,8 @@
   ],
   "refusals": {
     "assistantVoiceGenerationPrompt": "extractionRendering declares voice 'assistant' together with addGenerationPrompt: under the assistant voice the stimulus IS the generation, so there is no generation prompt to add or withhold and the key would reach nothing \u2014 repair: drop addGenerationPrompt, or declare voice 'user' if you meant the model READING the stimulus",
-    "assistantVoiceSystemPrompt": "extractionRendering declares voice 'assistant' together with a systemPrompt: the assistant-voice construction renders the assistant turn ALONE, with no preceding turn for system text to live in (injected context would confound the very contrast the voice exists to isolate) \u2014 repair: drop systemPrompt, or declare voice 'user' if the model is meant to read the stimulus under that system prompt"
+    "assistantVoiceSystemPrompt": "extractionRendering declares voice 'assistant' together with a systemPrompt: the assistant-voice construction renders the assistant turn ALONE, with no preceding turn for system text to live in (injected context would confound the very contrast the voice exists to isolate) \u2014 repair: drop systemPrompt, or declare voice 'user' if the model is meant to read the stimulus under that system prompt",
+    "unknownChatTemplateKey": "extractionRendering mode 'chatTemplate' does not accept addGenerationPromt: a key this engine does not read reaches nothing, so a misspelling (addGenerationPromt) silently leaves the default in place and changes what a frozen study measured \u2014 repair: correct or drop the key; the accepted parameters are addGenerationPrompt, mode, qwenThinkingEnabled, systemPrompt, voice"
   },
   "renderings": [
     {

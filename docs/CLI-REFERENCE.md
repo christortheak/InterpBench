@@ -202,6 +202,16 @@ visible — empty, then partial — while the copy runs. It still cannot overwri
 anything, and a failed copy removes it again; a reader who must be certain has
 the outer digest.
 
+The staging file is reached by **descriptor**, never by name, from the moment
+it is reserved: the reservation's handle is what the download writes through
+and what the digest is read back through, so the staging path cannot be
+swapped for a symlink and made to truncate its target. The one step that must
+still take a name is the `link` itself, and it is checked rather than trusted —
+the published file's inode is compared with the descriptor's, and a mismatch is
+a `stagingPathHijacked` refusal with the fresh link removed again. A second
+writer that gets into the staging file after the last chunk is a
+`stagedBytesChanged` refusal. Neither creates the destination.
+
 Connection flags, identical on all six: `--runner <url>`, `--token-file
 <path>`, `--timeout <seconds>`, `--ca-bundle <path>`. A `--runner` URL must
 be plain `http`/`https` with a host and nothing else: embedded credentials

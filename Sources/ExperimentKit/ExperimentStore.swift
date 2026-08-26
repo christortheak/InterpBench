@@ -3690,6 +3690,18 @@ public enum ExperimentStore {
                 SteeringVectorSidecar.self, from: sidecarData)
             rawSidecar = try JSONSerialization.jsonObject(with: sidecarData)
                 as? [String: Any] ?? [:]
+        } catch let error as ExtractionRendering.DeclarationError {
+            // The rendering block is the one part of a sidecar this engine
+            // reads STRICTLY (see `ExtractionRendering.init(from:)`), so its
+            // refusal is surfaced by name rather than buried in a decoder
+            // dump: a stranger here means the artifact was stamped by an
+            // engine that knows a parameter this one does not. Server twin:
+            // the same refusal in `experiment_store.attach_artifact`.
+            throw ExperimentError(
+                reason: "vector artifact '\(rel)' records an "
+                    + "extractionRendering this engine cannot read "
+                    + "(\(error.message)) — re-attach on the engine that "
+                    + "wrote it")
         } catch {
             throw ExperimentError(
                 reason: "vector artifact sidecar '\(rel).json' is not readable "
@@ -3888,6 +3900,12 @@ public enum ExperimentStore {
             }
             options.readingPosition = position
         }
+        // The RENDERING travels with the position, for exactly the reason the
+        // position does: verify compares the two canonically, so an artifact
+        // extracted through the chat template must not attach into a manifest
+        // that says raw. `stamp` is nil for a raw (or absent) recording, so a
+        // legacy artifact still attaches to byte-identical manifest JSON.
+        options.extractionRendering = sidecar.extractionRendering?.stamp
         var pin = ExperimentManifest.ConceptRef.VectorArtifactPin(
             path: rel,
             sha256TensorHash: sha256Hex(try Data(contentsOf: tensorURL)),
@@ -5324,10 +5342,28 @@ public enum ExperimentStore {
                 }
             }
             guard sidecarOK,
-                let data = try? Data(contentsOf: base.appendingPathExtension("json")),
-                let sidecar = try? JSONDecoder().decode(
-                    SteeringVectorSidecar.self, from: data)
+                let data = try? Data(contentsOf: base.appendingPathExtension("json"))
             else { continue }
+            let sidecar: SteeringVectorSidecar
+            do {
+                sidecar = try JSONDecoder().decode(
+                    SteeringVectorSidecar.self, from: data)
+            } catch let error as ExtractionRendering.DeclarationError {
+                // The rendering block is read STRICTLY (see
+                // `ExtractionRendering.init(from:)`), and a stranger in it is
+                // a NAMED violation rather than a silent skip: an artifact
+                // stamped by an engine that knows a parameter this one does
+                // not is exactly the case where reading on regardless would
+                // certify a rendering nobody can prove. Server twin: the same
+                // violation in `Manifest._verify_vector_artifact_pins`.
+                violations.append(
+                    "concept '\(ref.name)' vector artifact sidecar "
+                        + "'\(pin.path).json' declares an extractionRendering "
+                        + "this engine cannot read (\(error.message))")
+                continue
+            } catch {
+                continue
+            }
             if pin.sourceMethod != (sidecar.extractionMethod ?? "") {
                 violations.append(
                     "concept '\(ref.name)' vectorArtifact.sourceMethod "
@@ -5359,6 +5395,27 @@ public enum ExperimentStore {
                         + "'\(ref.options.readingPosition.label)' contradicts "
                         + "the pinned artifact's '\(recorded)' — held-out "
                         + "activations must be read where the vector was read")
+            }
+            // The rendering is recipe identity exactly as the position is, so
+            // a declaration that contradicts the artifact's own stamp is the
+            // same kind of violation. Compared CANONICALLY (the identity
+            // hash's rule): absent ≡ an explicit raw ≡ an explicit user
+            // voice, so every legacy artifact — none of which carries a
+            // rendering stamp — still matches an absent or raw declaration
+            // and does not start failing here. Server twin: the same check in
+            // `Manifest._verify_vector_artifact_pins`.
+            let declaredRendering = RecipeIdentity.Components.canonicalRendering(
+                ref.options.extractionRendering)
+            let recordedRendering = RecipeIdentity.Components.canonicalRendering(
+                sidecar.extractionRendering)
+            if declaredRendering != recordedRendering {
+                let declaredLabel = (ref.options.extractionRendering ?? .raw).label
+                let recordedLabel = (sidecar.extractionRendering ?? .raw).label
+                violations.append(
+                    "concept '\(ref.name)' extraction rendering "
+                        + "'\(declaredLabel)' contradicts the pinned "
+                        + "artifact's '\(recordedLabel)' — held-out "
+                        + "activations must be read as the vector was rendered")
             }
         }
         return violations

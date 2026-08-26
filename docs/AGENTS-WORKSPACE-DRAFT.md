@@ -122,6 +122,7 @@ status **draft**, which is the only status any authoring verb accepts.
 steerlab-cli experiment attach <name> <concept>… \
   [--method meanDifference|lat|emotionGrandMean|designatedReference] \
   [--pool-from K] [--reading-position '<label>'] \
+  [--extraction-rendering '<json>'] \
   [--reference <concept>] [--corpus a,b,c]
 ```
 
@@ -130,6 +131,22 @@ content token`, `content offset 2`, `mean content from token 0`, `offset from
 end 3`, …). `--pool-from K` is the legacy spelling of one of them (`mean from
 token K`); declaring both is refused, and a template-aware role declared under
 a raw rendering is refused here rather than hours later on a GPU.
+
+`--extraction-rendering` pins HOW those stimuli reach the model before they
+are read: a JSON object (`{"mode": "raw"|"chatTemplate", "voice":
+"user"|"assistant", "addGenerationPrompt": true|false}`), or the bare mode
+word. Raw and chat-template renderings of the same stimuli give different
+directions, so the rendering is recipe identity exactly as the reading
+position is. **Absent ≡ raw ≡ today's bytes**, and an explicit `raw` — or an
+explicit `voice: "user"` — canonicalizes away, so a silent legacy declaration
+and a newly explicit one compare equal. `voice: "assistant"` renders the
+stimulus as the model's OWN output, extracted by template subtraction;
+`steerlab-cli` refuses that voice — a typed engine asymmetry, so run
+assistant-voice cells on the server engine — and under it `addGenerationPrompt`
+and `systemPrompt` reach nothing and are typed refusals at declaration time.
+The template-aware reading positions above are the other side of this pairing:
+under a raw rendering there is no template for them to find, which is the
+refusal `attach` fires.
 
 Pins each named concept's **current** stimulus hash plus its extraction
 options. It also pins the neutral corpus when one exists — that corpus

@@ -98,6 +98,48 @@ struct SystemPromptCompositionTests {
                 == #"{"agent":null,"battery":null}"#)
     }
 
+    /// Review 2026-08-26. `compose` treats whitespace-only text as empty, but
+    /// the stamp used to hash by TRUTHINESS — so a persona of `"   "`
+    /// contributed nothing to the effective prompt and still stamped a digest,
+    /// claiming a contribution the bytes do not contain. All three stamp
+    /// shapes, both levels.
+    @Test func aLevelTheCompositionDropsStampsNullInAllThreeShapes() {
+        let blank = "   \n\t "
+        // The effective prompt is the OTHER side's exact bytes…
+        #expect(SystemPromptComposition.compose(agent: blank, frame: Self.frame)
+            == Self.frame)
+        #expect(SystemPromptComposition.compose(agent: Self.persona, frame: blank)
+            == Self.persona)
+
+        // …so the dropped level stamps null, wherever the stamp is built.
+        let study = SystemPromptCompositionStamp(
+            agentText: blank, studyText: Self.frame)
+        #expect(study.agent == nil)
+        #expect(study.study == sha(Self.frame))
+        let battery = BatteryArmingCompositionStamp(
+            agentText: Self.persona, batteryText: blank)
+        #expect(battery.agent == sha(Self.persona))
+        #expect(battery.battery == nil)
+        let cast = PanelSystemPromptCompositionStamp(
+            agentText: blank, castText: Self.frame)
+        #expect(cast.agent == nil)
+        #expect(cast.cast == sha(Self.frame))
+        // …and through the two arming types that build text and stamp together.
+        let arm = ArmSystemPrompt(agent: blank, study: Self.frame)
+        #expect(arm.effective == Self.frame)
+        #expect(arm.stamp.agent == nil)
+        let seat = SeatSystemPrompt(agent: Self.persona, cast: blank)
+        #expect(seat.effective == Self.persona)
+        #expect(seat.stamp.cast == nil)
+
+        // The per-condition hash convention is UNTOUCHED: one convention,
+        // shared with the server's `_sha256_text`. The composition rule lives
+        // at the stamp and nowhere else.
+        #expect(SystemPromptComposition.hash(blank) == sha(blank))
+        #expect(SystemPromptComposition.stampHash(blank) == nil)
+        #expect(SystemPromptComposition.stampHash(Self.frame) == sha(Self.frame))
+    }
+
     @Test func armSystemPromptBuildsTheTextAndTheStampTogether() {
         let arm = ArmSystemPrompt(agent: Self.persona, study: Self.frame)
         #expect(arm.effective == Self.persona + "\n\n" + Self.frame)

@@ -1165,10 +1165,52 @@ def import_bundle(bundle_path: str, *, target_root: str | None = None,
             run_dir = os.path.join(target, "runs", run_id)
             if run_id and os.path.isdir(run_dir):
                 local = os.path.join(run_dir, "pipeline-portable.json")
+                # Retention is still "only if it is not already there" — a
+                # re-import must leave a ledger that stands alone, exactly as
+                # before. What changed is HOW the bytes land (external review,
+                # 2026-08-26). It was ``if not exists: open(local, "wb")``,
+                # which is the one write in this commit that bypassed the
+                # transaction twice over: a file appearing between the check
+                # and the open was TRUNCATED rather than refused, and the
+                # bytes reached the workspace before anything registered them,
+                # so a write that died half way left a partial ledger no
+                # rollback knew about. Staging it and landing it through
+                # :func:`_commit_one` puts it under the same machinery as
+                # every other member — a partial write happens in the staging
+                # tree, and the landing either takes the name or refuses it.
                 if not os.path.exists(local):
-                    with open(local, "wb") as handle:
+                    if staging is None:
+                        # No member landed, so there is no staging tree yet —
+                        # inside the target root, like the other one, so the
+                        # landing stays a same-filesystem operation.
+                        staging = tempfile.mkdtemp(prefix=_STAGING_PREFIX,
+                                                   dir=target)
+                    staged_ledger = os.path.join(staging,
+                                                 "pipeline-portable.json")
+                    with open(staged_ledger, "wb") as handle:
                         handle.write(portable_payload)
-                    landed.append(_Landed(dest=local, backup=None))
+                    # Registered BEFORE the landing, so no failure between the
+                    # moment `local` acquires bytes and the moment this call
+                    # returns can leave them behind unrolled-back.
+                    ledger_entry = _Landed(dest=local, backup=None)
+                    landed.append(ledger_entry)
+                    try:
+                        _commit_one(staged_ledger, local, may_overwrite=False)
+                    except FileExistsError:
+                        # Identical to the member loop's window: the file
+                        # arrived after the check above and is not this
+                        # import's to keep or to destroy — so the registration
+                        # comes back out before the rollback runs, or the
+                        # rollback would delete somebody else's file.
+                        landed.pop()
+                        raise BundleError(
+                            f"refusing to overwrite existing file: "
+                            f"runs/{run_id}/pipeline-portable.json — it "
+                            "appeared AFTER preflight checked the "
+                            "destination, between that check and this commit. "
+                            "Nothing of this bundle was kept: import into a "
+                            "clean target root, or move that file aside and "
+                            "retry") from None
                     extracted.append(f"runs/{run_id}/pipeline-portable.json")
     except BaseException:
         _rollback(landed, created_dirs)

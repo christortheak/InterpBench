@@ -319,6 +319,53 @@ def test_raw_with_parameters_refuses_rather_than_pretending():
         er.from_json({"mode": "raw", "addGenerationPrompt": True})
 
 
+def test_a_stranger_under_chat_template_refuses_rather_than_being_ignored():
+    """THE MISSPELLING BUG (review 2026-08-26). The chat-template branch read
+    its five known keys and silently ignored every other one, so
+    ``addGenerationPromt`` — one transposed letter — left the default ``true``
+    in place and a frozen study measured something its manifest does not say.
+    The raw branch has always refused strangers; now both do."""
+    with pytest.raises(er.ExtractionRenderingError) as exc:
+        er.from_json({"mode": "chatTemplate", "addGenerationPromt": False})
+    message = str(exc.value)
+    assert "addGenerationPromt" in message           # the offender, named
+    assert "repair:" in message
+    for key in er.CHAT_TEMPLATE_KEYS:                # the vocabulary, offered
+        assert key in message
+    # Every stranger is listed, sorted, in one refusal.
+    with pytest.raises(er.ExtractionRenderingError) as exc:
+        er.from_json({"mode": "chatTemplate", "zeta": 1, "alpha": 2})
+    assert "alpha, zeta" in str(exc.value)
+
+
+def test_an_explicitly_null_stranger_declares_nothing_and_is_accepted():
+    """The raw branch's own rule, kept: an explicit ``null`` says the same
+    thing an absent key says, so it cannot mislead anyone about what was
+    declared."""
+    rendering = er.from_json({"mode": "chatTemplate", "somethingElse": None})
+    assert rendering.add_generation_prompt is True
+    assert rendering.mode == er.CHAT_TEMPLATE
+
+
+def test_the_read_path_is_as_strict_as_the_declaration_path():
+    """``from_json`` serves manifests and sidecars as well as declarations, and
+    a stranger in a RECORDED block can only be a newer engine's field or a
+    typo. Refusing loudly beats reading a recipe nobody wrote."""
+    from steerlab_server.experiment.manifest import ExtractionOptions
+
+    with pytest.raises(er.ExtractionRenderingError, match="addGenerationPromt"):
+        ExtractionOptions.from_json(
+            {"extractionRendering": {"mode": "chatTemplate",
+                                     "addGenerationPromt": False}})
+    # …and the identity reader reports the field UNPROVABLE rather than
+    # guessing raw, which is the same answer it gives an unknown mode.
+    from steerlab_server.experiment import recipe_identity as ri
+    fragment, ok = ri._parse_sidecar_rendering(
+        {"extractionRendering": {"mode": "chatTemplate",
+                                 "addGenerationPromt": False}})
+    assert fragment is None and ok is False
+
+
 # --- 3. the denominator follows the extraction --------------------------------
 
 def test_the_denominator_is_measured_under_the_extraction_rendering(monkeypatch):

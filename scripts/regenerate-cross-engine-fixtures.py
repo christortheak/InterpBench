@@ -820,7 +820,16 @@ def extraction_rendering_and_positions() -> None:
                 er.ASSISTANT_VOICE_GENERATION_PROMPT_REASON,
             "assistantVoiceSystemPrompt":
                 er.ASSISTANT_VOICE_SYSTEM_PROMPT_REASON,
+            # The MISSPELLING refusal, pinned as a produced instance rather
+            # than as a template: `addGenerationPromt` is the transposition
+            # that used to be read as "nothing declared" and silently left the
+            # default in place. The key vocabulary the repair names travels
+            # with it, so a key added on one engine and not the other shows up
+            # as a fixture diff.
+            "unknownChatTemplateKey":
+                er.unknown_chat_template_key_reason(["addGenerationPromt"]),
         },
+        "chatTemplateKeys": list(er.CHAT_TEMPLATE_KEYS),
     })
 
 

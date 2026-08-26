@@ -95,6 +95,23 @@ def text_hash(text: str | None) -> str | None:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _stamp_hash(text: str | None) -> str | None:
+    """The hash a COMPOSITION STAMP records for one level.
+
+    :func:`text_hash`'s own rule is truthiness, shared on purpose with the
+    per-condition ``systemPromptHash`` (``tasks._sha256_text``) so the two are
+    comparable without a second convention — and it stays exactly that. But a
+    stamp answers a different question: *what did this level contribute to the
+    effective prompt?* :func:`compose` drops a whitespace-only level entirely,
+    so a persona of ``"   "`` contributes nothing at all while hashing to a
+    perfectly good digest. Stamping it claimed a contribution the effective
+    bytes do not contain (review 2026-08-26). The composition's own emptiness
+    rule is therefore applied HERE, at the stamp, and nowhere else. Swift twin:
+    ``SystemPromptComposition.stampHash``.
+    """
+    return None if _empty(text) else text_hash(text)
+
+
 def composition(agent: str | None, frame: str | None, *,
                 frame_key: str = "study") -> dict:
     """The additive provenance block beside an effective ``systemPromptHash``.
@@ -108,8 +125,13 @@ def composition(agent: str | None, frame: str | None, *,
     engine does not stamp composition", a different claim from "this level was
     empty". The ``agent`` key is always first, whatever the second term is, so
     the three stamp shapes read alike.
+
+    "Contributed nothing" is :func:`compose`'s OWN rule, whitespace included
+    (see :func:`_stamp_hash`): a level the composition drops stamps ``null``,
+    so the stamp can never claim a contribution the effective prompt does not
+    carry.
     """
-    return {"agent": text_hash(agent), frame_key: text_hash(frame)}
+    return {"agent": _stamp_hash(agent), frame_key: _stamp_hash(frame)}
 
 
 def divergence_advisory(arms) -> str | None:
@@ -117,8 +139,12 @@ def divergence_advisory(arms) -> str | None:
     DIFFERENT effective system content.
 
     ``arms`` is an ordered sequence of ``(arm name, effective system prompt)``
-    in the run's own emission order. Returns ``None`` when every arm shares one
-    effective content — the universal case, which must stay silent — and
+    in the run's own emission order — EFFECTIVE, meaning each text has already
+    been through :func:`compose`, which is why this hashes with
+    :func:`text_hash` rather than :func:`_stamp_hash`: there is no dropped
+    level left to misrepresent, and two arms whose effective bytes differ by
+    whitespace really are armed differently. Returns ``None`` when every arm
+    shares one effective content — the universal case, which must stay silent — and
     otherwise a single line naming every arm and the hash it runs under.
 
     Why an advisory and not a refusal: a deliberately persona-varying design

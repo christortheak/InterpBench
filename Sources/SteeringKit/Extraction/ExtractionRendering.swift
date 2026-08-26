@@ -184,6 +184,62 @@ public struct ExtractionRendering: Codable, Sendable, Equatable {
             qwenThinkingEnabled: resolvedQwenThinkingEnabled,
             systemPrompt: systemPrompt)
     }
+
+    // MARK: - Reading is as strict as declaring
+
+    public enum CodingKeys: String, CodingKey {
+        case mode, addGenerationPrompt, qwenThinkingEnabled, systemPrompt, voice
+    }
+
+    /// A key of ARBITRARY name, so the decoder can see the strangers a typed
+    /// container silently steps over.
+    private struct AnyKey: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+
+    /// Decoding refuses an unknown chat-template key exactly as
+    /// ``declared(object:)`` does, and for a sharper reason: a stranger in a
+    /// RECORDED block — a manifest's `options.extractionRendering`, an
+    /// artifact sidecar's stamp — can only have been written by a newer engine
+    /// declaring a field this one does not understand, or by a hand edit with
+    /// a typo in it. Reading such a block as though the key were absent would
+    /// hand the study a rendering nobody declared, which is the whole failure
+    /// this type exists to end. Server twin: `from_json`, whose strictness the
+    /// declaration path and the read path already share.
+    ///
+    /// The encoder stays synthesized: what this engine WRITES is only ever the
+    /// five keys, so no artifact's bytes move.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // `mode` stays REQUIRED here (the synthesized decoder's rule, kept):
+        // a recorded block with no mode at all is malformed, not raw.
+        let mode = try container.decode(Mode.self, forKey: .mode)
+        if mode == .chatTemplate {
+            let everyKey = try decoder.container(keyedBy: AnyKey.self)
+            var unknown: [String] = []
+            for key in everyKey.allKeys
+            where !ExtractionRendering.chatTemplateKeys.contains(key.stringValue) {
+                if try !everyKey.decodeNil(forKey: key) {
+                    unknown.append(key.stringValue)
+                }
+            }
+            guard unknown.isEmpty else {
+                throw ExtractionRendering.unknownChatTemplateKeyError(
+                    unknown.sorted())
+            }
+        }
+        self.mode = mode
+        self.addGenerationPrompt = try container.decodeIfPresent(
+            Bool.self, forKey: .addGenerationPrompt)
+        self.qwenThinkingEnabled = try container.decodeIfPresent(
+            Bool.self, forKey: .qwenThinkingEnabled)
+        self.systemPrompt = try container.decodeIfPresent(
+            String.self, forKey: .systemPrompt)
+        self.voice = try container.decodeIfPresent(Voice.self, forKey: .voice)
+    }
 }
 
 // MARK: - The WRITER: a typed declaration off the command line
@@ -246,6 +302,59 @@ extension ExtractionRendering {
             self.repair = repair
         }
         public var description: String { reason }
+
+        /// The ONE-LINE form, which is how the server twin's
+        /// `ExtractionRenderingError` carries the same refusal: reason, an em
+        /// dash, and the repair. Used where a refusal is quoted INSIDE another
+        /// engine's message (an attach refusal, a verify violation), so the
+        /// two engines' composed texts match as well as their parts do.
+        public var message: String { reason + " — repair: " + repair }
+    }
+
+    /// EVERY key a `chatTemplate` rendering may carry, sorted — the vocabulary
+    /// a refusal about a stranger names. Server twin:
+    /// `extraction_rendering.CHAT_TEMPLATE_KEYS`.
+    public static let chatTemplateKeys = [
+        "addGenerationPrompt", "mode", "qwenThinkingEnabled", "systemPrompt",
+        "voice",
+    ]
+
+    /// The non-null keys of `object` this engine does not read, sorted.
+    ///
+    /// NON-null, exactly as the raw branch's own extra-parameter check: an
+    /// explicit `null` says "this parameter is absent", which is what an
+    /// absent key already says, so it declares nothing.
+    public static func unknownChatTemplateKeys(
+        in object: [String: Any]
+    ) -> [String] {
+        object.keys
+            .filter { !chatTemplateKeys.contains($0) }
+            .filter { object[$0].map { !($0 is NSNull) } ?? false }
+            .sorted()
+    }
+
+    /// Refusal text shared VERBATIM with the server twin
+    /// (`extraction_rendering.unknown_chat_template_key_reason`), as
+    /// `DeclarationError.message`.
+    ///
+    /// The raw branch has always refused strangers; the chat-template branch
+    /// used to read its five known keys and IGNORE everything else, so
+    /// `"addGenerationPromt": false` — one transposed letter — silently kept
+    /// the default `true` and a frozen study measured something other than
+    /// what its manifest appears to declare. A key that reaches nothing is the
+    /// same failure this option exists to end, so it is answered out loud
+    /// (review 2026-08-26).
+    public static func unknownChatTemplateKeyError(
+        _ keys: [String]
+    ) -> DeclarationError {
+        DeclarationError(
+            reason: "extractionRendering mode 'chatTemplate' does not accept "
+                + "\(keys.joined(separator: ", ")): a key this engine does not "
+                + "read reaches nothing, so a misspelling (addGenerationPromt) "
+                + "silently leaves the default in place and changes what a "
+                + "frozen study measured",
+            repair: "correct or drop the key; the accepted parameters are "
+                + chatTemplateKeys.joined(separator: ", "))
     }
 
     /// Parse what was typed after `--extraction-rendering`.
@@ -331,6 +440,15 @@ extension ExtractionRendering {
             }
             // Explicit raw == absent, byte for byte.
             return nil
+        }
+        // …and neither does a chat-template rendering, beyond the five
+        // parameters it actually varies. Checked FIRST, before any of them is
+        // read, so a stranger is answered before the meaningless-under-this-
+        // voice combinations below — one deterministic order, twinned in the
+        // server's `from_json`.
+        let unknown = unknownChatTemplateKeys(in: object)
+        guard unknown.isEmpty else {
+            throw unknownChatTemplateKeyError(unknown)
         }
         let addGenerationPrompt = try strictBool(
             object["addGenerationPrompt"], key: "addGenerationPrompt")

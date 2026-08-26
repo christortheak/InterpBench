@@ -125,6 +125,44 @@ ASSISTANT_VOICE_SYSTEM_PROMPT_REASON = (
 #: ``ExtractionRendering.declarationFlag``.
 DECLARATION_FLAG = "--extraction-rendering"
 
+#: EVERY key a ``chatTemplate`` rendering may carry, sorted — the vocabulary a
+#: refusal about a stranger names, and the list :func:`from_json` measures an
+#: object against. Swift twin: ``ExtractionRendering.chatTemplateKeys``.
+CHAT_TEMPLATE_KEYS = ("addGenerationPrompt", "mode", "qwenThinkingEnabled",
+                      "systemPrompt", "voice")
+
+
+def unknown_chat_template_keys(value: dict) -> list[str]:
+    """The non-null keys of ``value`` this engine does not read, sorted.
+
+    NON-null, exactly as the raw branch's own extra-parameter check: an
+    explicit ``null`` says "this parameter is absent", which is what an absent
+    key already says, so it declares nothing and refusing it would break
+    manifests that spell absence out.
+    """
+    return sorted(k for k in value
+                  if k not in CHAT_TEMPLATE_KEYS and value.get(k) is not None)
+
+
+def unknown_chat_template_key_reason(keys) -> str:
+    """Refusal text shared VERBATIM with the Swift twin
+    (``ExtractionRendering.unknownChatTemplateKeyReason``).
+
+    The raw branch has always refused strangers; the chat-template branch used
+    to read its five known keys and IGNORE everything else, so
+    ``"addGenerationPromt": false`` — one transposed letter — silently kept the
+    default ``true`` and a frozen study measured something other than what its
+    manifest appears to declare. A key that reaches nothing is the same failure
+    this module exists to end, so it is answered out loud (review 2026-08-26).
+    """
+    return (
+        f"extractionRendering mode 'chatTemplate' does not accept "
+        f"{', '.join(keys)}: a key this engine does not read reaches nothing, "
+        f"so a misspelling (addGenerationPromt) silently leaves the default in "
+        f"place and changes what a frozen study measured — repair: correct or "
+        f"drop the key; the accepted parameters are "
+        f"{', '.join(CHAT_TEMPLATE_KEYS)}")
+
 
 class ExtractionRenderingError(ValueError):
     """A rendering declaration this engine cannot honor. Typed and carrying a
@@ -212,6 +250,16 @@ def from_json(value) -> ExtractionRendering:
     "chatTemplate"``. An unknown mode is a typed refusal naming this engine —
     never a fallback, because falling back to raw would reproduce the exact
     silent-default bug this option exists to close.
+
+    **Reading is as strict as declaring**, and deliberately so: this function
+    serves the DECLARATION path (through :func:`parse_declaration`) and the
+    manifest/sidecar READ path alike, and an unknown key in a recorded block
+    can only mean a newer engine wrote a field this one does not understand.
+    Refusing loudly beats misreading the recipe — the callers that read
+    artifacts turn the refusal into their own named violation
+    (``manifest._verify_vector_artifact_pins``,
+    ``experiment_store.attach_artifact``, ``recipe_identity``'s unprovable
+    field).
     """
     if value is None:
         return RAW_RENDERING
@@ -240,6 +288,14 @@ def from_json(value) -> ExtractionRendering:
                 f"or declare mode 'chatTemplate' if you meant the template "
                 f"rendering")
         return RAW_RENDERING
+    # …and neither does a chat-template rendering, beyond the five parameters
+    # it actually varies. Checked FIRST, before any of them is read, so a
+    # stranger is answered before a declaration that also carries one of the
+    # meaningless-under-this-voice combinations below — one deterministic
+    # order, twinned in Swift's ``declared(object:)``.
+    unknown = unknown_chat_template_keys(value)
+    if unknown:
+        raise ExtractionRenderingError(unknown_chat_template_key_reason(unknown))
     add_generation_prompt = value.get("addGenerationPrompt")
     qwen_thinking = value.get("qwenThinkingEnabled")
     system_prompt = value.get("systemPrompt")

@@ -897,6 +897,24 @@ def attach_artifact(name: str, concept: str, artifact_path: str, *,
             if not verification["verified"]:
                 entry["vectorArtifact"]["optvecEvalRunUnverifiedReason"] = \
                     verification["reason"]
+    # The RENDERING travels with the reading position, for exactly the reason
+    # the position does: verify compares the two canonically, so an artifact
+    # extracted through the chat template must not attach into a manifest that
+    # says raw. A raw (or absent) recording writes NO key, so a legacy artifact
+    # still attaches to byte-identical manifest JSON. Swift twin:
+    # ``ExperimentStore.attachArtifactPin``.
+    from ..steering.extraction_rendering import ExtractionRenderingError
+    from ..steering.extraction_rendering import from_json as rendering_from_json
+    try:
+        recorded_rendering = rendering_from_json(
+            sidecar.get("extractionRendering"))
+    except ExtractionRenderingError as exc:
+        raise ExperimentStoreError(
+            f"vector artifact '{rel}' records an extractionRendering this "
+            f"engine cannot read ({exc}) — re-attach on the engine that "
+            "wrote it")
+    if not recorded_rendering.is_raw:
+        entry["options"]["extractionRendering"] = recorded_rendering.to_dict()
     if sidecar.get("neutralCorpusHash"):
         entry["vectorArtifact"]["normCorpusHash"] = sidecar["neutralCorpusHash"]
     if method.is_designated_reference:

@@ -1150,6 +1150,117 @@ def test_a_commit_phase_failure_rolls_the_whole_import_back(tmp_path,
     _no_leftovers(target)
 
 
+# --- the portable pipeline ledger is a member like any other -----------------
+#
+# `pipeline-portable.json` is retained inside the imported pipeline run dir
+# after the member loop has finished, so it used to be written by hand —
+# `if not exists: open(dest, "wb")` — outside the transaction the rest of the
+# commit runs under. Two holes, both closed here (external review,
+# 2026-08-26): the exists-then-write window truncated a file that appeared in
+# it, and the registration happened after the bytes landed, so a failure in
+# between left a partial ledger no rollback knew about.
+
+PIPELINE_RUN = "pipeline-2026"
+LEDGER = "pipeline-portable.json"
+
+
+def _pipeline_bundle(path, *, ledger=b'{"kind":"pipelinePortable"}\n'):
+    """A bundle whose run dir is a pipeline's, carrying a hash-pinned portable
+    ledger beside it."""
+    import hashlib
+
+    _bundle_with_members(
+        path,
+        [(f"runs/{PIPELINE_RUN}/pipeline.json", b'{"kind":"pipeline"}\n'),
+         ("steerlab-pipeline.json", ledger)],
+        extra={"runID": PIPELINE_RUN,
+               "pipelinePortableSha256": hashlib.sha256(ledger).hexdigest()})
+    return ledger
+
+
+def test_the_portable_ledger_lands_and_a_standing_one_is_left_alone(tmp_path):
+    """Retention is unchanged: the ledger lands with the rest of the import,
+    and a re-import that finds one already there leaves it exactly as it is
+    rather than rewriting it."""
+    bundle = str(tmp_path / "pipeline.tar.gz")
+    ledger = _pipeline_bundle(bundle)
+    target = tmp_path / "target"
+
+    result = bundles.import_bundle(bundle, target_root=str(target))
+    assert f"runs/{PIPELINE_RUN}/{LEDGER}" in result["extracted"]
+    landed = target / "runs" / PIPELINE_RUN / LEDGER
+    assert landed.read_bytes() == ledger
+
+    # A hand-annotated ledger from a previous import is not this call's to
+    # rewrite.
+    landed.write_bytes(b'{"kind":"pipelinePortable","annotated":true}\n')
+    again = bundles.import_bundle(bundle, target_root=str(target),
+                                  allow_overwrite=True)
+    assert f"runs/{PIPELINE_RUN}/{LEDGER}" not in again["extracted"]
+    assert landed.read_bytes() == \
+        b'{"kind":"pipelinePortable","annotated":true}\n'
+    _no_leftovers(target)
+
+
+def test_a_ledger_that_appears_mid_commit_is_refused_not_truncated(
+        tmp_path, monkeypatch):
+    """The exists-then-write window. ``open(local, "wb")`` truncated whatever
+    arrived in it; the landing now cannot overwrite, so the appearance is the
+    same refusal any other member's would be — whole import rolled back, the
+    file that appeared untouched."""
+    bundle = str(tmp_path / "pipeline.tar.gz")
+    _pipeline_bundle(bundle)
+    target = tmp_path / "target"
+    intruder = b'{"kind":"pipelinePortable","from":"another importer"}\n'
+    real_commit = bundles._commit_one
+
+    def _appear_then_commit(staged, dest, **kwargs):
+        if os.path.basename(dest) == LEDGER:
+            # Exactly the window: the existence check has passed and the bytes
+            # have not landed.
+            with open(dest, "wb") as handle:
+                handle.write(intruder)
+        return real_commit(staged, dest, **kwargs)
+
+    monkeypatch.setattr(bundles, "_commit_one", _appear_then_commit)
+    with pytest.raises(bundles.BundleError,
+                       match="refusing to overwrite existing file"):
+        bundles.import_bundle(bundle, target_root=str(target))
+
+    appeared = target / "runs" / PIPELINE_RUN / LEDGER
+    assert appeared.read_bytes() == intruder, \
+        "the ledger write truncated a file that appeared in the window"
+    assert not (target / "runs" / PIPELINE_RUN / "pipeline.json").exists(), \
+        "the refusal kept an earlier member — the ledger bypassed the rollback"
+    _no_leftovers(target)
+
+
+def test_a_ledger_that_fails_after_landing_is_rolled_back(tmp_path,
+                                                          monkeypatch):
+    """The registration window. The ledger used to be recorded as landed only
+    AFTER its write returned, so bytes that reached the workspace and then hit
+    a failure were invisible to the rollback. It is registered before the
+    landing now, and the rollback takes it back out."""
+    bundle = str(tmp_path / "pipeline.tar.gz")
+    _pipeline_bundle(bundle)
+    target = tmp_path / "target"
+    real_commit = bundles._commit_one
+
+    def _land_then_die(staged, dest, **kwargs):
+        real_commit(staged, dest, **kwargs)
+        if os.path.basename(dest) == LEDGER:
+            raise OSError("the disk went away after the ledger landed")
+
+    monkeypatch.setattr(bundles, "_commit_one", _land_then_die)
+    with pytest.raises(OSError, match="went away"):
+        bundles.import_bundle(bundle, target_root=str(target))
+
+    assert not (target / "runs" / PIPELINE_RUN / LEDGER).exists(), \
+        "a landed ledger survived a rolled-back import"
+    assert not (target / "runs" / PIPELINE_RUN / "pipeline.json").exists()
+    _no_leftovers(target)
+
+
 def test_rollback_restores_what_an_overwriting_import_replaced(tmp_path,
                                                                monkeypatch):
     """`allow_overwrite` imports (bundle-execute uses one) may replace files

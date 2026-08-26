@@ -428,6 +428,93 @@ def test_forcing_fp32_collapses_the_deviation_and_STAMPS_the_record(
     assert ref_model._lm_head.weight.dtype == torch.bfloat16
 
 
+class _HalfPromotable:
+    """A reference wrapper whose SECOND module refuses to change dtype.
+
+    The failure is what a 27B promotion runs out of memory doing: the first
+    several GiB of head land in float32 and the next allocation does not.
+    """
+
+    def __init__(self):
+        self.first = torch.nn.Linear(4, 4, bias=False).to(torch.bfloat16)
+        self.second = _RefusesToConvert()
+
+
+class _RefusesToConvert(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.zeros(4, 4,
+                                                     dtype=torch.bfloat16),
+                                         requires_grad=False)
+
+    def to(self, *args, **kwargs):  # noqa: D401 - deliberate failure
+        raise RuntimeError("out of memory promoting the reference head")
+
+
+def test_a_promotion_that_dies_part_way_leaves_the_model_as_it_found_it():
+    """The promotion mutates the STUDY model's live modules and hands back the
+    undo only at the end — so a failure part way used to strand every module it
+    had already reached in float32, with nobody holding a restore for them
+    (external review, 2026-08-26). All or nothing.
+    """
+    host = _HalfPromotable()
+
+    with pytest.raises(RuntimeError, match="out of memory"):
+        qualification._promote_reference_to_fp32(host)
+
+    assert host.first.weight.dtype == torch.bfloat16, \
+        "an earlier module was left promoted after the failure"
+    assert host.second.weight.dtype == torch.bfloat16
+
+
+def test_a_failing_promotion_is_not_masked_by_a_failing_rollback():
+    """The rollback is best effort and silent: the exception that caused it is
+    what the operator needs to see."""
+
+    class _FailsBothWays(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(
+                torch.zeros(2, 2, dtype=torch.bfloat16), requires_grad=False)
+            self.calls = 0
+
+        def to(self, *args, **kwargs):
+            self.calls += 1
+            raise RuntimeError("this module cannot change dtype at all")
+
+    class _Host:
+        def __init__(self):
+            self.only = _FailsBothWays()
+
+    host = _Host()
+    with pytest.raises(RuntimeError, match="cannot change dtype"):
+        qualification._promote_reference_to_fp32(host)
+    # Promotion attempt plus its own rollback attempt, and neither escaped as
+    # a different exception than the one that started it.
+    assert host.only.calls == 2
+
+
+def test_the_reference_check_restores_dtypes_when_the_comparison_explodes(
+        tmp_path, monkeypatch):
+    """The caller's guard encompasses the promotion itself, so the region in
+    which the shared modules are float32 is exactly the region the ``finally``
+    covers."""
+    monkeypatch.setenv(qualification.REFERENCE_FP32_ENV, "1")
+    root = str(tmp_path / "ws")
+    record = _import(tmp_path, EVIDENCE_MODEL)
+    readout, ref_model = _install_fake_reference(monkeypatch, record, root)
+
+    def _explode(*args, **kwargs):
+        raise RuntimeError("the comparison died mid-flight")
+
+    monkeypatch.setattr(qualification, "_compare_against_reference", _explode)
+    with pytest.raises(RuntimeError, match="died mid-flight"):
+        qualification._check_reference_agreement(
+            record, ReferenceModelHost(), readout, [0], root=root)
+
+    assert ref_model._lm_head.weight.dtype == torch.bfloat16
+
+
 def test_the_fp32_stamp_is_present_even_when_the_reference_is_absent(
         tmp_path, monkeypatch):
     """A skipped check is still a record someone reads for what mode it ran

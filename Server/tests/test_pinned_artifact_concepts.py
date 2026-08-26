@@ -65,7 +65,8 @@ def _sha256(path):
 
 def _derived_artifact(root, *, concept="crit-gm", layers=2, hidden=32,
                       model_id=MODEL, revision=REVISION, substrate=None,
-                      reading="mean from token 50", family_base="crit"):
+                      reading="mean from token 50", family_base="crit",
+                      rendering=None):
     """A stand-in for the real family-grand-mean-centred artifacts: the same
     sidecar shape (designatedReference source, pooled reading, per-layer
     residual norms, a familyGrandMeanCentring provenance block)."""
@@ -91,6 +92,8 @@ def _derived_artifact(root, *, concept="crit-gm", layers=2, hidden=32,
         "baseConcept": family_base, "family": "stances", "k": 5}
     if substrate is not None:
         sidecar.substrate = substrate
+    if rendering is not None:
+        sidecar.extractionRendering = rendering
     vector_store.save(vectors, sidecar, run_dir, concept)
     return os.path.join("runs", "20260810T045146213-derived-gm", concept)
 
@@ -306,6 +309,91 @@ def test_reading_position_disagreement_is_a_violation(tmp_path):
     d["concepts"][0]["options"]["readingPosition"] = {"lastToken": {}}
     assert any("held-out activations must be read where the vector was read"
                in v for v in Manifest.from_dict(d).verify(root))
+
+
+def test_extraction_rendering_disagreement_is_a_violation(tmp_path):
+    """The rendering is recipe identity exactly as the position is, so two
+    answers is no answer here either. Compared CANONICALLY: this artifact
+    carries no rendering stamp — every legacy artifact's shape — so an absent
+    AND an explicitly raw declaration both stay clean, and only a real
+    disagreement fires."""
+    root, artifact = _workspace(tmp_path)
+    es.attach_artifact("gm-study", "crit-gm", artifact, source_concept="crit",
+                       root=root)
+    d = es.load_raw("gm-study", root)
+    assert "extractionRendering" not in d["concepts"][0]["options"]
+    marker = "held-out activations must be read as the vector was rendered"
+    assert not any(marker in v for v in Manifest.from_dict(d).verify(root))
+    d["concepts"][0]["options"]["extractionRendering"] = {"mode": "raw"}
+    assert not any(marker in v for v in Manifest.from_dict(d).verify(root))
+    d["concepts"][0]["options"]["extractionRendering"] = {"mode": "chatTemplate"}
+    violations = Manifest.from_dict(d).verify(root)
+    assert any(marker in v for v in violations)
+    assert any("contradicts the pinned artifact's 'raw'" in v
+               for v in violations)
+
+
+def test_attach_copies_the_artifacts_rendering_so_verify_passes(tmp_path):
+    """Attach must never write a pin the very next verify rejects: the
+    rendering travels from the sidecar exactly as the reading position does,
+    and the assistant voice travels with it."""
+    root, artifact = _workspace(
+        tmp_path, rendering={"mode": "chatTemplate", "qwenThinkingEnabled": False,
+                             "voice": "assistant"})
+    es.attach_artifact("gm-study", "crit-gm", artifact, source_concept="crit",
+                       root=root)
+    d = es.load_raw("gm-study", root)
+    assert d["concepts"][0]["options"]["extractionRendering"] == {
+        "mode": "chatTemplate", "qwenThinkingEnabled": False,
+        "voice": "assistant"}
+    marker = "held-out activations must be read as the vector was rendered"
+    assert not any(marker in v for v in Manifest.from_dict(d).verify(root))
+    # …and dropping the declaration afterwards IS the contradiction.
+    del d["concepts"][0]["options"]["extractionRendering"]
+    assert any(marker in v for v in Manifest.from_dict(d).verify(root))
+
+
+def test_a_stranger_in_the_artifacts_rendering_refuses_the_attach_by_name(
+        tmp_path):
+    """READING is as strict as declaring (review 2026-08-26). A key this
+    engine does not understand in a recorded stamp can only be a NEWER engine's
+    parameter or a typo, and copying the block minus that key would pin a
+    rendering the artifact was not extracted under. The refusal is the store's
+    own, naming the artifact and the stranger — never a traceback out of the
+    sidecar reader."""
+    root, artifact = _workspace(
+        tmp_path, rendering={"mode": "chatTemplate",
+                             "addGenerationPromt": False})
+    with pytest.raises(es.ExperimentStoreError) as exc:
+        es.attach_artifact("gm-study", "crit-gm", artifact,
+                           source_concept="crit", root=root)
+    message = str(exc.value)
+    assert "records an extractionRendering this engine cannot read" in message
+    assert "addGenerationPromt" in message
+    assert "re-attach on the engine that wrote it" in message
+
+
+def test_a_stranger_in_a_pinned_sidecar_is_a_named_verify_violation(tmp_path):
+    """The same strictness at the OTHER read: a study that already pins such an
+    artifact reports a violation naming the concept and the sidecar, so verify
+    stays a list of findings rather than an exception."""
+    root, artifact = _workspace(tmp_path)
+    es.attach_artifact("gm-study", "crit-gm", artifact, source_concept="crit",
+                       root=root)
+    d = es.load_raw("gm-study", root)
+    sidecar_path = os.path.join(root, artifact + ".json")
+    with open(sidecar_path, encoding="utf-8") as handle:
+        sidecar = json.load(handle)
+    sidecar["extractionRendering"] = {"mode": "chatTemplate",
+                                      "addGenerationPromt": False}
+    with open(sidecar_path, "w", encoding="utf-8") as handle:
+        json.dump(sidecar, handle)
+    # Re-pin the hash, so it is the RENDERING that is under test and not drift.
+    d["concepts"][0]["vectorArtifact"]["sha256SidecarHash"] = _sha256(sidecar_path)
+    violations = Manifest.from_dict(d).verify(root)
+    assert any("declares an extractionRendering this engine cannot read" in v
+               for v in violations)
+    assert any("addGenerationPromt" in v for v in violations)
 
 
 def test_pin_surface_carries_both_artifact_files_and_the_source_data(tmp_path):

@@ -384,6 +384,16 @@ def _promote_reference_to_fp32(ref_model):
     a ``finally``: the reference wraps the study model's live modules, so this
     is a temporary promotion of shared objects, not a copy.
 
+    ALL OR NOTHING (external review, 2026-08-26). The promotion mutates those
+    shared modules as it walks them, and ``restore`` used to be handed over
+    only once the whole walk had succeeded — so a promotion that died part way
+    (OOM is the plausible way in: a 27B output head is several GiB, which is
+    precisely why this mode is opt-in) left the modules it had already reached
+    in float32 with nobody holding an undo for them. The rest of the
+    qualification would then run against a model in a dtype nobody chose. Any
+    exception now unwinds what this call did, in reverse, before it propagates:
+    either the reference is fully promoted or it is exactly as it was found.
+
     Restoring is exact rather than approximately exact. bfloat16 and float16
     values are all representable in float32, so ``bf16 → fp32 → bf16`` returns
     the identical bits; tensor attributes are restored by putting the ORIGINAL
@@ -403,33 +413,59 @@ def _promote_reference_to_fp32(ref_model):
 
     promoted: list[str] = []
     undo: list = []
-    for name, value in list(vars(ref_model).items()):
-        if isinstance(value, torch.nn.Module):
-            dtypes = {t.dtype for t in
-                      list(value.parameters()) + list(value.buffers())
-                      if t.is_floating_point()}
-            if not dtypes or dtypes == {torch.float32}:
-                continue
-            if len(dtypes) > 1:
-                # Mixed float widths: restoring would have to guess which
-                # tensor was which, so leave it and let the stamp show that
-                # this module was not promoted.
-                continue
-            original = dtypes.pop()
-            value.to(torch.float32)
-            undo.append(lambda m=value, d=original: m.to(d))
-            promoted.append(name)
-        elif isinstance(value, torch.Tensor) and value.is_floating_point() \
-                and value.dtype != torch.float32:
-            setattr(ref_model, name, value.to(torch.float32))
-            undo.append(lambda n=name, v=value: setattr(ref_model, n, v))
-            promoted.append(name)
+    try:
+        for name, value in list(vars(ref_model).items()):
+            if isinstance(value, torch.nn.Module):
+                dtypes = {t.dtype for t in
+                          list(value.parameters()) + list(value.buffers())
+                          if t.is_floating_point()}
+                if not dtypes or dtypes == {torch.float32}:
+                    continue
+                if len(dtypes) > 1:
+                    # Mixed float widths: restoring would have to guess which
+                    # tensor was which, so leave it and let the stamp show that
+                    # this module was not promoted.
+                    continue
+                original = dtypes.pop()
+                # Registered BEFORE the mutation, not after: `Module.to`
+                # converts tensor by tensor in place, so a failure inside one
+                # module leaves that module half promoted too, and the undo
+                # has to cover it.
+                undo.append(lambda m=value, d=original: m.to(d))
+                value.to(torch.float32)
+                promoted.append(name)
+            elif isinstance(value, torch.Tensor) and value.is_floating_point() \
+                    and value.dtype != torch.float32:
+                undo.append(lambda n=name, v=value: setattr(ref_model, n, v))
+                setattr(ref_model, name, value.to(torch.float32))
+                promoted.append(name)
+    except BaseException:
+        _unwind_promotion(undo, quiet=True)
+        raise
 
     def restore():
-        for step in reversed(undo):
-            step()
+        _unwind_promotion(undo, quiet=False)
 
     return promoted, restore
+
+
+def _unwind_promotion(undo: list, *, quiet: bool) -> None:
+    """Run a promotion's undo steps in reverse.
+
+    ``quiet`` is the rollback path, where a failing step must not displace the
+    exception that caused the rollback — that exception is the news, and a
+    swallowed secondary failure still leaves the model closer to how it was
+    found than not trying would. The ordinary ``restore`` path does not
+    swallow: there, a failure to restore IS the news.
+    """
+    for step in reversed(undo):
+        if quiet:
+            try:
+                step()
+            except Exception:
+                pass
+        else:
+            step()
 
 
 # ---------------------------------------------------------------------------
@@ -623,9 +659,13 @@ def _check_reference_agreement(record, model, readout, layers: list[int], *,
 
     promoted: list[str] = []
     restore = None
-    if fp32_forced:
-        promoted, restore = _promote_reference_to_fp32(ref_model)
+    # The promotion is INSIDE the guard that undoes it, not before it (external
+    # review, 2026-08-26). `_promote_reference_to_fp32` unwinds its own partial
+    # work, so this is belt and braces — but a reader should not have to go and
+    # check that to see that the mutation and its restoration are one region.
     try:
+        if fp32_forced:
+            promoted, restore = _promote_reference_to_fp32(ref_model)
         result = _compare_against_reference(
             record, readout, layers, ref_model, reference, backend_mod,
             root=root, fp32_forced=fp32_forced, promoted=promoted)

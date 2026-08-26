@@ -1371,6 +1371,161 @@ def test_an_explicit_temp_path_that_exists_is_refused_not_truncated(
         "the destination was created despite the refusal"
 
 
+def _swap_staging_for_symlink(adapter, monkeypatch, *, victim, locate):
+    """Reproduce the reviewer's window: the staging name is RESERVED, the
+    bytes have not been written yet, and something replaces the name with a
+    symlink to ``victim``.
+
+    ``self._client.stream(...)`` is the first thing the download does after the
+    reservation and before the first write, so wrapping it lands exactly in the
+    gap the old ``open(temp_path, "wb")`` reopen was exposed to. ``locate``
+    returns the reserved staging path (the caller knows it for ``--temp``, and
+    has to go and find the minted one otherwise).
+    """
+    real_stream = adapter._client.stream
+    swapped = {}
+
+    def _stream(*args, **kwargs):
+        path = locate()
+        if path and not swapped:
+            os.unlink(path)
+            os.symlink(victim, path)
+            swapped["path"] = path
+        return real_stream(*args, **kwargs)
+
+    monkeypatch.setattr(adapter._client, "stream", _stream)
+    return swapped
+
+
+def test_a_swapped_staging_name_cannot_overwrite_what_it_points_at(
+        adapter, service, monkeypatch):
+    """The staging file is reserved by descriptor and written by descriptor —
+    the name is never opened twice (external review, 2026-08-26).
+
+    It used to be: ``mkstemp`` (or ``"xb"``) reserved the name, the descriptor
+    was thrown away, and ``open(temp_path, "wb")`` opened it again. Between the
+    two the name can become a symlink, and ``"wb"`` follows it and truncates
+    the target — the reviewer overwrote an unrelated file and still had
+    ``verified: True`` handed back. A descriptor cannot be redirected, so the
+    victim keeps its bytes; the commit then notices the name no longer means
+    the verified inode and publishes nothing.
+    """
+    _job_id, meta = _evidence_bearing_job(service)
+    destination = os.path.join(str(service["tmp"]), "home", "swapped.tar.gz")
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    victim = os.path.join(str(service["tmp"]), "home", "unrelated.txt")
+    victim_bytes = b"an unrelated file that has nothing to do with any download"
+    with open(victim, "wb") as handle:
+        handle.write(victim_bytes)
+
+    def _minted():
+        for name in sorted(os.listdir(os.path.dirname(destination))):
+            if name.startswith(".steerlab-download-"):
+                return os.path.join(os.path.dirname(destination), name)
+        return None
+
+    swapped = _swap_staging_for_symlink(adapter, monkeypatch, victim=victim,
+                                        locate=_minted)
+
+    with pytest.raises(runner_api.RunnerRefusal) as caught:
+        adapter.download_bundle(remote_path=meta["bundlePath"],
+                                expected_sha256=meta["bundleSha256"],
+                                destination=destination)
+
+    assert swapped, "the repro never reached the staging window"
+    assert caught.value.code == "stagingPathHijacked"
+    assert caught.value.state == "refused"
+    with open(victim, "rb") as handle:
+        assert handle.read() == victim_bytes, \
+            "the download wrote through the staging NAME and hit its target"
+    assert not os.path.exists(destination), \
+        "an unverified inode was published under the destination's name"
+    debris = [name for name in os.listdir(os.path.dirname(destination))
+              if name.startswith(".steerlab-download-")]
+    assert debris == [], "the refusal left staging debris behind"
+
+
+def test_a_swapped_explicit_temp_path_cannot_overwrite_its_target(
+        adapter, service, monkeypatch):
+    """The same window on the ``--temp`` branch, which reserved the name with
+    ``"xb"`` and then closed the handle — the reservation was sound and the
+    reopen threw it away."""
+    _job_id, meta = _evidence_bearing_job(service)
+    destination = os.path.join(str(service["tmp"]), "home", "swapped2.tar.gz")
+    temp_path = os.path.join(str(service["tmp"]), "elsewhere", "swap.part")
+    victim = os.path.join(str(service["tmp"]), "elsewhere", "payroll.csv")
+    os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+    victim_bytes = b"row,one\nrow,two\n"
+    with open(victim, "wb") as handle:
+        handle.write(victim_bytes)
+
+    swapped = _swap_staging_for_symlink(adapter, monkeypatch, victim=victim,
+                                        locate=lambda: temp_path)
+
+    with pytest.raises(runner_api.RunnerRefusal) as caught:
+        adapter.download_bundle(remote_path=meta["bundlePath"],
+                                expected_sha256=meta["bundleSha256"],
+                                destination=destination, temp_path=temp_path)
+
+    assert swapped, "the repro never reached the staging window"
+    assert caught.value.code == "stagingPathHijacked"
+    with open(victim, "rb") as handle:
+        assert handle.read() == victim_bytes, "--temp truncated its symlink's "\
+            "target"
+    assert not os.path.exists(destination)
+    assert not os.path.exists(temp_path)
+
+
+def test_bytes_written_into_the_staging_inode_are_caught_before_the_commit(
+        adapter, service, monkeypatch):
+    """A descriptor stops the staging NAME from being redirected; it does not
+    stop somebody who already holds the staging file from writing into it.
+
+    So the digest that decides is taken from the inode, through the download's
+    own descriptor, immediately before the commit — not only from the bytes as
+    they arrived. Here a second writer scribbles over the staged archive after
+    the last chunk lands and before the commit.
+    """
+    _job_id, meta = _evidence_bearing_job(service)
+    destination = os.path.join(str(service["tmp"]), "home", "scribbled.tar.gz")
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    temp_path = os.path.join(str(service["tmp"]), "elsewhere", "held.part")
+    os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+    real_stream = adapter._client.stream
+
+    class _ScribbleAtEnd:
+        """The real streamed response, with one extra act as it closes — which
+        is after the download's last write and flush, and before it verifies
+        what is on the disk."""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __enter__(self):
+            return self._inner.__enter__()
+
+        def __exit__(self, *exc_info):
+            with open(temp_path, "r+b") as sneak:
+                sneak.seek(0)
+                sneak.write(b"not the archive that was verified")
+            return self._inner.__exit__(*exc_info)
+
+    monkeypatch.setattr(adapter._client, "stream",
+                        lambda *a, **k: _ScribbleAtEnd(real_stream(*a, **k)))
+
+    with pytest.raises(runner_api.RunnerRefusal) as caught:
+        adapter.download_bundle(remote_path=meta["bundlePath"],
+                                expected_sha256=meta["bundleSha256"],
+                                destination=destination, temp_path=temp_path)
+
+    assert caught.value.code == "stagedBytesChanged"
+    assert caught.value.state == "refused"
+    assert caught.value.detail["expectedSha256"] == meta["bundleSha256"]
+    assert caught.value.detail["stagedSha256"] != meta["bundleSha256"]
+    assert not os.path.exists(destination)
+    assert not os.path.exists(temp_path)
+
+
 def test_the_linkless_commit_leaves_no_short_file_behind(adapter, service,
                                                           monkeypatch):
     """The O_EXCL fallback (filesystems without hardlinks) RESERVES the

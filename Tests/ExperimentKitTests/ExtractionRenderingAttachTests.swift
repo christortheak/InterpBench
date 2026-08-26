@@ -279,6 +279,9 @@ import Testing
                 #"{"mode":"templated"}"#,          // out-of-vocabulary mode
                 #"{"mode":"raw","systemPrompt":"x"}"#,  // raw takes no parameters
                 #"{"mode":"chatTemplate","addGenerationPrompt":1}"#,
+                // …and a stranger under chatTemplate, which used to be read as
+                // "nothing declared" and silently kept the default.
+                #"{"mode":"chatTemplate","addGenerationPromt":false}"#,
             ]
             for declaration in cases {
                 let outcome = await invoke(
@@ -324,6 +327,124 @@ import Testing
                 .contains("python-hf-transformers") == true)
             let untouched = try ExperimentStore.load(name: "asym")
             #expect(untouched.concepts.isEmpty)
+        }
+    }
+
+    /// THE MISSPELLING BUG (review 2026-08-26), answered where the author can
+    /// still fix it. `addGenerationPromt: false` — one transposed letter — used
+    /// to attach cleanly and pin the DEFAULT `true`: a manifest that reads as
+    /// one recipe and extracts as another. The refusal names the offending key
+    /// and offers the vocabulary that would have worked.
+    @Test func aMisspelledParameterIsRefusedNamingItAndTheVocabulary() async throws {
+        try await withTempRoot { _ in
+            await invoke(["create", "typo", "--model", Self.model])
+            let outcome = await invoke(
+                [
+                    "attach", "typo", "french", "--extraction-rendering",
+                    #"{"mode":"chatTemplate","addGenerationPromt":false}"#,
+                ])
+            #expect(outcome.exitCode == 1)
+            #expect(outcome.envelope.exitCode == 64)
+            #expect(outcome.envelope.state == .blocked)
+            let reason = try #require(outcome.failure?.reason)
+            #expect(reason.contains("addGenerationPromt"))
+            let repair = try #require(outcome.envelope.error?.repairAction)
+            for key in ExtractionRendering.chatTemplateKeys {
+                #expect(repair.contains(key), "the repair omits '\(key)'")
+            }
+            let untouched = try ExperimentStore.load(name: "typo")
+            #expect(untouched.concepts.isEmpty)
+        }
+    }
+
+    // MARK: - 4. reading a RECORDED rendering is as strict as declaring one
+
+    /// An artifact on disk whose sidecar is written as RAW JSON, so the test
+    /// can put a key in it that no type on this engine can produce — which is
+    /// exactly the shape a NEWER engine's stamp would have. The tensor is a
+    /// stub: a pin hashes those bytes, it never decodes them.
+    func plantArtifact(
+        root: URL, name: String, rendering: [String: Any]
+    ) throws -> (reference: String, sidecar: URL, tensor: URL) {
+        let sidecar = SteeringVectorSidecar(
+            modelID: Self.model, concept: "french",
+            stimulusSetHash: "stim-hash",
+            vectors: ConceptVectors(perLayer: [[1, 0], [0, 1]]),
+            residualNormPerLayer: [7.0, 7.5],
+            residualNormSource: "neutral-corpus")
+        var object = try #require(
+            try JSONSerialization.jsonObject(
+                with: try JSONEncoder().encode(sidecar)) as? [String: Any])
+        object["extractionRendering"] = rendering
+        let run = "runs/20260826T000000000-planted"
+        let directory = root.appending(path: run)
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true)
+        let sidecarURL = directory.appending(component: "\(name).json")
+        let tensorURL = directory.appending(component: "\(name).safetensors")
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+            .write(to: sidecarURL)
+        try Data("stub-tensor".utf8).write(to: tensorURL)
+        return ("\(run)/\(name)", sidecarURL, tensorURL)
+    }
+
+    /// A stranger in a RECORDED stamp can only be a newer engine's parameter
+    /// or a typo, and copying the block minus that key would pin a rendering
+    /// the artifact was not extracted under. Attach refuses by name — never a
+    /// decoder dump, and never a quiet reinterpretation.
+    @Test func aStrangerInTheArtifactsRenderingRefusesTheAttachByName() async throws {
+        try await withTempRoot { root in
+            await invoke(["create", "pinned", "--model", Self.model])
+            let planted = try plantArtifact(
+                root: root, name: "planted-french",
+                rendering: ["mode": "chatTemplate", "addGenerationPromt": false])
+            do {
+                _ = try ExperimentStore.attachArtifact(
+                    "planted-french", artifact: planted.reference,
+                    experimentName: "pinned")
+                Issue.record("a stranger in a recorded rendering must refuse")
+            } catch let error as ExperimentError {
+                #expect(error.reason.contains(
+                    "records an extractionRendering this engine cannot read"))
+                #expect(error.reason.contains("addGenerationPromt"))
+                #expect(error.reason.contains(
+                    "re-attach on the engine that wrote it"))
+            }
+        }
+    }
+
+    /// The same strictness at the OTHER read: a study that ALREADY pins such
+    /// an artifact reports a named violation rather than silently skipping
+    /// every pin check for that concept. Server twin: the same violation in
+    /// `Manifest._verify_vector_artifact_pins`.
+    @Test func aStrangerInAPinnedSidecarIsANamedVerifyViolation() async throws {
+        try await withTempRoot { root in
+            await invoke(["create", "pinned-verify", "--model", Self.model])
+            let planted = try plantArtifact(
+                root: root, name: "planted-verify",
+                rendering: ["mode": "chatTemplate", "addGenerationPromt": false])
+            var manifest = try ExperimentStore.load(name: "pinned-verify")
+            manifest.concepts = [
+                ExperimentManifest.ConceptRef(
+                    name: "planted-verify", stimulusSetHash: "stim-hash",
+                    options: ExtractionOptions(method: .pinnedArtifact),
+                    vectorArtifact: .init(
+                        path: planted.reference,
+                        sha256TensorHash: ExperimentStore.sha256Hex(
+                            try Data(contentsOf: planted.tensor)),
+                        sha256SidecarHash: ExperimentStore.sha256Hex(
+                            try Data(contentsOf: planted.sidecar)),
+                        sourceMethod: "meanDifference",
+                        sourceConcept: "planted-verify",
+                        residualNormSource: "neutral-corpus")),
+            ]
+            let violations = ExperimentStore.verify(manifest)
+            #expect(violations.contains {
+                $0.contains(
+                    "declares an extractionRendering this engine cannot read")
+            }, "\(violations)")
+            #expect(violations.contains { $0.contains("addGenerationPromt") },
+                    "\(violations)")
         }
     }
 

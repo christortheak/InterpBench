@@ -273,6 +273,7 @@ def test_a_raw_declaration_clears_a_previous_chat_template_pin(tmp_path):
     '{"mode": "templated"}',
     '{"mode":"raw","systemPrompt":"x"}',
     '{"mode":"chatTemplate","addGenerationPrompt":1}',
+    '{"mode":"chatTemplate","addGenerationPromt":false}',
 ])
 def test_a_malformed_declaration_refuses_before_anything_is_written(
         tmp_path, declaration):
@@ -284,6 +285,77 @@ def test_a_malformed_declaration_refuses_before_anything_is_written(
     # NOTHING was pinned: the declaration is parsed before the manifest is
     # read, let alone written.
     assert Manifest.load("s", root=root).concepts == []
+
+
+def test_a_misspelled_parameter_refuses_at_the_attach_that_declares_it(tmp_path):
+    """THE MISSPELLING BUG (review 2026-08-26), answered where the author can
+    still fix it. ``addGenerationPromt: false`` used to attach cleanly and pin
+    the DEFAULT ``true`` — a manifest that reads as one recipe and extracts as
+    another. The refusal names the offending key and offers the vocabulary."""
+    root = str(tmp_path)
+    _concept(root)
+    es.create("s", model_id="org/m", root=root)
+    with pytest.raises(er.ExtractionRenderingError) as exc:
+        es.attach("s", ["french"], root=root,
+                  extraction_rendering='{"mode":"chatTemplate",'
+                                       '"addGenerationPromt":false}')
+    message = str(exc.value)
+    assert "addGenerationPromt" in message
+    assert "addGenerationPrompt" in message      # the spelling that works
+    assert "repair:" in message
+    # Nothing was pinned: the declaration is parsed before the manifest is read.
+    assert Manifest.load("s", root=root).concepts == []
+
+
+def test_the_client_cli_refuses_a_misspelled_parameter_as_usage(
+        tmp_path, monkeypatch, capsys):
+    """The refusal has to REACH the author, on the surface they typed it on."""
+    from steerlab_server import client_cli
+
+    root = tmp_path / "ws"
+    root.mkdir()
+    _concept(str(root))
+    monkeypatch.delenv("STEERLAB_ROOT", raising=False)
+    monkeypatch.setenv(client_cli.WORKSPACE_ENV, str(root))
+    assert client_cli.main(["experiment", "create", "demo",
+                            "--model", "org/m"]) == 0
+    capsys.readouterr()
+
+    code = client_cli.main(
+        ["experiment", "attach", "demo", "french", "--json",
+         er.DECLARATION_FLAG, '{"mode":"chatTemplate","addGenerationPromt":false}'])
+    assert code == 64
+    envelope = json.loads(capsys.readouterr().out)
+    assert envelope["state"] == "blocked"
+    assert envelope["error"]["code"] == "usage"
+    assert "addGenerationPromt" in json.dumps(envelope["error"])
+    assert es.load_raw("demo", str(root)).get("concepts") == []
+
+
+def test_the_http_attach_route_refuses_a_misspelled_parameter(
+        tmp_path, monkeypatch):
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from steerlab_server.api.app import app
+
+    monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path))
+    _concept(str(tmp_path), "joy")
+    client = TestClient(app)
+    client.get("/healthz")   # warm the lazy route build before asserting
+
+    assert client.post("/api/authoring/create",
+                       json={"name": "web", "modelID": "org/m"}
+                       ).status_code == 200
+    bad = client.post(
+        "/api/authoring/web/attach",
+        json={"concepts": ["joy"],
+              "extractionRendering": {"mode": "chatTemplate",
+                                      "addGenerationPromt": False}})
+    assert bad.status_code == 400
+    assert "addGenerationPromt" in bad.text
+    assert es.load_raw("web", str(tmp_path)).get("concepts") == []
 
 
 def test_a_pinned_artifact_refuses_a_rendering_declaration(tmp_path):

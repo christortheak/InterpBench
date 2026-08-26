@@ -21,7 +21,10 @@ from dataclasses import dataclass, field
 from typing import NamedTuple
 
 from ..steering import vector_math as vm
-from ..steering.extraction_rendering import RAW_RENDERING, ExtractionRendering
+from ..steering.extraction_rendering import (RAW_RENDERING, ExtractionRendering,
+                                             ExtractionRenderingError)
+from ..steering.extraction_rendering import (
+    canonical_identity_fragment as canonical_rendering)
 from ..steering.extraction_rendering import from_json as rendering_from_json
 from ..steering.reading_position import (LAST_TOKEN, ReadingPosition, from_label,
                                          mean_from_token)
@@ -1823,6 +1826,31 @@ class Manifest:
                     f"'{concept.options.reading_position.label}' contradicts "
                     f"the pinned artifact's '{recorded_reading}' — held-out "
                     "activations must be read where the vector was read")
+            # The rendering is recipe identity exactly as the position is, so
+            # a declaration that contradicts the artifact's own stamp is the
+            # same kind of violation. Compared CANONICALLY (the identity
+            # hash's rule): absent ≡ an explicit raw ≡ an explicit user voice,
+            # so every legacy artifact — none of which carries a rendering
+            # stamp — still matches an absent or raw declaration and does not
+            # start failing here. Swift twin: the same check in
+            # ``ExperimentStore.vectorArtifactPinViolations``.
+            declared_rendering = concept.options.extraction_rendering
+            try:
+                recorded_rendering = rendering_from_json(
+                    sidecar.get("extractionRendering"))
+            except ExtractionRenderingError as exc:
+                violations.append(
+                    f"concept '{concept.name}' vector artifact sidecar "
+                    f"'{path}.json' declares an extractionRendering this "
+                    f"engine cannot read ({exc})")
+                continue
+            if canonical_rendering(declared_rendering) != \
+                    canonical_rendering(recorded_rendering):
+                violations.append(
+                    f"concept '{concept.name}' extraction rendering "
+                    f"'{declared_rendering.label}' contradicts the pinned "
+                    f"artifact's '{recorded_rendering.label}' — held-out "
+                    "activations must be read as the vector was rendered")
         return violations
 
     def _sweep_input_pin_violations(self, base: str,

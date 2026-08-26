@@ -84,8 +84,31 @@ public enum SystemPromptComposition {
             .map { String(format: "%02x", $0) }.joined()
     }
 
+    /// The hash a composition STAMP records for one level.
+    ///
+    /// `hash(_:)`'s own rule is truthiness, shared on purpose with the
+    /// per-condition `systemPromptHash` (the server's `tasks._sha256_text`) so
+    /// the two are comparable without a second convention — and it stays
+    /// exactly that. But a stamp answers a different question: *what did this
+    /// level contribute to the effective prompt?* `compose(agent:frame:)`
+    /// drops a whitespace-only level entirely, so a persona of `"   "`
+    /// contributes nothing at all while hashing to a perfectly good digest.
+    /// Stamping it claimed a contribution the effective bytes do not contain
+    /// (review 2026-08-26). The composition's own emptiness rule is therefore
+    /// applied HERE, at the stamp, and nowhere else. Server twin:
+    /// `system_prompt._stamp_hash`.
+    public static func stampHash(_ text: String?) -> String? {
+        isEmpty(text) ? nil : hash(text)
+    }
+
     /// The loud, non-blocking run-start advisory for arms armed with
     /// DIFFERENT effective system content.
+    ///
+    /// Note the primitive: these texts are EFFECTIVE prompts, already through
+    /// `compose(agent:frame:)`, so `hash(_:)` is right here and `stampHash`
+    /// would be wrong — there is no dropped level left to misrepresent, and
+    /// two arms whose effective bytes differ by whitespace really are armed
+    /// differently.
     ///
     /// `arms` is in the run's own emission order. nil when every arm shares
     /// one effective content — the universal case, which must stay silent.
@@ -130,11 +153,14 @@ public struct SystemPromptCompositionStamp: Codable, Equatable, Sendable {
         self.study = study
     }
 
-    /// The stamp for one arm, from the two raw texts.
+    /// The stamp for one arm, from the two raw texts. A level the composition
+    /// DROPS (empty, or whitespace only) stamps `null`, so the stamp can never
+    /// claim a contribution the effective prompt does not carry — see
+    /// `SystemPromptComposition.stampHash`.
     public init(agentText: String?, studyText: String?) {
         self.init(
-            agent: SystemPromptComposition.hash(agentText),
-            study: SystemPromptComposition.hash(studyText))
+            agent: SystemPromptComposition.stampHash(agentText),
+            study: SystemPromptComposition.stampHash(studyText))
     }
 
     /// Neither level contributed anything (both keys `null`).
@@ -191,11 +217,12 @@ public struct PanelSystemPromptCompositionStamp: Codable, Equatable, Sendable {
         self.cast = cast
     }
 
-    /// The stamp for one seat, from the two raw texts.
+    /// The stamp for one seat, from the two raw texts. A level the composition
+    /// DROPS stamps `null` — see `SystemPromptComposition.stampHash`.
     public init(agentText: String?, castText: String?) {
         self.init(
-            agent: SystemPromptComposition.hash(agentText),
-            cast: SystemPromptComposition.hash(castText))
+            agent: SystemPromptComposition.stampHash(agentText),
+            cast: SystemPromptComposition.stampHash(castText))
     }
 
     enum CodingKeys: String, CodingKey { case agent, cast }
@@ -248,10 +275,13 @@ public struct BatteryArmingCompositionStamp: Codable, Equatable, Sendable {
         self.battery = battery
     }
 
+    /// The stamp for one battery generation, from the two raw texts. A level
+    /// the composition DROPS stamps `null` — see
+    /// `SystemPromptComposition.stampHash`.
     public init(agentText: String?, batteryText: String?) {
         self.init(
-            agent: SystemPromptComposition.hash(agentText),
-            battery: SystemPromptComposition.hash(batteryText))
+            agent: SystemPromptComposition.stampHash(agentText),
+            battery: SystemPromptComposition.stampHash(batteryText))
     }
 
     enum CodingKeys: String, CodingKey { case agent, battery }

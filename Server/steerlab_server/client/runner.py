@@ -958,6 +958,17 @@ class RunnerClient:
         staging path says where the bytes may wait, not that anything already
         standing there may be destroyed — and "somewhere with room" is exactly
         the kind of path that holds somebody else's large file.
+
+        The staging file is reached by DESCRIPTOR, never by name, from its
+        reservation to its commit (external review, 2026-08-26). Reserving a
+        name and then reopening it — which both branches did, with
+        ``open(temp_path, "wb")`` — is a time-of-check/time-of-use window: in
+        it the name can become a symlink, and the reopen then truncates
+        whatever it points at. The reviewer overwrote an unrelated file that
+        way and still got ``verified: True`` back. A descriptor cannot be
+        redirected after the fact, so the bytes go to the reserved inode, the
+        digest is taken from that same inode, and the commit publishes that
+        inode or refuses.
         """
         expected = (expected_sha256 or "").strip().lower()
         if not expected:
@@ -984,6 +995,9 @@ class RunnerClient:
                     "existing file aside if you meant to replace it."))
         destination_dir = os.path.dirname(destination) or "."
         os.makedirs(destination_dir, exist_ok=True)
+        # Before the reservation, so a missing dependency cannot leave a
+        # staging file (and its descriptor) behind.
+        import httpx
         if temp_path:
             # An operator who named a staging path owns it — the usual reason
             # is a filesystem with room the destination's does not have. They
@@ -994,10 +1008,15 @@ class RunnerClient:
             # exclusive create, so an existing file is a typed refusal and a
             # racing second download loses the reservation rather than the
             # bytes.
+            #
+            # The exclusive create is also the LAST time this path is opened:
+            # the handle it returns stays open and is what the download writes
+            # through. Reserving the name and reopening it would put the whole
+            # TOCTOU back — see the method docstring.
             temp_path = os.path.abspath(os.path.expanduser(temp_path))
             os.makedirs(os.path.dirname(temp_path) or ".", exist_ok=True)
             try:
-                open(temp_path, "xb").close()
+                staged = open(temp_path, "x+b")
             except FileExistsError:
                 raise RunnerRefusal(
                     f"{temp_path} already exists — this client will not "
@@ -1010,12 +1029,18 @@ class RunnerClient:
                         "is the path with no such question in it."),
                     detail={"tempPath": temp_path}) from None
         else:
+            # ``mkstemp`` hands back the descriptor precisely so the name never
+            # has to be opened a second time; it is wrapped, not closed.
             handle_fd, temp_path = tempfile.mkstemp(
                 prefix=".steerlab-download-", suffix=".partial",
                 dir=destination_dir)
-            os.close(handle_fd)
+            try:
+                staged = os.fdopen(handle_fd, "w+b")
+            except BaseException:
+                os.close(handle_fd)
+                _unlink_quietly(temp_path)
+                raise
 
-        import httpx
         url = self._url("/api/bundles/download")
         hasher = hashlib.sha256()
         total = 0
@@ -1036,27 +1061,27 @@ class RunnerClient:
                             "was not touched."),
                         detail={"declaredBytes": int(declared),
                                 "limitBytes": cap})
-                with open(temp_path, "wb") as handle:
-                    for chunk in response.iter_bytes():
-                        if not chunk:
-                            continue
-                        total += len(chunk)
-                        if total > cap:
-                            raise RunnerRefusal(
-                                f"the download passed the {cap}-byte limit — "
-                                "stopped mid-stream, nothing kept",
-                                code="downloadTooLarge",
-                                repair_action=(
-                                    "raise the client's limit if the bundle "
-                                    "really is this big, or fetch it out of "
-                                    "band. A truncated archive would fail its "
-                                    "digest anyway, which is why this stops "
-                                    "instead of keeping what arrived."),
-                                detail={"limitBytes": cap})
-                        hasher.update(chunk)
-                        handle.write(chunk)
+                for chunk in response.iter_bytes():
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > cap:
+                        raise RunnerRefusal(
+                            f"the download passed the {cap}-byte limit — "
+                            "stopped mid-stream, nothing kept",
+                            code="downloadTooLarge",
+                            repair_action=(
+                                "raise the client's limit if the bundle "
+                                "really is this big, or fetch it out of "
+                                "band. A truncated archive would fail its "
+                                "digest anyway, which is why this stops "
+                                "instead of keeping what arrived."),
+                            detail={"limitBytes": cap})
+                    hasher.update(chunk)
+                    staged.write(chunk)
+                staged.flush()
         except httpx.HTTPError as exc:
-            _unlink_quietly(temp_path)
+            _discard_staged(staged, temp_path)
             raise RunnerUnreachable(
                 self.scrub(f"{type(exc).__name__} downloading {url}: {exc}"),
                 repair_action=(
@@ -1064,12 +1089,12 @@ class RunnerClient:
                     "safe: a download is a GET, and this client verifies the "
                     "digest before the file moves anywhere.")) from exc
         except BaseException:
-            _unlink_quietly(temp_path)
+            _discard_staged(staged, temp_path)
             raise
 
         digest = hasher.hexdigest()
         if digest != expected:
-            _unlink_quietly(temp_path)
+            _discard_staged(staged, temp_path)
             raise RunnerRefusal(
                 f"the downloaded archive hashes to {digest}, not the "
                 f"{expected} the runner reported — refused before anything "
@@ -1084,10 +1109,33 @@ class RunnerClient:
                     "runner is the problem."),
                 detail={"expectedSha256": expected, "downloadedSha256": digest,
                         "bytes": total, "destination": destination})
+
+        # ``hasher`` covers the bytes this client HANDED to the descriptor.
+        # This covers the bytes the staging inode actually holds now, read back
+        # through that same descriptor — no name, so nothing can substitute a
+        # different file for it. The two disagree only when something else got
+        # into the inode while the download ran, which an opener who held the
+        # staging name before it was swapped away can arrange.
+        restaged = _digest_open_file(staged)
+        if restaged != expected:
+            _discard_staged(staged, temp_path)
+            raise RunnerRefusal(
+                f"the staged file hashes to {restaged}, not the {expected} "
+                "the arriving bytes hashed to — something else wrote into the "
+                f"staging file; refused before anything reached {destination}",
+                code="stagedBytesChanged",
+                repair_action=(
+                    "nothing was kept and the destination was not created. "
+                    "Stage somewhere only this client can write: omit --temp "
+                    "and the client mints a unique staging file beside the "
+                    "destination, which no other process has the name of."),
+                detail={"expectedSha256": expected, "stagedSha256": restaged,
+                        "tempPath": temp_path, "bytes": total,
+                        "destination": destination})
         try:
-            _commit_no_replace(temp_path, destination)
+            _commit_no_replace(staged, temp_path, destination)
         except FileExistsError:
-            _unlink_quietly(temp_path)
+            _discard_staged(staged, temp_path)
             raise RunnerRefusal(
                 f"{destination} appeared while this download was in flight — "
                 "refused rather than overwritten",
@@ -1100,6 +1148,10 @@ class RunnerClient:
                     "kept."),
                 detail={"destination": destination, "sha256": digest,
                         "bytes": total}) from None
+        except BaseException:
+            _discard_staged(staged, temp_path)
+            raise
+        staged.close()
         return {"path": destination, "sha256": digest, "bytes": total,
                 "remotePath": remote_path, "verified": True,
                 # Stated in the document, not only in the docs: this adapter
@@ -1127,7 +1179,43 @@ def sha256_file(path: str, *, chunk: int = 1024 * 1024) -> str:
     return hasher.hexdigest()
 
 
-def _commit_no_replace(temp_path: str, destination: str) -> None:
+def _digest_open_file(handle, *, chunk: int = 1024 * 1024) -> str:
+    """SHA-256 of an ALREADY-OPEN file, read through the caller's descriptor.
+
+    The descriptor is the whole point: :func:`sha256_file` takes a path, and a
+    path can name a different file by the time it is opened. This one hashes
+    the inode the caller is holding and cannot be redirected. Leaves the
+    handle positioned at end-of-file.
+    """
+    handle.flush()
+    handle.seek(0)
+    hasher = hashlib.sha256()
+    while True:
+        block = handle.read(chunk)
+        if not block:
+            break
+        hasher.update(block)
+    return hasher.hexdigest()
+
+
+def _discard_staged(handle, temp_path: str) -> None:
+    """Close the staging descriptor and drop its name, on any path that keeps
+    nothing.
+
+    Unlinking by NAME is correct here even though writing by name was not:
+    unlink removes a directory entry, never content that is reachable
+    elsewhere, and the entry is the one this client reserved. The descriptor
+    closes first so the inode goes away with the last link on the ordinary
+    path.
+    """
+    try:
+        handle.close()
+    except OSError:
+        pass
+    _unlink_quietly(temp_path)
+
+
+def _commit_no_replace(staged, temp_path: str, destination: str) -> None:
     """Move a VERIFIED download onto ``destination``, incapable of overwriting.
 
     ``os.link`` + ``os.remove``, not ``os.replace``. Replace clobbers, and the
@@ -1156,9 +1244,24 @@ def _commit_no_replace(temp_path: str, destination: str) -> None:
     runs on) has no window at all. A reader who must be certain has the outer
     digest to check, which is the same instrument this whole method exists for.
 
+    ``staged`` is the OPEN descriptor the download wrote and verified through,
+    and it is what makes the publish honest (external review, 2026-08-26).
+    ``os.link`` can only take a NAME, so linking is still the one step where a
+    swapped staging path could put a different inode under the destination —
+    the fd's bytes verified, somebody else's bytes published. The link is
+    therefore checked, not trusted: ``fstat`` of the descriptor against
+    ``stat`` of what landed. They agree and the destination is exactly the
+    inode that was verified; they disagree and the fresh link comes straight
+    back out (unlinking a name this call created, never the file that owns
+    it) as a ``stagingPathHijacked`` refusal. The destination side needs no
+    such check — ``link`` cannot overwrite. The fallback path copies from
+    ``staged`` itself, so there the published bytes are the verified inode's
+    by construction.
+
     Raises ``FileExistsError`` when ``destination`` exists; leaves
     ``temp_path`` in place for the caller to clean up when it does.
     """
+    reserved = os.fstat(staged.fileno())
     try:
         os.link(temp_path, destination)
     except FileExistsError:
@@ -1178,12 +1281,36 @@ def _commit_no_replace(temp_path: str, destination: str) -> None:
             except BaseException:
                 os.close(handle_fd)
                 raise
-            with landing, open(temp_path, "rb") as staged:
+            # Read the staged bytes back through the descriptor that wrote
+            # them, not through the staging name.
+            staged.seek(0)
+            with landing:
                 shutil.copyfileobj(staged, landing)
             landed = True
         finally:
             if not landed:
                 _unlink_quietly(destination)
+    else:
+        published = os.stat(destination)
+        if ((published.st_dev, published.st_ino)
+                != (reserved.st_dev, reserved.st_ino)):
+            _unlink_quietly(destination)
+            raise RunnerRefusal(
+                f"the staging path {temp_path} no longer names the file this "
+                f"download verified — {destination} was not published",
+                code="stagingPathHijacked",
+                repair_action=(
+                    "something replaced the staging path between the write "
+                    "and the commit, so the name pointed at a different file "
+                    "than the one whose digest matched. Nothing of this "
+                    "download was kept and the destination was removed again. "
+                    "Stage somewhere only this client can write — omit --temp "
+                    "and it mints a unique staging file beside the "
+                    "destination."),
+                detail={"tempPath": temp_path, "destination": destination})
+    # Unlinking the staging NAME: it removes a directory entry, never content
+    # reachable elsewhere, and the entry is the one this call reserved. The
+    # bytes survive under the destination's link, which is the point.
     os.remove(temp_path)
 
 

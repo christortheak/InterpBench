@@ -130,6 +130,28 @@ def test_the_composition_stamp_always_carries_both_keys():
         "agent", "battery"}
 
 
+def test_a_level_the_composition_drops_stamps_null_in_all_three_shapes():
+    """Review 2026-08-26. ``compose`` treats whitespace-only text as empty, but
+    the stamp used to hash by TRUTHINESS — so a persona of ``"   "``
+    contributed nothing to the effective prompt and still stamped a digest,
+    claiming a contribution the bytes do not contain."""
+    blank = "   \n\t "
+    # The effective prompt is the frame's EXACT bytes…
+    assert sp.compose(blank, FRAME) is FRAME
+    # …so the agent level stamps null, in every shape the stamp has.
+    for key in ("study", "battery", "cast"):
+        assert sp.composition(blank, FRAME, frame_key=key) == {
+            "agent": None, key: _sha(FRAME)}
+        # …and symmetrically, for the second level.
+        assert sp.composition(PERSONA, blank, frame_key=key) == {
+            "agent": _sha(PERSONA), key: None}
+    assert sp.compose(PERSONA, blank) is PERSONA
+    # The per-condition hash convention is UNTOUCHED — one convention, shared
+    # with ``tasks._sha256_text``, and the composition rule lives at the stamp.
+    assert sp.text_hash(blank) == _sha(blank)
+    assert tasks._sha256_text(blank) == _sha(blank)
+
+
 # --- 2. promote no longer inherits ------------------------------------------
 
 def _sweepable_study(root, name, *, frame):

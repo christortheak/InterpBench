@@ -479,7 +479,8 @@ import Testing
             "evalRun": "20260810T140000000-optvec-eval-rve",
         ],
         extractionMethod: String = "optvec",
-        modelID: String = "test/model"
+        modelID: String = "test/model",
+        rendering: [String: Any]? = nil
     ) throws -> String {
         let runDirectory = root.appending(
             components: "runs", "20260810T130000000-optvec-rve")
@@ -501,6 +502,7 @@ import Testing
             sidecar["residualNormSource"] = residualNormSource
         }
         if let optvecBlock { sidecar["optvec"] = optvecBlock }
+        if let rendering { sidecar["extractionRendering"] = rendering }
         try JSONSerialization.data(withJSONObject: sidecar)
             .write(to: runDirectory.appending(component: "\(name).json"))
         // Attach verifies the eval-run citation since 2026-08-10: when the
@@ -582,6 +584,74 @@ import Testing
                 })
             #expect(reloaded.concepts.first?.vectorArtifact == pin)
             #expect(reloaded.concepts.first?.validationHashPinnedAbsent == true)
+        }
+    }
+
+    /// The RENDERING is recipe identity exactly as the reading position is,
+    /// so it travels from the sidecar at attach and a manifest that
+    /// contradicts the artifact's own stamp is a verify violation. Compared
+    /// CANONICALLY: a legacy artifact carries no stamp at all, so an absent
+    /// AND an explicitly raw declaration both stay clean. Server twin:
+    /// `test_extraction_rendering_disagreement_is_a_violation`.
+    @Test func extractionRenderingContradictionIsAViolation() throws {
+        try withTempRoot { root in
+            try WorkspaceCompute.declare(.cluster, root: root)
+            _ = try ExperimentStore.create(
+                name: "rendering-pin", description: "", modelID: "test/model")
+
+            let legacy = try plantOptvecArtifact(root: root, name: "legacy")
+            var manifest = try ExperimentStore.attachArtifact(
+                "legacy", artifact: legacy, experimentName: "rendering-pin")
+            #expect(manifest.concepts.first?.options.extractionRendering == nil)
+            #expect(ExperimentStore.verify(manifest).isEmpty)
+
+            // An explicit raw declaration IS the absent one, canonically.
+            manifest.concepts[0].options.extractionRendering = .raw
+            #expect(ExperimentStore.verify(manifest).isEmpty)
+
+            // A chat-template declaration over a raw artifact is not.
+            manifest.concepts[0].options.extractionRendering = .chatTemplate()
+            #expect(
+                ExperimentStore.verify(manifest).contains {
+                    $0.contains(
+                        "held-out activations must be read as the vector was "
+                            + "rendered")
+                })
+        }
+    }
+
+    /// Attach never writes a pin the very next verify rejects, so a
+    /// chat-template artifact attaches with its rendering copied — and
+    /// dropping that declaration afterwards is the contradiction above.
+    @Test func attachCopiesTheArtifactsRendering() throws {
+        try withTempRoot { root in
+            try WorkspaceCompute.declare(.cluster, root: root)
+            _ = try ExperimentStore.create(
+                name: "rendering-copy", description: "", modelID: "test/model")
+
+            let templated = try plantOptvecArtifact(
+                root: root, name: "templated",
+                rendering: [
+                    "mode": "chatTemplate",
+                    "addGenerationPrompt": false,
+                    "qwenThinkingEnabled": false,
+                ])
+            var manifest = try ExperimentStore.attachArtifact(
+                "templated", artifact: templated,
+                experimentName: "rendering-copy")
+            let declared = try #require(
+                manifest.concepts.first?.options.extractionRendering)
+            #expect(declared.mode == .chatTemplate)
+            #expect(declared.resolvedAddGenerationPrompt == false)
+            #expect(ExperimentStore.verify(manifest).isEmpty)
+
+            manifest.concepts[0].options.extractionRendering = nil
+            #expect(
+                ExperimentStore.verify(manifest).contains {
+                    $0.contains(
+                        "held-out activations must be read as the vector was "
+                            + "rendered")
+                })
         }
     }
 
