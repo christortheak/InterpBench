@@ -872,4 +872,36 @@ public final class DatasetInventoryModel {
     }
 
     public var issueCount: Int { entries.filter { $0.issue != nil }.count }
+
+    // MARK: Selection (rendered by the DISPLAY PANE, not the table)
+
+    /// The scope on screen, and the row selected in each. These live on the
+    /// model rather than in the Inventory view because the selected row's
+    /// detail renders in the workbench's right-hand display pane — the same
+    /// split as Results (the run LIST lives in the main pane, the selected
+    /// run's contents in the viewer), and a view-local `@State` cannot be
+    /// read from there.
+    public var scope: Scope = .datasets
+    public var selection: DatasetInventoryEntry.ID?
+    public var derivedSelection: DerivedArtifactEntry.ID?
+
+    /// Which of the two lists the region is showing. One model, one refresh,
+    /// two lists (see the type comment) — the scope only chooses which.
+    public enum Scope: String, CaseIterable, Identifiable, Sendable {
+        case datasets = "Datasets"
+        case derived = "Derived"
+        public var id: String { rawValue }
+    }
+
+    /// The selected row, resolved against the CURRENT scan: a selection that
+    /// a re-scan no longer lists simply reads as nothing selected.
+    public var selectedEntry: DatasetInventoryEntry? {
+        guard let selection else { return nil }
+        return entries.first { $0.id == selection }
+    }
+
+    public var selectedDerived: DerivedArtifactEntry? {
+        guard let derivedSelection else { return nil }
+        return derived.first { $0.id == derivedSelection }
+    }
 }

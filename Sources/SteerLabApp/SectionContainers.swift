@@ -22,16 +22,11 @@ import SwiftUI
 /// invents a dataset from a name typed into a field any more.
 struct DataSectionView: View {
     @Bindable var service: ChatService
-    /// Cross-SECTION navigation, for the derived scope's two out-of-section
-    /// homes (Analysis, Agents). Injected by `ChatView`, which owns the
-    /// workbench selection — the section never reaches for global state.
-    let navigate: (WorkbenchSection) -> Void
-    /// The Agents section's LIBRARY region specifically — `navigate` alone
-    /// cannot name a region, and the derived scope's agent route has to land
-    /// on the browser that shows the selection it just set. Owned by
-    /// `ChatView`, which holds the region binding.
-    let openAgentsLibrary: () -> Void
-    @State private var tool: Tool = .inventory
+    /// The active tool, owned by `ChatView` (as the Agents section's region
+    /// already is): the display pane follows it — Inventory shows the
+    /// selected row's detail, the builders show the shared Activity feed —
+    /// and the pane is rendered outside this view.
+    @Binding var tool: Tool
 
     enum Tool: String, CaseIterable, Identifiable {
         case inventory = "Inventory"
@@ -55,8 +50,7 @@ struct DataSectionView: View {
             switch tool {
             case .inventory:
                 DatasetInventoryView(
-                    service: service, openInConceptBuilder: openInConceptBuilder,
-                    route: route)
+                    service: service, openInConceptBuilder: openInConceptBuilder)
             case .concepts:
                 ConceptsPanelView(service: service)
             case .adapterTraining:
@@ -67,17 +61,43 @@ struct DataSectionView: View {
         }
     }
 
-    /// The inventory's one routing action. `ConceptBuilder.selectedExisting`
-    /// is the same state the Concepts panel's own picker binds to, so setting
-    /// it drives the real selection (its `didSet` loads the concept's files)
-    /// rather than only changing tabs. The index is refreshed first so a
-    /// concept authored outside this app session is present in the picker's
-    /// options before it is selected.
+    /// The New Dataset flow's one in-section routing action, performed by the
+    /// shared router (`DataSectionRouting`) so this section and the display
+    /// pane's inventory detail name the same destinations. The inventory's
+    /// other routes are performed from the display pane, where the selected
+    /// row's actions now live.
     private func openInConceptBuilder(_ concept: String?) {
-        openInConceptBuilder(concept, grandMeanRecipe: false)
+        DataSectionRouting.openInConceptBuilder(
+            concept, grandMeanRecipe: false, service: service, tool: $tool)
     }
+}
 
-    private func openInConceptBuilder(_ concept: String?, grandMeanRecipe: Bool) {
+/// The Data section's routing, in ONE place because two views perform it: the
+/// section itself and the display pane's inventory detail
+/// (`DataInventoryDetailColumn`), which renders the selected row outside this
+/// section but names the same destinations. It knows both this section's
+/// tools and the workbench's sections, which is why the destinations are
+/// resolved here rather than in either view.
+///
+/// Every branch only navigates and SELECTS — no build is started, so each
+/// builder's own gates still stand between the researcher and a forward pass.
+///
+/// The two out-of-section routes preselect through their panel's own model
+/// seam (phase 4). Neither refuses when the selection no longer resolves —
+/// the seams re-scan and answer false, and the destination's own empty state
+/// takes it from there.
+@MainActor
+enum DataSectionRouting {
+
+    /// `ConceptBuilder.selectedExisting` is the same state the Concepts
+    /// panel's own picker binds to, so setting it drives the real selection
+    /// (its `didSet` loads the concept's files) rather than only changing
+    /// tabs. The index is refreshed first so a concept authored outside this
+    /// app session is present in the picker's options before it is selected.
+    static func openInConceptBuilder(
+        _ concept: String?, grandMeanRecipe: Bool, service: ChatService,
+        tool: Binding<DataSectionView.Tool>
+    ) {
         if let concept {
             // The builder's OWN seam (refresh the index, then set the dataset
             // selection, whose didSet loads the files and moves the build
@@ -94,27 +114,25 @@ struct DataSectionView: View {
         if grandMeanRecipe {
             service.concepts.recipeFamily = .emotionGrandMean
         }
-        tool = .concepts
+        tool.wrappedValue = .concepts
     }
 
-    /// The inventory's routing, resolved HERE because this is the one view
-    /// that knows both this section's tools and the workbench's sections.
-    /// Every branch only navigates and SELECTS — no build is started, so each
-    /// builder's own gates still stand between the researcher and a forward
-    /// pass.
-    ///
-    /// The two out-of-section routes preselect through their panel's own
-    /// model seam (phase 4). Neither refuses when the selection no longer
-    /// resolves — the seams re-scan and answer false, and the destination's
-    /// own empty state takes it from there.
-    private func route(_ request: DatasetRouteRequest) {
+    static func route(
+        _ request: DatasetRouteRequest, service: ChatService,
+        tool: Binding<DataSectionView.Tool>,
+        navigate: (WorkbenchSection) -> Void,
+        openAgentsLibrary: () -> Void
+    ) {
         switch request {
         case .conceptBuilder(let concept, let grandMeanRecipe):
-            openInConceptBuilder(concept, grandMeanRecipe: grandMeanRecipe)
+            openInConceptBuilder(
+                concept, grandMeanRecipe: grandMeanRecipe, service: service,
+                tool: tool)
         case .derived(.conceptsAndVectors, _):
-            openInConceptBuilder(nil, grandMeanRecipe: false)
+            openInConceptBuilder(
+                nil, grandMeanRecipe: false, service: service, tool: tool)
         case .derived(.adapterTraining, _):
-            tool = .adapterTraining
+            tool.wrappedValue = .adapterTraining
         case .derived(.analysis, let selection):
             if let selection { service.geometry.select(vectorIDs: [selection]) }
             navigate(.analysis)

@@ -1296,23 +1296,44 @@ struct ExperimentsPanelView: View {
                         Text(method.label).tag(method)
                     }
                 }
-                .frame(maxWidth: 260)
+                .frame(maxWidth: 210)
                 .help(
                     "extraction method pinned into the recipe — paired methods "
                         + "read positive/negative stimuli; grand mean reads the "
                         + "multi-concept story corpus")
-                TextField("pool from token", text: $panel.attachPoolFromText)
-                    .frame(width: 110)
-                    .help(
-                        "optional reading position: mean over token positions "
-                            + "from this index onward. Empty = the method default "
-                            + "(last token for paired; token 50 for grand mean)")
+                ReadingPositionField(
+                    choice: $panel.attachReadingPositionChoice,
+                    parameter: $panel.attachReadingPositionParameter,
+                    defaultCaption: "method default",
+                    help:
+                        "WHERE the residual stream is read, pinned into the "
+                            + "recipe. 'method default' declares nothing and "
+                            + "keeps the method's own position (last token for "
+                            + "paired; token 50 for grand mean and designated "
+                            + "reference). The content-side roles only exist "
+                            + "inside a rendered turn, so they need the chat "
+                            + "template beside this")
                 Button("Attach") { panel.attachConceptFromPicker() }
                     .disabled(panel.attachConceptName.isEmpty)
                     .help(
                         "pins the concept at its CURRENT stimulus hash plus the "
                             + "measurement-side validation pin — same write as "
                             + "'steerlab-cli experiment attach'")
+            }
+            HStack(spacing: 8) {
+                Text("rendering")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ExtractionRenderingField(
+                    choice: $panel.attachRendering,
+                    help:
+                        "HOW each stimulus reaches the model. 'raw' is the "
+                            + "legacy rendering and declares nothing — the bare "
+                            + "string through the tokenizer. 'chat template' "
+                            + "renders it the way a measured generation does; "
+                            + "the two produce DIFFERENT directions, which is "
+                            + "why the choice is pinned rather than inferred")
+                Spacer(minLength: 0)
             }
             if panel.attachMethod == .designatedReference {
                 Picker("reference", selection: $panel.attachReferenceName) {

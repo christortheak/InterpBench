@@ -520,11 +520,37 @@ struct GeometryPanelView: View {
                             + "model-specific, so the list follows the loaded model.")
                 }
             } else {
-                ForEach(service.compatibleVectors) { artifact in
-                    localVectorToggle(artifact)
+                vectorList {
+                    ForEach(service.compatibleVectors) { artifact in
+                        localVectorToggle(artifact)
+                    }
                 }
             }
         }
+    }
+
+    /// A workspace with dozens of vectors grew this section without bound —
+    /// one row per vector, all of them laid out. The list scrolls inside a
+    /// CONSTANT-height box instead.
+    ///
+    /// macOS 27 beta hazard (project memory "split-view min-size crashes"):
+    /// the height here is a fixed maximum on a compressible `ScrollView`, and
+    /// there is no minimum that varies with the row count — a split-view
+    /// column whose SwiftUI minimum changes mid-display-cycle is fatal on
+    /// this beta. Nothing about the surrounding split-view columns changes.
+    private static let vectorListHeight: CGFloat = 260
+
+    private func vectorList(
+        @ViewBuilder rows: () -> some View
+    ) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                rows()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 2)
+        }
+        .frame(maxHeight: Self.vectorListHeight)
     }
 
     private func localVectorToggle(_ artifact: VectorArtifact) -> some View {
@@ -603,8 +629,12 @@ struct GeometryPanelView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(service.compatibleServerVectors) { record in
-                    serverVectorToggle(record)
+                // Same bound as the local list — a server catalog is if
+                // anything longer.
+                vectorList {
+                    ForEach(service.compatibleServerVectors) { record in
+                        serverVectorToggle(record)
+                    }
                 }
             }
         }

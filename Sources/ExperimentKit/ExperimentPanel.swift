@@ -209,9 +209,29 @@ public final class ExperimentPanel {
     public var attachMethod: ExtractionMethod = .meanDifference
     /// designatedReference only: the reference stories concept to subtract.
     public var attachReferenceName: String = ""
-    /// Optional pooling token ("" = the method default reading position:
-    /// last token for paired methods, mean-from-token-50 for grand mean).
-    public var attachPoolFromText = ""
+    /// WHERE the residual stream is read, as a picker holds it. `.recipeDefault`
+    /// declares NOTHING — the method keeps its own reading position (last token
+    /// for paired methods, mean-from-token-50 for grand mean and designated
+    /// reference) and the manifest keeps its bytes. This SUPERSEDES the old
+    /// pool-from field: `--pool-from K` is the legacy spelling of exactly
+    /// `mean from token K`, the two may never be declared together, and one
+    /// coherent control is what a person can reason about.
+    public var attachReadingPositionChoice: ReadingPositionChoice = .recipeDefault {
+        didSet {
+            guard oldValue != attachReadingPositionChoice else { return }
+            // Carry the number into the new kind's range. A convenience, not
+            // a validation — the field still accepts anything, and the store
+            // still answers for what is typed there.
+            attachReadingPositionParameter = attachReadingPositionChoice
+                .steppedParameter(from: attachReadingPositionParameter)
+        }
+    }
+    /// The K/k/i/n beside the position, when it takes one.
+    public var attachReadingPositionParameter = 0
+    /// HOW the stimulus reaches the model. Raw declares nothing — absent IS
+    /// the legacy raw rendering, so an undeclared attach writes what it always
+    /// wrote.
+    public var attachRendering = ExtractionRenderingChoice()
     /// emotionGrandMean only: extra corpus members (comma-separated) beyond
     /// the attached targets, which are always members.
     public var attachCorpusText = ""
@@ -4479,8 +4499,8 @@ public final class ExperimentPanel {
     }
 
     /// One pin-status line per attached concept for the Studies list:
-    /// stimulus hash, method, reading position, and the three-state
-    /// validation pin. Pure; unit-tested.
+    /// stimulus hash, method, reading position, a non-raw extraction
+    /// rendering, and the three-state validation pin. Pure; unit-tested.
     public static func conceptPinStatusLine(
         _ ref: ExperimentManifest.ConceptRef
     ) -> String {
@@ -4489,6 +4509,12 @@ public final class ExperimentPanel {
             ref.options.method.rawValue,
             ref.options.readingPosition.label,
         ]
+        // A raw rendering stays UNMENTIONED, exactly as an absent declaration
+        // does — the two are the same recipe, and naming one and not the other
+        // would read as a difference. Only a declared chat template shows.
+        if let rendering = ref.options.extractionRendering, !rendering.isRaw {
+            parts.append(rendering.label)
+        }
         if let hash = ref.validationHash {
             parts.append("validation @ \(hash.prefix(12))…")
         } else if ref.validationHashPinnedAbsent {
@@ -4510,17 +4536,25 @@ public final class ExperimentPanel {
             note("pick a concept to attach", severity: .warning)
             return
         }
-        var poolFrom: Int?
-        let poolText = attachPoolFromText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !poolText.isEmpty {
-            guard let token = Int(poolText), token >= 0 else {
-                note(
-                    "pool-from must be a token index ≥ 0 — got '\(poolText)'",
-                    severity: .error)
-                return
-            }
-            poolFrom = token
+        // HOW the stimulus reaches the model, declared BEFORE anything is
+        // loaded — the same order the CLI attach takes, and the same parser,
+        // so the engine asymmetries (the assistant voice, addGenerationPrompt
+        // false) are answered here in the engine's own words rather than
+        // hours later on a run. Raw declares nothing at all.
+        let declaredRendering: ExtractionRendering?
+        do {
+            declaredRendering = try attachRendering.declared()
+        } catch let error as ExtractionRendering.DeclarationError {
+            note("\(error.reason) — repair: \(error.repair)", severity: .error)
+            return
+        } catch {
+            note("\(error)", severity: .error)
+            return
         }
+        // WHERE it is read, as the cross-engine label. nil for the recipe
+        // default, which keeps the manifest byte-identical.
+        let declaredPosition = attachReadingPositionChoice.declarationLabel(
+            parameter: attachReadingPositionParameter)
         let corpus = attachCorpusText
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -4529,9 +4563,10 @@ public final class ExperimentPanel {
             let manifest = try ExperimentStore.attachConcept(
                 concept,
                 method: attachMethod,
-                poolFromToken: poolFrom,
                 corpusConcepts: corpus,
                 reference: attachReferenceName.isEmpty ? nil : attachReferenceName,
+                extractionRendering: declaredRendering,
+                readingPosition: declaredPosition,
                 experimentName: experiment)
             refresh()
             attachConceptName = ""
@@ -4543,12 +4578,27 @@ public final class ExperimentPanel {
                         + "concept(s))",
                     severity: .success)
             } else if let ref = manifest.concepts.first(where: { $0.name == concept }) {
+                var pins = [
+                    ref.options.method.rawValue, ref.options.readingPosition.label,
+                ]
+                // Raw stays unmentioned, exactly like absent.
+                if let rendering = ref.options.extractionRendering, !rendering.isRaw {
+                    pins.append(rendering.label)
+                }
                 note(
                     "pinned \(concept) @ \(ref.stimulusSetHash.prefix(12))… "
-                        + "(\(ref.options.method.rawValue), "
-                        + "\(ref.options.readingPosition.label))",
+                        + "(\(pins.joined(separator: ", ")))",
                     severity: .success)
             }
+        } catch let error as ExperimentError where error.malformedInvocation != nil {
+            // A typed declaration refusal — the reading position, the
+            // rendering, the two spellings of one position. It reaches the
+            // notice VERBATIM, with its repair: wrapping it in "check your
+            // stimulus files" would send a person to look at the wrong thing.
+            note(
+                "\(error.reason) — repair: "
+                    + "\(error.malformedInvocation?.repairAction ?? "")",
+                severity: .error)
         } catch {
             note(
                 "Couldn't attach the concept — check its stimulus files "
@@ -4669,6 +4719,17 @@ public final class ExperimentPanel {
             note("could not export study JSON: \(error)", severity: .error)
             return nil
         }
+    }
+
+    /// The selected study's manifest as one pretty-printed JSON document,
+    /// for DISPLAY (the Studies display pane). Same document and same
+    /// encoder as `exportSelectedStudyJSON` — `ExperimentStore.exportStudyJSON`
+    /// over the manifest this panel already decoded, never a second read of
+    /// experiment.json — but SILENT: a display pane re-reads on every render,
+    /// and "select a study first" is the empty state there, not a notice.
+    public var selectedStudyJSON: String? {
+        guard let manifest = selected else { return nil }
+        return try? ExperimentStore.exportStudyJSON(manifest)
     }
 
     /// Import pasted study JSON as a NEW DRAFT (freeze metadata stripped —

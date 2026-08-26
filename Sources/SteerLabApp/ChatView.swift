@@ -16,6 +16,12 @@ struct ChatView: View {
     /// Optimizations) — owned here so cross-section links can land on a
     /// specific region (e.g. Home's "Optimize" → Agents → Optimizations).
     @State private var agentsRegion: AgentsRegion = .library
+    /// The Data section's active tool (Inventory / the three builders) —
+    /// owned here for the same reason as `agentsRegion`: the display pane
+    /// follows it (Inventory renders the selected row's detail; the builders
+    /// render the shared Activity feed), and the pane lives outside the
+    /// section.
+    @State private var dataTool: DataSectionView.Tool = .inventory
     /// Pinned display-pane viewer: while set, the right-hand pane stays put
     /// as the user navigates (watch a long job while browsing elsewhere).
     /// The pin carries its ORIGIN section, so a pinned viewer showing one
@@ -109,9 +115,7 @@ struct ChatView: View {
         case .playground:
             steeringPanel
         case .data:
-            DataSectionView(
-                service: service, navigate: navigate,
-                openAgentsLibrary: openAgentsLibrary)
+            DataSectionView(service: service, tool: $dataTool)
         case .templates:
             TemplatesPanelView(service: service, navigate: navigate)
         case .studies:
@@ -153,11 +157,14 @@ struct ChatView: View {
 
     /// The selected section's OWN viewer — region-aware within Agents
     /// (Library keeps the robustness viewer; New Agent / Optimizations
-    /// stream the live Activity feed, where sweep logs land). Recomputed
-    /// from the selection every time, which is what makes a section switch
-    /// reset the pane: it holds no mode of its own to go stale.
+    /// stream the live Activity feed, where sweep logs land) and tool-aware
+    /// within Data (Inventory renders the selected row; the builders stream
+    /// that same Activity feed). Recomputed from the selection every time,
+    /// which is what makes a section switch reset the pane: it holds no mode
+    /// of its own to go stale.
     private var sectionViewerMode: ActivityViewerMode {
-        ActivityViewerMode.mode(for: section, agentsRegion: agentsRegion)
+        ActivityViewerMode.mode(
+            for: section, agentsRegion: agentsRegion, dataTool: dataTool)
     }
 
     /// Identity of the selected section's own viewer (title + owning
@@ -193,8 +200,17 @@ struct ChatView: View {
             ResultsRunSummaryColumn(service: service)
         case .analysisGeometry:
             GeometryViewerColumn(service: service)
+        case .dataInventory:
+            DataInventoryDetailColumn(
+                service: service,
+                route: { request in
+                    DataSectionRouting.route(
+                        request, service: service, tool: $dataTool,
+                        navigate: navigate,
+                        openAgentsLibrary: openAgentsLibrary)
+                })
         case .studyOverview:
-            StudyTypeOverviewColumn(service: service)
+            StudyViewerColumn(service: service)
         case .activity(let title):
             ActivityFeedColumn(service: service, title: title)
         }
@@ -2038,6 +2054,12 @@ struct ChatView: View {
         let date = String(artifact.sidecar.extractionDate.prefix(10))
         let normText = norm(of: artifact, at: layer)
         var line = "\(method) · \(reading) · \(date) · norm@L\(layer) \(normText)"
+        // A raw rendering stays unmentioned, exactly like an absent stamp —
+        // they are the same rendering, and naming one would read as a
+        // difference.
+        if let rendering = artifact.sidecar.extractionRendering, !rendering.isRaw {
+            line += " · \(rendering.label)"
+        }
         if let substrate = artifact.sidecar.substrate {
             line += " · \(substrate)"
         }

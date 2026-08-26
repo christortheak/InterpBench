@@ -33,11 +33,11 @@ struct StudyTypeSection: View {
                 InfoButton(text: StudyInfo.studyType)
             }
             // One line here; the full guide (what it is, what you provide,
-            // what it measures) renders large in the Study Guide viewer on
-            // the right.
+            // what it measures) renders large in the Selected Study viewer on
+            // the right, beside the study's own manifest JSON.
             Label(
-                panel.studyFocus.tagline + " Full guide in the Study Guide "
-                    + "pane on the right.",
+                panel.studyFocus.tagline + " Full guide in the Selected Study "
+                    + "pane on the right (Guide).",
                 systemImage: panel.studyFocus.systemImage)
                 .font(.caption)
                 .foregroundStyle(.secondary)

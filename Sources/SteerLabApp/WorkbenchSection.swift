@@ -103,10 +103,17 @@ enum ActivityViewerMode: Equatable, Sendable {
     /// Analysis section: the computed cosine/RSA tables — the vector
     /// selection and Compute controls live in the Analysis main pane.
     case analysisGeometry
-    /// Studies section: the rich guide for the selected study's type —
-    /// what it is, what the researcher provides, what it measures — in
-    /// the viewer where there is room to read it (2026-07-19: the tiny
-    /// in-form caption was not enough).
+    /// Data section, Inventory tool: the DETAIL of the selected dataset or
+    /// derived artifact — its facts, provenance, and the routes into the
+    /// tool that owns it. Same split as Results: the tables, filters, and
+    /// selection live in the Data main pane, the selection's contents here
+    /// (2026-08-26: the detail used to render inline BELOW the table).
+    case dataInventory
+    /// Studies section: the selected study itself — its manifest JSON
+    /// (2026-08-26) and the rich guide for its type (what it is, what the
+    /// researcher provides, what it measures) in the viewer where there is
+    /// room to read them (2026-07-19: the tiny in-form caption was not
+    /// enough).
     case studyOverview
     case activity(title: String)
 
@@ -128,14 +135,25 @@ enum ActivityViewerMode: Equatable, Sendable {
     /// Activity feed so a sweep started there streams its logs right beside
     /// the controls (live-testing finding: an optimization run from Agents
     /// previously showed nothing until the researcher visited Compute).
+    /// Within Data the same rule holds for the same reason: only the
+    /// Inventory tool has a SELECTION to render, and the builders beside it
+    /// (Concepts & Vectors, Adapter Training, OptVec) stream their builds
+    /// into the shared Activity feed.
     /// Pinning is unaffected — a pinned viewer always wins over this.
     static func mode(
-        for section: WorkbenchSection, agentsRegion: AgentsRegion
+        for section: WorkbenchSection, agentsRegion: AgentsRegion,
+        dataTool: DataSectionView.Tool
     ) -> ActivityViewerMode {
-        guard section == .agents else { return mode(for: section) }
-        switch agentsRegion {
-        case .library: return .agentRobustness
-        case .create, .optimizations: return .activity(title: "Activity")
+        switch section {
+        case .agents:
+            switch agentsRegion {
+            case .library: return .agentRobustness
+            case .create, .optimizations: return .activity(title: "Activity")
+            }
+        case .data:
+            return dataTool == .inventory ? .dataInventory : mode(for: section)
+        default:
+            return mode(for: section)
         }
     }
 
@@ -146,7 +164,8 @@ enum ActivityViewerMode: Equatable, Sendable {
         case .agentRobustness: "Agent Robustness"
         case .resultsRun: "Selected Run"
         case .analysisGeometry: "Vector Geometry"
-        case .studyOverview: "Study Guide"
+        case .dataInventory: "Selected Data"
+        case .studyOverview: "Selected Study"
         case .activity(let title): title
         }
     }
@@ -155,14 +174,14 @@ enum ActivityViewerMode: Equatable, Sendable {
     /// Every mode but `.activity` renders ONE section's own state — its
     /// selected run, its computed tables, its transcript — and may not
     /// appear under another section's selection without a pin label.
-    /// `.activity` is the single workspace-wide feed that `home`, `data`,
-    /// `templates`, `compute`, and the Agents authoring regions share; its
-    /// persistence across sections is correct, not leakage.
+    /// `.activity` is the single workspace-wide feed that `home`,
+    /// `templates`, `compute`, and the authoring regions of Agents and Data
+    /// share; its persistence across sections is correct, not leakage.
     var ownership: WorkbenchViewerOwnership {
         switch self {
         case .activity: .workspaceWide
         case .chat, .multiAgentRun, .agentRobustness, .resultsRun,
-            .analysisGeometry, .studyOverview:
+            .analysisGeometry, .dataInventory, .studyOverview:
             .section
         }
     }

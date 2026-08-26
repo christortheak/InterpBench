@@ -371,13 +371,108 @@ public final class ConceptBuilder {
             noteMutation()
         }
     }
-    /// nil = read at last token; a value k = mean over tokens from k.
-    public var poolFromToken: Int? {
+    /// WHERE the residual stream is read, as a picker holds it — the WHOLE
+    /// declarable vocabulary, not only the legacy pooled pair this pane used
+    /// to offer. The position itself is re-derived through the engine's own
+    /// strict parser (``ReadingPositionChoice/declaredPosition(parameter:)``),
+    /// so an out-of-vocabulary parameter is REFUSED in the engine's words
+    /// rather than clamped into a recipe nobody asked for.
+    public var readingPositionChoice: ReadingPositionChoice = .lastToken {
         didSet {
-            guard oldValue != poolFromToken else { return }
-            lastDirection = nil
-            noteMutation()
+            guard oldValue != readingPositionChoice else { return }
+            // Carry the number into the new kind's range. A convenience, not
+            // a validation — the field still accepts anything, and the
+            // engine still answers for what is typed there.
+            let stepped = readingPositionChoice.steppedParameter(
+                from: readingPositionParameter)
+            if stepped != readingPositionParameter {
+                readingPositionParameter = stepped  // redeclares in its didSet
+            } else {
+                redeclareReadingPosition()
+            }
         }
+    }
+    /// The K/k/i/n beside the position, when it takes one.
+    public var readingPositionParameter = 0 {
+        didSet {
+            guard oldValue != readingPositionParameter else { return }
+            redeclareReadingPosition()
+        }
+    }
+    /// The declared position, or `.lastToken` — the value every extraction
+    /// path here reads.
+    public private(set) var readingPosition: ReadingPosition = .lastToken
+    /// The engine's own refusal for the current selection, or nil. Never this
+    /// pane's words: the vocabulary and the repair come from `ReadingPosition`.
+    public private(set) var readingPositionRefusal: String?
+
+    private func redeclareReadingPosition() {
+        do {
+            readingPosition =
+                try readingPositionChoice.declaredPosition(
+                    parameter: readingPositionParameter) ?? .lastToken
+            readingPositionRefusal = nil
+        } catch let error as ReadingPosition.DeclarationError {
+            readingPositionRefusal = "\(error.reason) — repair: \(error.repair)"
+        } catch {
+            readingPositionRefusal = "\(error)"
+        }
+        lastDirection = nil
+        noteMutation()
+    }
+
+    /// The LEGACY spelling of exactly one position (`mean from token k`), kept
+    /// because the server-extract routes and the web client type it. nil for
+    /// every other reading position — `--pool-from K` and
+    /// `--reading-position 'mean from token K'` are one declaration, never two.
+    public var poolFromToken: Int? {
+        get {
+            readingPositionChoice == .meanFromToken ? readingPositionParameter : nil
+        }
+        set {
+            if let newValue {
+                readingPositionParameter = newValue
+                readingPositionChoice = .meanFromToken
+            } else if readingPositionChoice == .meanFromToken {
+                readingPositionChoice = .lastToken
+            }
+        }
+    }
+
+    /// HOW each stimulus reaches the model. Raw declares NOTHING — and
+    /// nothing is what an untouched builder passes, so the artifact it writes
+    /// is byte-identical to what this pane always wrote.
+    public var extractionRenderingChoice = ExtractionRenderingChoice() {
+        didSet {
+            guard oldValue != extractionRenderingChoice else { return }
+            redeclareExtractionRendering()
+        }
+    }
+    /// The declared rendering, or nil for the legacy raw one.
+    public private(set) var extractionRendering: ExtractionRendering?
+    /// The engine's own refusal for the current selection, or nil — this is
+    /// where the assistant-voice and `addGenerationPrompt: false` engine
+    /// asymmetries speak.
+    public private(set) var extractionRenderingRefusal: String?
+
+    private func redeclareExtractionRendering() {
+        do {
+            extractionRendering = try extractionRenderingChoice.declared()
+            extractionRenderingRefusal = nil
+        } catch let error as ExtractionRendering.DeclarationError {
+            extractionRenderingRefusal = "\(error.reason) — repair: \(error.repair)"
+        } catch {
+            extractionRenderingRefusal = "\(error)"
+        }
+        lastDirection = nil
+        noteMutation()
+    }
+
+    /// True while either declaration stands refused: the build button is off,
+    /// because extracting under the last VALID declaration would silently
+    /// produce a vector nobody asked for.
+    public var hasRefusedExtractionDeclaration: Bool {
+        readingPositionRefusal != nil || extractionRenderingRefusal != nil
     }
 
     // MARK: Staleness & dirty tracking
@@ -394,6 +489,9 @@ public final class ConceptBuilder {
     public private(set) var unsavedChanges = false
 
     public var canSaveAndExtract: Bool {
+        // A standing declaration refusal disables the build: extracting under
+        // the last VALID declaration would write a vector nobody asked for.
+        if hasRefusedExtractionDeclaration { return false }
         if recipeFamily == .emotionGrandMean {
             return !grandMeanTargetConceptNames.isEmpty
         }
@@ -423,6 +521,7 @@ public final class ConceptBuilder {
         hasher.combine(vectorBuilderSelectedExisting)
         hasher.combine(extractionMethod)
         hasher.combine(extractionOptions.readingPosition.label)
+        hasher.combine(extractionOptions.resolvedExtractionRendering.label)
         hasher.combine(positives)
         hasher.combine(negatives)
         hasher.combine(multiConceptRows)
@@ -458,19 +557,25 @@ public final class ConceptBuilder {
     }
 
     private func computePendingPasses() -> Int {
-        let position = extractionOptions.readingPosition
+        let options = extractionOptions
         if recipeFamily == .emotionGrandMean {
             let rows = emotionRowsForExtraction()
             guard let modelID = host?.loadedModelID else { return rows.count }
             return rows.count {
-                activationCache["\(modelID)|\(position.label)|\($0.text)"] == nil
+                activationCache[
+                    Self.activationCacheKey(
+                        modelID: modelID, options: options, text: $0.text)] == nil
             }
         }
         guard let modelID = host?.loadedModelID else {
             return positives.count + negatives.count
         }
         func missing(_ texts: [String]) -> Int {
-            texts.count { activationCache["\(modelID)|\(position.label)|\($0)"] == nil }
+            texts.count {
+                activationCache[
+                    Self.activationCacheKey(
+                        modelID: modelID, options: options, text: $0)] == nil
+            }
         }
         var passes = missing(positives) + missing(negatives)
         for name in existingConcepts where name != currentName {
@@ -516,6 +621,8 @@ public final class ConceptBuilder {
                 || newest.sidecar.stimulusSetHash != selectedCorpusHash
                 || (newest.sidecar.readingPosition ?? ReadingPosition.lastToken.label)
                     != extractionOptions.readingPosition.label
+                || Self.renderingLabel(newest.sidecar.extractionRendering)
+                    != extractionOptions.resolvedExtractionRendering.label
                 || newest.sidecar.comparisonConcepts != selectedConcepts
                 || newest.sidecar.selectedTopics != selectedTopics
         }
@@ -533,12 +640,21 @@ public final class ConceptBuilder {
         return newest.sidecar.extractionMethod != extractionMethod.rawValue
             || (newest.sidecar.readingPosition ?? ReadingPosition.lastToken.label)
                 != extractionOptions.readingPosition.label
+            || Self.renderingLabel(newest.sidecar.extractionRendering)
+                != extractionOptions.resolvedExtractionRendering.label
+    }
+
+    /// An artifact's rendering as a comparable label. An ABSENT stamp is the
+    /// legacy raw rendering, never "unknown" — that is the whole convention.
+    static func renderingLabel(_ rendering: ExtractionRendering?) -> String {
+        (rendering ?? .raw).label
     }
 
     public var extractionOptions: ExtractionOptions {
         ExtractionOptions(
             method: extractionMethod,
-            readingPosition: poolFromToken.map { .meanFromToken($0) } ?? .lastToken)
+            readingPosition: readingPosition,
+            extractionRendering: extractionRendering)
     }
 
     /// Activations keyed by "modelID|text"; values are [layer][hidden].
@@ -2208,18 +2324,31 @@ public final class ConceptBuilder {
         return (set.positive, set.negative)
     }
 
+    /// Activations are keyed by MODEL, READING POSITION and RENDERING: a
+    /// pooled read and a last-token read are different measurements of the
+    /// same stimulus, and so are a raw render and a templated one — reusing
+    /// one for the other would silently mix two directions in one vector.
+    static func activationCacheKey(
+        modelID: String, options: ExtractionOptions, text: String
+    ) -> String {
+        "\(modelID)|\(options.readingPosition.label)"
+            + "|\(options.resolvedExtractionRendering.label)|\(text)"
+    }
+
     private func activations(
         for texts: [String], container: ModelContainer, modelID: String
     ) async throws -> [[[Float]]] {
-        // Cache key includes the reading position — pooled and last-token
-        // activations are different measurements of the same stimulus.
-        let position = extractionOptions.readingPosition
-        func key(_ text: String) -> String { "\(modelID)|\(position.label)|\(text)" }
+        let options = extractionOptions
+        func key(_ text: String) -> String {
+            Self.activationCacheKey(modelID: modelID, options: options, text: text)
+        }
 
         let missing = texts.filter { activationCache[key($0)] == nil }
         if !missing.isEmpty {
             let computed = try await ConceptExtractor.activations(
-                container: container, texts: missing, position: position)
+                container: container, texts: missing,
+                position: options.readingPosition,
+                rendering: options.resolvedExtractionRendering)
             for (text, acts) in zip(missing, computed.values) {
                 activationCache[key(text)] = acts
             }
@@ -3989,6 +4118,10 @@ public final class ConceptBuilder {
                 ],
                 readingPosition: extraction.options.readingPosition,
                 neutralPCSelection: .none,
+                // nil for the legacy raw rendering, which keeps the recipe's
+                // encoded bytes — and therefore its canonicalHash — exactly
+                // where they were.
+                extractionRendering: extraction.options.extractionRendering,
                 notes: recipeFamily == .repeLAT
                     ? "RepE/LAT direction is norm-matched to the CAA mean-difference vector for direction-only comparison."
                     : nil)
@@ -4071,7 +4204,8 @@ public final class ConceptBuilder {
             corpus: extractionRows,
             targetConcepts: Set(buildTargets),
             readingPosition: extractionOptions.readingPosition,
-            neutralTexts: corpus?.texts)
+            neutralTexts: corpus?.texts,
+            extractionRendering: extractionOptions.resolvedExtractionRendering)
 
         let runSlug = buildTargets.count == 1
             ? "concept-\(buildTargets[0])"
@@ -4100,6 +4234,7 @@ public final class ConceptBuilder {
                 ],
                 readingPosition: extraction.readingPosition,
                 neutralPCSelection: .none,
+                extractionRendering: extractionRendering,
                 notes: "Vector = mean(target concept build stories) - grand mean(selected build story rows). Validation/draft rows are saved in per-concept corpora but excluded from extraction. Concepts: \(selectedEmotionConceptDescription()). Topics: \(selectedEmotionTopicDescription()).")
             let sidecar = SteeringVectorSidecar(
                 modelID: modelID,
@@ -4111,6 +4246,7 @@ public final class ConceptBuilder {
                 residualNormPerLayer: extraction.residualNormPerLayer,
                 residualNormSource: normSource,
                 residualNormConvention: extraction.residualNormConvention,
+                extractionRendering: extractionRendering,
                 recipeMethod: recipe.method,
                 recipeHash: recipe.canonicalHash(),
                 recipeName: recipe.name,

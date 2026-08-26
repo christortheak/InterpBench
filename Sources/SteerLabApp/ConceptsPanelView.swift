@@ -332,22 +332,42 @@ struct ConceptsPanelView: View {
                 }
 
                 if builder.recipeFamily.extractsFromStimuli {
-                Toggle(
-                    "Pool tokens (mean from index \(builder.poolFromToken ?? 0))",
-                    isOn: Binding(
-                        get: { builder.poolFromToken != nil },
-                        set: { builder.poolFromToken = $0 ? 0 : nil }))
-                    .help(
-                        "off = read at last token; on = average positions from "
-                            + "an index. This is vector-build provenance, not concept identity")
-                if builder.poolFromToken != nil {
-                    Stepper(
-                        "Pool from token: \(builder.poolFromToken ?? 0)",
-                        value: Binding(
-                            get: { builder.poolFromToken ?? 0 },
-                            set: { builder.poolFromToken = $0 }),
-                        in: 0 ... 200, step: 10)
-                }
+                    LabeledContent("Reading position") {
+                        ReadingPositionField(
+                            choice: $builder.readingPositionChoice,
+                            parameter: $builder.readingPositionParameter,
+                            defaultCaption: nil,
+                            help:
+                                "WHERE the residual stream is read. The whole "
+                                    + "cross-engine vocabulary, not just the "
+                                    + "pooled pair this pane used to offer — the "
+                                    + "content-side roles only exist inside a "
+                                    + "rendered turn, so they need the chat "
+                                    + "template below. Vector-build provenance, "
+                                    + "not concept identity")
+                    }
+                    if let refusal = builder.readingPositionRefusal {
+                        Text(refusal)
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                    LabeledContent("Extraction rendering") {
+                        ExtractionRenderingField(
+                            choice: $builder.extractionRenderingChoice,
+                            help:
+                                "HOW each stimulus reaches the model. 'raw' is "
+                                    + "the legacy rendering — the bare string "
+                                    + "through the tokenizer. 'chat template' "
+                                    + "renders it the way a measured generation "
+                                    + "does; the two produce DIFFERENT "
+                                    + "directions, so the artifact stamps which "
+                                    + "one it read")
+                    }
+                    if let refusal = builder.extractionRenderingRefusal {
+                        Text(refusal)
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
                 }
 
                 derivationAdviceRow

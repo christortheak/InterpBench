@@ -3,42 +3,30 @@ import ExperimentKit
 import SwiftUI
 
 /// The Data section's landing region: an inventory TABLE of what this
-/// workspace holds, with a detail pane that routes to the existing build
-/// tools.
+/// workspace holds. The selected row's DETAIL renders in the workbench's
+/// right-hand display pane (`DataInventoryDetailColumn`, below) — the same
+/// split as Results, where the run list lives in the main pane and the
+/// selection's contents in the viewer (2026-08-26; it used to render inline
+/// underneath this table).
 ///
 /// Two SCOPES (WP-Data phase 3): **Datasets** — the source data a recipe
 /// reads — and **Derived** — the artifacts those recipes produced. They are
 /// separate tables on purpose: a dataset has items and a size, an artifact
 /// has a model, a method, and a birth date, and one column vocabulary
 /// stretched over both would make every column mean less. What they share is
-/// the region's shape (header, table, fixed detail) and the model
-/// (`DatasetInventoryModel` scans both in one refresh).
+/// the region's shape (header, table) and the model (`DatasetInventoryModel`
+/// scans both in one refresh, and owns the scope + selection so the display
+/// pane can render them).
 ///
 /// Layout note (macOS 27 beta hazard, project memory "split-view min-size
 /// crashes"): this is a plain `VStack` inside the existing main pane — no new
-/// split-view column, and every frame minimum below is a CONSTANT. The detail
-/// region is always present at a fixed height (it shows a placeholder when
-/// nothing is selected) so the pane's minimum height never changes with the
-/// selection, the empty state, OR the scope.
+/// split-view column, and every frame minimum below is a CONSTANT, never one
+/// that varies with the selection, the empty state, or the scope.
 struct DatasetInventoryView: View {
     @Bindable var service: ChatService
     /// Switch to the Concepts tool, optionally selecting a concept first.
     let openInConceptBuilder: (String?) -> Void
-    /// The phase-3 routing seam: a derived row's one action, and the
-    /// grand-mean derivation's recipe preselection. Owned by the Data
-    /// section (`DataSectionView.route`), which is the only thing that knows
-    /// both the section's tool tabs and the workbench's sections.
-    let route: (DatasetRouteRequest) -> Void
 
-    private enum Scope: String, CaseIterable, Identifiable {
-        case datasets = "Datasets"
-        case derived = "Derived"
-        var id: String { rawValue }
-    }
-
-    @State private var scope: Scope = .datasets
-    @State private var selection: DatasetInventoryEntry.ID?
-    @State private var derivedSelection: DerivedArtifactEntry.ID?
     @State private var kindFilter: DatasetKind?
     @State private var derivedKindFilter: DerivedArtifactKind?
     @State private var sortOrder = [
@@ -53,10 +41,26 @@ struct DatasetInventoryView: View {
     @State private var pendingSelection: DatasetInventoryEntry.ID?
 
     /// Constant, never mode- or scope-dependent (see the layout note above).
-    private static let detailHeight: CGFloat = 208
     private static let tableMinimumHeight: CGFloat = 160
 
     private var model: DatasetInventoryModel { service.datasetInventory }
+
+    /// Scope and selection live on the model — the display pane renders the
+    /// selected row (see the type comment). The controls bind through it,
+    /// the same shape the Analysis pane uses for the shared `GeometryPanel`.
+    private var scope: DatasetInventoryModel.Scope { model.scope }
+
+    private var scopeBinding: Binding<DatasetInventoryModel.Scope> {
+        Binding(get: { model.scope }, set: { model.scope = $0 })
+    }
+
+    private var selectionBinding: Binding<DatasetInventoryEntry.ID?> {
+        Binding(get: { model.selection }, set: { model.selection = $0 })
+    }
+
+    private var derivedSelectionBinding: Binding<DerivedArtifactEntry.ID?> {
+        Binding(get: { model.derivedSelection }, set: { model.derivedSelection = $0 })
+    }
 
     private var rows: [DatasetInventoryEntry] {
         let filtered = kindFilter.map { kind in
@@ -70,16 +74,6 @@ struct DatasetInventoryView: View {
             model.derived.filter { $0.kind == kind }
         } ?? model.derived
         return filtered.sorted(using: derivedSortOrder)
-    }
-
-    private var selectedEntry: DatasetInventoryEntry? {
-        guard let selection else { return nil }
-        return model.entries.first { $0.id == selection }
-    }
-
-    private var selectedDerived: DerivedArtifactEntry? {
-        guard let derivedSelection else { return nil }
-        return model.derived.first { $0.id == derivedSelection }
     }
 
     var body: some View {
@@ -96,13 +90,7 @@ struct DatasetInventoryView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .frame(minHeight: Self.tableMinimumHeight)
             Divider()
-            Group {
-                switch scope {
-                case .datasets: detailRegion
-                case .derived: derivedDetailRegion
-                }
-            }
-            .frame(height: Self.detailHeight)
+            detailPaneCaption
         }
         .task { model.refresh() }
         .onChange(of: model.entries) { _, entries in
@@ -112,17 +100,36 @@ struct DatasetInventoryView: View {
             // skeleton the builder will fill) simply has nothing to select.
             guard let entry = entries.first(where: { $0.id == pending })
             else { return }
-            scope = .datasets
+            model.scope = .datasets
             if let kindFilter, kindFilter != entry.kind { self.kindFilter = nil }
-            selection = entry.id
+            model.selection = entry.id
         }
+    }
+
+    /// One fixed-height line saying where the selected row's detail went —
+    /// the same courtesy the Analysis pane pays its tables ("cosine and RSA
+    /// tables render in the viewer pane on the right").
+    private var detailPaneCaption: some View {
+        Text(
+            scope == .datasets
+                ? "select a dataset — its path, hash, and the tools that open "
+                    + "it render in the display pane on the right"
+                : "select an artifact — its provenance (model, method, source "
+                    + "data, hashes) renders in the display pane on the right")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
     }
 
     // MARK: Scope
 
     private var scopePicker: some View {
-        Picker("", selection: $scope) {
-            ForEach(Scope.allCases) { item in
+        Picker("", selection: scopeBinding) {
+            ForEach(DatasetInventoryModel.Scope.allCases) { item in
                 Text(item.rawValue).tag(item)
             }
         }
@@ -241,7 +248,7 @@ struct DatasetInventoryView: View {
         } else if model.hasScanned, rows.isEmpty {
             filteredEmptyState { kindFilter = nil }
         } else {
-            Table(rows, selection: $selection, sortOrder: $sortOrder) {
+            Table(rows, selection: selectionBinding, sortOrder: $sortOrder) {
                 TableColumn("Dataset", value: \.name) { entry in
                     HStack(spacing: 6) {
                         if entry.issue != nil {
@@ -291,7 +298,10 @@ struct DatasetInventoryView: View {
         } else if model.hasScanned, derivedRows.isEmpty {
             filteredEmptyState { derivedKindFilter = nil }
         } else {
-            Table(derivedRows, selection: $derivedSelection, sortOrder: $derivedSortOrder) {
+            Table(
+                derivedRows, selection: derivedSelectionBinding,
+                sortOrder: $derivedSortOrder
+            ) {
                 TableColumn("Name", value: \.name) { entry in
                     Text(entry.name)
                         .lineLimit(1)
@@ -403,12 +413,40 @@ struct DatasetInventoryView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
+
+/// The display pane's Data mode: the DETAIL of the row selected in the
+/// Inventory — its facts, its provenance, and the routes into the tool that
+/// owns it. Read-only, exactly as the inline detail underneath the table was
+/// (2026-08-26 — the table, its filters, and the selection stay in the Data
+/// main pane; the selection's contents render here, the same split as
+/// Results). Scope and selection come from the shared
+/// `DatasetInventoryModel`, so this pane and the table can never disagree
+/// about what is selected.
+struct DataInventoryDetailColumn: View {
+    @Bindable var service: ChatService
+    /// The routing seam, performed by `DataSectionRouting` on the Data
+    /// section's tool binding — this pane names a destination and never
+    /// starts a build.
+    let route: (DatasetRouteRequest) -> Void
+
+    private var model: DatasetInventoryModel { service.datasetInventory }
+
+    var body: some View {
+        Group {
+            switch model.scope {
+            case .datasets: datasetDetail
+            case .derived: derivedDetail
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 
     // MARK: Datasets detail
 
     @ViewBuilder
-    private var detailRegion: some View {
-        if let entry = selectedEntry {
+    private var datasetDetail: some View {
+        if let entry = model.selectedEntry {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -466,9 +504,10 @@ struct DatasetInventoryView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
-            placeholder(
-                "Select a dataset",
-                "its path, hash, and the tools that open it appear here")
+            emptyState(
+                "No dataset selected", systemImage: "square.stack.3d.up",
+                description: "Select a dataset in the Data pane; its path, "
+                    + "hash, and the tools that open it render here.")
         }
     }
 
@@ -517,8 +556,8 @@ struct DatasetInventoryView: View {
     // MARK: Derived detail
 
     @ViewBuilder
-    private var derivedDetailRegion: some View {
-        if let entry = selectedDerived {
+    private var derivedDetail: some View {
+        if let entry = model.selectedDerived {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -549,20 +588,21 @@ struct DatasetInventoryView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
-            placeholder(
-                "Select an artifact",
-                "its provenance — model, method, source data, hashes — appears here")
+            emptyState(
+                "No artifact selected", systemImage: "shippingbox",
+                description: "Select an artifact in the Data pane; its "
+                    + "provenance — model, method, source data, hashes — "
+                    + "renders here.")
         }
     }
 
-    private func placeholder(_ title: String, _ subtitle: String) -> some View {
-        VStack(spacing: 6) {
-            Text(title)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    private func emptyState(
+        _ title: String, systemImage: String, description: String
+    ) -> some View {
+        ContentUnavailableView {
+            Label(title, systemImage: systemImage)
+        } description: {
+            Text(description)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -590,12 +630,12 @@ struct DatasetInventoryView: View {
         HStack(spacing: 8) {
             if let concept = entry.conceptName {
                 Button("Open in Concept Builder") {
-                    openInConceptBuilder(concept)
+                    route(.conceptBuilder(concept: concept, grandMeanRecipe: false))
                 }
                 .help("switch to Concepts & Vectors with \(concept) selected")
             } else if entry.kind == .neutralCorpus {
                 Button("Open in Concepts & Vectors") {
-                    openInConceptBuilder(nil)
+                    route(.conceptBuilder(concept: nil, grandMeanRecipe: false))
                 }
                 .help(
                     "neutral corpora are edited in the Concepts & Vectors tool's "
@@ -620,11 +660,11 @@ struct DatasetInventoryView: View {
     @ViewBuilder
     private func derivedActions(for entry: DerivedArtifactEntry) -> some View {
         HStack(spacing: 8) {
-            if let route = entry.route {
-                Button(route.label) {
-                    self.route(.derived(route, selection: entry.selectionKey))
+            if let entryRoute = entry.route {
+                Button(entryRoute.label) {
+                    route(.derived(entryRoute, selection: entry.selectionKey))
                 }
-                .help(route.help)
+                .help(entryRoute.help)
             }
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([entry.primaryURL])
