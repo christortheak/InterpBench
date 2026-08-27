@@ -927,7 +927,7 @@ public final class ConceptBuilder {
 
     /// An artifact's rendering as a comparable label. An ABSENT stamp is the
     /// legacy raw rendering, never "unknown" — that is the whole convention.
-    static func renderingLabel(_ rendering: ExtractionRendering?) -> String {
+    nonisolated static func renderingLabel(_ rendering: ExtractionRendering?) -> String {
         (rendering ?? .raw).label
     }
 
@@ -3686,6 +3686,11 @@ public final class ConceptBuilder {
     /// The LAST k pairs of the working set are written with split "test" and
     /// score the fitted probe they did not train.
     public var readerHeldOutPairCount = 0
+    /// The seed for the unsupervised T+/T− orientation draw, stamped into
+    /// every artifact of an `unsupervisedTemplatePair` fit. Declarable because
+    /// the reference implementation's shuffle is unseeded and therefore
+    /// irreproducible; the default is the engine's own.
+    public var readerOrientationSeed: UInt64 = RepEReader.defaultOrientationSeed
 
     public struct ReaderLayerScore: Identifiable, Sendable {
         public let layer: Int
@@ -3699,10 +3704,41 @@ public final class ConceptBuilder {
         /// it when the held-out split decided.
         public let signConvention: RepEReader.SignConvention
         public let signHeldOutAccuracy: Float?
+        /// Why the held-out sign rule stood down at this layer, when it did —
+        /// the artifact's own `signFallbackReason`, verbatim. Present exactly
+        /// when `signConvention == .trainMajority` on a fit that tried.
+        public let signFallbackReason: String?
+        /// WHICH cloud the explained variance describes: `"differenceCloud"`,
+        /// `"degenerateDifferenceCloud"`, or a schema-1 artifact's legacy
+        /// `"alternatedRows"`. Displayed beside the number, never silently
+        /// relabelled — the two bases are not comparable.
+        public let explainedVarianceBasis: String
         /// True for the layer the fit RECOMMENDS (argmax held-out accuracy).
         /// A recommendation: the layer a study reads stays declarable.
         public let isRecommendedLayer: Bool
         public var id: Int { layer }
+
+        /// True when this row's variance number is a pre-2026-08-27 artifact's
+        /// — measured over the ± alternated copies PCA is fitted on, where the
+        /// cloud is centred near zero by construction and the ratio flatters.
+        public var explainedVarianceIsLegacyBasis: Bool {
+            explainedVarianceBasis == "alternatedRows"
+        }
+
+        /// The variance cell's basis, in the words a reader needs beside it.
+        public var explainedVarianceBasisLabel: String {
+            switch explainedVarianceBasis {
+            case "differenceCloud": "of the difference cloud"
+            case "degenerateDifferenceCloud":
+                "difference cloud is degenerate — every difference identical, "
+                    + "so there is no variance to apportion"
+            case "alternatedRows":
+                "legacy schema-1 basis: measured over the ± ALTERNATED rows, "
+                    + "not the differences — systematically flattering, and not "
+                    + "comparable with a schema-2 number"
+            default: explainedVarianceBasis
+            }
+        }
 
         /// The explained-variance cell, formatted. "—" when the difference
         /// cloud carries no variance to apportion: PC1's share of nothing is
@@ -3718,6 +3754,8 @@ public final class ConceptBuilder {
             explainedVariance: Float?,
             signConvention: RepEReader.SignConvention = .trainMajority,
             signHeldOutAccuracy: Float? = nil,
+            signFallbackReason: String? = nil,
+            explainedVarianceBasis: String = "differenceCloud",
             isRecommendedLayer: Bool = false
         ) {
             self.layer = layer
@@ -3726,12 +3764,261 @@ public final class ConceptBuilder {
             self.explainedVariance = explainedVariance
             self.signConvention = signConvention
             self.signHeldOutAccuracy = signHeldOutAccuracy
+            self.signFallbackReason = signFallbackReason
+            self.explainedVarianceBasis = explainedVarianceBasis
             self.isRecommendedLayer = isRecommendedLayer
         }
+
+        /// Projection of one fitted artifact — the ONE place a reader artifact
+        /// becomes a display row, so the grid, the artifact list, and a legacy
+        /// schema-1 artifact all read the same fields the same way.
+        public init(artifact: RepEReader.Artifact) {
+            self.init(
+                layer: artifact.layer,
+                trainAccuracy: artifact.trainAccuracy,
+                heldOutAccuracy: artifact.heldOutAccuracy,
+                explainedVariance: artifact.differenceCloudExplainedVariance,
+                signConvention: artifact.signConvention,
+                signHeldOutAccuracy: artifact.signHeldOutAccuracy,
+                signFallbackReason: artifact.signFallbackReason,
+                explainedVarianceBasis: artifact.explainedVarianceBasis,
+                isRecommendedLayer: artifact.recommendedLayer == artifact.layer)
+        }
+    }
+
+    /// The stamps that describe a fitted SET rather than one of its layers —
+    /// the contrast the differences express, the orientation seed behind them,
+    /// the recommended layer, and how the scaffolds reached the model.
+    ///
+    /// Read off the artifacts themselves. Nothing here is re-derived in the
+    /// pane: two places computing "best layer" is how a pane and an artifact
+    /// come to disagree, and the recommendation is the artifact's word.
+    public struct ReaderFitStamps: Sendable, Equatable {
+        public let contrastMode: RepEReader.ContrastMode
+        public let orientationSeed: UInt64?
+        public let recommendedLayer: Int?
+        public let recommendedLayerAccuracy: Float?
+        public let layerRecommendationBasis: String?
+        /// The artifact's own rendering stamp — "raw" when absent, which is
+        /// what every reader fitted before the option existed carries.
+        public let renderingLabel: String
+        public let renderingConvention: String
+        /// True when the set carries a schema-1 explained-variance basis.
+        public let hasLegacyVarianceBasis: Bool
+
+        /// The recommendation line, in the ARTIFACT's own words — never
+        /// "selected", because nothing selects a layer at use time.
+        public var recommendationLine: String? {
+            guard let recommendedLayer, let recommendedLayerAccuracy else { return nil }
+            let basis = layerRecommendationBasis == "heldOutAccuracy"
+                ? "held-out" : "train"
+            return String(
+                format: "recommended layer %d (%@ %.0f%%). ",
+                recommendedLayer, basis, recommendedLayerAccuracy * 100)
+                + RepEReader.Artifact.layerRecommendationNote
+        }
+
+        /// The orientation-draw line, or nil under `supervisedContent` (whose
+        /// ± alternation needs no RNG and stamps no seed).
+        public var orientationSeedLine: String? {
+            guard let orientationSeed else { return nil }
+            return "orientation seed \(orientationSeed) — the T+/T− draw is "
+                + "SEEDED and stamped, so this fit is reproducible from the "
+                + "artifact alone (the reference implementation's shuffle is not)"
+        }
+    }
+
+    // MARK: Reader fit-score grid (formatting, not layout — the pane is thin)
+
+    /// The fit-score grid's columns, in the order ``readerLayerCells``
+    /// returns. "★" on a layer marks the fit's RECOMMENDED layer (argmax
+    /// held-out accuracy) — a recommendation, not a selection: which layer a
+    /// study reads is declared in its manifest.
+    public nonisolated static let readerLayerColumns = [
+        "layer", "train", "held-out", "PC1 var", "basis", "sign from",
+    ]
+
+    /// One reader-layer row's cells, as plain strings.
+    ///
+    /// An absent explained variance prints "—", not "0.00": PC1's share of a
+    /// difference cloud with no variance is undefined, and 0 would read as
+    /// "PC1 explains nothing" — the opposite of what an all-identical cloud
+    /// means. The sign cell says whether the HELD-OUT split fixed this layer's
+    /// direction (the paper's step 4) or the train labels did.
+    ///
+    /// The BASIS cell is not decoration: a schema-1 artifact's number was
+    /// measured over the ± ALTERNATED rows and is systematically flattering,
+    /// so it is never printed beside a schema-2 number without saying which is
+    /// which.
+    public nonisolated static func readerLayerCells(
+        _ score: ReaderLayerScore
+    ) -> [String] {
+        let layer = score.isRecommendedLayer
+            ? "\(score.layer) ★" : "\(score.layer)"
+        let train = String(format: "%.0f%%", score.trainAccuracy * 100)
+        let held =
+            score.heldOutAccuracy.map { String(format: "%.0f%%", $0 * 100) } ?? "—"
+        let sign: String
+        switch score.signConvention {
+        case .heldOutPairAgreement:
+            sign = score.signHeldOutAccuracy
+                .map { String(format: "held-out %.0f%%", $0 * 100) } ?? "held-out"
+        case .trainMajority:
+            sign = "train"
+        }
+        return [
+            layer, train, held, score.differenceCloudVarianceLabel,
+            readerVarianceBasisCell(score.explainedVarianceBasis), sign,
+        ]
+    }
+
+    /// The basis column's short form. An unrecognized basis passes through
+    /// verbatim rather than being coerced into one of the known three — a
+    /// future basis must read as unfamiliar, not as one of these.
+    public nonisolated static func readerVarianceBasisCell(_ basis: String) -> String {
+        switch basis {
+        case "differenceCloud": "diffs"
+        case "degenerateDifferenceCloud": "degenerate"
+        case "alternatedRows": "alternated (legacy)"
+        default: basis
+        }
+    }
+
+    /// Distinct sign-fallback reasons, in first-seen layer order — the same
+    /// reason repeated across 30 layers is one line, not thirty.
+    public nonisolated static func readerSignFallbackReasons(
+        _ scores: [ReaderLayerScore]
+    ) -> [String] {
+        var seen: Set<String> = []
+        return scores.compactMap { score -> String? in
+            guard let reason = score.signFallbackReason,
+                seen.insert(reason).inserted
+            else { return nil }
+            return reason
+        }
+    }
+
+    /// "id — T+/T− pair" for a template-pair template, the bare id otherwise.
+    /// The marker is on the MENU entry so a template that will refuse against
+    /// the authored rows is recognizable before it is chosen — the picker
+    /// shows every template rather than filtering the mismatch out of sight.
+    public nonisolated static func readerTemplateMenuLabel(
+        _ template: RepEReader.TaskTemplate
+    ) -> String {
+        template.isTemplatePair ? "\(template.id) — T+/T− pair" : template.id
+    }
+
+    /// Set-level stamps from a freshly fitted (or freshly read) artifact set.
+    public nonisolated static func readerFitStamps(
+        from artifacts: [RepEReader.Artifact]
+    ) -> ReaderFitStamps? {
+        guard let first = artifacts.first else { return nil }
+        return ReaderFitStamps(
+            contrastMode: first.contrastMode,
+            orientationSeed: first.orientationSeed,
+            recommendedLayer: first.recommendedLayer,
+            recommendedLayerAccuracy: first.recommendedLayerAccuracy,
+            layerRecommendationBasis: first.layerRecommendationBasis,
+            renderingLabel: renderingLabel(first.extractionRendering),
+            renderingConvention: first.renderingConvention,
+            hasLegacyVarianceBasis: artifacts.contains {
+                $0.explainedVarianceBasis == "alternatedRows"
+            })
+    }
+
+    /// One labelled line of a reader artifact's provenance. `isCaution` marks
+    /// a line a reader must not skim past — a stood-down sign rule, a legacy
+    /// variance basis, a divergence stamp.
+    public struct ReaderDetailRow: Sendable, Equatable, Identifiable {
+        public let label: String
+        public let value: String
+        public let isCaution: Bool
+        public var id: String { label }
+
+        public init(label: String, value: String, isCaution: Bool = false) {
+            self.label = label
+            self.value = value
+            self.isCaution = isCaution
+        }
+    }
+
+    /// Everything a fitted reader artifact stamps, as display lines — schema 2
+    /// and schema 1 alike. A schema-1 artifact is NOT dressed up as a schema-2
+    /// one: its explained variance says which cloud it measured, its absent
+    /// contrast/sign stamps show as the legacy defaults they decode to, and the
+    /// rows say so in words.
+    public nonisolated static func readerArtifactDetails(
+        _ artifact: RepEReader.Artifact
+    ) -> [ReaderDetailRow] {
+        var rows: [ReaderDetailRow] = [
+            ReaderDetailRow(
+                label: "contrast mode", value: artifact.contrastMode.label),
+            ReaderDetailRow(
+                label: "sign convention",
+                value: artifact.signConvention.label
+                    + (artifact.signHeldOutAccuracy.map {
+                        String(format: " · held-out agreement %.0f%%", $0 * 100)
+                    } ?? ""),
+                isCaution: artifact.signConvention == .trainMajority),
+        ]
+        if let reason = artifact.signFallbackReason {
+            rows.append(
+                ReaderDetailRow(
+                    label: "sign fallback", value: reason, isCaution: true))
+        }
+        let score = ReaderLayerScore(artifact: artifact)
+        rows.append(
+            ReaderDetailRow(
+                label: "PC1 explained variance",
+                value: score.differenceCloudVarianceLabel
+                    + " (" + score.explainedVarianceBasisLabel + ")",
+                isCaution: score.explainedVarianceIsLegacyBasis
+                    || artifact.differenceCloudExplainedVariance == nil))
+        if let layer = artifact.recommendedLayer,
+            let accuracy = artifact.recommendedLayerAccuracy
+        {
+            let basis = artifact.layerRecommendationBasis == "heldOutAccuracy"
+                ? "held-out" : "train"
+            rows.append(
+                ReaderDetailRow(
+                    label: "recommended layer",
+                    value: String(format: "%d (%@ %.0f%%). ", layer, basis, accuracy * 100)
+                        + RepEReader.Artifact.layerRecommendationNote))
+        }
+        if let seed = artifact.orientationSeed {
+            rows.append(
+                ReaderDetailRow(label: "orientation seed", value: String(seed)))
+        }
+        rows.append(
+            ReaderDetailRow(
+                label: "extraction rendering",
+                value: renderingLabel(artifact.extractionRendering)
+                    + (artifact.extractionRendering == nil
+                        ? " (absent stamp = raw, the pre-declaration default)" : "")))
+        rows.append(
+            ReaderDetailRow(
+                label: "template",
+                value: "\(artifact.templateID) · \(artifact.templateHash.prefix(12))…"))
+        if let divergence = artifact.template.divergence {
+            rows.append(
+                ReaderDetailRow(
+                    label: "template divergence", value: divergence, isCaution: true))
+        }
+        rows.append(
+            ReaderDetailRow(
+                label: "dataset", value: "\(artifact.datasetHash.prefix(12))… · "
+                    + "\(artifact.trainPairCount) train / \(artifact.heldOutPairCount) held out"))
+        rows.append(
+            ReaderDetailRow(
+                label: "binding",
+                value: "\(artifact.modelID) · substrate \(artifact.substrate)"))
+        return rows
     }
 
     /// Per-layer train/held-out accuracy from the newest local reader fit.
     public private(set) var readerLayerScores: [ReaderLayerScore] = []
+    /// Set-level stamps of the newest local reader fit.
+    public private(set) var readerFitStamps: ReaderFitStamps?
     public private(set) var lastReaderRunDirectory: URL?
     /// Fitted reader artifacts discovered under runs/ (all concepts; the
     /// panel filters to the selected one).
@@ -3780,6 +4067,271 @@ public final class ConceptBuilder {
         readerArtifacts = VectorCatalog.scanReaders()
     }
 
+    // MARK: Reader dataset shape (REPE-IMPLEMENTATION-BRIEF §3)
+
+    /// WHICH row shape the reader dataset is authored in. This is a DATA
+    /// choice — how many stimuli a row carries — and it is the only half of
+    /// the contrast the researcher declares. The other half is the template,
+    /// and the CONTRAST MODE is derived from the two by the engine's
+    /// `resolveContrastMode`; it is never offered as a third control, because
+    /// a mode chosen independently of the data that supports it is a mode the
+    /// fit would have to refuse.
+    public enum ReaderRowShape: String, Codable, Sendable, CaseIterable, Identifiable {
+        /// Two DIFFERENT stimuli under ONE template.
+        case contentPair
+        /// ONE stimulus under a template's T+ and T− instructions.
+        case singleStimulus
+
+        public var id: String { rawValue }
+
+        public var label: String {
+            switch self {
+            case .contentPair: "content pairs (positive / matched control)"
+            case .singleStimulus: "single stimuli (the template's T+/T− pair)"
+            }
+        }
+
+        /// What the rows say the file is, in the loader's own vocabulary.
+        public var datasetShape: RepEReader.Dataset.Shape {
+            switch self {
+            case .contentPair: .contentPair
+            case .singleStimulus: .singleStimulus
+            }
+        }
+
+        /// The row-id stem the encoder writes, which is also what the split
+        /// preview names (`<concept>-pair-<i>` / `<concept>-row-<i>`, the
+        /// brief's §3 examples).
+        var rowIDStem: String {
+            switch self {
+            case .contentPair: "pair"
+            case .singleStimulus: "row"
+            }
+        }
+    }
+
+    /// The row shape the reader editor is authoring.
+    public var readerRowShape: ReaderRowShape = .contentPair {
+        didSet {
+            guard oldValue != readerRowShape else { return }
+            noteMutation()
+        }
+    }
+
+    /// The single-stimulus working set — the shape `readerPairRows` could not
+    /// write before 2026-08-27 (it encoded content pairs only). Each entry
+    /// becomes ONE row; the contrast is the template's instruction pair, so a
+    /// second text here would be a confound, not data.
+    public private(set) var readerStimuli: [String] = []
+    /// Draft box for the single-stimulus editor: one stimulus per line.
+    public var readerStimulusDraft = ""
+
+    /// Append the draft's non-empty lines to the single-stimulus set.
+    public func addReaderStimuli() {
+        let added = readerStimulusDraft
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !added.isEmpty else {
+            status = "nothing to add — write one stimulus per line"
+            return
+        }
+        readerStimuli.append(contentsOf: added)
+        readerStimulusDraft = ""
+        status = "added \(added.count) single stimuli (\(readerStimuli.count) rows)"
+        noteMutation()
+    }
+
+    public func clearReaderStimuli() {
+        readerStimuli = []
+        noteMutation()
+    }
+
+    /// How many rows the current shape would write.
+    public var readerRowCount: Int {
+        switch readerRowShape {
+        case .contentPair: min(positives.count, negatives.count)
+        case .singleStimulus: readerStimuli.count
+        }
+    }
+
+    // MARK: Reader template + contrast resolution (engine-owned refusals)
+
+    /// The template the current selection resolves to, parsed through the
+    /// ENGINE's own schema checks — including `validateInstructionSlot`, so a
+    /// custom scaffold carrying a `{{instruction}}` slot with no instruction
+    /// pair refuses here in exactly the words `loadTemplate` would use.
+    ///
+    /// A custom template is hashed over the same bytes the fit persists, so
+    /// what the pane shows is what the artifact will pin.
+    nonisolated static func resolveReaderTemplate(
+        conceptName: String, customText: String?,
+        registry: RepEReader.TaskTemplate?
+    ) throws -> RepEReader.TaskTemplate {
+        if let customText {
+            guard customText.contains("{{stimulus}}") else {
+                throw ChatServiceError(reason: "custom template needs a {{stimulus}} slot")
+            }
+            let data = try customReaderTemplateData(
+                conceptName: conceptName, text: customText)
+            var template = try JSONDecoder().decode(
+                RepEReader.TaskTemplate.self, from: data)
+            template.hash = SHA256.hash(data: data)
+                .map { String(format: "%02x", $0) }.joined()
+            try template.validateInstructionSlot()
+            return template
+        }
+        guard let registry else {
+            throw ChatServiceError(
+                reason: "select a task template (prompts/templates/) or write a custom one")
+        }
+        return registry
+    }
+
+    /// The template the reader flow would fit through right now, or nil while
+    /// the selection refuses (see ``readerTemplateRefusal``).
+    public var resolvedReaderTemplate: RepEReader.TaskTemplate? {
+        try? Self.resolveReaderTemplate(
+            conceptName: currentConceptName,
+            customText: useCustomReaderTemplate ? customReaderTemplateText : nil,
+            registry: selectedReaderTemplate)
+    }
+
+    /// The engine's refusal for the current template selection, verbatim.
+    public var readerTemplateRefusal: String? {
+        do {
+            _ = try Self.resolveReaderTemplate(
+                conceptName: currentConceptName,
+                customText: useCustomReaderTemplate ? customReaderTemplateText : nil,
+                registry: selectedReaderTemplate)
+            return nil
+        } catch let error as ChatServiceError {
+            return error.reason
+        } catch let error as RepEReader.ReaderError {
+            return error.reason
+        } catch {
+            return "\(error)"
+        }
+    }
+
+    /// The contrast mode the current (row shape × template) DERIVES, or nil
+    /// when the two disagree. Never a control: see ``ReaderRowShape``.
+    public var readerContrastMode: RepEReader.ContrastMode? {
+        guard let template = resolvedReaderTemplate else { return nil }
+        return try? RepEReader.resolveContrastMode(
+            shape: readerRowShape.datasetShape, template: template)
+    }
+
+    /// The ENGINE's typed refusal when the chosen template and the authored
+    /// row shape cannot make a contrast — the pinned `resolveContrastMode`
+    /// twin literal, shown rather than a silently-filtered picker that would
+    /// hide the mismatch from the person who has to fix it.
+    public var readerContrastRefusal: String? {
+        guard let template = resolvedReaderTemplate else { return nil }
+        do {
+            _ = try RepEReader.resolveContrastMode(
+                shape: readerRowShape.datasetShape, template: template)
+            return nil
+        } catch let error as RepEReader.ReaderError {
+            return error.reason
+        } catch {
+            return "\(error)"
+        }
+    }
+
+    // MARK: Held-out split preview (REPE-IMPLEMENTATION-BRIEF §5)
+
+    /// What the writer will actually stamp `split: "test"` on, before it
+    /// writes anything: the clamp that keeps two train rows, the ids of the
+    /// held-out tail, and whether the split is large enough for the paper's
+    /// held-out sign rule to run at all.
+    public struct ReaderSplitPreview: Sendable, Equatable {
+        public let totalRows: Int
+        public let requestedHeldOut: Int
+        public let heldOutRows: Int
+        public let trainRows: Int
+        /// The row ids that will carry `split: "test"`, in file order.
+        public let heldOutRowIDs: [String]
+
+        /// True when the request was cut back to protect the train split.
+        public var wasClamped: Bool { heldOutRows != requestedHeldOut }
+
+        /// True when the held-out split cannot decide any layer's sign, so
+        /// every artifact will stamp `signConvention: "trainMajority"` plus a
+        /// `signFallbackReason`. The threshold is the engine's, not a number
+        /// this type chose.
+        public var signSelectionWillFallBack: Bool {
+            heldOutRows < RepEReader.minimumHeldOutPairsForSignSelection
+        }
+
+        /// One line saying what the split buys and what it costs.
+        public var note: String {
+            let minimum = RepEReader.minimumHeldOutPairsForSignSelection
+            if totalRows == 0 { return "no rows authored yet" }
+            var parts = ["\(trainRows) train / \(heldOutRows) held out"]
+            if wasClamped {
+                parts.append(
+                    "clamped from \(requestedHeldOut): at least 2 rows must stay train")
+            }
+            if signSelectionWillFallBack {
+                parts.append(
+                    "below the \(minimum)-pair minimum, so every layer's sign falls "
+                        + "back to train-label majority and stamps a signFallbackReason "
+                        + "— accuracies are train-only")
+            } else {
+                parts.append(
+                    "enough for the paper's held-out sign selection (minimum \(minimum))")
+            }
+            return parts.joined(separator: " — ")
+        }
+    }
+
+    /// Pure preview of the split the row encoder will write. Same clamp as
+    /// ``readerPairRows``/``readerStimulusRows``, computed once here so the
+    /// pane and the writer cannot disagree about which rows are held out.
+    public nonisolated static func readerSplitPreview(
+        concept: String, rowCount: Int, requestedHeldOut: Int,
+        rowShape: ReaderRowShape
+    ) -> ReaderSplitPreview {
+        let heldOut = min(max(0, requestedHeldOut), max(0, rowCount - 2))
+        let ids = (max(0, rowCount - heldOut) ..< max(0, rowCount)).map {
+            "\(concept)-\(rowShape.rowIDStem)-\($0)"
+        }
+        return ReaderSplitPreview(
+            totalRows: rowCount, requestedHeldOut: max(0, requestedHeldOut),
+            heldOutRows: heldOut, trainRows: max(0, rowCount - heldOut),
+            heldOutRowIDs: ids)
+    }
+
+    public var readerSplitPreview: ReaderSplitPreview {
+        Self.readerSplitPreview(
+            concept: currentConceptName, rowCount: readerRowCount,
+            requestedHeldOut: readerHeldOutPairCount, rowShape: readerRowShape)
+    }
+
+    // MARK: Reader fit gate
+
+    /// The standing refusal that blocks a reader fit on this target, or nil.
+    /// Every one of them is an ENGINE refusal quoted, never a message this
+    /// type composed.
+    ///
+    /// Two deliberate scopings. The READING POSITION is not consulted: a
+    /// reader reads at its template's LAT token, so a reading-position
+    /// declaration standing refused for the vector builder is not this fit's
+    /// business. The RENDERING is — fitting under the last valid rendering
+    /// while the pane shows another is exactly the silent substitution the
+    /// declaration exists to end — except for the two refusals that are THIS
+    /// engine's limit and name the server as their repair, which must not
+    /// block a fit queued on the server.
+    public func readerFitRefusal(onServer: Bool) -> String? {
+        if let refusal = readerTemplateRefusal ?? readerContrastRefusal {
+            return refusal
+        }
+        guard let rendering = extractionRenderingRefusal else { return nil }
+        if onServer, extractionRenderingRefusalIsLocalEngineLimit { return nil }
+        return rendering
+    }
+
     // MARK: Reader fit request assembly (pure; unit-tested)
 
     /// The pieces of the server `POST /api/reader/fit` body this builder
@@ -3793,6 +4345,14 @@ public final class ConceptBuilder {
         var templateID: String?
         var templateJSON: String?
         var pairsJSONL: String
+        /// HOW the scaffold reaches the model, declared for the fit. nil is
+        /// the raw default and is what an untouched panel sends, so the
+        /// request bytes stay identical to every fit queued before the
+        /// rendering became declarable.
+        var extractionRendering: ExtractionRendering?
+        /// The unsupervised T+/T− orientation draw's seed. nil lets the
+        /// engine stamp its own default.
+        var orientationSeed: UInt64?
     }
 
     /// Sorted-keys JSONL rows for a reader pairs file: one `RepEReader.Pair`
@@ -3823,6 +4383,36 @@ public final class ConceptBuilder {
         return lines
     }
 
+    /// Sorted-keys JSONL rows for a SINGLE-STIMULUS reader dataset — one
+    /// `stimulus` row per text, the LAST k written with split "test"
+    /// (REPE-IMPLEMENTATION-BRIEF §3, the paper's §3.1 step 1b shape). The
+    /// engine wave left this shape unauthorable: `readerPairRows` writes
+    /// content pairs only, so a T+/T− template had no dataset the Concept Lab
+    /// could produce for it.
+    ///
+    /// Row ids are `<concept>-row-<i>` rather than `-pair-<i>`: a row here is
+    /// one stimulus, and the two shapes must not be mistakable for one another
+    /// in a diff.
+    nonisolated static func readerStimulusRows(
+        concept: String, stimuli: [String],
+        heldOutPairCount: Int, templateID: String
+    ) throws -> [String] {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let heldOut = min(max(0, heldOutPairCount), max(0, stimuli.count - 2))
+        var lines: [String] = []
+        for (index, stimulus) in stimuli.enumerated() {
+            let row = RepEReader.Pair.templatePair(
+                id: "\(concept)-row-\(index)",
+                concept: concept,
+                stimulus: stimulus,
+                split: index >= stimuli.count - heldOut ? "test" : "train",
+                templateID: templateID)
+            lines.append(String(decoding: try encoder.encode(row), as: UTF8.self))
+        }
+        return lines
+    }
+
     /// Raw JSON bytes of a one-off (unregistered) reader template — the same
     /// object the local path persists into its run directory, so a custom
     /// scaffold sent to the server as `templateJSON` is byte-identical to the
@@ -3844,8 +4434,14 @@ public final class ConceptBuilder {
 
     /// Assembles the server fit request from builder state: template
     /// selection resolves to exactly one of templateID/templateJSON, and the
-    /// pairs rows carry the same ids, split assignment, and sorted-keys
-    /// encoding as the local pairs file.
+    /// rows carry the same ids, split assignment, and sorted-keys encoding as
+    /// the local pairs file.
+    ///
+    /// `rowShape` picks WHICH encoder writes the rows — content pairs from
+    /// `positives`/`negatives`, or single stimuli from `stimuli` — and the
+    /// server derives the contrast mode from the rows and the template exactly
+    /// as the local fit does. `extractionRendering` and `orientationSeed` are
+    /// nil-defaulted so an untouched panel posts the same bytes it always did.
     nonisolated static func readerFitRequest(
         concept: String,
         positives: [String],
@@ -3853,7 +4449,11 @@ public final class ConceptBuilder {
         heldOutPairCount: Int,
         registryTemplateID: String?,
         customTemplateText: String?,
-        modelID: String? = nil
+        modelID: String? = nil,
+        rowShape: ReaderRowShape = .contentPair,
+        stimuli: [String] = [],
+        extractionRendering: ExtractionRendering? = nil,
+        orientationSeed: UInt64? = nil
     ) throws -> ReaderFitRequest {
         let templateID: String?
         let templateJSON: String?
@@ -3875,13 +4475,23 @@ public final class ConceptBuilder {
             throw ChatServiceError(
                 reason: "select a task template (prompts/templates/) or write a custom one")
         }
-        let lines = try readerPairRows(
-            concept: concept, positives: positives, negatives: negatives,
-            heldOutPairCount: heldOutPairCount, templateID: pinnedTemplateID)
+        let lines: [String]
+        switch rowShape {
+        case .contentPair:
+            lines = try readerPairRows(
+                concept: concept, positives: positives, negatives: negatives,
+                heldOutPairCount: heldOutPairCount, templateID: pinnedTemplateID)
+        case .singleStimulus:
+            lines = try readerStimulusRows(
+                concept: concept, stimuli: stimuli,
+                heldOutPairCount: heldOutPairCount, templateID: pinnedTemplateID)
+        }
         return ReaderFitRequest(
             concept: concept, modelID: modelID,
             templateID: templateID, templateJSON: templateJSON,
-            pairsJSONL: lines.joined(separator: "\n") + "\n")
+            pairsJSONL: lines.joined(separator: "\n") + "\n",
+            extractionRendering: extractionRendering,
+            orientationSeed: orientationSeed)
     }
 
     /// Queue a RepE reader fit on the active server as a durable job
@@ -3906,23 +4516,36 @@ public final class ConceptBuilder {
             status = "select a vector-build concept"
             return
         }
+        // Every gate is an ENGINE refusal, quoted — surfaced here so it
+        // arrives before a job is queued rather than as a failed job.
+        if let refusal = readerFitRefusal(onServer: true) {
+            reportBuildFailure(refusal, title: "Server Reader Fit — refused")
+            return
+        }
         let pairedRows: (positive: [String], negative: [String])
-        do {
-            pairedRows = try pairedRowsForBuildConcept(name)
-        } catch {
-            reportBuildFailure(
-                "could not read paired dataset for \(name): \(error)",
-                title: "Reader Fit — failed")
-            return
+        switch readerRowShape {
+        case .contentPair:
+            do {
+                pairedRows = try pairedRowsForBuildConcept(name)
+            } catch {
+                reportBuildFailure(
+                    "could not read paired dataset for \(name): \(error)",
+                    title: "Reader Fit — failed")
+                return
+            }
+            guard pairedRows.positive.count == pairedRows.negative.count else {
+                status = "reader pairs must be matched: \(pairedRows.positive.count)+ vs "
+                    + "\(pairedRows.negative.count)- rows"
+                return
+            }
+        case .singleStimulus:
+            pairedRows = ([], [])
         }
-        guard pairedRows.positive.count == pairedRows.negative.count else {
-            status = "reader pairs must be matched: \(pairedRows.positive.count)+ vs "
-                + "\(pairedRows.negative.count)- rows"
-            return
-        }
-        let heldOut = min(max(0, readerHeldOutPairCount), max(0, pairedRows.positive.count - 2))
-        guard pairedRows.positive.count - heldOut >= 2 else {
-            status = "need at least 2 train pairs (have \(pairedRows.positive.count) pairs, "
+        let rowCount = readerRowShape == .contentPair
+            ? pairedRows.positive.count : readerStimuli.count
+        let heldOut = min(max(0, readerHeldOutPairCount), max(0, rowCount - 2))
+        guard rowCount - heldOut >= 2 else {
+            status = "need at least 2 train rows (have \(rowCount) rows, "
                 + "\(heldOut) held out)"
             return
         }
@@ -3943,7 +4566,12 @@ public final class ConceptBuilder {
                 heldOutPairCount: readerHeldOutPairCount,
                 registryTemplateID: useCustomReaderTemplate ? nil : selectedReaderTemplateID,
                 customTemplateText: useCustomReaderTemplate ? customReaderTemplateText : nil,
-                modelID: host.selectedRemoteModelID)
+                modelID: host.selectedRemoteModelID,
+                rowShape: readerRowShape,
+                stimuli: readerStimuli,
+                extractionRendering: serverExtractionRendering,
+                orientationSeed: readerRowShape == .singleStimulus
+                    ? readerOrientationSeed : nil)
 
             // Pin the reader dataset locally exactly as the local build does —
             // the pairs file is shared recipe data, not a per-substrate
@@ -3962,7 +4590,9 @@ public final class ConceptBuilder {
                 modelID: request.modelID,
                 templateID: request.templateID,
                 templateJSON: request.templateJSON,
-                pairsJSONL: request.pairsJSONL)
+                pairsJSONL: request.pairsJSONL,
+                extractionRendering: request.extractionRendering,
+                orientationSeed: request.orientationSeed)
             status = "server reader fit queued as job \(jobID)…"
             await host.cluster.refreshRemoteState()
 
@@ -4124,23 +4754,38 @@ public final class ConceptBuilder {
             status = "select a vector-build concept"
             return
         }
+        // The template's schema refusal, the (shape × template) contrast
+        // refusal, and a standing rendering refusal are all the ENGINE's, and
+        // they are the refusals this fit would raise anyway — surfaced before
+        // a forward pass is spent.
+        if let refusal = readerFitRefusal(onServer: false) {
+            reportBuildFailure(refusal, title: "Reader Fit — refused")
+            return
+        }
         let pairedRows: (positive: [String], negative: [String])
-        do {
-            pairedRows = try pairedRowsForBuildConcept(name)
-        } catch {
-            reportBuildFailure(
-                "could not read paired dataset for \(name): \(error)",
-                title: "Reader Fit — failed")
-            return
+        switch readerRowShape {
+        case .contentPair:
+            do {
+                pairedRows = try pairedRowsForBuildConcept(name)
+            } catch {
+                reportBuildFailure(
+                    "could not read paired dataset for \(name): \(error)",
+                    title: "Reader Fit — failed")
+                return
+            }
+            guard pairedRows.positive.count == pairedRows.negative.count else {
+                status = "reader pairs must be matched: \(pairedRows.positive.count)+ vs "
+                    + "\(pairedRows.negative.count)- rows"
+                return
+            }
+        case .singleStimulus:
+            pairedRows = ([], [])
         }
-        guard pairedRows.positive.count == pairedRows.negative.count else {
-            status = "reader pairs must be matched: \(pairedRows.positive.count)+ vs "
-                + "\(pairedRows.negative.count)- rows"
-            return
-        }
-        let heldOut = min(max(0, readerHeldOutPairCount), max(0, pairedRows.positive.count - 2))
-        guard pairedRows.positive.count - heldOut >= 2 else {
-            status = "need at least 2 train pairs (have \(pairedRows.positive.count) pairs, "
+        let rowCount = readerRowShape == .contentPair
+            ? pairedRows.positive.count : readerStimuli.count
+        let heldOut = min(max(0, readerHeldOutPairCount), max(0, rowCount - 2))
+        guard rowCount - heldOut >= 2 else {
+            status = "need at least 2 train rows (have \(rowCount) rows, "
                 + "\(heldOut) held out)"
             return
         }
@@ -4209,11 +4854,19 @@ public final class ConceptBuilder {
                 at: readersDirectory, withIntermediateDirectories: true)
             // Shared row encoder with the server fit path (`pairsJSONL`), so
             // both engines pin byte-identical rows → identical dataset hash.
-            let lines = try Self.readerPairRows(
-                concept: name,
-                positives: pairedRows.positive,
-                negatives: pairedRows.negative,
-                heldOutPairCount: readerHeldOutPairCount, templateID: template.id)
+            let lines: [String]
+            switch readerRowShape {
+            case .contentPair:
+                lines = try Self.readerPairRows(
+                    concept: name,
+                    positives: pairedRows.positive,
+                    negatives: pairedRows.negative,
+                    heldOutPairCount: readerHeldOutPairCount, templateID: template.id)
+            case .singleStimulus:
+                lines = try Self.readerStimulusRows(
+                    concept: name, stimuli: readerStimuli,
+                    heldOutPairCount: readerHeldOutPairCount, templateID: template.id)
+            }
             let pairsURL = VectorCatalog.pairedStimuliFile(family: .readers, name: name)
             try (lines.joined(separator: "\n") + "\n").write(
                 to: pairsURL, atomically: true, encoding: .utf8)
@@ -4226,20 +4879,13 @@ public final class ConceptBuilder {
                 revision: SteeredContainerLoader.cachedRevision(for: modelID),
                 dataset: dataset,
                 template: template,
+                orientationSeed: readerOrientationSeed,
                 extractionRendering: extractionRendering)
             for artifact in artifacts {
                 try RepEReader.saveArtifact(artifact, to: runDirectory)
             }
-            readerLayerScores = artifacts.map {
-                ReaderLayerScore(
-                    layer: $0.layer,
-                    trainAccuracy: $0.trainAccuracy,
-                    heldOutAccuracy: $0.heldOutAccuracy,
-                    explainedVariance: $0.differenceCloudExplainedVariance,
-                    signConvention: $0.signConvention,
-                    signHeldOutAccuracy: $0.signHeldOutAccuracy,
-                    isRecommendedLayer: $0.recommendedLayer == $0.layer)
-            }
+            readerLayerScores = artifacts.map(ReaderLayerScore.init(artifact:))
+            readerFitStamps = Self.readerFitStamps(from: artifacts)
             lastReaderRunDirectory = runDirectory
             refreshReaderArtifacts()
             // The RECOMMENDATION comes off the artifacts themselves (the fit
@@ -4266,6 +4912,99 @@ public final class ConceptBuilder {
         }
     }
 
+    /// What a reader-derived steering vector carries, and what it still owes
+    /// before a study can cite it (REPE-IMPLEMENTATION-BRIEF §6).
+    ///
+    /// The refusal is not composed here: it is
+    /// ``ExperimentStore/readerDerivedNormBackfillRefusal(artifact:)``, the
+    /// literal `attachArtifact` raises and the twin of the server's
+    /// `experiment_store.reader_derived_norm_backfill_refusal`. Showing it at
+    /// the derive step is the only way the missing LIFECYCLE STEP arrives
+    /// before the attach that would refuse.
+    public struct DerivedReaderVectorSummary: Sendable, Equatable {
+        /// Workspace-relative locator (`runs/<run>/<name>`), the same string
+        /// an attach takes.
+        public let reference: String
+        public let details: [ReaderDetailRow]
+        /// The engine's own attach refusal while this direction has no
+        /// residual-norm denominator; nil once one has been measured.
+        public let normBackfillRefusal: String?
+        /// True when every gate a reader-derived direction must pass is
+        /// passed: the method is in the vocabulary and the denominator exists.
+        public var isAttachable: Bool { normBackfillRefusal == nil }
+
+        /// What attaching this direction means, said once at the affordance.
+        public var attachabilityNote: String {
+            isAttachable
+                ? "attachable: `repeReaderLAT` is in the ExtractionMethod "
+                    + "vocabulary, so this pins as a pinnedArtifact whose SOURCE "
+                    + "method resolves. It has no source concept — its stimuli are "
+                    + "the reader's dataset and its held-out evidence is the reader "
+                    + "artifact's own accuracy, so no validation.jsonl is owed."
+                : "not attachable yet — measure norms first (below), then attach "
+                    + "the BACKFILLED copy."
+        }
+    }
+
+    /// Pure projection of a derived artifact's sidecar into the provenance the
+    /// derive affordance shows.
+    public nonisolated static func derivedReaderVectorSummary(
+        sidecar: SteeringVectorSidecar, reference: String
+    ) -> DerivedReaderVectorSummary {
+        var details: [ReaderDetailRow] = [
+            ReaderDetailRow(
+                label: "source", value: sidecar.source ?? RepEReader.artifactType),
+            ReaderDetailRow(
+                label: "control mode",
+                value: sidecar.controlMode ?? RepEReader.controlMode),
+        ]
+        if let layer = sidecar.readerLayer {
+            details.append(ReaderDetailRow(label: "reader layer", value: "\(layer)"))
+        }
+        if let template = sidecar.readerTemplateID {
+            details.append(
+                ReaderDetailRow(
+                    label: "reader template",
+                    value: template
+                        + (sidecar.readerTemplateHash.map { " · \($0.prefix(12))…" } ?? "")))
+        }
+        if let mode = sidecar.readerContrastMode {
+            details.append(
+                ReaderDetailRow(
+                    label: "contrast mode",
+                    value: RepEReader.ContrastMode(rawValue: mode)?.label ?? mode))
+        }
+        if let convention = sidecar.readerSignConvention {
+            details.append(
+                ReaderDetailRow(
+                    label: "sign convention",
+                    value: RepEReader.SignConvention(rawValue: convention)?.label
+                        ?? convention,
+                    isCaution: convention
+                        == RepEReader.SignConvention.trainMajority.rawValue))
+        }
+        if let orientation = sidecar.readerProbeOrientation {
+            details.append(
+                ReaderDetailRow(
+                    label: "probe orientation",
+                    value: orientation < 0
+                        ? "−1 — the probe reads ANTI-aligned with PC1, so the sign "
+                            + "is folded into the vector bytes (a steering vector has "
+                            + "no orientation field to carry it)"
+                        : "+1 — the stored direction already points at more concept"))
+        }
+        let refusal: String? =
+            sidecar.residualNormSource == nil
+            ? ExperimentStore.readerDerivedNormBackfillRefusal(artifact: reference)
+            : nil
+        return DerivedReaderVectorSummary(
+            reference: reference, details: details, normBackfillRefusal: refusal)
+    }
+
+    /// The newest reader → steering-vector conversion, with its provenance and
+    /// its standing refusal. Cleared when the family or concept moves.
+    public private(set) var lastDerivedReaderVector: DerivedReaderVectorSummary?
+
     /// Explicit reader → steering-vector conversion (REPE-IMPLEMENTATION-BRIEF §6). The derived
     /// artifact's sidecar stamps `source`, `readerID`, `readerHash`, and the
     /// honest `controlMode`, and it enters the normal vector catalog.
@@ -4281,12 +5020,22 @@ public final class ConceptBuilder {
                 revision: record.artifact.revision)
             let base = try RepEReader.deriveSteeringVector(
                 readerURL: record.url, into: runDirectory)
+            let sidecar = try JSONDecoder().decode(
+                SteeringVectorSidecar.self,
+                from: Data(contentsOf: base.appendingPathExtension("json")))
+            let root = VectorCatalog.projectRoot.standardizedFileURL.path + "/"
+            let path = base.standardizedFileURL.path
+            lastDerivedReaderVector = Self.derivedReaderVectorSummary(
+                sidecar: sidecar,
+                reference: path.hasPrefix(root)
+                    ? String(path.dropFirst(root.count)) : path)
             host?.refreshVectors()
             host?.selectVector(base.path)
             status = "derived steering vector from reader "
                 + "'\(record.fileName)' → \(runDirectory.lastPathComponent) "
                 + "(controlMode: \(RepEReader.controlMode)); selected for steering"
         } catch {
+            lastDerivedReaderVector = nil
             status = "derive failed: \(error)"
         }
     }

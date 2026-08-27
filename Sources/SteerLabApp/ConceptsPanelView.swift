@@ -1413,59 +1413,11 @@ struct ConceptsPanelView: View {
                 await builder.refreshServerReaders()
             }
 
-            Toggle("Custom template text", isOn: $builder.useCustomReaderTemplate)
-                .help(
-                    "off = pick a registry template from prompts/templates/ (shared "
-                        + "with the Python server); on = write a one-off scaffold, "
-                        + "persisted and hashed into the reader's run directory")
-            if builder.useCustomReaderTemplate {
-                TextEditor(text: $builder.customReaderTemplateText)
-                    .font(.callout.monospaced())
-                    .frame(height: 80)
-                Text(
-                    "must contain {{stimulus}}; include {{concept}} to name the concept "
-                        + "in the scaffold (RepE-faithful) or omit it for an unnamed "
-                        + "clean-room scaffold (stamped as a divergence)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            } else {
-                Picker("Task template", selection: $builder.selectedReaderTemplateID) {
-                    ForEach(builder.readerTemplates, id: \.id) { template in
-                        Text(template.id).tag(String?.some(template.id))
-                    }
-                }
-                .disabled(builder.readerTemplates.isEmpty)
-                .help("registry templates under prompts/templates/ — data shared with the server, pinned by raw-byte hash")
-                if let template = builder.selectedReaderTemplate {
-                    Text(template.text)
-                        .font(.caption.monospaced())
-                        .textSelection(.enabled)
-                        .foregroundStyle(.secondary)
-                    if let divergence = template.divergence {
-                        Text("divergence: \(divergence)")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-                    LabeledContent(
-                        "LAT token",
-                        value: template.latToken == "final"
-                            ? "final scaffold token" : template.latToken)
-                        .help("the token position whose hidden state the reader reads; rendering guarantees it is the scaffold's last token")
-                } else if builder.readerTemplates.isEmpty {
-                    Text("no templates found under prompts/templates/")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-            }
-
-            Stepper(
-                "Held-out pairs: \(builder.readerHeldOutPairCount)",
-                value: $builder.readerHeldOutPairCount,
-                in: 0 ... max(0, builder.positives.count))
-                .help(
-                    "the LAST k pairs are written with split \"test\" and score the "
-                        + "fitted probe they did not train — keep some, or accuracies "
-                        + "are train-only")
+            readerTemplateControls
+            readerDatasetShapeControls
+            readerContrastRow
+            readerRenderingControls
+            readerHeldOutControls
 
             if service.cluster.computeTarget == .server {
                 Text(
@@ -1475,86 +1427,378 @@ struct ConceptsPanelView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            // A standing refusal disables the fit rather than letting it run
+            // under the last VALID declaration — fitting raw under a panel
+            // showing a chat template is the silent substitution the whole
+            // declaration path exists to end. The reader's reading position is
+            // its template's LAT token, so only the RENDERING and the
+            // template/contrast refusals gate it.
+            let readerRefusal = builder.readerFitRefusal(
+                onServer: service.cluster.computeTarget == .server)
             HStack {
                 Button("Build reader") {
                     Task { await builder.buildReader() }
                 }
-                .disabled(builder.isWorking)
+                .disabled(builder.isWorking || readerRefusal != nil)
                 .help(
-                    "renders every pair through the template, captures the LAT token, "
+                    "renders every row through the template, captures the LAT token, "
                         + "fits PC1 + probe per layer, and writes one reader artifact "
                         + "per layer into a fresh run directory")
                 workingIndicator(task: "Building reader", fallback: "Building reader...")
             }
+            if let readerRefusal {
+                Text(readerRefusal)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-            if !builder.readerLayerScores.isEmpty {
-                DisclosureGroup(
-                    "Fit scores by layer (\(builder.readerLayerScores.count) layers)"
-                ) {
-                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
-                        GridRow {
-                            ForEach(Self.readerLayerColumns, id: \.self) { column in
-                                Text(column).font(.caption2)
-                                    .foregroundStyle(.secondary)
+            readerFitScoreGrid
+            readerFitStampRows
+            readerArtifactRows
+            readerDerivedVectorRows
+        }
+    }
+
+    // MARK: Reader — template registry (REPE-IMPLEMENTATION-BRIEF §2)
+
+    /// The registry as a picker, plus everything a template PINS: its text,
+    /// its raw-byte hash, its divergence stamp, and — for a T+/T− template —
+    /// both instructions. The picker lists every registry file, template-pair
+    /// ones included: filtering them out by the dataset's shape would hide the
+    /// mismatch instead of letting the engine name it.
+    @ViewBuilder
+    private var readerTemplateControls: some View {
+        @Bindable var builder = service.concepts
+        Toggle("Custom template text", isOn: $builder.useCustomReaderTemplate)
+            .help(
+                "off = pick a registry template from prompts/templates/ (shared "
+                    + "with the Python server); on = write a one-off scaffold, "
+                    + "persisted and hashed into the reader's run directory")
+        if builder.useCustomReaderTemplate {
+            TextEditor(text: $builder.customReaderTemplateText)
+                .font(.callout.monospaced())
+                .frame(height: 80)
+            Text(
+                "must contain {{stimulus}}; include {{concept}} to name the concept "
+                    + "in the scaffold (RepE-faithful) or omit it for an unnamed "
+                    + "clean-room scaffold (stamped as a divergence). A one-off "
+                    + "scaffold cannot declare a T+/T− instruction pair — that is a "
+                    + "registry file, so single-stimulus rows need a registry template.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        } else {
+            Picker("Task template", selection: $builder.selectedReaderTemplateID) {
+                ForEach(builder.readerTemplates, id: \.id) { template in
+                    Text(ConceptBuilder.readerTemplateMenuLabel(template))
+                        .tag(String?.some(template.id))
+                }
+            }
+            .disabled(builder.readerTemplates.isEmpty)
+            .help(
+                "registry templates under prompts/templates/ — data shared with "
+                    + "the server, pinned by raw-byte hash. 'T+/T−' marks a template "
+                    + "that declares an instructionPair: it needs single-stimulus "
+                    + "rows, and the engine refuses it against content pairs")
+            if let template = builder.selectedReaderTemplate {
+                readerTemplateDetail(template)
+            } else if builder.readerTemplates.isEmpty {
+                Text("no templates found under prompts/templates/")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+        if let refusal = builder.readerTemplateRefusal {
+            Text(refusal)
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .textSelection(.enabled)
+        }
+    }
+
+    @ViewBuilder
+    private func readerTemplateDetail(_ template: RepEReader.TaskTemplate) -> some View {
+        Text(template.text)
+            .font(.caption.monospaced())
+            .textSelection(.enabled)
+            .foregroundStyle(.secondary)
+        LabeledContent("Template hash", value: String(template.hash.prefix(16)) + "…")
+            .font(.caption2)
+            .help(
+                "SHA-256 over the template file's raw bytes — changing the "
+                    + "template changes every artifact fitted through it")
+        if let pair = template.instructionPair {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("T+ (experimental): \(pair.experimental)")
+                Text("T− (reference): \(pair.reference)")
+            }
+            .font(.caption2.monospaced())
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+            .help(
+                "the paper's §3.1 step 1b construction: ONE stimulus rendered "
+                    + "under both instructions, so the INSTRUCTION carries the "
+                    + "contrast and a second stimulus would be a confound")
+        }
+        if let divergence = template.divergence {
+            Text("divergence: \(divergence)")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .textSelection(.enabled)
+        }
+        LabeledContent(
+            "LAT token",
+            value: template.latToken == "final"
+                ? "final scaffold token" : template.latToken)
+            .help("the token position whose hidden state the reader reads; rendering guarantees it is the scaffold's last token")
+    }
+
+    // MARK: Reader — dataset shape (REPE-IMPLEMENTATION-BRIEF §3)
+
+    /// The row shape, and the single-stimulus editor the engine wave left
+    /// unauthorable. The shape is a DATA choice; the contrast mode is not
+    /// offered here because it is derived from (shape × template).
+    @ViewBuilder
+    private var readerDatasetShapeControls: some View {
+        @Bindable var builder = service.concepts
+        Picker("Reader rows", selection: $builder.readerRowShape) {
+            ForEach(ConceptBuilder.ReaderRowShape.allCases) { shape in
+                Text(shape.label).tag(shape)
+            }
+        }
+        .help(
+            "WHAT a row holds. Content pairs come from the paired dataset "
+                + "above; single stimuli are authored here and take their "
+                + "contrast from a T+/T− template's two instructions")
+        if builder.readerRowShape == .singleStimulus {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Single stimuli — one per line")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $builder.readerStimulusDraft)
+                    .font(.callout)
+                    .frame(height: 70)
+                    .help(
+                        "each line becomes ONE row: {\"stimulus\": …}. The T+/T− "
+                            + "instructions supply the contrast, so there is no "
+                            + "second text to match")
+                HStack {
+                    Button("Add stimuli") { builder.addReaderStimuli() }
+                        .disabled(builder.isWorking)
+                    Button("Clear") { builder.clearReaderStimuli() }
+                        .disabled(builder.readerStimuli.isEmpty || builder.isWorking)
+                    Spacer()
+                    Text("\(builder.readerStimuli.count) rows")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if !builder.readerStimuli.isEmpty {
+                    DisclosureGroup("Authored stimuli (\(builder.readerStimuli.count))") {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(
+                                    Array(builder.readerStimuli.enumerated()),
+                                    id: \.offset
+                                ) { entry in
+                                    Text(
+                                        "\(builder.currentConceptName)-row-"
+                                            + "\(entry.offset): \(entry.element)")
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
                             }
                         }
-                        ForEach(builder.readerLayerScores) { score in
-                            GridRow {
-                                ForEach(
-                                    Array(Self.readerLayerCells(score).enumerated()),
-                                    id: \.offset
-                                ) { cell in
-                                    Text(cell.element).font(.caption.monospaced())
-                                }
+                        .frame(maxHeight: 140)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The DERIVED contrast mode, or the engine's refusal when the row shape
+    /// and the template cannot make one. Never a picker: a mode chosen apart
+    /// from the data that supports it is a mode the fit has to refuse.
+    @ViewBuilder
+    private var readerContrastRow: some View {
+        if let refusal = builder.readerContrastRefusal {
+            Label(refusal, systemImage: "exclamationmark.triangle")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if let mode = builder.readerContrastMode {
+            LabeledContent("Contrast mode", value: mode.label)
+                .help(
+                    "DERIVED from the row shape and the template "
+                        + "(resolveContrastMode), never chosen: it is what the "
+                        + "differences will actually express, and it is stamped "
+                        + "into every artifact of the fit")
+        }
+    }
+
+    // MARK: Reader — rendering declaration (REPE-IMPLEMENTATION-BRIEF §7)
+
+    /// The same declaration control the vector builder uses, on the same
+    /// builder state — so a reader fit and a vector extraction cannot drift
+    /// into two renderings with one picker between them. The engine's own
+    /// refusal (the assistant voice, which MLXLMCommon cannot render) shows
+    /// verbatim, exactly as it does above.
+    @ViewBuilder
+    private var readerRenderingControls: some View {
+        @Bindable var builder = service.concepts
+        LabeledContent("Extraction rendering") {
+            ExtractionRenderingField(
+                choice: $builder.extractionRenderingChoice,
+                help:
+                    "HOW the rendered scaffold reaches the model. 'raw' is the "
+                        + "default and what an absent stamp means — the scaffold IS "
+                        + "the whole token sequence. 'chat template' makes it the "
+                        + "user turn's content so the LAT token lands on the "
+                        + "generation prompt's tail, which is what rep_token=-1 "
+                        + "reads in the reference implementation")
+        }
+        if let refusal = builder.extractionRenderingRefusal {
+            Text(refusal)
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .textSelection(.enabled)
+        }
+        if builder.readerContrastMode == .unsupervisedTemplatePair {
+            LabeledContent("Orientation seed") {
+                TextField(
+                    "seed", value: $builder.readerOrientationSeed, format: .number)
+                    .frame(width: 140)
+                    .help(
+                        "the T+/T− orientation draw's seed, stamped into every "
+                            + "artifact. The reference implementation's shuffle is "
+                            + "unseeded and its direction therefore irreproducible; "
+                            + "this keeps the ± symmetry and drops that")
+            }
+        }
+    }
+
+    // MARK: Reader — held-out split (REPE-IMPLEMENTATION-BRIEF §5)
+
+    @ViewBuilder
+    private var readerHeldOutControls: some View {
+        @Bindable var builder = service.concepts
+        let preview = builder.readerSplitPreview
+        Stepper(
+            "Held-out rows: \(builder.readerHeldOutPairCount)",
+            value: $builder.readerHeldOutPairCount,
+            in: 0 ... max(0, builder.readerRowCount))
+            .help(
+                "the LAST k rows are written with split \"test\" and score the "
+                    + "fitted probe they did not train — and they are what fixes "
+                    + "each layer's SIGN under the paper's step 4")
+        Text(preview.note)
+            .font(.caption2)
+            .foregroundStyle(preview.signSelectionWillFallBack ? .orange : .secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        if !preview.heldOutRowIDs.isEmpty {
+            Text("held out: " + preview.heldOutRowIDs.joined(separator: ", "))
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: Reader — fit results (REPE-IMPLEMENTATION-BRIEF §4, §5)
+
+    @ViewBuilder
+    private var readerFitScoreGrid: some View {
+        if !builder.readerLayerScores.isEmpty {
+            DisclosureGroup(
+                "Fit scores by layer (\(builder.readerLayerScores.count) layers)"
+            ) {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
+                    GridRow {
+                        ForEach(ConceptBuilder.readerLayerColumns, id: \.self) { column in
+                            Text(column).font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    ForEach(builder.readerLayerScores) { score in
+                        GridRow {
+                            ForEach(
+                                Array(ConceptBuilder.readerLayerCells(score).enumerated()),
+                                id: \.offset
+                            ) { cell in
+                                Text(cell.element).font(.caption.monospaced())
                             }
                         }
                     }
                 }
+                readerSignFallbackNotes
             }
-
-            readerArtifactRows
         }
     }
 
-    /// The fit-score grid's columns, in the order `readerLayerCells` returns.
-    /// "★" on a layer marks the fit's RECOMMENDED layer (argmax held-out
-    /// accuracy) — a recommendation, not a selection: which layer a study
-    /// reads is declared in its manifest.
-    static let readerLayerColumns = [
-        "layer", "train", "held-out", "PC1 var (diffs)", "sign from",
-    ]
-
-    /// One reader-layer row's cells, as plain strings.
-    ///
-    /// Split out of the grid deliberately: the cells are now four formatted
-    /// values with two optionals among them, and SwiftUI's type checker gives
-    /// up on the inline form ("unable to type-check this expression in
-    /// reasonable time"). Formatting is not layout, and it is testable here.
-    ///
-    /// An absent explained variance prints "—", not "0.00": PC1's share of a
-    /// difference cloud with no variance is undefined, and 0 would read as
-    /// "PC1 explains nothing" — the opposite of what an all-identical cloud
-    /// means. The sign cell says whether the HELD-OUT split fixed this layer's
-    /// direction (the RepE paper's step 4) or the train labels did.
-    static func readerLayerCells(
-        _ score: ConceptBuilder.ReaderLayerScore
-    ) -> [String] {
-        let layer = score.isRecommendedLayer
-            ? "\(score.layer) ★" : "\(score.layer)"
-        let train = String(format: "%.0f%%", score.trainAccuracy * 100)
-        let held =
-            score.heldOutAccuracy.map { String(format: "%.0f%%", $0 * 100) } ?? "—"
-        let variance =
-            score.differenceCloudVarianceLabel
-        let sign: String
-        switch score.signConvention {
-        case .heldOutPairAgreement:
-            sign = score.signHeldOutAccuracy
-                .map { String(format: "held-out %.0f%%", $0 * 100) } ?? "held-out"
-        case .trainMajority:
-            sign = "train"
+    /// Every distinct `signFallbackReason` in the fit, in the ARTIFACT's own
+    /// words. A layer whose sign came from train-label majority is not a
+    /// footnote: the held-out rule stood down, and the artifact says why.
+    @ViewBuilder
+    private var readerSignFallbackNotes: some View {
+        let reasons = ConceptBuilder.readerSignFallbackReasons(builder.readerLayerScores)
+        if !reasons.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(reasons, id: \.self) { reason in
+                    Label(reason, systemImage: "exclamationmark.triangle")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.top, 4)
         }
-        return [layer, train, held, variance, sign]
+    }
+
+    /// The stamps that describe the SET: the derived contrast, the seeded
+    /// orientation draw, the rendering that was applied, and the recommended
+    /// layer in the artifact's own words — a recommendation, never a
+    /// selection, and nothing here selects anything.
+    @ViewBuilder
+    private var readerFitStampRows: some View {
+        if let stamps = builder.readerFitStamps {
+            DisclosureGroup("Fit stamps") {
+                VStack(alignment: .leading, spacing: 4) {
+                    LabeledContent("contrast mode", value: stamps.contrastMode.label)
+                    LabeledContent("rendering", value: stamps.renderingLabel)
+                    if let line = stamps.orientationSeedLine {
+                        Text(line)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let line = stamps.recommendationLine {
+                        Label(line, systemImage: "star")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if stamps.hasLegacyVarianceBasis {
+                        Label(
+                            "this set carries a schema-1 explained-variance basis "
+                                + "(alternatedRows) — see the basis column",
+                            systemImage: "clock.arrow.circlepath")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(stamps.renderingConvention)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.caption2)
+                .padding(.top, 4)
+            }
+        }
     }
 
     @ViewBuilder
@@ -1618,31 +1862,127 @@ struct ConceptsPanelView: View {
             DisclosureGroup("Reader artifacts (\(readers.count))") {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(readers) { record in
-                        HStack(alignment: .firstTextBaseline) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(record.label)
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                Text(record.fileName)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer()
-                            Button("Derive steering vector") {
-                                builder.deriveSteeringVectorFromReader(record)
-                            }
-                            .font(.caption)
-                            .help(
-                                "explicit conversion: unit reading direction at the "
-                                    + "reader's layer; the sidecar stamps source, reader "
-                                    + "hash, and controlMode \"reading-vector activation "
-                                    + "addition\"")
-                        }
+                        localReaderArtifactRow(record)
                         if record.id != readers.last?.id { Divider() }
                     }
                 }
                 .padding(.top, 4)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func localReaderArtifactRow(
+        _ record: VectorCatalog.ReaderArtifactRecord
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(record.label)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    Text(record.fileName)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Button("Derive steering vector") {
+                    builder.deriveSteeringVectorFromReader(record)
+                }
+                .font(.caption)
+                .help(
+                    "explicit conversion: unit reading direction at the "
+                        + "reader's layer; the sidecar stamps source, reader "
+                        + "hash, and controlMode \"reading-vector activation "
+                        + "addition\"")
+            }
+            // Everything the artifact stamps — schema 2 and schema 1 alike.
+            // A legacy artifact is shown as what it is rather than dressed as
+            // a current one: its variance basis, its absent contrast/sign
+            // stamps' legacy defaults, and its rendering all say so.
+            DisclosureGroup("Stamps") {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(ConceptBuilder.readerArtifactDetails(record.artifact)) { row in
+                        readerDetailLine(row)
+                    }
+                }
+                .padding(.top, 4)
+            }
+            .font(.caption2)
+        }
+    }
+
+    @ViewBuilder
+    private func readerDetailLine(_ row: ConceptBuilder.ReaderDetailRow) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(row.label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(width: 150, alignment: .leading)
+            Text(row.value)
+                .font(.caption2)
+                .foregroundStyle(row.isCaution ? .orange : .secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: Reader — derive to steering (REPE-IMPLEMENTATION-BRIEF §6)
+
+    /// The conversion's own provenance, and what it still owes.
+    ///
+    /// The refusal shown here is the ENGINE's — the literal `attachArtifact`
+    /// raises — so the missing lifecycle step arrives at the derive, not two
+    /// screens later at an attach that fails. The happy path is stated in one
+    /// line above it: fit → inspect layers → derive at a layer → backfill norm
+    /// → attach.
+    @ViewBuilder
+    private var readerDerivedVectorRows: some View {
+        Text(
+            "Flow: fit → inspect the per-layer scores → derive at a layer → "
+                + "measure norms on the neutral corpus → attach. A reader-derived "
+                + "direction is born WITHOUT a norm denominator, so the attach "
+                + "refuses until the backfill has run; attach the backfilled copy.")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        if let derived = builder.lastDerivedReaderVector {
+            DisclosureGroup(
+                isExpanded: .constant(true)
+            ) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(derived.reference)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    ForEach(derived.details) { row in
+                        readerDetailLine(row)
+                    }
+                    if let refusal = derived.normBackfillRefusal {
+                        Label(refusal, systemImage: "exclamationmark.triangle")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(derived.attachabilityNote)
+                        .font(.caption2)
+                        .foregroundStyle(derived.isAttachable ? .green : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 4)
+            } label: {
+                Label(
+                    derived.isAttachable
+                        ? "Derived steering vector — attachable"
+                        : "Derived steering vector — norms owed",
+                    systemImage: derived.isAttachable
+                        ? "checkmark.seal" : "ruler")
+                    .font(.callout.bold())
             }
         }
     }

@@ -539,6 +539,30 @@ public enum RepEReader {
         }
 
         public var isTemplatePairRow: Bool { stimulus != nil }
+
+        /// Written so a template-pair row encodes to the shape the LOADER
+        /// accepts. The synthesized encoding emitted `positiveStimulus` and
+        /// `negativeStimulus` unconditionally — as empty strings on a
+        /// template-pair row — and `parsePairs` refuses exactly that
+        /// combination ("row declares both 'stimulus' and a positive/negative
+        /// pair"), so the type could parse a shape it could not write. A
+        /// content-pair row encodes byte-identically to the synthesized form
+        /// (optionals still nil-omitted), which is what keeps the pinned
+        /// cross-engine dataset hash where it was.
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeIfPresent(id, forKey: .id)
+            try container.encode(concept, forKey: .concept)
+            if let stimulus {
+                try container.encode(stimulus, forKey: .stimulus)
+            } else {
+                try container.encode(positiveStimulus, forKey: .positiveStimulus)
+                try container.encode(negativeStimulus, forKey: .negativeStimulus)
+            }
+            try container.encodeIfPresent(topic, forKey: .topic)
+            try container.encode(split, forKey: .split)
+            try container.encode(templateID, forKey: .templateID)
+        }
     }
 
     public struct Dataset: Sendable, Equatable {
@@ -672,7 +696,19 @@ public enum RepEReader {
     public static func resolveContrastMode(
         dataset: Dataset, template: TaskTemplate
     ) throws -> ContrastMode {
-        switch (dataset.shape, template.isTemplatePair) {
+        try resolveContrastMode(shape: dataset.shape, template: template)
+    }
+
+    /// The same derivation over a dataset SHAPE alone, for a caller that has
+    /// the shape before it has the rows — the Concept Lab's reader editor,
+    /// which must show the derived contrast (or the refusal) while the pairs
+    /// are still being authored. Same switch, same refusal literals, one
+    /// owner: a pane that re-worded either would be inventing a message the
+    /// CLI does not use.
+    public static func resolveContrastMode(
+        shape: Dataset.Shape, template: TaskTemplate
+    ) throws -> ContrastMode {
+        switch (shape, template.isTemplatePair) {
         case (.contentPair, false):
             return .supervisedContent
         case (.singleStimulus, true):

@@ -3326,7 +3326,9 @@ public struct ClusterClient: Sendable {
         templateJSON: String? = nil,
         pairsJSONL: String,
         layers: [Int]? = nil,
-        outputName: String? = nil
+        outputName: String? = nil,
+        extractionRendering: ExtractionRendering? = nil,
+        orientationSeed: UInt64? = nil
     ) async throws -> String {
         struct Body: Encodable {
             var concept: String
@@ -3337,6 +3339,14 @@ public struct ClusterClient: Sendable {
             var pairsJSONL: String
             var layers: [Int]?
             var outputName: String?
+            /// HOW the scaffold reaches the model, re-parsed by the route's
+            /// own strict parser. Absent = raw, which is what an untouched
+            /// panel sends, so the request bytes stay identical to every fit
+            /// queued before the rendering became declarable.
+            var extractionRendering: ExtractionRendering?
+            /// The seeded T+/T− orientation draw. Absent lets the server
+            /// stamp its own default seed.
+            var orientationSeed: UInt64?
         }
         struct Response: Decodable { var jobId: String }
         let response: Response = try await post(
@@ -3344,7 +3354,9 @@ public struct ClusterClient: Sendable {
             body: Body(
                 concept: concept, modelID: modelID, revision: revision,
                 templateID: templateID, templateJSON: templateJSON,
-                pairsJSONL: pairsJSONL, layers: layers, outputName: outputName))
+                pairsJSONL: pairsJSONL, layers: layers, outputName: outputName,
+                extractionRendering: extractionRendering,
+                orientationSeed: orientationSeed))
         return response.jobId
     }
 
