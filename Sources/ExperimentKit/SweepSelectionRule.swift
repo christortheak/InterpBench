@@ -20,7 +20,40 @@ public enum SweepSelectionRule {
     public static let implementedMetrics = ["markerDensity", "judgeScore", "logprobShift"]
 
     public static let defaultCapabilityTolerance = 0.15
+    /// The LEGACY absolute distinct-2 floor. Still the resolved value for
+    /// every criterion declared before the baseline-relative form existed, and
+    /// still what a criterion declaring `coherenceFloor` alone means.
     public static let defaultCoherenceFloor = 0.45
+
+    // MARK: - The baseline-relative coherence floor
+    //
+    // An ABSOLUTE distinct-2 floor gates against a fixed number, and a fixed
+    // number cannot know what the model's own prose looks like. A sweep
+    // admitted a cell at distinct-2 0.535 against a baseline of 0.989 —
+    // barely half the coherence the unsteered model produced, and 65% longer
+    // output — and its logprobShift was REPETITION rather than steering, which
+    // is precisely the failure the floor exists to catch. 0.535 clears 0.45,
+    // so the gate said yes.
+    //
+    // The floor a sweep declares from now on is therefore relative to the α=0
+    // baseline cell, with an absolute backstop underneath it: a cell passes
+    // when its distinct-2 is at least `ratio ×` the baseline's AND at least
+    // `backstop`. The backstop is what keeps a degenerate BASELINE from
+    // licensing a degenerate winner.
+    //
+    // Existing pinned criteria are untouched, forever: a constraints block
+    // with neither new field means the ABSOLUTE rule at its declared (or
+    // default) `coherenceFloor`, which is exactly what those studies ran.
+
+    /// Default `distinct2 ≥ ratio × baseline.distinct2`.
+    public static let defaultCoherenceRatio = 0.85
+    /// Default absolute backstop under the relative floor.
+    public static let defaultCoherenceBackstop = 0.60
+    /// A cell's mean output length above this multiple of the baseline's is
+    /// FLAGGED in the sweep report. A flag, never a gate: length inflation is
+    /// evidence a reader needs when interpreting a metric, not a rule about
+    /// which cells may win.
+    public static let lengthInflationFactor = 1.5
 
     /// What a capability tolerance can actually gate on, given how many
     /// items the battery holds (C4).
@@ -82,11 +115,36 @@ public enum SweepSelectionRule {
     public struct Resolved: Sendable, Equatable {
         public var metric: String
         public var capabilityTolerance: Double
+        /// The ABSOLUTE distinct-2 floor. Under the legacy rule this IS the
+        /// gate; under the baseline-relative rule it carries the backstop, so
+        /// every surface that reads one absolute number keeps reading a true
+        /// one (the number below which no cell passes either way).
         public var coherenceFloor: Double
+        /// Non-nil = the BASELINE-RELATIVE rule: a cell passes coherence only
+        /// when its distinct-2 is at least this multiple of the α=0
+        /// baseline's AND at least `coherenceFloor` (the backstop). Nil = the
+        /// legacy absolute rule, which is what every criterion declared
+        /// before this form means and will mean forever.
+        public var coherenceRatioToBaseline: Double?
         public var matchedNormRandomMargin: Double?
         /// "winner" (historical) or "topK" — see the Controls doc.
         public var controlApplyTo: String = "winner"
         public var controlTopK: Int?
+
+        /// Whether this criterion gates coherence against the baseline.
+        public var isBaselineRelativeCoherence: Bool {
+            coherenceRatioToBaseline != nil
+        }
+
+        /// The coherence rule in one clause, in the words both engines print.
+        /// Server twin: `SelectionCriterion.coherence_summary`.
+        public var coherenceSummary: String {
+            guard let ratio = coherenceRatioToBaseline else {
+                return "coherence floor \(coherenceFloor) (absolute distinct-2)"
+            }
+            return "coherence floor \(ratio)× the α=0 baseline's distinct-2, "
+                + "backstop \(coherenceFloor)"
+        }
 
         /// The resolved criterion in the manifest's own JSON shape — embedded
         /// verbatim in selection provenance and promotion birth certificates.
@@ -123,7 +181,14 @@ public enum SweepSelectionRule {
                 objective: objective,
                 constraints: .init(
                     capabilityTolerance: capabilityTolerance,
-                    coherenceFloor: coherenceFloor),
+                    coherenceFloor: coherenceFloor,
+                    // Emitted only under the relative rule, so a legacy
+                    // criterion round-trips to byte-identical JSON and keeps
+                    // its content hash — and so "no new fields" keeps meaning
+                    // "the absolute rule", forever.
+                    coherenceRatioToBaseline: coherenceRatioToBaseline,
+                    coherenceAbsoluteBackstop: coherenceRatioToBaseline == nil
+                        ? nil : coherenceFloor),
                 controls: matchedNormRandomMargin.map {
                     .init(
                         matchedNormRandomMargin: $0,
@@ -172,6 +237,71 @@ public enum SweepSelectionRule {
     /// Resolve a manifest `sweep.selection` block (or nil) to the criterion
     /// the sweep applies. Throws at sweep START for declared-but-unimplemented
     /// metrics and for unknown metric strings — never mid-run.
+    // MARK: - Coherence refusals (cross-engine literals; server twin:
+    // `sweep_selection.resolve_selection`)
+
+    public static func coherenceRatioRangeRefusal(_ value: Double) -> String {
+        "sweep.selection coherenceRatioToBaseline must be a finite number in "
+            + "(0, 1] — got \(value). It is a FRACTION of the α=0 baseline's "
+            + "distinct-2, so 1 means 'as coherent as the unsteered model' and "
+            + "anything above 1 asks a steered cell to beat it"
+    }
+
+    public static func coherenceBackstopRangeRefusal(_ value: Double) -> String {
+        "sweep.selection coherenceAbsoluteBackstop must be a finite number in "
+            + "[0, 1) — got \(value). It is the absolute distinct-2 no cell may "
+            + "fall below however incoherent the baseline was; 1 would admit "
+            + "nothing"
+    }
+
+    public static func coherenceOrderRefusal(
+        ratio: Double, backstop: Double
+    ) -> String {
+        "sweep.selection declares a baseline-relative coherence floor of "
+            + "\(ratio)× with an absolute backstop of \(backstop), but the "
+            + "backstop must sit UNDER the relative bar (backstop < ratio). A "
+            + "baseline's distinct-2 is at most 1, so a bar of \(ratio)× can "
+            + "never demand more than \(ratio) — a backstop of \(backstop) "
+            + "would gate every cell absolutely while the criterion reads as "
+            + "relative"
+    }
+
+    /// Does this cell clear the coherence gate? THE one place the rule lives,
+    /// so selection, ranking, the no-selection reason and the grid's cell
+    /// marking cannot drift from each other — the drift that let a degenerate
+    /// cell through in the first place. Server twin: `coherence_passes`.
+    public static func coherencePasses(
+        distinct2: Double, baselineDistinct2: Double, criterion: Resolved
+    ) -> Bool {
+        guard let ratio = criterion.coherenceRatioToBaseline else {
+            return distinct2 >= criterion.coherenceFloor
+        }
+        return distinct2 >= ratio * baselineDistinct2
+            && distinct2 >= criterion.coherenceFloor
+    }
+
+    /// A cell's distinct-2 as a fraction of the baseline's — the number the
+    /// relative floor gates on, reported for EVERY cell whichever rule is in
+    /// force. Nil when the baseline's own distinct-2 is 0 (the ratio is
+    /// undefined, and reporting 0 or ∞ would be an invented fact).
+    public static func distinct2Ratio(
+        distinct2: Double, baselineDistinct2: Double
+    ) -> Double? {
+        guard baselineDistinct2 > 0 else { return nil }
+        return distinct2 / baselineDistinct2
+    }
+
+    /// Whether this cell's mean output length exceeds
+    /// `lengthInflationFactor ×` the baseline's — a REPORTED column, never a
+    /// gate. The degenerate cell that motivated the relative floor ran 65%
+    /// long, and a reader looking at a logprobShift owes themselves that fact.
+    public static func lengthInflated(
+        meanWords: Double, baselineMeanWords: Double
+    ) -> Bool {
+        baselineMeanWords > 0
+            && meanWords > lengthInflationFactor * baselineMeanWords
+    }
+
     public static func resolve(
         _ spec: ExperimentManifest.SweepSelection?
     ) throws -> Resolved {
@@ -197,11 +327,45 @@ public enum SweepSelectionRule {
                 reason: "sweep.selection capabilityTolerance must be a finite "
                     + "number in [0, 1] — got \(tolerance)")
         }
-        let floor = spec?.constraints?.coherenceFloor ?? defaultCoherenceFloor
-        guard floor.isFinite, floor >= 0, floor <= 1 else {
-            throw ExperimentError(
-                reason: "sweep.selection coherenceFloor must be a finite "
-                    + "number in [0, 1] — got \(floor)")
+        // WHICH coherence rule this criterion declares is decided by the
+        // PRESENCE of either relative field — never by their values — so a
+        // constraints block written before the relative form existed keeps
+        // its absolute semantics permanently, and a stamped criterion decodes
+        // to the rule that actually ran.
+        let declaredRatio = spec?.constraints?.coherenceRatioToBaseline
+        let declaredBackstop = spec?.constraints?.coherenceAbsoluteBackstop
+        let relative = declaredRatio != nil || declaredBackstop != nil
+        let declaredFloor = spec?.constraints?.coherenceFloor
+        let floor: Double
+        if relative {
+            let ratio = declaredRatio ?? defaultCoherenceRatio
+            let backstop = declaredBackstop ?? defaultCoherenceBackstop
+            guard ratio.isFinite, ratio > 0, ratio <= 1 else {
+                throw ExperimentError(
+                    reason: coherenceRatioRangeRefusal(ratio))
+            }
+            guard backstop.isFinite, backstop >= 0, backstop < 1 else {
+                throw ExperimentError(
+                    reason: coherenceBackstopRangeRefusal(backstop))
+            }
+            // Ascending sanity: the backstop sits UNDER the relative bar. A
+            // backstop at or above the ratio can never be the looser of the
+            // two (the baseline's distinct-2 is at most 1, so the relative
+            // bar is at most `ratio`), which means the declaration says
+            // "relative" and behaves absolutely — a criterion that reads as
+            // one thing and gates as another.
+            guard backstop < ratio else {
+                throw ExperimentError(
+                    reason: coherenceOrderRefusal(ratio: ratio, backstop: backstop))
+            }
+            floor = backstop
+        } else {
+            floor = declaredFloor ?? defaultCoherenceFloor
+            guard floor.isFinite, floor >= 0, floor <= 1 else {
+                throw ExperimentError(
+                    reason: "sweep.selection coherenceFloor must be a finite "
+                        + "number in [0, 1] — got \(floor)")
+            }
         }
         let margin = spec?.controls?.matchedNormRandomMargin
         if let margin {
@@ -242,6 +406,8 @@ public enum SweepSelectionRule {
             metric: metric,
             capabilityTolerance: tolerance,
             coherenceFloor: floor,
+            coherenceRatioToBaseline: relative
+                ? (declaredRatio ?? defaultCoherenceRatio) : nil,
             matchedNormRandomMargin: margin,
             controlApplyTo: applyTo,
             controlTopK: applyTo == "topK" ? topK : nil)
@@ -581,7 +747,9 @@ public enum SweepSelectionRule {
         for cell in cells {
             let eligible =
                 cell.batteryAccuracy >= baseline.batteryAccuracy - criterion.capabilityTolerance
-                && cell.distinct2 >= criterion.coherenceFloor
+                && coherencePasses(
+                    distinct2: cell.distinct2,
+                    baselineDistinct2: baseline.distinct2, criterion: criterion)
             guard eligible else { continue }
             if cell.metric > (best?.metric ?? baseline.metric) {
                 best = cell
@@ -609,7 +777,10 @@ public enum SweepSelectionRule {
             .filter {
                 $0.element.batteryAccuracy
                     >= baseline.batteryAccuracy - criterion.capabilityTolerance
-                    && $0.element.distinct2 >= criterion.coherenceFloor
+                    && coherencePasses(
+                        distinct2: $0.element.distinct2,
+                        baselineDistinct2: baseline.distinct2,
+                        criterion: criterion)
                     && $0.element.metric > baseline.metric
             }
             .sorted {

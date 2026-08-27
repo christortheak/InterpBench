@@ -6526,12 +6526,20 @@ public enum ExperimentTasks {
     /// into an invisible multi-gigabyte fetch at the start of an evaluate.
     /// Refusing on the is-installed test — the same membership test every
     /// installed badge reads — costs a directory listing.
+    ///
+    /// `revision` names the PIN when the judge declares one (round 8, finding
+    /// 3): the cache can hold this model at a different revision, in which
+    /// case "not installed" on its own sends the reader to look at a Models
+    /// list that shows the model present.
     static func localJudgeNotInstalledMessage(
-        judgeName: String, model: String
+        judgeName: String, model: String, revision: String? = nil
     ) -> String {
-        "local judge '\(judgeName)' declares model '\(model)', which is not "
-            + "installed on this Mac — install it first; a judging run never "
-            + "downloads weights on your behalf"
+        let pin = (revision?.trimmingCharacters(in: .whitespacesAndNewlines))
+            .flatMap { $0.isEmpty ? nil : " at the pinned revision \($0.prefix(12))…" }
+            ?? ""
+        return "local judge '\(judgeName)' declares model '\(model)', which is "
+            + "not installed on this Mac\(pin) — install it first; a judging "
+            + "run never downloads weights on your behalf"
     }
 
     /// TEST SEAM (counting fake judge): when set, every judge call routes
@@ -6846,10 +6854,19 @@ public enum ExperimentTasks {
         if judgeOverrideForTesting == nil {
             for judge in judges where judge.kind == "local" {
                 if localContainers[judge.model] == nil {
-                    guard SteeredContainerLoader.isCached(modelID: judge.model) else {
+                    // The guard asks about the EXACT revision the next line
+                    // loads (review round 8, finding 3) — a cache holding
+                    // revision A used to satisfy a judge pinned to B, and the
+                    // load then fetched B over the network, which is the one
+                    // thing this guard exists to prevent.
+                    guard
+                        SteeredContainerLoader.isCached(
+                            modelID: judge.model, revision: judge.revision)
+                    else {
                         throw ExperimentError(
                             reason: localJudgeNotInstalledMessage(
-                                judgeName: judge.name, model: judge.model))
+                                judgeName: judge.name, model: judge.model,
+                                revision: judge.revision))
                     }
                     print("loading local judge model \(judge.model)")
                     do {
@@ -7408,10 +7425,15 @@ public enum ExperimentTasks {
         if codingOverrideForTesting == nil {
             for judge in judges where judge.kind == "local" {
                 if localContainers[judge.model] == nil {
-                    guard SteeredContainerLoader.isCached(modelID: judge.model) else {
+                    // Same exact-revision guard as the paired loop above.
+                    guard
+                        SteeredContainerLoader.isCached(
+                            modelID: judge.model, revision: judge.revision)
+                    else {
                         throw ExperimentError(
                             reason: localJudgeNotInstalledMessage(
-                                judgeName: judge.name, model: judge.model))
+                                judgeName: judge.name, model: judge.model,
+                                revision: judge.revision))
                     }
                     print("loading local judge model \(judge.model)")
                     do {
@@ -8259,7 +8281,7 @@ public enum ExperimentTasks {
             manifest: manifest, container: container, into: runDirectory)
 
         let extraMetric = objective.metric != "markerDensity"
-        var csv = "concept,layer,alpha,markerDensity,distinct2,batteryAccuracy"
+        var csv = SweepRunCatalog.csvHeader
         csv += extraMetric ? ",objective\n" : "\n"
         var recommendations: [String: Any] = [:]
 
@@ -8324,9 +8346,18 @@ public enum ExperimentTasks {
             }
             let baselineDensity = mean(baselineTexts.map { rubric?.density(in: $0) ?? 0 })
             let baselineDistinct = mean(baselineTexts.map(distinctBigramRatio))
+            // Mean output length, measured for the first time on this engine
+            // (the server has always written it as `words`). It is the input
+            // to the length-inflation flag: the degenerate cell that motivated
+            // the baseline-relative floor ran 65% long, and a reader looking
+            // at a logprobShift is owed that fact.
+            let baselineWords = mean(baselineTexts.map { Float(wordCount($0)) })
             let baselineMetric = SweepSelectionRule.baselineMetric(
                 objective.metric, baselineDensity: Double(baselineDensity))
-            csv += "\(ref.name),-1,0,\(baselineDensity),\(baselineDistinct),\(baselineAccuracy)"
+            // The baseline is its own reference, so its ratio is 1 and it is
+            // never length-inflated.
+            csv += "\(ref.name),-1,0,\(baselineDensity),\(baselineDistinct),1.0,"
+            csv += "\(baselineWords),false,\(baselineAccuracy)"
             csv += extraMetric ? ",\(baselineMetric)\n" : "\n"
             await emit(
                 "\(ref.name) baseline: density \(baselineDensity), "
@@ -8376,6 +8407,7 @@ public enum ExperimentTasks {
                     }
                     let density = mean(texts.map { rubric?.density(in: $0) ?? 0 })
                     let distinct = mean(texts.map(distinctBigramRatio))
+                    let words = mean(texts.map { Float(wordCount($0)) })
                     guard
                         let accuracy = try await batteryAccuracy(
                             container, battery: battery, modelID: manifest.modelID,
@@ -8410,10 +8442,30 @@ public enum ExperimentTasks {
                     default:
                         metricValue = Double(density)
                     }
-                    csv += "\(ref.name),\(layer),\(alpha),\(density),\(distinct),\(accuracy)"
+                    // Reported for EVERY cell whichever coherence rule is in
+                    // force: the number the baseline-relative floor gates on,
+                    // and the length flag beside it.
+                    let ratio = SweepSelectionRule.distinct2Ratio(
+                        distinct2: Double(distinct),
+                        baselineDistinct2: Double(baselineDistinct))
+                    let inflated = SweepSelectionRule.lengthInflated(
+                        meanWords: Double(words),
+                        baselineMeanWords: Double(baselineWords))
+                    let ratioField: String = ratio.map { "\($0)" } ?? ""
+                    csv += "\(ref.name),\(layer),\(alpha),\(density),\(distinct),"
+                    csv += ratioField
+                    csv += ",\(words),\(inflated),\(accuracy)"
                     csv += extraMetric ? ",\(metricValue)\n" : "\n"
                     var line = "\(ref.name) L\(layer) α\(alpha): density \(density), "
-                    line += "distinct2 \(distinct), battery \(accuracy)"
+                    line += "distinct2 \(distinct)"
+                    if let ratio {
+                        line += " (\(ratio)× baseline)"
+                    }
+                    line += ", battery \(accuracy)"
+                    if inflated {
+                        line += ", ⚠︎ output \(words) words vs baseline "
+                            + "\(baselineWords)"
+                    }
                     if extraMetric {
                         line += ", \(objective.metric) \(metricValue)"
                     }

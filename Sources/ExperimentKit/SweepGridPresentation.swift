@@ -19,6 +19,14 @@ public enum SweepGridPresentation {
         /// the sweep recorded one, else marker density.
         public var score: Double
         public var distinct2: Double
+        /// This cell's distinct-2 as a fraction of the α=0 baseline's — the
+        /// number the baseline-relative coherence floor gates on, reported
+        /// whichever rule is in force. nil in runs written before the column.
+        public var distinct2Ratio: Double?
+        /// Mean output length ran more than 1.5× the baseline's. A REPORTED
+        /// flag, never a gate — but the fact a reader needs before believing
+        /// a metric that repetition can inflate.
+        public var lengthInflated: Bool = false
         public var batteryAccuracy: Double
         public var state: SweepRunCatalog.CellState
 
@@ -166,7 +174,9 @@ public enum SweepGridPresentation {
             }
             return Cell(
                 layer: row.layer, alpha: row.alpha, score: score(row),
-                distinct2: row.distinct2, batteryAccuracy: row.batteryAccuracy,
+                distinct2: row.distinct2, distinct2Ratio: row.distinct2Ratio,
+                lengthInflated: row.lengthInflated,
+                batteryAccuracy: row.batteryAccuracy,
                 state: state, intensity: intensity)
         }
 
@@ -178,7 +188,8 @@ public enum SweepGridPresentation {
             baseline: baselineRow.map { row in
                 Cell(
                     layer: row.layer, alpha: row.alpha, score: score(row),
-                    distinct2: row.distinct2,
+                    distinct2: row.distinct2, distinct2Ratio: row.distinct2Ratio,
+                    lengthInflated: row.lengthInflated,
                     batteryAccuracy: row.batteryAccuracy,
                     state: .baseline, intensity: nil)
             },

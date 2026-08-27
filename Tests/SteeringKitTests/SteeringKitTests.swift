@@ -50,6 +50,163 @@ import Foundation
             !SteeredContainerLoader.isCached(
                 modelID: "vendor-b/model-large-8bit", cacheRoot: root))
     }
+
+    // MARK: - The exact-revision, complete-snapshot guard (round 8, finding 3)
+
+    /// Writes a cache entry: `refs/main` naming `commit`, and a snapshot
+    /// directory under `snapshots/<commit>` holding exactly `files`.
+    static func writeCacheEntry(
+        root: URL, modelID: String, commit: String, ref: String? = "main",
+        files: [String: String]
+    ) throws {
+        let fm = FileManager.default
+        let repo = "models--" + modelID.replacingOccurrences(of: "/", with: "--")
+        let modelDir = root.appending(components: "hub", repo)
+        if let ref {
+            try fm.createDirectory(
+                at: modelDir.appending(component: "refs"),
+                withIntermediateDirectories: true)
+            try commit.write(
+                to: modelDir.appending(components: "refs", ref),
+                atomically: true, encoding: .utf8)
+        }
+        let snapshot = modelDir.appending(components: "snapshots", commit)
+        try fm.createDirectory(at: snapshot, withIntermediateDirectories: true)
+        for (name, contents) in files {
+            try contents.write(
+                to: snapshot.appending(component: name), atomically: true,
+                encoding: .utf8)
+        }
+    }
+
+    /// A complete single-shard snapshot: what an install that finished looks
+    /// like on disk.
+    static let completeSnapshot: [String: String] = [
+        "config.json": "{}", "tokenizer_config.json": "{}",
+        "tokenizer.json": "{}", "model.safetensors": "weights",
+    ]
+
+    static func temporaryCacheRoot() -> URL {
+        FileManager.default.temporaryDirectory
+            .appending(component: "hf-\(UUID().uuidString)")
+    }
+
+    /// THE finding: a cache holding revision A satisfied a load pinned to
+    /// revision B, and the load then fetched B over the network — the exact
+    /// thing the no-download guard exists to prevent.
+    @Test func theRevisionGuardAsksAboutTheRevisionTheLoadWillRequest() throws {
+        let root = Self.temporaryCacheRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cached = String(repeating: "a", count: 40)
+        let pinned = String(repeating: "b", count: 40)
+        try Self.writeCacheEntry(
+            root: root, modelID: "vendor-a/model-small-4bit", commit: cached,
+            files: Self.completeSnapshot)
+
+        // The repo-id-only question still answers yes — this Mac does hold
+        // the model, which is the right answer for an installed badge.
+        #expect(
+            SteeredContainerLoader.isCached(
+                modelID: "vendor-a/model-small-4bit", cacheRoot: root))
+        // The LOAD question is revision-specific, and answers each spelling
+        // of the cached revision the same way.
+        #expect(
+            SteeredContainerLoader.isCached(
+                modelID: "vendor-a/model-small-4bit", revision: cached,
+                cacheRoot: root))
+        #expect(
+            SteeredContainerLoader.isCached(
+                modelID: "vendor-a/model-small-4bit", revision: nil,
+                cacheRoot: root))
+        #expect(
+            SteeredContainerLoader.isCached(
+                modelID: "vendor-a/model-small-4bit", revision: "main",
+                cacheRoot: root))
+        // A DIFFERENT pin is not cached, however complete the other one is.
+        #expect(
+            !SteeredContainerLoader.isCached(
+                modelID: "vendor-a/model-small-4bit", revision: pinned,
+                cacheRoot: root))
+        // Nor is a ref this cache has never fetched.
+        #expect(
+            !SteeredContainerLoader.isCached(
+                modelID: "vendor-a/model-small-4bit", revision: "some-branch",
+                cacheRoot: root))
+    }
+
+    /// The other half: a snapshot that EXISTS but cannot be loaded. Each
+    /// omission is one of the files `LLMModelFactory._load` actually opens.
+    @Test func anIncompleteSnapshotIsNotCached() throws {
+        for missing in ["config.json", "tokenizer_config.json",
+                        "tokenizer.json", "model.safetensors"] {
+            let root = Self.temporaryCacheRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            var files = Self.completeSnapshot
+            files.removeValue(forKey: missing)
+            try Self.writeCacheEntry(
+                root: root, modelID: "vendor-a/partial", commit: "c0ffee",
+                files: files)
+            #expect(
+                !SteeredContainerLoader.isCached(
+                    modelID: "vendor-a/partial", revision: nil, cacheRoot: root),
+                "a snapshot missing \(missing) is not loadable")
+        }
+    }
+
+    /// A `snapshots` PATH existing was the whole of the old marker test, and
+    /// an interrupted install is exactly that shape.
+    @Test func aRepoWithNoSnapshotDirectoryIsNotCachedAtAnyRevision() throws {
+        let root = Self.temporaryCacheRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        let modelDir = root.appending(
+            components: "hub", "models--vendor-a--never-fetched")
+        try fm.createDirectory(
+            at: modelDir.appending(component: "refs"),
+            withIntermediateDirectories: true)
+        try "abc123".write(
+            to: modelDir.appending(components: "refs", "main"),
+            atomically: true, encoding: .utf8)
+
+        #expect(
+            SteeredContainerLoader.isCached(
+                modelID: "vendor-a/never-fetched", cacheRoot: root))
+        #expect(
+            !SteeredContainerLoader.isCached(
+                modelID: "vendor-a/never-fetched", revision: nil,
+                cacheRoot: root))
+    }
+
+    /// A SHARDED model: the index names every shard, and one absent shard is
+    /// an incomplete download however many of the others landed.
+    @Test func aShardedSnapshotNeedsEveryShardTheIndexNames() throws {
+        let index = """
+            {"weight_map": {"a.weight": "model-00001-of-00002.safetensors", \
+            "b.weight": "model-00002-of-00002.safetensors"}}
+            """
+        let root = Self.temporaryCacheRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var partial = Self.completeSnapshot
+        partial.removeValue(forKey: "model.safetensors")
+        partial["model.safetensors.index.json"] = index
+        partial["model-00001-of-00002.safetensors"] = "shard one"
+        try Self.writeCacheEntry(
+            root: root, modelID: "vendor-a/sharded", commit: "d00d",
+            files: partial)
+        #expect(
+            !SteeredContainerLoader.isCached(
+                modelID: "vendor-a/sharded", revision: nil, cacheRoot: root))
+
+        let complete = Self.temporaryCacheRoot()
+        defer { try? FileManager.default.removeItem(at: complete) }
+        partial["model-00002-of-00002.safetensors"] = "shard two"
+        try Self.writeCacheEntry(
+            root: complete, modelID: "vendor-a/sharded", commit: "d00d",
+            files: partial)
+        #expect(
+            SteeredContainerLoader.isCached(
+                modelID: "vendor-a/sharded", revision: nil, cacheRoot: complete))
+    }
 }
 
 /// A model's own `config.json` must never be able to kill the process.

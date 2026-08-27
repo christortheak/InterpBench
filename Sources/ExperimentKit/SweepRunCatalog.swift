@@ -28,6 +28,19 @@ public enum SweepRunCatalog {
         /// markerDensity sweeps and for runs that predate the column; marker
         /// density then remains the only displayable expression score.
         public var objective: Double?
+        /// This cell's distinct-2 as a fraction of the α=0 baseline's — the
+        /// number the baseline-relative coherence floor gates on, reported for
+        /// every cell whichever rule is in force. nil for a run that predates
+        /// the column, and for a sweep whose baseline distinct-2 was 0 (the
+        /// ratio is undefined and inventing one would be a fact nobody
+        /// measured).
+        public var distinct2Ratio: Double?
+        /// Mean output length in whitespace words. nil in pre-column Swift
+        /// runs; the server has always written it as `words`.
+        public var words: Double?
+        /// This cell's mean output length exceeds 1.5× the baseline's — a
+        /// REPORTED flag, never a gate.
+        public var lengthInflated: Bool
 
         /// The no-injection anchor row (written with layer -1, alpha 0).
         public var isBaseline: Bool { layer < 0 }
@@ -35,7 +48,8 @@ public enum SweepRunCatalog {
         public init(
             concept: String, layer: Int, alpha: Double,
             markerDensity: Double, distinct2: Double, batteryAccuracy: Double,
-            objective: Double? = nil
+            objective: Double? = nil, distinct2Ratio: Double? = nil,
+            words: Double? = nil, lengthInflated: Bool = false
         ) {
             self.concept = concept
             self.layer = layer
@@ -44,15 +58,20 @@ public enum SweepRunCatalog {
             self.distinct2 = distinct2
             self.batteryAccuracy = batteryAccuracy
             self.objective = objective
+            self.distinct2Ratio = distinct2Ratio
+            self.words = words
+            self.lengthInflated = lengthInflated
         }
     }
 
-    /// The Swift writer's canonical column order. The PARSER is header-name
-    /// driven (below) — it accepts any column order and ignores unknown extra
-    /// columns, because the server's sweep.csv adds a `words` column and both
-    /// engines' artifacts must load in the Optimizations UI.
+    /// The canonical column order — and, since the baseline-relative coherence
+    /// floor landed, the SAME order on both engines. The PARSER is header-name
+    /// driven (below): it accepts any column order and ignores unknown extra
+    /// columns, and every column added here is optional on read, so a sweep
+    /// run written before them still loads in the Optimizations UI.
     public static let csvHeader =
-        "concept,layer,alpha,markerDensity,distinct2,batteryAccuracy"
+        "concept,layer,alpha,markerDensity,distinct2,distinct2Ratio,words,"
+        + "lengthInflated,batteryAccuracy"
 
     /// Columns every sweep.csv must carry, whatever engine wrote it.
     /// `batteryAccuracy` is expected but tolerated-absent (legacy files):
@@ -100,6 +119,13 @@ public enum SweepRunCatalog {
         // must render whatever a run recorded — absent or unparseable
         // objective values become nil, never a load failure.
         let objectiveIndex = index["objective"]
+        // Same tolerance for the reporting columns: present in runs written
+        // since the baseline-relative floor landed, absent before it, and an
+        // empty cell means "undefined" (a baseline whose own distinct-2 was 0
+        // has no ratio) rather than a load failure.
+        let ratioIndex = index["distinct2Ratio"]
+        let wordsIndex = index["words"]
+        let inflatedIndex = index["lengthInflated"]
         lines.removeFirst()
 
         var rows: [Row] = []
@@ -128,7 +154,12 @@ public enum SweepRunCatalog {
                     concept: fields[conceptIndex], layer: layer, alpha: alpha,
                     markerDensity: density, distinct2: distinct,
                     batteryAccuracy: accuracy,
-                    objective: objectiveIndex.flatMap { Double(fields[$0]) }))
+                    objective: objectiveIndex.flatMap { Double(fields[$0]) },
+                    distinct2Ratio: ratioIndex.flatMap { Double(fields[$0]) },
+                    words: wordsIndex.flatMap { Double(fields[$0]) },
+                    lengthInflated: inflatedIndex.map {
+                        fields[$0].lowercased() == "true"
+                    } ?? false))
         }
         return rows
     }
@@ -214,9 +245,14 @@ public enum SweepRunCatalog {
             let eligible =
                 row.batteryAccuracy
                     >= baseline.batteryAccuracy - criterion.capabilityTolerance
-                && row.distinct2 >= criterion.coherenceFloor
+                && SweepSelectionRule.coherencePasses(
+                    distinct2: row.distinct2,
+                    baselineDistinct2: baseline.distinct2, criterion: criterion)
             if !eligible { return .failedConstraint }
         } else if row.distinct2 < criterion.coherenceFloor {
+            // No baseline row: only the ABSOLUTE half can judge — which under
+            // the baseline-relative rule is the backstop, the number
+            // `coherenceFloor` carries.
             // No baseline row: only the absolute coherence floor can judge.
             return .failedConstraint
         }

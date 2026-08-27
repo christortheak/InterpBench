@@ -625,6 +625,24 @@ def reader_derived_norm_backfill_refusal(rel: str) -> str:
             "α in norm units is meaningless until the denominator is measured")
 
 
+def mirrored_pole_stimulus_mismatch(artifact: str, where: str,
+                                    source_concept: str, pinned: str,
+                                    live: str | None) -> str:
+    """A mirrored pole whose concept directory does not hold the parent's two
+    files with their roles swapped. Named once, because attach and verify both
+    say it. Swift twin: ``ExperimentStore.mirroredPoleStimulusMismatch``."""
+    parent = (f"source concept '{source_concept}''s" if source_concept
+              else "its source concept's")
+    return (f"vector artifact '{artifact}' is a MIRRORED pole "
+            f"(polesSwappedFromSource) of stimuli hashing {pinned[:12]}…, so "
+            f"{where} must hold {parent} two files with their "
+            "positive/negative roles SWAPPED — but hashing them in the "
+            f"source's order gives {(live or '')[:12]}…. Author the mirrored "
+            "concept's positive.jsonl from the source's negative.jsonl and its "
+            "negative.jsonl from the source's positive.jsonl (byte for byte), "
+            "or pass the right source concept")
+
+
 def attach_artifact(name: str, concept: str, artifact_path: str, *,
                     source_concept: str | None = None,
                     eval_run: str | None = None,
@@ -825,10 +843,45 @@ def attach_artifact(name: str, concept: str, artifact_path: str, *,
                 "optvec vector with no recorded objective certifies nothing. "
                 "Re-attach the artifact the training run wrote (or its "
                 "norm-backfilled copy, which preserves the block verbatim)")
+    # A MIRRORED POLE declares its stimuli differently, and the difference is
+    # the whole of external review round 8, finding 1.
+    #
+    # :mod:`steerlab_server.steering.pole_mirror` mints the opposite end of a
+    # contrastive direction and carries the parent's ``stimulusSetHash``
+    # VERBATIM, qualified by ``polesSwappedFromSource: true`` — the honest
+    # stamp, because the mirrored concept's stimuli are the same two files with
+    # the positive/negative roles exchanged. But the hash is ORDER-SENSITIVE
+    # (``sha256(positive ‖ negative)``), so the mirrored concept's own
+    # directory hashes to something else entirely, and the equality check below
+    # refused every mirrored artifact under its own concept: the verb minted an
+    # artifact no study could cite.
+    #
+    # The fix is to compare the RIGHT CLAIM rather than to weaken any hash. The
+    # sidecar's claim is "these are concept X's two files with their roles
+    # swapped", so this concept's files are hashed in the PARENT's order
+    # (negative ‖ positive) and compared to the inherited hash. Nothing is
+    # loosened: a mirrored pole whose directory holds different bytes, or the
+    # same bytes in the same order as the parent, still refuses.
+    mirrored_pole = bool(sidecar.get("polesSwappedFromSource")) \
+        and method.has_source_concept and not method.uses_story_corpus
     # The pin must be one verify() could pass the moment it is written:
     # attach never records a hash the very next verify would reject.
     from . import multiconcept
-    if not method.has_source_concept:
+    # For a mirrored pole this is the concept's OWN hash — what the manifest
+    # pins and every later verify recomputes — while ``live`` carries the
+    # swapped-order hash the sidecar's claim is checked against. For every
+    # other concept the two are the same value.
+    own_stimulus_set_hash: str | None = None
+    if mirrored_pole:
+        try:
+            stimuli = StimulusSet.from_directory(
+                paths.concept_directory(data_concept, root))
+            live = stimuli.poles_swapped_hash
+            own_stimulus_set_hash = stimuli.hash
+        except Exception:  # noqa: BLE001 - absence IS the message below
+            live = None
+        where = f"prompts/concepts/{data_concept}/"
+    elif not method.has_source_concept:
         # The identity hash is carried through VERBATIM, because nothing on
         # disk under prompts/ can be compared against it: for optvec the
         # composite "optvec:<sha256 over the split files>" (the splits are
@@ -859,6 +912,14 @@ def attach_artifact(name: str, concept: str, artifact_path: str, *,
             f"the study could never validate '{concept}' — pass the concept "
             f"the artifact was derived from{hint}")
     if live != sidecar["stimulusSetHash"]:
+        if mirrored_pole:
+            negated = sidecar.get("negatedFrom")
+            raise ExperimentStoreError(
+                mirrored_pole_stimulus_mismatch(
+                    rel, where,
+                    str((negated or {}).get("concept", ""))
+                    if isinstance(negated, dict) else "",
+                    sidecar["stimulusSetHash"], live))
         raise ExperimentStoreError(
             f"vector artifact '{rel}' was extracted from stimuli hashing "
             f"{sidecar['stimulusSetHash'][:12]}…, but {where} now hashes "
@@ -896,7 +957,10 @@ def attach_artifact(name: str, concept: str, artifact_path: str, *,
 
     entry: dict = {
         "name": concept,
-        "stimulusSetHash": sidecar["stimulusSetHash"],
+        # A mirrored pole pins its OWN directory's hash as the live pin — that
+        # is the value verify recomputes from prompts/concepts/ — and the
+        # inherited parent hash travels in the artifact pin beside it.
+        "stimulusSetHash": own_stimulus_set_hash or sidecar["stimulusSetHash"],
         "options": {
             "method": ExtractionMethod.PINNED_ARTIFACT.value,
             "readingPosition": _reading_position_codable(
@@ -961,6 +1025,15 @@ def attach_artifact(name: str, concept: str, artifact_path: str, *,
         entry["options"]["extractionRendering"] = recorded_rendering.to_dict()
     if sidecar.get("neutralCorpusHash"):
         entry["vectorArtifact"]["normCorpusHash"] = sidecar["neutralCorpusHash"]
+    if mirrored_pole:
+        # The mirror linkage: the LIVE pin above is this concept's own hash,
+        # and this is the parent hash the sidecar inherited, so the manifest
+        # states both halves of the claim instead of leaving the relation
+        # implicit in a sidecar nobody re-reads. Both keys are ABSENT for every
+        # ordinary pin, so existing manifests re-encode byte-identically.
+        entry["vectorArtifact"]["polesSwappedFromSource"] = True
+        entry["vectorArtifact"]["sourceStimulusSetHash"] = \
+            sidecar["stimulusSetHash"]
     if method.is_designated_reference:
         ref = sidecar.get("designatedReference")
         if not (isinstance(ref, dict) and ref.get("name") and ref.get("hash")):
@@ -1219,7 +1292,8 @@ def pin_model_revision(name: str, revision: str, root: str | None = None) -> dic
 #: ``ExperimentStore.sweepSelectionOwnedFlags``.
 SWEEP_SELECTION_OWNED_FLAGS: tuple[str, ...] = (
     "--objective", "--choice-prompts", "--capability-tolerance",
-    "--coherence-floor", "--control-margin", "--control-apply-to",
+    "--coherence-floor", "--coherence-ratio", "--coherence-backstop",
+    "--control-margin", "--control-apply-to",
     "--control-top-k",
 )
 

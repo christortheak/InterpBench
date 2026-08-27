@@ -55,6 +55,21 @@ class StimulusSet:
     positive: list[str]
     negative: list[str]
     hash: str
+    #: SHA-256 over the same two files in the OPPOSITE order (negative bytes
+    #: then positive bytes): what these stimuli hash to when the
+    #: positive/negative ROLES are swapped.
+    #:
+    #: This exists for exactly one claim — a MIRRORED pole
+    #: (:mod:`steerlab_server.steering.pole_mirror`), whose concept directory
+    #: holds its parent's two files with the roles exchanged, and whose sidecar
+    #: therefore carries the PARENT's ``stimulusSetHash`` qualified by
+    #: ``polesSwappedFromSource``. Attach proves that claim by hashing the
+    #: mirrored concept's files in the parent's order and comparing
+    #: (:func:`experiment_store.attach_artifact`) — the right claim, checked,
+    #: rather than a hash comparison weakened to let the mirror through. None
+    #: for an in-memory class set, which has no files and so no order to swap.
+    #: Swift twin: ``StimulusSet.polesSwappedHash``.
+    poles_swapped_hash: str | None = None
 
     @classmethod
     def from_directory(cls, directory: str) -> "StimulusSet":
@@ -69,7 +84,8 @@ class StimulusSet:
             raise StimulusSetError(f"empty stimulus set: {name}")
         # SHA-256 over positive bytes then negative bytes — matches Swift.
         return cls(name=name, positive=positive, negative=negative,
-                   hash=_sha256_hex(positive_data, negative_data))
+                   hash=_sha256_hex(positive_data, negative_data),
+                   poles_swapped_hash=_sha256_hex(negative_data, positive_data))
 
 
 @dataclass

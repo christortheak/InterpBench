@@ -42,7 +42,8 @@ extension ExperimentStoreTests {
             try Data(#"{"name": "ad"}"#.utf8).write(
                 to: directory.appending(component: "experiment.json"))
             try Data(
-                (SweepRunCatalog.csvHeader + "\nfear,31,0.2,0.0,0.9,0.9").utf8
+                (SweepRunCatalog.csvHeader
+                    + "\nfear,31,0.2,0.0,0.9,0.91,50,false,0.9").utf8
             ).write(to: directory.appending(component: "sweep.csv"))
             let provenance = ExperimentManifest.SelectionProvenance(
                 sweepRun: "20260804T000000000-exp-ad-sweep",

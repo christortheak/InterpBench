@@ -378,9 +378,25 @@ recalibrated on live testing — a starting grid, not a finding.
 
 ```bash
 steerlab-cli experiment set-sweep-selection formality-pilot \
-    --objective judgeScore --capability-tolerance 0.15 --coherence-floor 0.45 \
+    --objective judgeScore --capability-tolerance 0.15 \
+    --coherence-ratio 0.85 --coherence-backstop 0.6 \
     --control-margin 0.05 --control-apply-to topK --control-top-k 3
 ```
+
+The flags are independent axes and the verb **merges**: re-declaring one of them
+later keeps the rest, and the success line names whatever it carried over. Only
+`--objective ""` clears the whole declaration.
+
+**The coherence floor is relative to the α=0 baseline.** A cell passes only when
+its distinct-2 holds at least `--coherence-ratio` of the baseline cell's *and*
+clears `--coherence-backstop` absolutely. This replaced a fixed floor because a
+fixed number cannot know what the model's own prose looks like: a sweep admitted
+a cell at distinct-2 0.535 against a baseline of 0.989 — half the coherence the
+unsteered model produced, on output 65% longer — whose `logprobShift` turned out
+to be repetition rather than steering. It cleared the old absolute 0.45 and was
+recommended. Declaring `--coherence-floor` instead still gives you the fixed
+number, and every criterion pinned before this change keeps the absolute
+semantics it ran under, permanently.
 
 Three objectives exist on both engines: `markerDensity` (expression of the
 concept's marker vocabulary), `judgeScore` (paired judging of each cell against
@@ -399,7 +415,12 @@ as a stop sign.
 **Read the whole grid.** The recommendation is one cell; `sweep.csv` is the
 dose-response curve and the coherence cliff. Pick a dose on the rising part of
 the curve, comfortably below collapse — not the single most expressive cell an
-optimizer found. Expression usually appears well below α ≈ 0.5 on small models
+optimizer found. Two columns are there for exactly this reading:
+`distinct2Ratio` is each cell's coherence as a fraction of the baseline's (the
+number the floor gates on), and `lengthInflated` marks a cell whose mean output
+ran more than 1.5× the baseline's. The length flag is **reported, not gated** —
+but a flagged cell with a strong objective is the shape a repetition artifact
+takes, and it should be read before it is believed. Expression usually appears well below α ≈ 0.5 on small models
 and coherence starts failing above ≈ 1, but that is a bracket to sweep, never a
 setting to adopt. And note that **the matched-norm control here is a screen,
 not specificity evidence**: `--control-apply-to winner` controls the argmax

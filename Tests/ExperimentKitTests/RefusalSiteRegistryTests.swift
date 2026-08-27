@@ -617,6 +617,139 @@ import Testing
         }
     }
 
+    /// A7 (external review round 8): `set-sweep-selection` MERGES its axes.
+    ///
+    /// It used to REPLACE the whole block, so re-declaring `--objective` on a
+    /// draft duplicated from a donor silently deleted the donor's `controls` —
+    /// six live sweep arms ran with no matched-norm control and nobody was
+    /// told. The flags are independent axes of one declaration and the sibling
+    /// verb that owns the block's other half (`set-sweep-grid`) has always
+    /// merged axis by axis, so this one does too. `--objective ""` still
+    /// clears the whole block, and `--control-margin ""` removes just the
+    /// control, so merging is not a one-way ratchet.
+    @Test func setSweepSelectionMergesAxesAndEchoesTheWholeBlock() async throws {
+        try await withTempRoot { _ in
+            await invoke(
+                "experiment",
+                ["create", "merge", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            await invoke("experiment", ["attach", "merge", "french"])
+            // The donor's declaration: an absolute (legacy) coherence floor,
+            // a non-default tolerance, and a topK matched-norm control.
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "merge", "--objective",
+                        "markerDensity", "--capability-tolerance", "0.1",
+                        "--coherence-floor", "0.5", "--control-margin", "0.05",
+                        "--control-apply-to", "topK", "--control-top-k", "3",
+                    ]
+                ).exitCode == 0)
+
+            // The objective-only re-declare — the shape of the command the
+            // workspace contract's duplicate-a-donor flow prints. (The
+            // objective is restated rather than changed so the assertion is
+            // about the MERGE and not about judgeScore's rubric pins, which
+            // this draft has not declared.)
+            let redeclared = await invoke(
+                "experiment",
+                ["set-sweep-selection", "merge", "--objective", "markerDensity"])
+            #expect(redeclared.exitCode == 0)
+            let merged = try #require(
+                try ExperimentStore.load(name: "merge").sweep?.selection)
+            #expect(merged.objective?.metric == "markerDensity")
+            // THE regression: the control survives.
+            #expect(merged.controls?.matchedNormRandomMargin == 0.05)
+            #expect(merged.controls?.applyTo == "topK")
+            #expect(merged.controls?.topK == 3)
+            // …and so does the tolerance, and the DECLARED coherence FORM: an
+            // absolute floor is never silently converted to the relative one.
+            #expect(merged.constraints?.capabilityTolerance == 0.1)
+            #expect(merged.constraints?.coherenceFloor == 0.5)
+            #expect(merged.constraints?.coherenceRatioToBaseline == nil)
+
+            // Nothing changes invisibly: the envelope echoes the whole
+            // resulting block and names what it carried over.
+            guard case .array(let inherited)? = redeclared.envelope
+                .result?["inheritedFromExistingDeclaration"]
+            else {
+                Issue.record("no inherited list in the result")
+                return
+            }
+            #expect(inherited.count == 3)
+            #expect(redeclared.envelope.result?["selection"] != nil)
+            #expect(redeclared.envelope.message.contains("kept from the existing"))
+
+            // `--control-margin ""` REMOVES the control rather than keeping it.
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "merge", "--objective",
+                        "markerDensity", "--control-margin", "",
+                    ]
+                ).exitCode == 0)
+            let cleared = try #require(
+                try ExperimentStore.load(name: "merge").sweep?.selection)
+            #expect(cleared.controls == nil)
+            #expect(cleared.constraints?.coherenceFloor == 0.5)
+        }
+    }
+
+    /// A NEW declaration takes the baseline-relative coherence floor, written
+    /// explicitly — a constraints block with neither relative field keeps
+    /// meaning the legacy absolute rule forever, so the default has to be
+    /// stated rather than inferred.
+    @Test func aNewSweepSelectionDeclaresTheRelativeCoherenceFloor()
+        async throws
+    {
+        try await withTempRoot { _ in
+            await invoke(
+                "experiment",
+                ["create", "relfloor", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            await invoke("experiment", ["attach", "relfloor", "french"])
+            let outcome = await invoke(
+                "experiment",
+                [
+                    "set-sweep-selection", "relfloor", "--objective",
+                    "markerDensity",
+                ])
+            #expect(outcome.exitCode == 0)
+            let selection = try #require(
+                try ExperimentStore.load(name: "relfloor").sweep?.selection)
+            #expect(selection.constraints?.coherenceRatioToBaseline == 0.85)
+            #expect(selection.constraints?.coherenceAbsoluteBackstop == 0.6)
+            #expect(selection.constraints?.coherenceFloor == nil)
+            #expect(
+                outcome.envelope.message.contains(
+                    "coherence floor 0.85× the α=0 baseline's distinct-2"))
+
+            // The two forms are not mixable on one command line.
+            let both = await invoke(
+                "experiment",
+                [
+                    "set-sweep-selection", "relfloor", "--objective",
+                    "markerDensity", "--coherence-floor", "0.5",
+                    "--coherence-ratio", "0.9",
+                ])
+            #expect(both.exitCode != 0)
+            #expect(both.envelope.message.contains("declare one form, not both"))
+
+            // The ascending-sanity rule refuses at declaration.
+            let inverted = await invoke(
+                "experiment",
+                [
+                    "set-sweep-selection", "relfloor", "--objective",
+                    "markerDensity", "--coherence-ratio", "0.5",
+                    "--coherence-backstop", "0.8",
+                ])
+            #expect(inverted.exitCode != 0)
+            #expect(
+                inverted.envelope.message.contains(
+                    "backstop must sit UNDER the relative bar"))
+        }
+    }
+
     /// P13. Pinned `options` + `target` do NOT engage the logprob instrument:
     /// the declaration is provenance and is never inferred from the data. The
     /// root cause is an authoring gap, and this is the verb that closes it.

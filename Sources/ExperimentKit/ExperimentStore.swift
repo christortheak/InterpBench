@@ -173,6 +173,21 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
             /// corpus it was measured on.
             public var residualNormSource: String
             public var normCorpusHash: String?
+            // MIRRORED POLE linkage (`PoleMirror`). Both absent for every
+            // ordinary pin, so existing manifests re-encode byte-identically
+            // and keep their content hash.
+            /// True when the pinned artifact is a mirrored pole: its sidecar
+            /// carries `polesSwappedFromSource`, and this concept's stimulus
+            /// directory holds the SOURCE concept's two files with their
+            /// positive/negative roles exchanged.
+            public var polesSwappedFromSource: Bool?
+            /// The sidecar's inherited `stimulusSetHash` — the SOURCE
+            /// concept's order-sensitive hash, `sha256(positive ‖ negative)`
+            /// of the parent's files. The concept's OWN hash is the pin's
+            /// `ConceptRef.stimulusSetHash` (what verify recomputes); this is
+            /// the claim that links the two, and verify re-derives it by
+            /// hashing this concept's files in the parent's order.
+            public var sourceStimulusSetHash: String?
             // OptVec provenance (additive; server writes them from the
             // sidecar's `optvec` block so the manifest is self-describing
             // about what the direction was trained to do and which eval
@@ -192,7 +207,9 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
                 path: String, sha256TensorHash: String,
                 sha256SidecarHash: String, sourceMethod: String,
                 sourceConcept: String, residualNormSource: String,
-                normCorpusHash: String? = nil, optvecLayer: Int? = nil,
+                normCorpusHash: String? = nil,
+                polesSwappedFromSource: Bool? = nil,
+                sourceStimulusSetHash: String? = nil, optvecLayer: Int? = nil,
                 optvecTrainingRun: String? = nil, optvecSeed: Int? = nil,
                 optvecEvalRun: String? = nil,
                 optvecEvalRunVerified: Bool? = nil,
@@ -205,6 +222,8 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
                 self.sourceConcept = sourceConcept
                 self.residualNormSource = residualNormSource
                 self.normCorpusHash = normCorpusHash
+                self.polesSwappedFromSource = polesSwappedFromSource
+                self.sourceStimulusSetHash = sourceStimulusSetHash
                 self.optvecLayer = optvecLayer
                 self.optvecTrainingRun = optvecTrainingRun
                 self.optvecSeed = optvecSeed
@@ -390,12 +409,33 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         public struct Constraints: Codable, Sendable, Equatable {
             /// Battery accuracy must stay within this of baseline (default 0.15).
             public var capabilityTolerance: Double?
-            /// Distinct-bigram ratio floor (default 0.45).
+            /// Distinct-bigram ratio floor. Under the LEGACY rule this is the
+            /// whole coherence gate (default 0.45); under the
+            /// baseline-relative rule it is the absolute BACKSTOP beneath the
+            /// relative bar.
             public var coherenceFloor: Double?
+            /// BASELINE-RELATIVE coherence (default for new declarations,
+            /// 0.85): a cell passes only when its distinct-2 is at least this
+            /// multiple of the α=0 baseline cell's. Its PRESENCE — either this
+            /// key or `coherenceAbsoluteBackstop` — is what selects the
+            /// relative rule, so a criterion carrying neither means the
+            /// absolute rule at `coherenceFloor` and keeps meaning that
+            /// forever. Both optional + omitted-when-nil, so every existing
+            /// manifest re-encodes byte-identically and keeps its content hash.
+            public var coherenceRatioToBaseline: Double?
+            /// The absolute floor under the relative bar (default 0.60) — what
+            /// stops a degenerate BASELINE from licensing a degenerate winner.
+            public var coherenceAbsoluteBackstop: Double?
 
-            public init(capabilityTolerance: Double? = nil, coherenceFloor: Double? = nil) {
+            public init(
+                capabilityTolerance: Double? = nil, coherenceFloor: Double? = nil,
+                coherenceRatioToBaseline: Double? = nil,
+                coherenceAbsoluteBackstop: Double? = nil
+            ) {
                 self.capabilityTolerance = capabilityTolerance
                 self.coherenceFloor = coherenceFloor
+                self.coherenceRatioToBaseline = coherenceRatioToBaseline
+                self.coherenceAbsoluteBackstop = coherenceAbsoluteBackstop
             }
         }
 
@@ -3039,7 +3079,8 @@ public enum ExperimentStore {
     /// Server twin: `experiment_store.SWEEP_SELECTION_OWNED_FLAGS`.
     static let sweepSelectionOwnedFlags = [
         "--objective", "--choice-prompts", "--capability-tolerance",
-        "--coherence-floor", "--control-margin", "--control-apply-to",
+        "--coherence-floor", "--coherence-ratio", "--coherence-backstop",
+        "--control-margin", "--control-apply-to",
         "--control-top-k",
     ]
 
@@ -4216,10 +4257,44 @@ public enum ExperimentStore {
             }
             optvecBlock = block
         }
+        // A MIRRORED POLE declares its stimuli differently, and the difference
+        // is the whole of external review round 8, finding 1.
+        //
+        // `PoleMirror` mints the opposite end of a contrastive direction and
+        // carries the parent's `stimulusSetHash` VERBATIM, qualified by
+        // `polesSwappedFromSource: true` — the honest stamp, because the
+        // mirrored concept's stimuli are the same two files with the
+        // positive/negative roles exchanged. But the hash is ORDER-SENSITIVE
+        // (`sha256(positive ‖ negative)`), so the mirrored concept's own
+        // directory hashes to something else entirely, and the equality check
+        // below refused every mirrored artifact under its own concept: the
+        // verb minted an artifact no study could cite.
+        //
+        // The fix is to compare the RIGHT CLAIM rather than to weaken any
+        // hash. The sidecar's claim is "these are concept X's two files with
+        // their roles swapped", so this concept's files are hashed in the
+        // PARENT's order (negative ‖ positive) and compared to the inherited
+        // hash. Nothing is loosened: a mirrored pole whose directory holds
+        // different bytes, or the same bytes in the same order as the parent,
+        // still refuses.
+        let mirroredPole = sidecar.polesSwappedFromSource == true
+            && method.hasSourceConcept && !method.usesStoryCorpus
         // The pin must be one verify() could pass the moment it is written.
         let live: String?
         let where_: String
-        if !method.hasSourceConcept {
+        // For a mirrored pole this is the concept's OWN hash — what the
+        // manifest pins and every later verify recomputes — while `live` above
+        // carries the swapped-order hash the sidecar's claim is checked
+        // against. For every other concept the two are the same value.
+        var ownStimulusSetHash: String?
+        if mirroredPole {
+            let directory = VectorCatalog.conceptsDirectory
+                .appending(component: dataConcept)
+            let set = try? StimulusSet(directory: directory)
+            live = set?.polesSwappedHash
+            ownStimulusSetHash = set?.hash
+            where_ = "prompts/concepts/\(dataConcept)/"
+        } else if !method.hasSourceConcept {
             // The identity hash travels VERBATIM: nothing under prompts/
             // compares against it — for optvec the composite
             // "optvec:<sha256>" over the split files (pinned in the training
@@ -4252,6 +4327,15 @@ public enum ExperimentStore {
                     + "from\(hint)")
         }
         if liveHash != sidecar.stimulusSetHash {
+            if mirroredPole {
+                throw ExperimentError(
+                    reason: Self.mirroredPoleStimulusMismatch(
+                        artifact: rel, where_: where_,
+                        sourceConcept: rawSidecar["negatedFrom"]
+                            .flatMap { ($0 as? [String: Any])?["concept"] as? String }
+                            ?? "",
+                        pinned: sidecar.stimulusSetHash, live: liveHash))
+            }
             throw ExperimentError(
                 reason: "vector artifact '\(rel)' was extracted from stimuli "
                     + "hashing \(sidecar.stimulusSetHash.prefix(12))…, but "
@@ -4286,7 +4370,13 @@ public enum ExperimentStore {
             sourceMethod: sourceMethodRaw,
             sourceConcept: dataConcept,
             residualNormSource: normSource,
-            normCorpusHash: sidecar.neutralCorpusHash)
+            normCorpusHash: sidecar.neutralCorpusHash,
+            // The mirror linkage: the LIVE pin below is this concept's own
+            // hash, and this is the parent hash the sidecar inherited, so the
+            // manifest states both halves of the claim instead of leaving the
+            // relation implicit in a sidecar nobody re-reads.
+            polesSwappedFromSource: mirroredPole ? true : nil,
+            sourceStimulusSetHash: mirroredPole ? sidecar.stimulusSetHash : nil)
         if let optvecBlock {
             // The optimization's own identity, copied so the manifest is
             // self-describing. Absent keys stay absent — never a guessed
@@ -4318,7 +4408,11 @@ public enum ExperimentStore {
             : conceptValidationHash(
                 name: dataConcept, isPaired: !method.usesStoryCorpus)
         var ref = ExperimentManifest.ConceptRef(
-            name: name, stimulusSetHash: sidecar.stimulusSetHash,
+            // A mirrored pole pins its OWN directory's hash as the live pin —
+            // that is the value verify recomputes from prompts/concepts/ — and
+            // the inherited parent hash travels in the artifact pin beside it.
+            name: name,
+            stimulusSetHash: ownStimulusSetHash ?? sidecar.stimulusSetHash,
             options: options, validationHash: validationHash,
             validationHashPinnedAbsent: validationHash == nil,
             vectorArtifact: pin)
@@ -4374,6 +4468,27 @@ public enum ExperimentStore {
         manifest.concepts.removeAll { $0.name == name }
         manifest.concepts.append(ref)
         pinNeutralCorpus(into: &manifest)
+    }
+
+    /// A mirrored pole whose concept directory does not hold the parent's two
+    /// files with their roles swapped. Named once, because attach and verify
+    /// both say it. Server twin:
+    /// `experiment_store.mirrored_pole_stimulus_mismatch`.
+    static func mirroredPoleStimulusMismatch(
+        artifact: String, where_: String, sourceConcept: String,
+        pinned: String, live: String
+    ) -> String {
+        let parent = sourceConcept.isEmpty
+            ? "its source concept's"
+            : "source concept '\(sourceConcept)''s"
+        return "vector artifact '\(artifact)' is a MIRRORED pole "
+            + "(polesSwappedFromSource) of stimuli hashing "
+            + "\(pinned.prefix(12))…, so \(where_) must hold \(parent) two "
+            + "files with their positive/negative roles SWAPPED — but hashing "
+            + "them in the source's order gives \(live.prefix(12))…. Author "
+            + "the mirrored concept's positive.jsonl from the source's "
+            + "negative.jsonl and its negative.jsonl from the source's "
+            + "positive.jsonl (byte for byte), or pass the right source concept"
     }
 
     /// An absolute path under the ACTIVE workspace root (test override
@@ -5990,6 +6105,31 @@ public enum ExperimentStore {
                 violations.append(
                     "concept '\(ref.name)': stimulus files changed since pinning "
                         + "(have \(set.hash.prefix(12))…, pinned \(ref.stimulusSetHash.prefix(12))…)")
+            }
+            // A MIRRORED POLE pins TWO hashes and verify checks both: the
+            // concept's own (just above, like any concept), and the claim that
+            // links it to the artifact — that these same files, hashed in the
+            // SOURCE's order, are the sidecar's inherited stimulusSetHash. The
+            // second is what makes the mirror citable rather than merely
+            // present, so it is re-proved at every verify and not left to the
+            // moment of attach. Server twin: the same pair in `Manifest.verify`.
+            if let pin = ref.vectorArtifact, pin.polesSwappedFromSource == true {
+                let claimed = pin.sourceStimulusSetHash ?? ""
+                let swapped = set.polesSwappedHash ?? ""
+                if claimed.isEmpty {
+                    violations.append(
+                        "concept '\(ref.name)' pins a mirrored pole "
+                            + "(polesSwappedFromSource) with no "
+                            + "sourceStimulusSetHash — the hash it inherited "
+                            + "from its source is what makes the swap "
+                            + "checkable; re-attach the artifact")
+                } else if swapped != claimed {
+                    violations.append(
+                        mirroredPoleStimulusMismatch(
+                            artifact: ref.vectorArtifact?.path ?? ref.name,
+                            where_: "prompts/concepts/\(dataName)/",
+                            sourceConcept: "", pinned: claimed, live: swapped))
+                }
             }
         }
         // Artifact-pinned concepts: the VECTOR BYTES are the pinned input,

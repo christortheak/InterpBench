@@ -437,7 +437,8 @@ public enum ExperimentCLIParser {
             purpose: "Declare the sweep's selection criterion as manifest data.",
             valueFlags: [
                 "--objective", "--choice-prompts", "--capability-tolerance",
-                "--coherence-floor", "--control-margin", "--control-apply-to",
+                "--coherence-floor", "--coherence-ratio", "--coherence-backstop",
+                "--control-margin", "--control-apply-to",
                 "--control-top-k",
             ]),
         // The grid's other half, and the gap that made the passenger-concept

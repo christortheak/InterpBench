@@ -244,8 +244,15 @@ public enum VariantRobustness {
         // cancellable Install flow that is supposed to be the only way
         // weights arrive. Refusing here costs nothing; refusing after the
         // battery has run costs the battery.
+        //
+        // The question is asked about the EXACT revision the load below asks
+        // for — this route loads the judge revision-less, so `nil`, which the
+        // hub resolves through `refs/main` — and about the FILE SET a load
+        // opens (review round 8, finding 3). The repo-id-only test passed on
+        // a bare `snapshots` path, so a half-downloaded judge cleared the
+        // gate and then either re-downloaded or died inside MLX.
         if case .local(let model) = JudgeModelSpelling.parse(judgeModel),
-            !SteeredContainerLoader.isCached(modelID: model)
+            !SteeredContainerLoader.isCached(modelID: model, revision: nil)
         {
             throw ExperimentError(
                 reason: JudgeReadiness.notInstalledRefusal(model: model))

@@ -51,7 +51,38 @@ def _rule_refusal(message: str) -> "lifecycle_gates.LifecycleValueError":
                 "--objective markerDensity|judgeScore|logprobShift …"))
 
 DEFAULT_CAPABILITY_TOLERANCE = 0.15
+#: The LEGACY absolute distinct-2 floor. Still the resolved value for every
+#: criterion declared before the baseline-relative form existed, and still what
+#: a criterion declaring ``coherenceFloor`` alone means.
 DEFAULT_COHERENCE_FLOOR = 0.45
+
+# --- the baseline-relative coherence floor -------------------------------------
+#
+# An ABSOLUTE distinct-2 floor gates against a fixed number, and a fixed number
+# cannot know what the model's own prose looks like. A sweep admitted a cell at
+# distinct-2 0.535 against a baseline of 0.989 — barely half the coherence the
+# unsteered model produced, and 65% longer output — and its logprobShift was
+# REPETITION rather than steering, which is precisely the failure the floor
+# exists to catch. 0.535 clears 0.45, so the gate said yes.
+#
+# The floor a sweep declares from now on is therefore relative to the α=0
+# baseline cell, with an absolute backstop underneath it: a cell passes when its
+# distinct-2 is at least ``ratio ×`` the baseline's AND at least ``backstop``.
+# The backstop is what keeps a degenerate BASELINE from licensing a degenerate
+# winner.
+#
+# Existing pinned criteria are untouched, forever: a constraints block with
+# neither new field means the ABSOLUTE rule at its declared (or default)
+# ``coherenceFloor``, which is exactly what those studies ran.
+
+#: Default ``distinct2 >= ratio * baseline.distinct2``.
+DEFAULT_COHERENCE_RATIO = 0.85
+#: Default absolute backstop under the relative floor.
+DEFAULT_COHERENCE_BACKSTOP = 0.60
+#: A cell's mean output length above this multiple of the baseline's is FLAGGED
+#: in the sweep report. A flag, never a gate: length inflation is evidence a
+#: reader needs when interpreting a metric, not a rule about which cells win.
+LENGTH_INFLATION_FACTOR = 1.5
 
 
 @dataclass(frozen=True)
@@ -60,7 +91,17 @@ class SelectionCriterion:
 
     metric: str = "markerDensity"
     capability_tolerance: float = DEFAULT_CAPABILITY_TOLERANCE
+    #: The ABSOLUTE distinct-2 floor. Under the legacy rule this IS the gate;
+    #: under the baseline-relative rule it carries the backstop, so every
+    #: surface that reads one absolute number keeps reading a true one (the
+    #: number below which no cell passes either way).
     coherence_floor: float = DEFAULT_COHERENCE_FLOOR
+    #: Not None = the BASELINE-RELATIVE rule: a cell passes coherence only when
+    #: its distinct-2 is at least this multiple of the α=0 baseline's AND at
+    #: least ``coherence_floor`` (the backstop). None = the legacy absolute
+    #: rule, which is what every criterion declared before this form means and
+    #: will mean forever.
+    coherence_ratio_to_baseline: float | None = None
     # When set, the winning cell must beat a deterministic matched-norm random
     # direction (same layer/alpha) by at least this margin, else no
     # recommendation is made.
@@ -106,11 +147,16 @@ class SelectionCriterion:
                 obj["judgeRubricHash"] = objective.judge_rubric_hash
             if objective.judges:
                 obj["judges"] = [dict(j) for j in objective.judges]
-        resolved: dict = {
-            "objective": obj,
-            "constraints": {"capabilityTolerance": self.capability_tolerance,
-                            "coherenceFloor": self.coherence_floor},
-        }
+        constraints: dict = {"capabilityTolerance": self.capability_tolerance,
+                             "coherenceFloor": self.coherence_floor}
+        if self.coherence_ratio_to_baseline is not None:
+            # Emitted only under the relative rule, so a legacy criterion
+            # round-trips to byte-identical JSON and keeps its content hash —
+            # and so "no new fields" keeps meaning "the absolute rule", forever.
+            constraints["coherenceRatioToBaseline"] = \
+                self.coherence_ratio_to_baseline
+            constraints["coherenceAbsoluteBackstop"] = self.coherence_floor
+        resolved: dict = {"objective": obj, "constraints": constraints}
         if self.matched_norm_random_margin is not None:
             controls: dict = {
                 "matchedNormRandomMargin": self.matched_norm_random_margin}
@@ -119,6 +165,83 @@ class SelectionCriterion:
                 controls["topK"] = self.control_top_k
             resolved["controls"] = controls
         return resolved
+
+
+    @property
+    def is_baseline_relative_coherence(self) -> bool:
+        """Whether this criterion gates coherence against the baseline."""
+        return self.coherence_ratio_to_baseline is not None
+
+    @property
+    def coherence_summary(self) -> str:
+        """The coherence rule in one clause, in the words both engines print.
+        Swift twin: ``SweepSelectionRule.Resolved.coherenceSummary``."""
+        if self.coherence_ratio_to_baseline is None:
+            return (f"coherence floor {self.coherence_floor:g} "
+                    "(absolute distinct-2)")
+        return (f"coherence floor {self.coherence_ratio_to_baseline:g}× the "
+                f"α=0 baseline's distinct-2, backstop {self.coherence_floor:g}")
+
+
+def coherence_passes(distinct2: float, baseline_distinct2: float,
+                     criterion: SelectionCriterion) -> bool:
+    """Does this cell clear the coherence gate? THE one place the rule lives,
+    so selection, ranking, the no-selection reason and the deferred-judging
+    completion cannot drift from each other — the drift that let a degenerate
+    cell through in the first place. Swift twin:
+    ``SweepSelectionRule.coherencePasses``."""
+    ratio = criterion.coherence_ratio_to_baseline
+    if ratio is None:
+        return distinct2 >= criterion.coherence_floor
+    return (distinct2 >= ratio * baseline_distinct2
+            and distinct2 >= criterion.coherence_floor)
+
+
+def distinct2_ratio(distinct2: float, baseline_distinct2: float) -> float | None:
+    """A cell's distinct-2 as a fraction of the baseline's — the number the
+    relative floor gates on, reported for EVERY cell whichever rule is in
+    force. None when the baseline's own distinct-2 is 0 (the ratio is
+    undefined, and reporting 0 or ∞ would be an invented fact). Swift twin:
+    ``SweepSelectionRule.distinct2Ratio``."""
+    if not baseline_distinct2 > 0:
+        return None
+    return distinct2 / baseline_distinct2
+
+
+def length_inflated(mean_words: float, baseline_mean_words: float) -> bool:
+    """Whether this cell's mean output length exceeds
+    ``LENGTH_INFLATION_FACTOR ×`` the baseline's — a REPORTED column, never a
+    gate. The degenerate cell that motivated the relative floor ran 65% long,
+    and a reader looking at a logprobShift owes themselves that fact. Swift
+    twin: ``SweepSelectionRule.lengthInflated``."""
+    return (baseline_mean_words > 0
+            and mean_words > LENGTH_INFLATION_FACTOR * baseline_mean_words)
+
+
+# --- coherence refusals (cross-engine literals; Swift twin: SweepSelectionRule)
+
+def coherence_ratio_range_refusal(value: float) -> str:
+    return ("sweep.selection coherenceRatioToBaseline must be a finite number "
+            f"in (0, 1] — got {value:g}. It is a FRACTION of the α=0 "
+            "baseline's distinct-2, so 1 means 'as coherent as the unsteered "
+            "model' and anything above 1 asks a steered cell to beat it")
+
+
+def coherence_backstop_range_refusal(value: float) -> str:
+    return ("sweep.selection coherenceAbsoluteBackstop must be a finite number "
+            f"in [0, 1) — got {value:g}. It is the absolute distinct-2 no cell "
+            "may fall below however incoherent the baseline was; 1 would admit "
+            "nothing")
+
+
+def coherence_order_refusal(ratio: float, backstop: float) -> str:
+    return ("sweep.selection declares a baseline-relative coherence floor of "
+            f"{ratio:g}× with an absolute backstop of {backstop:g}, but the "
+            "backstop must sit UNDER the relative bar (backstop < ratio). A "
+            f"baseline's distinct-2 is at most 1, so a bar of {ratio:g}× can "
+            f"never demand more than {ratio:g} — a backstop of {backstop:g} "
+            "would gate every cell absolutely while the criterion reads as "
+            "relative")
 
 
 def defaulted_selection_advisory(spec: dict | None, choice_item_count: int,
@@ -168,7 +291,20 @@ def resolve_selection(spec: dict | None) -> SelectionCriterion:
     controls = spec.get("controls") or {}
     tolerance = float(
         constraints.get("capabilityTolerance", DEFAULT_CAPABILITY_TOLERANCE))
+    # WHICH coherence rule this criterion declares is decided by the PRESENCE
+    # of either relative field — never by their values — so a constraints block
+    # written before the relative form existed keeps its absolute semantics
+    # permanently, and a stamped criterion decodes to the rule that ran.
+    declared_ratio = constraints.get("coherenceRatioToBaseline")
+    declared_backstop = constraints.get("coherenceAbsoluteBackstop")
+    relative = declared_ratio is not None or declared_backstop is not None
     floor = float(constraints.get("coherenceFloor", DEFAULT_COHERENCE_FLOOR))
+    ratio: float | None = None
+    if relative:
+        ratio = float(declared_ratio if declared_ratio is not None
+                      else DEFAULT_COHERENCE_RATIO)
+        floor = float(declared_backstop if declared_backstop is not None
+                      else DEFAULT_COHERENCE_BACKSTOP)
     margin = controls.get("matchedNormRandomMargin")
     margin = None if margin is None else float(margin)
     # Range validation (cross-engine contract with the Swift engine's
@@ -178,7 +314,21 @@ def resolve_selection(spec: dict | None) -> SelectionCriterion:
         raise _rule_refusal(
             "sweep.selection capabilityTolerance must be a finite number in "
             f"[0, 1] — got {tolerance:g}")
-    if not (math.isfinite(floor) and 0 <= floor <= 1):
+    if relative:
+        assert ratio is not None
+        if not (math.isfinite(ratio) and 0 < ratio <= 1):
+            raise _rule_refusal(coherence_ratio_range_refusal(ratio))
+        if not (math.isfinite(floor) and 0 <= floor < 1):
+            raise _rule_refusal(coherence_backstop_range_refusal(floor))
+        # Ascending sanity: the backstop sits UNDER the relative bar. A
+        # backstop at or above the ratio can never be the looser of the two
+        # (the baseline's distinct-2 is at most 1, so the relative bar is at
+        # most ``ratio``), which means the declaration says "relative" and
+        # behaves absolutely — a criterion that reads as one thing and gates
+        # as another.
+        if not floor < ratio:
+            raise _rule_refusal(coherence_order_refusal(ratio, floor))
+    elif not (math.isfinite(floor) and 0 <= floor <= 1):
         raise _rule_refusal(
             "sweep.selection coherenceFloor must be a finite number in "
             f"[0, 1] — got {floor:g}")
@@ -209,6 +359,7 @@ def resolve_selection(spec: dict | None) -> SelectionCriterion:
         metric=metric,
         capability_tolerance=tolerance,
         coherence_floor=floor,
+        coherence_ratio_to_baseline=ratio,
         matched_norm_random_margin=margin,
         control_apply_to=apply_to,
         control_top_k=top_k if apply_to == "topK" else None)
@@ -680,7 +831,7 @@ def select_cell(cells: list[SweepCell], baseline: BaselineCell,
     for cell in cells:
         eligible = (
             cell.battery_accuracy >= baseline.battery_accuracy - criterion.capability_tolerance
-            and cell.distinct2 >= criterion.coherence_floor)
+            and coherence_passes(cell.distinct2, baseline.distinct2, criterion))
         if not eligible:
             continue
         floor = best.metric if best is not None else baseline.metric
@@ -711,11 +862,11 @@ def no_selection_reason(cells: list[SweepCell], baseline: BaselineCell,
     eligible = [
         c for c in cells
         if c.battery_accuracy >= baseline.battery_accuracy - criterion.capability_tolerance
-        and c.distinct2 >= criterion.coherence_floor]
+        and coherence_passes(c.distinct2, baseline.distinct2, criterion)]
     if not eligible:
         return ("no cell passed the capability/coherence gates "
-                f"(tolerance {criterion.capability_tolerance:g}, floor "
-                f"{criterion.coherence_floor:g})")
+                f"(tolerance {criterion.capability_tolerance:g}, "
+                f"{criterion.coherence_summary})")
     best = max(c.metric for c in eligible)
     blocked = len(cells) - len(eligible)
     detail = (f"; {blocked} of {len(cells)} cells also failed the "
@@ -738,7 +889,7 @@ def ranked_candidates(cells: list[SweepCell], baseline: BaselineCell,
     eligible = [
         c for c in cells
         if c.battery_accuracy >= baseline.battery_accuracy - criterion.capability_tolerance
-        and c.distinct2 >= criterion.coherence_floor
+        and coherence_passes(c.distinct2, baseline.distinct2, criterion)
         and c.metric > baseline.metric]
     # Tie-break is CONTRACT, not accident (review 2026-08-03): objective
     # descending, then declared grid order. Python's sort is documented

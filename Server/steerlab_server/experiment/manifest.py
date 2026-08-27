@@ -1378,7 +1378,7 @@ class Manifest:
                     "samplesPerItem > 1 requires seedPolicy 'derivedSHA256' "
                     "(per-record seeds derived from condition/prompt/sampleIndex)")
 
-        from . import multiconcept
+        from . import experiment_store, multiconcept
 
         # Data-side questions ask the EFFECTIVE method and the DATA concept:
         # an artifact-pinned concept keeps the base concept's stimuli and
@@ -1421,6 +1421,30 @@ class Manifest:
                 violations.append(
                     f"concept '{concept.name}' stimuli changed since pinning "
                     f"(have {live.hash[:12]}…, pinned {concept.stimulus_set_hash[:12]}…)")
+            # A MIRRORED POLE pins TWO hashes and verify checks both: the
+            # concept's own (just above, like any concept), and the claim that
+            # links it to the artifact — that these same files, hashed in the
+            # SOURCE's order, are the sidecar's inherited stimulusSetHash. The
+            # second is what makes the mirror citable rather than merely
+            # present, so it is re-proved at every verify and not left to the
+            # moment of attach. Swift twin: the same pair in
+            # ``ExperimentStore.modelOutputPinViolations``.
+            pin = concept.vector_artifact or {}
+            if pin.get("polesSwappedFromSource"):
+                claimed = pin.get("sourceStimulusSetHash") or ""
+                if not claimed:
+                    violations.append(
+                        f"concept '{concept.name}' pins a mirrored pole "
+                        "(polesSwappedFromSource) with no "
+                        "sourceStimulusSetHash — the hash it inherited from "
+                        "its source is what makes the swap checkable; "
+                        "re-attach the artifact")
+                elif (live.poles_swapped_hash or "") != claimed:
+                    violations.append(
+                        experiment_store.mirrored_pole_stimulus_mismatch(
+                            pin.get("path") or concept.name,
+                            f"prompts/concepts/{data_name}/", "",
+                            claimed, live.poles_swapped_hash))
 
         # designatedReference: the reference corpus is recipe data — its pin
         # must exist and its live bytes must match, exactly like stimuli.

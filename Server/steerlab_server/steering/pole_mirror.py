@@ -43,8 +43,11 @@ import json
 import os
 import re
 import struct
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+
+from .vector_math import ExtractionMethod
 
 #: ``layer_<i>`` and nothing else. ``neutral_mean_layer_<i>`` deliberately
 #: fails this match (see the module docstring).
@@ -59,6 +62,53 @@ _FLOAT_ELEMENT_BYTES = {"F64": 8, "F32": 4, "F16": 2, "BF16": 2}
 #: its inherited ``stimulusSetHash``. Pinned cross-engine contract.
 NEGATED_FROM_KEY = "negatedFrom"
 POLES_SWAPPED_KEY = "polesSwappedFromSource"
+
+#: The repair every unreadable-payload refusal names, on both engines. One
+#: literal, because a repair sentence duplicated at its throw sites drifts —
+#: which is exactly what had happened here (this engine said "truncated" where
+#: the Swift twin said "corrupt", for the same two refusals).
+#: Swift twin: ``PoleMirror.truncatedRepair``.
+_TRUNCATED_REPAIR = "re-extract the source artifact; its .safetensors is corrupt"
+
+
+def mirrorable_methods() -> list[ExtractionMethod]:
+    """The extraction methods a mirrored pole is DEFINED for, decided from the
+    methods' own properties rather than from a list that drifts as methods are
+    added: PAIRED (two authored stimulus files, so swapping their roles is what
+    the negation means) AND source-concept-bearing (so the swapped files, and a
+    validation.jsonl over them, exist somewhere a study could pin). Today that
+    is the CAA family, ``meanDifference`` and ``pairedDifferencePCA``.
+
+    Why the OTHER source-concept-bearing methods are excluded — the question
+    this restriction had to answer (external review round 8, finding 2):
+
+    * ``designatedReference`` is source-concept-bearing but UNPAIRED. Its
+      direction is mean(concept stories) − mean(a designated REFERENCE
+      corpus's stories), so its negation is "the reference corpus minus the
+      concept" — a different comparison, not the concept's opposite pole. The
+      reference is a baseline the study designated, not a pole a researcher
+      authored as the concept's other end, and nothing in the sidecar's
+      ``designatedReference {name, hash}`` schema can even express a swap: the
+      ``stimulusSetHash`` is the concept's own stories hash, and a mirrored
+      artifact would have to claim the reference corpus is now a concept with
+      held-out scenarios of its own. Not obviously yes, so: excluded, and the
+      refusal says why.
+    * ``emotionGrandMean`` negates to "the population mean minus the concept",
+      which is generic negation with no second pole anywhere.
+    * ``optvec``, ``gemmaScopeSAE`` and ``repeReaderLAT`` have no source
+      concept at all — no stimulus files to swap, and a ``validation.jsonl``
+      under the mirrored name is a file ``attach_artifact`` pins EXPLICITLY
+      NULL, so the success message used to promise a workflow attach forbids.
+
+    Swift twin: ``PoleMirror.mirrorableMethods``.
+    """
+    return [method for method in ExtractionMethod
+            if method.is_paired and method.has_source_concept]
+
+
+def mirrorable_method_list() -> str:
+    """Those methods' values, sorted — the vocabulary the refusal names."""
+    return ", ".join(sorted(method.value for method in mirrorable_methods()))
 
 #: What the CLI prints after a successful mint, and the reason this module
 #: writes NOTHING into ``prompts/concepts/``: the mirrored pole's held-out
@@ -104,8 +154,27 @@ def _sha256_hex(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _remove_quietly(path: str) -> None:
+    """Delete a path we own, swallowing "it was never there". Used only on
+    failure paths, where a second exception would replace the real one."""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 def _iso8601(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _readable_offsets(offsets: object) -> bool:
+    """Whether a header entry's ``data_offsets`` is the shape the Swift twin's
+    typed ``[Int]`` decode accepts: a list (or tuple) of plain integers.
+    ``bool`` is excluded deliberately — it is an ``int`` subclass in Python and
+    is not one in the contract."""
+    return (isinstance(offsets, (list, tuple))
+            and all(isinstance(value, int) and not isinstance(value, bool)
+                    for value in offsets))
 
 
 def negate_layer_tensors(payload: bytes) -> bytes:
@@ -121,7 +190,7 @@ def negate_layer_tensors(payload: bytes) -> bytes:
         raise PoleMirrorError(
             "unreadableArtifact",
             "safetensors payload is shorter than its 8-byte header length",
-            "re-extract the source artifact; its .safetensors is truncated")
+            _TRUNCATED_REPAIR)
     (header_length,) = struct.unpack_from("<Q", payload, 0)
     header_start = 8
     data_start = header_start + header_length
@@ -130,14 +199,14 @@ def negate_layer_tensors(payload: bytes) -> bytes:
             "unreadableArtifact",
             f"safetensors header claims {header_length} bytes but only "
             f"{len(payload) - header_start} follow",
-            "re-extract the source artifact; its .safetensors is truncated")
+            _TRUNCATED_REPAIR)
     try:
         header = json.loads(payload[header_start:data_start].decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PoleMirrorError(
             "unreadableArtifact",
             f"safetensors header is not readable JSON: {exc}",
-            "re-extract the source artifact; its .safetensors is corrupt"
+            _TRUNCATED_REPAIR
         ) from exc
 
     out = bytearray(payload)
@@ -145,7 +214,24 @@ def negate_layer_tensors(payload: bytes) -> bytes:
     for key, entry in sorted(header.items()):
         if not _LAYER_TENSOR.match(key) or not isinstance(entry, dict):
             continue
+        # The header is UNTRUSTED input — a `.safetensors` file is bytes on
+        # disk, and this transform writes into the payload at offsets the
+        # header names. The Swift twin decodes the entry through a typed
+        # `HeaderEntry` (a `String` dtype and an `[Int]` data_offsets) and then
+        # guards the pair; this engine has to spell the same checks out, or a
+        # malformed header escapes as a raw `KeyError`/`TypeError` instead of
+        # the typed refusal, and two of the shapes are worse than untidy:
+        # `[8, 0]` flips nothing while counting as a flipped tensor (Python's
+        # `-8 % 4` is 0, so the modulo test passes and the empty range is a
+        # silent no-op), and a NEGATIVE start addresses backwards out of the
+        # payload into the header. Swift twin: `PoleMirror.negatedTensorBytes`.
         dtype = entry.get("dtype")
+        offsets = entry.get("data_offsets")
+        if not isinstance(dtype, str) or not _readable_offsets(offsets):
+            raise PoleMirrorError(
+                "unreadableArtifact",
+                f"tensor {key!r} has no readable dtype/data_offsets",
+                _TRUNCATED_REPAIR)
         width = _FLOAT_ELEMENT_BYTES.get(dtype)
         if width is None:
             raise PoleMirrorError(
@@ -154,13 +240,19 @@ def negate_layer_tensors(payload: bytes) -> bytes:
                 "sign bits and is defined only for float tensors "
                 f"({', '.join(sorted(_FLOAT_ELEMENT_BYTES))})",
                 "re-extract the source artifact as float32")
-        start, stop = entry["data_offsets"]
-        if (stop - start) % width or stop > len(payload) - data_start:
+        if len(offsets) != 2:
+            raise PoleMirrorError(
+                "unreadableArtifact",
+                f"tensor {key!r} has no readable dtype/data_offsets",
+                _TRUNCATED_REPAIR)
+        start, stop = offsets
+        if (start < 0 or stop < start or (stop - start) % width
+                or stop > len(payload) - data_start):
             raise PoleMirrorError(
                 "unreadableArtifact",
                 f"tensor {key!r} data_offsets [{start}, {stop}] do not "
                 f"describe whole {dtype} elements inside the payload",
-                "re-extract the source artifact; its .safetensors is corrupt")
+                _TRUNCATED_REPAIR)
         # The sign bit is the MSB of the LAST byte of each little-endian
         # element, for every IEEE width safetensors carries.
         for offset in range(data_start + start + width - 1,
@@ -257,12 +349,39 @@ def mirror_poles(vector_dir: str, name: str, *, concept: str,
             "unreadableArtifact", f"unreadable sidecar {sidecar_source}: {exc}",
             "pass the base path of a vector artifact — <runDir>/<name> with "
             "no extension") from exc
-    if not isinstance(original, dict) or "layerCount" not in original:
+    # `layerCount` is read as a NUMBER here, before a single byte is written —
+    # it used to be converted after both files had landed, so a sidecar whose
+    # layerCount was a string ("2", say) stranded a complete artifact pair on
+    # disk and then raised a bare ValueError past every typed refusal. Swift
+    # twin: the same numeric guard in `PoleMirror.mirrorPoles`.
+    layer_count_value = original.get("layerCount") \
+        if isinstance(original, dict) else None
+    if not isinstance(layer_count_value, (int, float)) \
+            or isinstance(layer_count_value, bool):
         raise PoleMirrorError(
             "unreadableArtifact",
             f"{base!r} is not a steering-vector artifact",
             "pass the base path of a vector artifact — <runDir>/<name> with "
             "no extension")
+    layer_count = int(layer_count_value)
+
+    # Which methods HAVE an opposite pole (see :func:`mirrorable_methods`).
+    # This gate is the reason the success message's validation-authoring note
+    # is now always honest: it can only be printed for a method whose mirrored
+    # concept can pin a validation.jsonl at attach.
+    recorded_method = str(original.get("extractionMethod") or "").strip()
+    try:
+        source_method: ExtractionMethod | None = ExtractionMethod(recorded_method)
+    except ValueError:
+        source_method = None
+    if source_method is None or not source_method.is_paired \
+            or not source_method.has_source_concept:
+        raise PoleMirrorError(
+            "unmirrorableMethod",
+            unmirrorable_method_reason(
+                base, recorded_method,
+                source_method.label if source_method else None),
+            UNMIRRORABLE_METHOD_REPAIR)
 
     source_concept = str(original.get("concept", ""))
     if source_concept == concept:
@@ -304,11 +423,37 @@ def mirror_poles(vector_dir: str, name: str, *, concept: str,
         original, concept=concept, source_artifact=base,
         source_vectors_hash=_sha256_hex(vector_bytes),
         source_sidecar_hash=_sha256_hex(sidecar_bytes), date=date)
+    sidecar_text = json.dumps(sidecar, sort_keys=True, indent=2)
 
-    with open(vectors_path, "wb") as handle:
-        handle.write(mirrored_bytes)
-    with open(sidecar_path, "w", encoding="utf-8") as handle:
-        json.dump(sidecar, handle, sort_keys=True, indent=2)
+    # An artifact is a PAIR, so it is written as one. Both files land under
+    # temporary names in the destination directory and are promoted by rename
+    # only once both are on disk: a failure between the two writes — a full
+    # disk, a permission change, an interrupt — used to strand a tensor with no
+    # sidecar, which the catalog reads as an unreadable artifact and which the
+    # `destinationOccupied` rule then refuses to replace. The cleanup removes
+    # exactly the two temporary names, on EVERY failure path (bare `except`,
+    # re-raised): a cleanup that only ran for typed refusals would miss the
+    # very failures this exists for. Swift twin: `PoleMirror.mirrorPoles`.
+    token = uuid.uuid4().hex
+    vectors_temp = f"{vectors_path}.{token}.partial"
+    sidecar_temp = f"{sidecar_path}.{token}.partial"
+    try:
+        with open(vectors_temp, "wb") as handle:
+            handle.write(mirrored_bytes)
+        with open(sidecar_temp, "w", encoding="utf-8") as handle:
+            handle.write(sidecar_text)
+        os.replace(vectors_temp, vectors_path)
+        try:
+            os.replace(sidecar_temp, sidecar_path)
+        except BaseException:
+            # The tensor is already promoted; take it back out so a failed
+            # mint never leaves half an artifact under the final names.
+            _remove_quietly(vectors_path)
+            raise
+    except BaseException:
+        _remove_quietly(vectors_temp)
+        _remove_quietly(sidecar_temp)
+        raise
 
     return MirrorResult(
         run_directory=run_directory,
@@ -317,7 +462,7 @@ def mirror_poles(vector_dir: str, name: str, *, concept: str,
         concept=concept, source_artifact=base, source_concept=source_concept,
         source_vectors_hash=sidecar[NEGATED_FROM_KEY]["sha256TensorHash"],
         source_sidecar_hash=sidecar[NEGATED_FROM_KEY]["sha256SidecarHash"],
-        layer_count=int(original["layerCount"]))
+        layer_count=layer_count)
 
 
 # --- refusal texts (cross-engine literals; Swift twin: PoleMirror) -------------
@@ -376,3 +521,33 @@ def double_mirror_reason(base: str, concept: str, parent: str) -> str:
 
 def double_mirror_repair(parent: str) -> str:
     return f"use the original artifact at '{parent}' instead of mirroring this one"
+
+
+def unmirrorable_method_reason(base: str, method: str,
+                               label: str | None) -> str:
+    if not method:
+        recorded = "records no extractionMethod"
+    elif label:
+        recorded = f"records extractionMethod '{method}' ({label})"
+    else:
+        recorded = (f"records extractionMethod '{method}', which this engine "
+                    "does not know")
+    return (f"'{base}' {recorded} — mirror-poles mints the opposite pole only "
+            "for a PAIRED, source-concept-bearing contrast "
+            f"({mirrorable_method_list()}), where the two poles ARE two "
+            "authored stimulus files and swapping their roles is exactly what "
+            "the negation MEANS. Every other direction negates GENERICALLY, "
+            "with no method-specific evidence semantics: a grand-mean or "
+            "class-vs-reference direction negates to 'the population (or the "
+            "designated reference corpus) minus the concept', which is a "
+            "different comparison and not the concept's opposite pole, and a "
+            "direction with no source concept has no stimulus files to swap at "
+            "all — so the validation.jsonl a mirrored pole is told to author "
+            "would be a file attach pins as EXPLICITLY ABSENT, and authoring "
+            "it later is drift")
+
+
+UNMIRRORABLE_METHOD_REPAIR = (
+    "inject the opposite end of this direction with a NEGATIVE α in a study "
+    "condition — the sign flip is available there, needs no new artifact, and "
+    "claims no evidence the method cannot supply")

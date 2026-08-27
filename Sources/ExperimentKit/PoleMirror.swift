@@ -60,6 +60,8 @@ public enum PoleMirror {
             case doubleMirror
             /// The pair exists and cannot be read as an artifact.
             case unreadableArtifact
+            /// The source's extraction method has no swapped-pole semantics.
+            case unmirrorableMethod
         }
 
         public let kind: Kind
@@ -72,6 +74,48 @@ public enum PoleMirror {
             self.reason = reason
             self.repairAction = repairAction
         }
+    }
+
+    // MARK: - Which methods have a mirrored pole at all
+
+    /// The extraction methods a mirrored pole is DEFINED for, decided from the
+    /// methods' own properties rather than from a list that drifts as methods
+    /// are added: PAIRED (two authored stimulus files, so swapping their roles
+    /// is what the negation means) AND source-concept-bearing (so the swapped
+    /// files, and a validation.jsonl over them, exist somewhere a study could
+    /// pin). Today that is the CAA family, `meanDifference` and
+    /// `pairedDifferencePCA`.
+    ///
+    /// Why the OTHER source-concept-bearing methods are excluded — the
+    /// question this restriction had to answer (external review round 8,
+    /// finding 2):
+    ///
+    /// - `designatedReference` is source-concept-bearing but UNPAIRED. Its
+    ///   direction is mean(concept stories) − mean(a designated REFERENCE
+    ///   corpus's stories), so its negation is "the reference corpus minus the
+    ///   concept" — a different comparison, not the concept's opposite pole.
+    ///   The reference is a baseline the study designated, not a pole a
+    ///   researcher authored as the concept's other end, and nothing in the
+    ///   sidecar's `designatedReference {name, hash}` schema can even express
+    ///   a swap: the `stimulusSetHash` is the concept's own stories hash, and
+    ///   a mirrored artifact would have to claim the reference corpus is now a
+    ///   concept with held-out scenarios of its own. Not obviously yes, so:
+    ///   excluded, and the refusal says why.
+    /// - `emotionGrandMean` negates to "the population mean minus the
+    ///   concept", which is generic negation with no second pole anywhere.
+    /// - `optvec`, `gemmaScopeSAE` and `repeReaderLAT` have no source concept
+    ///   at all — no stimulus files to swap, and a `validation.jsonl` under
+    ///   the mirrored name is a file `attachArtifact` pins EXPLICITLY ABSENT,
+    ///   so the success message used to promise a workflow attach forbids.
+    ///
+    /// Server twin: `pole_mirror.mirrorable_methods`.
+    public static var mirrorableMethods: [ExtractionMethod] {
+        ExtractionMethod.allCases.filter { $0.isPaired && $0.hasSourceConcept }
+    }
+
+    /// Those methods' raw values, sorted — the vocabulary the refusal names.
+    public static var mirrorableMethodList: String {
+        mirrorableMethods.map(\.rawValue).sorted().joined(separator: ", ")
     }
 
     /// What a successful mint prints, and the reason this type writes NOTHING
@@ -336,11 +380,37 @@ public enum PoleMirror {
                 reason: "unreadable sidecar \(sidecarSource.path): \(error)",
                 repairAction: basePathRepair)
         }
-        guard original["layerCount"] != nil else {
+        // `layerCount` is read as a NUMBER here, before a single byte is
+        // written. It used to be enough that the key existed, and the value
+        // was converted only AFTER both files had landed — so a sidecar
+        // carrying a non-numeric layerCount produced a complete artifact pair
+        // whose recorded layer count was silently 0. Server twin: the same
+        // numeric guard in `pole_mirror.mirror_poles`.
+        guard let layerCountValue = original["layerCount"],
+            case .number(let layerCountNumber) = layerCountValue
+        else {
             throw MirrorError(
                 kind: .unreadableArtifact,
                 reason: "'\(artifact.path)' is not a steering-vector artifact",
                 repairAction: basePathRepair)
+        }
+        let layerCount = Int(layerCountNumber)
+        // Which methods HAVE an opposite pole (see `mirrorableMethods`). This
+        // gate is the reason the success message's validation-authoring note
+        // is now always honest: it can only be printed for a method whose
+        // mirrored concept can pin a validation.jsonl at attach.
+        let recordedMethod = (stringValue(original["extractionMethod"]) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceMethod = ExtractionMethod(rawValue: recordedMethod)
+        guard let sourceMethod, sourceMethod.isPaired,
+            sourceMethod.hasSourceConcept
+        else {
+            throw MirrorError(
+                kind: .unmirrorableMethod,
+                reason: unmirrorableMethodReason(
+                    base: artifact.path, method: recordedMethod,
+                    label: sourceMethod?.label),
+                repairAction: unmirrorableMethodRepair)
         }
         let sourceConcept = stringValue(original["concept"]) ?? ""
         guard sourceConcept != concept else {
@@ -395,15 +465,43 @@ public enum PoleMirror {
             sourceVectorsHash: vectorsHash, sourceSidecarHash: sidecarHash,
             date: date)
 
-        try mirroredBytes.write(to: vectorsPath)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(sidecar).write(to: sidecarPath)
+        let sidecarBytesOut = try encoder.encode(sidecar)
 
-        var layerCount = 0
-        if let value = original["layerCount"], case .number(let count) = value {
-            layerCount = Int(count)
+        // An artifact is a PAIR, so it is written as one. Both files land
+        // under temporary names in the destination directory and are promoted
+        // by rename only once both are on disk: a failure between the two
+        // writes — a full disk, a permission change, an interrupt — used to
+        // strand a tensor with no sidecar, which the catalog reads as an
+        // unreadable artifact and which the `destinationOccupied` rule then
+        // refuses to replace. The cleanup removes exactly the two temporary
+        // names on EVERY failure path, not only the typed refusals: an
+        // untyped write error is precisely the failure this exists for.
+        // Server twin: `pole_mirror.mirror_poles`.
+        let token = UUID().uuidString
+        let vectorsTemp = runDirectory.appending(
+            component: "\(outName).safetensors.\(token).partial")
+        let sidecarTemp = runDirectory.appending(
+            component: "\(outName).json.\(token).partial")
+        do {
+            try mirroredBytes.write(to: vectorsTemp)
+            try sidecarBytesOut.write(to: sidecarTemp)
+            try fm.moveItem(at: vectorsTemp, to: vectorsPath)
+            do {
+                try fm.moveItem(at: sidecarTemp, to: sidecarPath)
+            } catch {
+                // The tensor is already promoted; take it back out so a failed
+                // mint never leaves half an artifact under the final names.
+                try? fm.removeItem(at: vectorsPath)
+                throw error
+            }
+        } catch {
+            try? fm.removeItem(at: vectorsTemp)
+            try? fm.removeItem(at: sidecarTemp)
+            throw error
         }
+
         return MirrorResult(
             runDirectory: runDirectory,
             artifact: runDirectory.appending(component: outName),
@@ -493,4 +591,36 @@ public enum PoleMirror {
     public static func doubleMirrorRepair(parent: String) -> String {
         "use the original artifact at '\(parent)' instead of mirroring this one"
     }
+
+    public static func unmirrorableMethodReason(
+        base: String, method: String, label: String?
+    ) -> String {
+        let recorded: String
+        if method.isEmpty {
+            recorded = "records no extractionMethod"
+        } else if let label {
+            recorded = "records extractionMethod '\(method)' (\(label))"
+        } else {
+            recorded = "records extractionMethod '\(method)', which this "
+                + "engine does not know"
+        }
+        return "'\(base)' \(recorded) — mirror-poles mints the opposite pole "
+            + "only for a PAIRED, source-concept-bearing contrast "
+            + "(\(mirrorableMethodList)), where the two poles ARE two authored "
+            + "stimulus files and swapping their roles is exactly what the "
+            + "negation MEANS. Every other direction negates GENERICALLY, with "
+            + "no method-specific evidence semantics: a grand-mean or "
+            + "class-vs-reference direction negates to 'the population (or the "
+            + "designated reference corpus) minus the concept', which is a "
+            + "different comparison and not the concept's opposite pole, and a "
+            + "direction with no source concept has no stimulus files to swap "
+            + "at all — so the validation.jsonl a mirrored pole is told to "
+            + "author would be a file attach pins as EXPLICITLY ABSENT, and "
+            + "authoring it later is drift"
+    }
+
+    public static let unmirrorableMethodRepair =
+        "inject the opposite end of this direction with a NEGATIVE α in a "
+        + "study condition — the sign flip is available there, needs no new "
+        + "artifact, and claims no evidence the method cannot supply"
 }

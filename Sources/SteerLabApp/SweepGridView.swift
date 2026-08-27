@@ -90,8 +90,12 @@ struct SweepGridView: View {
             case .baseline: "no-injection baseline"
             case .pass: "eligible"
             }
+        let ratio = cell.distinct2Ratio.map { " (\(format($0))× baseline)" } ?? ""
+        let length = cell.lengthInflated
+            ? ", ⚠︎ output over 1.5× baseline length" : ""
         return "L\(cell.layer) α\(format(cell.alpha)): objective \(score), "
-            + "distinct-2 \(distinct), battery \(battery) — \(state)"
+            + "distinct-2 \(distinct)\(ratio), battery \(battery)\(length) "
+            + "— \(state)"
     }
 
     @ViewBuilder

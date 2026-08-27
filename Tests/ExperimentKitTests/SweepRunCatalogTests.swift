@@ -35,7 +35,8 @@ struct SweepRunCatalogTests {
         }
         #expect(throws: ExperimentError.self) {
             _ = try SweepRunCatalog.parseCSV(
-                SweepRunCatalog.csvHeader + "\nfrench,notanint,0,0,0,0")
+                SweepRunCatalog.csvHeader
+                    + "\nfrench,notanint,0,0,0,1,50,false,0")
         }
         #expect(throws: ExperimentError.self) {
             _ = try SweepRunCatalog.parseCSV("")
@@ -43,8 +44,11 @@ struct SweepRunCatalogTests {
     }
 
     @Test func parsesServerShapedCSVWithWordsColumnIdentically() throws {
-        // The server's sweep.csv adds a `words` column between distinct2 and
-        // batteryAccuracy — rows must parse identically to the Swift shape.
+        // The `words` column used to exist only on the server; since the
+        // baseline-relative coherence floor both engines write it, alongside
+        // `distinct2Ratio` and `lengthInflated`. A run written before any of
+        // them must still parse, and to the same rows modulo the columns it
+        // genuinely did not record.
         let serverCSV = """
             concept,layer,alpha,markerDensity,distinct2,words,batteryAccuracy
             french,-1,0,0.01,0.82,52.1,0.9
@@ -57,7 +61,10 @@ struct SweepRunCatalogTests {
             """
         let serverRows = try SweepRunCatalog.parseCSV(serverCSV)
         let swiftRows = try SweepRunCatalog.parseCSV(swiftCSV)
-        #expect(serverRows == swiftRows)
+        #expect(serverRows.map(\.words) == [52.1, 49.8])
+        #expect(swiftRows.allSatisfy { $0.words == nil })
+        #expect(
+            serverRows.map { var r = $0; r.words = nil; return r } == swiftRows)
         #expect(serverRows.count == 2)
         #expect(serverRows[0].isBaseline)
 

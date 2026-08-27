@@ -49,7 +49,27 @@ public struct StimulusSet: Sendable {
     public let negative: [String]
     /// SHA-256 over the raw bytes of both files, hashed into run configs so
     /// results are traceable to the exact stimuli that produced the vector.
+    ///
+    /// ORDER-SENSITIVE by construction: positive bytes then negative bytes.
+    /// That is deliberate — the two files are not a set, they are a signed
+    /// contrast, and a hash blind to which file was the positive one would
+    /// certify a direction pointing the other way.
     public let hash: String
+
+    /// SHA-256 over the same two files in the OPPOSITE order (negative bytes
+    /// then positive bytes): what these stimuli hash to when the
+    /// positive/negative ROLES are swapped.
+    ///
+    /// This exists for exactly one claim — a MIRRORED pole (`PoleMirror`),
+    /// whose concept directory holds its parent's two files with the roles
+    /// exchanged, and whose sidecar therefore carries the PARENT's
+    /// `stimulusSetHash` qualified by `polesSwappedFromSource`. Attach proves
+    /// that claim by hashing the mirrored concept's files in the parent's
+    /// order and comparing (`ExperimentStore.attachArtifactPin`) — the right
+    /// claim, checked, rather than a hash comparison weakened to let the
+    /// mirror through. nil for an in-memory class set, which has no files and
+    /// so no order to swap. Server twin: `StimulusSet.poles_swapped_hash`.
+    public let polesSwappedHash: String?
 
     /// In-memory class set — designated-reference extraction builds its
     /// classes from stories corpora, not a directory. `hash` is the
@@ -60,6 +80,7 @@ public struct StimulusSet: Sendable {
         self.positive = positive
         self.negative = negative
         self.hash = hash
+        self.polesSwappedHash = nil
     }
 
     public init(directory: URL) throws {
@@ -90,6 +111,11 @@ public struct StimulusSet: Sendable {
         digest.update(data: positiveData)
         digest.update(data: negativeData)
         self.hash = digest.finalize().map { String(format: "%02x", $0) }.joined()
+        var swapped = SHA256()
+        swapped.update(data: negativeData)
+        swapped.update(data: positiveData)
+        self.polesSwappedHash =
+            swapped.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     private static func read(_ url: URL) throws -> Data {

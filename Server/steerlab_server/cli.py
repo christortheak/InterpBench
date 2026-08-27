@@ -2963,6 +2963,7 @@ _MIRROR_REFUSALS: dict = {
     "conceptRequired": ("blocked", "usage", 64),
     "destinationOccupied": ("refused", "artifactExists", 65),
     "doubleMirror": ("refused", "doubleMirror", 65),
+    "unmirrorableMethod": ("refused", "unmirrorableMethod", 65),
 }
 
 

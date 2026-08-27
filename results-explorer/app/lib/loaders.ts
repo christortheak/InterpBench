@@ -198,6 +198,9 @@ export const loadSweepRows = async (run: WorkspaceRun): Promise<SweepRow[]> => {
       concept: at(row, "concept"), layer, alpha, markerDensity, distinct2,
       batteryAccuracy: strictNumber(at(row, "batteryaccuracy")),
       objective: strictNumber(at(row, "objective")),
+      distinct2Ratio: strictNumber(at(row, "distinct2Ratio")),
+      words: strictNumber(at(row, "words")),
+      lengthInflated: String(at(row, "lengthInflated") ?? "").toLowerCase() === "true",
     }];
   });
 };
@@ -208,7 +211,7 @@ export const loadSweepRecommendations = async (run: WorkspaceRun): Promise<Sweep
   try {
     const root = recordValue(JSON.parse(await (await runFile.handle.getFile()).text()));
     return Object.entries(root).map(([concept, raw]) => {
-      if (typeof raw === "string") return { concept, failure: raw, layer: null, alpha: null, metric: "markerDensity", metrics: {}, capabilityTolerance: .15, coherenceFloor: .45, matchedNormRandomMargin: null, devPromptsHash: "", batteryHash: "", sweepRun: "" };
+      if (typeof raw === "string") return { concept, failure: raw, layer: null, alpha: null, metric: "markerDensity", metrics: {}, capabilityTolerance: .15, coherenceFloor: .45, coherenceRatioToBaseline: null, matchedNormRandomMargin: null, devPromptsHash: "", batteryHash: "", sweepRun: "" };
       const item = recordValue(raw);
       const cell = recordValue(item.winningCell);
       const criterion = recordValue(item.criterion);
@@ -223,7 +226,11 @@ export const loadSweepRecommendations = async (run: WorkspaceRun): Promise<Sweep
         metric: typeof objective.metric === "string" ? objective.metric : "markerDensity",
         metrics,
         capabilityTolerance: typeof constraints.capabilityTolerance === "number" ? constraints.capabilityTolerance : .15,
-        coherenceFloor: typeof constraints.coherenceFloor === "number" ? constraints.coherenceFloor : .45,
+        // Which coherence rule the criterion declared is decided by the PRESENCE of
+        // the relative fields — never their values — exactly as both engines decide it.
+        // Absent = the legacy absolute rule at coherenceFloor, forever.
+        coherenceFloor: typeof constraints.coherenceAbsoluteBackstop === "number" ? constraints.coherenceAbsoluteBackstop : typeof constraints.coherenceFloor === "number" ? constraints.coherenceFloor : .45,
+        coherenceRatioToBaseline: typeof constraints.coherenceRatioToBaseline === "number" ? constraints.coherenceRatioToBaseline : typeof constraints.coherenceAbsoluteBackstop === "number" ? .85 : null,
         matchedNormRandomMargin: typeof controls.matchedNormRandomMargin === "number" ? controls.matchedNormRandomMargin : null,
         devPromptsHash: typeof item.devPromptsHash === "string" ? item.devPromptsHash : "",
         batteryHash: typeof item.batteryHash === "string" ? item.batteryHash : "",

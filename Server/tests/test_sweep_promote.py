@@ -9,6 +9,7 @@ extraction + generation.
 """
 
 import hashlib
+import csv
 import json
 import os
 from contextlib import contextmanager
@@ -1675,3 +1676,192 @@ def test_changed_vector_bytes_mint_a_new_agent_rather_than_reusing(tmp_path):
     assert again.get("idempotentReuse") is not True
     assert again["variant"]["promotion"]["vectorArtifactHash"] != \
         first["variant"]["promotion"]["vectorArtifactHash"]
+
+
+# --- the BASELINE-RELATIVE coherence floor (maintainer ruling, round 8) --------
+#
+# An absolute distinct-2 floor gates against a fixed number, and a fixed number
+# cannot know what the model's own prose looks like. The cell that forced this:
+# distinct-2 0.535 against a baseline of 0.989, output 65% longer, and a
+# logprobShift that was repetition rather than steering. It cleared the absolute
+# 0.45 and was recommended.
+#
+# Swift twin: ``Tests/ExperimentKitTests/BaselineRelativeCoherenceFloorTests.swift``.
+
+_DEGENERATE = sel.SweepCell(layer=20, alpha=0.4, metric=0.9, distinct2=0.535,
+                            battery_accuracy=0.9)
+_HEALTHY = sel.SweepCell(layer=12, alpha=0.2, metric=0.6, distinct2=0.93,
+                         battery_accuracy=0.9)
+_BASELINE = sel.BaselineCell(metric=0.1, distinct2=0.989, battery_accuracy=0.9)
+
+
+def test_the_relative_floor_rejects_the_cell_the_absolute_floor_admitted():
+    legacy = sel.resolve_selection({"constraints": {"coherenceFloor": 0.45}})
+    assert legacy.coherence_ratio_to_baseline is None
+    assert sel.select_cell([_DEGENERATE, _HEALTHY], _BASELINE, legacy).layer == 20
+
+    relative = sel.resolve_selection({"constraints": {
+        "coherenceRatioToBaseline": 0.85, "coherenceAbsoluteBackstop": 0.6}})
+    assert relative.is_baseline_relative_coherence
+    # 0.535 is neither 0.85 × 0.989 (= 0.84) nor above the 0.6 backstop.
+    assert sel.select_cell([_DEGENERATE, _HEALTHY], _BASELINE,
+                           relative).layer == 12
+    # …and the ranking the topK control walks agrees, because both read the
+    # same rule.
+    assert [c.layer for c in sel.ranked_candidates(
+        [_DEGENERATE, _HEALTHY], _BASELINE, relative, 5)] == [12]
+
+
+def test_both_halves_of_the_relative_floor_bind():
+    criterion = sel.resolve_selection({"constraints": {
+        "coherenceRatioToBaseline": 0.85, "coherenceAbsoluteBackstop": 0.6}})
+    # Clears the backstop, misses the relative bar.
+    assert not sel.coherence_passes(0.7, 0.989, criterion)
+    # A DEGENERATE baseline: 0.5 × 0.85 = 0.425, which the cell clears — the
+    # backstop is what stops a bad baseline licensing a bad winner.
+    assert not sel.coherence_passes(0.5, 0.5, criterion)
+    assert sel.coherence_passes(0.9, 0.989, criterion)
+
+
+def test_absent_new_fields_mean_the_legacy_absolute_rule_forever():
+    legacy = sel.resolve_selection(None)
+    assert legacy.coherence_floor == 0.45
+    assert legacy.coherence_ratio_to_baseline is None
+    assert legacy.coherence_summary == "coherence floor 0.45 (absolute distinct-2)"
+    # A stamped criterion round-trips to the SAME rule — provenance and agent
+    # birth certificates decode forever.
+    assert sel.resolve_selection(legacy.to_dict()) == legacy
+    constraints = legacy.to_dict()["constraints"]
+    assert "coherenceRatioToBaseline" not in constraints
+    assert "coherenceAbsoluteBackstop" not in constraints
+
+    # Either field ALONE selects the relative rule and defaults the other.
+    for declared in ({"coherenceRatioToBaseline": 0.85},
+                     {"coherenceAbsoluteBackstop": 0.6}):
+        resolved = sel.resolve_selection({"constraints": declared})
+        assert resolved.coherence_ratio_to_baseline == 0.85
+        assert resolved.coherence_floor == 0.6
+        assert resolved.coherence_summary == (
+            "coherence floor 0.85× the α=0 baseline's distinct-2, backstop 0.6")
+        assert sel.resolve_selection(resolved.to_dict()) == resolved
+
+
+@pytest.mark.parametrize("constraints,fragment", [
+    ({"coherenceRatioToBaseline": 1.5}, "coherenceRatioToBaseline"),
+    ({"coherenceRatioToBaseline": 0}, "coherenceRatioToBaseline"),
+    ({"coherenceRatioToBaseline": -0.1}, "coherenceRatioToBaseline"),
+    ({"coherenceRatioToBaseline": float("nan")}, "coherenceRatioToBaseline"),
+    ({"coherenceRatioToBaseline": 0.9, "coherenceAbsoluteBackstop": 1},
+     "coherenceAbsoluteBackstop"),
+    ({"coherenceRatioToBaseline": 0.9, "coherenceAbsoluteBackstop": -0.1},
+     "coherenceAbsoluteBackstop"),
+    # Ascending sanity: a backstop at or above the ratio can never be the
+    # looser of the two, so the criterion reads as relative and gates
+    # absolutely.
+    ({"coherenceRatioToBaseline": 0.6, "coherenceAbsoluteBackstop": 0.6},
+     "backstop must sit UNDER the relative bar"),
+    ({"coherenceRatioToBaseline": 0.5, "coherenceAbsoluteBackstop": 0.8},
+     "backstop must sit UNDER the relative bar"),
+])
+def test_the_relative_ranges_and_ascending_sanity_refuse_at_resolve(constraints,
+                                                                    fragment):
+    with pytest.raises(ValueError) as caught:
+        sel.resolve_selection({"constraints": constraints})
+    assert fragment in str(caught.value)
+
+
+def test_the_legal_relative_boundary_resolves():
+    resolved = sel.resolve_selection({"constraints": {
+        "coherenceRatioToBaseline": 1, "coherenceAbsoluteBackstop": 0}})
+    assert resolved.coherence_floor == 0
+    assert resolved.coherence_ratio_to_baseline == 1
+
+
+def test_the_reported_ratio_and_length_flag_are_reports_not_gates():
+    assert round(sel.distinct2_ratio(0.535, 0.989), 3) == 0.541
+    # A baseline with no coherence at all has no ratio — reporting 0 or ∞
+    # would be a fact nobody measured.
+    assert sel.distinct2_ratio(0.5, 0) is None
+    # 65% longer is flagged; 49% is not; a zero baseline never flags.
+    assert sel.length_inflated(165, 100)
+    assert not sel.length_inflated(149, 100)
+    assert not sel.length_inflated(200, 0)
+    # A flag is NOT a gate.
+    criterion = sel.SelectionCriterion(coherence_floor=0.6,
+                                       coherence_ratio_to_baseline=0.85)
+    assert sel.coherence_passes(0.95, 0.989, criterion)
+
+
+def test_no_selection_reason_names_the_relative_rule():
+    criterion = sel.resolve_selection({"constraints": {
+        "coherenceRatioToBaseline": 0.85, "coherenceAbsoluteBackstop": 0.6}})
+    reason = sel.no_selection_reason([_DEGENERATE], _BASELINE, criterion)
+    assert "coherence floor 0.85× the α=0 baseline's distinct-2" in reason
+    assert "backstop 0.6" in reason
+    # …and the legacy rule still says "absolute", so a reader can tell which
+    # gate refused them.
+    legacy = sel.resolve_selection({"constraints": {"coherenceFloor": 0.9}})
+    assert "coherence floor 0.9 (absolute distinct-2)" in \
+        sel.no_selection_reason([_DEGENERATE], _BASELINE, legacy)
+
+
+def test_a_relative_floor_run_refuses_a_cell_the_absolute_floor_accepts(
+        tmp_path, monkeypatch):
+    """End to end, both halves of the ruling in one sweep: the cell is admitted
+    under the legacy absolute floor and refused under the baseline-relative
+    one, and the CSV reports the ratio and the length flag either way."""
+    # The shape of the real cell: a steered text that repeats itself (low
+    # distinct-2, inflated length) against a baseline whose prose is fully
+    # varied. Both end in the battery's answer so capability stays at 1.
+    phrase = "dread filled the quiet town before dawn broke "
+    steered = (phrase * 3 + "2",)          # distinct-2 0.375, 25 words
+    plain = "the town woke slowly to a bright and unhurried winter morning 2"
+
+    def run(name, selection):
+        root = str(tmp_path / name)
+        os.makedirs(root, exist_ok=True)
+        _sweep_workspace(root, name, selection=selection)
+        monkeypatch.setattr(tasks, "_extract_all",
+                            lambda model, manifest, root: {"fear": _fake_bundle()})
+        monkeypatch.setattr(tasks, "generate",
+                            _fake_generate(steered=steered, plain=plain))
+        run_dir = tasks.sweep(name, root, model_provider=_fake_model,
+                              log=lambda *_: None)
+        with open(os.path.join(run_dir, "recommendations.json"),
+                  encoding="utf-8") as handle:
+            recs = json.load(handle)
+        with open(os.path.join(run_dir, "sweep.csv"), encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        return recs, rows
+
+    # LEGACY absolute floor: a number that looks fine in isolation, and the
+    # repetitive cell clears it and is selected. This is the failure verbatim.
+    legacy_recs, legacy_rows = run(
+        "abs", {"constraints": {"coherenceFloor": 0.3}})
+    assert not isinstance(legacy_recs["fear"], str), legacy_recs["fear"]
+
+    # BASELINE-RELATIVE floor, same backstop: the same cell is refused,
+    # because 0.375 is nowhere near 0.85 of a baseline that scored 1.0 — and
+    # the refusal names the rule that refused it.
+    rel_recs, rel_rows = run("rel", {"constraints": {
+        "coherenceRatioToBaseline": 0.85, "coherenceAbsoluteBackstop": 0.3}})
+    assert isinstance(rel_recs["fear"], str)
+    assert "no cell passed the capability/coherence gates" in rel_recs["fear"]
+    assert "0.85× the α=0 baseline's distinct-2" in rel_recs["fear"]
+
+    # The REPORT columns, present under both rules and on the baseline row.
+    for rows in (legacy_rows, rel_rows):
+        assert list(rows[0]) == ["concept", "layer", "alpha", "markerDensity",
+                                 "distinct2", "distinct2Ratio", "words",
+                                 "lengthInflated", "batteryAccuracy"]
+        baseline_row = next(r for r in rows if r["layer"] == "-1")
+        assert float(baseline_row["distinct2Ratio"]) == 1.0
+        assert baseline_row["lengthInflated"] == "False"
+        cell = next(r for r in rows if r["layer"] != "-1")
+        # The degenerate cell's coherence is a fraction of the baseline's, and
+        # the ratio says so — the number the relative floor gates on.
+        assert float(cell["distinct2Ratio"]) < 0.5
+        # …and the length flag fires without gating anything: the cell the
+        # absolute run SELECTED is flagged in that run's own CSV.
+        assert cell["lengthInflated"] == "True"
+        assert float(cell["words"]) > float(baseline_row["words"])

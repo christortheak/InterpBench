@@ -82,7 +82,13 @@ struct SweepPanelSection: View {
             .number.precision(.fractionLength(0 ... 4)))
         let floor = resolved.coherenceFloor.formatted(
             .number.precision(.fractionLength(0 ... 4)))
-        return "capability tolerance \(tolerance) · coherence floor \(floor)"
+        guard let ratio = resolved.coherenceRatioToBaseline else {
+            return "capability tolerance \(tolerance) · coherence floor "
+                + "\(floor) (absolute)"
+        }
+        let relative = ratio.formatted(.number.precision(.fractionLength(0 ... 4)))
+        return "capability tolerance \(tolerance) · coherence floor "
+            + "\(relative)× baseline · backstop \(floor)"
     }
 
     @ViewBuilder

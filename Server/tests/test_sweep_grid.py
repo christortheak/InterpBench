@@ -581,5 +581,6 @@ def test_the_selection_owned_flags_are_the_ones_that_verb_declares():
         "experiment"]
     assert es.SWEEP_SELECTION_OWNED_FLAGS == (
         "--objective", "--choice-prompts", "--capability-tolerance",
-        "--coherence-floor", "--control-margin", "--control-apply-to",
+        "--coherence-floor", "--coherence-ratio", "--coherence-backstop",
+        "--control-margin", "--control-apply-to",
         "--control-top-k")

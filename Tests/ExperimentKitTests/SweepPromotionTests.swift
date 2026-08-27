@@ -675,7 +675,8 @@ extension ExperimentStoreTests {
         try FileManager.default.createDirectory(
             at: directory, withIntermediateDirectories: true)
         let csv = SweepRunCatalog.csvHeader
-            + "\nfear,-1,0,0.01,0.8,1\nfear,3,0.4,0.2,0.7,0.9"
+            + "\nfear,-1,0,0.01,0.8,1.0,50,false,1"
+            + "\nfear,3,0.4,0.2,0.7,0.875,52,false,0.9"
         try csv.write(
             to: directory.appending(component: "sweep.csv"),
             atomically: true, encoding: .utf8)

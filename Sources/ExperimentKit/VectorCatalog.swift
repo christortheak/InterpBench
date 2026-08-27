@@ -387,6 +387,16 @@ public enum VectorCatalog {
     public static func isStale(_ artifact: VectorArtifact) -> Bool {
         let directory = conceptsDirectory.appending(component: artifact.sidecar.concept)
         guard let set = try? StimulusSet(directory: directory) else { return false }
+        // A MIRRORED POLE inherits its parent's order-sensitive hash and says
+        // so (`polesSwappedFromSource`), and its own concept directory holds
+        // the parent's two files with their roles exchanged. Comparing the
+        // directory's ordinary hash would therefore badge every correctly
+        // authored mirror as stale — the same order-blindness that refused
+        // them at attach (round 8, finding 1). The claim to check is the
+        // swapped one.
+        if artifact.sidecar.polesSwappedFromSource == true {
+            return set.polesSwappedHash != artifact.sidecar.stimulusSetHash
+        }
         return set.hash != artifact.sidecar.stimulusSetHash
     }
 

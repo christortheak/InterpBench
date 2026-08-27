@@ -1862,7 +1862,7 @@ public struct ExperimentCLIRunner: Sendable {
         switch kind {
         case .sourceNotFound, .unreadableArtifact: .notFound
         case .conceptRequired: .blocked
-        case .destinationOccupied, .doubleMirror: .refused
+        case .destinationOccupied, .doubleMirror, .unmirrorableMethod: .refused
         }
     }
 
@@ -1872,6 +1872,7 @@ public struct ExperimentCLIRunner: Sendable {
         case .conceptRequired: "usage"
         case .destinationOccupied: "artifactExists"
         case .doubleMirror: "doubleMirror"
+        case .unmirrorableMethod: "unmirrorableMethod"
         }
     }
 
@@ -3083,7 +3084,9 @@ public struct ExperimentCLIRunner: Sendable {
                     reason: "usage: experiment set-sweep-selection <name> "
                         + "--objective \(SweepSelectionRule.knownMetrics.joined(separator: "|")) "
                         + "[--choice-prompts prompts/…/choices.jsonl] "
-                        + "[--capability-tolerance 0.15] [--coherence-floor 0.45] "
+                        + "[--capability-tolerance 0.15] "
+                        + "[--coherence-ratio 0.85] [--coherence-backstop 0.6] "
+                        + "[--coherence-floor <absolute, the legacy form>] "
                         + "[--control-margin M] [--control-apply-to winner|topK] "
                         + "[--control-top-k K]\n"
                         + "       experiment set-sweep-selection <name> "
@@ -3101,9 +3104,16 @@ public struct ExperimentCLIRunner: Sendable {
             if objective.isEmpty {
                 let cleared = try ExperimentStore.setSweepSelection(
                     nil, experimentName: args[1])
+                // The CLEARED state is the LEGACY rule, and says so: an
+                // absent sweep.selection has always meant the absolute floor,
+                // and a study that clears its declaration is asking for
+                // exactly the historical behaviour.
                 let line = "cleared the sweep selection on '\(cleared.name)' — "
-                    + "the sweep resolves to markerDensity, tolerance 0.15, "
-                    + "coherence floor 0.45"
+                    + "the sweep resolves to markerDensity, tolerance "
+                    + "\(SweepSelectionRule.defaultCapabilityTolerance), "
+                    + "coherence floor "
+                    + "\(SweepSelectionRule.defaultCoherenceFloor) (absolute "
+                    + "distinct-2, the legacy rule)"
                 sink.out(line)
                 return ExperimentCLIResult(
                     message: line, changed: true,
@@ -3112,34 +3122,71 @@ public struct ExperimentCLIRunner: Sendable {
                         "selection": .null,
                     ])
             }
+            // MERGE, not replace (review round 8, finding 7). The flags are
+            // INDEPENDENT AXES of one block — objective, instrument,
+            // tolerance, coherence, control — and the sibling verb that owns
+            // the block's other half (`set-sweep-grid`) already merges axis by
+            // axis. A researcher typing `--objective judgeScore` on a
+            // duplicated draft means "change the objective", not "delete the
+            // matched-norm control I inherited". `--objective ""` remains the
+            // spelling that clears the whole declaration.
+            let existingSelection =
+                (try? ExperimentStore.load(name: args[1]))?.sweep?.selection
+            var inherited: [String] = []
             let selection = try Self.parseSweepSelection(
                 objective: objective,
                 choicePrompts: flag("--choice-prompts"),
                 capabilityTolerance: flag("--capability-tolerance"),
                 coherenceFloor: flag("--coherence-floor"),
+                coherenceRatio: flag("--coherence-ratio"),
+                coherenceBackstop: flag("--coherence-backstop"),
                 controlMargin: flag("--control-margin"),
                 controlApplyTo: flag("--control-apply-to"),
-                controlTopK: flag("--control-top-k"))
+                controlTopK: flag("--control-top-k"),
+                existing: existingSelection, inherited: &inherited)
             let declared = try ExperimentStore.setSweepSelection(
                 selection, experimentName: args[1])
             let resolved = try SweepSelectionRule.resolve(declared.sweep?.selection)
             let selectionLine =
                 "declared sweep selection on '\(declared.name)': objective "
                 + "\(resolved.metric), capability tolerance "
-                + "\(resolved.capabilityTolerance), coherence floor "
-                + "\(resolved.coherenceFloor)"
+                + "\(resolved.capabilityTolerance), "
+                + resolved.coherenceSummary
                 + (resolved.matchedNormRandomMargin.map {
                     ", matched-norm random margin \($0) (\(resolved.controlApplyTo))"
                 } ?? "")
+                + Self.inheritedSelectionNote(inherited)
             sink.out(selectionLine)
             var selectionPayload: [String: JSONValue] = [
                 "experiment": .string(declared.name),
                 "objective": .string(resolved.metric),
                 "capabilityTolerance": .number(resolved.capabilityTolerance),
+                // Under the baseline-relative rule this carries the BACKSTOP,
+                // which is still the absolute number below which no cell
+                // passes — so a reader of this key alone is never told
+                // something untrue.
                 "coherenceFloor": .number(resolved.coherenceFloor),
                 "implementedOnThisEngine": .bool(
                     SweepSelectionRule.implementedMetrics.contains(resolved.metric)),
             ]
+            if let ratio = resolved.coherenceRatioToBaseline {
+                selectionPayload["coherenceRatioToBaseline"] = .number(ratio)
+                selectionPayload["coherenceAbsoluteBackstop"] =
+                    .number(resolved.coherenceFloor)
+            }
+            // The FULL resulting block, echoed verbatim: a merge that changed
+            // something the caller did not name must be visible in the
+            // envelope, not inferred from the flags that were typed.
+            if let declaredBlock = declared.sweep?.selection,
+                let encoded = try? JSONEncoder().encode(declaredBlock),
+                let value = try? JSONDecoder().decode(JSONValue.self, from: encoded)
+            {
+                selectionPayload["selection"] = value
+            }
+            if !inherited.isEmpty {
+                selectionPayload["inheritedFromExistingDeclaration"] =
+                    .array(inherited.map(JSONValue.string))
+            }
             if let margin = resolved.matchedNormRandomMargin {
                 selectionPayload["matchedNormRandomMargin"] = .number(margin)
                 selectionPayload["controlApplyTo"] = .string(resolved.controlApplyTo)
@@ -3702,14 +3749,38 @@ public struct ExperimentCLIRunner: Sendable {
     /// constraint. `--control-apply-to topK` without `--control-top-k` is
     /// refused here rather than resolved to a default, because how many cells
     /// a control covers is a preregistration decision.
+    /// Both coherence forms on one command line. Cross-engine literal; server
+    /// twin: `cli._COHERENCE_FORMS_CONFLICT`.
+    static let coherenceFormsConflictRefusal =
+        "--coherence-floor declares the ABSOLUTE coherence rule and "
+        + "--coherence-ratio/--coherence-backstop declare the "
+        + "BASELINE-RELATIVE one — declare one form, not both. The relative "
+        + "form is the default (a cell must hold at least "
+        + "0.85× the α=0 baseline's distinct-2 and at least 0.6 absolutely); "
+        + "pass --coherence-floor only when the study wants a fixed number "
+        + "the baseline cannot move"
+
+    /// What a re-declare INHERITED rather than restated, in the words the
+    /// verb prints and the envelope echoes. Empty when nothing was inherited.
+    static func inheritedSelectionNote(_ inherited: [String]) -> String {
+        inherited.isEmpty
+            ? ""
+            : " · kept from the existing declaration: "
+                + inherited.joined(separator: ", ")
+    }
+
     static func parseSweepSelection(
         objective: String,
         choicePrompts: String?,
         capabilityTolerance: String?,
         coherenceFloor: String?,
+        coherenceRatio: String? = nil,
+        coherenceBackstop: String? = nil,
         controlMargin: String?,
         controlApplyTo: String?,
-        controlTopK: String?
+        controlTopK: String?,
+        existing: ExperimentManifest.SweepSelection? = nil,
+        inherited: inout [String]
     ) throws -> ExperimentManifest.SweepSelection {
         func number(_ raw: String?, _ flag: String) throws -> Double? {
             guard let raw else { return nil }
@@ -3732,15 +3803,110 @@ public struct ExperimentCLIRunner: Sendable {
                     + "objective — '\(objective)' reads no choice file")
         }
         var block = ExperimentManifest.SweepSelection.Objective(metric: objective)
-        block.choicePromptsFile = choicePrompts
+        if let choicePrompts {
+            block.choicePromptsFile = choicePrompts
+        } else if objective == "logprobShift", let previous = existing?.objective {
+            // The choice INSTRUMENT is its own axis: re-declaring the metric
+            // must not silently unpin the file the objective reads (and whose
+            // hash freeze checks). Inherited whole — file, per-concept map,
+            // and both pin hashes — because they are one declaration.
+            block.choicePromptsFile = previous.choicePromptsFile
+            block.choicePromptsFiles = previous.choicePromptsFiles
+            block.choicePromptsHash = previous.choicePromptsHash
+            block.choicePromptsHashes = previous.choicePromptsHashes
+            if previous.choicePromptsFile != nil || previous.choicePromptsFiles != nil {
+                inherited.append("choice prompts")
+            }
+        } else if existing?.objective?.metric == "logprobShift",
+            existing?.objective?.choicePromptsFile != nil
+                || existing?.objective?.choicePromptsFiles != nil
+        {
+            // A metric change AWAY from logprobShift: the pin is dropped
+            // because nothing reads it any more — said out loud, never
+            // silently, which is the whole point of the echo.
+            inherited.append(
+                "dropped the choice-prompt pin (only logprobShift reads one)")
+        }
         var selection = ExperimentManifest.SweepSelection(objective: block)
-        let tolerance = try number(capabilityTolerance, "--capability-tolerance")
+        var tolerance = try number(capabilityTolerance, "--capability-tolerance")
         let floor = try number(coherenceFloor, "--coherence-floor")
-        if tolerance != nil || floor != nil {
+        let ratio = try number(coherenceRatio, "--coherence-ratio")
+        let backstop = try number(coherenceBackstop, "--coherence-backstop")
+        if tolerance == nil, let previous = existing?.constraints?.capabilityTolerance {
+            tolerance = previous
+            inherited.append("capability tolerance \(previous)")
+        }
+        // ONE coherence form per declaration. Both spellings in one command
+        // line is not a merge to guess at: the absolute floor and the
+        // baseline-relative bar answer the same question differently, and a
+        // criterion has to say which question it asked.
+        if floor != nil, ratio != nil || backstop != nil {
+            throw ExperimentError(reason: Self.coherenceFormsConflictRefusal)
+        }
+        // The RELATIVE form is the default for a NEW declaration — written
+        // explicitly, never left to be inferred, so that a constraints block
+        // with neither field keeps meaning the legacy absolute rule forever.
+        // `--coherence-floor` still declares that legacy rule, for a study
+        // that genuinely wants a fixed number.
+        if floor != nil {
             selection.constraints = .init(
                 capabilityTolerance: tolerance, coherenceFloor: floor)
+        } else if ratio != nil || backstop != nil {
+            selection.constraints = .init(
+                capabilityTolerance: tolerance,
+                coherenceRatioToBaseline: ratio
+                    ?? SweepSelectionRule.defaultCoherenceRatio,
+                coherenceAbsoluteBackstop: backstop
+                    ?? SweepSelectionRule.defaultCoherenceBackstop)
+        } else if let previous = existing?.constraints,
+            previous.coherenceFloor != nil
+                || previous.coherenceRatioToBaseline != nil
+                || previous.coherenceAbsoluteBackstop != nil
+        {
+            // A re-declare that names no coherence flag INHERITS the declared
+            // coherence rule verbatim — including a legacy absolute floor,
+            // which must never be silently converted to the relative form.
+            selection.constraints = .init(
+                capabilityTolerance: tolerance,
+                coherenceFloor: previous.coherenceFloor,
+                coherenceRatioToBaseline: previous.coherenceRatioToBaseline,
+                coherenceAbsoluteBackstop: previous.coherenceAbsoluteBackstop)
+            inherited.append(
+                previous.coherenceRatioToBaseline != nil
+                    ? "the baseline-relative coherence floor"
+                    : "coherence floor \(previous.coherenceFloor ?? 0)")
+        } else if existing == nil {
+            // A genuinely NEW declaration takes the baseline-relative floor,
+            // written explicitly. An EXISTING block that declared no
+            // coherence keys keeps declaring none — it means the legacy
+            // absolute default, and a re-declare must not move it.
+            selection.constraints = .init(
+                capabilityTolerance: tolerance,
+                coherenceRatioToBaseline: SweepSelectionRule.defaultCoherenceRatio,
+                coherenceAbsoluteBackstop: SweepSelectionRule.defaultCoherenceBackstop)
+        } else if tolerance != nil {
+            selection.constraints = .init(capabilityTolerance: tolerance)
         }
-        if let margin = try number(controlMargin, "--control-margin") {
+        // A7: the matched-norm CONTROL is an independent axis, and a
+        // re-declare that names none of its flags inherits it whole. Before
+        // this, `set-sweep-selection <name> --objective judgeScore` on a draft
+        // duplicated from a donor DELETED the donor's control block, and six
+        // live sweep arms ran with no matched-norm control and nobody was
+        // told. `--control-margin ""` is the spelling that REMOVES it, so
+        // merging is not a one-way ratchet.
+        if controlMargin?.trimmingCharacters(in: .whitespaces) == "" ,
+            controlMargin != nil
+        {
+            selection.controls = nil
+        } else if controlMargin == nil, controlApplyTo == nil, controlTopK == nil,
+            let previous = existing?.controls
+        {
+            selection.controls = previous
+            inherited.append(
+                "matched-norm random control (margin "
+                    + "\(previous.matchedNormRandomMargin ?? 0), "
+                    + "\(previous.applyTo ?? "winner"))")
+        } else if let margin = try number(controlMargin, "--control-margin") {
             var topK: Int?
             if let raw = controlTopK {
                 guard let value = Int(raw), value >= 1 else {

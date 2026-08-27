@@ -93,7 +93,13 @@ public enum SweepPanelModel {
         public var files: [InstrumentFile]
         public var objective: String
         public var capabilityTolerance: Double
+        /// The ABSOLUTE distinct-2 floor (the backstop, under the
+        /// baseline-relative rule) — always a true "no cell passes below
+        /// this" number.
         public var coherenceFloor: Double
+        /// Non-nil = the baseline-relative rule at this multiple of the α=0
+        /// baseline's distinct-2.
+        public var coherenceRatioToBaseline: Double?
         public var control: ControlState
 
         /// Cells actually executed, plus the implied baseline.
@@ -167,6 +173,7 @@ public enum SweepPanelModel {
             objective: criterion.metric,
             capabilityTolerance: criterion.capabilityTolerance,
             coherenceFloor: criterion.coherenceFloor,
+            coherenceRatioToBaseline: criterion.coherenceRatioToBaseline,
             control: criterion.matchedNormRandomMargin.map(ControlState.declared)
                 ?? .absent)
     }

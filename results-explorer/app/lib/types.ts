@@ -105,6 +105,9 @@ export type SweepRow = {
   distinct2: number;
   batteryAccuracy: number | null;
   objective: number | null;
+  distinct2Ratio: number | null;
+  words: number | null;
+  lengthInflated: boolean;
 };
 
 export type SweepRecommendation = {
@@ -115,7 +118,10 @@ export type SweepRecommendation = {
   metric: string;
   metrics: Record<string, number>;
   capabilityTolerance: number;
+  /** The absolute distinct-2 floor — the backstop under the baseline-relative rule. */
   coherenceFloor: number;
+  /** Non-null = the baseline-relative rule at this multiple of the baseline's distinct-2. */
+  coherenceRatioToBaseline: number | null;
   matchedNormRandomMargin: number | null;
   devPromptsHash: string;
   batteryHash: string;

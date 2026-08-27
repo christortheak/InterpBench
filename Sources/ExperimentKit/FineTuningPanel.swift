@@ -1812,6 +1812,12 @@ public final class FineTuningPanel {
                 ?? JudgeModelOffers.liveInstalled)
     }
 
+    /// Why the coherence judge switch cannot run with nothing picked. Named
+    /// here, beside the gate that returns it, so the sentence has one home.
+    public static let judgeSelectionRequiredReason =
+        "the coherence judge is on but no judge is picked — choose a judge, "
+        + "or turn the coherence judge off"
+
     /// Why Run Robustness Check will not start, in one plain sentence — nil
     /// means runnable. The judge half is the SHARED precondition list
     /// (`JudgeReadiness`), so this gate, the picker's flags, and the route
@@ -1821,8 +1827,23 @@ public final class FineTuningPanel {
     /// installed used to reach `SteeredContainerLoader.load`, which downloads,
     /// and a local judge under a server route used to run the whole battery
     /// and then skip judging with a warning nobody had been warned about.
+    ///
+    /// The BLANK selection is refused here rather than in `JudgeReadiness`
+    /// (review round 8, finding 4). A blank is a legal "no judge asked for"
+    /// for the shared rule's other callers — the Studies pane substitutes the
+    /// default Claude judge before asking, and the picker just lists nothing
+    /// selected — but this pane has a switch that SAYS a judge will run.
+    /// Passing a blank through meant the toggle was on, the battery ran, the
+    /// route took its `case nil: (nil, [])` branch, and the report simply had
+    /// no judge section: a judgeless run reported as an ordinary one, with no
+    /// warning anywhere. The shared rule stays as it is; the caller that
+    /// knows a judge was ASKED FOR is the one that must say so.
     public var robustnessJudgeDisabledReason: String? {
         guard robustnessUseJudge else { return nil }
+        guard
+            !robustnessJudgeModel
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return Self.judgeSelectionRequiredReason }
         return JudgeReadiness.refusal(
             for: robustnessJudgeModel,
             substrate: judgeSubstrate,

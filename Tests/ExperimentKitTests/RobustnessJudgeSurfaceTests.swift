@@ -686,9 +686,32 @@ struct JudgePickerPanelSurfaceTests {
         panel.localModelScanOverrideForTesting = []
         panel.robustnessUseJudge = true
 
-        // No judge asked for at all: nothing to refuse.
+        // The judge switch is ON with nothing picked. This USED to pass the
+        // blank through the shared rule (where blank legitimately means "no
+        // judge") and enable Run — the battery then ran, the route judged
+        // nothing, and the report simply had no judge section (review round
+        // 8, finding 4). The pane that owns the switch is the one that knows
+        // a judge was asked for.
         panel.robustnessJudgeModel = ""
-        #expect(panel.robustnessJudgeDisabledReason == nil)
+        #expect(
+            panel.robustnessJudgeDisabledReason
+                == "the coherence judge is on but no judge is picked — "
+                    + "choose a judge, or turn the coherence judge off")
+        #expect(
+            panel.robustnessJudgeDisabledReason
+                == FineTuningPanel.judgeSelectionRequiredReason)
+        // Whitespace is not a selection either.
+        panel.robustnessJudgeModel = "   "
+        #expect(
+            panel.robustnessJudgeDisabledReason
+                == FineTuningPanel.judgeSelectionRequiredReason)
+        // …and the SHARED rule is untouched: a blank is still no refusal
+        // there, because its other callers default a blank to a real judge.
+        #expect(
+            JudgeReadiness.refusal(
+                for: "", claudeKeyPresent: false, openRouterKeyPresent: false,
+                installed: { _ in false }, capability: { _ in .capable })
+                == nil)
 
         panel.robustnessJudgeModel = "vendor/tier-absent"
         #expect(

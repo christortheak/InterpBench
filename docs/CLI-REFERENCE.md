@@ -874,7 +874,7 @@ steerlab-cli experiment detach <name> <concept>…
 steerlab-cli experiment pin-prompts <name> <prompts/…/file.jsonl>
 steerlab-cli experiment pin-rubric <name> <prompts/rubrics/file.md> [--judges <spec>]
 steerlab-cli experiment declare-condition <name> <condition> [--alpha-units <norm|raw>] [--band-width <k>] [--baseline] [--control <name>] [--slots <spec>]
-steerlab-cli experiment set-sweep-selection <name> [--capability-tolerance <ratio>] [--choice-prompts <path>] [--coherence-floor <ratio>] [--control-apply-to <winner|topK>] [--control-margin <margin>] [--control-top-k <k>] [--objective <metric>]
+steerlab-cli experiment set-sweep-selection <name> [--capability-tolerance <ratio>] [--choice-prompts <path>] [--coherence-backstop <ratio>] [--coherence-floor <ratio>] [--coherence-ratio <ratio>] [--control-apply-to <winner|topK>] [--control-margin <margin>] [--control-top-k <k>] [--objective <metric>]
 steerlab-cli experiment set-sweep-grid <name> [--alphas <a1,a2,…>] [--battery <path>] [--dev-prompts <path>] [--layer-fractions <f1,f2,…>] [--layers <L1,L2,…>] [--max-tokens <n>]
 steerlab-cli experiment set-instruments <name> <instrument>[,…] [--ordinal-aggregation <expectedValue|argmax>]
 steerlab-cli experiment set-style-taxonomy <name> <prompts/taxonomies/file.json>
@@ -908,6 +908,64 @@ takes no `--slots` (it is the explicit no-intervention arm) but still requires
 `--alpha-units`, and
 `set-sweep-selection … --objective ""` clears the declaration, after which the
 sweep resolves to the historical `markerDensity` rule.
+
+**`set-sweep-selection`** — the sweep's decision rule, declared as manifest data
+before the sweep runs. That is what makes the selection preregistered rather
+than chosen after seeing the grid.
+
+Its flags are **independent axes of one block, and the verb MERGES**: a
+re-declare that names no coherence flag keeps the declared coherence rule, one
+that names no control flag keeps the matched-norm control, and so on. This is
+the same axis-by-axis behaviour `set-sweep-grid` has always had for the block's
+other half, and it exists because a re-declare used to *replace*: typing
+`--objective judgeScore` on a draft duplicated from a donor silently deleted the
+donor's `controls` block, and arms ran with no matched-norm control with nothing
+said. Whatever a merge carried over is named in the success line and echoed in
+`--json` as `inheritedFromExistingDeclaration`, and the envelope now echoes the
+**whole resulting `selection` block** so nothing changes invisibly. To REMOVE
+the control rather than keep it, pass `--control-margin ""`; to clear the whole
+declaration, `--objective ""`.
+
+**The coherence floor is baseline-relative** (default for new declarations). An
+absolute distinct-2 number cannot know what the model's own prose looks like: a
+sweep admitted a cell at distinct-2 0.535 against a baseline of 0.989 — barely
+half the coherence the unsteered model produced, on output 65% longer — and its
+`logprobShift` was *repetition*, not steering. 0.535 clears 0.45, so the gate
+said yes.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--objective` | **required** | `markerDensity` \| `judgeScore` \| `logprobShift`. `""` clears the whole declaration. |
+| `--choice-prompts` | none | `logprobShift` only: the hashed dev choice-prompt JSONL the objective scores. |
+| `--capability-tolerance` | `0.15` | Battery accuracy may drop at most this far below the α=0 baseline's. |
+| `--coherence-ratio` | `0.85` | A cell's distinct-2 must be at least this fraction of the **α=0 baseline cell's** distinct-2. Range `(0, 1]`. |
+| `--coherence-backstop` | `0.6` | The absolute distinct-2 no cell may fall below whatever the baseline was — what stops a degenerate baseline licensing a degenerate winner. Range `[0, 1)`, and it must sit **under** the ratio. |
+| `--coherence-floor` | — | The **legacy absolute** rule: a fixed distinct-2 floor, `[0, 1]`. Declares a different form from the two flags above, so passing it alongside either is refused. |
+| `--control-margin` | none | The winner must beat a matched-norm random direction by this margin. `""` removes a declared control. |
+| `--control-apply-to` | `winner` | `winner` \| `topK`. |
+| `--control-top-k` | — | Required with `--control-apply-to topK`. |
+
+Which rule a criterion declares is decided by the **presence** of
+`coherenceRatioToBaseline` / `coherenceAbsoluteBackstop` in its constraints
+block — never by their values. A constraints block carrying neither means the
+absolute rule at its declared (or default `0.45`) `coherenceFloor`, and will
+mean that forever: **every criterion pinned before this change keeps the exact
+semantics it ran under**, including the ones stamped into frozen manifests and
+agent birth certificates. Only new declarations take the relative form, and
+`set-sweep-selection` writes it explicitly rather than leaving it to be
+inferred.
+
+`sweep.csv` reports the number the relative floor gates on for **every** cell,
+whichever rule is in force: `distinct2Ratio` (this cell's distinct-2 over the
+baseline's) sits beside `distinct2`, and `lengthInflated` flags a cell whose
+mean output ran more than 1.5× the baseline's length. The flag is **reported,
+never gated on** — length inflation is a fact a reader needs before believing a
+metric that repetition can move, not a rule about which cells may win. Both
+engines now write the identical column order:
+
+```
+concept,layer,alpha,markerDensity,distinct2,distinct2Ratio,words,lengthInflated,batteryAccuracy[,objective]
+```
 
 **`create`** — `--model` is required (usage error otherwise). `--revision` pins
 the model commit; unpinned, freeze will demand it (or auto-pin from the local
@@ -1491,6 +1549,22 @@ tensors flip — a stored `neutral_mean_layer_<i>` is the residual stream's own
 mean, an absolute activation statistic, and negating it would corrupt ablation
 mean-centring.
 
+**Only a PAIRED, source-concept-bearing contrast can be mirrored** — the CAA
+family, `meanDifference` and `lat`. Those are the methods whose two poles ARE
+two authored stimulus files, so swapping their roles is exactly what the
+negation means and the swapped files are evidence a researcher can author. Every
+other direction negates *generically*, with no method-specific evidence
+semantics: a grand-mean direction's negation is "the population mean minus the
+concept", a `designatedReference` direction's is "the reference corpus minus the
+concept" — a different comparison, not the concept's opposite pole, and unpaired
+besides — and `optvec` / `gemmaScopeSAE` / `repeReaderLAT` have no source
+concept at all, so there are no stimulus files to swap. In every one of those
+cases the `validation.jsonl` this verb would tell you to author is a file
+`attach` pins as **explicitly absent**, treating one that appears later as
+drift; the verb was promising a workflow attach forbids. An excluded method is
+refused `unmirrorableMethod`/65, naming the method and pointing at the sign flip
+that *is* available: a negative α in a study condition.
+
 **`--concept <newName>` is required**, and it may not be the source's own name.
 A mirrored pole under the same name would leave two artifacts with one concept
 name pointing in opposite directions, and every selector, pin, and promotion
@@ -1521,6 +1595,37 @@ silently would claim the same recipe — the hash travels, and
 is dropped: `recipeIdentityHash`, an identity claim about *these* bytes whose
 canonical form includes the concept name and which promotion matches on.
 
+**Attaching the minted mirror.** The stimulus hash is `sha256(positive ‖
+negative)` and therefore order-sensitive, so the mirrored concept's own
+directory — holding the parent's two files role-swapped — hashes to something
+else entirely. `attach` reads the sidecar's `polesSwappedFromSource` and checks
+the claim the sidecar actually makes: it hashes **this** concept's files in the
+**source's** order and compares that to the inherited hash. Nothing is
+loosened — a mirrored concept whose directory holds different bytes, or the
+right bytes in the same order as the parent, still refuses. The manifest then
+pins the mirrored concept's OWN hash as the live `stimulusSetHash` (what every
+later `verify` recomputes) with the linkage beside it in the artifact pin:
+
+```json
+"vectorArtifact": {
+  "…": "…",
+  "polesSwappedFromSource": true,
+  "sourceStimulusSetHash": "<the parent concept's hash>"
+}
+```
+
+`verify` re-proves **both**: the concept's own hash against
+`prompts/concepts/<newName>/`, and the swap itself, by re-deriving the
+source-order hash from those same files. Validation pins the **mirrored**
+concept's own `validation.jsonl` under the ordinary source-concept rules — the
+inverted rows the success message tells you to author.
+
+The proof that the swapped files are the right evidence rather than a
+bookkeeping convention: CAA's mean difference is antisymmetric under a file
+swap, so extracting freshly from the mirrored concept's directory reproduces the
+minted bytes exactly. The mirror and the "just re-extract from the swapped
+files" workaround are the same vector.
+
 Refusals: a missing source is `notFound`/66; `--concept` missing or equal to
 the source's is `usage`/64 *with the reason*; a destination that already holds
 that artifact is `artifactExists`/65 (mirroring never replaces); and mirroring
@@ -1530,9 +1635,9 @@ original.
 **Validation is not minted.** A mirrored concept has no `validation.jsonl`, and
 this verb writes nothing into `prompts/concepts/` — an engine that invented
 held-out evidence would be manufacturing the thing the validate gate exists to
-demand. Attach behaves accordingly: a source-concept-less artifact (a
-reader-derived direction) pins the absence explicitly and the existing vacuity
-machinery reports it. The success message names the file to author:
+demand. Because mirroring is now restricted to the methods whose attach ACCEPTS
+a validation file, the message below only ever appears where authoring one is a
+workflow that works. The success message names the file to author:
 
 > to validate the mirrored pole, author
 > `prompts/concepts/<newName>/validation.jsonl` — the source concept's rows

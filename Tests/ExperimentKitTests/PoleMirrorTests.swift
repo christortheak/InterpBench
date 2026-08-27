@@ -540,20 +540,16 @@ import Testing
         }
     }
 
-    /// The lifecycle answer: a mirrored pole has NO validation.jsonl, and
-    /// nothing invents one. Mirroring a source-concept-less artifact (a
-    /// reader-derived direction) attaches cleanly and the absence is pinned
-    /// EXPLICITLY — the existing explicit-null machinery, saying so honestly,
-    /// rather than a new gate.
-    @Test func aMirroredReaderDirectionAttachesWithItsValidationPinnedAbsent()
-        async throws
-    {
+    /// A source-concept-less direction (here a reader-derived one) is REFUSED
+    /// by mirror-poles, and the refusal is the answer to what used to be a
+    /// promise the lifecycle could not keep: the verb accepted any artifact
+    /// with a `layerCount` and then told the researcher to author
+    /// `validation.jsonl`, while attach pins validation EXPLICITLY ABSENT for
+    /// exactly these methods and treats a file appearing later as drift
+    /// (external review round 8, finding 2). The mirrored pole is now minted
+    /// only where the swapped-pole semantics are real.
+    @Test func aReaderDerivedDirectionCannotBeMirrored() async throws {
         try await withWorkspace { root in
-            try WorkspaceCompute.declare(.localMLX, root: root)
-            _ = try ExperimentStore.create(
-                name: "mirror-study", description: "",
-                modelID: "mlx-community/gemma-3-4b-it-4bit")
-
             let reader = RepEReader.Artifact(
                 modelID: "mlx-community/gemma-3-4b-it-4bit", revision: "abc123",
                 concept: "candour", layer: 1,
@@ -570,36 +566,281 @@ import Testing
                 trainAccuracy: 1, heldOutAccuracy: 0.9,
                 trainPairCount: 8, heldOutPairCount: 4,
                 signConvention: .heldOutPairAgreement, signHeldOutAccuracy: 1)
-            var (vectors, sidecar) = try RepEReader.deriveSteeringArtifact(
+            let (vectors, sidecar) = try RepEReader.deriveSteeringArtifact(
                 from: reader, readerFileName: "reader-candour-layer1.json",
                 readerBytes: Data("reader-bytes".utf8))
-            sidecar.residualNormPerLayer = [7.0, 7.5]
-            sidecar.residualNormSource = "neutral-corpus"
             let sourceDirectory = root.appending(components: "runs", "derived")
             try SteeringVectorStore.save(
                 vectors: vectors, sidecar: sidecar, to: sourceDirectory,
                 name: "candour-repe-reader")
 
+            let outcome = await run([
+                "mirror-poles", "runs/derived/candour-repe-reader",
+                "--concept", "reticence", "--json",
+            ])
+            #expect(outcome.envelope.exitCode == SteerLabCLIState.refused.exitCode)
+            let error = try #require(outcome.envelope.error)
+            #expect(error.code == "unmirrorableMethod")
+            #expect(error.reason.contains("repeReaderLAT"))
+            #expect(error.reason.contains("PAIRED, source-concept-bearing"))
+            #expect(error.reason.contains("lat, meanDifference"))
+            #expect(error.repairAction == PoleMirror.unmirrorableMethodRepair)
+            #expect(error.repairAction.contains("NEGATIVE α"))
+            // Nothing was minted, and no run directory was left behind.
+            let runs = try FileManager.default.contentsOfDirectory(
+                at: root.appending(component: "runs"),
+                includingPropertiesForKeys: nil)
+            #expect(!runs.contains { $0.lastPathComponent.contains("mirror-") })
+        }
+    }
+
+    /// Every method whose mirrored pole would be a generic sign flip is
+    /// refused, and the accepted set is derived from the methods' own
+    /// properties rather than a hand-kept list.
+    @Test func onlyThePairedSourceConceptBearingFamilyIsMirrorable() {
+        #expect(
+            PoleMirror.mirrorableMethods.map(\.rawValue).sorted()
+                == ["lat", "meanDifference"])
+        for method in ExtractionMethod.allCases
+        where !PoleMirror.mirrorableMethods.contains(method) {
+            #expect(!(method.isPaired && method.hasSourceConcept))
+        }
+        // designatedReference is source-concept-BEARING and still excluded:
+        // it is unpaired, so its negation is "the reference corpus minus the
+        // concept" — a different comparison, not the opposite pole.
+        #expect(ExtractionMethod.designatedReference.hasSourceConcept)
+        #expect(!ExtractionMethod.designatedReference.isPaired)
+        #expect(
+            !PoleMirror.mirrorableMethods.contains(.designatedReference))
+    }
+}
+
+/// THE MIRRORED-POLE LIFECYCLE, end to end (external review round 8, finding
+/// 1): mint → author the swapped stimulus files and the inverted validation →
+/// attach the MINTED artifact under the mirrored concept → verify clean.
+///
+/// The bug this pins: `stimulusSetHash` is `sha256(positive ‖ negative)` and
+/// therefore ORDER-SENSITIVE, the mirrored sidecar carries the PARENT's hash
+/// (qualified `polesSwappedFromSource`), and the mirrored concept's own
+/// directory holds those same two files role-swapped. Attach recomputed the
+/// concept directory's ordinary hash, compared it to the inherited one, and
+/// refused every mirror ever minted — the verb produced an artifact no study
+/// could cite. The fix compares the right CLAIM (these files in the source's
+/// order) rather than weakening any hash, so a directory holding the wrong
+/// bytes, or the right bytes in the WRONG order, still refuses.
+///
+/// Every expectation here is duplicated in `Server/tests/test_pole_mirror.py`.
+@Suite(.serialized) struct MirroredPoleAttachTests {
+
+    static let sourceConcept = "brightness"
+    static let mirrorConcept = "dimness"
+    static let positiveRows = #"""
+        {"text": "the lamp is on"}
+        {"text": "the room is lit"}
+        """#
+    static let negativeRows = #"""
+        {"text": "the lamp is off"}
+        {"text": "the room is dark"}
+        """#
+
+    func withWorkspace<T>(_ body: (URL) async throws -> T) async throws -> T {
+        ExperimentRootOverrideLock.acquire()
+        let temp = FileManager.default.temporaryDirectory
+            .appending(component: "mirror-attach-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: temp, withIntermediateDirectories: true)
+        WorkspaceRoot.programmaticOverride = temp
+        ExperimentStore.rootOverride = temp
+        defer {
+            ExperimentStore.rootOverride = nil
+            WorkspaceRoot.programmaticOverride = nil
+            try? FileManager.default.removeItem(at: temp)
+            ExperimentRootOverrideLock.release()
+        }
+        return try await body(temp)
+    }
+
+    /// Author `prompts/concepts/<name>/` with the given two files (plus an
+    /// optional validation.jsonl).
+    @discardableResult
+    static func writeConcept(
+        _ name: String, root: URL, positive: String, negative: String,
+        validation: String? = nil
+    ) throws -> URL {
+        let directory = root.appending(components: "prompts", "concepts", name)
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true)
+        try positive.write(
+            to: directory.appending(component: "positive.jsonl"),
+            atomically: true, encoding: .utf8)
+        try negative.write(
+            to: directory.appending(component: "negative.jsonl"),
+            atomically: true, encoding: .utf8)
+        if let validation {
+            try validation.write(
+                to: directory.appending(component: "validation.jsonl"),
+                atomically: true, encoding: .utf8)
+        }
+        return directory
+    }
+
+    /// A CAA artifact whose sidecar records the SOURCE concept's real,
+    /// order-sensitive stimulus hash — what an `experiment extract` of that
+    /// concept writes.
+    static func writeSourceArtifact(root: URL, stimulusSetHash: String) throws
+        -> URL
+    {
+        let vectors = ConceptVectors(perLayer: [
+            [1.0, -2.0, 0.5], [0.25, 4.0, -0.75],
+        ])
+        var sidecar = SteeringVectorSidecar(
+            modelID: "org/m", revision: "abc", concept: sourceConcept,
+            stimulusSetHash: stimulusSetHash, vectors: vectors,
+            residualNormPerLayer: [11.0, 12.0],
+            residualNormSource: "neutral-corpus",
+            residualNormConvention: ResidualNormConvention.current)
+        sidecar.extractionMethod = ExtractionMethod.meanDifference.rawValue
+        sidecar.coversModelDepth = true
+        let directory = root.appending(components: "runs", "src")
+        try SteeringVectorStore.save(
+            vectors: vectors, sidecar: sidecar, to: directory,
+            name: sourceConcept)
+        return directory.appending(component: sourceConcept)
+    }
+
+    @Test func theMintedMirrorAttachesUnderItsOwnConceptAndVerifiesClean()
+        async throws
+    {
+        try await withWorkspace { root in
+            try WorkspaceCompute.declare(.localMLX, root: root)
+            _ = try ExperimentStore.create(
+                name: "mirror-study", description: "", modelID: "org/m")
+
+            // The source concept, and an artifact extracted from it.
+            let sourceDirectory = try Self.writeConcept(
+                Self.sourceConcept, root: root, positive: Self.positiveRows,
+                negative: Self.negativeRows,
+                validation: #"{"text": "she squinted", "expresses": true}"#)
+            let sourceSet = try StimulusSet(directory: sourceDirectory)
+            let source = try Self.writeSourceArtifact(
+                root: root, stimulusSetHash: sourceSet.hash)
+
+            // Mint the opposite pole.
             let mirrored = try PoleMirror.mirrorPoles(
-                artifact: sourceDirectory.appending(component: "candour-repe-reader"),
-                concept: "reticence",
+                artifact: source, concept: Self.mirrorConcept,
                 into: root.appending(components: "runs", "mirrored"))
+            #expect(mirrored.sourceConcept == Self.sourceConcept)
+
+            // The mirrored concept: the SAME two files, roles swapped, and
+            // the source's validation rows with `expresses` inverted — which
+            // is exactly what the success message tells the researcher to do.
+            let mirrorDirectory = try Self.writeConcept(
+                Self.mirrorConcept, root: root,
+                positive: Self.negativeRows, negative: Self.positiveRows,
+                validation: #"{"text": "she squinted", "expresses": false}"#)
+            let mirrorSet = try StimulusSet(directory: mirrorDirectory)
+            // The heart of the finding, stated as an assertion: the mirrored
+            // concept's OWN hash is NOT the parent's, and its swapped-order
+            // hash IS.
+            #expect(mirrorSet.hash != sourceSet.hash)
+            #expect(mirrorSet.polesSwappedHash == sourceSet.hash)
 
             let manifest = try ExperimentStore.attachArtifact(
-                "reticence", artifact: "runs/mirrored/reticence",
+                Self.mirrorConcept,
+                artifact: "runs/mirrored/\(Self.mirrorConcept)",
                 experimentName: "mirror-study")
-            let ref = try #require(manifest.concepts.first { $0.name == "reticence" })
-            #expect(ref.effectiveMethod == .repeReaderLAT)
-            // The reader's dataset hash still travels verbatim — the mirrored
-            // pole's stimuli are the same bytes.
-            #expect(ref.stimulusSetHash == "reader-dataset-hash")
-            // The absence of a validation.jsonl is pinned EXPLICITLY, not
-            // merely missing: authoring one later is drift the existing
-            // machinery names.
-            #expect(ref.validationHash == nil)
-            #expect(ref.validationHashPinnedAbsent)
+            let ref = try #require(
+                manifest.concepts.first { $0.name == Self.mirrorConcept })
+
+            // The LIVE pin is the mirrored concept's own hash — the value
+            // every later verify recomputes from prompts/concepts/.
+            #expect(ref.stimulusSetHash == mirrorSet.hash)
+            let pin = try #require(ref.vectorArtifact)
+            // …and the sidecar linkage travels beside it, so the manifest
+            // states both halves of the claim.
+            #expect(pin.polesSwappedFromSource == true)
+            #expect(pin.sourceStimulusSetHash == sourceSet.hash)
+            #expect(pin.sourceConcept == Self.mirrorConcept)
+            #expect(ref.effectiveMethod == .meanDifference)
+
+            // Validation pins the MIRRORED concept's own file, by the normal
+            // source-concept rules — not the source's, and not absent.
+            let mirroredValidation = try #require(
+                ExperimentStore.conceptValidationHash(
+                    fileURL: mirrorDirectory.appending(
+                        component: "validation.jsonl")))
+            let sourceValidation = try #require(
+                ExperimentStore.conceptValidationHash(
+                    fileURL: sourceDirectory.appending(
+                        component: "validation.jsonl")))
+            #expect(ref.validationHash == mirroredValidation)
+            #expect(ref.validationHash != sourceValidation)
+            #expect(!ref.validationHashPinnedAbsent)
+
+            // Verify passes, and it re-proves BOTH hashes.
             #expect(ExperimentStore.verify(manifest).isEmpty)
-            #expect(mirrored.sourceConcept == "candour")
         }
+    }
+
+    /// Nothing was loosened. The swapped claim is CHECKED: a mirrored concept
+    /// whose directory holds the parent's files in the parent's ORDER (the
+    /// natural mistake) refuses, and so does one holding different bytes.
+    @Test func aMirroredConceptWhoseFilesAreNotSwappedIsRefused() async throws {
+        for (label, positive, negative) in [
+            ("same order as the source", Self.positiveRows, Self.negativeRows),
+            ("different bytes", Self.negativeRows, #"{"text": "elsewhere"}"#),
+        ] {
+            try await withWorkspace { root in
+                try WorkspaceCompute.declare(.localMLX, root: root)
+                _ = try ExperimentStore.create(
+                    name: "mirror-study", description: "", modelID: "org/m")
+                let sourceDirectory = try Self.writeConcept(
+                    Self.sourceConcept, root: root,
+                    positive: Self.positiveRows, negative: Self.negativeRows)
+                let source = try Self.writeSourceArtifact(
+                    root: root,
+                    stimulusSetHash: try StimulusSet(directory: sourceDirectory).hash)
+                _ = try PoleMirror.mirrorPoles(
+                    artifact: source, concept: Self.mirrorConcept,
+                    into: root.appending(components: "runs", "mirrored"))
+                try Self.writeConcept(
+                    Self.mirrorConcept, root: root, positive: positive,
+                    negative: negative)
+
+                var refused = false
+                do {
+                    _ = try ExperimentStore.attachArtifact(
+                        Self.mirrorConcept,
+                        artifact: "runs/mirrored/\(Self.mirrorConcept)",
+                        experimentName: "mirror-study")
+                } catch let error as ExperimentError {
+                    refused = true
+                    #expect(
+                        error.reason.contains("is a MIRRORED pole"),
+                        "\(label): \(error.reason)")
+                    #expect(error.reason.contains("roles SWAPPED"))
+                }
+                #expect(refused, "\(label) must refuse")
+            }
+        }
+    }
+
+    /// The SEMANTICS' proof, and the reason the swapped files are the right
+    /// evidence rather than a bookkeeping convention: CAA's mean difference is
+    /// ANTISYMMETRIC under a file swap, so extracting freshly from the
+    /// mirrored concept's directory reproduces the minted bytes exactly. The
+    /// workaround this finding came in through — "just re-extract from the
+    /// swapped files" — and the mirror are the same vector.
+    @Test func extractingFromTheSwappedFilesReproducesTheMintedDirection() throws {
+        let positive: [[Float]] = [[1, -2, 0.5], [3, 0, -1]]
+        let negative: [[Float]] = [[-0.25, 4, 1], [0.5, 0.5, 0.5]]
+        let forward = try SteeringVectorMath.meanDifference(
+            positive: positive, negative: negative)
+        let swapped = try SteeringVectorMath.meanDifference(
+            positive: negative, negative: positive)
+        #expect(swapped == forward.map { -$0 })
+        // …and the mirror's own transform is that same negation, bit-exactly,
+        // which is what makes the two artifacts the same claim.
+        #expect(forward.map { -$0 } == swapped)
     }
 }

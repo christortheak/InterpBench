@@ -3709,8 +3709,15 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
         return density
 
     extra_metric = objective.metric != "markerDensity"
+    # Column order is now IDENTICAL on both engines (the Swift twin's
+    # `SweepRunCatalog.csvHeader`). `distinct2Ratio` is written for every cell
+    # whichever coherence rule is in force — it is the number the
+    # baseline-relative floor gates on — and `lengthInflated` flags a cell whose
+    # mean output ran more than 1.5× the baseline's. The flag is REPORTED, never
+    # gated on.
     fieldnames = ["concept", "layer", "alpha", "markerDensity", "distinct2",
-                  "words", "batteryAccuracy"]
+                  "distinct2Ratio", "words", "lengthInflated",
+                  "batteryAccuracy"]
     if extra_metric:
         fieldnames.append("objective")
 
@@ -3786,10 +3793,14 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                                     distinct2=baseline_distinct,
                                     battery_accuracy=baseline_accuracy)
         if baseline_prev is None:
+            # The baseline is its own reference, so its ratio is 1 and it is
+            # never length-inflated.
             baseline_row = {"concept": concept_name, "layer": -1, "alpha": 0,
                             "markerDensity": baseline_density,
                             "distinct2": baseline_distinct,
+                            "distinct2Ratio": 1.0,
                             "words": baseline_words,
+                            "lengthInflated": False,
                             "batteryAccuracy": baseline_accuracy}
             if extra_metric:
                 baseline_row["objective"] = baseline_objective
@@ -3841,9 +3852,13 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                     # for completed cells keep today's partial-CSV behavior.
                     cancelled = True
                     break
+                ratio = sel.distinct2_ratio(distinct, baseline_distinct)
+                inflated = sel.length_inflated(words, baseline_words)
                 row = {"concept": concept_name, "layer": layer,
                        "alpha": alpha, "markerDensity": density,
-                       "distinct2": distinct, "words": words,
+                       "distinct2": distinct,
+                       "distinct2Ratio": "" if ratio is None else ratio,
+                       "words": words, "lengthInflated": inflated,
                        "batteryAccuracy": accuracy}
                 if extra_metric:
                     row["objective"] = metric_value
@@ -3883,7 +3898,11 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                             "control", layer, alpha, dev.texts,
                             control_texts, baseline_texts, judge_rubric_hash)
                 _log(f"{concept_name} L{layer} α{alpha:g}: density {density:.4g}, "
-                     f"distinct2 {distinct:.4g}, battery {accuracy:.4g}"
+                     f"distinct2 {distinct:.4g}"
+                     + ("" if ratio is None else f" ({ratio:.4g}× baseline)")
+                     + f", battery {accuracy:.4g}"
+                     + (f", ⚠︎ output {words:.4g} words vs baseline "
+                        f"{baseline_words:.4g}" if inflated else "")
                      + (f", {objective.metric} {metric_value:.4g}"
                         if extra_metric and metric_value is not None else ""))
             if cancelled:

@@ -241,11 +241,16 @@ struct OptimizationRunsView: View {
         named name: String, objective: String, panel: ExperimentPanel
     ) -> Bool {
         var spec = ExperimentManifest.SweepSpec()
+        // A NEW declaration takes the baseline-relative coherence floor, and
+        // writes it EXPLICITLY — a constraints block with neither relative
+        // field keeps meaning the legacy absolute rule, forever, so the
+        // default has to be stated rather than inferred.
         spec.selection = ExperimentManifest.SweepSelection(
             objective: .init(metric: objective),
             constraints: .init(
                 capabilityTolerance: SweepSelectionRule.defaultCapabilityTolerance,
-                coherenceFloor: SweepSelectionRule.defaultCoherenceFloor))
+                coherenceRatioToBaseline: SweepSelectionRule.defaultCoherenceRatio,
+                coherenceAbsoluteBackstop: SweepSelectionRule.defaultCoherenceBackstop))
         return panel.setSweepSpec(spec, for: name)
     }
 
@@ -484,10 +489,25 @@ struct OptimizationRunsView: View {
                     format(resolved.capabilityTolerance),
                     isDefault: effective?.constraints?.capabilityTolerance == nil))
             }
-            LabeledContent("Coherence floor (distinct-2)") {
-                Text(criterionValue(
-                    format(resolved.coherenceFloor),
-                    isDefault: effective?.constraints?.coherenceFloor == nil))
+            if let ratio = resolved.coherenceRatioToBaseline {
+                LabeledContent("Coherence floor (relative to baseline)") {
+                    Text(criterionValue(
+                        "\(format(ratio))× the α=0 baseline's distinct-2",
+                        isDefault: effective?.constraints?
+                            .coherenceRatioToBaseline == nil))
+                }
+                LabeledContent("Coherence backstop (absolute distinct-2)") {
+                    Text(criterionValue(
+                        format(resolved.coherenceFloor),
+                        isDefault: effective?.constraints?
+                            .coherenceAbsoluteBackstop == nil))
+                }
+            } else {
+                LabeledContent("Coherence floor (absolute distinct-2)") {
+                    Text(criterionValue(
+                        format(resolved.coherenceFloor),
+                        isDefault: effective?.constraints?.coherenceFloor == nil))
+                }
             }
             LabeledContent("Matched-norm random control") {
                 Text(
@@ -1068,9 +1088,18 @@ struct OptimizationRunsView: View {
         _ row: SweepRunCatalog.Row, state: SweepRunCatalog.CellState,
         criterion: SweepSelectionRule.Resolved
     ) -> String {
+        // The RATIO is shown beside the raw distinct-2 whichever coherence
+        // rule is in force, and the length flag beside them: a metric that
+        // repetition can inflate should never be read without both.
+        let ratioPart = row.distinct2Ratio.map {
+            " (\(format($0))× baseline)"
+        } ?? ""
+        let lengthPart = row.lengthInflated
+            ? ", ⚠︎ output over 1.5× baseline length"
+            : ""
         let diagnostics = "density \(format(row.markerDensity)), "
-            + "distinct-2 \(format(row.distinct2)), battery "
-            + "\(format(row.batteryAccuracy))"
+            + "distinct-2 \(format(row.distinct2))\(ratioPart), battery "
+            + "\(format(row.batteryAccuracy))\(lengthPart)"
         let objectivePart = criterion.metric == "markerDensity"
             ? ""
             : "\(criterion.metric) "
@@ -1392,6 +1421,9 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
     @State private var choiceFilesByConcept: [String: String]
     @State private var toleranceText: String
     @State private var floorText: String
+    /// Non-nil = the criterion under edit declares the baseline-relative
+    /// coherence floor. Carried, never edited here.
+    @State private var coherenceRatio: Double?
     @State private var marginText: String
     @State private var controlApplyTo: String
     @State private var controlTopKText: String
@@ -1504,8 +1536,21 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         let tolerance = initial.selection?.constraints?.capabilityTolerance
             ?? SweepSelectionRule.defaultCapabilityTolerance
         _toleranceText = State(initialValue: "\(tolerance)")
-        let floor = initial.selection?.constraints?.coherenceFloor
-            ?? SweepSelectionRule.defaultCoherenceFloor
+        // Which coherence RULE this criterion declares is not editable here,
+        // and is never silently converted: the ratio travels through the
+        // editor untouched, and the one number the field edits is whichever
+        // absolute value that rule uses — the backstop under the relative
+        // rule, the floor under the legacy one.
+        let ratio = initial.selection?.constraints?.coherenceRatioToBaseline
+        let backstop = initial.selection?.constraints?.coherenceAbsoluteBackstop
+        _coherenceRatio = State(initialValue: ratio)
+        let floor: Double
+        if ratio != nil || backstop != nil {
+            floor = backstop ?? SweepSelectionRule.defaultCoherenceBackstop
+        } else {
+            floor = initial.selection?.constraints?.coherenceFloor
+                ?? SweepSelectionRule.defaultCoherenceFloor
+        }
         _floorText = State(initialValue: "\(floor)")
         let margin = initial.selection?.controls?.matchedNormRandomMargin
         _marginText = State(initialValue: margin.map { "\($0)" } ?? "")
@@ -1708,8 +1753,18 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         }
         TextField("Capability tolerance (0–1)", text: $toleranceText)
             .help("battery accuracy may drop at most this far below baseline")
-        TextField("Coherence floor (distinct-2, 0–1)", text: $floorText)
-            .help("cells below this distinct-bigram ratio fail the constraint")
+        TextField(
+            coherenceRatio == nil
+                ? "Coherence floor (absolute distinct-2, 0–1)"
+                : "Coherence backstop (absolute distinct-2, 0–1)",
+            text: $floorText
+        )
+        .help(
+            coherenceRatio.map {
+                "this criterion gates coherence at \($0)× the α=0 baseline's "
+                    + "distinct-2; no cell passes below this absolute backstop "
+                    + "whatever the baseline was"
+            } ?? "cells below this distinct-bigram ratio fail the constraint")
         TextField("Matched-norm random control margin (empty = none)", text: $marginText)
             .help(
                 "when set, the winner must beat a norm-matched random direction "
@@ -1933,7 +1988,12 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         }
         spec.selection = ExperimentManifest.SweepSelection(
             objective: objective,
-            constraints: .init(capabilityTolerance: tolerance, coherenceFloor: floor),
+            constraints: coherenceRatio.map {
+                .init(
+                    capabilityTolerance: tolerance,
+                    coherenceRatioToBaseline: $0,
+                    coherenceAbsoluteBackstop: floor)
+            } ?? .init(capabilityTolerance: tolerance, coherenceFloor: floor),
             controls: controls)
         formError = nil
         // setSweepSpec refuses structural/criterion problems; since 2026-07-26

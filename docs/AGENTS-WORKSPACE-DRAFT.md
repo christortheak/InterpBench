@@ -527,7 +527,11 @@ steerlab-cli experiment set-sweep-selection <new> --objective logprobShift \
 steerlab-cli experiment detach <new> <donor-concept>…
 ```
 
-Detach **last**. The inherited selection rule still names the donor's concepts
+Detach **last**. `set-sweep-selection` MERGES its axes, so re-declaring the
+objective and its instrument here keeps the donor's capability tolerance,
+coherence rule and matched-norm control, and the success line names whatever it
+carried over (only `--objective ""` clears the block). The inherited selection
+rule still names the donor's concepts
 in its per-concept instrument map, and `detach` refuses (`conceptInUse`) while
 it does — that refusal is the ordering, enforced. Never hand-edit
 `experiment.json` to break the cycle; the refusal is telling you a declaration
