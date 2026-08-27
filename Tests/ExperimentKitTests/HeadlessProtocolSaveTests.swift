@@ -111,3 +111,37 @@ import Testing
         }
     }
 }
+
+/// The other silent loss on this route: a default `JSONDecoder` ignores keys
+/// the Body does not declare, so an out-of-vocabulary key wrote nothing while
+/// the route answered ok. `unknownProtocolBodyKeys` is the refusal's decision,
+/// factored out of the connection handling like `isRequestRefused` — the
+/// Python engine's twin gate is `experiment_store.set_protocol` over
+/// `PROTOCOL_FIELDS` (the manifest's key spellings; this route speaks the
+/// panel's).
+@Suite struct ProtocolBodyVocabularyTests {
+
+    @Test func unknownKeysAreNamedAndSorted() {
+        let body = Data(
+            #"{"temperature":0.7,"notAField":1,"alsoNot":2}"#.utf8)
+        #expect(SteerLabWebServer.unknownProtocolBodyKeys(in: body)
+            == ["alsoNot", "notAField"])
+    }
+
+    @Test func everyDeclaredKeyPasses() {
+        let body = Data(#"""
+            {"description":"d","task":"t","outcomes":"o","judgeModel":"j",
+             "judgePrompt":"p","taskPromptsFile":"f","promptMode":"rawCompletion",
+             "systemPrompt":"s","qwenThinkingEnabled":false,
+             "temperature":0.1,"maxTokens":16}
+            """#.utf8)
+        #expect(SteerLabWebServer.unknownProtocolBodyKeys(in: body).isEmpty)
+    }
+
+    /// A body that is not a JSON object is the typed decode's refusal
+    /// ("bad body"), not this one's — the helper stays out of its way.
+    @Test func nonObjectBodiesAreLeftToTheTypedDecode() {
+        #expect(SteerLabWebServer.unknownProtocolBodyKeys(in: Data("[1]".utf8)).isEmpty)
+        #expect(SteerLabWebServer.unknownProtocolBodyKeys(in: Data("nope".utf8)).isEmpty)
+    }
+}

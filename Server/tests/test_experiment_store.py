@@ -45,6 +45,36 @@ def test_frozen_is_read_only(tmp_path):
         es.set_protocol("s", {"temperature": 0.9}, root=root)
 
 
+def test_set_protocol_refuses_unknown_keys_at_the_store(tmp_path):
+    """The store itself refuses, not just the client CLI: the HTTP authoring
+    route hands request bodies straight to ``set_protocol``, so a drop here
+    would keep that surface silent. Nothing is written on refusal — the
+    valid keys in the same call must not land either."""
+    root = str(tmp_path)
+    es.create("s", model_id="org/m", root=root)
+    with pytest.raises(es.ExperimentStoreError) as exc:
+        es.set_protocol("s", {"temperature": 0.7, "notAField": 1}, root=root)
+    assert "'notAField'" in str(exc.value)
+    assert "temperature" in str(exc.value)  # the vocabulary is listed
+    assert exc.value.repair_action
+    d = es.load_raw("s", root)
+    assert d["temperature"] == 0.0  # create's default, not 0.7
+    assert "notAField" not in d
+    # The contract keys the Mac spells as verbs land as protocol fields.
+    d = es.set_protocol(
+        "s", {"outcomeInstruments": ["sampledText"],
+              "sweep": {"selection": {"objective": {"kind": "markerDensity"}}}},
+        root=root)
+    assert d["outcomeInstruments"] == ["sampledText"]
+    assert d["sweep"]["selection"]["objective"]["kind"] == "markerDensity"
+    # …with the instrument vocabulary enforced at declaration (Swift
+    # `setOutcomeInstruments` twin) and sweep required to be an object.
+    with pytest.raises(es.ExperimentStoreError):
+        es.set_protocol("s", {"outcomeInstruments": ["sampledTxt"]}, root=root)
+    with pytest.raises(es.ExperimentStoreError):
+        es.set_protocol("s", {"sweep": "markerDensity"}, root=root)
+
+
 def test_freeze_requires_revision_without_force(tmp_path):
     root = str(tmp_path)
     es.create("s2", model_id="org/m", root=root)  # no revision

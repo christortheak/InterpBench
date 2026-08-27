@@ -166,6 +166,30 @@ public final class SteerLabWebServer: Sendable {
         try? JSONDecoder().decode(type, from: body)
     }
 
+    /// The closed protocol-body vocabulary — the keys
+    /// `POST /api/experiment/protocol` may carry, in its Body's declaration
+    /// order. A default `JSONDecoder` silently ignores keys the Body does not
+    /// declare, so an out-of-vocabulary key used to write nothing while the
+    /// route answered ok — the same silent loss the Python engine's
+    /// `set_protocol` refuses (`experiment_store.PROTOCOL_FIELDS`; that
+    /// vocabulary is the manifest's spellings, this one is the panel's).
+    /// Factored out with `unknownProtocolBodyKeys` so the decision is
+    /// testable without a live ChatService, like `isRequestRefused`.
+    static let protocolBodyKeys: [String] = [
+        "description", "task", "outcomes", "judgeModel", "judgePrompt",
+        "taskPromptsFile", "promptMode", "systemPrompt", "qwenThinkingEnabled",
+        "temperature", "maxTokens",
+    ]
+
+    /// The body's top-level keys outside the vocabulary, sorted. A body that
+    /// is not a JSON object answers `[]` — the typed decode already refuses
+    /// those as "bad body".
+    static func unknownProtocolBodyKeys(in body: Data) -> [String] {
+        guard let object = (try? JSONSerialization.jsonObject(with: body))
+            as? [String: Any] else { return [] }
+        return object.keys.filter { !protocolBodyKeys.contains($0) }.sorted()
+    }
+
     private static func queryValue(_ name: String, in path: String) -> String? {
         guard let components = URLComponents(string: "http://localhost\(path)") else { return nil }
         return components.queryItems?.first { $0.name == name }?.value
@@ -713,6 +737,20 @@ public final class SteerLabWebServer: Sendable {
                 let qwenThinkingEnabled: Bool?
                 let temperature: Double?
                 let maxTokens: Int?
+            }
+            // Refuse, never drop: keys the Body does not declare would be
+            // silently ignored by the decoder below, and the route would
+            // answer ok over a declaration that wrote nothing (the loss
+            // class `armsCleared` exists to refuse). Checked before the
+            // typed decode so nothing is written on refusal.
+            let unknown = unknownProtocolBodyKeys(in: body)
+            guard unknown.isEmpty else {
+                return .error(
+                    "unknown protocol field(s) "
+                        + unknown.map { "'\($0)'" }.joined(separator: ", ")
+                        + " — known: "
+                        + protocolBodyKeys.joined(separator: ", ")
+                        + "; nothing was written")
             }
             guard let request = decode(Body.self, from: body) else { return .error("bad body") }
             if let description = request.description {

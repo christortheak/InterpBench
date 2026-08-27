@@ -1521,29 +1521,78 @@ def set_sweep_grid(name: str, *, layer_fractions=None, layers=None,
     }
     return report
 
+#: The closed protocol-field vocabulary, in declaration order — the manifest
+#: keys ``set_protocol`` may write. A tuple so refusals list it in one stable
+#: order. The Mac's analogue is the typed ``Body`` of
+#: ``WebServer`` ``POST /api/experiment/protocol`` (its own key spellings —
+#: the panel's, not the manifest's), plus its dedicated verbs for the fields
+#: that are verbs there: ``outcomeInstruments`` is ``set-instruments`` and
+#: ``sweep`` is ``set-sweep-selection``. Here they are protocol fields,
+#: because ``PORTABILITY-CONTRACTS.md`` §"authoring" promises exactly that
+#: reachability to the client.
+PROTOCOL_FIELDS: tuple[str, ...] = (
+    "experimentDescription", "taskDescription", "outcomeMeasures", "promptMode",
+    "systemPrompt", "qwenThinkingEnabled", "temperature", "maxTokens", "seeds",
+    # studyType: the researcher's declared study type (authoring
+    # vocabulary: conceptStudy | agentComparison | confirmAgent |
+    # multiAgent) — persisted verbatim; studyKind stays the
+    # engine-facing run-path switch.
+    "taskPromptsFile", "taskPromptsHash", "studyKind", "studyType",
+    "multiAgentScenarioPath",
+    "multiAgentScenarioHash", "multiAgentIncludeBaseline", "evaluation",
+    "judgeRubricFile", "judgeRubricHash", "judges", "humanValidation",
+    "capabilityBatteryFile", "capabilityBatteryHash",
+    "reasoningStyleTaxonomyPath", "reasoningStyleTaxonomyHash",
+    # Declared record-exclusion rules (closed vocabulary,
+    # validated by verify(); joined at analyze) — measurement
+    # declarations, so draft-editable like the other protocol
+    # fields and frozen with the manifest.
+    "exclusionRules",
+    # The two Mac VERBS the contract makes protocol FIELDS on this engine:
+    # the declared instrument list (validated against
+    # KNOWN_OUTCOME_INSTRUMENTS below, exactly where Swift
+    # `setOutcomeInstruments` validates) and the sweep block whose
+    # `selection` is the promotion criterion (semantics checked by verify()
+    # / freeze, like every other declaration).
+    "outcomeInstruments", "sweep",
+)
+
 
 def set_protocol(name: str, fields: dict, root: str | None = None) -> dict:
     d = load_raw(name, root)
-    allowed = {"experimentDescription", "taskDescription", "outcomeMeasures", "promptMode",
-               "systemPrompt", "qwenThinkingEnabled", "temperature", "maxTokens", "seeds",
-               # studyType: the researcher's declared study type (authoring
-               # vocabulary: conceptStudy | agentComparison | confirmAgent |
-               # multiAgent) — persisted verbatim; studyKind stays the
-               # engine-facing run-path switch.
-               "taskPromptsFile", "taskPromptsHash", "studyKind", "studyType",
-               "multiAgentScenarioPath",
-               "multiAgentScenarioHash", "multiAgentIncludeBaseline", "evaluation",
-               "judgeRubricFile", "judgeRubricHash", "judges", "humanValidation",
-               "capabilityBatteryFile", "capabilityBatteryHash",
-               "reasoningStyleTaxonomyPath", "reasoningStyleTaxonomyHash",
-               # Declared record-exclusion rules (closed vocabulary,
-               # validated by verify(); joined at analyze) — measurement
-               # declarations, so draft-editable like the other protocol
-               # fields and frozen with the manifest.
-               "exclusionRules"}
+    unknown = sorted(key for key in fields if key not in PROTOCOL_FIELDS)
+    if unknown:
+        # Refuse, never drop: a key outside the vocabulary used to write
+        # nothing while the verb reported success — a study measuring
+        # something other than what the caller declared, the same silent
+        # loss `armsCleared` and `conceptInUse` exist to refuse.
+        named = ", ".join(f"'{key}'" for key in unknown)
+        raise ExperimentStoreError(
+            f"unknown protocol field(s) {named} — known: "
+            + ", ".join(PROTOCOL_FIELDS),
+            repair=("re-run set-protocol with keys from the declared "
+                    "vocabulary; nothing was written"))
+    if "outcomeInstruments" in fields:
+        # Same declaration-time gate as Swift `setOutcomeInstruments`
+        # (ExperimentError.malformed at 64): the downstream readers are set
+        # membership tests, so an unknown instrument dispatches nothing and
+        # the study completes having measured only the default sampled text.
+        problem = unknown_outcome_instrument_problem(
+            {"outcomeInstruments": fields["outcomeInstruments"]})
+        if problem:
+            raise ExperimentStoreError(
+                problem, repair=unknown_outcome_instrument_repair(name))
+    if "sweep" in fields and not isinstance(fields["sweep"], dict):
+        # Every reader guards with `isinstance(d.get("sweep"), dict)`, so a
+        # non-dict sweep silently disables the whole block — the same loss
+        # class as an unknown key.
+        raise ExperimentStoreError(
+            f"sweep must be an object, got {type(fields['sweep']).__name__} "
+            "— the declared shape is {\"selection\": {…}} "
+            "(docs/CLI-REFERENCE.md, set-sweep-selection)",
+            repair="re-run with --set sweep='{\"selection\": {…}}'")
     for key, value in fields.items():
-        if key in allowed:
-            d[key] = value
+        d[key] = value
     save_raw(d, root)
     return d
 
