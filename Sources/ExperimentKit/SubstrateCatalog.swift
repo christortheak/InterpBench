@@ -150,8 +150,20 @@ public final class SubstrateCatalog {
     /// Re-scan the local Hugging Face cache. Cheap (a directory listing), so
     /// callers refresh it whenever a model picker appears and after an
     /// install finishes.
+    ///
+    /// This is ALSO where judge-capability verdicts are forgotten (review
+    /// round 7, finding 3). `LocalJudgeCapability` memoizes per repo id so a
+    /// picker does not stat a snapshot per row per frame — but the memo
+    /// outlived the fact it recorded: a repo inspected before its weights
+    /// arrived is remembered as "this Mac holds no cached snapshot for this
+    /// repo" and stays un-judgeable for the rest of the session, install or
+    /// no install. Every rescan is exactly a claim that the installed set
+    /// changed, so every rescan drops the memo — wholesale, because a
+    /// directory listing already costs more than re-inspecting the few
+    /// snapshots a picker asks about.
     public func refreshLocalInstalledModels() {
         localInstalledModelIDs = Set(localCacheScan())
+        LocalJudgeCapability.forgetCachedVerdicts()
     }
 
     /// Fetch the *active* server's catalog. No-op (cleared) when the Local

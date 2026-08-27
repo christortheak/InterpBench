@@ -1460,6 +1460,13 @@ public final class FineTuningPanel {
             note("agent robustness check is already running", severity: .info)
             return
         }
+        // The judge is settled BEFORE any generation: a check whose judge
+        // will be skipped, refused, or silently downloaded is not a check
+        // worth spending a battery on (review round 7, findings 1, 2, 5).
+        if let reason = robustnessJudgeDisabledReason {
+            note(reason, severity: .info)
+            return
+        }
         if case .server(let path) = robustnessTarget {
             // A server-stored agent exists only on its server: it can never
             // run in-process, and switching to Local clears nothing silently —
@@ -1759,13 +1766,32 @@ public final class FineTuningPanel {
     @ObservationIgnored public var judgeKeyPresenceOverrideForTesting: Bool?
     @ObservationIgnored
     public var judgeCapabilityOverrideForTesting: JudgeModelOffers.CapabilityCheck?
+    /// Is-installed seam, so a test's picker never depends on which weights
+    /// this developer's Mac happens to hold.
+    @ObservationIgnored
+    public var judgeInstalledOverrideForTesting: JudgeModelOffers.InstalledCheck?
     /// Cache-scan seam, so a test's picker sees synthetic ids only.
     @ObservationIgnored public var localModelScanOverrideForTesting: [String]?
+    /// Substrate seam: which engine a run would generate on, when no host is
+    /// attached. The live answer is the host's active workspace.
+    @ObservationIgnored
+    public var judgeSubstrateOverrideForTesting: JudgeReadiness.Substrate?
+
+    /// Where a robustness run would generate — and therefore whether a LOCAL
+    /// judge can be reached at all.
+    public var judgeSubstrate: JudgeReadiness.Substrate {
+        if let override = judgeSubstrateOverrideForTesting { return override }
+        if let host, case .server = host.cluster.activeWorkspace { return .server }
+        return .local
+    }
 
     /// What the Robustness Check's Judge picker offers. The cache scan is
     /// capability-filtered (it lists every artifact on disk, generative or
-    /// not); the app's own model tiers and the default Claude judge pass by
-    /// construction; a stored selection that fails is FLAGGED, never dropped.
+    /// not); the app's own model tiers are checked for PRESENCE, not
+    /// capability, and listed flagged when they are not installed; a stored
+    /// selection that fails is FLAGGED, never dropped; and in a server
+    /// workspace every local entry is flagged as unreachable rather than
+    /// hidden.
     public var robustnessJudgeOffers: JudgeModelOffers.Offers {
         var candidates: [JudgeModelOffers.Candidate] = []
         if let loaded = host?.loadedModelID { candidates.append(.cached(loaded)) }
@@ -1779,8 +1805,34 @@ public final class FineTuningPanel {
             candidates: candidates,
             openRouterKeyPresent: judgeKeyPresenceOverrideForTesting
                 ?? (JudgeKeyStore.resolveKey(kind: "openrouter") != nil),
+            substrate: judgeSubstrate,
             capability: judgeCapabilityOverrideForTesting
-                ?? JudgeModelOffers.liveCapability)
+                ?? JudgeModelOffers.liveCapability,
+            installed: judgeInstalledOverrideForTesting
+                ?? JudgeModelOffers.liveInstalled)
+    }
+
+    /// Why Run Robustness Check will not start, in one plain sentence — nil
+    /// means runnable. The judge half is the SHARED precondition list
+    /// (`JudgeReadiness`), so this gate, the picker's flags, and the route
+    /// that actually judges cannot drift (review round 7, findings 1, 2, 5).
+    ///
+    /// It refuses UP FRONT rather than mid-run: a local judge that is not
+    /// installed used to reach `SteeredContainerLoader.load`, which downloads,
+    /// and a local judge under a server route used to run the whole battery
+    /// and then skip judging with a warning nobody had been warned about.
+    public var robustnessJudgeDisabledReason: String? {
+        guard robustnessUseJudge else { return nil }
+        return JudgeReadiness.refusal(
+            for: robustnessJudgeModel,
+            substrate: judgeSubstrate,
+            claudeKeyPresent: ClaudeStimulusGenerator.apiKey != nil,
+            openRouterKeyPresent: judgeKeyPresenceOverrideForTesting
+                ?? (JudgeKeyStore.resolveKey(kind: "openrouter") != nil),
+            installed: judgeInstalledOverrideForTesting
+                ?? JudgeReadiness.liveInstalled,
+            capability: judgeCapabilityOverrideForTesting
+                ?? JudgeReadiness.liveCapability)
     }
 
     /// The judge selection parsed — what the pane keys its OpenRouter fields

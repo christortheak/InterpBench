@@ -24,10 +24,21 @@ import Synchronization
 ///    autoencoder or a classifier cannot answer a prompt.
 /// 2. **A chat template.** Either `tokenizer_config.json` carries a
 ///    non-empty `chat_template`, or a `chat_template.jinja` /
-///    `chat_template.json` sits beside it. A judge is asked an instruction
-///    in a chat turn; a repo with no template has no defined way to be
-///    asked one, and rendering it as raw text produces a verdict-shaped
-///    hallucination rather than a refusal.
+///    `chat_template.json` sits beside it and is itself USABLE. A judge is
+///    asked an instruction in a chat turn; a repo with no template has no
+///    defined way to be asked one, and rendering it as raw text produces a
+///    verdict-shaped hallucination rather than a refusal.
+///
+///    The sidecar route holds the SAME standard as the tokenizer-config
+///    route, which has always required a non-empty template (review round 7,
+///    finding 6): existence alone said yes to an empty file, to a
+///    *directory* named `chat_template.json`, and to a sidecar full of
+///    malformed JSON — three snapshots that pass the picker and then fail at
+///    load. So a sidecar must be a regular file with bytes in it, and a
+///    `.json` sidecar must parse as JSON. A `.jinja` sidecar is checked no
+///    further: non-empty is the whole test, because deciding whether Jinja
+///    source is valid means implementing Jinja, which this predicate must
+///    never do.
 ///
 /// Verdicts are memoized per repo id: a picker recomputes its options on
 /// every render, and re-stating a snapshot each time is a filesystem hit per
@@ -110,8 +121,7 @@ public enum LocalJudgeCapability {
     /// Whether the snapshot supplies a chat template by either route.
     public static func hasChatTemplate(snapshot: URL) -> Bool {
         for name in chatTemplateFileNames
-        where FileManager.default.fileExists(
-            atPath: snapshot.appending(component: name).path) {
+        where isUsableTemplateSidecar(snapshot.appending(component: name)) {
             return true
         }
         guard
@@ -127,6 +137,33 @@ public enum LocalJudgeCapability {
         }
         if let list = config["chat_template"] as? [Any] { return !list.isEmpty }
         return false
+    }
+
+    /// Whether ONE sidecar file actually supplies a template. Existence is
+    /// not the test (review round 7, finding 6): a directory, an empty file,
+    /// or a `.json` sidecar that is not JSON all "exist" and none of them can
+    /// be rendered.
+    ///
+    /// A `.jinja` sidecar stops at non-empty on purpose — the alternative is
+    /// a Jinja parser, and a template this predicate cannot parse is still a
+    /// template the loader can.
+    public static func isUsableTemplateSidecar(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        guard
+            FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+            !isDirectory.boolValue,
+            let data = try? Data(contentsOf: url),
+            !data.isEmpty
+        else { return false }
+        // Whitespace alone is as empty as zero bytes — the same standard the
+        // tokenizer_config route holds its `chat_template` string to.
+        if let text = String(data: data, encoding: .utf8),
+            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return false
+        }
+        guard url.pathExtension.lowercased() == "json" else { return true }
+        return (try? JSONSerialization.jsonObject(with: data)) != nil
     }
 
     // MARK: - Memoized per-repo verdicts
@@ -153,9 +190,18 @@ public enum LocalJudgeCapability {
         verdict(forModelID: modelID).isCapable
     }
 
-    /// Drop the memo — for a session that has just installed a model, and
-    /// for tests that inspect the same id twice under different fixtures.
+    /// Drop the memo. Called on every installed-models rescan
+    /// (`SubstrateCatalog.refreshLocalInstalledModels`), which is what makes
+    /// a freshly installed repo judge-capable without a relaunch, and by
+    /// tests that inspect the same id twice under different fixtures.
     public static func forgetCachedVerdicts() {
         cache.withLock { $0.removeAll() }
+    }
+
+    /// TEST SEAM: plant a verdict so a test can prove the memo is CONSULTED
+    /// and then dropped, without needing a real snapshot on disk to change
+    /// underneath it.
+    public static func rememberForTesting(_ modelID: String, _ verdict: Verdict) {
+        cache.withLock { $0[modelID] = verdict }
     }
 }

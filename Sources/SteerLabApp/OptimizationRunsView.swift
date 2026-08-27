@@ -1487,8 +1487,13 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
             .trimmingCharacters(in: .whitespaces)
         let manifest = panel.experiments.first { $0.name == experimentName }
         let manifestConcepts = (manifest?.concepts ?? []).map(\.name)
+        // Model id AND pinned revision: the depth this editor displays
+        // absolute layers against must be the depth of the revision the
+        // manifest pins, not of whatever else this workspace has extracted
+        // for the same checkpoint (review round 7, finding 4).
         self.cachedLayerCount = manifest.flatMap {
-            SweepPanelModel.cachedLayerCount(modelID: $0.modelID)
+            SweepPanelModel.cachedLayerCount(
+                modelID: $0.modelID, revision: $0.modelRevision)
         }
         if !manifestSingular.isEmpty, manifestConcepts.count > 1 {
             for concept in manifestConcepts where seededMap[concept] == nil {

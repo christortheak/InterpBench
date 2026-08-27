@@ -487,6 +487,38 @@ import Testing
         }
     }
 
+    /// The DISPLAY paths ask the same question the run path asks (review
+    /// round 7, finding 4). `resolve(manifest:)` used to resolve depth by
+    /// model id alone while `setSweepGrid` passed the manifest's pinned
+    /// revision, so the editor could convert layer fractions against a
+    /// different revision's artifacts and show absolute layers of a network
+    /// that is not the one pinned.
+    @Test func manifestDepthResolutionCarriesThePinnedRevision() async throws {
+        try await withTempRoot { root in
+            try draft(model: "test/model")
+            try ExperimentStore.setModelRevision("rev-a", experimentName: "d")
+            _ = try ExperimentStore.setSweepGrid(
+                experimentName: "d", layerFractions: [0.5], alphas: [1])
+            // Depth 42 for the pinned revision; a DIFFERENT revision's
+            // artifact says 11 and must not be evidence about this one.
+            try plantSidecar(
+                root: root, layerCount: 42, concept: "alpha",
+                runName: "20260101-000000-a", extra: ["revision": "rev-a"])
+            try plantSidecar(
+                root: root, layerCount: 11, concept: "beta",
+                runName: "20260202-000000-b", extra: ["revision": "rev-b"])
+
+            // Revision-blind, the two witnesses disagree and the depth is nil
+            // — which is how the editor lost the number it needed.
+            #expect(SweepPanelModel.cachedLayerCount(modelID: "test/model") == nil)
+
+            let manifest = try ExperimentStore.load(name: "d")
+            let resolved = try #require(SweepPanelModel.resolve(manifest: manifest))
+            #expect(resolved.layerCount == 42)
+            #expect(resolved.layers == [21])
+        }
+    }
+
     @Test func noCandidateAtAllIsStillTheMissingPrerequisitePath() async throws {
         try await withTempRoot { root in
             try draft(model: "test/model")

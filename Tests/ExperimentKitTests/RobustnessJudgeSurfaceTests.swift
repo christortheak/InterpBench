@@ -33,6 +33,14 @@ import Testing
         }
     }
 
+    /// An is-installed seam. Everything is installed unless a test says
+    /// otherwise — no test may depend on what this developer's Mac holds.
+    private static func installed(
+        except absent: Set<String> = []
+    ) -> JudgeModelOffers.InstalledCheck {
+        { !absent.contains($0) }
+    }
+
     // MARK: - The spelling
 
     /// The spelling is NOT new vocabulary: it is the study path's judge spec
@@ -112,13 +120,15 @@ import Testing
                     "the cached snapshot has no config.json",
                 "vendor/lens-artifact":
                     "the cached snapshot has no config.json",
-            ]))
+            ]),
+            installed: Self.installed())
         #expect(offers.models.map(\.id) == ["vendor/chat-model-small"])
     }
 
-    /// Curated entries have nothing on disk to inspect, so they are never
-    /// capability-checked — even when the seam would refuse them.
-    @Test func curatedEntriesPassByConstruction() {
+    /// Curated entries are never capability-inspected — there may be nothing
+    /// on disk to inspect. An INSTALLED curated tier is offered plainly even
+    /// when the capability seam would refuse it.
+    @Test func installedCuratedEntriesAreNotCapabilityChecked() {
         let offers = JudgeModelOffers.compose(
             selected: "",
             candidates: [
@@ -131,8 +141,159 @@ import Testing
                 "vendor/dictionary-artifact": "no config.json",
                 "vendor/tier-model": "no cached snapshot",
                 "claude-opus-4-8": "no cached snapshot",
-            ]))
+            ]),
+            installed: Self.installed())
         #expect(offers.models.map(\.id) == ["vendor/tier-model", "claude-opus-4-8"])
+        #expect(offers.models.allSatisfy { !$0.isFlagged })
+    }
+
+    /// …but "curated" never meant "present". A model tier is a CANDIDATE:
+    /// a fresh Mac has none of them downloaded, and passing every tier by
+    /// construction made an uninstalled one selectable — which sent the
+    /// loader to the hub for up to 35 GB outside the visible Install flow.
+    /// It stays LISTED (it is exactly what you would install) and flagged.
+    @Test func anUninstalledCuratedTierIsListedFlaggedNotSelectableForARun() throws {
+        let offers = JudgeModelOffers.compose(
+            selected: "",
+            candidates: [
+                .curated("vendor/tier-installed"),
+                .curated("vendor/tier-absent"),
+                .curated("claude-opus-4-8"),
+            ],
+            openRouterKeyPresent: false,
+            capability: Self.capability(refusing: [:]),
+            installed: Self.installed(except: ["vendor/tier-absent"]))
+        #expect(
+            offers.models.map(\.id)
+                == ["vendor/tier-installed", "vendor/tier-absent", "claude-opus-4-8"])
+        let absent = try #require(offers.models.first { $0.id == "vendor/tier-absent" })
+        #expect(absent.isFlagged)
+        #expect(absent.label == "vendor/tier-absent (not installed)")
+        #expect(
+            absent.caption
+                == "it is not installed on this Mac — install it in Models first")
+        // A Claude entry is untouched by the install test.
+        #expect(offers.models.first { $0.id == "claude-opus-4-8" }?.isFlagged == false)
+
+        // …and the Run gate refuses the same pick, in the same vocabulary.
+        #expect(
+            JudgeReadiness.refusal(
+                for: "vendor/tier-absent",
+                claudeKeyPresent: true, openRouterKeyPresent: true,
+                installed: Self.installed(except: ["vendor/tier-absent"]),
+                capability: { _ in .capable })
+                == "judge 'vendor/tier-absent' is not installed on this Mac — "
+                    + "install it in Models first, or pick a judge that is")
+    }
+
+    /// A stored selection naming an uninstalled tier is flagged with the
+    /// SAME clause, carried into the caption the pane puts under the picker.
+    @Test func aStoredUninstalledSelectionIsFlaggedWithTheInstallClause() throws {
+        let offers = JudgeModelOffers.compose(
+            selected: "vendor/tier-absent",
+            candidates: [.curated("vendor/tier-absent")],
+            openRouterKeyPresent: false,
+            capability: Self.capability(refusing: [:]),
+            installed: Self.installed(except: ["vendor/tier-absent"]))
+        #expect(offers.models.map(\.id) == ["vendor/tier-absent"])
+        #expect(
+            offers.selectionCaption
+                == "'vendor/tier-absent' cannot judge: it is not installed on "
+                    + "this Mac — install it in Models first. It stays listed "
+                    + "because it is your stored choice — pick another judge "
+                    + "to clear this.")
+    }
+
+    /// In a server workspace the route judges from this Mac but generates
+    /// remotely, so a LOCAL judge is skipped. The picker says so on every
+    /// local row rather than hiding entries that are fine on Local — and the
+    /// gate refuses in the route's own sentence.
+    @Test func aServerWorkspaceFlagsLocalEntriesInsteadOfHidingThem() throws {
+        let offers = JudgeModelOffers.compose(
+            selected: "",
+            candidates: [
+                .cached("vendor/chat-model-small"),
+                .cached("vendor/dictionary-artifact"),
+                .curated("vendor/tier-model"),
+                .curated("claude-opus-4-8"),
+            ],
+            openRouterKeyPresent: true,
+            substrate: .server,
+            capability: Self.capability(refusing: [
+                "vendor/dictionary-artifact": "the cached snapshot has no config.json"
+            ]),
+            installed: Self.installed())
+        // The non-generative artifact is still DROPPED — it is not a judge on
+        // any workspace — while the real local models stay listed, flagged.
+        #expect(!offers.models.map(\.id).contains("vendor/dictionary-artifact"))
+        let local = try #require(offers.models.first { $0.id == "vendor/chat-model-small" })
+        #expect(local.isFlagged)
+        #expect(local.label == "vendor/chat-model-small (cannot judge)")
+        #expect(
+            local.caption == "local model — not runnable against a server workspace")
+        #expect(offers.models.first { $0.id == "vendor/tier-model" }?.isFlagged == true)
+        // Both API backends stay plainly offerable.
+        #expect(offers.models.first { $0.id == "claude-opus-4-8" }?.isFlagged == false)
+        #expect(offers.openRouter.map(\.id) == ["openrouter:"])
+
+        // The Run gate refuses with the route's OWN warning sentence, so the
+        // researcher reads the same words before and after.
+        let refusal = JudgeReadiness.refusal(
+            for: "vendor/chat-model-small", substrate: .server,
+            claudeKeyPresent: true, openRouterKeyPresent: true,
+            installed: Self.installed(), capability: { _ in .capable })
+        let route = VariantRobustness.judgeRoute(
+            JudgeModelSpelling.parse("vendor/chat-model-small"),
+            rubric: "r", localContainer: nil)
+        #expect(refusal == route.warnings.first)
+    }
+
+    // MARK: - The shared precondition list (finding 5)
+
+    /// The gate enforces exactly what execution enforces — provider pin, key
+    /// presence, install, capability — so the picker, the Run button, and the
+    /// executing route cannot disagree about the same string.
+    @Test func theReadinessGateEnforcesEveryPreconditionExecutionDoes() {
+        func refusal(
+            _ raw: String, claude: Bool = true, openRouter: Bool = true,
+            absent: Set<String> = [], refusing: [String: String] = [:]
+        ) -> String? {
+            JudgeReadiness.refusal(
+                for: raw, claudeKeyPresent: claude, openRouterKeyPresent: openRouter,
+                installed: Self.installed(except: absent),
+                capability: Self.capability(refusing: refusing))
+        }
+        // Nothing asked for is not a refusal.
+        #expect(refusal("") == nil)
+        // Provider pin — the same sentence `resolvedJudges` throws.
+        #expect(
+            refusal("openrouter:vendor/model")
+                == JudgeModelSpelling.unpinnedProviderRefusal(model: "vendor/model"))
+        // Key presence, both backends.
+        #expect(
+            refusal("openrouter:vendor/model:together", openRouter: false)
+                == "judge 'vendor/model' needs an external judge key — save "
+                    + "one in the Compute section or set OPENROUTER_API_KEY")
+        #expect(refusal("openrouter:vendor/model:together") == nil)
+        #expect(
+            refusal("claude-opus-4-8", claude: false)
+                == "judge 'claude-opus-4-8' needs a Claude API key — set "
+                    + "ANTHROPIC_API_KEY or save a key in the Compute section "
+                    + "(stored in the macOS Keychain)")
+        #expect(refusal("claude-opus-4-8") == nil)
+        // Install before capability: an absent repo is told what to do, not
+        // told it has no snapshot.
+        #expect(
+            refusal("vendor/tier-absent", absent: ["vendor/tier-absent"])
+                == "judge 'vendor/tier-absent' is not installed on this Mac — "
+                    + "install it in Models first, or pick a judge that is")
+        // Installed but not a text model — the verdict is QUOTED.
+        #expect(
+            refusal(
+                "vendor/dictionary-artifact",
+                refusing: ["vendor/dictionary-artifact": "no config.json"])
+                == "judge 'vendor/dictionary-artifact' cannot judge: no config.json")
+        #expect(refusal("vendor/chat-model-small") == nil)
     }
 
     /// A stored choice that fails the filter is FLAGGED, never dropped: a
@@ -147,7 +308,8 @@ import Testing
                 "vendor/dictionary-artifact":
                     "the cached snapshot has no config.json — this repo is "
                     + "not a loadable text model"
-            ]))
+            ]),
+            installed: Self.installed())
         let flagged = try #require(offers.models.first)
         #expect(flagged.id == "vendor/dictionary-artifact")
         #expect(flagged.label == "vendor/dictionary-artifact (cannot judge)")
@@ -167,7 +329,8 @@ import Testing
             selected: "vendor/chat-model-small",
             candidates: [.cached("vendor/chat-model-small")],
             openRouterKeyPresent: false,
-            capability: Self.capability(refusing: [:]))
+            capability: Self.capability(refusing: [:]),
+            installed: Self.installed())
         #expect(offers.models.map(\.id) == ["vendor/chat-model-small"])
         #expect(offers.selectionCaption == nil)
         #expect(offers.models.allSatisfy { !$0.isFlagged })
@@ -179,7 +342,8 @@ import Testing
         let withKey = JudgeModelOffers.compose(
             selected: "", candidates: [.curated("claude-opus-4-8")],
             openRouterKeyPresent: true,
-            capability: Self.capability(refusing: [:]))
+            capability: Self.capability(refusing: [:]),
+            installed: Self.installed())
         #expect(withKey.openRouter.map(\.id) == ["openrouter:"])
         #expect(withKey.openRouter.map(\.label) == ["OpenRouter judge…"])
         #expect(withKey.openRouterHint == nil)
@@ -187,7 +351,8 @@ import Testing
         let withoutKey = JudgeModelOffers.compose(
             selected: "", candidates: [.curated("claude-opus-4-8")],
             openRouterKeyPresent: false,
-            capability: Self.capability(refusing: [:]))
+            capability: Self.capability(refusing: [:]),
+            installed: Self.installed())
         #expect(withoutKey.openRouter.isEmpty)
         #expect(
             withoutKey.openRouterHint
@@ -205,7 +370,8 @@ import Testing
             selected: "openrouter:vendor/model:together",
             candidates: [.curated("claude-opus-4-8")],
             openRouterKeyPresent: false,
-            capability: Self.capability(refusing: [:]))
+            capability: Self.capability(refusing: [:]),
+            installed: Self.installed())
         #expect(offers.openRouter.map(\.id) == ["openrouter:vendor/model:together"])
         #expect(offers.openRouterHint != nil)
         #expect(offers.selectionCaption == nil)
@@ -432,6 +598,7 @@ struct JudgePickerPanelSurfaceTests {
     @Test func theRobustnessPickerFiltersTheScanAndFlagsAStoredFailure() throws {
         let panel = FineTuningPanel()
         panel.judgeCapabilityOverrideForTesting = Self.refusesDictionaryArtifacts
+        panel.judgeInstalledOverrideForTesting = { _ in true }
         panel.localModelScanOverrideForTesting = [
             "vendor/chat-model-small", "vendor/dictionary-artifact",
         ]
@@ -456,6 +623,7 @@ struct JudgePickerPanelSurfaceTests {
     @Test func theRobustnessPickerOffersOpenRouterOnlyWithAKey() {
         let panel = FineTuningPanel()
         panel.judgeCapabilityOverrideForTesting = { _ in .capable }
+        panel.judgeInstalledOverrideForTesting = { _ in true }
         panel.localModelScanOverrideForTesting = []
         panel.judgeKeyPresenceOverrideForTesting = true
         #expect(panel.robustnessJudgeOffers.openRouter.map(\.id) == ["openrouter:"])
@@ -484,6 +652,7 @@ struct JudgePickerPanelSurfaceTests {
     @Test func theAdHocPickerFiltersTheScanAndGatesOpenRouterTheSameWay() {
         let panel = ExperimentPanel()
         panel.judgeCapabilityOverrideForTesting = Self.refusesDictionaryArtifacts
+        panel.judgeInstalledOverrideForTesting = { _ in true }
         panel.localModelScanOverrideForTesting = [
             "vendor/chat-model-small", "vendor/dictionary-artifact",
         ]
@@ -503,5 +672,146 @@ struct JudgePickerPanelSurfaceTests {
         panel.judgeKeyPresenceOverrideForTesting = true
         #expect(panel.judgeModelOffers.openRouter.map(\.id) == ["openrouter:"])
         #expect(panel.judgeModelOptions.contains("openrouter:"))
+    }
+
+    // MARK: - Readiness gates reach the panels (findings 1, 2, 5)
+
+    /// The Robustness Check's Run gate refuses the same picks the picker
+    /// flags — before a battery is generated, not after.
+    @Test func theRobustnessRunGateRefusesWhatThePickerFlags() {
+        let panel = FineTuningPanel()
+        panel.judgeCapabilityOverrideForTesting = Self.refusesDictionaryArtifacts
+        panel.judgeInstalledOverrideForTesting = { $0 != "vendor/tier-absent" }
+        panel.judgeKeyPresenceOverrideForTesting = false
+        panel.localModelScanOverrideForTesting = []
+        panel.robustnessUseJudge = true
+
+        // No judge asked for at all: nothing to refuse.
+        panel.robustnessJudgeModel = ""
+        #expect(panel.robustnessJudgeDisabledReason == nil)
+
+        panel.robustnessJudgeModel = "vendor/tier-absent"
+        #expect(
+            panel.robustnessJudgeDisabledReason
+                == "judge 'vendor/tier-absent' is not installed on this Mac — "
+                    + "install it in Models first, or pick a judge that is")
+
+        panel.robustnessJudgeModel = "vendor/dictionary-artifact"
+        #expect(
+            panel.robustnessJudgeDisabledReason
+                == "judge 'vendor/dictionary-artifact' cannot judge: the "
+                    + "cached snapshot has no config.json")
+
+        panel.robustnessJudgeModel = "openrouter:vendor/model"
+        #expect(
+            panel.robustnessJudgeDisabledReason
+                == JudgeModelSpelling.unpinnedProviderRefusal(model: "vendor/model"))
+
+        // Pinned provider, no key — the key seam is a PRESENCE boolean.
+        panel.robustnessJudgeModel = "openrouter:vendor/model:together"
+        #expect(
+            panel.robustnessJudgeDisabledReason
+                == "judge 'vendor/model' needs an external judge key — save "
+                    + "one in the Compute section or set OPENROUTER_API_KEY")
+        panel.judgeKeyPresenceOverrideForTesting = true
+        #expect(panel.robustnessJudgeDisabledReason == nil)
+
+        // A capable, installed local judge is runnable.
+        panel.robustnessJudgeModel = "vendor/chat-model-small"
+        #expect(panel.robustnessJudgeDisabledReason == nil)
+
+        // Turning the judge off removes the precondition entirely — a
+        // robustness check without a coherence judge is a legal check.
+        panel.robustnessJudgeModel = "vendor/tier-absent"
+        panel.robustnessUseJudge = false
+        #expect(panel.robustnessJudgeDisabledReason == nil)
+    }
+
+    /// In a server workspace the gate refuses a local judge in the ROUTE's
+    /// own words — the sentence the run would otherwise have produced as a
+    /// warning after generating everything.
+    @Test func theRobustnessRunGateRefusesALocalJudgeOnAServerWorkspace() {
+        let panel = FineTuningPanel()
+        panel.judgeCapabilityOverrideForTesting = { _ in .capable }
+        panel.judgeInstalledOverrideForTesting = { _ in true }
+        panel.judgeKeyPresenceOverrideForTesting = true
+        panel.localModelScanOverrideForTesting = ["vendor/chat-model-small"]
+        panel.judgeSubstrateOverrideForTesting = .server
+        panel.robustnessUseJudge = true
+        panel.robustnessJudgeModel = "vendor/chat-model-small"
+
+        let route = VariantRobustness.judgeRoute(
+            JudgeModelSpelling.parse("vendor/chat-model-small"),
+            rubric: "r", localContainer: nil)
+        #expect(panel.robustnessJudgeDisabledReason == route.warnings.first)
+        // The picker says the same thing on the row, in its flag idiom.
+        #expect(
+            panel.robustnessJudgeOffers.selectionCaption?
+                .contains("not runnable against a server workspace") == true)
+
+        // Both API backends stay runnable from a server workspace.
+        panel.robustnessJudgeModel = "claude-opus-4-8"
+        panel.judgeSubstrateOverrideForTesting = .server
+        #expect(
+            panel.robustnessJudgeDisabledReason == nil
+                || panel.robustnessJudgeDisabledReason?.contains("Claude API key")
+                    == true)
+        panel.robustnessJudgeModel = "openrouter:vendor/model:together"
+        #expect(panel.robustnessJudgeDisabledReason == nil)
+    }
+
+    /// The Studies pane's Run Paired Judge gate predated the spelling and
+    /// knew Claude-plus-a-key only. It now enforces the same list execution
+    /// does, so a green button is a promise the run keeps.
+    @Test func theAdHocRunGateEnforcesTheSharedPreconditionList() {
+        func refusal(
+            _ adHoc: String, judges: [ExperimentManifest.JudgeRef] = [],
+            claude: Bool = true, openRouter: Bool = false
+        ) -> String? {
+            ExperimentPanel.judgeDisabledReason(
+                judges: judges, adHocJudgeModel: adHoc,
+                claudeKeyPresent: claude, openRouterKeyPresent: openRouter,
+                installed: { $0 != "vendor/tier-absent" },
+                capability: Self.refusesDictionaryArtifacts)
+        }
+        // Blank resolves to the default Claude judge, which has a key here.
+        #expect(refusal("") == nil)
+        #expect(
+            refusal("", claude: false)
+                == "judge '\(ClaudePairedJudge.defaultModel)' needs a Claude "
+                    + "API key — set ANTHROPIC_API_KEY or save a key in the "
+                    + "Compute section (stored in the macOS Keychain)")
+
+        // The four shapes the old gate waved through, each now named.
+        #expect(
+            refusal("openrouter:vendor/model")
+                == JudgeModelSpelling.unpinnedProviderRefusal(model: "vendor/model"))
+        #expect(
+            refusal("openrouter:vendor/model:together")
+                == "judge 'vendor/model' needs an external judge key — save "
+                    + "one in the Compute section or set OPENROUTER_API_KEY")
+        #expect(refusal("openrouter:vendor/model:together", openRouter: true) == nil)
+        #expect(
+            refusal("vendor/dictionary-artifact")
+                == "judge 'vendor/dictionary-artifact' cannot judge: the "
+                    + "cached snapshot has no config.json")
+        #expect(
+            refusal("vendor/tier-absent")
+                == "judge 'vendor/tier-absent' is not installed on this Mac — "
+                    + "install it in Models first, or pick a judge that is")
+        #expect(refusal("vendor/chat-model-small") == nil)
+
+        // A declared PANEL takes over from the ad-hoc string, and a named
+        // local judge model gets the same install test the loop enforces.
+        let absentLocal = ExperimentManifest.JudgeRef(
+            name: "j-1", kind: "local", model: "vendor/tier-absent")
+        #expect(
+            refusal("vendor/chat-model-small", judges: [absentLocal])
+                == "judge 'vendor/tier-absent' is not installed on this Mac — "
+                    + "install it in Models first, or pick a judge that is")
+        // A local judge with NO model is legal — it resolves to the study
+        // model at evaluation start.
+        let defaulted = ExperimentManifest.JudgeRef(name: "j-1", kind: "local")
+        #expect(refusal("", judges: [defaulted]) == nil)
     }
 }

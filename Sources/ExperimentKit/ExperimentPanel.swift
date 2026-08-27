@@ -771,11 +771,19 @@ public final class ExperimentPanel {
     @ObservationIgnored public var judgeKeyPresenceOverrideForTesting: Bool?
     @ObservationIgnored
     public var judgeCapabilityOverrideForTesting: JudgeModelOffers.CapabilityCheck?
+    /// Is-installed seam, so a test's picker never depends on which weights
+    /// this developer's Mac happens to hold.
+    @ObservationIgnored
+    public var judgeInstalledOverrideForTesting: JudgeModelOffers.InstalledCheck?
+    /// Claude key PRESENCE seam for the readiness gate — a boolean, never a
+    /// credential.
+    @ObservationIgnored public var claudeKeyPresenceOverrideForTesting: Bool?
     @ObservationIgnored public var localModelScanOverrideForTesting: [String]?
 
     /// What the ad-hoc judge picker offers. Same composition as the
     /// Robustness Check's — one rule, two panes: the cache scan is
-    /// capability-filtered, curated entries pass by construction, and a
+    /// capability-filtered, curated entries are checked for PRESENCE (a model
+    /// tier is a candidate, not an inventory) and flagged when absent, and a
     /// stored selection that fails is flagged rather than dropped.
     public var judgeModelOffers: JudgeModelOffers.Offers {
         var candidates: [JudgeModelOffers.Candidate] = []
@@ -793,7 +801,9 @@ public final class ExperimentPanel {
             openRouterKeyPresent: judgeKeyPresenceOverrideForTesting
                 ?? (JudgeKeyStore.resolveKey(kind: "openrouter") != nil),
             capability: judgeCapabilityOverrideForTesting
-                ?? JudgeModelOffers.liveCapability)
+                ?? JudgeModelOffers.liveCapability,
+            installed: judgeInstalledOverrideForTesting
+                ?? JudgeModelOffers.liveInstalled)
     }
 
     /// The flat id list the web surface's `<select>` consumes — the same
@@ -4376,6 +4386,15 @@ public final class ExperimentPanel {
     /// Why Run Paired Judge is disabled, in one plain sentence — nil means
     /// runnable. The UI must always surface this next to the button: a
     /// silently gray button is a bug, not a state.
+    ///
+    /// The judge half runs through `JudgeReadiness` — the SHARED precondition
+    /// list the picker flags with and the executing route enforces. This gate
+    /// predated `JudgeModelSpelling` and knew one shape, Claude-plus-a-key
+    /// (review round 7, finding 5): an `openrouter:` spelling with no pinned
+    /// provider passed here and threw at resolve; OpenRouter with no key
+    /// passed here and refused inside the client; a local pick this Mac does
+    /// not hold passed here and reached the loader, which downloads. A green
+    /// button followed by a refusal is this gate lying about the run.
     public var pairedJudgeDisabledReason: String? {
         if isEvaluating || isRunning || isValidating || isExtracting {
             return "another study task is running — wait for it to finish"
@@ -4391,33 +4410,71 @@ public final class ExperimentPanel {
         if !hasRubricFile, !hasInlineRubric {
             return "no judge rubric — pin a rubric file or enter inline rubric text above"
         }
+        return Self.judgeDisabledReason(
+            judges: judges,
+            adHocJudgeModel: judgeModel,
+            claudeKeyPresent: claudeKeyPresenceOverrideForTesting
+                ?? (ClaudeStimulusGenerator.apiKey != nil),
+            openRouterKeyPresent: judgeKeyPresenceOverrideForTesting
+                ?? (JudgeKeyStore.resolveKey(kind: "openrouter") != nil),
+            installed: judgeInstalledOverrideForTesting
+                ?? JudgeReadiness.liveInstalled,
+            capability: judgeCapabilityOverrideForTesting
+                ?? JudgeReadiness.liveCapability)
+    }
+
+    /// The JUDGE half of `pairedJudgeDisabledReason` — why the declared judge
+    /// (or, with no panel, the ad-hoc single-string one) cannot run. Static
+    /// and pure so the rule is asserted directly, rather than only through a
+    /// panel that first needs a study, a completed run, and a rubric on disk.
+    ///
+    /// Key state arrives as PRESENCE booleans; no credential is read here.
+    nonisolated static func judgeDisabledReason(
+        judges: [ExperimentManifest.JudgeRef],
+        adHocJudgeModel: String,
+        claudeKeyPresent: Bool,
+        openRouterKeyPresent: Bool,
+        installed: JudgeReadiness.InstalledCheck = JudgeReadiness.liveInstalled,
+        capability: JudgeReadiness.CapabilityCheck = JudgeReadiness.liveCapability
+    ) -> String? {
+        func refusal(_ raw: String) -> String? {
+            JudgeReadiness.refusal(
+                for: raw, claudeKeyPresent: claudeKeyPresent,
+                openRouterKeyPresent: openRouterKeyPresent,
+                installed: installed, capability: capability)
+        }
         let panelJudges = judges.filter {
             !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
-        if panelJudges.isEmpty {
-            let model = judgeModel.trimmingCharacters(in: .whitespacesAndNewlines)
-            let effective = model.isEmpty ? ClaudePairedJudge.defaultModel : model
-            if ClaudePairedJudge.isClaudeModel(effective), ClaudeStimulusGenerator.apiKey == nil {
-                return "judge '\(effective)' needs a Claude API key — set "
+        guard !panelJudges.isEmpty else {
+            // Blank means the default Claude judge — the same default
+            // `ExperimentTasks.resolvedJudges` applies — so the gate asks
+            // about what would actually run, not about the empty string.
+            let model = adHocJudgeModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            return refusal(model.isEmpty ? ClaudePairedJudge.defaultModel : model)
+        }
+        // A local judge with no model is legal — it resolves to the study
+        // model (manifest.modelID) at evaluation start.
+        for judge in panelJudges {
+            if judge.kind == "claude", !claudeKeyPresent {
+                return "Claude judge '\(judge.name)' needs an API key — set "
                     + "ANTHROPIC_API_KEY or save a key in the Compute section "
                     + "(stored in the macOS Keychain)"
             }
-        } else {
-            // A local judge with no model is legal — it resolves to the
-            // study model (manifest.modelID) at evaluation start.
-            for judge in panelJudges {
-                if judge.kind == "claude", ClaudeStimulusGenerator.apiKey == nil {
-                    return "Claude judge '\(judge.name)' needs an API key — set "
-                        + "ANTHROPIC_API_KEY or save a key in the Compute section "
-                    + "(stored in the macOS Keychain)"
-                }
-                if judge.kind == "openrouter",
-                    JudgeKeyStore.resolveKey(kind: "openrouter") == nil
-                {
-                    return "OpenRouter judge '\(judge.name)' needs an external "
-                        + "judge key — save one in the Compute section or set "
-                        + "OPENROUTER_API_KEY"
-                }
+            if judge.kind == "openrouter", !openRouterKeyPresent {
+                return "OpenRouter judge '\(judge.name)' needs an external "
+                    + "judge key — save one in the Compute section or set "
+                    + "OPENROUTER_API_KEY"
+            }
+            // A named local judge model is loaded at evaluation start; one
+            // this Mac does not hold reaches the hub. The same precondition
+            // the ad-hoc branch and the executing loop use.
+            let model = (judge.model ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if judge.kind == "local", !model.isEmpty,
+                let reason = refusal(model)
+            {
+                return reason
             }
         }
         return nil

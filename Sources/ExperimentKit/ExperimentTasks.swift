@@ -6520,6 +6520,20 @@ public enum ExperimentTasks {
             + "judge's model empty to judge with the study model"
     }
 
+    /// The same failure, decided BEFORE the loader is asked (review round 7,
+    /// finding 1). `SteeredContainerLoader.load` downloads what it cannot
+    /// find, so "load it and see" turns a judge model this Mac does not hold
+    /// into an invisible multi-gigabyte fetch at the start of an evaluate.
+    /// Refusing on the is-installed test — the same membership test every
+    /// installed badge reads — costs a directory listing.
+    static func localJudgeNotInstalledMessage(
+        judgeName: String, model: String
+    ) -> String {
+        "local judge '\(judgeName)' declares model '\(model)', which is not "
+            + "installed on this Mac — install it first; a judging run never "
+            + "downloads weights on your behalf"
+    }
+
     /// TEST SEAM (counting fake judge): when set, every judge call routes
     /// here instead of the Claude/OpenRouter/local clients, so tests can
     /// assert exactly which pairs were judged (e.g. that an excluded
@@ -6832,6 +6846,11 @@ public enum ExperimentTasks {
         if judgeOverrideForTesting == nil {
             for judge in judges where judge.kind == "local" {
                 if localContainers[judge.model] == nil {
+                    guard SteeredContainerLoader.isCached(modelID: judge.model) else {
+                        throw ExperimentError(
+                            reason: localJudgeNotInstalledMessage(
+                                judgeName: judge.name, model: judge.model))
+                    }
                     print("loading local judge model \(judge.model)")
                     do {
                         // The judge's own pinned revision wins
@@ -7389,6 +7408,11 @@ public enum ExperimentTasks {
         if codingOverrideForTesting == nil {
             for judge in judges where judge.kind == "local" {
                 if localContainers[judge.model] == nil {
+                    guard SteeredContainerLoader.isCached(modelID: judge.model) else {
+                        throw ExperimentError(
+                            reason: localJudgeNotInstalledMessage(
+                                judgeName: judge.name, model: judge.model))
+                    }
                     print("loading local judge model \(judge.model)")
                     do {
                         localContainers[judge.model] =

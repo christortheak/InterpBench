@@ -105,4 +105,140 @@ public enum JudgeModelSpelling {
         "openrouter judge for '\(model)' has no pinned provider — an "
             + "unpinned provider is not a pinned judge"
     }
+
+    /// The warning the SERVER robustness route raises for a local judge —
+    /// hoisted here (review round 7, finding 2) so the Run gate can refuse in
+    /// the route's own words instead of paraphrasing them. The route stays
+    /// the only place that EMITS it during a run; this is the one place it is
+    /// written.
+    public static func localJudgeSkippedInServerWorkspace(model: String) -> String {
+        "coherence judge '\(model)' is a local model — judging skipped in a "
+            + "server workspace; pick a Claude or OpenRouter judge"
+    }
+}
+
+/// Whether a single-string judge is RUNNABLE — the one precondition list, so
+/// the picker's flags, a Run button's readiness gate, and the executing route
+/// cannot disagree about the same selection.
+///
+/// The three surfaces had drifted apart (review round 7, finding 5). The
+/// Studies pane's `pairedJudgeDisabledReason` predates `JudgeModelSpelling`
+/// and recognised one shape only — Claude, plus a key. It therefore passed an
+/// `openrouter:` spelling with no pinned provider (execution throws),
+/// OpenRouter with no key (the client refuses mid-run), and a local pick this
+/// Mac cannot answer with (the loader either refuses or, worse, downloads it).
+/// A green Run button followed by a refusal is the readiness gate lying.
+///
+/// Everything here is a value: key state arrives as a PRESENCE boolean and no
+/// credential is ever read, held, or rendered.
+public enum JudgeReadiness {
+
+    /// Where the generations come from — which decides whether a LOCAL judge
+    /// can be reached at all. On the server route nothing is loaded on this
+    /// Mac, so a local judge is skipped; both API backends work either way.
+    public enum Substrate: Sendable, Equatable {
+        case local
+        case server
+    }
+
+    /// Is this repo's snapshot on this Mac? Injectable; the default is the
+    /// ONE local installed-model test, so a picker's badge, this gate, and a
+    /// load refusal cannot disagree.
+    public typealias InstalledCheck = @Sendable (String) -> Bool
+    public typealias CapabilityCheck = @Sendable (String) -> LocalJudgeCapability.Verdict
+
+    public static let liveInstalled: InstalledCheck = {
+        SteeredContainerLoader.isCached(modelID: $0)
+    }
+    public static let liveCapability: CapabilityCheck = {
+        LocalJudgeCapability.verdict(forModelID: $0)
+    }
+
+    // MARK: - Sentences
+
+    /// Why an uninstalled repo cannot judge, in the voice the capability
+    /// verdicts use — a clause, so the picker can drop it into its flagged
+    /// caption and the gate into its refusal.
+    public static let notInstalledReason =
+        "it is not installed on this Mac — install it in Models first"
+
+    /// The picker's short label suffix for an offered-but-absent tier.
+    public static func notInstalledLabel(_ model: String) -> String {
+        "\(model) (not installed)"
+    }
+
+    /// Why a local judge is unreachable from a server workspace, as a clause
+    /// for the picker's flag. The RUN refusal uses the route's own sentence
+    /// (`JudgeModelSpelling.localJudgeSkippedInServerWorkspace`) instead.
+    public static let localOnServerReason =
+        "local model — not runnable against a server workspace"
+
+    public static func notInstalledRefusal(model: String) -> String {
+        "judge '\(model)' is not installed on this Mac — install it in "
+            + "Models first, or pick a judge that is"
+    }
+
+    public static func incapableRefusal(model: String, reason: String) -> String {
+        "judge '\(model)' cannot judge: \(reason)"
+    }
+
+    /// Worded exactly as the Studies pane has always worded it.
+    public static func claudeKeyRefusal(model: String) -> String {
+        "judge '\(model)' needs a Claude API key — set ANTHROPIC_API_KEY or "
+            + "save a key in the Compute section (stored in the macOS Keychain)"
+    }
+
+    /// Worded like the panel-judge twin beside it ("needs an external judge
+    /// key — save one in the Compute section or set OPENROUTER_API_KEY").
+    public static func openRouterKeyRefusal(model: String) -> String {
+        "judge '\(model)' needs an external judge key — save one in the "
+            + "Compute section or set OPENROUTER_API_KEY"
+    }
+
+    // MARK: - The gate
+
+    /// Why this selection cannot be run, or nil when it can. A blank
+    /// selection is nil: "no judge asked for" is a legal state everywhere,
+    /// and the panes that DEFAULT a blank to the Claude judge pass that
+    /// default in themselves.
+    ///
+    /// The order is the order execution hits them, so the first thing a
+    /// researcher is told is the first thing that would have failed.
+    public static func refusal(
+        for raw: String?,
+        substrate: Substrate = .local,
+        claudeKeyPresent: Bool,
+        openRouterKeyPresent: Bool,
+        installed: InstalledCheck = liveInstalled,
+        capability: CapabilityCheck = liveCapability
+    ) -> String? {
+        guard let selection = JudgeModelSpelling.parse(raw) else { return nil }
+        switch selection {
+        case .openRouterUnpinned(let model):
+            // What `ExperimentTasks.resolvedJudges` throws, before anything
+            // runs.
+            return JudgeModelSpelling.unpinnedProviderRefusal(model: model)
+        case .openRouter(let model, _):
+            return openRouterKeyPresent ? nil : openRouterKeyRefusal(model: model)
+        case .claude(let model):
+            return claudeKeyPresent ? nil : claudeKeyRefusal(model: model)
+        case .local(let model):
+            if substrate == .server {
+                return JudgeModelSpelling.localJudgeSkippedInServerWorkspace(
+                    model: model)
+            }
+            // Installed BEFORE capable: `LocalJudgeCapability` answers "no
+            // cached snapshot" for an absent repo, which is true but tells a
+            // researcher looking at a listed model tier nothing about what to
+            // do. The install test is also what stops a Run from becoming an
+            // invisible multi-gigabyte download inside the loader.
+            guard installed(model) else { return notInstalledRefusal(model: model) }
+            let verdict = capability(model)
+            guard verdict.isCapable else {
+                return incapableRefusal(
+                    model: model, reason: verdict.reason ?? "it is not a text model")
+            }
+            return nil
+        }
+    }
 }

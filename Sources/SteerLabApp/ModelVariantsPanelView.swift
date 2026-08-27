@@ -498,7 +498,18 @@ struct ModelVariantsPanelView: View {
                 Button(panel.isRobustnessRunning ? "Checking…" : "Run Robustness Check") {
                     panel.runRobustnessCheck()
                 }
-                .disabled(!panel.hasResolvableRobustnessTarget || panel.isRobustnessRunning)
+                .disabled(
+                    !panel.hasResolvableRobustnessTarget || panel.isRobustnessRunning
+                        || panel.robustnessJudgeDisabledReason != nil)
+                // A grayed button that says nothing is a bug, not a state:
+                // the judge precondition that stopped the run is shown in the
+                // words the route itself would have used.
+                if let reason = panel.robustnessJudgeDisabledReason {
+                    Label(reason, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 // Substrate transparency: battery/coherence items and scoring
                 // are local recipe data + pure code on either route; only
                 // generation moves. (localOnly is unreachable for this builder
@@ -1751,8 +1762,13 @@ struct ModelVariantsPanelView: View {
                     panel.robustnessTargetVariantID = record.id
                     panel.runRobustnessCheck()
                 }
-                .disabled(panel.isRobustnessRunning)
-                .help("run the configured robustness check on this agent; output streams in the viewer")
+                .disabled(
+                    panel.isRobustnessRunning
+                        || panel.robustnessJudgeDisabledReason != nil)
+                .help(
+                    panel.robustnessJudgeDisabledReason
+                        ?? "run the configured robustness check on this agent; "
+                            + "output streams in the viewer")
                 Button("Add to study") { addSelectedAgentToStudy(record) }
                     .disabled(!canAddSelectedAgentToStudy(record))
                     .help(addToStudyHelp(record))

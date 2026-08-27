@@ -525,7 +525,10 @@ public final class ChatService {
         }
         // A finished install is exactly the moment the installed-models index
         // is stale: re-scan so the picker's availability and the Load gate
-        // both see the new weights without a relaunch.
+        // both see the new weights without a relaunch. The rescan also drops
+        // the judge-capability memo (see `refreshLocalInstalledModels`), so a
+        // repo that was "no cached snapshot" a minute ago is re-inspected
+        // rather than remembered as un-judgeable for the session.
         modelInstaller.onFinished = { [weak self] _ in
             self?.catalog.refreshLocalInstalledModels()
         }

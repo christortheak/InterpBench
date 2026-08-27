@@ -237,6 +237,19 @@ public enum VariantRobustness {
         let promptsURL = VectorCatalog.projectRoot.appending(path: coherencePromptsFile)
         let (promptTexts, _) = try StimulusSet.loadTexts(url: promptsURL)
         let coherencePrompts = Array(promptTexts.prefix(max(0, maxCoherencePrompts)))
+        // The judge is settled BEFORE a single generation (review round 7,
+        // finding 1). A LOCAL judge is loaded further down through
+        // `SteeredContainerLoader.load`, which downloads what it cannot find
+        // — up to 35 GB for a scale tier, invisibly, outside the named and
+        // cancellable Install flow that is supposed to be the only way
+        // weights arrive. Refusing here costs nothing; refusing after the
+        // battery has run costs the battery.
+        if case .local(let model) = JudgeModelSpelling.parse(judgeModel),
+            !SteeredContainerLoader.isCached(modelID: model)
+        {
+            throw ExperimentError(
+                reason: JudgeReadiness.notInstalledRefusal(model: model))
+        }
         let promptMode = ExperimentManifest.PromptMode(rawValue: variant.promptMode) ?? .chatAssistant
         let systemPrompt = variant.systemPrompt
         let qwenThinking = variant.qwenThinkingEnabled
@@ -466,12 +479,14 @@ public enum VariantRobustness {
             return (nil, [])
         case .local(let model):
             guard let localContainer else {
+                // Written once, in `JudgeModelSpelling`, so the Run gate can
+                // refuse up front in the route's own words instead of
+                // paraphrasing them (review round 7, finding 2).
                 return (
                     nil,
                     [
-                        "coherence judge '\(model)' is a local model — judging "
-                            + "skipped in a server workspace; pick a Claude or "
-                            + "OpenRouter judge"
+                        JudgeModelSpelling.localJudgeSkippedInServerWorkspace(
+                            model: model)
                     ])
             }
             return (

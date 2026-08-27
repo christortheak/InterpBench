@@ -1,4 +1,5 @@
 import Foundation
+import SteeringKit
 import Testing
 
 @testable import ExperimentKit
@@ -227,6 +228,30 @@ struct SubstrateCatalogTests {
         catalog.refreshLocalInstalledModels()
         #expect(catalog.isInstalled(tier, in: .local))
         #expect(!catalog.isInstalled(ChatService.availableModels[1].id, in: .local))
+    }
+
+    /// The rescan is also where judge-capability verdicts are forgotten
+    /// (review round 7, finding 3). `LocalJudgeCapability` memoizes per repo
+    /// id so a picker does not stat a snapshot per row per frame — but the
+    /// memo outlived the fact it recorded: a repo inspected before its
+    /// weights arrived stayed "this Mac holds no cached snapshot" for the
+    /// rest of the session, install or no install. Every rescan is a claim
+    /// that the installed set changed, so every rescan drops the memo.
+    @Test func aRescanForgetsMemoizedJudgeCapabilityVerdicts() throws {
+        let store = clusterStore(defaults: try freshDefaults("judge-memo"))
+        let catalog = SubstrateCatalog(store: store, localCacheScan: { [] })
+        let id = "vendor-absent/repo-\(UUID().uuidString)"
+
+        // Inspecting an absent repo memoizes a refusal…
+        #expect(!LocalJudgeCapability.verdict(forModelID: id).isCapable)
+        LocalJudgeCapability.rememberForTesting(id, .capable)
+        #expect(LocalJudgeCapability.verdict(forModelID: id).isCapable)
+
+        // …and the rescan the install-completion path runs drops it, so the
+        // next question is answered from the filesystem again.
+        catalog.refreshLocalInstalledModels()
+        #expect(!LocalJudgeCapability.verdict(forModelID: id).isCapable)
+        LocalJudgeCapability.forgetCachedVerdicts()
     }
 
     /// A model installed by slug joins the SAME offerable list the builders

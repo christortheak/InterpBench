@@ -7,18 +7,34 @@ import SteeringKit
 /// researcher reads are asserted in tests rather than inferred from a
 /// screenshot.
 ///
-/// Two rules the composition exists to hold:
+/// Three rules the composition exists to hold:
 ///
 /// - **A capability filter, not a narrower scan.** Candidates coming from the
 ///   local cache scan are checked with `LocalJudgeCapability`; curated entries
 ///   (the app's own model tiers, `claude-…`/`anthropic:…`, an OpenRouter
-///   spelling) pass by construction — they are not cache artifacts and there
-///   is nothing on disk to inspect.
+///   spelling) are not cache artifacts and are never capability-inspected —
+///   there may be nothing on disk to inspect.
+/// - **Curated is not the same as present.** A curated model tier is a
+///   CANDIDATE, not an inventory (`ChatService.availableModels`): a fresh Mac
+///   has none of them downloaded. Passing every tier "by construction" made
+///   them selectable, and selecting one sent `SteeredContainerLoader.load`
+///   to the hub for up to 35 GB — outside the visible, cancellable Install
+///   flow the model contract says is the only way weights arrive (review
+///   round 7, finding 1). So a curated entry that names a LOCAL repo is
+///   checked against the one installed test and, when absent, listed
+///   FLAGGED — visible, because it is exactly the thing you would install,
+///   and unrunnable, because it is not here yet.
 /// - **A stored choice is never silently dropped.** The value the panel
 ///   already holds is ALWAYS listed. If it fails the filter it is listed
 ///   FLAGGED, carrying the engine's own reason, because a picker that quietly
 ///   deletes a saved selection leaves the researcher with a blank field and no
 ///   account of what happened to it.
+///
+/// Flagging, not hiding, is also how a server workspace treats local judges:
+/// the server route runs generations remotely and judges from this Mac, so a
+/// local pick is skipped with a warning. The picker says so in the row rather
+/// than removing entries that are perfectly good on the Local workspace
+/// (review round 7, finding 2).
 public enum JudgeModelOffers {
 
     public struct Option: Sendable, Equatable, Identifiable {
@@ -88,14 +104,23 @@ public enum JudgeModelOffers {
         "\(model) (cannot judge)"
     }
 
+    /// The two clauses that are not capability verdicts, restated from the
+    /// shared precondition list so the picker and the Run gate quote the same
+    /// words.
+    public static let notInstalledReason = JudgeReadiness.notInstalledReason
+    public static let localOnServerReason = JudgeReadiness.localOnServerReason
+
     // MARK: - Composition
 
     /// The capability seam. Injectable so tests never touch the real cache.
     public typealias CapabilityCheck = @Sendable (String) -> LocalJudgeCapability.Verdict
+    /// The is-installed seam, same shape and same default as the Run gate's.
+    public typealias InstalledCheck = JudgeReadiness.InstalledCheck
 
     public static let liveCapability: CapabilityCheck = {
         LocalJudgeCapability.verdict(forModelID: $0)
     }
+    public static let liveInstalled: InstalledCheck = JudgeReadiness.liveInstalled
 
     /// One candidate id plus how it must be treated. Order is the CALLER's:
     /// cached and curated entries interleave in the list the pane already
@@ -127,11 +152,15 @@ public enum JudgeModelOffers {
     ///   - candidates: everything the pane would list, in its own order.
     ///   - openRouterKeyPresent: PRESENCE only. The key itself is never read
     ///     here and never rendered.
+    ///   - substrate: which engine will generate. `.server` makes every local
+    ///     entry a flagged row — the server route skips local judges.
     public static func compose(
         selected: String,
         candidates: [Candidate],
         openRouterKeyPresent: Bool,
-        capability: CapabilityCheck = liveCapability
+        substrate: JudgeReadiness.Substrate = .local,
+        capability: CapabilityCheck = liveCapability,
+        installed: InstalledCheck = liveInstalled
     ) -> Offers {
         var offers = Offers()
         var seen = Set<String>()
@@ -145,22 +174,38 @@ public enum JudgeModelOffers {
             }
         }
 
-        // 1. The stored selection, first and unconditionally.
+        /// Why a LOCAL id cannot judge here, or nil when it can. The order is
+        /// the Run gate's: the workspace first (a local judge is unreachable
+        /// from a server route whatever its snapshot says), then presence,
+        /// then — for ids with something on disk to inspect — capability.
+        func localRefusal(_ model: String, capabilityChecked: Bool) -> String? {
+            if substrate == .server { return localOnServerReason }
+            guard installed(model) else { return notInstalledReason }
+            guard capabilityChecked else { return nil }
+            let verdict = capability(model)
+            return verdict.isCapable
+                ? nil : (verdict.reason ?? "it is not a text model")
+        }
+
+        // 1. The stored selection, first and unconditionally. It is always
+        //    inspected as fully as a cache id, whatever list it came from:
+        //    what the panel HOLDS is what a run would use.
         let selection = selected.trimmingCharacters(in: .whitespacesAndNewlines)
         if !selection.isEmpty {
             switch JudgeModelSpelling.parse(selection) {
             case .local(let model):
-                let verdict = capability(model)
-                if verdict.isCapable {
-                    place(Option(id: selection, label: selection))
-                } else {
-                    let reason = verdict.reason ?? "it is not a text model"
+                if let reason = localRefusal(model, capabilityChecked: true) {
                     offers.selectionCaption = flaggedSelectionCaption(
                         model: model, reason: reason)
                     place(
                         Option(
-                            id: selection, label: flaggedLabel(model),
+                            id: selection,
+                            label: reason == notInstalledReason
+                                ? JudgeReadiness.notInstalledLabel(model)
+                                : flaggedLabel(model),
                             caption: reason))
+                } else {
+                    place(Option(id: selection, label: selection))
                 }
             default:
                 // Claude and OpenRouter selections pass by construction —
@@ -169,13 +214,41 @@ public enum JudgeModelOffers {
             }
         }
 
-        // 2. The rest, in the caller's order: cache-scan ids filtered,
-        //    curated ids listed as-is.
+        // 2. The rest, in the caller's order.
+        //
+        //    Dropped vs flagged, and why they differ: a cache-scan id that
+        //    fails the CAPABILITY test is dropped, because the scan is broad
+        //    on purpose and its rejects are artifacts nobody chose to offer
+        //    (a dictionary repo, a lens repo). Everything else that cannot
+        //    judge is flagged and stays listed — a curated tier that is not
+        //    installed is precisely the thing you would install, and in a
+        //    server workspace every local entry is unreachable at once, which
+        //    is a fact about the workspace, not about the models.
         for candidate in candidates {
             let trimmed = candidate.id.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
-            if candidate.capabilityChecked, !capability(trimmed).isCapable { continue }
-            place(Option(id: trimmed, label: trimmed))
+            guard case .local(let model) = JudgeModelSpelling.parse(trimmed) else {
+                place(Option(id: trimmed, label: trimmed))
+                continue
+            }
+            // A cache-scan reject is dropped wherever the run would happen:
+            // a dictionary repo is not a judge on any workspace, so this test
+            // comes before the workspace one.
+            if candidate.capabilityChecked, !capability(model).isCapable { continue }
+            guard
+                let reason = localRefusal(
+                    model, capabilityChecked: candidate.capabilityChecked)
+            else {
+                place(Option(id: trimmed, label: trimmed))
+                continue
+            }
+            place(
+                Option(
+                    id: trimmed,
+                    label: reason == notInstalledReason
+                        ? JudgeReadiness.notInstalledLabel(model)
+                        : flaggedLabel(model),
+                    caption: reason))
         }
 
         // 3. The OpenRouter section, gated on key PRESENCE alone.

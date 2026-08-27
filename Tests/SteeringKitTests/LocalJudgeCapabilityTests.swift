@@ -126,6 +126,73 @@ struct LocalJudgeCapabilityTests {
         }
     }
 
+    /// Existence was never the test the tokenizer-config route holds itself
+    /// to, and the sidecar route now matches it (review round 7, finding 6).
+    /// Three snapshots that used to pass the picker and fail at load: an
+    /// empty sidecar, a whitespace-only one, and a DIRECTORY wearing the
+    /// sidecar's name.
+    @Test func anEmptyOrDirectorySidecarIsNoTemplate() {
+        withSnapshot(files: [
+            "config.json": #"{"architectures": ["FooForCausalLM"]}"#,
+            "chat_template.jinja": "",
+        ]) { snapshot in
+            let verdict = LocalJudgeCapability.inspect(snapshot: snapshot)
+            #expect(!verdict.isCapable)
+            #expect(verdict.reason?.contains("no chat template") == true)
+        }
+        withSnapshot(files: [
+            "config.json": #"{"architectures": ["FooForCausalLM"]}"#,
+            "chat_template.jinja": "   \n  ",
+        ]) { snapshot in
+            #expect(!LocalJudgeCapability.inspect(snapshot: snapshot).isCapable)
+        }
+        // A directory named `chat_template.json` "exists" and renders nothing.
+        withSnapshot(files: [
+            "config.json": #"{"architectures": ["FooForCausalLM"]}"#,
+            "chat_template.json/placeholder.txt": "not a template",
+        ]) { snapshot in
+            #expect(!LocalJudgeCapability.inspect(snapshot: snapshot).isCapable)
+        }
+    }
+
+    /// A `.json` sidecar must BE json. A `.jinja` one stops at non-empty on
+    /// purpose: deciding whether Jinja source is valid means implementing
+    /// Jinja, and a template this predicate cannot parse is still a template
+    /// the loader can.
+    @Test func aJSONSidecarMustParseAndAJinjaOneNeedOnlyHaveBytes() {
+        withSnapshot(files: [
+            "config.json": #"{"architectures": ["FooForCausalLM"]}"#,
+            "chat_template.json": "{ not json at all",
+        ]) { snapshot in
+            #expect(!LocalJudgeCapability.inspect(snapshot: snapshot).isCapable)
+        }
+        withSnapshot(files: [
+            "config.json": #"{"architectures": ["FooForCausalLM"]}"#,
+            "chat_template.json": #"{"chat_template": "{{ messages }}"}"#,
+        ]) { snapshot in
+            #expect(LocalJudgeCapability.inspect(snapshot: snapshot).isCapable)
+        }
+        // Jinja source is not JSON and must not be asked to be.
+        withSnapshot(files: [
+            "config.json": #"{"architectures": ["FooForCausalLM"]}"#,
+            "chat_template.jinja": "{% for m in messages %}{{ m }}{% endfor %}",
+        ]) { snapshot in
+            #expect(LocalJudgeCapability.inspect(snapshot: snapshot).isCapable)
+        }
+    }
+
+    /// An unusable sidecar does not veto a template the tokenizer config
+    /// carries — the two routes are alternatives, and only one need hold.
+    @Test func anUnusableSidecarFallsThroughToTheTokenizerConfig() {
+        withSnapshot(files: [
+            "config.json": #"{"architectures": ["FooForCausalLM"]}"#,
+            "chat_template.json": "",
+            "tokenizer_config.json": #"{"chat_template": "{{ messages }}"}"#,
+        ]) { snapshot in
+            #expect(LocalJudgeCapability.inspect(snapshot: snapshot).isCapable)
+        }
+    }
+
     @Test func unreadableConfigJSONRefusesRatherThanCrashing() {
         withSnapshot(files: [
             "config.json": "not json at all",

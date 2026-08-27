@@ -333,7 +333,14 @@ extension SweepPanelModel {
             .map { inspect(label: $0.label, path: $0.path, pinnedHash: $0.pinnedHash) }
         return resolve(
             spec: spec, criterion: criterion,
-            layerCount: layerCount ?? cachedLayerCount(modelID: manifest.modelID),
+            // The manifest's pinned revision is part of the depth question
+            // (review round 7, finding 4): the RUN path already asks it that
+            // way (`ExperimentStore.setSweepGrid`), and asking by model id
+            // alone here let the editor display absolute layers converted
+            // against a different revision's artifacts.
+            layerCount: layerCount
+                ?? cachedLayerCount(
+                    modelID: manifest.modelID, revision: manifest.modelRevision),
             files: files)
     }
 }

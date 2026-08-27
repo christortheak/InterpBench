@@ -197,11 +197,20 @@ import Testing
             !fm.fileExists(atPath: destination.path),
             "a failed create left a partial workspace at \(destination.path)")
         #expect(!WorkspaceStore.isWorkspace(url: destination))
+        // The staging tree THIS create made, and only that one. `create`
+        // names it after its own destination
+        // (`.<destination>.steerlab-staging-<uuid>`), so the destination-
+        // specific prefix is exactly what the transaction guarantees to
+        // clean up. Matching the bare word "steerlab-staging" across the
+        // shared system temp directory asserted something else entirely —
+        // that no OTHER process on this machine has ever been interrupted
+        // mid-create — and a single stale directory from any earlier run
+        // failed a test about this one (review round 7, finding 7).
+        let prefix = ".\(destination.lastPathComponent).steerlab-staging-"
         let siblings = (try? fm.contentsOfDirectory(
             atPath: destination.deletingLastPathComponent().path)) ?? []
-        #expect(
-            !siblings.contains { $0.contains("steerlab-staging") },
-            "staging tree was not cleaned up: \(siblings)")
+        let ours = siblings.filter { $0.hasPrefix(prefix) }
+        #expect(ours.isEmpty, "staging tree was not cleaned up: \(ours)")
     }
 
     /// The preflight half: an existing NON-EMPTY destination is refused
