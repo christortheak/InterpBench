@@ -163,6 +163,51 @@ struct OptimizationLifecycleTests {
         spec = ExperimentManifest.SweepSpec()
         spec.batteryFile = ""
         #expect(SweepSpecForm.validate(spec) != nil)
+
+        // The two ascent rules — the checks this form lacked while it kept
+        // its own copy of the audit, which is how the panel could save a
+        // grid `set-sweep-grid` refuses. `validate` is now a name for
+        // `ExperimentStore.sweepGridProblem`, so the twin texts answer here.
+        spec = ExperimentManifest.SweepSpec()
+        spec.layerFractions = [0.7, 0.5, 0.85]
+        #expect(SweepSpecForm.validate(spec)?.contains("does not ascend") == true)
+
+        spec = ExperimentManifest.SweepSpec()
+        spec.layerFractions = [0.5, 0.5, 0.7]
+        #expect(SweepSpecForm.validate(spec)?.contains("does not ascend") == true)
+
+        spec = ExperimentManifest.SweepSpec()
+        spec.alphas = [0.1, 0.05]
+        #expect(SweepSpecForm.validate(spec)?.contains("does not ascend") == true)
+
+        spec = ExperimentManifest.SweepSpec()
+        spec.alphas = [0.05, 0.05, 0.1]
+        #expect(SweepSpecForm.validate(spec)?.contains("does not ascend") == true)
+    }
+
+    // MARK: §4.15(b) — fractions and absolute layers, side by side
+
+    @Test func resolvedLayersCaptionShowsBothSpellings() {
+        #expect(
+            SweepSpecForm.resolvedLayersText(
+                fractions: [0.5, 0.7, 0.85], layerCount: 34)
+                == "layers 17, 23, 28 of 34")
+        // No depth known (nothing extracted for the model yet): the caption
+        // states that fact instead of guessing.
+        #expect(
+            SweepSpecForm.resolvedLayersText(fractions: [0.5], layerCount: nil)
+                .contains("unknown"))
+        #expect(
+            SweepSpecForm.resolvedLayersText(fractions: [0.5], layerCount: 0)
+                .contains("unknown"))
+        // Two fractions on one layer at THIS depth: the collapse is said,
+        // not hidden — a grid of "two depths" that is really one is a
+        // silently smaller sweep.
+        #expect(
+            SweepSpecForm.resolvedLayersText(
+                fractions: [0.5, 0.51], layerCount: 10)
+                == "layers 5 of 10 (1 fraction collapsed onto a layer "
+                + "already in the grid)")
     }
 
     // MARK: save-time criterion validation
@@ -407,6 +452,41 @@ extension ExperimentStoreTests {
             #expect(panel.setSweepSpec(spec, for: "scr"))
             let loaded = try ExperimentStore.load(name: "scr")
             #expect(loaded.sweep == spec)
+        }
+    }
+
+    /// The panel's Save routes through `ExperimentStore.setSweepGrid`, so a
+    /// grid the CLI refuses (`sweepGridRule`) refuses HERE too, in the same
+    /// words — the divergence where the GUI saved `alphas 0.1, 0.05` while
+    /// `set-sweep-grid` refused it (same class the detach commit closed for
+    /// the Studies remove button).
+    @Test @MainActor func setSweepSpecRefusesTheUnsweepableGridLikeTheCLI() throws {
+        try withOptimizationsWorkspace { _ in
+            _ = try ExperimentStore.create(
+                name: "grid", description: "", modelID: "test/model")
+            let panel = ExperimentPanel()
+
+            // A descending alpha ladder: refused, nothing written, and the
+            // refusal is inline beside the Save button (finding 11a).
+            var spec = ExperimentManifest.SweepSpec()
+            spec.alphas = [0.1, 0.05]
+            #expect(!panel.setSweepSpec(spec, for: "grid"))
+            #expect(panel.status?.contains("does not ascend") == true)
+            #expect(panel.formErrors[.sweepSpec] == panel.status)
+            #expect(try ExperimentStore.load(name: "grid").sweep == nil)
+
+            // A repeated layer fraction: strict ascent, same twin text.
+            spec = ExperimentManifest.SweepSpec()
+            spec.layerFractions = [0.5, 0.5, 0.7]
+            #expect(!panel.setSweepSpec(spec, for: "grid"))
+            #expect(panel.status?.contains("does not ascend") == true)
+            #expect(try ExperimentStore.load(name: "grid").sweep == nil)
+
+            // The ascending declaration saves through the same gated verb,
+            // clearing the inline refusal.
+            #expect(panel.setSweepSpec(.init(), for: "grid"))
+            #expect(panel.formErrors[.sweepSpec] == nil)
+            #expect(try ExperimentStore.load(name: "grid").sweep != nil)
         }
     }
 

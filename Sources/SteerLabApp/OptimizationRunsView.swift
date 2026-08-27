@@ -1405,6 +1405,11 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
     /// so plain `let`s seeded in init are correct.
     private let pinnedDevPromptsHash: String?
     private let pinnedBatteryHash: String?
+    /// The pinned model's depth from any extracted vector's sidecar, seeded
+    /// once in init (the catalog scan is disk I/O — not per keystroke). nil
+    /// until something has been extracted for the model; the caption states
+    /// that rather than guessing.
+    private let cachedLayerCount: Int?
 
     /// Every editable field, compared verbatim. Deliberately the RAW text and
     /// not the parsed spec: "0.10" vs "0.1" is an unsaved edit as far as the
@@ -1480,9 +1485,11 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         var seededMap = initial.selection?.objective?.choicePromptsFiles ?? [:]
         let manifestSingular = (initial.selection?.objective?.choicePromptsFile ?? "")
             .trimmingCharacters(in: .whitespaces)
-        let manifestConcepts = (panel.experiments
-            .first { $0.name == experimentName }?.concepts ?? [])
-            .map(\.name)
+        let manifest = panel.experiments.first { $0.name == experimentName }
+        let manifestConcepts = (manifest?.concepts ?? []).map(\.name)
+        self.cachedLayerCount = manifest.flatMap {
+            SweepPanelModel.cachedLayerCount(modelID: $0.modelID)
+        }
         if !manifestSingular.isEmpty, manifestConcepts.count > 1 {
             for concept in manifestConcepts where seededMap[concept] == nil {
                 seededMap[concept] = manifestSingular
@@ -1537,6 +1544,7 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
     private var gridFields: some View {
         TextField("Layer fractions (0–1, comma-separated)", text: $layerFractionsText)
             .help("network-depth fractions the sweep maps to layers, e.g. 0.5, 0.7, 0.85")
+        resolvedLayersCaption
         TextField("Alphas (norm units, comma-separated)", text: $alphasText)
             .help(
                 "steering strengths in residual-norm units, e.g. 0.05, 0.08, 0.13 — "
@@ -1550,6 +1558,25 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         instrumentFileRow(label: "capability battery", path: batteryFile)
         sweepInputPinCaption
         TextField("Max tokens per generation", text: $maxTokensText)
+    }
+
+    /// §4.15(b): the grid is a cost and a preregistration, so the human
+    /// deciding it is shown the fractions AND the absolute layers they
+    /// resolve to at this model's depth, side by side, LIVE as they edit —
+    /// not only after a save. Hidden while the text does not parse or names
+    /// an out-of-range fraction (the form's own parse error and the save
+    /// refusal own those); collapse onto fewer layers is stated by the
+    /// shared caption text.
+    @ViewBuilder
+    private var resolvedLayersCaption: some View {
+        if let fractions = SweepSpecForm.parseNumberList(layerFractionsText),
+            fractions.allSatisfy({ $0 >= 0 && $0 <= 1 })
+        {
+            Text("→ " + SweepSpecForm.resolvedLayersText(
+                fractions: fractions, layerCount: cachedLayerCount))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
     }
 
     /// What the manifest actually records for the two sweep inputs.

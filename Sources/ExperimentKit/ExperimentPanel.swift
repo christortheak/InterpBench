@@ -1320,6 +1320,15 @@ public final class ExperimentPanel {
     /// the declared selection is validated at SAVE time so a bad criterion is
     /// caught at declaration, not at sweep start. Returns false (with the
     /// reason in `status`) when nothing was written.
+    ///
+    /// The write itself is the two fully-gated store verbs the CLI and the
+    /// HTTP route use — `ExperimentStore.setSweepGrid` for the grid block,
+    /// `setSweepSelection` for the rule — the same routing that closed the
+    /// Studies remove button's divergence (`detachConcept`). Before that,
+    /// this panel could save `--alphas 0.1, 0.05` where the CLI refuses it
+    /// (`sweepGridRule`): a grid the sweep would sort into something other
+    /// than its declaration. The selection is validated BEFORE the grid
+    /// write so a refusal on either half leaves the manifest untouched.
     @discardableResult
     public func setSweepSpec(
         _ spec: ExperimentManifest.SweepSpec, for name: String
@@ -1330,17 +1339,13 @@ public final class ExperimentPanel {
         // composer and the Optimizations editor — funnel through here).
         let spec = SweepSpecForm.workspaceRelativeNormalized(spec)
         do {
-            var manifest = try ExperimentStore.load(name: name)
+            let manifest = try ExperimentStore.load(name: name)
             guard manifest.status == .draft else {
                 refuse(
                     .sweepSpec,
                     "'\(name)' is \(manifest.status.rawValue) — the sweep "
                         + "spec is pinned manifest data; duplicate the study to "
                         + "change it", severity: .warning)
-                return false
-            }
-            if let problem = SweepSpecForm.validate(spec) {
-                refuse(.sweepSpec, "sweep spec not saved: \(problem)")
                 return false
             }
             let outcome = SweepSpecForm.validateSelection(spec.selection)
@@ -1354,8 +1359,15 @@ public final class ExperimentPanel {
                 refuse(.sweepSpec, "sweep spec not saved: \(problem)")
                 return false
             }
-            manifest.sweep = spec
-            try ExperimentStore.save(manifest)
+            let grid = try ExperimentStore.setSweepGrid(
+                experimentName: name,
+                layerFractions: spec.layerFractions,
+                alphas: spec.alphas,
+                devPromptsFile: spec.devPromptsFile,
+                batteryFile: spec.batteryFile,
+                maxTokens: spec.maxTokens)
+            try ExperimentStore.setSweepSelection(
+                spec.selection, experimentName: name)
             refresh()
             clearFormError(.sweepSpec)
             if case .declaredAhead(let metric) = outcome {
@@ -1364,10 +1376,7 @@ public final class ExperimentPanel {
                     + "sweep will REFUSE at start (declaring ahead is allowed)", severity: .warning)
             } else {
                 note("declared sweep spec on '\(name)' "
-                    + "(\(spec.layerFractions.count) layer fraction"
-                    + "\(spec.layerFractions.count == 1 ? "" : "s") × "
-                    + "\(spec.alphas.count) alpha"
-                    + "\(spec.alphas.count == 1 ? "" : "s"))", severity: .success)
+                    + "(\(Self.gridDeclarationSummary(grid)))", severity: .success)
                 // judgeScore local-judge resolution, surfaced at save time:
                 // blank-model judges are legal (study model); a non-study
                 // local judge model warns about the local sweep-start
@@ -1386,10 +1395,34 @@ public final class ExperimentPanel {
                 }
             }
             return true
+        } catch let error as ExperimentError {
+            // A store refusal (sweepGridRule, statusImmutable, …) — the
+            // engine's own words, inline beside the Save button.
+            refuse(.sweepSpec, "sweep spec not saved: \(error.reason)")
+            return false
         } catch {
             refuse(.sweepSpec, "declare optimization failed: \(error)")
             return false
         }
+    }
+
+    /// The success-note grid summary — §4.15(b)'s side-by-side: the depth
+    /// fractions the manifest stores AND the absolute layers they resolve to
+    /// at this model's depth, when a vector for it has stated that depth.
+    private static func gridDeclarationSummary(
+        _ grid: ExperimentStore.SweepGridOutcome
+    ) -> String {
+        let spec = grid.manifest.sweep ?? .init()
+        let alphaPart = "\(spec.alphas.count) alpha"
+            + "\(spec.alphas.count == 1 ? "" : "s")"
+        guard grid.layerCount != nil, !grid.resolvedLayers.isEmpty else {
+            return "\(spec.layerFractions.count) layer fraction"
+                + "\(spec.layerFractions.count == 1 ? "" : "s") × \(alphaPart)"
+        }
+        return "fractions \(SweepSpecForm.numberListText(spec.layerFractions)) → "
+            + SweepSpecForm.resolvedLayersText(
+                fractions: spec.layerFractions, layerCount: grid.layerCount)
+            + " × \(alphaPart)"
     }
 
     /// Run the layer×alpha sweep for an experiment — same task path as
@@ -5593,30 +5626,43 @@ public enum SweepSpecForm {
 
     /// Structural problems with a spec that no engine could run — nil means
     /// sound. (Selection-criterion validity is `validateSelection`'s job.)
+    ///
+    /// A thin name over `ExperimentStore.sweepGridProblem`, THE grid audit —
+    /// the one whose strings are the cross-engine refusal contract. This
+    /// form used to keep its own copy of these checks, minus the two ascent
+    /// rules, which is how the Optimizations panel could save
+    /// `alphas 0.1, 0.05` where `set-sweep-grid` refuses it. One definition
+    /// now answers the CLI, the HTTP route, and every form.
     public static func validate(_ spec: ExperimentManifest.SweepSpec) -> String? {
-        if spec.layerFractions.isEmpty {
-            return "layer fractions must name at least one layer"
+        ExperimentStore.sweepGridProblem(
+            layerFractions: spec.layerFractions, alphas: spec.alphas,
+            devPromptsFile: spec.devPromptsFile,
+            batteryFile: spec.batteryFile, maxTokens: spec.maxTokens)
+    }
+
+    /// The absolute layers a fraction axis resolves to — §4.15(b)'s
+    /// side-by-side, as one caption phrase ("layers 17, 23, 28 of 34").
+    /// A fraction set that collapses at this depth says so: a grid of "four
+    /// depths" that is really three is a silently smaller sweep. With no
+    /// known depth (nothing extracted for the model yet), that fact is the
+    /// caption.
+    public static func resolvedLayersText(
+        fractions: [Double], layerCount: Int?
+    ) -> String {
+        guard let layerCount, layerCount > 0 else {
+            return "layer indices unknown until a vector for this model "
+                + "states its depth"
         }
-        if let bad = spec.layerFractions.first(where: { $0 < 0 || $0 > 1 }) {
-            return "layer fractions are depth fractions in [0, 1] — got \(bad)"
+        let layers = ExperimentManifest.SweepSpec(layerFractions: fractions)
+            .resolvedLayers(layerCount: layerCount)
+        var text = "layers " + layers.map(String.init).joined(separator: ", ")
+            + " of \(layerCount)"
+        let collapsed = max(0, Set(fractions).count - layers.count)
+        if collapsed > 0 {
+            text += " (\(collapsed) fraction\(collapsed == 1 ? "" : "s") "
+                + "collapsed onto a layer already in the grid)"
         }
-        if spec.alphas.isEmpty {
-            return "alphas must name at least one steering strength"
-        }
-        if let bad = spec.alphas.first(where: { $0 <= 0 }) {
-            return "alphas are residual-norm units > 0 (0 is the implied "
-                + "baseline cell) — got \(bad)"
-        }
-        if spec.maxTokens <= 0 {
-            return "max tokens must be positive"
-        }
-        if spec.devPromptsFile.trimmingCharacters(in: .whitespaces).isEmpty {
-            return "dev prompts file is required"
-        }
-        if spec.batteryFile.trimmingCharacters(in: .whitespaces).isEmpty {
-            return "capability battery file is required"
-        }
-        return nil
+        return text
     }
 
     /// EVERY path-bearing instrument field in a sweep spec is
