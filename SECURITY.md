@@ -27,7 +27,7 @@ than promised in advance.
 SteerLab runs two HTTP servers, and both are **single-researcher instruments**,
 not multi-tenant services:
 
-- the Swift engine's web front end (`steerlab serve`), and
+- the Swift engine's web front end (`steerlab-cli serve`), and
 - the Python engine's API and browser workbench (`steerlab-server serve`).
 
 Neither has user accounts, roles, or per-user isolation. Anyone who can reach

@@ -15,4 +15,4 @@ equally for an arbitrary concept, it is wrong.
 
 # One release version across both engines as of the public flip
 # (v0.9.0, 2026-08-20); the Swift SteerLabVersion.version matches.
-__version__ = "0.9.2"
+__version__ = "0.9.3"

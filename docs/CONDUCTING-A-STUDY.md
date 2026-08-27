@@ -243,6 +243,19 @@ Blockers are a **refusal**: `state: "refused"`, exit **65** in both human and
 meeting the same list at a failing freeze gate, after the authoring context is
 gone.
 
+For each row it names, `steerlab-cli authoring prompt <kind>` renders the
+generation prompt that produces that file, with the kind's audit battery as
+numbers: `contrastive-pairs` and `validation-set` for §3.1's stimuli and
+held-out probe, `choice-prompts` for the `logprobShift` instrument,
+`reader-pairs` for `prompts/readers/<c>/pairs.jsonl`, and `battery` for the
+capability battery. The templates are workspace data in
+`prompts/authoring-prompts/` — your copy wins over the shipped one, and each
+emission stamps the hash of the wording it used, so a study can cite the prompt
+its data came from. Counts and shapes have defaults; nothing that describes the
+study does, because a plausible default there would be a study nobody declared.
+The emitter is deliberately not the acceptor: what an LLM returns still has to
+pass the audit, and §3.2's independent review still applies.
+
 ---
 
 ## 4. The lifecycle as preregistration
@@ -278,8 +291,10 @@ runs nothing, and `--json` belongs on anything you script.
 demands it either way). `attach` pins each concept's **current stimulus hash**
 plus the extraction options — recipe
 (`--method meanDifference|lat|emotionGrandMean|designatedReference`), reading
-position (`--pool-from K`), the reference concept (`--reference`), grand-mean
-corpus members (`--corpus a,b,c`) — and pins the **neutral corpus** whenever
+position (`--reading-position '<label>'`), the template the stimulus is rendered
+through (`--extraction-rendering`), the reference concept (`--reference`),
+grand-mean corpus members (`--corpus a,b,c`) — and pins the **neutral corpus**
+whenever
 one exists, because that corpus is the denominator that makes α comparable
 across concepts, layers and model families. It is a pinned measurement input,
 not a convenience.
@@ -293,6 +308,19 @@ says when paired mean-difference is right, when a deliberately authored
 reference class is, and why a small family's own centroid is not usable as a
 zero. `--project-neutral K` is legacy pooled projection: draft-only, and
 verification-blocked.
+
+Reading position and rendering are declarations, not defaults you inherit.
+`--reading-position` takes one of eight named labels and is strict-parsed — a
+writer never falls back, so an unknown label, or a template role asked for under
+raw rendering, refuses at declaration rather than hours later on a GPU. The
+older `--pool-from K` is the legacy spelling of one of those eight; it produces
+byte-identical pins and is mutually exclusive with the new flag. Leaving both
+absent keeps today's bytes exactly, but an explicit position **moves the recipe
+identity**, because the position a direction was read at is part of what the
+direction is. The same is true of `--extraction-rendering`, whose unknown keys
+are typed refusals on both engines, and both axes travel: `attach` copies a
+pinned artifact's rendering as it copies its position, and `verify` refuses a
+contradiction in either.
 
 ### 4.2 `extract` — deterministic derivation
 
@@ -446,11 +474,20 @@ later, by someone who was not there: the discipline is enforced by the artifact
 rather than by memory. Do not force a freeze to get past a gate; fix the gate.
 
 After freeze the manifest is read-only and the writing verbs (`attach`,
-`pin-prompts`, `pin-rubric`, `declare-condition`, `set-style-taxonomy`,
-`confirm`) refuse. Two read-only verbs stay legal and surprise people:
-**`sweep`**, which records recommendations in its own run directory rather than
-the manifest, and **`promote`**, which mints into the mutable variant library.
-Iterate with `steerlab-cli experiment duplicate formality-pilot formality-pilot-2`.
+`detach`, `pin-prompts`, `pin-rubric`, `declare-condition`, `set-sweep-grid`,
+`set-style-taxonomy`, `confirm`) refuse. Two read-only verbs stay legal and
+surprise people: **`sweep`**, which records recommendations in its own run
+directory rather than the manifest, and **`promote`**, which mints into the
+mutable variant library.
+
+Iterate with `steerlab-cli experiment duplicate formality-pilot
+formality-pilot-2`. A duplicate brings the donor's pinned concepts with it, so
+when you are re-pointing a study at a different concept the full move is
+**duplicate → clear the declarations that name the old concept → `detach` it →
+`attach` the new one**. `detach` is all-or-nothing and refuses (`conceptInUse`)
+while any condition, sweep-selection instrument, variant condition, or
+perturbation policy still names the concept, which is what forces that ordering.
+Without it a donor's concepts ride along swept but uncitable.
 
 ### 4.7 `run`, `evaluate`, `analyze`
 
@@ -551,6 +588,14 @@ biasing them, and the battery is what tells you which happened.
   revision and generates through the already-resident model, while a
   different-model local judge refuses at start wherever a second resident model
   is impossible, rather than dying partway through a panel.
+- **A judging run never downloads weights on your behalf.** A local judge whose
+  declared model is not installed refuses before any generation and names the
+  install; it does not reach the hub loader. The judge picker likewise vets a
+  candidate repository from the snapshot's own files — a text-generation
+  architecture in `config.json` and a chat template — so a cache entry that
+  cannot answer a question is never offered as a judge. OpenRouter judges are
+  available on the robustness path too, spelled
+  `openrouter:<model>:<provider>`, and are offered only when a key is present.
 - **The rubric is a pinned file**, hashed into the manifest; inline rubric text
   is draft-only and cannot freeze.
 - **Noncompliant judge answers become recorded rows** rather than crashes: a
@@ -582,7 +627,9 @@ finished runs without regenerating them; stored parses are never overwritten.
 Screening and confirming are two studies, not two phases of one manifest.
 **Screen** broadly, over many concepts, with BH-FDR correction, selecting by
 the declared criterion and promoting the survivors. Then **confirm**:
-`duplicate` the frozen screen into a fresh draft and
+`duplicate` the frozen screen into a fresh draft, `detach` the screened concepts
+the confirmation does not carry (§4.6 — clear their declarations first, detach
+last), and
 
 ```bash
 steerlab-cli experiment confirm formality-pilot-2 --agent formality-mid --deltas 0.2
@@ -691,7 +738,12 @@ steerlab-cli cluster ensure   --site <id> --target connected --allow-push --allo
 with no `--allow-…` flag it returns `needsApproval` and names the flag it
 wants, because every remote side effect is authorized separately. The human
 boundary is absolute — no verb accepts a password, a passcode, or a second
-factor in any form. Two deploy facts that have bitten real runs: a successful
+factor in any form. Expired SSH auth is not a broken site and has its own verb
+family: `cluster auth open` spawns *your* Terminal for the password and second
+factor and persists the resulting master connection, `cluster auth status`
+confirms it, and `cluster auth close` ends it. An agent that hits `Permission
+denied, keyboard-interactive` should say so and wait for you, never retry the
+refusal. Two deploy facts that have bitten real runs: a successful
 `push` **re-stamps the deployed build identity** (an rsync `--delete` would
 otherwise erase it, and every later run would stamp the previous deploy's
 commit), and bootstrap installs the **committed platform lock** before the

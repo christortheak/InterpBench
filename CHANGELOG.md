@@ -10,6 +10,216 @@ A breaking change to a run, manifest, or JSON-envelope schema gets a new
 schema number, a reader for the old form, and an entry in this file — never a
 migration that rewrites frozen bytes.
 
+## [0.9.3] — 2026-08-27
+
+Everything new since the internal `v0.9.2` cut, which was never
+published. The section below it stays the cumulative description of what
+a first source release contains; 0.9.3 is the tag that description will be
+published under, and the two are read together.
+
+The theme is fidelity. The axes an extraction is read along became declarable,
+transmissible, and provable rather than implied; four verbs the headless study
+path had been missing arrived; and four rounds of external review were spent
+turning quiet paths loud.
+
+### Added
+
+- **Four verbs the headless study path was missing.** `experiment detach` is
+  attach's inverse — all-or-nothing, refused (`conceptInUse`) while any
+  condition, sweep-selection instrument, variant condition, or perturbation
+  policy still names the concept, because a detach that orphaned a declaration
+  would be exactly the silent drop this instrument exists to prevent; the
+  grand-mean corpus follows its targets out. `experiment set-sweep-grid` owns
+  the sweep's layer × alpha axes, its instrument files, and its per-cell token
+  budget, which until now were reachable only from the app's Optimizations
+  panel — so the only headless way to obtain a grid was `duplicate`, which
+  brings the donor study's concepts along as passengers that get swept but
+  cannot be cited. Both axes must ascend with no repeats (`sweepGridRule`), the
+  layer axis is stored as depth fractions and echoed both ways, and one rule
+  answers the CLI, the HTTP route, and the panel. `authoring prompt <kind>`
+  renders the generation prompt for each of five kinds of missing study data
+  from a hashed template registry in `prompts/authoring-prompts/`: a
+  workspace's own copy wins, each emission stamps both the wording's hash and
+  the emission's, counts and shapes default while nothing that describes the
+  study ever does, and the emitter is never the acceptor of what it asks for.
+  `vectors mirror-poles` mints the opposite pole of a contrastive direction as
+  an artifact with provenance instead of a hand-flipped mystery — a bit-exact
+  IEEE sign-bit flip under a required new concept name, with `negatedFrom` and
+  `polesSwappedFromSource` stamps, the sign-invariant statistics (norms and the
+  whole residual-norm denominator family) preserved so α means the same dose,
+  the neutral-mean tensors left alone, and the recipe identity hash dropped so
+  promotion can never mistake a mirror for its source.
+- **Representation Engineering, implemented in full.** The template-mediated
+  RepE reader described in the block below reached that description in this cut:
+  sign fixed by held-out classification per the paper
+  (train-majority survives only as a stamped, reasoned fallback), the best
+  layer stamped as a recommendation and never a silent selection, T+/T−
+  instruction-pair templates for the paper's unsupervised construction with a
+  seeded orientation draw the reference implementation lacks, and a declarable
+  chat-template rendering that puts the LAT token where `rep_token=-1`
+  actually reads on an instruct model. Reader-derived directions apply the
+  probe's orientation, carry full provenance, and can attach — refusing α
+  until their norm denominator is backfilled. Explained variance is now of the
+  difference cloud, the power iteration's degenerate-start guard is real, the
+  PCA path gained a cross-engine numeric fixture, and the normalization
+  previously credited to RepE Appendix C.1 is attributed as ours at all four
+  sites. `docs/REPE-IMPLEMENTATION-BRIEF.md` exists for those citations to
+  land on.
+- **The designated-reference recipe, on every surface that had promised it.**
+  `ExtractionMethod.designatedReference` and `experiment attach --method
+  designatedReference --reference <concept>` had existed since July, but the
+  SwiftUI concept builder could not author it, the recipe enum could not name
+  it, and the server's extract route would have accepted the method string and
+  silently extracted from the *paired* files with no reference pinned. All
+  three are closed: a builder family that routes the dataset pane to story
+  rows, refuses a self-reference with repair text, gates the save on both
+  corpora existing, and restores both its recipe and its reference pin when an
+  existing story concept is selected; a local build that mirrors the CLI
+  lifecycle exactly; a server build that pushes both corpora and verifies the
+  pin through a response echo, with its own typed refusal
+  (`ReferenceNotApplied`) for a server too old to honour it; and the browser
+  workbench's own reference picker. The Python route refuses a missing or
+  unknown reference at declaration time, in attach's words.
+- **Reading position and extraction rendering as declared axes.**
+  `experiment attach --reading-position '<label>'` on both command lines and
+  the authoring route: eight positions, strict-parsed — writers never fall
+  back — mutually exclusive with the legacy `--pool-from`, and refusing an
+  unknown label or a template role under raw rendering at declaration time,
+  hours before a GPU would have found out. Two of the eight are new:
+  `contentOffset(k)` counts back into what the stimulus itself said rather
+  than into the template's trailing scaffolding, and `meanContentFromToken(n)`
+  pools content tokens only. `--extraction-rendering` gains a `voice` of
+  `user` or `assistant`, where the assistant render is obtained by subtracting
+  two template renders rather than by hand-written markers, and the
+  combinations that mean nothing under it refuse by type. Absent stays
+  byte-identical everywhere, but an explicit position moves the recipe
+  identity, because position *is* identity. Both axes travel: `attach` copies
+  a pinned artifact's rendering as it copies its position, `verify` gained the
+  rendering-contradiction twin of the position check, and server-side
+  extraction accepts the whole declaration with a response echo the client
+  verifies, so an older server can no longer drop a declared axis in silence.
+  Extraction diagnostics also gained per-direction logit-lens vocabulary — the
+  top promoted and suppressed tokens at the declared validation depths — as an
+  instrument, never a gate.
+- **The app grows the surfaces the engine already had.** A Reader Lab that
+  shows the faithful RepE pipeline and renders the engine's refusals verbatim:
+  a template picker that marks T+/T− pairs rather than hiding mismatches,
+  single-stimulus dataset authoring, a held-out split control that says when
+  the sign rule will stand down, and per-layer results carrying sign
+  convention, fallback reason, and variance basis. Reading position and
+  extraction rendering get one shared control pair in the study-attach row and
+  the concept builder, leading with a "method default" that declares nothing.
+  Selecting in Data › Inventory now renders in the display pane, and a
+  selected study shows its manifest there. The judge picker asks whether a
+  candidate repository can answer a question at all — a text-generation
+  architecture in `config.json` and a chat template — instead of offering
+  every snapshot in the Hugging Face cache; OpenRouter judges, a complete
+  backend the robustness path had never wired, route through one dispatch
+  shared with the local and server paths, offered only when a key is present.
+  The Prompts row gained a numeric field beside its stepper and states the
+  coherence file's actual supply instead of truncating silently.
+- **A workspace contract that can prove it is the machine's.** The generated
+  `AGENTS.md` header now declares a SHA-256 of the body it wrote. A hash that
+  matches the body is proof of machine ownership, so an app update refreshes
+  such a file to the shipped contract — atomic replace, one info notice — at
+  every workspace open and every CLI verb, while a hash that no longer matches
+  is an edit and the file is the researcher's, untouched. Legacy hashless
+  headers keep the advisory-only behaviour until one manual regeneration
+  graduates them. The contract itself gained §4.3's `--reading-position` and
+  `--extraction-rendering`, §4.15's sweep workflow (the concept-swap chain
+  with `detach` last, the grid dialog, and the missing-data rule ending at
+  independent review), and §8's `cluster auth open` — the documented move for
+  an expired SSH master, and one only a human can answer.
+
+### Changed
+
+- **`repeLAT` is now `pairedDifferencePCA`.** What that family computes was
+  never LAT, and the label now says so: **paired-difference PCA
+  (RepE-inspired)** in prose, `pairedDifferencePCA` in code. No artifact
+  moves — the sidecar `recipeMethod` value stays `"repeLAT"` and the manifest
+  method stays `"lat"`, permanently, because they are written bytes.
+- **`set-protocol` refuses an unknown key instead of dropping it.** On all
+  three surfaces — the Python store, the HTTP authoring route, and the Mac's
+  `POST /api/experiment/protocol`, where a default `JSONDecoder` had been
+  discarding out-of-vocabulary keys with no warning at all — an unknown key
+  now refuses before anything is written, naming the key and listing the
+  closed vocabulary; valid keys in the same invocation do not land either.
+  `outcomeInstruments` and `sweep` join that vocabulary, which
+  `docs/PORTABILITY-CONTRACTS.md` had claimed for them while neither was
+  actually accepted. **Behaviour break, deliberate:** a script relying on the
+  client's old tolerate-and-warn (exit `0` plus an `ignored` list) now stops
+  at `64`.
+- **A judging run never downloads weights on your behalf.** Selecting an
+  uninstalled curated judge tier used to reach the hub loader and pull up to
+  35 GB outside the named, cancellable Install flow. Uninstalled tiers are now
+  listed flagged and refused before a single generation — at the picker, at
+  study evaluate, and in the coding loops alike — and local judges a server
+  workspace would skip are flagged up front, quoting the route's own sentence.
+  One `JudgeReadiness` rule (provider pin, key presence, installation,
+  capability, in execution's order) answers the picker, the Run gate, and
+  execution.
+- **Panels stop paying for their data before they may draw.** Switching to the
+  Agents tab used to run two full `runs/` walks, a config decode per run
+  directory, and a SHA-256 of every saved agent artifact — synchronously, on
+  the main actor, inside `onAppear`. A summary-index layer loads row-ready
+  entries off the main actor and defers hashing and robustness-report reads to
+  a background phase after the list is visible, latest-wins, with the previous
+  rows on screen while a rescan runs; the dashboard, the Studies panel, and the
+  optimization-runs view moved onto the same pattern. No split-view geometry
+  changed.
+- **The Optimizations panel saves through the sweep-grid gate.** It validated
+  with its own copy of the checks, minus the two ascent rules, so the app could
+  save a grid the CLI refuses. It now writes through the same fully-gated store
+  verbs the CLI and the route use, with the selection validated before the grid
+  write so a refusal on either half leaves the manifest untouched, and a live
+  caption resolving typed fractions to absolute layers at the pinned model's
+  depth.
+
+### Fixed
+
+Four rounds of external review — the fourth through the seventh — account for
+most of what follows. Their findings are grouped by class rather than listed.
+
+- **Cleanup that proves ownership.** Every unlink in the runner goes through
+  one primitive that proves the name still refers to the reserved inode before
+  removing it, so a foreign file moved onto a staging path survives cleanup and
+  the refusal says so. Evidence staging lives on one file descriptor from
+  reservation to commit, with the published inode proven to be the verified one
+  (`stagingPathHijacked`, `stagedBytesChanged`), and the portable ledger rides
+  the same transactional no-replace commit.
+- **Reading-position and rendering fidelity.** Python artifact-attach carries
+  all eight reading positions in the Swift twin's codable shape instead of
+  collapsing six of them to `lastToken`. Unknown keys under a `chatTemplate`
+  rendering are typed refusals on both engines, at declaration and on sidecar
+  reads alike, so a misspelled `addGenerationPrompt` can no longer quietly
+  become the default. Swift's recorded-raw decode refuses parameters exactly as
+  declaring does.
+- **Held-out sign provenance.** Derivation is convention-aware: under held-out
+  pair agreement the fitted direction ships unflipped, and a train/held-out
+  disagreement is stamped rather than silently resolved. The companion claim
+  that the same interaction distorts `heldOutAccuracy` was audited and refuted
+  — the probe is sign-invariant by construction, now pinned by test.
+- **Depth witnesses.** Cached model depth is collected only from artifacts that
+  state they cover it (a new `coversModelDepth` stamp), requires revision
+  agreement, and refuses on conflict rather than choosing a network; a pinned
+  copy of a partial source can no longer launder itself full. Reader-derived
+  artifacts are partial by construction, and the depth-display paths pass the
+  pinned revision the resolver already accepted.
+- **Emission and packaging.** The authoring-prompt registry ships inside the
+  wheel, so a `pip install` with no checkout beside it renders prompts instead
+  of refusing with a prerequisite no repair could satisfy; a byte-identity gate
+  keeps the packaged copies equal to `WorkspaceSeed/`. Custom reader templates
+  dry-run the job's own render before any canonical byte moves,
+  `promptInstanceHash` identifies the emission beside the wording's hash, and
+  authoring counts are typed, ceilinged, and cross-checked.
+- **Smaller corrections.** J-lens fp32 promotion unwinds itself on a mid-loop
+  exception; a whitespace-only composition level stamps null instead of
+  claiming a contribution, and two of them compose to nothing whichever side
+  the blank is on; chat-template sidecars must be non-empty regular files whose
+  JSON parses; evidence refreshes carry their own generation counter and
+  snapshot verification; and client evidence downloads are gitignored, because
+  study data never belongs in this checkout.
+
 ## [Unreleased] — first source release
 
 The first public form of SteerLab: a buildable source tree for a

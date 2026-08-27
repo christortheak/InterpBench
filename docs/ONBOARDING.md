@@ -68,9 +68,12 @@ per layer. Injection is equally simple: `h ← h + α·v` at a chosen layer, on
 
 Two lines of arithmetic. Everything else — provenance, validation, controls,
 freezing, statistics — exists to make those two lines mean something. Other
-recipes are selected as data, not code: a PCA-based reading of difference
-vectors (LAT/RepE), a grand-mean contrast against a reference corpus, and linear
-probes. [METHODS.md](METHODS.md) has the math and the literature behind each.
+recipes are selected as data, not code: paired-difference PCA (RepE-inspired), a
+grand-mean or designated-reference contrast against a reference corpus, the
+template-mediated RepE reader, and linear probes. [METHODS.md](METHODS.md) has
+the math and the literature behind each, and
+[REPE-IMPLEMENTATION-BRIEF.md](REPE-IMPLEMENTATION-BRIEF.md) separates the
+reader from the PCA family that used to borrow its name.
 
 ---
 
@@ -347,7 +350,15 @@ the fastest way to learn what a study needs:
 
 Every row names the **path you must author** and why the requirement exists.
 Blockers are a refusal, not a warning: `data check` exits 65 when any blocker is
-present. The task-prompt file is the measured task, and the sample ships one:
+present. For the row you owe, `steerlab-cli authoring prompt <kind>` renders the
+generation prompt that produces it — `contrastive-pairs`, `validation-set`,
+`choice-prompts`, `reader-pairs`, `battery` — with that kind's audit battery as
+numbers. The templates are workspace data in `prompts/authoring-prompts/`, your
+copy wins over the shipped one, and each emission stamps the hash of the wording
+it used. The emitter is deliberately not the acceptor: what comes back still has
+to pass the audit.
+
+The task-prompt file is the measured task, and the sample ships one:
 `steerlab-cli experiment pin-prompts demo prompts/tasks/starter-prompts.jsonl`.
 
 The neutral corpus is the denominator that makes steering strength comparable,
@@ -438,9 +449,11 @@ at a time; templates live under your workspace's `prompts/templates/`.
 ```bash
 steerlab-cli experiment create <name> --model <model-id> [--revision <commit>]
 steerlab-cli experiment attach <name> <concept>…          # pin stimuli + options
+steerlab-cli experiment detach <name> <concept>…          # attach's inverse, all-or-nothing
 steerlab-cli experiment pin-prompts <name> prompts/tasks/<file>.jsonl
 steerlab-cli experiment pin-rubric  <name> prompts/rubrics/<file>.md --judges a:local,b:claude
 steerlab-cli experiment set-instruments <name> answerTokenLogprob
+steerlab-cli experiment set-sweep-grid <name> --layer-fractions 0.5,0.7,0.85
 steerlab-cli experiment set-sweep-selection <name> --objective judgeScore
 steerlab-cli experiment declare-condition <name> <arm> --slots <concept>:<layer>:<alpha>
 
@@ -463,7 +476,17 @@ places — a `judgeScore` sweep objective is refused until a rubric is pinned �
 the shape is always the same: **declare and pin everything, gather evidence
 about your settings on a development split, freeze, and only then measure.**
 
-`sweep` walks a layer × α grid and selects a cell by a criterion **declared in
+The grid and the rule that picks from it are both manifest data with their own
+writers: `set-sweep-grid` declares the layer × α axes (the layer axis as depth
+fractions, so one declaration names the proportionally same site in a 26-block
+model and a 62-block one) along with the dev split, the battery, and the
+per-cell token budget, and refuses a grid no sweep could run — empty,
+non-ascending, repeated, or out of range. `set-sweep-selection` declares how the
+winner is chosen. `detach` is attach's inverse and is what lets a duplicated
+study shed the donor's concepts, which would otherwise ride along swept but
+uncitable; it refuses while any declaration still names the concept.
+
+`sweep` walks that grid and selects a cell by the criterion **declared in
 the manifest as data**; `promote` mints an arm from the winning cell carrying a
 birth certificate recording how it was selected. A manual override is permitted,
 loud, and stamped — and still requires evidence that a sweep ran. An arm should
@@ -622,6 +645,14 @@ order, the file shapes, the freeze gates with their repairs, the machine
 contract, and an explicit list of what not to do. Point an agent at the
 workspace and it has what it needs; you do not have to explain SteerLab to it.
 
+It also keeps itself current. The generated header carries a SHA-256 of the body
+it wrote, so a file whose hash still matches is provably the machine's and is
+refreshed to the shipped contract — atomically, with one info notice — at every
+workspace open and every CLI verb. A hash that no longer matches means you edited
+it, and the file is then yours and is left alone. Contracts written before the
+hashed header keep the older advisory-only behaviour until one manual
+regeneration graduates them.
+
 Tell it which command line it has. On a Mac that is `steerlab-cli`, the
 instrument this document types throughout, verified by `steerlab-cli --version`
 reporting **6/6 resource families resolved**. Elsewhere it is the `steerlab`
@@ -672,6 +703,7 @@ treating them as failures makes you refuse a legitimate lifecycle.
 │   ├── batteries/         capability probes
 │   ├── rubrics/           judge rubrics (pinned by hash)
 │   ├── templates/         the shape of every file you must author
+│   ├── authoring-prompts/ the registry `authoring prompt <kind>` renders from
 │   └── generation/        prompt texts for LLM-assisted authoring
 ├── experiments/<name>/    experiment.json (the manifest) + pinned/ (freeze snapshot)
 ├── runs/                  immutable outputs
@@ -739,8 +771,13 @@ engines guard against it.
 - **Activation / residual stream** — the per-layer hidden vector the model
   carries through the network; where SteerLab reads and writes.
 - **CAA** — Contrastive Activation Addition: mean(positive) − mean(negative),
-  per layer. **LAT / RepE** — a reading direction taken as the first principal
-  component of per-pair activation differences.
+  per layer. **Paired-difference PCA (RepE-inspired)** — a direction taken as
+  the first principal component of per-pair activation differences; called
+  `repeLAT` until the 2026-08-27 naming ruling, and its raw values on disk stay
+  `lat`/`repeLAT` forever. **RepE reader** — the separate, template-mediated
+  reading instrument of Zou et al.: a task template, the LAT token at the
+  rendered scaffold's final position, and a sign and layer chosen on a held-out
+  split. See [REPE-IMPLEMENTATION-BRIEF.md](REPE-IMPLEMENTATION-BRIEF.md).
 - **Alpha (α)** — steering strength. In residual-norm units the injected
   perturbation's L2 norm is α × the layer's typical residual norm on the pinned
   neutral corpus, which is what makes doses comparable.

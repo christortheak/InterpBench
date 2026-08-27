@@ -74,10 +74,14 @@ execution needs lives behind the `runner` extra (see the comments in
 flow resolve exactly the package set they always did.
 
 The client covers the **whole authoring lifecycle** on that bare install —
-create, attach, declare-condition, set-protocol, list, duplicate, `verify`,
-`freeze` and `bundle package` — including studies that declare an SAE latent
-condition they never execute. `[runner]` is needed to *execute*, not to
-author or to check. (`verify` / `freeze` used to need it, because
+create, attach, detach, declare-condition, set-protocol, set-sweep-grid, list,
+duplicate, `verify`, `freeze` and `bundle package`, plus `authoring prompt
+<kind>` for the generation prompts that unblock missing study data — including
+studies that declare an SAE latent condition they never execute. `[runner]` is
+needed to *execute*, not to author or to check. The bare install is also
+self-contained: the authoring-prompt registry ships inside the package (see
+`[tool.setuptools.package-data]`), so a wheel install with no checkout beside
+it still renders. (`verify` / `freeze` used to need it, because
 `Manifest.verify` reached `experiment.sae_latent` and through it the
 torch-bound injector stack; the SAE latent declared surface now lives in the
 torch-free `steering.sae_latent_schema`.) The boundary is measured and pinned
@@ -265,11 +269,14 @@ workbench. Open `http://localhost:8080` after `serve`. Tabs:
 - **Chat / Steer** — system prompt, prompt mode, temperature, max tokens, a
   steering **mixer** (`h + Σ αᵢ·vᵢ`: pick saved vectors, set layer/alpha, toggle),
   and chat with **live SSE token streaming** + stop.
-- **Concept Lab** — full concept authoring (parity with the SwiftUI Concepts panel):
+- **Concept Lab** — full concept authoring (close parity with the SwiftUI Concepts panel;
+  the **designated-reference** family, the Reader Lab, and the declaration axes are Mac-
+  or CLI-side for now):
   create/rename/delete concepts; edit/import contrastive pairs (CAA) or **paired-difference PCA**;
   the **grand-mean (emotion multi-concept)** family with a story corpus editor,
   include-vs-build concept selection, and per-concept extraction; reading-position
-  (last token / pool-from-token); all seven generation-prompt helpers (incl.
+  (last token / pool-from-token — two of the engine's eight; the rest are declared
+  through `experiment attach --reading-position`); all seven generation-prompt helpers (incl.
   Anthropic-style dialogue); **validation stats** (held-out accuracy, split-half,
   norm-by-layer, outliers, control cosines); **scalar probe** training; **neutral
   corpus** import + **neutral-PC basis** build; Claude-assisted proposals
@@ -341,7 +348,7 @@ the Swift smoke-test/toy-concept configs (`models`, `prompt`, `maxTokens`,
 2. Injectors compose additively: `h + Σ αᵢ·vᵢ`.
 3. Norm-unit alpha folds out the vector norm: `α_eff = α·residual/‖v‖`.
 4. Extraction is RNG-free and deterministic (Gram power-iteration with two fixed
-   starts) so LAT/PCA reproduce.
+   starts) so the paired-difference PCA path reproduces.
 
 ## Known gaps / deferred
 

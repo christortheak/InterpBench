@@ -17,8 +17,8 @@ activation vectors injected during generation and fine-tuned adapters —
 though the workhorse case is a single vector at one layer and strength. The
 vectors can be **extracted** in-workbench from contrastive stimulus sets
 (contrastive activation addition, a grand-mean contrast against a reference
-corpus, PCA-based readings of difference vectors, linear probes) or
-**imported** from external interpretability work, including
+corpus, paired-difference PCA, the template-mediated RepE reader of Zou et al.,
+linear probes) or **imported** from external interpretability work, including
 sparse-autoencoder feature directions (e.g. Gemma Scope) and Jacobian-lens
 vectors. However an agent is built, it lands in the same artifact model with
 the same provenance, and a study is a **comparison between agents**: an agent
@@ -30,7 +30,10 @@ Underneath, the engine does three things, and everything else in the
 repository exists to make them trustworthy:
 
 1. **Source** a concept direction — extract it from stimuli you author, or
-   import and rescale one derived elsewhere.
+   import and rescale one derived elsewhere. The position in the sequence a
+   direction is read at, and the template it is read through, are declared
+   rather than assumed, and a contrastive direction's opposite pole is minted
+   as its own provenance-stamped artifact rather than left as a negative α.
 2. **Inject** it during generation, at a chosen layer and a strength measured
    in units of the residual-stream norm at that layer, on every decode step
    rather than only during prefill.
@@ -184,9 +187,12 @@ from source (the one path that needs Xcode 27) is covered there too.
 
 A workspace is a plain folder holding `prompts/`, `experiments/`, and
 `runs/` — its own git repository, seeded with templates and its own
-`AGENTS.md`, which is written to hand a coding agent. Study data lives in a
-workspace, never in this checkout. Drive the lifecycle through the app,
-through your agent, or yourself.
+`AGENTS.md`, which is written to hand a coding agent. That contract keeps
+itself current: its header carries a hash of the body it wrote, so an
+untouched one is refreshed to the shipped text when SteerLab updates, and one
+you have edited is yours and is left alone. Study data lives in a workspace,
+never in this checkout. Drive the lifecycle through the app, through your
+agent, or yourself.
 
 The full lifecycle below is the **Mac instrument's**, so every line types
 `steerlab-cli` — the Swift command line, whether installed from the app bundle
@@ -201,8 +207,10 @@ export STEERLAB_WORKSPACE=~/SteerLab/Workspaces/my-study
 steerlab-cli experiment --help                # the study lifecycle, one line each
 steerlab-cli experiment create demo --model <model-id>
 steerlab-cli experiment attach demo <concept> # pins stimulus hashes + options
+steerlab-cli experiment detach demo <concept> # attach's inverse, and gated
 steerlab-cli experiment extract demo
 steerlab-cli experiment validate demo
+steerlab-cli experiment set-sweep-grid demo   # the layer x alpha axes
 steerlab-cli experiment sweep demo            # layer x alpha on the dev split
 steerlab-cli experiment promote demo <concept>
 steerlab-cli experiment freeze demo           # one-way, and gated
@@ -210,6 +218,13 @@ steerlab-cli experiment run demo
 steerlab-cli experiment analyze demo
 steerlab-cli data check demo                  # data-readiness checklist
 ```
+
+A study is blocked by missing *data* more often than by a missing verb, so
+`steerlab-cli authoring prompt <kind>` emits the generation prompt for each
+kind — contrastive pairs, a validation set, reader pairs, choice prompts, a
+capability battery — carrying that kind's audit checks as numbers. The templates are
+workspace data: your copy wins over the shipped one, and every emission stamps
+the hash of the wording it used.
 
 `<family> --help` lists a family's verbs; `<family> <verb> --help` prints one
 verb's arguments and exit codes. The full surface is in
@@ -371,7 +386,9 @@ This is a source release, an early one. What that means concretely:
   Python server's own browser workbench for remote use.
 - A **cross-platform `steerlab` client is available as a preview** for agents
   and developers: a third command line that authors a local workspace on any
-  platform, installed by `pip install -e Server` with no torch. See
+  platform, installed by `pip install -e Server` with no torch. The install is
+  self-contained — the authoring-prompt registry travels inside the package, so
+  a machine with no checkout beside it still renders those prompts. See
   `docs/CLI-REFERENCE.md` §1.4 and `docs/PORTABILITY-CONTRACTS.md` §7. The name
   `steerlab` is the client's; the source installer writes its shim as
   `steerlab-cli` and never takes the short name unless you pass

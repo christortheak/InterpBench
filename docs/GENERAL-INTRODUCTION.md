@@ -123,8 +123,8 @@ and a bad final one.
 
 Other recipes are selected as *data*, not code: a **grand-mean or
 designated-reference** contrast (concept mean minus the mean over a deliberately
-authored reference corpus), a PCA-based reading of difference vectors
-(**LAT/RepE**), trained linear **probes**, and **imports of independently
+authored reference corpus), **paired-difference PCA (RepE-inspired)** over
+difference vectors, trained linear **probes**, and **imports of independently
 discovered features** (Gemma Scope). Running two recipes over the same stimuli
 is a cross-check: no result should depend on one recipe's quirks.
 
@@ -277,7 +277,19 @@ manipulation, all first-class conditions. Whether they produce the same
 behavioral fingerprint is itself a research question, with a safety edge:
 prompts are auditable by inspection; injections and adapters are not.
 
-**A reading channel, alongside the writing channel.** The Python engine also
+**A reading channel, alongside the writing channel.** The **RepE reader** of Zou
+et al. is implemented in full on both engines, and it is a *reading* instrument
+rather than a fourth spelling of extraction: a hashed task template, the LAT
+token at the rendered scaffold's final position, mean-centred PCA over paired
+differences, both of the paper's contrast constructions, and a sign and a layer
+chosen on a held-out split — the layer stamped as a recommendation, never as a
+silent selection. A reader-derived direction can be converted into a steering
+vector through an explicit, provenance-stamped conversion, and refuses α until
+its norm denominator is backfilled.
+[REPE-IMPLEMENTATION-BRIEF.md](REPE-IMPLEMENTATION-BRIEF.md) itemises what is
+faithful to the paper and what departs from it.
+
+The Python engine also
 carries a family of **lens instruments** (`jlens` — server-only and Gemma-only,
 the imported lens artifacts being PyTorch-native): acquire and convert a lens,
 decompose a steering vector into the vocabulary it is made of, probe a prompt
@@ -403,16 +415,21 @@ record and writes one record per condition, prompt, and sample index.
 
 ## 7. What is in the box
 
-- **Two engines over one artifact model.** `steerlab` (Swift/MLX, Apple silicon)
-  for authoring and local runs; `steerlab-server` (Python/PyTorch/Hugging Face)
-  for CUDA hardware, larger models, and stochastic multi-sample work. Both read
-  and write the same manifests, vectors, and run directories.
+- **Two engines over one artifact model.** `steerlab-cli` (Swift/MLX, Apple
+  silicon) for authoring and local runs; `steerlab-server` (Python/PyTorch/
+  Hugging Face) for CUDA hardware, larger models, and stochastic multi-sample
+  work. Both read and write the same manifests, vectors, and run directories.
+  The bare name `steerlab` is neither of them — it is the cross-platform Python
+  client, a third product with its own smaller verb surface.
 - **CLI-first, headless by contract.** Every paper-relevant operation is a
   command-line verb — the whole study path on both engines. The app and the
   browser workbench are clients of the same machinery.
 - **An agent surface.** Every workspace is created with an `AGENTS.md` — the
   lifecycle in order, the file shapes, the freeze gates with their repairs, what
-  not to do. Every study-path verb accepts `--json`: one envelope on stdout,
+  not to do — and it stays current: its header carries a hash of the body, so an
+  untouched contract is refreshed to the shipped text on workspace open and on
+  every CLI verb, while one you have edited is yours and is left alone. Every
+  study-path verb accepts `--json`: one envelope on stdout,
   diagnostics on stderr, sorted keys, complete hashes, a typed `error` with a
   `repairAction`, and exit codes separating malformed invocation (64), gate
   refusal (65), not found (66), failure (70). Advisories never change one.
@@ -480,7 +497,7 @@ through.)*
 | [SECURITY.md](../SECURITY.md) | Threat model, auth posture, known limitations, disclosure |
 | [Server/README.md](../Server/README.md) | The Python engine: design, cross-engine artifact contract, deployment |
 | [SampleWorkspace/README.md](../SampleWorkspace/README.md) | The worked example workspace, and what it deliberately omits |
-| Your workspace's `AGENTS.md` | The contract to hand a coding agent (generated at workspace creation) |
+| Your workspace's `AGENTS.md` | The contract to hand a coding agent (generated at workspace creation, and refreshed while it stays unedited) |
 
 ### A note on models
 
@@ -510,9 +527,12 @@ you download.
   generated token. **Ablation** — removing a direction by projection instead.
   **α (alpha), norm units** — the dose, relative to the layer's typical residual
   norm on a pinned neutral corpus, so doses compare across concepts and models.
-- **CAA / grand-mean / designated reference / LAT-RepE** — the extraction
-  recipes: paired mean difference; concept mean minus a corpus mean or an
-  authored reference class; a PCA-based reading of difference vectors.
+- **CAA / grand-mean / designated reference / paired-difference PCA** — the
+  extraction recipes: paired mean difference; concept mean minus a corpus mean
+  or an authored reference class; the first principal component of per-pair
+  activation differences (called `repeLAT` until the 2026-08-27 naming ruling,
+  and still spelled that way in artifact bytes). **RepE reader** — the separate
+  template-mediated *reading* instrument, not an extraction recipe.
 - **Validation (never-named)** — held-out scenarios that evoke a concept without
   naming it; a vector must classify them to be used. **Matched-norm random
   control** — a random direction of identical magnitude: the placebo arm.
