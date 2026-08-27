@@ -50,6 +50,7 @@ class _Recorder:
         self.options = None
         self.reading_position = None
         self.rendering = None
+        self.stimuli = None
         self.sidecars = []
 
 
@@ -113,6 +114,7 @@ def harness(tmp_path, monkeypatch):
         recorder.options = options
         recorder.reading_position = options.reading_position
         recorder.rendering = options.extraction_rendering
+        recorder.stimuli = stimuli
         return extractor.ExtractionResult(
             vectors=_vectors(), residual_norm_per_layer=[1.0, 1.0],
             residual_norm_source="extraction-stimuli", options=options,
@@ -376,3 +378,94 @@ def test_grand_mean_refuses_an_unknown_declaration(harness):
     assert response.status_code == 400
     assert "repair:" in response.json()["detail"]
     assert er.DECLARATION_FLAG  # the twin flag exists for the other axis
+
+
+# --- designated reference on the same route -----------------------------------
+#
+# The route accepts ``method: "designatedReference"`` plus ``reference``: the
+# classes become story corpora (the concept's stories minus the reference's),
+# the legacy reading of an absent position becomes the method's attach policy
+# (a pool from token 50), the sidecar stamps the reference pin the recipe
+# firewall reads, and the response ECHOES the pin — a route predating this
+# support would have read the paired files and answered an ordinary job id,
+# the same silent substitution ``appliedExtraction`` ends for the axes.
+# Swift twin: the ``conceptExtract(reference:)`` echo tests in
+# ``Tests/ExperimentKitTests/ServerExtractDeclarationTests.swift``.
+
+
+def _dr_extract(harness, **body):
+    return harness.client.post("/api/concept/calm/extract", json=body)
+
+
+def test_designated_reference_reaches_the_extractor_with_both_classes(harness):
+    from steerlab_server.steering.vector_math import ExtractionMethod
+
+    _stories_on_disk(harness.root, name="plain-exposition")
+    response = _dr_extract(harness, method="designatedReference",
+                           reference="plain-exposition")
+    assert response.status_code == 200, response.text
+    assert harness.recorder.options.method is ExtractionMethod.DESIGNATED_REFERENCE
+    # Pooled-from-50 is the method's attach policy, so it is this route's
+    # legacy reading of an absent position for it.
+    assert harness.recorder.reading_position == rp.mean_from_token(50)
+    assert len(harness.recorder.stimuli.positive) == 4
+    assert len(harness.recorder.stimuli.negative) == 4
+
+
+def test_designated_reference_stamps_the_pin_and_echoes_it(harness):
+    from steerlab_server.experiment import multiconcept
+
+    _stories_on_disk(harness.root, name="plain-exposition")
+    target_hash = multiconcept.stories_hash("calm")
+    reference_hash = multiconcept.stories_hash("plain-exposition")
+    response = _dr_extract(harness, method="designatedReference",
+                           reference="plain-exposition")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["designatedReference"] == {"name": "plain-exposition",
+                                           "hash": reference_hash}
+    assert body["appliedExtraction"]["readingPosition"] == "mean from token 50"
+    sidecar = harness.recorder.sidecars[-1]
+    assert sidecar.extractionMethod == "designatedReference"
+    assert sidecar.stimulusSetHash == target_hash
+    assert sidecar.designatedReference == {"name": "plain-exposition",
+                                           "hash": reference_hash}
+
+
+def test_designated_reference_refuses_a_missing_or_unknown_reference(harness):
+    response = _dr_extract(harness, method="designatedReference")
+    assert response.status_code == 400
+    assert "reference" in response.json()["detail"]
+
+    response = _dr_extract(harness, method="designatedReference",
+                           reference="never-authored")
+    assert response.status_code == 400
+    assert "no stories.jsonl for reference" in response.json()["detail"]
+
+
+def test_designated_reference_refuses_a_target_without_stories(harness):
+    _stories_on_disk(harness.root, name="plain-exposition")
+    response = harness.client.post(
+        "/api/concept/steadiness/extract",
+        json={"method": "designatedReference", "reference": "plain-exposition"})
+    assert response.status_code == 400
+    assert "no stories.jsonl for concept" in response.json()["detail"]
+
+
+def test_designated_reference_takes_the_declaration_axes_too(harness):
+    _stories_on_disk(harness.root, name="plain-exposition")
+    response = _dr_extract(harness, method="designatedReference",
+                           reference="plain-exposition",
+                           readingPosition="last content token",
+                           extractionRendering=CHAT_TEMPLATE)
+    assert response.status_code == 200, response.text
+    assert harness.recorder.reading_position == rp.LAST_CONTENT_TOKEN
+    assert harness.recorder.rendering.mode == "chatTemplate"
+    assert response.json()["designatedReference"]["name"] == "plain-exposition"
+
+
+def test_a_paired_extraction_echoes_no_reference(harness):
+    """The paired body is unchanged: no reference key read, none echoed."""
+    response = _extract(harness, method="meanDifference")
+    assert response.status_code == 200, response.text
+    assert "designatedReference" not in response.json()

@@ -84,6 +84,11 @@ public enum DerivationPlanner {
             // keeps the pin honest if a vector record ever appears.
             case .repeReaderLAT: return method.rawValue
             case .emotionGrandMean: return ExtractionMethod.emotionGrandMean.rawValue
+            // One spelling on both substrates: the recipe enum's rawValue IS
+            // the ExtractionMethod's, so a server sidecar's extractionMethod
+            // and a local sidecar's recipeMethod compare equal.
+            case .designatedReference:
+                return ExtractionMethod.designatedReference.rawValue
             // A J-lens direction has no ExtractionMethod twin — it is derived
             // from a lens plus a token id, not extracted from stimuli. The raw
             // value keeps the pin honest; freshness for these compares the

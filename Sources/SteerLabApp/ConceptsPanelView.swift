@@ -325,6 +325,10 @@ struct ConceptsPanelView: View {
                     }
                 }
 
+                if builder.recipeFamily == .designatedReference {
+                    designatedReferenceRows
+                }
+
                 statusChip
 
                 if builder.recipeFamily == .jlensTokenDirection {
@@ -385,7 +389,9 @@ struct ConceptsPanelView: View {
                 Text(
                     builder.recipeFamily.isPaired
                         ? "Concepts are reusable primitives. Saving writes the selected recipe dataset and creates a model-specific per-layer vector artifact with provenance."
-                        : "Grand-mean vectors use selected build rows only. Validation rows remain in the concept corpus but are held out from extraction."
+                        : builder.recipeFamily == .designatedReference
+                            ? "Designated-reference vectors read both story corpora whole — the concept's and the reference's — and pin the reference by name and stories hash."
+                            : "Grand-mean vectors use selected build rows only. Validation rows remain in the concept corpus but are held out from extraction."
                 )
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -2631,6 +2637,37 @@ struct ConceptsPanelView: View {
                 "runs on the server's copy of the stimuli and the selected "
                     + "server model; progress appears in Compute and the "
                     + "Activity pane")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// The designated-reference recipe's one extra input: the reference
+    /// class. A deliberate selection — the artifact pins it by name and
+    /// stories hash, so there is no default and a self-reference stands
+    /// refused in the builder's words rather than hidden from the picker.
+    @ViewBuilder
+    private var designatedReferenceRows: some View {
+        @Bindable var builder = service.concepts
+        Picker("Reference class", selection: $builder.designatedReferenceConcept) {
+            Text("select reference…").tag("")
+            ForEach(builder.designatedReferenceOptions, id: \.self) { name in
+                Text(name).tag(name)
+            }
+        }
+        .help(
+            "the deliberately authored reference class whose mean is "
+                + "subtracted from the concept's — part of the recipe, pinned "
+                + "into the artifact as {name, stories hash}")
+        if let refusal = builder.designatedReferenceRefusal {
+            Text(refusal)
+                .font(.caption2)
+                .foregroundStyle(.orange)
+        } else {
+            Text(
+                "Vector = mean(concept stories) − mean(reference stories). "
+                    + "The reference must share the concept corpus's register "
+                    + "and topic grid; −α steers toward the reference class.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

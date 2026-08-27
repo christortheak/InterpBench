@@ -25,6 +25,13 @@ public final class ConceptBuilder {
         /// The faithful template-mediated RepE reader.
         case repeReaderLAT
         case emotionGrandMean
+        /// METHODS amendment ii: mean(concept stories) − mean(a DESIGNATED
+        /// reference class's stories) — unpaired class-vs-reference mean
+        /// difference over the `prompts/emotions/` story layout. The
+        /// reference corpus is part of the recipe: the artifact pins it as
+        /// {name, hash}, exactly as `experiment attach --method
+        /// designatedReference --reference <concept>` does.
+        case designatedReference
         /// A direction for one exact vocabulary token, derived from an imported
         /// Jacobian lens. Unlike every other family this reads NO activations:
         /// no stimuli, no reading position, no pooling, and no loaded model —
@@ -40,6 +47,7 @@ public final class ConceptBuilder {
             case .pairedDifferencePCA: "Paired-difference PCA (RepE-inspired)"
             case .repeReaderLAT: "RepE reader LAT"
             case .emotionGrandMean: "Grand mean"
+            case .designatedReference: "Designated reference (stories − reference)"
             case .jlensTokenDirection: "J-lens token direction"
             }
         }
@@ -50,6 +58,7 @@ public final class ConceptBuilder {
             case .pairedDifferencePCA: .pairedDifferencePCA
             case .repeReaderLAT: .repeReaderLAT
             case .emotionGrandMean: .emotionGrandMean
+            case .designatedReference: .designatedReference
             case .jlensTokenDirection: .jlensTokenDirection
             }
         }
@@ -57,7 +66,19 @@ public final class ConceptBuilder {
         public var isPaired: Bool {
             switch self {
             case .caaMeanDifference, .pairedDifferencePCA, .repeReaderLAT: true
-            case .emotionGrandMean, .jlensTokenDirection: false
+            case .emotionGrandMean, .designatedReference, .jlensTokenDirection:
+                false
+            }
+        }
+
+        /// True when the family's stimuli are story corpora under
+        /// `prompts/emotions/<concept>/stories.jsonl` rather than paired
+        /// files — the dataset pane then edits story rows, and `addDrafts`
+        /// parses story JSONL. Mirrors ``ExtractionMethod/usesStoryCorpus``.
+        public var usesStoryCorpus: Bool {
+            switch self {
+            case .emotionGrandMean, .designatedReference: true
+            default: false
             }
         }
 
@@ -73,6 +94,12 @@ public final class ConceptBuilder {
             case .pairedDifferencePCA: .pairedDifferencePCA
             case .repeReaderLAT: .pairedDifferencePCA
             case .emotionGrandMean: .meanDifference
+            // First-class in the method vocabulary, and the family's own
+            // didSet pins exactly it — so a designated-reference family
+            // seeing `designatedReference` arrive is not evidence that the
+            // researcher left the family (the demotion the guard below
+            // exists to prevent).
+            case .designatedReference: .designatedReference
             case .jlensTokenDirection: nil
             }
         }
@@ -83,7 +110,8 @@ public final class ConceptBuilder {
         /// them apply — and would silently imply provenance it does not have.
         public var extractsFromStimuli: Bool {
             switch self {
-            case .caaMeanDifference, .pairedDifferencePCA, .repeReaderLAT, .emotionGrandMean:
+            case .caaMeanDifference, .pairedDifferencePCA, .repeReaderLAT,
+                .emotionGrandMean, .designatedReference:
                 true
             case .jlensTokenDirection:
                 false
@@ -134,6 +162,13 @@ public final class ConceptBuilder {
                     "Grand mean builds each selected concept as mean(concept stories) - mean(all included concept stories), following the emotion-vector corpus design.",
                     "Data needed: a balanced concept x topic story corpus; build rows extract vectors and validation rows stay held out.",
                     "Workflow: copy the LLM prompt for a small corpus or the Claude Cowork prompt for parallel multi-concept generation, paste the returned JSONL into the story box, add the rows, choose included/build concepts and topics, then build.",
+                ]
+            case .designatedReference:
+                [
+                    "Designated reference builds each layer's direction as mean(concept stories) - mean(reference stories): an unpaired class-vs-reference mean difference, where the reference is a deliberately authored corpus, not a population centroid.",
+                    "Data needed: the concept's story corpus plus a reference corpus in the same register and on the same topic grid (narrative concepts reference neutral stories; expository concepts reference plain exposition) — a register mismatch injects an essay-vs-story component into the vector.",
+                    "Workflow: author both corpora as story concepts (copy the LLM prompt, paste the returned JSONL), pick the reference class, then build. The artifact pins the reference by name and stories hash — the reference corpus is part of the recipe.",
+                    "Negative-dose semantics: -alpha steers toward the reference class, i.e. toward an ordinary telling of the same scenes.",
                 ]
             case .jlensTokenDirection:
                 [
@@ -374,6 +409,11 @@ public final class ConceptBuilder {
                 extractionMethod = .meanDifference
                 poolFromToken = 50
                 if generationCount == 10 { generationCount = 12 }
+            case .designatedReference:
+                // The attach verb's method policy, mirrored: pooled reading
+                // from token 50 unless a position is declared explicitly.
+                extractionMethod = .designatedReference
+                poolFromToken = 50
             }
             stats = nil
             lastDirection = nil
@@ -398,13 +438,49 @@ public final class ConceptBuilder {
                 recipeFamily.impliedExtractionMethod != extractionMethod
             {
                 recipeFamily =
-                    extractionMethod == .pairedDifferencePCA
-                    ? .pairedDifferencePCA : .caaMeanDifference
+                    switch extractionMethod {
+                    case .pairedDifferencePCA: .pairedDifferencePCA
+                    case .designatedReference: .designatedReference
+                    default: .caaMeanDifference
+                    }
             }
             lastDirection = nil
             noteMutation()
         }
     }
+    /// designatedReference only: the REFERENCE class — the stories concept
+    /// whose mean is subtracted from the target's. Part of the recipe (the
+    /// artifact pins {name, hash}), so it is a deliberate selection with an
+    /// empty default, never a guess.
+    public var designatedReferenceConcept: String = "" {
+        didSet {
+            guard oldValue != designatedReferenceConcept else { return }
+            lastDirection = nil
+            noteMutation()
+        }
+    }
+
+    /// Reference-class candidates: concepts with a local
+    /// `prompts/emotions/<name>/stories.jsonl`. The build target may appear
+    /// here too — selecting it stands refused below rather than hidden, so
+    /// the mistake is explained instead of silently unavailable.
+    public var designatedReferenceOptions: [String] {
+        localStoryConceptNames()
+    }
+
+    /// The standing refusal for the current reference selection, or nil. An
+    /// EMPTY selection is not a refusal (the picker says "select reference…"
+    /// and the build button stays off); a self-reference is.
+    public var designatedReferenceRefusal: String? {
+        let reference = designatedReferenceConcept
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reference.isEmpty, reference == buildTargetName else { return nil }
+        return "the reference must be a different stories concept — "
+            + "subtracting a concept's own corpus extracts the zero vector — "
+            + "repair: pick the deliberately authored reference class "
+            + "(a neutral-stories or plain-exposition corpus in the same register)"
+    }
+
     /// WHERE the residual stream is read, as a picker holds it — the WHOLE
     /// declarable vocabulary, not only the legacy pooled pair this pane used
     /// to offer. The position itself is re-derived through the engine's own
@@ -649,6 +725,21 @@ public final class ConceptBuilder {
         if recipeFamily == .emotionGrandMean {
             return !grandMeanTargetConceptNames.isEmpty
         }
+        if recipeFamily == .designatedReference {
+            // Both classes must exist as non-empty story corpora, and the
+            // reference must be a different concept — the same gates the
+            // build itself refuses on, so the button can never be enabled
+            // for a build that would refuse.
+            let name = buildTargetName
+            guard !name.isEmpty, designatedReferenceRefusal == nil else {
+                return false
+            }
+            let reference = designatedReferenceConcept
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !reference.isEmpty else { return false }
+            return storyCorpusRowCount(for: name) > 0
+                && storyCorpusRowCount(for: reference) > 0
+        }
         if recipeFamily == .repeReaderLAT {
             return false  // reader family builds through buildReader()
         }
@@ -684,6 +775,7 @@ public final class ConceptBuilder {
         hasher.combine(grandMeanBuildConcepts.sorted())
         hasher.combine(grandMeanBuildConceptsAreExplicit)
         hasher.combine(buildAllGrandMeanConcepts)
+        hasher.combine(designatedReferenceConcept)
         return hasher.finalize()
     }
 
@@ -712,6 +804,15 @@ public final class ConceptBuilder {
 
     private func computePendingPasses() -> Int {
         let options = extractionOptions
+        if recipeFamily == .designatedReference {
+            let texts = designatedReferenceClassTexts()
+            guard let modelID = host?.loadedModelID else { return texts.count }
+            return texts.count {
+                activationCache[
+                    Self.activationCacheKey(
+                        modelID: modelID, options: options, text: $0)] == nil
+            }
+        }
         if recipeFamily == .emotionGrandMean {
             let rows = emotionRowsForExtraction()
             guard let modelID = host?.loadedModelID else { return rows.count }
@@ -745,6 +846,32 @@ public final class ConceptBuilder {
         let name = currentName
         guard !name.isEmpty else {
             return !positives.isEmpty || !negatives.isEmpty || !multiConceptRows.isEmpty
+        }
+        if recipeFamily == .designatedReference {
+            if !multiConceptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return true
+            }
+            guard let modelID = host?.loadedModelID else { return false }
+            let target = buildTargetName
+            let reference = designatedReferenceConcept
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !target.isEmpty, !reference.isEmpty,
+                let targetHash = storyCorpusHash(for: target),
+                let referenceHash = storyCorpusHash(for: reference)
+            else { return false }
+            let newest = VectorCatalog.scan().first {
+                $0.sidecar.concept == target && $0.sidecar.modelID == modelID
+            }
+            guard let newest else { return true }
+            return newest.sidecar.recipeMethod
+                != VectorExtractionRecipe.Method.designatedReference.rawValue
+                || newest.sidecar.stimulusSetHash != targetHash
+                || newest.sidecar.designatedReference?["name"] != reference
+                || newest.sidecar.designatedReference?["hash"] != referenceHash
+                || (newest.sidecar.readingPosition ?? ReadingPosition.lastToken.label)
+                    != extractionOptions.readingPosition.label
+                || Self.renderingLabel(newest.sidecar.extractionRendering)
+                    != extractionOptions.resolvedExtractionRendering.label
         }
         if recipeFamily == .emotionGrandMean {
             if !multiConceptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1231,7 +1358,18 @@ public final class ConceptBuilder {
         multiConceptRows = (try? loadEmotionRows(for: name)) ?? []
         if !multiConceptRows.isEmpty {
             if positives.isEmpty, negatives.isEmpty {
-                recipeFamily = .emotionGrandMean
+                // A story corpus alone cannot distinguish grand-mean from
+                // designated-reference (the file layout is shared on
+                // purpose), but this concept's newest artifact can — the same
+                // must-restore-ITS-recipe rule `pairedRecipeFamilyOnDisk`
+                // exists for. The artifact also carries the reference pin, so
+                // the picker comes back showing the recipe that built it.
+                if let reference = Self.designatedReferencePinOnDisk(for: name) {
+                    recipeFamily = .designatedReference
+                    designatedReferenceConcept = reference
+                } else {
+                    recipeFamily = .emotionGrandMean
+                }
             }
             notes.append("\(multiConceptRows.count) story rows")
         }
@@ -1259,6 +1397,29 @@ public final class ConceptBuilder {
         }
         probeDraft = ""
         refreshStaleness()
+    }
+
+    /// The reference pin from a concept's newest designated-reference
+    /// artifact, or nil when its newest artifact was built by another recipe
+    /// (or no artifact exists). This is RECORDED PROVENANCE in the same sense
+    /// as `recordedRecipeFamily` — `VectorCatalog.scan` enumerates run
+    /// directories newest-first by their timestamped names, never by a
+    /// filesystem attribute — so the selection restores the recipe the
+    /// researcher actually ran, reference pin and all.
+    nonisolated static func designatedReferencePinOnDisk(
+        for name: String, root: URL? = nil
+    ) -> String? {
+        let runs = VectorCatalog.runsDirectory(root: root ?? VectorCatalog.projectRoot)
+        guard
+            let newest = VectorCatalog.scan(runsDirectory: runs).first(where: {
+                $0.sidecar.concept == name
+            }),
+            VectorRecipeGrouping.normalizedMethod(
+                recipeMethod: newest.sidecar.recipeMethod,
+                extractionMethod: newest.sidecar.extractionMethod)
+                == ExtractionMethod.designatedReference.rawValue
+        else { return nil }
+        return newest.sidecar.designatedReference?["name"]
     }
 
     /// Which paired recipe produced a concept's on-disk dataset, and WHERE
@@ -1427,7 +1588,11 @@ public final class ConceptBuilder {
                             ? "Use matched prompt fragments or an answer scaffold appropriate to the concept."
                             : generationGuidance),
                 ])
-        case .emotionGrandMean:
+        case .emotionGrandMean, .designatedReference:
+            // The designated-reference layout IS the story-corpus layout
+            // (METHODS amendment ii keeps `prompts/emotions/` for it), so the
+            // same corpus prompt authors either class — the reference corpus
+            // is authored as its own story concept through this same flow.
             return templatePromptOrNotice(
                 filename: "emotion-grand-mean-stories.md",
                 replacements: [
@@ -1608,7 +1773,7 @@ public final class ConceptBuilder {
     /// Pasted pair-JSONL (the copy-prompt round trip) is detected in either
     /// box and parsed as pairs.
     public func addDrafts() async {
-        if recipeFamily == .emotionGrandMean {
+        if recipeFamily.usesStoryCorpus {
             do {
                 let rows = try Self.parseMultiConceptRows(
                     Data(multiConceptDraft.utf8),
@@ -2415,7 +2580,9 @@ public final class ConceptBuilder {
 
     public func rebuild() async {
         guard recipeFamily.isPaired else {
-            status = "live pair-margin stats are for CAA/RepE paired data; save to extract the emotion grand-mean vector"
+            status = "live pair-margin stats are for CAA/RepE paired data; "
+                + "use Save & generate vector to extract the "
+                + "\(recipeFamily.label) vector"
             stats = nil
             refreshStaleness()
             return
@@ -2848,34 +3015,19 @@ public final class ConceptBuilder {
                 // would silently pool a smaller corpus, not fail. Push the
                 // included corpora first; anything required that cannot be
                 // pushed (no local stories) must already exist server-side.
-                let plan = Self.grandMeanServerSyncPlan(
-                    included: included, targets: targets,
-                    localStoryConcepts: localStoryConceptNames())
-                var mustExistOnServer = plan.requireOnServer
-                for concept in plan.push {
-                    let rows = (try? loadEmotionRows(for: concept)) ?? []
-                    guard !rows.isEmpty else {
-                        // Nothing to push — never overwrite server stories
-                        // with an empty file; require the server's copy.
-                        mustExistOnServer.append(concept)
-                        continue
-                    }
-                    status = "syncing '\(concept)' stories to the server…"
-                    try await client.saveStories(concept: concept, rows: rows)
-                }
-                if !mustExistOnServer.isEmpty {
-                    let listing = Set(try await client.storyConcepts())
-                    let missing = mustExistOnServer.filter { !listing.contains($0) }
-                        .sorted()
-                    if !missing.isEmpty {
-                        reportBuildFailure(
-                            "cannot queue grand-mean build: the server has "
-                                + "no stories for \(missing.joined(separator: ", ")) "
-                                + "(prompts/emotions/<concept>/stories.jsonl on the "
-                                + "server's tree) and there are none locally to sync",
-                            title: "Server Grand Mean Vector Build — failed")
-                        return
-                    }
+                let missing = try await syncStoryCorporaToServer(
+                    plan: Self.grandMeanServerSyncPlan(
+                        included: included, targets: targets,
+                        localStoryConcepts: localStoryConceptNames()),
+                    client: client)
+                if !missing.isEmpty {
+                    reportBuildFailure(
+                        "cannot queue grand-mean build: the server has "
+                            + "no stories for \(missing.joined(separator: ", ")) "
+                            + "(prompts/emotions/<concept>/stories.jsonl on the "
+                            + "server's tree) and there are none locally to sync",
+                        title: "Server Grand Mean Vector Build — failed")
+                    return
                 }
                 // The grand-mean route pools from token 50 when the body says
                 // nothing, so THAT is its legacy default — and the whole
@@ -2888,6 +3040,54 @@ public final class ConceptBuilder {
                     readingPosition: declaration.readingPosition,
                     extractionRendering: declaration.extractionRendering)
                 title = "Server Grand Mean Vector Build"
+            case .designatedReference:
+                let reference = designatedReferenceConcept
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !reference.isEmpty else {
+                    reportBuildFailure(
+                        "designated-reference build needs a reference stories "
+                            + "concept — the reference corpus is part of the "
+                            + "recipe",
+                        title: "Server Vector Build — refused")
+                    return
+                }
+                if let refusal = designatedReferenceRefusal {
+                    reportBuildFailure(
+                        refusal, title: "Server Vector Build — refused")
+                    return
+                }
+                // The job reads the SERVER's story corpora for BOTH classes —
+                // push what exists locally, and anything unpushable must
+                // already be in the server's corpus listing, answered before
+                // queuing rather than after the GPU warms up.
+                let missing = try await syncStoryCorporaToServer(
+                    plan: Self.grandMeanServerSyncPlan(
+                        included: [name, reference], targets: nil,
+                        localStoryConcepts: localStoryConceptNames()),
+                    client: client)
+                if !missing.isEmpty {
+                    reportBuildFailure(
+                        "cannot queue designated-reference build: the server "
+                            + "has no stories for \(missing.joined(separator: ", ")) "
+                            + "(prompts/emotions/<concept>/stories.jsonl on the "
+                            + "server's tree) and there are none locally to sync",
+                        title: "Server Vector Build — refused")
+                    return
+                }
+                // Pooled-from-50 is this method's attach policy, so it is the
+                // route's legacy reading of an absent position — and the
+                // reference itself is verified via the response echo: a
+                // server that cannot confirm the pin never gets to build.
+                let declaration = serverExtractionDeclaration(
+                    legacyPooledDefault: 50)
+                jobID = try await client.conceptExtract(
+                    concept: name,
+                    method: ExtractionMethod.designatedReference.rawValue,
+                    reference: reference,
+                    poolFromToken: declaration.poolFromToken,
+                    readingPosition: declaration.readingPosition,
+                    extractionRendering: declaration.extractionRendering)
+                title = "Server Vector Build: \(name) − '\(reference)'"
             case .caaMeanDifference, .pairedDifferencePCA:
                 // The job reads the SERVER's checkout of
                 // prompts/concepts/<name> — persist the drafted dataset
@@ -3149,6 +3349,70 @@ public final class ConceptBuilder {
         let required = pooled.union(targets ?? [])
         let push = required.intersection(local)
         return (push.sorted(), required.subtracting(push).sorted())
+    }
+
+    /// Execute a story-corpus sync plan against the active server: push the
+    /// local corpora the build needs and preflight the rest against the
+    /// server's corpus listing. Returns the concepts the server cannot
+    /// provide (nothing local to push, nothing in its listing) — non-empty
+    /// means refuse before queuing, because the job-side corpus loaders
+    /// answer a missing file only after the GPU is already warm.
+    private func syncStoryCorporaToServer(
+        plan: (push: [String], requireOnServer: [String]),
+        client: ClusterClient
+    ) async throws -> [String] {
+        var mustExistOnServer = plan.requireOnServer
+        for concept in plan.push {
+            let rows = (try? loadEmotionRows(for: concept)) ?? []
+            guard !rows.isEmpty else {
+                // Nothing to push — never overwrite server stories with an
+                // empty file; require the server's copy.
+                mustExistOnServer.append(concept)
+                continue
+            }
+            status = "syncing '\(concept)' stories to the server…"
+            try await client.saveStories(concept: concept, rows: rows)
+        }
+        guard !mustExistOnServer.isEmpty else { return [] }
+        let listing = Set(try await client.storyConcepts())
+        return mustExistOnServer.filter { !listing.contains($0) }.sorted()
+    }
+
+    /// One concept's stories corpus from disk — the class loader every
+    /// designated-reference path here shares (the hash is the raw file
+    /// bytes', matching what attach pins). nil when the file is missing or
+    /// unreadable.
+    private func storyCorpus(for concept: String)
+        -> (rows: [StimulusSet.MultiConceptStimulus], hash: String)?
+    {
+        try? StimulusSet.loadMultiConceptTexts(
+            url: VectorCatalog.emotionsDirectory.appending(
+                components: concept, "stories.jsonl"))
+    }
+
+    private func storyCorpusRowCount(for concept: String) -> Int {
+        storyCorpus(for: concept)?.rows.count ?? 0
+    }
+
+    private func storyCorpusHash(for concept: String) -> String? {
+        storyCorpus(for: concept)?.hash
+    }
+
+    /// Both designated-reference classes' texts, for the pass-count estimate.
+    private func designatedReferenceClassTexts() -> [String] {
+        let target = buildTargetName
+        let reference = designatedReferenceConcept
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var texts: [String] = []
+        if !target.isEmpty, let corpus = storyCorpus(for: target) {
+            texts += corpus.rows.map(\.text)
+        }
+        if !reference.isEmpty, reference != target,
+            let corpus = storyCorpus(for: reference)
+        {
+            texts += corpus.rows.map(\.text)
+        }
+        return texts
     }
 
     /// Concepts with a local `prompts/emotions/<name>/stories.jsonl`.
@@ -4283,6 +4547,27 @@ public final class ConceptBuilder {
                 modelID: modelID,
                 stimulusHash: disk?.hash,
                 cost: .paired(stimulusCount: stimulusCount))
+        case .designatedReference:
+            let name = buildTargetName
+            guard !name.isEmpty else { return nil }
+            guard let target = storyCorpus(for: name), !target.rows.isEmpty
+            else { return nil }
+            let reference = designatedReferenceConcept
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let referenceCount = reference.isEmpty
+                ? 0 : storyCorpusRowCount(for: reference)
+            // Both engines stamp the TARGET's raw stories.jsonl hash as the
+            // artifact's stimulus identity (the reference rides alongside as
+            // its own pin), so freshness compares that hash on either
+            // workspace. Cost is one pass per story on either side.
+            return DerivationPlanner.advise(
+                records: records,
+                concept: name,
+                method: recipeFamily.recipeMethod,
+                workspace: workspace,
+                modelID: modelID,
+                stimulusHash: target.hash,
+                cost: .paired(stimulusCount: target.rows.count + referenceCount))
         case .emotionGrandMean:
             let rows = emotionRowsForExtraction()
             guard !rows.isEmpty else { return nil }
@@ -4388,6 +4673,17 @@ public final class ConceptBuilder {
                     }
                 }
                 try await saveEmotionGrandMeanConcept(
+                    name: name, container: container, modelID: modelID, host: host)
+                return
+            }
+            if recipeFamily == .designatedReference {
+                if !multiConceptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    await addDrafts()
+                    if !multiConceptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        return
+                    }
+                }
+                try await saveDesignatedReferenceConcept(
                     name: name, container: container, modelID: modelID, host: host)
                 return
             }
@@ -4504,6 +4800,119 @@ public final class ConceptBuilder {
         } catch {
             reportBuildFailure("save failed: \(error)", title: "Vector Build — failed")
         }
+    }
+
+    /// The local designated-reference build: both classes are stories
+    /// corpora read whole from disk (the same class loader the CLI lifecycle
+    /// uses — no split filtering; validation lives in its own file), the math
+    /// is the unpaired class-mean difference, and the artifact pins the
+    /// reference {name, hash} exactly as `experiment attach` would.
+    private func saveDesignatedReferenceConcept(
+        name: String, container: ModelContainer, modelID: String, host: ChatService
+    ) async throws {
+        let reference = designatedReferenceConcept
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reference.isEmpty else {
+            reportBuildFailure(
+                "designated-reference build needs a reference stories concept "
+                    + "— the reference corpus is part of the recipe",
+                title: "Vector Build — refused")
+            return
+        }
+        if let refusal = designatedReferenceRefusal {
+            reportBuildFailure(refusal, title: "Vector Build — refused")
+            return
+        }
+        guard let target = storyCorpus(for: name), !target.rows.isEmpty else {
+            reportBuildFailure(
+                "no stories.jsonl for concept '\(name)' under prompts/emotions/ "
+                    + "— add story rows (or import a corpus) before building",
+                title: "Vector Build — refused")
+            return
+        }
+        guard let referenceCorpus = storyCorpus(for: reference),
+            !referenceCorpus.rows.isEmpty
+        else {
+            reportBuildFailure(
+                "no stories.jsonl for reference '\(reference)' under "
+                    + "prompts/emotions/ — author the reference corpus first",
+                title: "Vector Build — refused")
+            return
+        }
+
+        status = "extracting designated-reference vector…"
+        let stimuli = StimulusSet(
+            name: name,
+            positive: target.rows.map(\.text),
+            negative: referenceCorpus.rows.map(\.text),
+            hash: target.hash)
+        let corpusURL = VectorCatalog.projectRoot.appending(
+            components: "prompts", "neutral", "corpus.jsonl")
+        let corpus = try? StimulusSet.loadTexts(url: corpusURL)
+        let extraction = try await ConceptExtractor.extract(
+            container: container, stimuli: stimuli, options: extractionOptions,
+            neutralTexts: corpus?.texts)
+
+        let runDirectory = try VectorCatalog.makeUniqueRunDirectory(
+            slug: "concept-\(name)")
+        try RunMetadata.write(
+            runType: "extract", to: runDirectory,
+            modelID: modelID,
+            revision: SteeredContainerLoader.cachedRevision(for: modelID))
+        let normSource =
+            extraction.residualNormSource == "neutral-corpus"
+            ? "neutral-corpus \(corpus?.hash.prefix(12) ?? "")"
+            : extraction.residualNormSource
+        let recipe = VectorExtractionRecipe(
+            name: "\(name)-designated-reference",
+            method: .designatedReference,
+            targetConcept: name,
+            datasets: [
+                .init(
+                    role: .positive,
+                    path: "prompts/emotions/\(name)/stories.jsonl",
+                    sha256: target.hash),
+                .init(
+                    role: .negative,
+                    path: "prompts/emotions/\(reference)/stories.jsonl",
+                    sha256: referenceCorpus.hash,
+                    notes: "designated reference '\(reference)'"),
+            ],
+            readingPosition: extraction.options.readingPosition,
+            neutralPCSelection: .none,
+            extractionRendering: extraction.options.extractionRendering,
+            notes: "Vector = mean(concept stories) - mean(reference "
+                + "'\(reference)' stories); -alpha steers toward the "
+                + "reference class.")
+        var sidecar = SteeringVectorSidecar(
+            modelID: modelID,
+            revision: SteeredContainerLoader.cachedRevision(for: modelID),
+            concept: name,
+            stimulusSetHash: target.hash, vectors: extraction.vectors,
+            options: extraction.options,
+            residualNormPerLayer: extraction.residualNormPerLayer,
+            residualNormSource: normSource,
+            residualNormConvention: extraction.residualNormConvention,
+            recipeMethod: recipe.method,
+            recipeHash: recipe.canonicalHash(),
+            recipeName: recipe.name)
+        sidecar.designatedReference = ["name": reference, "hash": referenceCorpus.hash]
+        let artifactName = "\(name)-\(host.selectedModel.family)"
+        try SteeringVectorStore.save(
+            vectors: extraction.vectors, sidecar: sidecar, to: runDirectory,
+            name: artifactName,
+            neutralMeanPerLayer: extraction.neutralMeanPerLayer)
+
+        refreshConceptList()
+        if name == currentName { selectedExisting = name }
+        host.refreshVectors()
+        let artifactID = runDirectory.appending(component: artifactName).path
+        host.selectVector(artifactID)
+        host.steeringEnabled = true
+        status = "saved \(name) (\(target.rows.count) stories − "
+            + "\(referenceCorpus.rows.count) reference '\(reference)') "
+            + "→ \(runDirectory.lastPathComponent); selected for steering"
+        refreshStaleness()
     }
 
     private func saveEmotionGrandMeanConcept(

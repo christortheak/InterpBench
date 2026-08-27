@@ -371,6 +371,7 @@ function conceptsPane() {
         <option value="caaMeanDifference">CAA mean difference</option>
         <option value="repeLAT">Paired-difference PCA (RepE-inspired)</option>
         <option value="emotionGrandMean">Grand mean</option>
+        <option value="designatedReference">Designated reference (stories − reference)</option>
       </select></div>
     <details id="c-browse-details"><summary id="c-browse-title">Browse dataset</summary><div id="c-browse" style="max-height:260px;overflow-y:auto"></div></details>
     <div id="c-paired-editor">
@@ -475,7 +476,12 @@ function conceptsPane() {
         <option value="caaMeanDifference">CAA mean difference</option>
         <option value="repeLAT">Paired-difference PCA (RepE-inspired)</option>
         <option value="emotionGrandMean">Grand mean</option>
+        <option value="designatedReference">Designated reference (stories − reference)</option>
       </select></div>
+    <div class="row" id="c-dr-row" style="display:none">
+      <label title="the deliberately authored reference class whose mean is subtracted from the concept's — part of the recipe, pinned into the artifact as name + stories hash">Reference class</label>
+      <select id="c-dr-ref" class="grow"></select></div>
+    <div class="muted" id="c-dr-note" style="display:none"></div>
     <label class="row" id="c-build-all-row" title="when enabled, each checked concept becomes its own vector artifact from the same selected Grand Mean corpus">
       <input type="checkbox" id="c-build-all"> Build one vector for every checked concept</label>
     <div id="c-topic-box"></div>
@@ -511,7 +517,12 @@ function renderConcepts() {
   setVal($("c-name"), c.name);
   setVal($("c-recipe"), c.recipeFamily || "caaMeanDifference");
   setVal($("c-vector-dataset"), c.recipeFamily || "caaMeanDifference");
-  const paired = (c.recipeFamily || "caaMeanDifference") !== "emotionGrandMean";
+  // Family semantics come from the app (recipeIsPaired), so a new family
+  // never mis-renders here; the fallback keeps the historic reading for an
+  // app predating the flag.
+  const paired = c.recipeIsPaired ?? ((c.recipeFamily || "caaMeanDifference") !== "emotionGrandMean");
+  const grandMean = c.recipeFamily === "emotionGrandMean";
+  const designatedRef = c.recipeFamily === "designatedReference";
   const conceptName = c.selected || String(c.name || "").toLowerCase().replaceAll(" ", "-").replace(/[^a-z0-9-]/g, "");
   const compatibleVectors = (S.vectors || []).slice();
   const compatibleIDs = new Set(compatibleVectors.map(v => v.id));
@@ -544,14 +555,28 @@ function renderConcepts() {
   setChk($("c-pool"), c.poolFromToken != null);
   setVal($("c-pool-k"), c.poolFromToken ?? 0);
   $("c-pool-k").style.display = c.poolFromToken != null ? "" : "none";
-  $("c-build-all-row").style.display = paired ? "none" : "";
+  $("c-build-all-row").style.display = grandMean ? "" : "none";
   setChk($("c-build-all"), !!c.buildAllGrandMeanConcepts);
+  $("c-dr-row").style.display = designatedRef ? "" : "none";
+  const drNote = $("c-dr-note");
+  drNote.style.display = designatedRef ? "" : "none";
+  if (designatedRef) {
+    const refSel = $("c-dr-ref");
+    if (document.activeElement !== refSel) {
+      refSel.innerHTML = `<option value="">select reference…</option>` +
+        (c.designatedReferenceOptions || []).map(n =>
+          `<option ${n === c.designatedReference ? "selected" : ""}>${esc(n)}</option>`).join("");
+    }
+    drNote.textContent = c.designatedReferenceRefusal
+      || "Vector = mean(concept stories) − mean(reference stories); −α steers toward the reference class. The reference must share the concept corpus's register and topic grid.";
+    drNote.style.color = c.designatedReferenceRefusal ? "var(--warn)" : "";
+  }
   const rb = $("c-rebuild");
   rb.textContent = c.pendingPassCount ? `Rebuild stats (${c.pendingPassCount} passes)` : "Rebuild stats";
   rb.className = c.statsStale ? "primary" : "";
   rb.disabled = c.isWorking || S.modelState !== "ready" || !paired;
   $("c-add").disabled = c.isWorking;
-  $("c-copy-cowork").disabled = paired;
+  $("c-copy-cowork").disabled = !grandMean;  // cowork corpus prompts are Grand mean's
   $("c-probe-count").textContent = `${c.probePositiveCount || 0}+ / ${c.probeNegativeCount || 0}-`;
   const conceptNeutralCorpus = $("c-neutral-corpus");
   if (document.activeElement !== conceptNeutralCorpus) {
@@ -576,7 +601,7 @@ function renderConcepts() {
       <span><b>${item.expresses ? "concept-present" : "control"}</b>${item.topic ? ` · ${esc(item.topic)}` : ""}<br>${esc(item.text)}</span>
       <span class="muted">${esc(item.split || "validation")}</span>
     </div>`).join("");
-  $("c-topic-box").innerHTML = !paired && ((c.emotionTopics || []).length || (c.emotionConcepts || []).length) ? `
+  $("c-topic-box").innerHTML = grandMean && ((c.emotionTopics || []).length || (c.emotionConcepts || []).length) ? `
     ${(c.emotionConcepts || []).length ? `<details><summary>Grand Mean concept set</summary>
       <div>${(c.emotionConcepts || []).map(name => {
         const selected = !c.includedEmotionConcepts || c.includedEmotionConcepts.length === 0 || c.includedEmotionConcepts.includes(name);
@@ -714,6 +739,7 @@ function wireConcepts() {
   $("c-name").onchange = e => post("/api/concept/name", {name: e.target.value});
   $("c-recipe").onchange = e => post("/api/concept/options", {recipeFamily: e.target.value});
   $("c-vector-dataset").onchange = e => post("/api/concept/options", {recipeFamily: e.target.value});
+  $("c-dr-ref").onchange = e => post("/api/concept/options", {designatedReference: e.target.value});
   $("c-pool").onchange = e => post("/api/concept/options", {pooling: e.target.checked, poolFromToken: +$("c-pool-k").value});
   $("c-pool-k").onchange = e => post("/api/concept/options", {poolFromToken: +e.target.value});
   $("c-build-all").onchange = e => post("/api/concept/options", {buildAllGrandMeanConcepts: e.target.checked});

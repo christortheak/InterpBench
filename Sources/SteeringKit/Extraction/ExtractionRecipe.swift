@@ -29,6 +29,11 @@ public struct VectorExtractionRecipe: Codable, Sendable, Equatable {
         /// Emotion-paper-style vectors: concept mean minus grand mean across
         /// a multi-concept story corpus.
         case emotionGrandMean
+        /// METHODS amendment ii: concept mean minus the mean of a DESIGNATED
+        /// reference class (unpaired class-vs-reference mean difference over
+        /// stories corpora). Same rawValue as its `ExtractionMethod` twin, so
+        /// the two stamps normalize to one method identity.
+        case designatedReference
         /// J-lens token direction: `J_l^T (g . u_t)` for one exact vocabulary
         /// token, from an imported Jacobian lens. DERIVED, not extracted —
         /// there is no stimulus set, and the identity is the token id plus the
@@ -42,6 +47,7 @@ public struct VectorExtractionRecipe: Codable, Sendable, Equatable {
             case .pairedDifferencePCA: "Paired-difference PCA (RepE-inspired)"
             case .repeReaderLAT: "RepE reader LAT"
             case .emotionGrandMean: "Emotion grand mean"
+            case .designatedReference: "Designated reference"
             case .jlensTokenDirection: "J-lens token direction"
             }
         }

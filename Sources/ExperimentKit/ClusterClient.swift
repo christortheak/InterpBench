@@ -3171,16 +3171,49 @@ public struct ClusterClient: Sendable {
         }
     }
 
+    /// A server that took a designated-reference build and could not confirm
+    /// the reference pin — or is old enough not to have read it at all.
+    ///
+    /// The same version-skew shape as ``DeclarationNotApplied``, with a
+    /// harder edge: a server predating designated-reference extraction on
+    /// this route would read the paired stimulus files and answer an ordinary
+    /// job id, silently building a different recipe than the panel shows. So
+    /// the route echoes the pin it applied and this client refuses anything
+    /// less — and unlike the declaration axes there is no legacy spelling to
+    /// fall back to.
+    public struct ReferenceNotApplied: Error, CustomStringConvertible {
+        public let route: String
+        public let declared: String
+        public let applied: String?
+        public var description: String {
+            let got = applied.map { "it reports reference '\($0)'" }
+                ?? "it echoes no designatedReference at all, which means it "
+                    + "predates designated-reference extraction on this route "
+                    + "and would have extracted something else"
+            return "the server did not pin the designated reference this "
+                + "build asked for on \(route): declared reference "
+                + "'\(declared)', and \(got) — repair: update the server (its "
+                + "extract route must echo the applied designatedReference); "
+                + "this recipe has no legacy spelling"
+        }
+    }
+
     /// Contrastive extraction from the server's checkout of
-    /// `prompts/concepts/<concept>` (`POST /api/concept/{name}/extract`).
+    /// `prompts/concepts/<concept>` (`POST /api/concept/{name}/extract`) —
+    /// or, for `method: "designatedReference"`, from its story corpora
+    /// (`prompts/emotions/…`), with `reference` naming the class subtracted.
     ///
     /// `readingPosition` (a cross-engine LABEL) and `extractionRendering` are
     /// additive and optional: omitting both sends exactly the body this
     /// client always sent. `poolFromToken` is the LEGACY spelling of one
     /// position, so declaring both spellings is refused HERE as well as
-    /// server-side — one recipe, never a silent pick between two.
+    /// server-side — one recipe, never a silent pick between two. A declared
+    /// `reference` is verified against the response's `designatedReference`
+    /// echo the same way the declaration axes are: unconfirmed is a refusal,
+    /// never a build.
     public func conceptExtract(
-        concept: String, method: String, poolFromToken: Int? = nil,
+        concept: String, method: String, reference: String? = nil,
+        poolFromToken: Int? = nil,
         readingPosition: String? = nil,
         extractionRendering: ExtractionRendering? = nil
     ) async throws -> String {
@@ -3191,6 +3224,7 @@ public struct ClusterClient: Sendable {
         }
         struct Body: Encodable {
             var method: String
+            var reference: String?
             var poolFromToken: Int?
             var readingPosition: String?
             var extractionRendering: ExtractionRendering?
@@ -3198,17 +3232,26 @@ public struct ClusterClient: Sendable {
         struct Response: Decodable {
             var jobId: String
             var appliedExtraction: AppliedExtraction?
+            var designatedReference: [String: String]?
         }
         let route = "/api/concept/\(concept)/extract"
         let response: Response = try await post(
             route,
             body: Body(
-                method: method, poolFromToken: poolFromToken,
+                method: method, reference: reference,
+                poolFromToken: poolFromToken,
                 readingPosition: readingPosition,
                 extractionRendering: extractionRendering))
         try Self.verifyApplied(
             response.appliedExtraction, declaredPosition: readingPosition,
             declaredRendering: extractionRendering, route: route)
+        if let reference {
+            let applied = response.designatedReference?["name"]
+            guard applied == reference else {
+                throw ReferenceNotApplied(
+                    route: route, declared: reference, applied: applied)
+            }
+        }
         return response.jobId
     }
 

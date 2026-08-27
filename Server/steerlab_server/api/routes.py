@@ -2439,12 +2439,65 @@ def build_router(state: ServiceState) -> APIRouter:
         # route that reconstructed only lastToken/meanFromToken produced a raw
         # last-token vector while the panel displayed different scientific
         # settings (external review round 5, finding 2).
-        reading, rendering = _declared_extraction(body)
+        reference = None
+        reference_hash = None
+        target_hash = None
+        if method is ExtractionMethod.DESIGNATED_REFERENCE:
+            # The classes are story corpora and the reference is part of the
+            # recipe — both answered HERE, before a GPU warms up, in the same
+            # words the attach verb refuses with. Pooled-from-50 is this
+            # method's attach policy, so it is also this route's legacy
+            # reading of an absent position for it.
+            from ..experiment import multiconcept
+            from ..steering.reading_position import mean_from_token
+            reference = (body.get("reference") or "").strip()
+            if not reference:
+                raise HTTPException(
+                    status_code=400,
+                    detail="designatedReference needs a reference stories "
+                           "concept — the reference corpus is part of the recipe")
+            reference_hash = multiconcept.stories_hash(reference)
+            if reference_hash is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"no stories.jsonl for reference '{reference}' "
+                           "under prompts/emotions/")
+            target_hash = multiconcept.stories_hash(name)
+            if target_hash is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"no stories.jsonl for concept '{name}' under "
+                           "prompts/emotions/")
+            reading, rendering = _declared_extraction(
+                body, legacy_position=lambda pool: mean_from_token(int(pool or 50)))
+        else:
+            reading, rendering = _declared_extraction(body)
         options = ExtractionOptions(method=method, reading_position=reading,
                                     extraction_rendering=rendering or RAW_RENDERING)
 
         def work(job):
-            stimuli = StimulusSet.from_directory(paths.concept_directory(name))
+            if method is ExtractionMethod.DESIGNATED_REFERENCE:
+                # The response echoed the queue-time hashes, so the bytes read
+                # must BE those bytes — a corpus edited between queueing and
+                # extraction refuses loudly instead of stamping a pin the
+                # build did not read.
+                from types import SimpleNamespace
+                from ..experiment import multiconcept
+                if multiconcept.stories_hash(name) != target_hash:
+                    raise RuntimeError(
+                        f"concept '{name}' stories changed between queueing "
+                        "and extraction — re-queue the build")
+                if multiconcept.stories_hash(reference) != reference_hash:
+                    raise RuntimeError(
+                        f"reference '{reference}' stories changed between "
+                        "queueing and extraction — re-queue the build")
+                stimuli = SimpleNamespace(
+                    positive=multiconcept.load_stories_texts(name),
+                    negative=multiconcept.load_stories_texts(reference))
+                stimulus_hash = target_hash
+            else:
+                stimuli = StimulusSet.from_directory(paths.concept_directory(name))
+                stimulus_hash = stimuli.hash
             with state.acquire_active() as model:
                 result = extract(model, stimuli, options)
                 run_dir = paths.make_unique_run_directory(f"concept-{name}")
@@ -2453,7 +2506,7 @@ def build_router(state: ServiceState) -> APIRouter:
                                  revision=model.revision)
                 sidecar = SteeringVectorSidecar.make(
                     model_id=model.model_id, revision=model.revision, concept=name,
-                    stimulus_set_hash=stimuli.hash, vectors=result.vectors,
+                    stimulus_set_hash=stimulus_hash, vectors=result.vectors,
                     extraction_method=method.value, reading_position=reading,
                     residual_norm_per_layer=result.residual_norm_per_layer,
                     residual_norm_source=result.residual_norm_source,
@@ -2464,16 +2517,32 @@ def build_router(state: ServiceState) -> APIRouter:
                     residual_norm_rendering=result.residual_norm_rendering,
                     extraction_rendering=rendering,
                     reading_position_resolution=result.reading_position_resolution)
+                if method is ExtractionMethod.DESIGNATED_REFERENCE:
+                    # The pin the recipe firewall reads (recipe_identity's
+                    # methodParameters) — the same stamp the lifecycle
+                    # extraction writes.
+                    sidecar.designatedReference = {"name": reference,
+                                                   "hash": reference_hash}
                 save_vec(result.vectors, sidecar, run_dir, name)
             job.log(f"built {result.vectors.layer_count}-layer {method.value} vector "
-                    f"({reading.label}, rendering "
+                    + (f"(− reference '{reference}') " if reference else "")
+                    + f"({reading.label}, rendering "
                     f"{(rendering or RAW_RENDERING).label}) → {run_dir}")
             return {"runDirectory": run_dir, "name": name}
 
-        return {**_run_or_submit(state, f"concept-extract:{name}", work,
-                                 path=f"/api/concept/{name}/extract",
-                                 body=body),
-                "appliedExtraction": _applied_extraction(reading, rendering)}
+        response = {**_run_or_submit(state, f"concept-extract:{name}", work,
+                                     path=f"/api/concept/{name}/extract",
+                                     body=body),
+                    "appliedExtraction": _applied_extraction(reading, rendering)}
+        if method is ExtractionMethod.DESIGNATED_REFERENCE:
+            # The reference's version-skew echo: a client that declared a
+            # reference verifies this block, because a route predating it
+            # would have read the paired files and answered an ordinary job
+            # id — the same silent substitution `appliedExtraction` ends for
+            # the declaration axes.
+            response["designatedReference"] = {"name": reference,
+                                               "hash": reference_hash}
+        return response
 
     # --- grand-mean (emotion multi-concept) ---------------------------------
 
