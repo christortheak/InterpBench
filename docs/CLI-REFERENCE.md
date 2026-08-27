@@ -166,7 +166,9 @@ plus `--version`. `steerlab <family>
 family, which addresses a remote engine and names its local paths explicitly,
 so it runs without one (a named workspace is still honoured and still reported
 in the envelope), and `authoring`, whose template registry falls back to the
-shipped copy so a caller who named no study still gets the shipped prompt.
+shipped copy so a caller who named no study still gets the shipped prompt. That
+shipped copy travels inside the wheel, so a `pip install` with no checkout
+beside it renders exactly the same bytes.
 `run` is not an exception: it reads a study out of a workspace and imports
 evidence back into it, so it requires one.
 
@@ -2052,7 +2054,8 @@ So the prompts are **data**. They live in `prompts/authoring-prompts/`, one
 Markdown file per kind, plus `_`-prefixed shared partials; the directory is the
 registry index, and the kind is the filename's stem. **A workspace's copy wins
 over the shipped one** — edit the wording for your study, and the emission's
-hash follows your bytes.
+hashes follow your bytes. The shipped copy travels inside the engine package,
+so a `pip install` with no checkout beside it still renders.
 
 | Kind | Produces | Required |
 |---|---|---|
@@ -2068,12 +2071,25 @@ missing `--positive` refuses with exit 64 naming what it is, because a
 plausible default there would be a study nobody declared. A flag belonging to a
 different kind refuses the same way rather than being ignored.
 
-Every emission stamps a header carrying `promptSpecHash` — the SHA-256 of the
-partials plus the template, in assembly order — and the `--json` result repeats
-it as `result.promptSpecHash`, together with `templateFiles`,
-`fromWorkspaceCopy`, the resolved `parameters`, and the whole `prompt`. That
-hash is what a study's provenance cites: it makes the exact wording a corpus was
-generated from recoverable from a finished study.
+Counts are checked as numbers: `--count`, `--validation-count` and
+`--held-out` each take a whole number of rows above 0 and at most 500, and
+`--held-out` must be below `--count` (the held-out rows are the trailing rows of
+the same file). Anything else is exit 64 naming the offending value — the count
+is substituted into the prompt verbatim, so `--count bananas` used to ask an
+author for bananas rows.
+
+Every emission stamps a header carrying TWO hashes, and the `--json` result
+repeats both, together with `templateFiles`, `fromWorkspaceCopy`, the resolved
+`parameters`, and the whole `prompt`:
+
+* `promptSpecHash` — the SHA-256 of the partials plus the template, in assembly
+  order. It identifies the WORDING, before substitution, and recovers which
+  prompt text a study is citing. Two emissions of one kind for two different
+  concepts share it.
+* `promptInstanceHash` — the SHA-256 of the rendered body plus the resolved
+  parameter set. It identifies THIS emission, and recovers which run produced a
+  given corpus. It moves when any argument moves, including one the wording does
+  not interpolate.
 
 `--out <file>` writes the prompt (this verb owns `--out`; the envelope is
 stdout). **The verb writes nothing else, ever.** Its `nextAction` says so:

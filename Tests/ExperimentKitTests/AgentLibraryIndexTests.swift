@@ -374,4 +374,59 @@ import Testing
             forBaseModelIDs: ["b/two", "a/one", "b/two"])
         #expect(rows.map(\.baseModelID) == ["a/one", "b/two"])
     }
+
+    // MARK: - The evidence overlay's latest-wins rule (review round 6, #6)
+
+    /// The Library starts the evidence pass TWICE by design: once in `.task`,
+    /// for the rows carried over from a previous visit, and again from
+    /// `onChange(of: agentIndex)` when the rescan reports new ones. Both used
+    /// to capture the library scan's token, which cannot tell them apart, so
+    /// whichever `runs/` walk finished last won — including the older one,
+    /// over evidence computed for a NEWER snapshot.
+    @Test func aSupersededEvidencePassMayNotLandOverANewerOne() {
+        let root = URL(filePath: "/w")
+        let ids: Set<String> = ["a", "b"]
+        // The second pass, landing against its own state: applied.
+        #expect(
+            FineTuningPanel.evidenceMayLand(
+                scanToken: 3, liveScanToken: 3,
+                evidenceToken: 2, liveEvidenceToken: 2,
+                root: root, liveRoot: root,
+                entryIDs: ids, liveEntryIDs: ids))
+        // The FIRST pass, finishing after the second started: dropped. Under
+        // the shared token both of these read as "token 3 == token 3".
+        #expect(
+            !FineTuningPanel.evidenceMayLand(
+                scanToken: 3, liveScanToken: 3,
+                evidenceToken: 1, liveEvidenceToken: 2,
+                root: root, liveRoot: root,
+                entryIDs: ids, liveEntryIDs: ids))
+    }
+
+    @Test func evidenceForAnotherWorkspaceOrAnotherRowSetIsDropped() {
+        let root = URL(filePath: "/w")
+        let ids: Set<String> = ["a", "b"]
+        // A library rescan superseded the walk.
+        #expect(
+            !FineTuningPanel.evidenceMayLand(
+                scanToken: 3, liveScanToken: 4,
+                evidenceToken: 1, liveEvidenceToken: 1,
+                root: root, liveRoot: root,
+                entryIDs: ids, liveEntryIDs: ids))
+        // The workspace moved under it.
+        #expect(
+            !FineTuningPanel.evidenceMayLand(
+                scanToken: 3, liveScanToken: 3,
+                evidenceToken: 1, liveEvidenceToken: 1,
+                root: root, liveRoot: URL(filePath: "/other"),
+                entryIDs: ids, liveEntryIDs: ids))
+        // The rows changed without either counter moving — evidence keyed on
+        // ids that are no longer on screen renders under the wrong agent.
+        #expect(
+            !FineTuningPanel.evidenceMayLand(
+                scanToken: 3, liveScanToken: 3,
+                evidenceToken: 1, liveEvidenceToken: 1,
+                root: root, liveRoot: root,
+                entryIDs: ids, liveEntryIDs: ["a", "c"]))
+    }
 }

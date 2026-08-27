@@ -157,6 +157,13 @@ include = ["steerlab_server*"]
 # `jlens qualify` is an instrument self-test, and inputs that varied per
 # workspace would make two workspaces' qualifications incomparable.
 "steerlab_server.jlens" = ["fixtures/*"]
+# The authoring-prompt registry ships INSIDE the package. It used to be reached
+# only at `<checkout>/WorkspaceSeed`, three directories up from the module —
+# which does not exist in a wheel install, so every `authoring prompt` verb
+# refused with a missing-file prerequisite no repair could satisfy. The
+# checkout's WorkspaceSeed/ is still the source of truth; a test asserts these
+# copies are byte-identical to it.
+"steerlab_server.experiment" = ["seed/prompts/authoring-prompts/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

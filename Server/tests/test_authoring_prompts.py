@@ -66,6 +66,101 @@ def test_the_registry_directory_holds_no_undeclared_kind():
     assert on_disk == {entry.id for entry in ap.KINDS}
 
 
+def test_the_packaged_registry_is_byte_identical_to_the_workspace_seed():
+    """Review round 6, finding 3. The registry ships inside the package so a
+    wheel install can render at all; the checkout's ``WorkspaceSeed/`` stays
+    the source of truth. Two copies of the same words drift unless something
+    says they may not — this is that something."""
+    checkout = ap.checkout_seed_root()
+    if checkout is None:
+        pytest.skip("no checkout beside this install (a wheel)")
+    packaged = ap.seed_root()
+    assert packaged, "the registry did not ship inside the package"
+    source = os.path.join(checkout, ap.REGISTRY_RELATIVE_DIRECTORY)
+    shipped = os.path.join(packaged, ap.REGISTRY_RELATIVE_DIRECTORY)
+    assert sorted(os.listdir(source)) == sorted(os.listdir(shipped))
+    for name in sorted(os.listdir(source)):
+        with open(os.path.join(source, name), "rb") as handle:
+            expected = handle.read()
+        with open(os.path.join(shipped, name), "rb") as handle:
+            actual = handle.read()
+        assert actual == expected, (
+            f"{name} drifted: copy WorkspaceSeed/"
+            f"{ap.REGISTRY_RELATIVE_DIRECTORY}/{name} into "
+            f"Server/steerlab_server/experiment/{ap.PACKAGED_SEED_DIRECTORY}/"
+            f"{ap.REGISTRY_RELATIVE_DIRECTORY}/")
+
+
+def test_the_packaged_registry_is_declared_as_package_data():
+    """A copy in the tree that setuptools does not ship is the same wheel with
+    extra steps."""
+    checkout = ap.checkout_seed_root()
+    if checkout is None:
+        pytest.skip("no checkout beside this install (a wheel)")
+    pyproject = os.path.join(os.path.dirname(checkout), "Server", "pyproject.toml")
+    with open(pyproject, encoding="utf-8") as handle:
+        text = handle.read()
+    assert (f'"steerlab_server.experiment" = '
+            f'["{ap.PACKAGED_SEED_DIRECTORY}/'
+            f'{ap.REGISTRY_RELATIVE_DIRECTORY}/*.md"]') in text
+
+
+@pytest.mark.skipif(
+    os.environ.get("STEERLAB_TEST_WHEEL") != "1",
+    reason="builds a wheel and installs it into a scratch venv (~30s, and the "
+           "build isolation env may reach the network for setuptools) — set "
+           "STEERLAB_TEST_WHEEL=1 to run it")
+def test_a_wheel_install_can_emit_an_authoring_prompt(tmp_path):
+    """The end the whole finding is about: a machine that has the wheel and
+    nothing else. Before the registry shipped inside the package, this exact
+    command refused with a missing-file prerequisite naming a path that does
+    not exist in a wheel install.
+
+    Deliberately end-to-end and out of process — a unit test that reads
+    ``seed_root()`` proves the files are in the TREE, not that setuptools put
+    them in the WHEEL."""
+    import subprocess
+    import sys
+
+    checkout = ap.checkout_seed_root()
+    if checkout is None:
+        pytest.skip("no checkout beside this install (a wheel)")
+    server_dir = os.path.join(os.path.dirname(checkout), "Server")
+    dist = tmp_path / "dist"
+    subprocess.run(
+        [sys.executable, "-m", "pip", "wheel", "--no-deps",
+         "--wheel-dir", str(dist), server_dir],
+        check=True, capture_output=True)
+    wheels = sorted(dist.glob("*.whl"))
+    assert len(wheels) == 1, wheels
+
+    venv = tmp_path / "venv"
+    subprocess.run([sys.executable, "-m", "venv", str(venv)],
+                   check=True, capture_output=True)
+    # --no-deps ON PURPOSE: the authoring path is stdlib-only, and installing
+    # nothing else proves it.
+    subprocess.run([str(venv / "bin" / "pip"), "install", "--no-deps",
+                    str(wheels[0])], check=True, capture_output=True)
+
+    banner = subprocess.run(
+        [str(venv / "bin" / "steerlab"), "--version"],
+        check=True, capture_output=True, text=True, cwd=str(tmp_path))
+    assert banner.stdout.strip().endswith("(client)")
+
+    emitted = subprocess.run(
+        [str(venv / "bin" / "steerlab"), "authoring", "prompt",
+         "validation-set", "--concept", "x", "--positive", "a",
+         "--negative", "b"],
+        check=True, capture_output=True, text=True, cwd=str(tmp_path))
+    first, _, body = emitted.stdout.partition("\n")
+    assert first.startswith("<!-- steerlab authoring prompt — kind: "
+                            "validation-set; promptSpecHash: sha256:")
+    assert re.search(r"promptSpecHash: sha256:[0-9a-f]{64};", first)
+    assert re.search(r"promptInstanceHash: sha256:[0-9a-f]{64};", first)
+    assert "_discipline.md + _delivery.md + validation-set.md" in first
+    assert len(body.strip()) > 500
+
+
 def test_every_kind_declares_its_parameters_and_a_destination():
     for entry in ap.KINDS:
         assert entry.purpose.endswith("."), f"{entry.id} has no purpose"
@@ -106,8 +201,11 @@ def test_every_emission_carries_its_hash_and_its_audit_battery(kind_id):
     emission = ap.emit(kind_id, LEGAL_ARGUMENTS[kind_id])
     first = emission.text.splitlines()[0]
     assert first.startswith("<!-- steerlab authoring prompt")
-    assert f"sha256:{emission.prompt_spec_hash}" in first
+    assert f"promptSpecHash: sha256:{emission.prompt_spec_hash}" in first
     assert re.fullmatch(r"[0-9a-f]{64}", emission.prompt_spec_hash)
+    assert (f"promptInstanceHash: sha256:{emission.prompt_instance_hash}"
+            in first)
+    assert re.fullmatch(r"[0-9a-f]{64}", emission.prompt_instance_hash)
     # The battery is the part an acceptor re-runs; a prompt without one is a
     # request with no way to check the answer.
     assert "audit battery — compute these and report them" in emission.text
@@ -139,6 +237,35 @@ def test_the_hash_is_over_the_partials_and_the_template_in_assembly_order():
         with open(path, "rb") as handle:
             digest.update(handle.read())
     assert digest.hexdigest() == emission.prompt_spec_hash
+
+
+def test_the_spec_hash_identifies_the_wording_and_the_instance_hash_the_emission():
+    """Review round 6, finding 5. ``promptSpecHash`` is the TEMPLATE's hash and
+    is documented as exactly that — two emissions differing only in the concept
+    share it, which is right for "which wording is this study citing" and
+    useless for "which emission produced this corpus". The instance hash
+    answers the second question."""
+    first = ap.emit("validation-set",
+                    dict(LEGAL_ARGUMENTS["validation-set"], concept="alpha"))
+    second = ap.emit("validation-set",
+                     dict(LEGAL_ARGUMENTS["validation-set"], concept="beta"))
+    assert first.prompt_spec_hash == second.prompt_spec_hash
+    assert first.prompt_instance_hash != second.prompt_instance_hash
+    # And it is reproducible from the emitted body plus the reported
+    # parameters, which is what makes it a citation rather than a serial
+    # number.
+    body = first.text.split("\n", 1)[1].lstrip("\n")
+    assert ap.instance_digest(body, first.parameters) == first.prompt_instance_hash
+
+
+def test_the_instance_hash_moves_with_a_parameter_that_leaves_no_mark_on_the_body():
+    """The parameters are hashed as well as the body, so an argument the
+    wording happens not to interpolate still separates two emissions."""
+    base = dict(LEGAL_ARGUMENTS["reader-pairs"], count="40", heldOut="10")
+    first = ap.emit("reader-pairs", base)
+    second = ap.emit("reader-pairs", dict(base, heldOut="11"))
+    assert first.prompt_spec_hash == second.prompt_spec_hash
+    assert first.prompt_instance_hash != second.prompt_instance_hash
 
 
 def test_the_two_reader_shapes_produce_different_prompts_and_hashes():
@@ -218,6 +345,58 @@ def test_a_parameter_the_kind_does_not_own_is_refused_not_ignored():
     with pytest.raises(ap.AuthoringPromptError) as excinfo:
         ap.emit("battery", {"concept": "c"})
     assert "takes no parameter 'concept'" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("value", ["bananas", "-5", "0", "4.5", "1e3", "٤٠"])
+def test_a_count_that_is_not_a_count_is_refused_by_name(value):
+    """Review round 6, finding 7. The value is substituted into a prompt an
+    LLM obeys literally, so ``--count bananas`` asked an author for bananas
+    rows — and emitted a well-formed prompt with a hash to prove it."""
+    with pytest.raises(ap.AuthoringPromptError) as excinfo:
+        ap.emit("validation-set",
+                dict(LEGAL_ARGUMENTS["validation-set"], count=value))
+    assert "--count takes a whole number of rows above 0" in str(excinfo.value)
+    assert f"got '{value}'" in str(excinfo.value)
+    # Usage, not a workspace gate: the invocation is wrong, not the tree.
+    assert excinfo.value.gate is None
+
+
+def test_a_count_above_the_ceiling_is_refused_with_the_ceiling():
+    with pytest.raises(ap.AuthoringPromptError) as excinfo:
+        ap.emit("validation-set",
+                dict(LEGAL_ARGUMENTS["validation-set"], count="900"))
+    assert f"above the ceiling of {ap.MAXIMUM_COUNT}" in str(excinfo.value)
+    assert "Emit twice and review twice instead" in str(excinfo.value)
+    assert str(ap.MAXIMUM_COUNT) in excinfo.value.repair_action
+
+
+def test_every_count_flag_is_checked_not_only_the_one_named_count():
+    for entry in ap.KINDS:
+        for parameter in entry.parameters:
+            if not parameter.is_count:
+                continue
+            arguments = dict(LEGAL_ARGUMENTS[entry.id])
+            arguments[parameter.key] = "nope"
+            with pytest.raises(ap.AuthoringPromptError) as excinfo:
+                ap.emit(entry.id, arguments)
+            assert parameter.flag in str(excinfo.value)
+
+
+@pytest.mark.parametrize("held_out", ["40", "41"])
+def test_a_held_out_split_that_is_not_a_split_is_refused(held_out):
+    with pytest.raises(ap.AuthoringPromptError) as excinfo:
+        ap.emit("reader-pairs",
+                dict(LEGAL_ARGUMENTS["reader-pairs"], count="40",
+                     heldOut=held_out))
+    assert "the held-out rows are the TRAILING rows" in str(excinfo.value)
+    assert f"--held-out is {held_out} of 40 rows" in str(excinfo.value)
+
+
+def test_a_held_out_split_below_the_count_still_emits():
+    emission = ap.emit("reader-pairs",
+                       dict(LEGAL_ARGUMENTS["reader-pairs"], count="40",
+                            heldOut="10"))
+    assert emission.parameters["heldOut"] == "10"
 
 
 def test_an_unknown_reader_shape_is_refused_with_the_vocabulary():

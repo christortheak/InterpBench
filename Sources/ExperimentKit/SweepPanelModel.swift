@@ -226,15 +226,95 @@ extension SweepPanelModel {
             sha256: ExperimentStore.sha256Hex(data), pinnedHash: pinnedHash)
     }
 
-    /// The cached layer count for a model, from any vector sidecar already on
-    /// disk for it. Nil when nothing has been extracted yet.
+    /// One artifact's claim about a model's depth, for a refusal to name.
+    /// Server twin: `experiment_store.DepthWitness`.
+    public struct DepthWitness: Sendable, Equatable {
+        public let artifact: String
+        public let depth: Int
+
+        public init(artifact: String, depth: Int) {
+            self.artifact = artifact
+            self.depth = depth
+        }
+    }
+
+    /// What this workspace can say about a pinned model's depth.
+    ///
+    /// `depth` is the agreed answer, or nil when nothing states it AND when the
+    /// witnesses conflict — a caller that only wants a number treats both the
+    /// same way, and a caller that must refuse reads `conflict`. Server twin:
+    /// `experiment_store.CachedDepth`.
+    public struct CachedDepth: Sendable, Equatable {
+        public let depth: Int?
+        public let conflict: [DepthWitness]
+
+        public init(depth: Int?, conflict: [DepthWitness] = []) {
+            self.depth = depth
+            self.conflict = conflict
+        }
+    }
+
+    /// The pinned model's depth, from the vector sidecars already on disk for
+    /// it — and the honest answer when they do not agree.
     ///
     /// Deliberately catalog-only: loading a 27B model to answer "what is 0.66
     /// of this network?" is the reason that question went unanswered.
-    public static func cachedLayerCount(modelID: String) -> Int? {
-        VectorCatalog.scan()
-            .first { $0.sidecar.modelID == modelID }?
-            .sidecar.layerCount
+    ///
+    /// **Not every artifact may answer (review round 6, finding 2).** The old
+    /// rule was "the first sidecar for this model wins", and reader-derived
+    /// artifacts are PARTIAL by construction — a reader fitted at block 10
+    /// writes `layerCount: 11`. One of those made an entire 42-block model
+    /// eleven blocks deep, and absolute sweep layers then converted against a
+    /// network that does not exist. Only artifacts that state the model's
+    /// DEPTH are witnesses; `SteeringVectorSidecar.statesModelDepth` is the
+    /// single definition of which those are.
+    ///
+    /// **A revision, when the caller knows one, is part of the question.** Two
+    /// revisions of a checkpoint can differ in depth, so an artifact stamped
+    /// with a different revision is not evidence about this one. An artifact
+    /// carrying NO revision is legacy and unattributable: it cannot be shown
+    /// to be about a different model, so it still counts.
+    ///
+    /// **Disagreement is reported, never resolved.** Picking one of two depths
+    /// would silently pick a network. Server twin:
+    /// `experiment_store.cached_depth`.
+    public static func cachedDepth(
+        modelID: String, revision: String? = nil
+    ) -> CachedDepth {
+        var witnesses: [DepthWitness] = []
+        var seen: Set<Int> = []
+        for artifact in VectorCatalog.scan() {
+            let sidecar = artifact.sidecar
+            guard sidecar.modelID == modelID, sidecar.layerCount > 0 else { continue }
+            if let revision, let stamped = sidecar.revision, stamped != revision {
+                continue
+            }
+            guard sidecar.statesModelDepth else { continue }
+            guard seen.insert(sidecar.layerCount).inserted else { continue }
+            witnesses.append(
+                DepthWitness(
+                    artifact: "runs/\(artifact.directory.lastPathComponent)"
+                        + "/\(artifact.name)",
+                    depth: sidecar.layerCount))
+        }
+        // Sorted, not scan-ordered: the two engines walk runs/ in opposite
+        // directions, and a refusal that names artifacts must read the same on
+        // both.
+        witnesses.sort { $0.artifact < $1.artifact }
+        guard let only = witnesses.first else { return CachedDepth(depth: nil) }
+        if witnesses.count > 1 {
+            return CachedDepth(depth: nil, conflict: witnesses)
+        }
+        return CachedDepth(depth: only.depth)
+    }
+
+    /// The agreed depth, or nil when nothing states it or the witnesses
+    /// conflict. Callers that must refuse on a conflict read `cachedDepth`.
+    /// Server twin: `experiment_store.cached_layer_count`.
+    public static func cachedLayerCount(
+        modelID: String, revision: String? = nil
+    ) -> Int? {
+        cachedDepth(modelID: modelID, revision: revision).depth
     }
 
     /// Resolve straight from a manifest — the app's entry point.

@@ -17,7 +17,7 @@ from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.experiment.prompt_render import (
     READER_CHAT_TEMPLATE_RENDERING_CONVENTION, READER_RENDERING_CONVENTION,
     render_reader)
-from steerlab_server.steering import extractor, repe_reader
+from steerlab_server.steering import extractor, repe_reader, vector_math
 from steerlab_server.steering.vector_math import ScalarProbe
 
 REPO_TEMPLATES = os.path.abspath(os.path.join(
@@ -811,6 +811,58 @@ def test_api_reader_fit_rejected_upload_does_not_clobber_good_pairs(tmp_path, mo
     assert os.listdir(os.path.dirname(pinned)) == ["pairs.jsonl"]
 
 
+def test_api_reader_fit_refuses_an_unrenderable_custom_template_synchronously(
+        tmp_path, monkeypatch):
+    """Review round 6, finding 4. The reviewer's minimal template — valid JSON
+    with an id and a text, and nothing a fit can do with it — used to pass the
+    synchronous checks, replace the canonical corpus, and fail from a job."""
+    _fit_route_harness(tmp_path, monkeypatch)
+    good_rows = [_pair_row(0, "p0", "n0", concept="calm", template_id="x"),
+                 _pair_row(1, "p1", "n1", concept="calm", template_id="x")]
+    good = "".join(json.dumps(r) + "\n" for r in good_rows)
+    pinned = os.path.join(str(tmp_path), "prompts", "readers", "calm", "pairs.jsonl")
+    os.makedirs(os.path.dirname(pinned))
+    with open(pinned, "wb") as handle:
+        handle.write(good.encode("utf-8"))
+    before = open(pinned, "rb").read()
+
+    resp = client.post("/api/reader/fit", json={
+        "concept": "calm", "templateJSON": json.dumps({"id": "x", "text": "x"}),
+        "pairsJSONL": good})
+    assert resp.status_code == 400
+    assert "{{stimulus}}" in resp.json()["detail"]
+    assert open(pinned, "rb").read() == before
+    assert os.listdir(os.path.dirname(pinned)) == ["pairs.jsonl"]
+
+
+@pytest.mark.parametrize("template,expected", [
+    ({"id": "x", "text": "S: {{stimulus}}", "latToken": "penultimate"},
+     "unsupported latToken"),
+    ({"id": "x", "text": "S: {{stimulus}} {{instruction}}"},
+     "declares no instructionPair"),
+    ({"id": "x", "text": "S: {{stimulus}}",
+      "instructionPair": {"experimental": "a", "reference": "b"}},
+     "has no {{instruction}} slot"),
+    ({"id": "x", "text": "S: {{stimulus}} {{concept}}"},
+     "conceptSlot=false"),
+    ({"id": "x", "text": "<bos>S: {{stimulus}}"},
+     "special/chat-template marker"),
+])
+def test_api_reader_fit_refuses_each_unrenderable_template_shape(
+        tmp_path, monkeypatch, template, expected):
+    """Every rule the queued job would have applied, applied synchronously and
+    typed — parse, slot coherence, LAT vocabulary, scaffold marker hygiene."""
+    _fit_route_harness(tmp_path, monkeypatch)
+    rows = [_pair_row(0, "p0", "n0", template_id="x"),
+            _pair_row(1, "p1", "n1", template_id="x")]
+    resp = client.post("/api/reader/fit", json={
+        "concept": "fear", "templateJSON": json.dumps(template),
+        "pairsJSONL": "".join(json.dumps(r) + "\n" for r in rows)})
+    assert resp.status_code == 400
+    assert expected in resp.json()["detail"]
+    assert not os.path.exists(os.path.join(str(tmp_path), "prompts", "readers"))
+
+
 def test_api_reader_fit_snapshots_active_model_at_submission(tmp_path, monkeypatch):
     # No explicit modelID: the ACTIVE model's id/revision are snapshotted
     # synchronously at submission, and the job acquires exactly that snapshot —
@@ -1271,12 +1323,13 @@ def test_legacy_artifact_decodes_with_stamped_legacy_semantics():
     assert repe_reader.score_activation(reader, [3.0, 7.0]) == pytest.approx(1.25)
 
 
-# --- derive-steering conversion applies the probe orientation ------------------
+# --- derive-steering conversion: whose sign the bytes carry -------------------
 
 def test_derived_vector_applies_the_probe_orientation():
-    """Audit finding 1. ``ScalarProbe.score`` is ``orientation · (a·d − c)``,
-    so a reader whose PC1 came out anti-aligned with the positive class stores
-    a direction pointing AWAY from the concept."""
+    """Round-5 audit finding 1, and still the rule under ``trainMajority``:
+    ``ScalarProbe.score`` is ``orientation · (a·d − c)``, so a reader whose PC1
+    came out anti-aligned with the positive class stores a direction pointing
+    AWAY from the concept."""
     reader = _manual_reader(layer=1)
     reader.probe = ScalarProbe(
         direction=[1.0, 0.0], projection_center=0.5, projection_scale=2.0,
@@ -1298,6 +1351,94 @@ def test_derived_vector_applies_the_probe_orientation():
         forward, reader_file_name="r.json", reader_bytes=b"{}")
     assert forward_vectors.per_layer[1] == pytest.approx([1.0, 0.0])
     assert forward_sidecar.readerProbeOrientation == 1.0
+    # Held-out never voted on a train-majority fit, so there is nothing to
+    # stamp — the field is absent, not False.
+    assert sidecar.trainHeldOutSignDisagreement is None
+    assert forward_sidecar.trainHeldOutSignDisagreement is None
+
+
+def test_derived_vector_keeps_the_held_out_sign_when_train_disagrees():
+    """Review round 6. Under ``heldOutPairAgreement`` the fitted direction is
+    ALREADY the held-out-chosen sign; ``probe.orientation`` still comes from
+    the train class means. Applying it when the splits disagree re-flipped the
+    vector to the direction held-out rejected — the reviewer's repro exactly:
+    direction [−1, 0], orientation −1, convention heldOutPairAgreement used to
+    derive [1, 0]."""
+    reader = _manual_reader(layer=1)
+    reader.sign_convention = repe_reader.HELD_OUT_PAIR_AGREEMENT
+    reader.probe = ScalarProbe(
+        direction=[-1.0, 0.0], projection_center=0.5, projection_scale=2.0,
+        orientation=-1.0, positive_mean=-1.0, negative_mean=1.0,
+        activation_center=[1.0, 0.0])
+    vectors, sidecar = repe_reader.derive_steering_sidecar(
+        reader, reader_file_name="reader-fear-layer1.json", reader_bytes=b"{}")
+    assert vectors.per_layer[1] == pytest.approx([-1.0, 0.0])
+    assert sidecar.readerSignConvention == "heldOutPairAgreement"
+    assert sidecar.signConvention == "heldOutPairAgreement"
+    assert sidecar.readerProbeOrientation == -1.0
+    # The disagreement is diagnostic information, so it is stamped rather than
+    # silently discarded.
+    assert sidecar.trainHeldOutSignDisagreement is True
+
+
+def test_derived_vector_stamps_agreement_when_both_splits_chose_the_same_sign():
+    reader = _manual_reader(layer=1)
+    reader.sign_convention = repe_reader.HELD_OUT_PAIR_AGREEMENT
+    vectors, sidecar = repe_reader.derive_steering_sidecar(
+        reader, reader_file_name="r.json", reader_bytes=b"{}")
+    assert vectors.per_layer[1] == pytest.approx([1.0, 0.0])
+    assert sidecar.readerProbeOrientation == 1.0
+    assert sidecar.trainHeldOutSignDisagreement is False
+
+
+def test_a_legacy_schema_1_reader_derives_under_train_majority():
+    """A schema-1 artifact carries no ``signConvention``; ``from_dict`` reads
+    that as train-majority, so the round-5 behaviour is what it gets."""
+    legacy = {
+        "artifactType": repe_reader.ARTIFACT_TYPE,
+        "schemaVersion": 1, "modelID": "org/m", "revision": "abc",
+        "concept": "fear", "layer": 1, "datasetHash": "dh",
+        "template": {"id": "unnamed-scenario-v1", "text": "S: {{stimulus}} q",
+                     "conceptSlot": False, "latToken": "final", "hash": "th",
+                     "divergence": "unnamed-clean-room"},
+        "probe": {"direction": [1.0, 0.0], "projectionCenter": 0.5,
+                  "projectionScale": 2.0, "orientation": -1.0,
+                  "positiveMean": -1.0, "negativeMean": 1.0,
+                  "activationCenter": [1.0, 0.0]},
+        "pc1ExplainedVariance": 0.87, "trainAccuracy": 1.0,
+        "heldOutAccuracy": 0.8, "trainPairCount": 4, "heldOutPairCount": 2,
+        "renderingConvention": "rawCompletion scaffold",
+        "extractionDate": "2026-07-03T00:00:00Z",
+    }
+    reader = repe_reader.ReaderArtifact.from_dict(legacy)
+    assert reader.sign_convention == repe_reader.TRAIN_MAJORITY
+    vectors, sidecar = repe_reader.derive_steering_sidecar(
+        reader, reader_file_name="r.json", reader_bytes=b"{}")
+    assert vectors.per_layer[1] == pytest.approx([-1.0, 0.0])
+    assert sidecar.trainHeldOutSignDisagreement is None
+
+
+def test_held_out_accuracy_does_not_move_with_the_direction_s_sign():
+    """The reviewer's second claim, audited: it does NOT hold. ``scalar_probe``
+    derives ``orientation``, ``projectionCenter`` and ``projectionScale`` from
+    the same direction it is handed, so flipping the direction flips the
+    orientation and the centre together and every score is identical. Held-out
+    accuracy — and therefore the recommended layer built on it — is exactly
+    sign-invariant."""
+    positive = [[2.0, 0.5], [3.0, -0.5], [2.5, 0.0]]
+    negative = [[-2.0, 0.5], [-3.0, -0.5], [-2.5, 0.0]]
+    held_positive = [[1.5, 0.2], [2.2, -0.3]]
+    held_negative = [[-1.8, 0.1], [-2.4, 0.4]]
+    center = vector_math.mean(positive + negative)
+    forward = vector_math.scalar_probe([1.0, 0.0], positive, negative,
+                                       activation_center=center)
+    flipped = vector_math.scalar_probe([-1.0, 0.0], positive, negative,
+                                       activation_center=center)
+    assert forward.orientation == 1.0 and flipped.orientation == -1.0
+    for row in held_positive + held_negative:
+        assert forward.score(row) == pytest.approx(flipped.score(row))
+    assert (repe_reader._pair_accuracy(forward, held_positive, held_negative)
+            == repe_reader._pair_accuracy(flipped, held_positive, held_negative))
 
 
 def test_derived_sidecar_carries_reader_method_and_instrument_pins():

@@ -1337,21 +1337,111 @@ def depth_fraction_for_layer(layer: int, depth: int) -> float:
     return (float(layer) + 0.5) / float(depth)
 
 
-def cached_layer_count(model_id: str, root: str | None = None) -> int | None:
-    """The pinned model's depth, from any vector sidecar already on disk for
-    it — None when nothing has been extracted for it yet.
+@dataclass(frozen=True)
+class DepthWitness:
+    """One artifact's claim about a model's depth, for a refusal to name.
+    Swift twin: ``SweepPanelModel.DepthWitness``."""
+
+    artifact: str
+    depth: int
+
+
+@dataclass(frozen=True)
+class CachedDepth:
+    """What this workspace can say about a pinned model's depth.
+
+    ``depth`` is the agreed answer, or ``None`` when nothing states it and when
+    the witnesses conflict — a caller that only wants a number treats both the
+    same way, and a caller that must refuse reads ``conflict``. Swift twin:
+    ``SweepPanelModel.CachedDepth``."""
+
+    depth: int | None
+    conflict: tuple[DepthWitness, ...] = ()
+
+
+def cached_depth(model_id: str, root: str | None = None,
+                 *, revision: str | None = None) -> CachedDepth:
+    """The pinned model's depth, from the vector sidecars already on disk for
+    it — and the honest answer when they do not agree.
 
     Deliberately catalog-only, exactly as Swift
-    ``SweepPanelModel.cachedLayerCount`` is: loading a 27B model to answer
-    "what is 0.66 of this network?" is the reason that question went
-    unanswered. The import is local because this module is on the light-install
-    path and ``catalog`` walks the tree.
-    """
+    ``SweepPanelModel.cachedDepth`` is: loading a 27B model to answer "what is
+    0.66 of this network?" is the reason that question went unanswered. The
+    import is local because this module is on the light-install path and
+    ``catalog`` walks the tree.
+
+    **Not every artifact may answer (review round 6, finding 2).** The old rule
+    was "the first sidecar for this model wins", and reader-derived artifacts
+    are PARTIAL by construction — a reader fitted at block 10 writes
+    ``layerCount: 11``. One of those sitting in an early run directory made an
+    entire 42-block model eleven blocks deep, and absolute sweep layers then
+    converted against a network that does not exist. Only artifacts that state
+    the model's DEPTH are witnesses; ``catalog.covers_model_depth`` is the
+    single definition of which those are.
+
+    **A revision, when the caller knows one, is part of the question.** Two
+    revisions of a checkpoint can differ in depth, so an artifact stamped with
+    a different revision is not evidence about this one. An artifact carrying
+    NO revision is legacy and unattributable: it cannot be shown to be about a
+    different model, so it still counts.
+
+    **Disagreement is reported, never resolved.** Picking one of two depths
+    would silently pick a network."""
     from . import catalog
+    witnesses: list[DepthWitness] = []
+    seen: set[int] = set()
     for artifact in catalog.list_vectors(root):
-        if artifact.modelID == model_id and artifact.layerCount > 0:
-            return int(artifact.layerCount)
-    return None
+        if artifact.modelID != model_id or artifact.layerCount <= 0:
+            continue
+        if revision and artifact.revision and artifact.revision != revision:
+            continue
+        if not artifact.states_model_depth:
+            continue
+        depth = int(artifact.layerCount)
+        if depth in seen:
+            continue
+        seen.add(depth)
+        witnesses.append(DepthWitness(
+            artifact=artifact.workspaceRelativeID or artifact.name, depth=depth))
+    # Sorted, not scan-ordered: the two engines walk runs/ in opposite
+    # directions, and a refusal that names artifacts must read the same on
+    # both.
+    witnesses.sort(key=lambda w: w.artifact)
+    if not witnesses:
+        return CachedDepth(depth=None)
+    if len(witnesses) > 1:
+        return CachedDepth(depth=None, conflict=tuple(witnesses))
+    return CachedDepth(depth=witnesses[0].depth)
+
+
+def cached_layer_count(model_id: str, root: str | None = None,
+                       *, revision: str | None = None) -> int | None:
+    """The agreed depth, or ``None`` when nothing states it or the witnesses
+    conflict. Callers that must refuse on a conflict read :func:`cached_depth`.
+    Swift twin: ``SweepPanelModel.cachedLayerCount``."""
+    return cached_depth(model_id, root, revision=revision).depth
+
+
+def conflicting_depth_message(model_id: str,
+                              witnesses: tuple[DepthWitness, ...]) -> str:
+    """THE refusal for a workspace whose artifacts disagree about a model's
+    depth. Swift twin: ``ExperimentStore.conflictingDepthMessage``."""
+    said = ", ".join(f"{w.artifact} says {w.depth}" for w in witnesses)
+    return (f"the vector artifacts in this workspace disagree about how deep "
+            f"'{model_id}' is — {said}. A layer index means nothing until they "
+            "agree, and choosing one of them for you would silently choose a "
+            "network")
+
+
+def conflicting_depth_repair(name: str) -> str:
+    """THE repair for that disagreement. Fractions come first because they need
+    no stored depth at all. Swift twin:
+    ``ExperimentStore.conflictingDepthRepair``."""
+    return (f"steerlab-cli experiment set-sweep-grid {name} "
+            "--layer-fractions 0.5,0.7,0.85  (fractions resolve against the "
+            "model the sweep actually loads, so no stored depth is needed); or "
+            "remove the artifact whose depth is wrong for this model, then "
+            f"steerlab-cli experiment set-sweep-grid {name} --layers <L>,…")
 
 
 def sweep_grid_repair(name: str) -> str:
@@ -1431,12 +1521,19 @@ def set_sweep_grid(name: str, *, layer_fractions=None, layers=None,
     for key, value in _DEFAULT_SWEEP_BLOCK.items():
         spec.setdefault(key, list(value) if isinstance(value, list) else value)
     model_id = str(d.get("modelID") or "")
-    depth = layer_count if layer_count is not None \
-        else cached_layer_count(model_id, root)
+    known = (CachedDepth(depth=int(layer_count)) if layer_count is not None
+             else cached_depth(model_id, root,
+                               revision=str(d.get("modelRevision") or "") or None))
+    depth = known.depth
     fractions = list(layer_fractions) if layer_fractions is not None \
         else list(spec["layerFractions"])
     if layers is not None:
         absolute = [int(layer) for layer in layers]
+        if known.conflict:
+            raise ExperimentStoreError(
+                conflicting_depth_message(model_id, known.conflict),
+                gate=lifecycle_gates.MISSING_PREREQUISITE,
+                repair=conflicting_depth_repair(name))
         if not depth or depth <= 0:
             raise ExperimentStoreError(
                 f"absolute layers were declared for '{name}', but nothing in "

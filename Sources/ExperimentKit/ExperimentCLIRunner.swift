@@ -1045,9 +1045,15 @@ public struct ExperimentCLIRunner: Sendable {
         var payload: [String: JSONValue] = [
             "kind": .string(emission.kind),
             "prompt": .string(emission.text),
-            // The provenance citation. Named exactly as a manifest would
-            // record it, so a study can carry it verbatim.
+            // The provenance citations. Named exactly as a manifest would
+            // record them, so a study can carry them verbatim. The SPEC hash
+            // identifies the wording (template + partials, pre-substitution);
+            // the INSTANCE hash identifies this emission (that wording
+            // rendered with these parameters). Two emissions differing only in
+            // concept share the first and differ in the second.
             "promptSpecHash": .string("sha256:\(emission.promptSpecHash)"),
+            "promptInstanceHash": .string(
+                "sha256:\(emission.promptInstanceHash)"),
             "templateFiles": .array(emission.templateFiles.map { .string($0) }),
             "fromWorkspaceCopy": .bool(emission.fromWorkspaceCopy),
             "destination": .string(emission.destination),
@@ -1058,7 +1064,9 @@ public struct ExperimentCLIRunner: Sendable {
         return ExperimentCLIResult(
             message: "emitted the '\(emission.kind)' authoring prompt "
                 + "(\(emission.text.count) characters, promptSpecHash "
-                + "sha256:\(emission.promptSpecHash.prefix(12))…)"
+                + "sha256:\(emission.promptSpecHash.prefix(12))…, "
+                + "promptInstanceHash "
+                + "sha256:\(emission.promptInstanceHash.prefix(12))…)"
                 + (wrotePath.map { " → \($0)" } ?? ""),
             changed: wrotePath != nil,
             payload: payload,

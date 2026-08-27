@@ -517,3 +517,47 @@ def test_list_vectors_exposes_workspace_relative_id(tmp_path):
         "runs", "20260101T000000000-toy-french", "french")
     assert os.path.isabs(v.id)
     assert asdict(v)["workspaceRelativeID"] == v.workspaceRelativeID
+
+
+# --- which artifacts may state a model's depth (review round 6, finding 2) ---
+
+def test_the_depth_discriminator_reads_the_stamp_first_then_the_method():
+    """One rule, in one place. ``layerCount`` is a ROW count, and only some
+    artifact kinds have one row per block — a reader-derived direction writes
+    zeros below its layer and stops, so reading a model's depth off one of them
+    reports the reader's layer plus one."""
+    def covers(**kwargs):
+        return catalog.covers_model_depth(
+            **{"covers": None, "extraction_method": None,
+               "recipe_method": None, **kwargs})
+
+    # Reader-derived: partial, by the stamp AND by the method (so pre-stamp
+    # artifacts of that family are still recognised).
+    assert not covers(covers=False)
+    assert not covers(extraction_method="repeReaderLAT")
+    assert not covers(recipe_method="repeReaderLAT")
+    # Full-depth families, stamped or not.
+    for method in ("lat", "meanDifference", "emotionGrandMean",
+                   "designatedReference", "optvec", "jlensTokenDirection",
+                   "gemmaScopeSAE", "pinnedArtifact"):
+        assert covers(extraction_method=method), method
+    # Old enough to carry no method at all: the family predates the reader.
+    assert covers()
+    # An explicit stamp always wins over the method.
+    assert covers(covers=True, extraction_method="repeReaderLAT")
+    assert not covers(covers=False, extraction_method="lat")
+
+
+def test_a_catalog_row_carries_the_stamp_and_answers_for_itself(tmp_path):
+    run = os.path.join(str(tmp_path), "runs", "20260101T000000000-derived")
+    os.makedirs(run)
+    with open(os.path.join(run, "d.json"), "w", encoding="utf-8") as handle:
+        json.dump({"modelID": "org/m", "layerCount": 11, "hiddenSize": 4,
+                   "concept": "d", "extractionMethod": "repeReaderLAT",
+                   "coversModelDepth": False}, handle)
+    with open(os.path.join(run, "d.safetensors"), "wb") as handle:
+        handle.write(b"\0")
+    (row,) = catalog.list_vectors(str(tmp_path))
+    assert row.coversModelDepth is False
+    assert not row.states_model_depth
+    assert asdict(row)["coversModelDepth"] is False

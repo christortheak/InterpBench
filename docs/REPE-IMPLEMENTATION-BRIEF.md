@@ -228,14 +228,40 @@ import convention). The sidecar stamps `extractionMethod: "repeReaderLAT"`,
 reader's own `readerLayer` / `readerTemplateID` / `readerTemplateHash` /
 `readerContrastMode` / `readerSignConvention`.
 
-**The probe's orientation is applied to the bytes** (audit finding 1, fixed
-2026-08-27). `ScalarProbe.score` is `orientation · (a·direction − centre)`, so
-the stored `direction` points at "more concept" only when `orientation == +1`.
-Every reader whose PC1 came out anti-aligned with the positive class carries
-`orientation == −1`, and shipping its raw direction injected the concept
-BACKWARDS while every provenance stamp said forwards. A steering vector has no
-orientation field to carry the sign in, so the sign is folded into the bytes
-and `readerProbeOrientation` records that it was.
+**Whose sign the bytes carry — and it depends on the reader's
+`signConvention`.** `ScalarProbe.score` is `orientation · (a·direction −
+centre)`, so a stored `direction` points at "more concept" only when
+`orientation == +1`. When train-label majority signed every direction, applying
+the orientation was simply restating that verdict in the one place a steering
+vector can hold a sign — without it, a reader whose PC1 came out anti-aligned
+injected the concept BACKWARDS while every provenance stamp said forwards.
+Held-out sign selection then changed who decides: under
+`signConvention: "heldOutPairAgreement"` the fitted `direction` ALREADY carries
+the held-out-chosen sign, while `probe.orientation` still comes from the train
+class means — so applying it when the two splits disagree re-flips the vector
+to the direction held-out rejected. The conversion is therefore
+convention-aware:
+
+* **`heldOutPairAgreement`** — the fitted direction is authoritative and ships
+  unflipped. A train/held-out disagreement (`orientation == −1`) is stamped as
+  `trainHeldOutSignDisagreement: true` rather than discarded, because "the
+  training labels would have signed this the other way" is a fact about the
+  direction's stability. Agreement stamps `false`; the field is present either
+  way whenever held-out did the signing.
+* **`trainMajority`**, and every legacy artifact whose absent `signConvention`
+  reads as train-majority — the orientation is applied to the bytes, and
+  `trainHeldOutSignDisagreement` is absent because held-out never voted.
+
+`readerProbeOrientation` records the orientation under both conventions, so
+what the conversion did is recoverable from the artifact alone.
+
+**Held-out accuracy is untouched by any of this.** `heldOutAccuracy`,
+`trainAccuracy`, `signHeldOutAccuracy` and the layer recommendation built on
+them are all invariant to the direction's sign: `scalar_probe` derives
+`orientation`, `projectionCenter` and `projectionScale` from the same direction
+it is handed, so flipping the direction flips the orientation and the centre
+together and every score comes out identical. A sign disagreement shows up as a
+sub-chance `heldOutAccuracy`, which is the honest signal, not a corrupted one.
 
 **Attaching one.** `repeReaderLAT` is in both engines' `ExtractionMethod`
 vocabulary, so a derived vector attaches as a `pinnedArtifact` whose SOURCE

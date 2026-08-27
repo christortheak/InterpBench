@@ -155,11 +155,12 @@ import Testing
         }
     }
 
-    /// The orientation fix is visible on the ATTACHED artifact, not only in
-    /// the conversion: a reader with `orientation == −1` produces bytes
-    /// pointing the way its probe reads, and the sidecar records that the sign
-    /// was applied.
-    @Test func attachedVectorCarriesTheAppliedOrientation() throws {
+    /// The sign rule is visible on the ATTACHED artifact, not only in the
+    /// conversion. This reader was signed by HELD-OUT pair agreement, so its
+    /// fitted direction ships unflipped even though the train class means read
+    /// the other way — and that disagreement is stamped rather than discarded
+    /// (review round 6, finding 1).
+    @Test func attachedVectorCarriesTheHeldOutSignAndTheDisagreement() throws {
         try ExperimentRootOverrideLock.withTempRoot(prefix: "reader-attach") { root in
             try WorkspaceCompute.declare(.localMLX, root: root)
             _ = try ExperimentStore.create(
@@ -167,11 +168,23 @@ import Testing
                 modelID: "mlx-community/gemma-3-4b-it-4bit")
             let (_, sidecar) = try plantDerived(root: root, orientation: -1)
             #expect(sidecar.readerProbeOrientation == -1)
+            #expect(sidecar.trainHeldOutSignDisagreement == true)
             #expect(sidecar.readerLayer == 1)
             #expect(sidecar.readerTemplateID == "unnamed-scenario-v1")
             #expect(sidecar.readerSignConvention == "heldOutPairAgreement")
             #expect(sidecar.signConvention == "heldOutPairAgreement")
             #expect(sidecar.readerContrastMode == "supervisedContent")
+        }
+    }
+
+    @Test func anAgreeingReaderStampsTheAgreement() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "reader-attach") { root in
+            try WorkspaceCompute.declare(.localMLX, root: root)
+            _ = try ExperimentStore.create(
+                name: "reader-study", description: "",
+                modelID: "mlx-community/gemma-3-4b-it-4bit")
+            let (_, sidecar) = try plantDerived(root: root, orientation: 1)
+            #expect(sidecar.trainHeldOutSignDisagreement == false)
         }
     }
 }

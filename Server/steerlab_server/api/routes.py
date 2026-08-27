@@ -1556,17 +1556,22 @@ def build_router(state: ServiceState) -> APIRouter:
             except repe_reader.RepeReaderError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
         else:
+            # The SAME parse the queued job will do, in memory, before any
+            # canonical byte moves (review round 6, finding 4). The old check
+            # was JSON-ness plus two keys, so a template with an unsupported
+            # latToken, a missing {{stimulus}} slot, an instructionPair with no
+            # slot to fill, or an embedded turn marker sailed through — and
+            # took the concept's pinned pairs.jsonl with it.
             template_bytes = str(template_json).encode("utf-8")
             try:
-                parsed = json.loads(template_bytes.decode("utf-8"))
-            except json.JSONDecodeError as exc:
-                raise HTTPException(status_code=400,
-                                    detail=f"invalid templateJSON: {exc}")
-            for key in ("id", "text"):
-                if not isinstance(parsed, dict) or key not in parsed:
-                    raise HTTPException(status_code=400,
-                                        detail=f"templateJSON missing {key!r}")
-            custom_id = str(parsed["id"]).strip()
+                template = repe_reader.parse_template(
+                    template_bytes, source="uploaded templateJSON")
+            except repe_reader.RepeReaderError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            # NOT stripped: the job persists these bytes as `<id>.json` and
+            # `load_template` compares the id to the filename, so the name has
+            # to be the id the template actually declares.
+            custom_id = template.id
             _safe_name(custom_id)
             custom_template_file = f"{custom_id}.json"
 
@@ -1658,7 +1663,7 @@ def build_router(state: ServiceState) -> APIRouter:
         # Template pin: every row must pin the template this fit uses. The fit
         # re-checks, but failing synchronously keeps a mismatched upload out of
         # the canonical location (and returns a 400 instead of a failed job).
-        fit_template_id = template.id if template is not None else custom_id
+        fit_template_id = template.id
         mismatched = sorted({p.template_id for p in dataset.pairs
                              if p.template_id != fit_template_id})
         if mismatched:
@@ -1666,6 +1671,18 @@ def build_router(state: ServiceState) -> APIRouter:
                 status_code=400,
                 detail=f"pairs pin template(s) {mismatched}, but this fit uses "
                        f"{fit_template_id!r}")
+
+        # The fit's OWN rendering, dry-run over the real rows: LAT token, slot
+        # rules, contrast-mode resolution and scaffold marker hygiene. Model-
+        # free, so it belongs here rather than in the job — and it has to be
+        # here, because everything after this line is a write (review round 6,
+        # finding 4).
+        try:
+            repe_reader.validate_fit_renders(
+                dataset, template, model_id=fit_model_id or "",
+                rendering=fit_rendering)
+        except repe_reader.RepeReaderError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
         # All synchronous validation passed — only now does an uploaded corpus
         # reach its canonical git-versionable home under ``prompts/`` (a fixed

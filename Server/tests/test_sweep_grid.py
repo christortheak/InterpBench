@@ -44,17 +44,20 @@ def _draft(root, name="s", model="org/m"):
     return es.load_raw(name, root)
 
 
-def _vector_sidecar(root, model="org/m", layer_count=34, concept="alpha"):
+def _vector_sidecar(root, model="org/m", layer_count=34, concept="alpha",
+                    run_name="20260101-000000-x", extra=None):
     """A minimal vector sidecar+tensor pair, which is the ONLY thing in a
     workspace that states how deep a model is (``catalog.list_vectors``
     refuses a sidecar without both ``modelID`` and ``layerCount``, and the
     tensor's absence makes the pair invisible)."""
-    run = os.path.join(root, "runs", "20260101-000000-x")
+    run = os.path.join(root, "runs", run_name)
     os.makedirs(run, exist_ok=True)
+    sidecar = {"modelID": model, "layerCount": layer_count,
+               "hiddenSize": 8, "concept": concept}
+    sidecar.update(extra or {})
     with open(os.path.join(run, f"{concept}.json"), "w",
               encoding="utf-8") as handle:
-        json.dump({"modelID": model, "layerCount": layer_count,
-                   "hiddenSize": 8, "concept": concept}, handle)
+        json.dump(sidecar, handle)
     with open(os.path.join(run, f"{concept}.safetensors"), "wb") as handle:
         handle.write(b"\0")
 
@@ -275,6 +278,88 @@ def test_the_depth_comes_from_the_pinned_model_not_from_any_vector(tmp_path):
     with pytest.raises(es.ExperimentStoreError) as excinfo:
         es.set_sweep_grid("s", layers=[13], root=root)
     assert excinfo.value.gate == lifecycle_gates.MISSING_PREREQUISITE
+
+
+def test_a_partial_reader_derived_artifact_does_not_state_the_models_depth(
+        tmp_path):
+    """Review round 6, finding 2. A reader fitted at block 10 writes
+    ``layerCount: 11``; sitting in the earliest run directory it used to win
+    the first-sidecar race and make a 42-block model eleven blocks deep."""
+    root = str(tmp_path)
+    _draft(root, model="org/m")
+    _vector_sidecar(root, layer_count=11, concept="reader-derived",
+                    run_name="20260101-000000-a",
+                    extra={"extractionMethod": "repeReaderLAT",
+                           "coversModelDepth": False, "readerLayer": 10})
+    _vector_sidecar(root, layer_count=42, concept="full",
+                    run_name="20260202-000000-b",
+                    extra={"extractionMethod": "lat"})
+    assert es.cached_layer_count("org/m", root) == 42
+    report = es.set_sweep_grid("s", layers=[28], root=root)["_sweepGrid"]
+    assert report["layerCount"] == 42
+    assert report["resolvedLayers"] == [28]
+
+
+def test_a_pre_stamp_reader_artifact_is_partial_by_its_method(tmp_path):
+    """Reader-derived vectors written before ``coversModelDepth`` existed carry
+    no stamp — the method is the witness, because the whole family is partial."""
+    root = str(tmp_path)
+    _draft(root, model="org/m")
+    _vector_sidecar(root, layer_count=11, concept="reader-derived",
+                    run_name="20260101-000000-a",
+                    extra={"extractionMethod": "repeReaderLAT"})
+    _vector_sidecar(root, layer_count=42, concept="full",
+                    run_name="20260202-000000-b")
+    assert es.cached_layer_count("org/m", root) == 42
+
+
+def test_witnesses_that_disagree_about_the_depth_refuse_by_name(tmp_path):
+    """Two full-depth artifacts cannot both be right, and picking one would
+    silently pick a network."""
+    root = str(tmp_path)
+    _draft(root, model="org/m")
+    _vector_sidecar(root, layer_count=34, concept="alpha",
+                    run_name="20260101-000000-a")
+    _vector_sidecar(root, layer_count=42, concept="beta",
+                    run_name="20260202-000000-b")
+    known = es.cached_depth("org/m", root)
+    assert known.depth is None
+    assert [w.depth for w in known.conflict] == [34, 42]
+    with pytest.raises(es.ExperimentStoreError) as excinfo:
+        es.set_sweep_grid("s", layers=[13], root=root)
+    assert excinfo.value.gate == lifecycle_gates.MISSING_PREREQUISITE
+    assert "disagree about how deep 'org/m' is" in str(excinfo.value)
+    assert "runs/20260101-000000-a/alpha says 34" in str(excinfo.value)
+    assert "runs/20260202-000000-b/beta says 42" in str(excinfo.value)
+
+
+def test_an_artifact_stamped_with_another_revision_is_not_evidence(tmp_path):
+    """A revision the caller knows is part of the depth question; an artifact
+    carrying no revision is legacy and still counts."""
+    root = str(tmp_path)
+    es.create("s", model_id="org/m", root=root)
+    es.pin_model_revision("s", "rev-a", root=root)
+    _vector_sidecar(root, layer_count=42, concept="alpha",
+                    run_name="20260101-000000-a", extra={"revision": "rev-a"})
+    _vector_sidecar(root, layer_count=11, concept="beta",
+                    run_name="20260202-000000-b", extra={"revision": "rev-b"})
+    assert es.cached_depth("org/m", root, revision="rev-a").depth == 42
+    report = es.set_sweep_grid("s", layers=[28], root=root)["_sweepGrid"]
+    assert report["layerCount"] == 42
+
+
+def test_no_candidate_at_all_is_still_the_missing_prerequisite_path(tmp_path):
+    root = str(tmp_path)
+    _draft(root, model="org/m")
+    _vector_sidecar(root, layer_count=11, concept="reader-derived",
+                    extra={"extractionMethod": "repeReaderLAT",
+                           "coversModelDepth": False})
+    assert es.cached_layer_count("org/m", root) is None
+    assert es.cached_depth("org/m", root).conflict == ()
+    with pytest.raises(es.ExperimentStoreError) as excinfo:
+        es.set_sweep_grid("s", layers=[5], root=root)
+    assert excinfo.value.gate == lifecycle_gates.MISSING_PREREQUISITE
+    assert "nothing in this workspace states how deep" in str(excinfo.value)
 
 
 # =============================================================================

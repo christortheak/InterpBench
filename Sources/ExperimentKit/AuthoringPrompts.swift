@@ -99,15 +99,23 @@ public enum AuthoringPrompts {
         /// nothing that describes the study is ever defaulted, because a
         /// plausible default there is a study nobody declared.
         public let defaultValue: String?
+        /// Whether the value is a ROW COUNT. Counts are substituted into a
+        /// prompt an LLM will obey literally, so `--count bananas` used to
+        /// reach the author as an instruction to write "bananas" rows, and
+        /// `--count -5` as an instruction nobody can follow. Checked at
+        /// emission (review round 6, finding 7). Server twin:
+        /// `authoring_prompts.Parameter.is_count`.
+        public let isCount: Bool
 
         public init(
             key: String, flag: String, purpose: String,
-            defaultValue: String? = nil
+            defaultValue: String? = nil, isCount: Bool = false
         ) {
             self.key = key
             self.flag = flag
             self.purpose = purpose
             self.defaultValue = defaultValue
+            self.isCount = isCount
         }
 
         public var isRequired: Bool { defaultValue == nil }
@@ -149,10 +157,12 @@ public enum AuthoringPrompts {
                 conceptParameter, positiveParameter, negativeParameter,
                 .init(
                     key: "count", flag: "--count",
-                    purpose: "Pairs to write.", defaultValue: "48"),
+                    purpose: "Pairs to write.", defaultValue: "48",
+                    isCount: true),
                 .init(
                     key: "validationCount", flag: "--validation-count",
-                    purpose: "Held-out probe rows.", defaultValue: "40"),
+                    purpose: "Held-out probe rows.", defaultValue: "40",
+                    isCount: true),
             ],
             destination: "prompts/concepts/{{concept}}/"),
         .init(
@@ -166,7 +176,8 @@ public enum AuthoringPrompts {
                         + "sentence or two."),
                 .init(
                     key: "count", flag: "--count",
-                    purpose: "Rows to write.", defaultValue: "40"),
+                    purpose: "Rows to write.", defaultValue: "40",
+                    isCount: true),
             ],
             destination: "prompts/tasks/{{concept}}-choices.jsonl"),
         .init(
@@ -176,7 +187,8 @@ public enum AuthoringPrompts {
                 conceptParameter, positiveParameter, negativeParameter,
                 .init(
                     key: "count", flag: "--count",
-                    purpose: "Rows to write.", defaultValue: "40"),
+                    purpose: "Rows to write.", defaultValue: "40",
+                    isCount: true),
             ],
             destination: "prompts/concepts/{{concept}}/validation.jsonl"),
         .init(
@@ -195,11 +207,13 @@ public enum AuthoringPrompts {
                     defaultValue: "contentPair"),
                 .init(
                     key: "count", flag: "--count",
-                    purpose: "Rows to write.", defaultValue: "40"),
+                    purpose: "Rows to write.", defaultValue: "40",
+                    isCount: true),
                 .init(
                     key: "heldOut", flag: "--held-out",
                     purpose: "Trailing rows marked split \"test\"; they decide "
-                        + "the direction's sign.", defaultValue: "10"),
+                        + "the direction's sign.", defaultValue: "10",
+                    isCount: true),
             ],
             destination: "prompts/readers/{{concept}}/pairs.jsonl"),
         .init(
@@ -212,7 +226,8 @@ public enum AuthoringPrompts {
                     defaultValue: "capability"),
                 .init(
                     key: "count", flag: "--count",
-                    purpose: "Items to write.", defaultValue: "20"),
+                    purpose: "Items to write.", defaultValue: "20",
+                    isCount: true),
             ],
             destination: "prompts/batteries/{{name}}.jsonl"),
     ]
@@ -227,6 +242,60 @@ public enum AuthoringPrompts {
     /// paragraph the emitter concatenates.
     public static let readerShapes = ["contentPair", "singleStimulus"]
 
+    /// The largest row count any kind will ask for. A STATED ceiling, not a
+    /// technical one: the delivery is one LLM generation, and past a few
+    /// hundred rows a model starts repeating itself while the batch stops
+    /// being reviewable by the second acceptor this verb's whole design turns
+    /// on. A study that genuinely needs more emits twice and reviews twice.
+    /// Server twin: `authoring_prompts.MAXIMUM_COUNT`.
+    public static let maximumCount = 500
+
+    /// The integer behind a count flag, or a typed usage refusal naming the
+    /// value that is not one.
+    ///
+    /// Counts are the one parameter class with a machine-checkable shape, and
+    /// they are substituted straight into a prompt an LLM will obey literally:
+    /// `--count bananas` asked an author for "bananas" rows and `--count -5`
+    /// asked for something nobody can deliver, and both emitted a perfectly
+    /// well-formed prompt with a hash. Review round 6, finding 7. Server twin:
+    /// `authoring_prompts.count_value`.
+    static func countValue(
+        _ parameter: Parameter, _ value: String, kindID: String, program: String
+    ) throws -> Int {
+        let text = value.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty, text.allSatisfy(\.isASCII), text.allSatisfy(\.isNumber),
+            let number = Int(text), number > 0
+        else {
+            throw ExperimentError.malformed(
+                "\(parameter.flag) takes a whole number of rows above 0 — got "
+                    + "'\(value)'. It is substituted into the prompt verbatim, "
+                    + "so an author would be asked for exactly that many",
+                repair: "\(program) authoring prompt \(kindID) "
+                    + "\(parameter.flag) \(parameter.defaultValue ?? "40")")
+        }
+        guard number <= maximumCount else {
+            throw ExperimentError.malformed(
+                "\(parameter.flag) is \(number), above the ceiling of "
+                    + "\(maximumCount) — one delivery is one generation, and "
+                    + "past a few hundred rows a model repeats itself and a "
+                    + "second acceptor cannot review the batch. Emit twice and "
+                    + "review twice instead",
+                repair: "\(program) authoring prompt \(kindID) "
+                    + "\(parameter.flag) \(maximumCount)")
+        }
+        return number
+    }
+
+    /// THE refusal for a held-out split that is not a split. Server twin:
+    /// `authoring_prompts.held_out_exceeds_count_message`.
+    static func heldOutExceedsCountMessage(heldOut: Int, count: Int) -> String {
+        "--held-out is \(heldOut) of \(count) rows, which leaves "
+            + "\(count - heldOut) to fit on — the held-out rows are the "
+            + "TRAILING rows of the same file, so they have to be fewer than "
+            + "the total. They decide the direction's sign; a fit with nothing "
+            + "left to fit on has no direction for them to sign"
+    }
+
     static func readerShapePartial(_ shape: String) -> String {
         "_reader-shape-\(shape).md"
     }
@@ -238,8 +307,14 @@ public enum AuthoringPrompts {
         public let text: String
         public let kind: String
         /// SHA-256 over the partials and the template, in assembly order —
-        /// what a study's PROVENANCE cites as `promptSpecHash`.
+        /// what a study's PROVENANCE cites as `promptSpecHash`. It identifies
+        /// the WORDING, not this emission: change only the concept and it does
+        /// not move.
         public let promptSpecHash: String
+        /// SHA-256 over the rendered body and the resolved parameters — what
+        /// identifies THIS emission (`promptInstanceHash`). Change only the
+        /// concept and this moves while `promptSpecHash` does not.
+        public let promptInstanceHash: String
         /// The registry files that were read, workspace-relative, in assembly
         /// order.
         public let templateFiles: [String]
@@ -347,6 +422,23 @@ public enum AuthoringPrompts {
                         + "--shape \(readerShapes.joined(separator: "|")) …")
             }
         }
+        // Counts are the one parameter class with a checkable shape, and they
+        // are substituted into a prompt an LLM obeys literally (review round
+        // 6, finding 7). Checked per field first, then across fields.
+        var counts: [String: Int] = [:]
+        for parameter in kind.parameters where parameter.isCount {
+            counts[parameter.key] = try countValue(
+                parameter, resolved[parameter.key] ?? "", kindID: kindID,
+                program: program)
+        }
+        if let heldOut = counts["heldOut"], let count = counts["count"],
+            heldOut >= count
+        {
+            throw ExperimentError.malformed(
+                heldOutExceedsCountMessage(heldOut: heldOut, count: count),
+                repair: "\(program) authoring prompt \(kindID) --count "
+                    + "\(count) --held-out \(max(1, count / 4)) …")
+        }
         for (key, value) in resolved { values[key] = value }
         values["path"] = substitute(kind.destination, values)
 
@@ -403,21 +495,66 @@ public enum AuthoringPrompts {
             .trimmedTrailing()
         let body = substitute(bodies[kind.templateFileName] ?? "", values)
 
-        let text = header(kind: kindID, hash: hash, files: files)
+        // Over the FINAL body, header excluded: the header carries the hash,
+        // so hashing it would be circular.
+        let instance = instanceDigest(
+            body: body.trimmedTrailing() + "\n", parameters: resolved)
+        let text = header(
+            kind: kindID, hash: hash, instance: instance, files: files)
             + "\n\n" + body.trimmedTrailing() + "\n"
         return Emission(
             text: text, kind: kindID, promptSpecHash: hash,
+            promptInstanceHash: instance,
             templateFiles: files.map { "\(registryRelativeDirectory)/\($0)" },
             fromWorkspaceCopy: fromWorkspace, parameters: resolved,
             destination: values["path"] ?? kind.destination)
     }
 
+    /// SHA-256 over THIS EMISSION: the fully rendered body and the resolved
+    /// parameter set that produced it.
+    ///
+    /// The spec hash identifies the WORDING — the template and partials,
+    /// before substitution — so two emissions of the same kind for two
+    /// different concepts share it. That is the right identity for "which
+    /// prompt text is this study citing", and the wrong one for "which
+    /// emission produced this corpus": nothing in the spec hash distinguishes
+    /// the run that asked for concept A from the run that asked for B. This is
+    /// the second half (review round 6, finding 5), and the two are stamped
+    /// side by side because they answer different questions.
+    ///
+    /// Framing: the body's bytes, then each `key` and `value` of the resolved
+    /// parameters in key order, every field preceded by a NUL. The NULs are
+    /// not decoration — without them a value ending in a key's name could
+    /// forge a field boundary and two different parameter sets could hash the
+    /// same. Server twin: `authoring_prompts.instance_digest`.
+    static func instanceDigest(body: String, parameters: [String: String])
+        -> String
+    {
+        var hasher = SHA256()
+        hasher.update(data: Data(body.utf8))
+        for key in parameters.keys.sorted() {
+            hasher.update(data: Data([0]))
+            hasher.update(data: Data(key.utf8))
+            hasher.update(data: Data([0]))
+            hasher.update(data: Data((parameters[key] ?? "").utf8))
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     /// The stamped first line. An HTML comment so it does not render as prose
     /// when the prompt is pasted into a chat, and so an acceptor reading a
     /// delivery can recover exactly which prompt produced it.
-    static func header(kind: String, hash: String, files: [String]) -> String {
+    ///
+    /// Both hashes are on it, because they recover different things:
+    /// `promptSpecHash` recovers the WORDING (which template and partials, at
+    /// which bytes) and `promptInstanceHash` recovers the EMISSION (that
+    /// wording, rendered with these parameters).
+    static func header(
+        kind: String, hash: String, instance: String, files: [String]
+    ) -> String {
         "<!-- steerlab authoring prompt — kind: \(kind); promptSpecHash: "
-            + "sha256:\(hash); assembled from: "
+            + "sha256:\(hash); promptInstanceHash: sha256:\(instance); "
+            + "assembled from: "
             + files.joined(separator: " + ") + " -->"
     }
 

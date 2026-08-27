@@ -985,13 +985,14 @@ import Testing
         #expect(try RepEReader.scoreActivation(reader, activation: [3, 7]) == 1.25)
     }
 
-    // MARK: - Derive-steering conversion applies the probe orientation
+    // MARK: - Derive-steering conversion: whose sign the bytes carry
 
-    /// Audit finding 1. `ScalarProbe.score` is `orientation · (a·d − centre)`,
-    /// so a reader whose PC1 came out anti-aligned with the positive class
-    /// stores a direction pointing AWAY from the concept. Shipping those bytes
-    /// as a steering vector injected the concept backwards while every
-    /// provenance stamp said forwards.
+    /// Round-5 audit finding 1, and still the rule under `trainMajority`:
+    /// `ScalarProbe.score` is `orientation · (a·d − centre)`, so a reader whose
+    /// PC1 came out anti-aligned with the positive class stores a direction
+    /// pointing AWAY from the concept. Shipping those bytes as a steering
+    /// vector injected the concept backwards while every provenance stamp said
+    /// forwards.
     @Test func derivedVectorAppliesTheProbeOrientation() throws {
         var reader = manualReader(layer: 1)
         reader.probe = SteeringVectorMath.ScalarProbe(
@@ -1017,6 +1018,109 @@ import Testing
             from: forward, readerFileName: "r.json", readerBytes: Data())
         #expect(approx(forwardVectors.perLayer[1], [1, 0]))
         #expect(forwardSidecar.readerProbeOrientation == 1)
+        // Held-out never voted on a train-majority fit, so there is nothing to
+        // stamp — the field is absent, not false.
+        #expect(sidecar.trainHeldOutSignDisagreement == nil)
+        #expect(forwardSidecar.trainHeldOutSignDisagreement == nil)
+    }
+
+    /// Review round 6. Under `heldOutPairAgreement` the fitted direction is
+    /// ALREADY the held-out-chosen sign; `probe.orientation` still comes from
+    /// the train class means. Applying it when the splits disagree re-flipped
+    /// the vector to the direction held-out rejected — the reviewer's repro
+    /// exactly: direction [−1, 0], orientation −1, convention
+    /// heldOutPairAgreement used to derive [1, 0].
+    @Test func derivedVectorKeepsTheHeldOutSignWhenTrainDisagrees() throws {
+        var reader = manualReader(layer: 1)
+        reader.signConvention = .heldOutPairAgreement
+        reader.probe = SteeringVectorMath.ScalarProbe(
+            direction: [-1, 0], activationCenter: [1, 0],
+            projectionCenter: 0.5, projectionScale: 2, orientation: -1,
+            positiveMean: -1, negativeMean: 1)
+        let (vectors, sidecar) = try RepEReader.deriveSteeringArtifact(
+            from: reader, readerFileName: "reader-fear-layer1.json",
+            readerBytes: Data())
+        #expect(approx(vectors.perLayer[1], [-1, 0]))
+        #expect(sidecar.readerSignConvention == "heldOutPairAgreement")
+        #expect(sidecar.signConvention == "heldOutPairAgreement")
+        #expect(sidecar.readerProbeOrientation == -1)
+        // The disagreement is diagnostic information, so it is stamped rather
+        // than silently discarded.
+        #expect(sidecar.trainHeldOutSignDisagreement == true)
+    }
+
+    @Test func derivedVectorStampsAgreementWhenBothSplitsChoseTheSameSign() throws {
+        var reader = manualReader(layer: 1)
+        reader.signConvention = .heldOutPairAgreement
+        let (vectors, sidecar) = try RepEReader.deriveSteeringArtifact(
+            from: reader, readerFileName: "r.json", readerBytes: Data())
+        #expect(approx(vectors.perLayer[1], [1, 0]))
+        #expect(sidecar.readerProbeOrientation == 1)
+        #expect(sidecar.trainHeldOutSignDisagreement == false)
+    }
+
+    /// A schema-1 artifact carries no `signConvention`; the decoder reads that
+    /// as train-majority, so the round-5 behaviour is what it gets.
+    @Test func aLegacySchema1ReaderDerivesUnderTrainMajority() throws {
+        let json = """
+            {
+              "artifactType": "repe-reader-lat",
+              "schemaVersion": 1,
+              "modelID": "org/m", "revision": "abc", "concept": "fear",
+              "layer": 1, "datasetHash": "dh",
+              "template": {
+                "id": "unnamed-scenario-v1", "text": "S: {{stimulus}} q",
+                "conceptSlot": false, "latToken": "final", "hash": "th",
+                "divergence": "unnamed-clean-room"
+              },
+              "probe": {
+                "direction": [1, 0], "activationCenter": [1, 0],
+                "projectionCenter": 0.5, "projectionScale": 2,
+                "orientation": -1, "positiveMean": -1, "negativeMean": 1
+              },
+              "pc1ExplainedVariance": 0.87, "trainAccuracy": 1,
+              "heldOutAccuracy": 0.8, "trainPairCount": 4, "heldOutPairCount": 2,
+              "renderingConvention": "rawCompletion scaffold",
+              "extractionDate": "2026-07-03T00:00:00Z"
+            }
+            """
+        let reader = try JSONDecoder().decode(
+            RepEReader.Artifact.self, from: Data(json.utf8))
+        #expect(reader.signConvention == .trainMajority)
+        let (vectors, sidecar) = try RepEReader.deriveSteeringArtifact(
+            from: reader, readerFileName: "r.json", readerBytes: Data())
+        #expect(approx(vectors.perLayer[1], [-1, 0]))
+        #expect(sidecar.trainHeldOutSignDisagreement == nil)
+    }
+
+    /// The reviewer's second claim, audited: it does NOT hold. `scalarProbe`
+    /// derives `orientation`, `projectionCenter` and `projectionScale` from the
+    /// same direction it is handed, so flipping the direction flips the
+    /// orientation and the centre together and every score is identical.
+    /// Held-out accuracy — and therefore the recommended layer built on it —
+    /// is exactly sign-invariant.
+    @Test func heldOutAccuracyDoesNotMoveWithTheDirectionsSign() throws {
+        let positive: [[Float]] = [[2, 0.5], [3, -0.5], [2.5, 0]]
+        let negative: [[Float]] = [[-2, 0.5], [-3, -0.5], [-2.5, 0]]
+        let heldPositive: [[Float]] = [[1.5, 0.2], [2.2, -0.3]]
+        let heldNegative: [[Float]] = [[-1.8, 0.1], [-2.4, 0.4]]
+        let centre = try SteeringVectorMath.mean(positive + negative)
+        let forward = try SteeringVectorMath.scalarProbe(
+            direction: [1, 0], positive: positive, negative: negative,
+            activationCenter: centre)
+        let flipped = try SteeringVectorMath.scalarProbe(
+            direction: [-1, 0], positive: positive, negative: negative,
+            activationCenter: centre)
+        #expect(forward.orientation == 1)
+        #expect(flipped.orientation == -1)
+        for row in heldPositive + heldNegative {
+            #expect(abs(try forward.score(row) - (try flipped.score(row))) < 1e-6)
+        }
+        #expect(
+            try RepEReader.pairAccuracy(
+                probe: forward, positive: heldPositive, negative: heldNegative)
+                == (try RepEReader.pairAccuracy(
+                    probe: flipped, positive: heldPositive, negative: heldNegative)))
     }
 
     /// The derived sidecar carries the reader's identity AND its method, so an

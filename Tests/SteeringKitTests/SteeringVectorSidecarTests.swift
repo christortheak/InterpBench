@@ -267,4 +267,55 @@ import Testing
             Issue.record("unexpected error type: \(error)")
         }
     }
+
+    // MARK: - Which artifacts may state a model's depth (round 6, finding 2)
+
+    /// One rule, in one place. `layerCount` is a ROW count, and only some
+    /// artifact kinds have one row per block — a reader-derived direction
+    /// writes zeros below its layer and stops, so reading a model's depth off
+    /// one of them reports the reader's layer plus one.
+    @Test func theDepthDiscriminatorReadsTheStampFirstThenTheMethod() {
+        func states(covers: Bool? = nil, method: String? = nil,
+                    recipe: String? = nil) -> Bool
+        {
+            var sidecar = makeSidecar()
+            sidecar.coversModelDepth = covers
+            sidecar.extractionMethod = method
+            sidecar.recipeMethod = recipe
+            return sidecar.statesModelDepth
+        }
+        // Reader-derived: partial, by the stamp AND by the method (so
+        // pre-stamp artifacts of that family are still recognised).
+        #expect(!states(covers: false))
+        #expect(!states(method: "repeReaderLAT"))
+        #expect(!states(recipe: "repeReaderLAT"))
+        // Full-depth families, stamped or not.
+        for method in [
+            "lat", "meanDifference", "emotionGrandMean", "designatedReference",
+            "optvec", "jlensTokenDirection", "gemmaScopeSAE", "pinnedArtifact",
+        ] {
+            #expect(states(method: method), "\(method)")
+        }
+        // Old enough to carry no method at all: the family predates the reader.
+        #expect(states())
+        // An explicit stamp always wins over the method.
+        #expect(states(covers: true, method: "repeReaderLAT"))
+        #expect(!states(covers: false, method: "lat"))
+    }
+
+    /// The stamp is a pinned cross-engine JSON key, and absent means "read the
+    /// method" — so an unstamped sidecar must not gain the key.
+    @Test func theDepthStampEncodesUnderItsContractKeyAndIsOmittedWhenAbsent()
+        throws
+    {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        var stamped = makeSidecar()
+        stamped.coversModelDepth = false
+        let withStamp = String(decoding: try encoder.encode(stamped), as: UTF8.self)
+        #expect(withStamp.contains("\"coversModelDepth\":false"))
+        let without = String(
+            decoding: try encoder.encode(makeSidecar()), as: UTF8.self)
+        #expect(!without.contains("coversModelDepth"))
+    }
 }

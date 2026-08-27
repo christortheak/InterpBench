@@ -110,6 +110,14 @@ class ConceptVectorBundle:
     raw_decoder_norm: float | None = None
     gemmascope_target_norm: float | None = None
     gemmascope_source: dict | None = None
+    # Whether the SOURCE artifact's ``layerCount`` is the MODEL's depth. A
+    # materialized copy has the source's rows, so it inherits the source's
+    # answer — and a PARTIAL source (a reader-derived direction, zeros below
+    # its layer) must not launder itself into a full-looking copy just because
+    # the copy's own ``extractionMethod`` is ``pinnedArtifact``. None on every
+    # full-depth bundle, which keeps their sidecars byte-identical
+    # (``to_dict`` drops None).
+    covers_model_depth: bool | None = None
 
 
 def _effective_dtype(manifest: Manifest, dtype: str) -> str:
@@ -510,6 +518,7 @@ def _materialize_pinned_artifact(manifest: Manifest, concept,
     manifest declares (held-out activations must be read where the vector
     was read).
     """
+    from . import catalog
     block = concept.vector_artifact or {}
     rel = str(block.get("path") or "")
     if not rel:
@@ -600,6 +609,14 @@ def _materialize_pinned_artifact(manifest: Manifest, concept,
         raw_decoder_norm=sidecar.rawDecoderNorm,
         gemmascope_target_norm=sidecar.gemmascopeTargetNorm,
         gemmascope_source=sidecar.gemmascopeSource,
+        # Depth coverage travels with the vector too: the copy has the
+        # source's rows, so it may only claim what the source could. The
+        # import is local because `catalog` walks the tree.
+        covers_model_depth=(
+            None if catalog.covers_model_depth(
+                covers=sidecar.coversModelDepth,
+                extraction_method=sidecar.extractionMethod,
+                recipe_method=sidecar.recipeMethod) else False),
         pinned_from={
             "path": rel,
             "sha256TensorHash": block.get("sha256TensorHash"),
@@ -773,6 +790,7 @@ def _persist_vectors(bundles: dict[str, ConceptVectorBundle], manifest: Manifest
         sidecar.rawDecoderNorm = bundle.raw_decoder_norm
         sidecar.gemmascopeTargetNorm = bundle.gemmascope_target_norm
         sidecar.gemmascopeSource = bundle.gemmascope_source
+        sidecar.coversModelDepth = bundle.covers_model_depth
         # Stamp the canonical full-recipe identity from the sidecar's own
         # recorded fields — the stamp always describes THIS artifact, and
         # stamping exercises the same reader promotion uses. An extraction

@@ -4458,12 +4458,18 @@ public final class ConceptBuilder {
         let templateID: String?
         let templateJSON: String?
         let pinnedTemplateID: String
+        // The parsed template, when this request carries one. A custom
+        // scaffold is validated the way the engine validates it — see the
+        // dry-run below.
+        var customTemplate: RepEReader.TaskTemplate?
         if let customTemplateText {
             guard customTemplateText.contains("{{stimulus}}") else {
                 throw ChatServiceError(reason: "custom template needs a {{stimulus}} slot")
             }
             let data = try customReaderTemplateData(
                 conceptName: concept, text: customTemplateText)
+            customTemplate = try RepEReader.parseTemplate(
+                data, source: "custom reader template")
             templateID = nil
             templateJSON = String(decoding: data, as: UTF8.self)
             pinnedTemplateID = "custom-\(concept)-v1"
@@ -4486,10 +4492,22 @@ public final class ConceptBuilder {
                 concept: concept, stimuli: stimuli,
                 heldOutPairCount: heldOutPairCount, templateID: pinnedTemplateID)
         }
+        let pairsJSONL = lines.joined(separator: "\n") + "\n"
+        // A custom scaffold renders EVERY row here, before this request is
+        // returned — and therefore before the caller pins the pairs file. A
+        // template that decodes but cannot render used to reach the canonical
+        // corpus and fail from the server's job (review round 6, finding 4).
+        if let customTemplate {
+            let dataset = try RepEReader.parsePairs(
+                Data(pairsJSONL.utf8), source: "reader fit request")
+            try RepEReader.validateFitRenders(
+                dataset: dataset, template: customTemplate, modelID: modelID ?? "",
+                rendering: extractionRendering)
+        }
         return ReaderFitRequest(
             concept: concept, modelID: modelID,
             templateID: templateID, templateJSON: templateJSON,
-            pairsJSONL: lines.joined(separator: "\n") + "\n",
+            pairsJSONL: pairsJSONL,
             extractionRendering: extractionRendering,
             orientationSeed: orientationSeed)
     }
@@ -4573,17 +4591,6 @@ public final class ConceptBuilder {
                 orientationSeed: readerRowShape == .singleStimulus
                     ? readerOrientationSeed : nil)
 
-            // Pin the reader dataset locally exactly as the local build does —
-            // the pairs file is shared recipe data, not a per-substrate
-            // artifact; the server writes the same bytes on its tree.
-            let readersDirectory = VectorCatalog.pairedStimuliDirectory(
-                family: .readers, name: name)
-            try FileManager.default.createDirectory(
-                at: readersDirectory, withIntermediateDirectories: true)
-            try request.pairsJSONL.write(
-                to: VectorCatalog.pairedStimuliFile(family: .readers, name: name),
-                atomically: true, encoding: .utf8)
-
             try await ensureSelectedServerModelLoaded(host: host, client: client)
             let jobID = try await client.fitReader(
                 concept: request.concept,
@@ -4593,6 +4600,22 @@ public final class ConceptBuilder {
                 pairsJSONL: request.pairsJSONL,
                 extractionRendering: request.extractionRendering,
                 orientationSeed: request.orientationSeed)
+
+            // Pin the reader dataset locally exactly as the local build does —
+            // the pairs file is shared recipe data, not a per-substrate
+            // artifact; the server writes the same bytes on its tree.
+            //
+            // AFTER the queue, not before (review round 6, finding 4): the
+            // engine's refusals are the last word on whether these rows and
+            // this template can be fitted at all, and a request it declines
+            // must not have already replaced the concept's pinned corpus.
+            let readersDirectory = VectorCatalog.pairedStimuliDirectory(
+                family: .readers, name: name)
+            try FileManager.default.createDirectory(
+                at: readersDirectory, withIntermediateDirectories: true)
+            try request.pairsJSONL.write(
+                to: VectorCatalog.pairedStimuliFile(family: .readers, name: name),
+                atomically: true, encoding: .utf8)
             status = "server reader fit queued as job \(jobID)…"
             await host.cluster.refreshRemoteState()
 
@@ -4984,14 +5007,35 @@ public final class ConceptBuilder {
                         == RepEReader.SignConvention.trainMajority.rawValue))
         }
         if let orientation = sidecar.readerProbeOrientation {
+            let heldOutSigned =
+                sidecar.readerSignConvention
+                == RepEReader.SignConvention.heldOutPairAgreement.rawValue
+            let value: String
+            if orientation < 0 && heldOutSigned {
+                value =
+                    "−1 — the TRAIN class means read ANTI-aligned with the fitted "
+                    + "direction, but the held-out split signed this vector and its "
+                    + "choice stands: the bytes ship unflipped"
+            } else if orientation < 0 {
+                value =
+                    "−1 — the probe reads ANTI-aligned with PC1, so the sign "
+                    + "is folded into the vector bytes (a steering vector has "
+                    + "no orientation field to carry it)"
+            } else {
+                value = "+1 — the stored direction already points at more concept"
+            }
+            details.append(ReaderDetailRow(label: "probe orientation", value: value))
+        }
+        if let disagreement = sidecar.trainHeldOutSignDisagreement {
             details.append(
                 ReaderDetailRow(
-                    label: "probe orientation",
-                    value: orientation < 0
-                        ? "−1 — the probe reads ANTI-aligned with PC1, so the sign "
-                            + "is folded into the vector bytes (a steering vector has "
-                            + "no orientation field to carry it)"
-                        : "+1 — the stored direction already points at more concept"))
+                    label: "train/held-out sign",
+                    value: disagreement
+                        ? "DISAGREE — the training labels would have signed this "
+                            + "direction the other way; read the reader's "
+                            + "heldOutAccuracy before trusting it"
+                        : "agree — both splits chose the same sign",
+                    isCaution: disagreement))
         }
         let refusal: String? =
             sidecar.residualNormSource == nil

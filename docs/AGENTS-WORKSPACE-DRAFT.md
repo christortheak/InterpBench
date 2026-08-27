@@ -596,10 +596,14 @@ does not exist yet. For every missing prerequisite, in this order:
    of that vocabulary and a probe that reuses it tests a word detector.*
 3. **Emit its generation prompt** —
    `steerlab-cli authoring prompt <kind>` renders the prompt for that kind of
-   data with your study's seam substituted, its audit battery as NUMBERS, and a
-   `promptSpecHash` stamped in the header so the exact wording is recoverable
-   later. Kinds: `contrastive-pairs`, `choice-prompts`, `validation-set`,
-   `reader-pairs`, `battery`. Hand it to an author unedited.
+   data with your study's seam substituted, its audit battery as NUMBERS, and
+   two hashes stamped in the header: `promptSpecHash`, over the template and
+   partials, which recovers the exact WORDING later, and
+   `promptInstanceHash`, over the rendered body and the resolved arguments,
+   which recovers WHICH EMISSION produced a given corpus. Two prompts for two
+   concepts share the first and differ in the second. Kinds:
+   `contrastive-pairs`, `choice-prompts`, `validation-set`, `reader-pairs`,
+   `battery`. Hand it to an author unedited.
 4. **Never install generated data on the generator's word.** The emitter is not
    the acceptor. A *second* reviewer — one who did not write the rows — re-runs
    the prompt's own audit battery against the delivery and reports the numbers.

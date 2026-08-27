@@ -379,6 +379,7 @@ def import_feature(report_path: str, feature: int, *, model_id: str,
         extractionDate=_now_iso8601(),
         revision=src.revision,
         extractionMethod="gemmaScopeSAE",
+        coversModelDepth=_inherited_depth_coverage(src),
         residualNormPerLayer=src.residualNormPerLayer,
         residualNormSource=src.residualNormSource,
         recipeHash=f"{release}|{sae_id}|feature:{int(feature)}",
@@ -389,6 +390,23 @@ def import_feature(report_path: str, feature: int, *, model_id: str,
         gemmascopeTargetNorm=float(target_norm))
     save(vectors, sidecar, run_directory, name)
     return os.path.join(run_directory, name)
+
+
+def _inherited_depth_coverage(source) -> bool | None:
+    """An SAE import writes one row per layer of the artifact it was calibrated
+    against, so it states the model's depth exactly when THAT artifact did.
+
+    Absent (the common case — the donor is a full-depth concept vector) leaves
+    the import reading as full, the same as every other extraction family. An
+    explicit ``false`` is what stops a PARTIAL donor's row count from
+    laundering itself into a full-looking import: the donor's own method stamp
+    does not survive the copy, so the fact has to be carried forward here."""
+    from . import catalog
+    covers = catalog.covers_model_depth(
+        covers=source.coversModelDepth,
+        extraction_method=source.extractionMethod,
+        recipe_method=source.recipeMethod)
+    return None if covers else False
 
 
 def _now_iso8601() -> str:
@@ -1044,6 +1062,7 @@ def import_feature_by_id(
         extractionDate=_now_iso8601(),
         revision=donor.revision,
         extractionMethod="gemmaScopeSAE",
+        coversModelDepth=_inherited_depth_coverage(donor),
         residualNormPerLayer=[float(n) for n in residual_norms[:donor.layerCount]],
         residualNormSource=donor.residualNormSource,
         # The calibration identity travels as one unit: a neutral-corpus norm

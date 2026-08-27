@@ -70,6 +70,20 @@ class SteeringVectorSidecar:
     # engines, so injection paths refuse foreign-substrate artifacts; ``None``
     # is a legacy/unknown artifact (pre-stamp), which loads with no way to know.
     substrate: str | None = None
+    # Whether ``layerCount`` above is the MODEL's depth or only this artifact's
+    # own row count. Reader-derived directions are PARTIAL by construction
+    # (zeros below the reader's layer, then one row), so a workspace that reads
+    # a model's depth off one of them gets the reader's layer plus one — and
+    # then converts absolute sweep layers against a network that does not
+    # exist. Stamped ``false`` forward by every writer that knows its artifact
+    # is partial. **Absent is read by method**: a reader-derived artifact
+    # written before the stamp is partial anyway (the whole family is), and
+    # everything else — CAA, LAT, grand-mean, designated reference, OptVec,
+    # J-lens, and the artifacts old enough to carry no ``extractionMethod`` at
+    # all — is full depth. The rule lives in one place,
+    # ``catalog.covers_model_depth``. Pinned cross-engine contract: same JSON
+    # key on the Swift ``SteeringVectorSidecar``.
+    coversModelDepth: bool | None = None
     extractionMethod: str | None = None
     readingPosition: str | None = None
     confoundProjection: str | None = None
@@ -156,12 +170,23 @@ class SteeringVectorSidecar:
     readerTemplateHash: str | None = None
     readerContrastMode: str | None = None
     readerSignConvention: str | None = None
-    # The reader probe's ``orientation`` at derive time (+1 or −1). Recorded
-    # because the derived BYTES have the orientation folded in: a reader with
-    # orientation −1 stores a direction pointing AWAY from the concept, and the
-    # conversion negates it. Without this stamp there is no way to tell, from
-    # the artifact alone, whether the sign was applied.
+    # The reader probe's ``orientation`` at derive time (+1 or −1) — the sign
+    # the TRAIN class means imply. Under ``trainMajority`` the derived BYTES
+    # have it folded in (a reader with orientation −1 stores a direction
+    # pointing away from the concept, and the conversion negates it); under
+    # ``heldOutPairAgreement`` the fitted direction already carries the
+    # held-out-chosen sign and ships unflipped. Either way this stamp is what
+    # makes the conversion recoverable from the artifact alone.
     readerProbeOrientation: float | None = None
+    # Whether the TRAIN split would have signed a held-out-signed direction the
+    # other way (``readerProbeOrientation == −1`` under
+    # ``signConvention: "heldOutPairAgreement"``). Diagnostic, not corrective:
+    # the held-out sign stands, and this records that the two splits did not
+    # agree about it, which is a fact about the direction's stability. Present
+    # (true or false) only when held-out did the signing; absent under
+    # train-majority and on every non-reader artifact. Pinned cross-engine
+    # contract: same JSON key on the Swift ``SteeringVectorSidecar``.
+    trainHeldOutSignDisagreement: bool | None = None
     # HOW this direction's sign was fixed — "heldOutPairAgreement" (the RepE
     # paper's step 4) or "trainMajority" (the reference implementation's
     # get_signs). Stamped by every family whose direction has a sign to choose,

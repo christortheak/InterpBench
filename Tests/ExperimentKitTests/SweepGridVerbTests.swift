@@ -61,20 +61,22 @@ import Testing
     /// quietly change what these tests exercise.
     func plantSidecar(
         root: URL, model: String = "test/model", layerCount: Int = 34,
-        concept: String = "alpha"
+        concept: String = "alpha", runName: String = "20260101-000000-x",
+        extra: [String: Any] = [:]
     ) throws {
-        let run = root.appending(components: "runs", "20260101-000000-x")
+        let run = root.appending(components: "runs", runName)
         try FileManager.default.createDirectory(
             at: run, withIntermediateDirectories: true)
         // Every key `SteeringVectorSidecar` requires: a partial sidecar
         // fails to decode and the catalog skips the pair silently, which
         // would leave these tests exercising the unknown-depth path.
-        let sidecar: [String: Any] = [
+        var sidecar: [String: Any] = [
             "modelID": model, "layerCount": layerCount, "hiddenSize": 8,
             "concept": concept, "stimulusSetHash": String(repeating: "0", count: 64),
             "normsPerLayer": Array(repeating: 1.0, count: layerCount),
             "extractionDate": "2026-01-01T00:00:00Z",
         ]
+        for (key, value) in extra { sidecar[key] = value }
         try JSONSerialization
             .data(withJSONObject: sidecar, options: [.sortedKeys])
             .write(to: run.appending(component: "\(concept).json"))
@@ -388,6 +390,122 @@ import Testing
                 Issue.record("a foreign model's depth was used")
             } catch {
                 #expect(lifecycleGate(error) == .missingPrerequisite)
+            }
+        }
+    }
+
+    /// Review round 6, finding 2. A reader fitted at block 10 writes
+    /// `layerCount: 11`; sitting in a run directory it used to win the
+    /// first-sidecar race and make a 42-block model eleven blocks deep.
+    @Test func aPartialReaderDerivedArtifactDoesNotStateTheModelsDepth()
+        async throws
+    {
+        try await withTempRoot { root in
+            try draft(model: "test/model")
+            try plantSidecar(
+                root: root, layerCount: 11, concept: "reader-derived",
+                runName: "20260101-000000-a",
+                extra: ["extractionMethod": "repeReaderLAT",
+                        "coversModelDepth": false, "readerLayer": 10])
+            try plantSidecar(
+                root: root, layerCount: 42, concept: "full",
+                runName: "20260202-000000-b",
+                extra: ["extractionMethod": "lat"])
+            #expect(SweepPanelModel.cachedLayerCount(modelID: "test/model") == 42)
+            let outcome = try ExperimentStore.setSweepGrid(
+                experimentName: "d", absoluteLayers: [28])
+            #expect(outcome.layerCount == 42)
+            #expect(outcome.resolvedLayers == [28])
+        }
+    }
+
+    /// Reader-derived vectors written before `coversModelDepth` existed carry
+    /// no stamp — the method is the witness, because the whole family is
+    /// partial.
+    @Test func aPreStampReaderArtifactIsPartialByItsMethod() async throws {
+        try await withTempRoot { root in
+            try draft(model: "test/model")
+            try plantSidecar(
+                root: root, layerCount: 11, concept: "reader-derived",
+                runName: "20260101-000000-a",
+                extra: ["extractionMethod": "repeReaderLAT"])
+            try plantSidecar(
+                root: root, layerCount: 42, concept: "full",
+                runName: "20260202-000000-b")
+            #expect(SweepPanelModel.cachedLayerCount(modelID: "test/model") == 42)
+        }
+    }
+
+    /// Two full-depth artifacts cannot both be right, and picking one would
+    /// silently pick a network.
+    @Test func witnessesThatDisagreeAboutTheDepthRefuseByName() async throws {
+        try await withTempRoot { root in
+            try draft(model: "test/model")
+            try plantSidecar(
+                root: root, layerCount: 34, concept: "alpha",
+                runName: "20260101-000000-a")
+            try plantSidecar(
+                root: root, layerCount: 42, concept: "beta",
+                runName: "20260202-000000-b")
+            let known = SweepPanelModel.cachedDepth(modelID: "test/model")
+            #expect(known.depth == nil)
+            #expect(known.conflict.map(\.depth) == [34, 42])
+            do {
+                _ = try ExperimentStore.setSweepGrid(
+                    experimentName: "d", absoluteLayers: [13])
+                Issue.record("a disagreed depth was resolved silently")
+            } catch {
+                #expect(lifecycleGate(error) == .missingPrerequisite)
+                let message = (error as? ExperimentError)?
+                    .lifecycleRefusal?.reason ?? ""
+                #expect(message.contains(
+                    "disagree about how deep 'test/model' is"))
+                #expect(message.contains("runs/20260101-000000-a/alpha says 34"))
+                #expect(message.contains("runs/20260202-000000-b/beta says 42"))
+            }
+        }
+    }
+
+    /// A revision the caller knows is part of the depth question; an artifact
+    /// carrying no revision is legacy and still counts.
+    @Test func anArtifactStampedWithAnotherRevisionIsNotEvidence() async throws {
+        try await withTempRoot { root in
+            try draft(model: "test/model")
+            try ExperimentStore.setModelRevision("rev-a", experimentName: "d")
+            try plantSidecar(
+                root: root, layerCount: 42, concept: "alpha",
+                runName: "20260101-000000-a", extra: ["revision": "rev-a"])
+            try plantSidecar(
+                root: root, layerCount: 11, concept: "beta",
+                runName: "20260202-000000-b", extra: ["revision": "rev-b"])
+            #expect(
+                SweepPanelModel.cachedDepth(
+                    modelID: "test/model", revision: "rev-a").depth == 42)
+            let outcome = try ExperimentStore.setSweepGrid(
+                experimentName: "d", absoluteLayers: [28])
+            #expect(outcome.layerCount == 42)
+        }
+    }
+
+    @Test func noCandidateAtAllIsStillTheMissingPrerequisitePath() async throws {
+        try await withTempRoot { root in
+            try draft(model: "test/model")
+            try plantSidecar(
+                root: root, layerCount: 11, concept: "reader-derived",
+                extra: ["extractionMethod": "repeReaderLAT",
+                        "coversModelDepth": false])
+            #expect(SweepPanelModel.cachedLayerCount(modelID: "test/model") == nil)
+            #expect(SweepPanelModel.cachedDepth(modelID: "test/model").conflict.isEmpty)
+            do {
+                _ = try ExperimentStore.setSweepGrid(
+                    experimentName: "d", absoluteLayers: [5])
+                Issue.record("a partial artifact stated a model's depth")
+            } catch {
+                #expect(lifecycleGate(error) == .missingPrerequisite)
+                let message = (error as? ExperimentError)?
+                    .lifecycleRefusal?.reason ?? ""
+                #expect(message.contains(
+                    "nothing in this workspace states how deep"))
             }
         }
     }

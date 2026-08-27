@@ -373,6 +373,30 @@ public enum RepEReader {
 
     /// Loads one template JSON; hash = SHA-256 over the file's raw bytes.
     /// The registry is one file per id: the id must match the filename.
+    /// Parse one template from BYTES, with every rule `loadTemplate` applies
+    /// except the filename one — the in-memory seam an upload needs.
+    ///
+    /// `parsePairs` exists for exactly this reason on the corpus side: an
+    /// uploaded pairs file is validated in memory so a rejected upload never
+    /// reaches (or clobbers) its canonical home. Templates had no equivalent,
+    /// and a custom scaffold was checked for a `{{stimulus}}` slot and nothing
+    /// more — after which the local pairs file was already replaced. Review
+    /// round 6, finding 4. Server twin: `repe_reader.parse_template`.
+    public static func parseTemplate(_ data: Data, source: String) throws
+        -> TaskTemplate
+    {
+        var template: TaskTemplate
+        do {
+            template = try JSONDecoder().decode(TaskTemplate.self, from: data)
+        } catch {
+            throw ReaderError(
+                reason: "\(source): invalid template JSON: \(error)")
+        }
+        template.hash = sha256Hex(data)
+        try template.validateInstructionSlot()
+        return template
+    }
+
     public static func loadTemplate(url: URL) throws -> TaskTemplate {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw ReaderError(reason: "missing template file: \(url.path)")
@@ -1411,6 +1435,29 @@ public enum RepEReader {
         return texts
     }
 
+    /// Everything the fit needs from a template, checked WITHOUT a model.
+    ///
+    /// The LAT-token vocabulary, the `{{stimulus}}`/`{{concept}}`/
+    /// `{{instruction}}` slot rules, the contrast-mode resolution, and the
+    /// scaffold's marker hygiene — every one of them, over every row of the
+    /// real dataset, exactly as `fit` will exercise them. It is the same code
+    /// path (`fitTexts`), not a re-statement of it, which is the only kind of
+    /// pre-flight worth trusting.
+    ///
+    /// Why it exists (review round 6, finding 4): a custom scaffold reached
+    /// the canonical pairs file before anything had tried to render it, so a
+    /// template that decoded but could not render took the good corpus with
+    /// it. Server twin: `repe_reader.validate_fit_renders`.
+    public static func validateFitRenders(
+        dataset: Dataset, template: TaskTemplate, modelID: String,
+        rendering: ExtractionRendering? = nil
+    ) throws {
+        _ = try template.readingPosition()  // the latToken vocabulary
+        _ = try fitTexts(
+            dataset: dataset, template: template, modelID: modelID,
+            rendering: rendering)
+    }
+
     /// Fits one reader per layer from the dataset's train split; held-out rows
     /// (any other `split` value) fix each layer's SIGN and score the
     /// instrument they did not fit.
@@ -1523,15 +1570,46 @@ public enum RepEReader {
     /// `controlMode` — because "we steered with a RepE reader direction" is a
     /// different claim from "we reproduced RepE control".
     ///
-    /// **The orientation is applied here (audit finding 1, fixed 2026-08-27).**
-    /// `ScalarProbe.score` computes `orientation · (a·direction − center)`, so
-    /// the stored `direction` points at "more concept" only when
-    /// `orientation == +1`. Half the readers a study fits — every one where
-    /// PC1 came out anti-aligned with the positive class — carry
-    /// `orientation == −1`, and shipping the raw direction as a steering
-    /// vector injected the concept BACKWARDS while every provenance stamp said
-    /// forwards. A steering vector has no orientation field to carry the sign
-    /// in, so the sign must be folded into the bytes.
+    /// **Whose sign the bytes carry — a two-wave story, and the second wave
+    /// changed the answer.**
+    ///
+    /// *Wave one (audit finding 1, 2026-08-27).* `ScalarProbe.score` computes
+    /// `orientation · (a·direction − center)`, so a stored `direction` points
+    /// at "more concept" only when `orientation == +1`. Back when every fitted
+    /// direction was signed by TRAIN-label majority, `orientation` — derived
+    /// from the train class means — agreed with that choice, and folding it
+    /// into the bytes was simply restating the training labels' verdict in the
+    /// one place a steering vector can hold a sign. Readers whose PC1 came out
+    /// anti-aligned carried `orientation == −1`, and shipping their raw
+    /// direction injected the concept BACKWARDS while every provenance stamp
+    /// said forwards. Applying the orientation fixed that.
+    ///
+    /// *Wave two (the RepE wave, and review round 6).* Sign authority then
+    /// moved to the HELD-OUT split: `fitDirection` flips PC1 by held-out pair
+    /// agreement and stamps `signConvention: "heldOutPairAgreement"`. The
+    /// `direction` on such a reader is ALREADY the held-out-chosen sign, while
+    /// `probe.orientation` still comes from the TRAIN class means. When the
+    /// two splits disagree the orientation is `−1`, and applying it re-flipped
+    /// the vector to the very direction held-out REJECTED — the wave-one
+    /// repair, turned inside out by the wave that followed it.
+    ///
+    /// **So the rule is convention-aware:**
+    ///
+    /// - `heldOutPairAgreement` — the fitted direction is authoritative and
+    ///   ships UNFLIPPED. A train/held-out disagreement (`orientation == −1`)
+    ///   is not discarded: it is stamped as `trainHeldOutSignDisagreement:
+    ///   true`, because "the training labels would have signed this the other
+    ///   way" is a fact about the direction's stability that a reader of the
+    ///   artifact is owed. Agreement stamps `false` — the field is present,
+    ///   either way, whenever held-out did the signing.
+    /// - `trainMajority` (and every legacy schema-1 artifact, whose absent
+    ///   `signConvention` reads as train-majority) — wave one stands: the
+    ///   orientation is applied, and `trainHeldOutSignDisagreement` is absent
+    ///   because held-out never voted.
+    ///
+    /// `readerProbeOrientation` records the orientation either way, so what
+    /// the conversion did is recoverable from the artifact alone. Server twin:
+    /// `repe_reader.derive_steering_sidecar`.
     public static func deriveSteeringArtifact(
         from reader: Artifact, readerFileName: String, readerBytes: Data
     ) throws -> (vectors: ConceptVectors, sidecar: SteeringVectorSidecar) {
@@ -1540,7 +1618,10 @@ public enum RepEReader {
             throw ReaderError(reason: "reader probe has an empty direction")
         }
         let orientation = reader.probe.orientation
-        let direction = orientation < 0 ? probeDirection.map { -$0 } : probeDirection
+        let heldOutSigned = reader.signConvention == .heldOutPairAgreement
+        let direction =
+            (!heldOutSigned && orientation < 0)
+            ? probeDirection.map { -$0 } : probeDirection
         let hidden = direction.count
         var perLayer = [[Float]](
             repeating: [Float](repeating: 0, count: hidden), count: reader.layer)
@@ -1555,6 +1636,10 @@ public enum RepEReader {
             appliedReadingPosition: try reader.readingPosition())
         sidecar.extractionMethod = ExtractionMethod.repeReaderLAT.rawValue
         sidecar.recipeMethod = VectorExtractionRecipe.Method.repeReaderLAT.rawValue
+        // PARTIAL by construction: zeros below the reader's layer, then one
+        // row. Stamped so nothing downstream reads this artifact's layerCount
+        // as the model's depth (review round 6, finding 2).
+        sidecar.coversModelDepth = false
         sidecar.source = artifactType
         sidecar.readerID = readerFileName
         sidecar.readerHash = sha256Hex(readerBytes)
@@ -1566,6 +1651,9 @@ public enum RepEReader {
         sidecar.readerSignConvention = reader.signConvention.rawValue
         sidecar.readerProbeOrientation = orientation
         sidecar.signConvention = reader.signConvention.rawValue
+        if heldOutSigned {
+            sidecar.trainHeldOutSignDisagreement = orientation < 0
+        }
         if let rendering = reader.extractionRendering {
             sidecar.extractionRendering = rendering.stamp
         }

@@ -3216,10 +3216,20 @@ public enum ExperimentStore {
         var collapsed = 0
         let manifest = try updateDraft(name: experimentName) { manifest in
             var spec = manifest.sweep ?? ExperimentManifest.SweepSpec()
-            depth = layerCount ?? SweepPanelModel.cachedLayerCount(
-                modelID: manifest.modelID)
+            let known =
+                layerCount.map { SweepPanelModel.CachedDepth(depth: $0) }
+                ?? SweepPanelModel.cachedDepth(
+                    modelID: manifest.modelID, revision: manifest.modelRevision)
+            depth = known.depth
             var fractions = layerFractions ?? spec.layerFractions
             if let absolute = absoluteLayers {
+                if !known.conflict.isEmpty {
+                    throw ExperimentError.refusing(
+                        .missingPrerequisite,
+                        conflictingDepthMessage(
+                            modelID: manifest.modelID, witnesses: known.conflict),
+                        repair: conflictingDepthRepair(experimentName))
+                }
                 guard let depth, depth > 0 else {
                     throw ExperimentError.refusing(
                         .missingPrerequisite,
@@ -3325,6 +3335,31 @@ public enum ExperimentStore {
     /// ORIGINAL request answerable; fractions are the answer that needs no
     /// model at all. Server twin:
     /// `experiment_store.absolute_layers_need_depth_repair`.
+    /// THE refusal for a workspace whose artifacts disagree about a model's
+    /// depth. Server twin: `experiment_store.conflicting_depth_message`.
+    static func conflictingDepthMessage(
+        modelID: String, witnesses: [SweepPanelModel.DepthWitness]
+    ) -> String {
+        let said = witnesses
+            .map { "\($0.artifact) says \($0.depth)" }
+            .joined(separator: ", ")
+        return "the vector artifacts in this workspace disagree about how deep "
+            + "'\(modelID)' is — \(said). A layer index means nothing until "
+            + "they agree, and choosing one of them for you would silently "
+            + "choose a network"
+    }
+
+    /// THE repair for that disagreement. Fractions come first because they
+    /// need no stored depth at all. Server twin:
+    /// `experiment_store.conflicting_depth_repair`.
+    static func conflictingDepthRepair(_ name: String) -> String {
+        "steerlab-cli experiment set-sweep-grid \(name) "
+            + "--layer-fractions 0.5,0.7,0.85  (fractions resolve against the "
+            + "model the sweep actually loads, so no stored depth is needed); "
+            + "or remove the artifact whose depth is wrong for this model, then "
+            + "steerlab-cli experiment set-sweep-grid \(name) --layers <L>,…"
+    }
+
     static func absoluteLayersNeedDepthRepair(_ name: String) -> String {
         "steerlab-cli experiment extract \(name)  (any vector for the pinned "
             + "model states its depth) && steerlab-cli experiment "

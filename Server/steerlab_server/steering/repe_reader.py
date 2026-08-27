@@ -310,6 +310,37 @@ class TaskTemplate:
                                      if isinstance(pair, dict) else None))
 
 
+def parse_template(data: bytes | str, *, source: str) -> TaskTemplate:
+    """Parse one template from BYTES, with every rule :func:`load_template`
+    applies except the filename one — the in-memory seam an upload needs.
+
+    ``parse_pairs`` exists for exactly this reason on the corpus side: an
+    uploaded pairs file is validated in memory so a rejected upload never
+    reaches (or clobbers) its canonical home. Templates had no equivalent, and
+    the reader-fit route therefore checked an uploaded template for JSON-ness,
+    an ``id`` and a ``text`` and nothing more — then replaced the canonical
+    ``prompts/readers/<concept>/pairs.jsonl`` and queued a job that discovered,
+    minutes later, that the template could not render. Review round 6,
+    finding 4.
+
+    ``hash`` is SHA-256 over the raw bytes, exactly as the file loader computes
+    it, so a template validated here and persisted verbatim keeps one identity.
+    """
+    raw = data.encode("utf-8") if isinstance(data, str) else bytes(data)
+    try:
+        obj = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise RepeReaderError(f"{source}: invalid template JSON: {exc}") from exc
+    if not isinstance(obj, dict):
+        raise RepeReaderError(f"{source}: template must be a JSON object")
+    for key in ("id", "text"):
+        if key not in obj:
+            raise RepeReaderError(f"{source}: template missing {key!r}")
+    template = TaskTemplate.from_dict(obj, hash=_sha256_hex(raw))
+    template.validate_instruction_slot()
+    return template
+
+
 def load_template(path: str) -> TaskTemplate:
     """Load one template JSON; hash = SHA-256 over the file's raw bytes."""
     if not os.path.exists(path):
@@ -939,6 +970,35 @@ def fit_texts(dataset: ReaderDataset, template: TaskTemplate, *, model_id: str,
     return texts
 
 
+def validate_fit_renders(dataset: ReaderDataset, template: TaskTemplate, *,
+                         model_id: str,
+                         rendering: ExtractionRendering | None = None) -> None:
+    """Everything the fit needs from a template, checked WITHOUT a model.
+
+    The LAT-token vocabulary, the ``{{stimulus}}``/``{{concept}}``/
+    ``{{instruction}}`` slot rules, the contrast-mode resolution, and the
+    scaffold's marker hygiene — every one of them, over every row of the real
+    dataset, exactly as :func:`fit` will exercise them. It is the same code
+    path (:func:`fit_texts`), not a re-statement of it, which is the only kind
+    of pre-flight worth trusting.
+
+    Why it exists (review round 6, finding 4): the reader-fit route replaced
+    the canonical pairs corpus and queued a job BEFORE anything had tried to
+    render the template. A template that parsed as JSON but could not render
+    took the good corpus with it and reported the failure minutes later, from
+    a job. Callers run this first, and every failure — including the
+    ``ValueError`` the scaffold pass raises — arrives as one typed
+    :class:`RepeReaderError`.
+    """
+    try:
+        template.reading_position  # noqa: B018 — the latToken vocabulary check
+        fit_texts(dataset, template, model_id=model_id, rendering=rendering)
+    except RepeReaderError:
+        raise
+    except ValueError as exc:
+        raise RepeReaderError(str(exc)) from exc
+
+
 def fit_activations(dataset: ReaderDataset, template: TaskTemplate,
                     captured: list[list[list[float]]], *, model_id: str,
                     revision: str | None, layers: list[int] | None = None,
@@ -1106,15 +1166,46 @@ def derive_steering_sidecar(reader: ReaderArtifact, *, reader_file_name: str,
     steered with a RepE reader direction" is a different claim from "we
     reproduced RepE control".
 
-    **The orientation is applied here (audit finding 1, fixed 2026-08-27).**
-    ``ScalarProbe.score`` computes ``orientation · (a·direction − center)``, so
-    the stored ``direction`` points at "more concept" only when
-    ``orientation == +1``. Half the readers a study fits — every one where PC1
-    came out anti-aligned with the positive class — carry ``orientation == −1``,
-    and shipping the raw direction as a steering vector injected the concept
-    BACKWARDS while every provenance stamp said forwards. A steering vector has
-    no orientation field to carry the sign in, so the sign must be folded into
-    the bytes. Swift twin: ``RepEReader.deriveSteeringArtifact``.
+    **Whose sign the bytes carry — a two-wave story, and the second wave
+    changed the answer.**
+
+    *Wave one (audit finding 1, 2026-08-27).* ``ScalarProbe.score`` computes
+    ``orientation · (a·direction − center)``, so a stored ``direction`` points
+    at "more concept" only when ``orientation == +1``. Back when every fitted
+    direction was signed by TRAIN-label majority, ``orientation`` — derived
+    from the train class means — agreed with that choice, and folding it into
+    the bytes was simply restating the training labels' verdict in the one
+    place a steering vector can hold a sign. Readers whose PC1 came out
+    anti-aligned carried ``orientation == −1``, and shipping their raw
+    direction injected the concept BACKWARDS while every provenance stamp said
+    forwards. Applying the orientation fixed that.
+
+    *Wave two (the RepE wave, and review round 6).* Sign authority then moved
+    to the HELD-OUT split: :func:`fit_direction` flips PC1 by held-out pair
+    agreement and stamps ``signConvention: "heldOutPairAgreement"``. The
+    ``direction`` on such a reader is ALREADY the held-out-chosen sign, while
+    ``probe.orientation`` still comes from the TRAIN class means. When the two
+    splits disagree the orientation is ``−1``, and applying it re-flipped the
+    vector to the very direction held-out REJECTED — the wave-one repair,
+    turned inside out by the wave that followed it.
+
+    **So the rule is convention-aware:**
+
+    - ``heldOutPairAgreement`` — the fitted direction is authoritative and
+      ships UNFLIPPED. A train/held-out disagreement (``orientation == −1``) is
+      not discarded: it is stamped as ``trainHeldOutSignDisagreement: true``,
+      because "the training labels would have signed this the other way" is a
+      fact about the direction's stability that a reader of the artifact is
+      owed. Agreement stamps ``false`` — the field is present, either way,
+      whenever held-out did the signing.
+    - ``trainMajority`` (and every legacy schema-1 artifact, whose absent
+      ``signConvention`` reads as train-majority) — wave one stands: the
+      orientation is applied, and ``trainHeldOutSignDisagreement`` is absent
+      because held-out never voted.
+
+    ``readerProbeOrientation`` records the orientation either way, so what the
+    conversion did is recoverable from the artifact alone. Swift twin:
+    ``RepEReader.deriveSteeringArtifact``.
     """
     from .vector_store import ConceptVectors, SteeringVectorSidecar
 
@@ -1122,8 +1213,12 @@ def derive_steering_sidecar(reader: ReaderArtifact, *, reader_file_name: str,
     if not probe_direction:
         raise RepeReaderError("reader probe has an empty direction")
     orientation = float(reader.probe.orientation)
-    direction = ([-x for x in probe_direction] if orientation < 0
-                 else probe_direction)
+    held_out_signed = reader.sign_convention == HELD_OUT_PAIR_AGREEMENT
+    if held_out_signed:
+        direction = probe_direction
+    else:
+        direction = ([-x for x in probe_direction] if orientation < 0
+                     else probe_direction)
     hidden = len(direction)
     per_layer = [[0.0] * hidden for _ in range(reader.layer)] + [direction]
     vectors = ConceptVectors(per_layer=per_layer)
@@ -1133,6 +1228,10 @@ def derive_steering_sidecar(reader: ReaderArtifact, *, reader_file_name: str,
         extraction_method=vm.ExtractionMethod.REPE_READER_LAT.value,
         reading_position=reader.reading_position)
     sidecar.recipeMethod = vm.ExtractionMethod.REPE_READER_LAT.value
+    # PARTIAL by construction: zeros below the reader's layer, then one row.
+    # Stamped so nothing downstream reads this artifact's layerCount as the
+    # model's depth (review round 6, finding 2).
+    sidecar.coversModelDepth = False
     sidecar.source = ARTIFACT_TYPE
     sidecar.readerID = reader_file_name
     sidecar.readerHash = _sha256_hex(reader_bytes)
@@ -1144,6 +1243,8 @@ def derive_steering_sidecar(reader: ReaderArtifact, *, reader_file_name: str,
     sidecar.readerSignConvention = reader.sign_convention
     sidecar.readerProbeOrientation = orientation
     sidecar.signConvention = reader.sign_convention
+    if held_out_signed:
+        sidecar.trainHeldOutSignDisagreement = orientation < 0
     if reader.extraction_rendering:
         sidecar.extractionRendering = dict(reader.extraction_rendering)
     return vectors, sidecar

@@ -127,17 +127,28 @@ def test_unbackfilled_reader_vector_names_the_backfill(workspace):
         "units is meaningless until the denominator is measured")
 
 
-def test_attached_vector_carries_the_applied_orientation(workspace):
-    """The orientation fix is visible on the ARTIFACT, not only in the
-    conversion: a reader with orientation −1 produces bytes pointing the way
-    its probe reads, and the sidecar records that the sign was applied."""
+def test_attached_vector_carries_the_held_out_sign_and_the_disagreement(workspace):
+    """The sign rule is visible on the ARTIFACT, not only in the conversion.
+    This reader was signed by HELD-OUT pair agreement, so its fitted direction
+    ships unflipped even though the train class means read the other way —
+    and that disagreement is stamped rather than discarded (review round 6,
+    finding 1)."""
     artifact = _plant(workspace, orientation=-1.0)
     sidecar = json.load(open(os.path.join(workspace, artifact + ".json")))
     assert sidecar["readerProbeOrientation"] == -1.0
+    assert sidecar["trainHeldOutSignDisagreement"] is True
     assert sidecar["readerLayer"] == 1
     assert sidecar["readerTemplateID"] == "unnamed-scenario-v1"
     assert sidecar["readerSignConvention"] == "heldOutPairAgreement"
     assert sidecar["signConvention"] == "heldOutPairAgreement"
     assert sidecar["readerContrastMode"] == "supervisedContent"
     vectors, _ = vector_store.load(os.path.join(workspace, RUN), NAME)
-    assert vectors.per_layer[1] == pytest.approx([-1.0, 0.0, 0.0])
+    assert vectors.per_layer[1] == pytest.approx([1.0, 0.0, 0.0])
+
+
+def test_an_agreeing_reader_stamps_the_agreement(workspace):
+    artifact = _plant(workspace, orientation=1.0)
+    sidecar = json.load(open(os.path.join(workspace, artifact + ".json")))
+    assert sidecar["trainHeldOutSignDisagreement"] is False
+    vectors, _ = vector_store.load(os.path.join(workspace, RUN), NAME)
+    assert vectors.per_layer[1] == pytest.approx([1.0, 0.0, 0.0])

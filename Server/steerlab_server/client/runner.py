@@ -1448,5 +1448,3 @@ def _commit_no_replace(staged, temp_path: str, destination: str) -> None:
     # branches. A stranger is left in place: a leftover partial is
     # recoverable, somebody else's deleted file is not.
     _unlink_if_reserved(temp_path, reserved)
-
-

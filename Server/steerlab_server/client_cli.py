@@ -1734,9 +1734,14 @@ def _authoring_prompt(invocation: Invocation) -> CLIResult:
     payload = {
         "kind": emission.kind,
         "prompt": emission.text,
-        # The provenance citation. Named exactly as a manifest would record
-        # it, so a study can carry it verbatim.
+        # The provenance citations. Named exactly as a manifest would record
+        # them, so a study can carry them verbatim. The SPEC hash identifies
+        # the wording (template + partials, pre-substitution); the INSTANCE
+        # hash identifies this emission (that wording rendered with these
+        # parameters). Two emissions differing only in concept share the first
+        # and differ in the second.
         "promptSpecHash": f"sha256:{emission.prompt_spec_hash}",
+        "promptInstanceHash": f"sha256:{emission.prompt_instance_hash}",
         "templateFiles": list(emission.template_files),
         "fromWorkspaceCopy": emission.from_workspace_copy,
         "destination": emission.destination,
@@ -1747,7 +1752,9 @@ def _authoring_prompt(invocation: Invocation) -> CLIResult:
     return CLIResult(
         message=(f"emitted the {emission.kind!r} authoring prompt "
                  f"({len(emission.text)} characters, promptSpecHash "
-                 f"sha256:{emission.prompt_spec_hash[:12]}…)"
+                 f"sha256:{emission.prompt_spec_hash[:12]}…, "
+                 f"promptInstanceHash sha256:"
+                 f"{emission.prompt_instance_hash[:12]}…)"
                  + (f" → {wrote}" if wrote else "")),
         changed=bool(wrote),
         payload=payload,

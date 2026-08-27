@@ -106,10 +106,17 @@ import Testing
             kind: kindID, arguments: Self.legalArguments[kindID] ?? [:])
         let first = try #require(emission.text.split(separator: "\n").first)
         #expect(first.hasPrefix("<!-- steerlab authoring prompt"))
-        #expect(first.contains("sha256:\(emission.promptSpecHash)"))
+        #expect(
+            first.contains("promptSpecHash: sha256:\(emission.promptSpecHash)"))
         #expect(emission.promptSpecHash.count == 64)
         let isHex = emission.promptSpecHash.allSatisfy(\.isHexDigit)
         #expect(isHex)
+        #expect(
+            first.contains(
+                "promptInstanceHash: sha256:\(emission.promptInstanceHash)"))
+        #expect(emission.promptInstanceHash.count == 64)
+        let instanceIsHex = emission.promptInstanceHash.allSatisfy(\.isHexDigit)
+        #expect(instanceIsHex)
         // The battery is the part an acceptor re-runs; a prompt without one is
         // a request with no way to check the answer.
         #expect(emission.text.contains("audit battery — compute these and report them"))
@@ -147,6 +154,135 @@ import Testing
             try joined.append(Data(contentsOf: url))
         }
         #expect(ExperimentStore.sha256Hex(joined) == emission.promptSpecHash)
+    }
+
+    /// Review round 6, finding 5. `promptSpecHash` is the TEMPLATE's hash and
+    /// is documented as exactly that — two emissions differing only in the
+    /// concept share it, which is right for "which wording is this study
+    /// citing" and useless for "which emission produced this corpus". The
+    /// instance hash answers the second question.
+    @Test func theSpecHashIdentifiesTheWordingAndTheInstanceHashTheEmission()
+        throws
+    {
+        var arguments = Self.legalArguments["validation-set"] ?? [:]
+        arguments["concept"] = "alpha"
+        let first = try AuthoringPrompts.emit(
+            kind: "validation-set", arguments: arguments)
+        arguments["concept"] = "beta"
+        let second = try AuthoringPrompts.emit(
+            kind: "validation-set", arguments: arguments)
+        #expect(first.promptSpecHash == second.promptSpecHash)
+        #expect(first.promptInstanceHash != second.promptInstanceHash)
+        // And it is reproducible from the emitted body plus the reported
+        // parameters, which is what makes it a citation rather than a serial
+        // number.
+        let body = first.text
+            .split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)[1]
+            .drop { $0 == "\n" }
+        #expect(
+            AuthoringPrompts.instanceDigest(
+                body: String(body), parameters: first.parameters)
+                == first.promptInstanceHash)
+    }
+
+    /// The parameters are hashed as well as the body, so an argument the
+    /// wording happens not to interpolate still separates two emissions.
+    @Test func theInstanceHashMovesWithAParameterThatLeavesNoMarkOnTheBody()
+        throws
+    {
+        var arguments = Self.legalArguments["reader-pairs"] ?? [:]
+        arguments["count"] = "40"
+        arguments["heldOut"] = "10"
+        let first = try AuthoringPrompts.emit(
+            kind: "reader-pairs", arguments: arguments)
+        arguments["heldOut"] = "11"
+        let second = try AuthoringPrompts.emit(
+            kind: "reader-pairs", arguments: arguments)
+        #expect(first.promptSpecHash == second.promptSpecHash)
+        #expect(first.promptInstanceHash != second.promptInstanceHash)
+    }
+
+    // MARK: - Counts are numbers (review round 6, finding 7)
+
+    /// The value is substituted into a prompt an LLM obeys literally, so
+    /// `--count bananas` asked an author for bananas rows — and emitted a
+    /// well-formed prompt with a hash to prove it.
+    @Test(arguments: ["bananas", "-5", "0", "4.5", "1e3", "\u{664}\u{660}"])
+    func aCountThatIsNotACountIsRefusedByName(_ value: String) throws {
+        var arguments = Self.legalArguments["validation-set"] ?? [:]
+        arguments["count"] = value
+        do {
+            _ = try AuthoringPrompts.emit(
+                kind: "validation-set", arguments: arguments)
+            Issue.record("'\(value)' was accepted as a row count")
+        } catch let error as ExperimentError {
+            #expect(
+                error.reason.contains(
+                    "--count takes a whole number of rows above 0"))
+            #expect(error.reason.contains("got '\(value)'"))
+            // Usage, not a workspace gate: the invocation is wrong, not the
+            // tree.
+            #expect(error.malformedInvocation != nil)
+            #expect(error.lifecycleRefusal == nil)
+        }
+    }
+
+    @Test func aCountAboveTheCeilingIsRefusedWithTheCeiling() throws {
+        var arguments = Self.legalArguments["validation-set"] ?? [:]
+        arguments["count"] = "900"
+        do {
+            _ = try AuthoringPrompts.emit(
+                kind: "validation-set", arguments: arguments)
+            Issue.record("900 rows was accepted")
+        } catch let error as ExperimentError {
+            #expect(
+                error.reason.contains(
+                    "above the ceiling of \(AuthoringPrompts.maximumCount)"))
+            #expect(error.reason.contains("Emit twice and review twice instead"))
+        }
+    }
+
+    @Test func everyCountFlagIsCheckedNotOnlyTheOneNamedCount() throws {
+        for kind in AuthoringPrompts.kinds {
+            for parameter in kind.parameters where parameter.isCount {
+                var arguments = Self.legalArguments[kind.id] ?? [:]
+                arguments[parameter.key] = "nope"
+                do {
+                    _ = try AuthoringPrompts.emit(
+                        kind: kind.id, arguments: arguments)
+                    Issue.record("\(kind.id) \(parameter.flag) was unchecked")
+                } catch let error as ExperimentError {
+                    #expect(error.reason.contains(parameter.flag))
+                }
+            }
+        }
+    }
+
+    @Test(arguments: ["40", "41"])
+    func aHeldOutSplitThatIsNotASplitIsRefused(_ heldOut: String) throws {
+        var arguments = Self.legalArguments["reader-pairs"] ?? [:]
+        arguments["count"] = "40"
+        arguments["heldOut"] = heldOut
+        do {
+            _ = try AuthoringPrompts.emit(
+                kind: "reader-pairs", arguments: arguments)
+            Issue.record("a held-out split of \(heldOut) in 40 was accepted")
+        } catch let error as ExperimentError {
+            #expect(
+                error.reason.contains(
+                    "the held-out rows are the TRAILING rows"))
+            #expect(
+                error.reason.contains("--held-out is \(heldOut) of 40 rows"))
+        }
+    }
+
+    @Test func aHeldOutSplitBelowTheCountStillEmits() throws {
+        var arguments = Self.legalArguments["reader-pairs"] ?? [:]
+        arguments["count"] = "40"
+        arguments["heldOut"] = "10"
+        let emission = try AuthoringPrompts.emit(
+            kind: "reader-pairs", arguments: arguments)
+        #expect(emission.parameters["heldOut"] == "10")
     }
 
     /// The shapes fit DIFFERENT contrasts. One prompt for both, or one hash for

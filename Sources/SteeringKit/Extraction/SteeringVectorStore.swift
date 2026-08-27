@@ -14,6 +14,17 @@ public struct SteeringVectorSidecar: Codable, Sendable {
     public var hiddenSize: Int
     public var normsPerLayer: [Float]
     public var extractionDate: String
+    /// Whether `layerCount` above is the MODEL's depth or only this artifact's
+    /// own row count. Reader-derived directions are PARTIAL by construction
+    /// (zeros below the reader's layer, then one row), so a workspace that
+    /// reads a model's depth off one of them gets the reader's layer plus one
+    /// — and then converts absolute sweep layers against a network that does
+    /// not exist. Stamped `false` forward by every writer that knows its
+    /// artifact is partial; **absent is read by method** — see
+    /// `statesModelDepth`, which is the property to ask. Pinned cross-engine
+    /// contract: same JSON key on the server's
+    /// `vector_store.SteeringVectorSidecar`.
+    public var coversModelDepth: Bool?
     /// Direction-finding method ("meanDifference" | "lat"). Optional for
     /// artifacts predating method options.
     public var extractionMethod: String?
@@ -110,12 +121,24 @@ public struct SteeringVectorSidecar: Codable, Sendable {
     public var readerTemplateHash: String?
     public var readerContrastMode: String?
     public var readerSignConvention: String?
-    /// The reader probe's `orientation` at derive time (+1 or −1). Recorded
-    /// because the derived BYTES have the orientation folded in: a reader with
-    /// orientation −1 stores a direction pointing AWAY from the concept, and
-    /// the conversion negates it. Without this stamp there is no way to tell,
-    /// from the artifact alone, whether the sign was applied.
+    /// The reader probe's `orientation` at derive time (+1 or −1) — the sign
+    /// the TRAIN class means imply. Under `trainMajority` the derived BYTES
+    /// have it folded in (a reader with orientation −1 stores a direction
+    /// pointing away from the concept, and the conversion negates it); under
+    /// `heldOutPairAgreement` the fitted direction already carries the
+    /// held-out-chosen sign and ships unflipped. Either way this stamp is what
+    /// makes the conversion recoverable from the artifact alone.
     public var readerProbeOrientation: Float?
+    /// Whether the TRAIN split would have signed a held-out-signed direction
+    /// the other way (`readerProbeOrientation == −1` under
+    /// `signConvention: "heldOutPairAgreement"`). Diagnostic, not corrective:
+    /// the held-out sign stands, and this records that the two splits did not
+    /// agree about it, which is a fact about the direction's stability.
+    /// Present (true or false) only when held-out did the signing; absent
+    /// under train-majority and on every non-reader artifact. Pinned
+    /// cross-engine contract: same JSON key on the server's
+    /// `vector_store.SteeringVectorSidecar`.
+    public var trainHeldOutSignDisagreement: Bool?
     /// HOW this direction's sign was fixed — `"heldOutPairAgreement"` (the
     /// paper's step 4) or `"trainMajority"` (the reference implementation's
     /// `get_signs`). Stamped by every family whose direction has a sign to
@@ -325,6 +348,7 @@ public struct SteeringVectorSidecar: Codable, Sendable {
         self.readerContrastMode = nil
         self.readerSignConvention = nil
         self.readerProbeOrientation = nil
+        self.trainHeldOutSignDisagreement = nil
         // Every paired direction has a sign rule; the extraction paths stamp
         // theirs after construction (the reader's from its artifact, the
         // paired-difference PCA family's train-majority rule at extract time).
@@ -339,6 +363,43 @@ public struct SteeringVectorSidecar: Codable, Sendable {
         self.recipeIdentityHash = nil  // stamped by the experiment writers
         self.gemmascopeSource = nil  // stamped by the server's SAE importer
         self.optvec = nil  // stamped by the server's OptVec trainer
+        // Full depth: every extraction this initializer serves writes one row
+        // per block. The partial families stamp `false` themselves.
+        self.coversModelDepth = nil
+    }
+
+    /// Extraction methods whose artifacts are PARTIAL by construction — their
+    /// `layerCount` is a row count, not a model depth. `repeReaderLAT` writes
+    /// zeros below the reader's layer and stops there (the Gemma-Scope import
+    /// convention), so a reader fitted at block 13 of a 42-block model writes
+    /// `layerCount: 14`.
+    public static let partialDepthMethods: Set<String> = ["repeReaderLAT"]
+
+    /// Whether this artifact's `layerCount` is the MODEL's depth.
+    ///
+    /// Not every steering-vector artifact is one row per block. Reader-derived
+    /// directions are partial by construction, and reading a model's depth off
+    /// one of them reports the reader's layer plus one — which then converts
+    /// absolute sweep layers against a network that does not exist.
+    ///
+    /// The discriminator is EXPLICIT where the writer knows: `coversModelDepth`
+    /// on the sidecar, stamped forward. Absent is read by method, and the two
+    /// legacy meanings are different:
+    ///
+    /// - absent on a reader-derived artifact (`repeReaderLAT`) = PARTIAL. Every
+    ///   artifact of that family ever written is partial, so the method is a
+    ///   sound witness for the ones written before the stamp existed.
+    /// - absent anywhere else = FULL. CAA, LAT, grand-mean,
+    ///   designated-reference, OptVec and J-lens artifacts all carry one row
+    ///   per block, as do the artifacts old enough to carry no
+    ///   `extractionMethod` at all — the family predates the reader entirely.
+    ///
+    /// Server twin: `catalog.covers_model_depth`.
+    public var statesModelDepth: Bool {
+        if let coversModelDepth { return coversModelDepth }
+        let partial = Self.partialDepthMethods
+        return !(partial.contains(extractionMethod ?? "")
+            || partial.contains(recipeMethod ?? ""))
     }
 }
 

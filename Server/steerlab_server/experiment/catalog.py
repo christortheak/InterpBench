@@ -99,10 +99,59 @@ class VectorArtifact:
     # keeps its historical existence-only behaviour, loudly.
     sidecarSha256: str | None = None
     tensorSha256: str | None = None
+    # Whether ``layerCount`` is the MODEL's depth or only this artifact's own
+    # row count — verbatim from the sidecar's ``coversModelDepth``. See
+    # :func:`covers_model_depth` for what absent means.
+    coversModelDepth: bool | None = None
 
     @property
     def id(self) -> str:
         return os.path.join(self.runDirectory, self.name)
+
+    @property
+    def states_model_depth(self) -> bool:
+        """Whether this row may be read as a statement of the model's depth."""
+        return covers_model_depth(
+            covers=self.coversModelDepth, extraction_method=self.method,
+            recipe_method=self.recipeMethod)
+
+
+#: Extraction methods whose artifacts are PARTIAL by construction — their
+#: ``layerCount`` is a row count, not a model depth. ``repeReaderLAT`` writes
+#: zeros below the reader's layer and stops there (the Gemma-Scope import
+#: convention), so a reader fitted at block 13 of a 42-block model writes
+#: ``layerCount: 14``.
+PARTIAL_DEPTH_METHODS = frozenset({"repeReaderLAT"})
+
+
+def covers_model_depth(*, covers: bool | None, extraction_method: str | None,
+                       recipe_method: str | None) -> bool:
+    """Whether an artifact's ``layerCount`` is the MODEL's depth.
+
+    Not every steering-vector artifact is one row per block. Reader-derived
+    directions are partial by construction, and reading a model's depth off one
+    of them reports the reader's layer plus one — which then converts absolute
+    sweep layers against a network that does not exist.
+
+    The discriminator is EXPLICIT where the writer knows: ``coversModelDepth``
+    on the sidecar, stamped forward. Absent is read by method, and the two
+    legacy meanings are different:
+
+    - absent on a reader-derived artifact (``repeReaderLAT``) = PARTIAL. Every
+      artifact of that family ever written is partial, so the method is a
+      sound witness for the ones written before the stamp existed.
+    - absent anywhere else = FULL. CAA, LAT, grand-mean, designated-reference,
+      OptVec and J-lens artifacts all carry one row per block, as do the
+      artifacts old enough to carry no ``extractionMethod`` at all — the family
+      predates the reader entirely.
+
+    Swift twin: ``SteeringVectorSidecar.coversModelDepth`` (the resolved
+    property, not the stored optional).
+    """
+    if covers is not None:
+        return bool(covers)
+    return not (str(extraction_method or "") in PARTIAL_DEPTH_METHODS
+                or str(recipe_method or "") in PARTIAL_DEPTH_METHODS)
 
 
 def _finite_float_list(value) -> list[float] | None:
@@ -220,7 +269,10 @@ def list_vectors(root: str | None = None) -> list[VectorArtifact]:
                 # Hashed AFTER the sidecar parsed: only rows that are really
                 # vector artifacts pay the read.
                 sidecarSha256=_artifact_sha256(os.path.join(run_dir, fname)),
-                tensorSha256=_artifact_sha256(tensor_path)))
+                tensorSha256=_artifact_sha256(tensor_path),
+                coversModelDepth=(
+                    None if sidecar.get("coversModelDepth") is None
+                    else bool(sidecar["coversModelDepth"]))))
     return out
 
 

@@ -110,6 +110,18 @@ public final class FineTuningPanel {
     /// not let the previous root's rows land afterwards. Same mechanism as
     /// `DatasetInventoryModel.generation`.
     private var agentScanGeneration = 0
+    /// The evidence overlay's OWN latest-wins counter, separate from the
+    /// library scan's (review round 6, finding 6).
+    ///
+    /// The two passes were sharing `agentScanGeneration`, and the Library
+    /// starts evidence TWICE by design: once in `.task`, for the rows carried
+    /// over from a previous visit, and again from `onChange(of: agentIndex)`
+    /// when the rescan reports new ones. Both captured the same token, so the
+    /// token could not tell them apart, and whichever `runs/` walk happened to
+    /// finish last won — including the older one, over evidence computed for a
+    /// NEWER snapshot. Its own counter makes "a second evidence pass started"
+    /// invalidate the first, which is what latest-wins means.
+    private var agentEvidenceGeneration = 0
     /// Where notes persist (A15). The shared per-workspace feed in the app;
     /// tests inject a hermetic instance.
     public var notices: PanelNotices = .shared
@@ -336,6 +348,16 @@ public final class FineTuningPanel {
     /// hash PER AGENT — the part that actually scaled with the number of
     /// promoted agents — and no row needs it to draw. Callers run it only
     /// for the region that shows it (the Library).
+    ///
+    /// Two guards, because the token alone was not enough (review round 6,
+    /// finding 6): its OWN generation counter, so a second evidence pass
+    /// invalidates the first rather than racing it; and the captured snapshot
+    /// — the root and the exact set of entry ids the walk was computed for —
+    /// checked against the live index before anything is applied. The second
+    /// is what makes a late result harmless even if a counter is ever bumped
+    /// somewhere this method does not know about: evidence keyed on rows that
+    /// are no longer the rows on screen renders under the wrong agent, and
+    /// that is the failure worth being paranoid about.
     public func refreshAgentEvidenceAsync() {
         let entries = agentIndex
         guard !entries.isEmpty else {
@@ -343,15 +365,47 @@ public final class FineTuningPanel {
             return
         }
         let runs = ExperimentStore.runsDirectory
-        let token = agentScanGeneration
+        let root = VectorCatalog.projectRoot
+        let entryIDs = Set(entries.map(\.id))
+        let scanToken = agentScanGeneration
+        agentEvidenceGeneration &+= 1
+        let evidenceToken = agentEvidenceGeneration
         Task.detached(priority: .utility) {
             let evidence = AgentLibraryIndex.evidence(
                 for: entries, runsDirectory: runs)
             await MainActor.run { [weak self] in
-                guard let self, token == self.agentScanGeneration else { return }
+                guard let self,
+                    Self.evidenceMayLand(
+                        scanToken: scanToken,
+                        liveScanToken: self.agentScanGeneration,
+                        evidenceToken: evidenceToken,
+                        liveEvidenceToken: self.agentEvidenceGeneration,
+                        root: root, liveRoot: self.scannedAgentRoot,
+                        entryIDs: entryIDs,
+                        liveEntryIDs: Set(self.agentIndex.map(\.id)))
+                else { return }
                 self.robustnessByAgentID = evidence.byEntryID
             }
         }
+    }
+
+    /// Whether a finished evidence walk still describes what is on screen.
+    ///
+    /// Pure and static so the rule is testable without racing two detached
+    /// tasks: every input is what the walk CAPTURED beside what the panel
+    /// holds NOW. All four must agree — a superseded library scan, a
+    /// superseded evidence pass, a workspace that moved, or a row set that
+    /// changed each make the result evidence about something else.
+    nonisolated static func evidenceMayLand(
+        scanToken: Int, liveScanToken: Int,
+        evidenceToken: Int, liveEvidenceToken: Int,
+        root: URL?, liveRoot: URL?,
+        entryIDs: Set<String>, liveEntryIDs: Set<String>
+    ) -> Bool {
+        scanToken == liveScanToken
+            && evidenceToken == liveEvidenceToken
+            && root == liveRoot
+            && entryIDs == liveEntryIDs
     }
 
     private func applyScannedVariants(

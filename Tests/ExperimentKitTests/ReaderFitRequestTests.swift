@@ -160,6 +160,39 @@ import Testing
         }
     }
 
+    /// Review round 6, finding 4. The `{{stimulus}}` check was the ONLY thing
+    /// standing between a custom scaffold and the concept's pinned corpus; a
+    /// template that carried the slot but embedded a turn marker, or named a
+    /// LAT token nothing implements, reached the canonical file and failed
+    /// from a server job. Every one of the engine's rules now runs here, on
+    /// the real rows, before the request exists.
+    @Test func aCustomTemplateThatCannotRenderRefusesBeforeTheRequestExists()
+        throws
+    {
+        func build(_ text: String) throws -> ConceptBuilder.ReaderFitRequest {
+            try ConceptBuilder.readerFitRequest(
+                concept: "fear",
+                positives: ["p0", "p1"],
+                negatives: ["n0", "n1"],
+                heldOutPairCount: 0,
+                registryTemplateID: nil,
+                customTemplateText: text)
+        }
+        // An embedded chat-template marker: the scaffold IS the token sequence
+        // under a raw rendering, so the tokenizer would add a second BOS.
+        #expect(throws: (any Error).self) {
+            _ = try build("<bos>S: {{stimulus}} —")
+        }
+        // An {{instruction}} slot with no instructionPair to fill it: the
+        // literal would reach the model.
+        #expect(throws: (any Error).self) {
+            _ = try build("S: {{stimulus}} {{instruction}} —")
+        }
+        // And the shape that always worked still does.
+        let ok = try build("S: {{stimulus}} —")
+        #expect(ok.templateJSON?.contains("{{stimulus}}") == true)
+    }
+
     @Test func missingTemplateSelectionThrows() {
         expectChatServiceError(containing: "select a task template") {
             _ = try ConceptBuilder.readerFitRequest(

@@ -429,9 +429,14 @@ struct ReaderLabSurfaceTests {
         #expect(
             values["sign convention"]
                 == RepEReader.SignConvention.heldOutPairAgreement.label)
-        // The orientation fix is a fact about the BYTES, so the row says what
-        // was folded into them.
-        #expect(values["probe orientation"]?.contains("folded into the vector bytes") == true)
+        // This reader was signed by HELD-OUT pair agreement, so the fitted
+        // direction ships unflipped and the row says whose sign the bytes
+        // carry — not that an orientation was folded into them (review round
+        // 6, finding 1).
+        #expect(
+            values["probe orientation"]?
+                .contains("the held-out split signed this vector") == true)
+        #expect(values["train/held-out sign"]?.hasPrefix("DISAGREE") == true)
     }
 
     /// The refusal is not composed by the pane: it is the literal
