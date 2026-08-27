@@ -272,25 +272,67 @@ def test_a_frozen_study_refuses_further_authoring(workspace, capsys):
         "draft"
 
 
-def test_set_protocol_reports_the_fields_it_did_not_apply(workspace, capsys):
-    """``set_protocol`` filters against a closed allow-list and says nothing
-    about what it dropped. A silently ignored protocol field is a study
-    measuring something other than what the caller declared, so the client
-    reports the difference."""
+def test_set_protocol_refuses_an_unknown_field_and_writes_nothing(
+        workspace, capsys):
+    """A key outside the protocol vocabulary used to write nothing while the
+    verb reported ``changed: true`` — a study measuring something other than
+    what the caller declared. It now refuses at 64 (the shape
+    ``set-instruments`` gives an out-of-vocabulary instrument), names the
+    key, lists the vocabulary, and writes NOTHING — the valid keys in the
+    same invocation must not land either."""
     assert _run(["experiment", "create", "demo", "--model", "org/m"]) == 0
     capsys.readouterr()
     assert _run(["experiment", "set-protocol", "demo",
                  "--set", "temperature=0.7",
                  "--set", "seeds=[0,1,2]",
                  "--set", "taskDescription=answer the item",
-                 "--set", "notAField=1", "--json"]) == 0
-    result = _document(capsys)["result"]
-    assert result["applied"] == ["seeds", "taskDescription", "temperature"]
-    assert result["ignored"] == ["notAField"]
+                 "--set", "notAField=1", "--json"]) == 64
+    error = _document(capsys)["error"]
+    assert error["code"] == "usage"
+    assert "'notAField'" in error["reason"]
+    assert "temperature" in error["reason"]  # the vocabulary is listed
+    assert error["repairAction"]
     document = experiment_store.load_raw("demo", str(workspace))
-    assert document["temperature"] == 0.7
-    assert document["seeds"] == [0, 1, 2]
+    assert document["temperature"] == 0.0  # create's default, not 0.7
+    assert document["seeds"] == [0]
     assert "notAField" not in document
+
+
+def test_set_protocol_reaches_the_fields_the_contract_promises(
+        workspace, capsys):
+    """PORTABILITY-CONTRACTS §authoring: the Mac's ``set-instruments`` and
+    ``set-sweep-selection`` are protocol FIELDS here, reachable through
+    ``set-protocol``. That sentence was false for both until the vocabulary
+    grew ``outcomeInstruments`` and ``sweep`` — this test is the claim."""
+    assert _run(["experiment", "create", "demo", "--model", "org/m"]) == 0
+    capsys.readouterr()
+    assert _run(["experiment", "set-protocol", "demo",
+                 "--set", 'outcomeInstruments=["sampledText"]',
+                 "--set", 'sweep={"selection": {"objective": '
+                          '{"kind": "markerDensity"}}}', "--json"]) == 0
+    result = _document(capsys)["result"]
+    assert result["applied"] == ["outcomeInstruments", "sweep"]
+    document = experiment_store.load_raw("demo", str(workspace))
+    assert document["outcomeInstruments"] == ["sampledText"]
+    assert document["sweep"]["selection"]["objective"]["kind"] == \
+        "markerDensity"
+
+
+def test_set_protocol_refuses_an_unknown_instrument_value(workspace, capsys):
+    """The vocabulary gate covers VALUES where a closed value vocabulary
+    exists: an unknown instrument declared through ``set-protocol`` is the
+    same silent loss ``set-instruments`` refuses on the Mac (the downstream
+    readers are set-membership tests), so the store refuses it here too."""
+    assert _run(["experiment", "create", "demo", "--model", "org/m"]) == 0
+    capsys.readouterr()
+    assert _run(["experiment", "set-protocol", "demo",
+                 "--set", 'outcomeInstruments=["sampledTxt"]', "--json"]) == 65
+    error = _document(capsys)["error"]
+    assert error["code"] == "authoringRefused"
+    assert "sampledTxt" in error["reason"]
+    assert "set-instruments" in error["repairAction"]
+    document = experiment_store.load_raw("demo", str(workspace))
+    assert "outcomeInstruments" not in document
 
 
 def test_concept_import_asks_which_pole_unpaired_texts_join(workspace, capsys):

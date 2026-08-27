@@ -1277,23 +1277,29 @@ def _experiment(invocation: Invocation) -> CLIResult:
                 # A bare word is the commonest spelling of a string value and
                 # refusing it would be pedantry, not safety.
                 fields[key.strip()] = raw
+        # A key outside the vocabulary refuses BEFORE the store is touched —
+        # at 64, the shape `set-instruments` gives an out-of-vocabulary
+        # instrument on the Mac. The store refuses the same keys itself
+        # (`set_protocol` is shared with the HTTP route); this earlier check
+        # exists so the client's refusal is a malformed invocation, not an
+        # authoring rule, because that is what a typo'd flag value is.
+        unknown = sorted(k for k in fields if k not in store.PROTOCOL_FIELDS)
+        if unknown:
+            named = ", ".join(f"'{k}'" for k in unknown)
+            raise ClientRefusal(
+                code=USAGE_CODE,
+                reason=(f"unknown protocol field(s) {named} — known: "
+                        + ", ".join(store.PROTOCOL_FIELDS)),
+                repair_action=(f"{PROGRAM} experiment set-protocol {name} "
+                               "--set <key>=<json> with keys from the "
+                               "declared vocabulary; nothing was written"))
         document = store.set_protocol(name, fields)
-        # `set_protocol` filters against its own closed allow-list and says
-        # nothing about what it dropped. Report the difference rather than
-        # claiming every key landed: a silently ignored protocol field is a
-        # study that measures something other than what the caller declared.
-        applied = sorted(k for k, v in fields.items() if document.get(k) == v)
-        ignored = sorted(k for k in fields if k not in applied)
+        applied = sorted(fields)
         line = f"set {len(applied)} protocol field(s) on {name!r}"
         print(line)
-        for key in ignored:
-            sys.stderr.write(
-                f"warning: {key!r} is not a declared protocol field and was "
-                "ignored\n")
         return CLIResult(
             message=line, changed=bool(applied),
-            payload={"experiment": name, "applied": applied,
-                     "ignored": ignored})
+            payload={"experiment": name, "applied": applied})
 
     if verb == "pin-revision":
         _require(args, 2, spec)

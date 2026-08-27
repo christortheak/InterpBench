@@ -398,8 +398,14 @@ document *into a server's* copy, which is the opposite of what this client
 does) and `attach_artifact` (reachable as `attach --artifact`, which is the
 spelling the store itself dispatches). The Mac's `pin-prompts`, `pin-rubric`,
 `set-instruments` and `set-sweep-selection` are protocol *fields* here,
-reachable through `set-protocol --set <key>=<json>`, because that is the shape
-`set_protocol` actually has.
+reachable through `set-protocol --set <key>=<json>` — `taskPromptsFile` +
+`taskPromptsHash`, `judgeRubricFile` + `judgeRubricHash`,
+`outcomeInstruments`, and `sweep` respectively — because that is the shape
+`set_protocol` actually has. The field vocabulary is closed
+(`experiment_store.PROTOCOL_FIELDS`) and a key outside it **refuses at 64**,
+naming the key and listing the vocabulary, with nothing written — never a
+silent drop reported as success. An `outcomeInstruments` value outside the
+instrument vocabulary refuses the same way the Mac's `set-instruments` does.
 
 ### The envelope
 
