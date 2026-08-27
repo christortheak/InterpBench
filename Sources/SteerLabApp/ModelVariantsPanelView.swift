@@ -67,9 +67,6 @@ struct ModelVariantsPanelView: View {
     @State private var pendingOptimizationSelection: String?
     @State private var confirmDelete = false
     @State private var editorLoadedID: String?
-    /// Latest robustness evidence per agent record id, rebuilt on refresh
-    /// (one runs/ scan + one hash per saved agent — never per frame).
-    @State private var robustnessByAgentID: [String: AgentEvidence.RobustnessEvidence] = [:]
     // Agent Library filters (pure rules in AgentLibrary.Filter).
     @State private var filterBaseModel: String?
     @State private var filterSweepOnly = false
@@ -107,35 +104,42 @@ struct ModelVariantsPanelView: View {
         ) {
             Button("Delete", role: .destructive) { panel.deleteSelectedVariant() }
         }
-        .onAppear {
-            panel.refresh()
+        // Nothing on the tab-switch path may touch the disk (2026-08-27):
+        // this used to be an `onAppear` that ran the library scan, a runs/
+        // walk, and a full-file hash of every saved agent SYNCHRONOUSLY,
+        // which is exactly the latency the switch showed and exactly why it
+        // scaled with the number of promoted agents. `.task` runs after the
+        // first draw, and both scans now run off the main actor.
+        .task {
+            panel.refreshAgentLibraryAsync()
             loadEditorForSelection()
-            refreshAgentEvidence()
+            // Rows carried over from a previous visit are already on screen;
+            // give them their evidence without waiting for the rescan to
+            // report a CHANGE it may not have.
+            refreshAgentEvidenceIfShown()
         }
+        // The list landed (or changed): seed the editor if it was waiting on
+        // the scan, and start the deferred evidence pass.
+        .onChange(of: panel.agentIndex) {
+            loadEditorForSelection()
+            refreshAgentEvidenceIfShown()
+        }
+        // Entering the Library is what makes the robustness captions visible;
+        // the other regions never render them, so they never pay for them.
+        .onChange(of: region) { refreshAgentEvidenceIfShown() }
         // A completed robustness check lands in a new run directory — pick
         // its report up without waiting for the next panel appearance.
         .onChange(of: panel.lastRobustnessDirectory) {
-            refreshAgentEvidence()
+            refreshAgentEvidenceIfShown()
         }
     }
 
-    /// Rebuild the per-agent latest-robustness map: one runs/ scan, then a
-    /// pure newest-report match per saved agent (hash-preferred, name
-    /// fallback — `AgentEvidence.latestRobustness`).
-    private func refreshAgentEvidence() {
-        let reports = AgentEvidence.scanRobustnessReports()
-        var map: [String: AgentEvidence.RobustnessEvidence] = [:]
-        for record in panel.variants {
-            let hash = try? ModelVariantStore.hash(record.url)
-            if let match = AgentEvidence.latestRobustness(
-                in: reports,
-                variantName: record.artifact.name,
-                artifactHash: hash)
-            {
-                map[record.id] = match
-            }
-        }
-        robustnessByAgentID = map
+    /// Start the deferred robustness overlay — one runs/ scan plus a content
+    /// hash per agent, off the main actor (`AgentLibraryIndex.evidence`) —
+    /// but only for the region that renders it.
+    private func refreshAgentEvidenceIfShown() {
+        guard region == .library else { return }
+        panel.refreshAgentEvidenceAsync()
     }
 
     // MARK: Regions (Library / New Agent / Optimizations)
@@ -1388,16 +1392,38 @@ struct ModelVariantsPanelView: View {
         return hashes
     }
 
-    private func chips(for record: ModelVariantRecord) -> [AgentLibrary.Chip] {
-        var availability = agentAvailability
-        if isServerWorkspace {
-            availability.serverApplicability =
-                service.serverApplicability(of: record.artifact).isApplicable
+    /// Everything a batch of rows needs to judge itself, built ONCE per body
+    /// evaluation instead of once per row.
+    ///
+    /// `agentAvailability` and `currentAdapterHashes` are computed
+    /// properties: reading them inside a per-row helper rebuilt a set of
+    /// every local model, vector and adapter for EVERY agent — twice (once to
+    /// filter, once for the chips). That is O(agents × catalog) of pure CPU
+    /// on the main thread per render, on top of the IO the tab used to do.
+    private struct LibraryContext {
+        var availability: AgentLibrary.Availability
+        var adapterHashes: [String: String]
+        var isServerWorkspace: Bool
+    }
+
+    private var libraryContext: LibraryContext {
+        LibraryContext(
+            availability: agentAvailability,
+            adapterHashes: currentAdapterHashes,
+            isServerWorkspace: isServerWorkspace)
+    }
+
+    private func chips(
+        for entry: AgentLibraryIndex.Entry, context: LibraryContext
+    ) -> [AgentLibrary.Chip] {
+        var availability = context.availability
+        if context.isServerWorkspace {
+            availability.serverApplicability = serverApplicability(of: entry)
         }
         return AgentLibrary.chips(
-            for: record.artifact,
+            for: entry.components,
             availability: availability,
-            currentAdapterHashes: currentAdapterHashes)
+            currentAdapterHashes: context.adapterHashes)
     }
 
     private var agentFilter: AgentLibrary.Filter {
@@ -1408,82 +1434,157 @@ struct ModelVariantsPanelView: View {
             runnableHere: filterRunnableHere)
     }
 
+    /// The server rule wants the full artifact; a row holds only its summary,
+    /// so resolve the record on demand. Only reached in a server workspace,
+    /// and only for rows that are actually being judged.
+    private func serverApplicability(of entry: AgentLibraryIndex.Entry) -> Bool {
+        guard let record = panel.variants.first(where: { $0.id == entry.id })
+        else { return false }
+        return service.serverApplicability(of: record.artifact).isApplicable
+    }
+
     /// "Runnable here" = the ACTIVE workspace can run it (local resolution in
     /// Local; the existing server applicability rule in a server workspace).
-    private func runnableHere(_ record: ModelVariantRecord) -> Bool {
-        if isServerWorkspace {
-            return service.serverApplicability(of: record.artifact).isApplicable
-        }
+    private func runnableHere(
+        _ entry: AgentLibraryIndex.Entry, context: LibraryContext
+    ) -> Bool {
+        if context.isServerWorkspace { return serverApplicability(of: entry) }
         return AgentLibrary.isRunnableLocally(
-            record.artifact, availability: agentAvailability)
+            entry.components, availability: context.availability)
     }
 
-    private func baselineRunnableHere(_ row: AgentLibrary.BaselineRow) -> Bool {
-        if isServerWorkspace {
+    private func baselineRunnableHere(
+        _ row: AgentLibrary.BaselineRow, context: LibraryContext
+    ) -> Bool {
+        if context.isServerWorkspace {
             return service.workspaceModelOptions.contains(row.baseModelID)
         }
-        return agentAvailability.localModelIDs.contains(row.baseModelID)
+        return context.availability.localModelIDs.contains(row.baseModelID)
     }
 
-    private var filteredAgents: [ModelVariantRecord] {
-        panel.variants.filter {
+    /// Filtered rows. `runnableHere` is passed as a closure, so the
+    /// availability judgement (and, on a server, the applicability rule
+    /// against the remote catalog) runs only when the "Runnable here" filter
+    /// is actually on — it used to be evaluated for every row every time.
+    private func filteredAgents(
+        context: LibraryContext
+    ) -> [AgentLibraryIndex.Entry] {
+        panel.agentIndex.filter { entry in
             AgentLibrary.matches(
-                $0.artifact, filter: agentFilter, runnableHere: runnableHere($0))
+                entry.components, filter: agentFilter,
+                runnableHere: { runnableHere(entry, context: context) })
         }
     }
 
-    private var filteredBaselines: [AgentLibrary.BaselineRow] {
-        AgentLibrary.baselineRows(for: panel.variants.map(\.artifact)).filter {
+    private func filteredBaselines(
+        context: LibraryContext
+    ) -> [AgentLibrary.BaselineRow] {
+        AgentLibrary.baselineRows(
+            forBaseModelIDs: panel.agentIndex.map(\.baseModelID)
+        ).filter { row in
             AgentLibrary.matches(
-                baseline: $0, filter: agentFilter,
-                runnableHere: baselineRunnableHere($0))
+                baseline: row, filter: agentFilter,
+                runnableHere: { baselineRunnableHere(row, context: context) })
         }
     }
 
     private var libraryBaseModelOptions: [String] {
-        Set(panel.variants.map(\.artifact.baseModelID)).sorted()
+        Set(panel.agentIndex.map(\.baseModelID)).sorted()
     }
+
+    /// The roster scrolls inside a CONSTANT-height box rather than laying out
+    /// every agent inline — the same shape as the Analysis section's vector
+    /// list (`GeometryPanelView.vectorListHeight`).
+    ///
+    /// macOS 27 beta hazard (project memory "split-view min-size crashes"):
+    /// this is a fixed MAXIMUM on a compressible `ScrollView`, and no
+    /// minimum here varies with the row count. Nothing about the surrounding
+    /// split-view columns changes.
+    private static let agentListHeight: CGFloat = 360
 
     @ViewBuilder
     private var agentLibrarySection: some View {
         Section("Agent Library") {
-            if panel.variants.isEmpty {
-                Text(
-                    "No agents yet. Create one in New Agent — by hand, or by "
-                        + "optimizing a concept vector (sweep → criterion → "
-                        + "Create Agent).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    Button("New Agent") { region = .create }
-                    Button("Optimize a Vector") {
-                        createMode = .optimize
-                        region = .create
+            if panel.agentIndex.isEmpty {
+                if panel.isScanningAgents || !panel.hasScannedAgents {
+                    // The tab is already on screen; the library is still
+                    // being read. Never the other way round.
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Reading the agent library…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    Button("Train Adapter") { navigate(.data) }
-                }
-                .controlSize(.small)
-            } else {
-                libraryFilters
-                ForEach(filteredBaselines) { row in
-                    baselineRowView(row)
-                }
-                ForEach(filteredAgents) { record in
-                    Button {
-                        panel.selectedVariantID = record.id
-                        loadEditorForSelection()
-                    } label: {
-                        agentRow(record)
-                    }
-                    .buttonStyle(.plain)
-                }
-                if filteredAgents.isEmpty, filteredBaselines.isEmpty {
-                    Text("No agents match the current filters.")
+                } else {
+                    Text(
+                        "No agents yet. Create one in New Agent — by hand, or by "
+                            + "optimizing a concept vector (sweep → criterion → "
+                            + "Create Agent).")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Button("New Agent") { region = .create }
+                        Button("Optimize a Vector") {
+                            createMode = .optimize
+                            region = .create
+                        }
+                        Button("Train Adapter") { navigate(.data) }
+                    }
+                    .controlSize(.small)
                 }
+            } else {
+                libraryFilters
+                agentRoster
                 selectedAgentActions
             }
+        }
+    }
+
+    private var agentRoster: some View {
+        // The context is built here, once, and captured by the lazily
+        // materialized rows below.
+        let context = libraryContext
+        let baselines = filteredBaselines(context: context)
+        let agents = filteredAgents(context: context)
+        return VStack(alignment: .leading, spacing: 4) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(baselines) { row in
+                        baselineRowView(row)
+                    }
+                    ForEach(agents) { entry in
+                        Button {
+                            panel.selectedVariantID = entry.id
+                            loadEditorForSelection()
+                        } label: {
+                            agentRow(entry, context: context)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 2)
+            }
+            .frame(maxHeight: Self.agentListHeight)
+
+            if agents.isEmpty, baselines.isEmpty {
+                Text("No agents match the current filters.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 6) {
+                if panel.isScanningAgents {
+                    ProgressView().controlSize(.small)
+                    Text("refreshing…")
+                } else {
+                    Text(
+                        "\(agents.count) agent\(agents.count == 1 ? "" : "s")"
+                            + (agents.count == panel.agentIndex.count
+                                ? "" : " of \(panel.agentIndex.count)"))
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -1506,38 +1607,43 @@ struct ModelVariantsPanelView: View {
         .padding(.vertical, 2)
     }
 
-    private func agentRow(_ record: ModelVariantRecord) -> some View {
-        let selected = panel.selectedVariantID == record.id
+    /// One roster row, rendered entirely from its summary
+    /// (`AgentLibraryIndex.Entry`) — no artifact retained, no date or
+    /// component string rebuilt here, and no disk touched.
+    private func agentRow(
+        _ entry: AgentLibraryIndex.Entry, context: LibraryContext
+    ) -> some View {
+        let selected = panel.selectedVariantID == entry.id
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text(record.artifact.name)
+                Text(entry.name)
                     .font(.headline)
-                AgentKindBadge(kind: AgentLibrary.kind(of: record.artifact))
+                AgentKindBadge(kind: entry.kind)
                 Spacer()
-                Text(dateLabel(record.artifact.createdAt))
+                Text(entry.dateLabel)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
-            Text(record.artifact.baseModelID)
+            Text(entry.baseModelID)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(AgentLibrary.componentsSummary(record.artifact))
+            Text(entry.componentsSummary)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            chipRow(for: record)
-            if let promotion = record.artifact.promotion {
-                Text(promotionLine(promotion))
+            chipRow(for: entry, context: context)
+            if let line = entry.promotionLine {
+                Text(line)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
-                if let reason = promotion.overrideReason {
+                if let reason = entry.overrideReason {
                     Text("override reason: \(reason)")
                         .font(.caption2)
                         .foregroundStyle(.orange)
                         .textSelection(.enabled)
                 }
             }
-            if let evidence = robustnessByAgentID[record.id] {
+            if let evidence = panel.robustnessByAgentID[entry.id] {
                 Text(AgentEvidence.robustnessSummaryLine(evidence.report))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -1548,14 +1654,17 @@ struct ModelVariantsPanelView: View {
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(selected ? Color.accentColor.opacity(0.08) : .clear))
     }
 
-    private func chipRow(for record: ModelVariantRecord) -> some View {
+    private func chipRow(
+        for entry: AgentLibraryIndex.Entry, context: LibraryContext
+    ) -> some View {
         HStack(spacing: 4) {
-            ForEach(chips(for: record)) { chip in
+            ForEach(chips(for: entry, context: context)) { chip in
                 AgentChipView(chip: chip)
             }
         }
@@ -1670,18 +1779,6 @@ struct ModelVariantsPanelView: View {
         return "pin this agent as a variant condition of '\(study.name)' (by artifact hash)"
     }
 
-    private func promotionLine(_ promotion: ModelVariantArtifact.Promotion) -> String {
-        var parts = ["from '\(promotion.experiment)'"]
-        if let run = promotion.sweepRun { parts.append("sweep \(run)") }
-        if let metric = promotion.criterion?.objective?.metric {
-            parts.append("criterion \(metric)")
-        }
-        if let cell = promotion.winningCell {
-            parts.append("L\(cell.layer) α\(cell.alpha)")
-        }
-        return parts.joined(separator: " · ")
-    }
-
     private func robustnessSummary(_ report: VariantRobustnessReport) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if let presetID = report.presetID,
@@ -1739,12 +1836,6 @@ struct ModelVariantsPanelView: View {
 
     private func percent(_ value: Float) -> String {
         value.formatted(.percent.precision(.fractionLength(0)))
-    }
-
-    private func dateLabel(_ iso: String) -> String {
-        let trimmed = iso.replacingOccurrences(of: "T", with: " ")
-            .replacingOccurrences(of: "Z", with: "")
-        return String(trimmed.prefix(min(16, trimmed.count)))
     }
 
     private func nilIfEmpty(_ value: String) -> String? {

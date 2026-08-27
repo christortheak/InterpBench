@@ -9,6 +9,52 @@ import Foundation
 /// resolve), so the rules run in plain CPU tests.
 public enum AgentLibrary {
 
+    // MARK: Components (what the rules actually judge)
+
+    /// The parts of a saved agent every rule below reads: its base model, the
+    /// refs that have to resolve, and whether it carries a birth certificate.
+    ///
+    /// Split out from `ModelVariantArtifact` so a LIST ROW can be judged from
+    /// a lightweight summary (`AgentLibraryIndex.Entry`) instead of a retained
+    /// full artifact. The artifact-taking entry points below are unchanged and
+    /// simply project into this — one implementation, two shapes of caller.
+    public struct Components: Sendable, Equatable {
+        public var baseModelID: String
+        public var adapters: [ModelVariantArtifact.AdapterRef]
+        public var injections: [ModelVariantArtifact.InjectionRef]
+        /// A promotion block is present (the birth certificate exists).
+        public var isPromoted: Bool
+        /// …and it was stamped `promotedBy: "manualOverride"`.
+        public var isManualOverride: Bool
+        public var neutralPCBasisLabel: String?
+
+        public init(
+            baseModelID: String,
+            adapters: [ModelVariantArtifact.AdapterRef] = [],
+            injections: [ModelVariantArtifact.InjectionRef] = [],
+            isPromoted: Bool = false,
+            isManualOverride: Bool = false,
+            neutralPCBasisLabel: String? = nil
+        ) {
+            self.baseModelID = baseModelID
+            self.adapters = adapters
+            self.injections = injections
+            self.isPromoted = isPromoted
+            self.isManualOverride = isManualOverride
+            self.neutralPCBasisLabel = neutralPCBasisLabel
+        }
+    }
+
+    public static func components(of artifact: ModelVariantArtifact) -> Components {
+        Components(
+            baseModelID: artifact.baseModelID,
+            adapters: artifact.adapters,
+            injections: artifact.injections,
+            isPromoted: artifact.promotion != nil,
+            isManualOverride: artifact.promotion?.promotedBy == "manualOverride",
+            neutralPCBasisLabel: artifact.neutralPCBasisLabel)
+    }
+
     // MARK: Kind
 
     /// One user-facing kind per row. Priority: promotion provenance beats
@@ -36,12 +82,15 @@ public enum AgentLibrary {
     }
 
     public static func kind(of artifact: ModelVariantArtifact) -> Kind {
-        if let promotion = artifact.promotion {
-            return promotion.promotedBy == "manualOverride"
-                ? .overridePromoted : .sweepPromoted
+        kind(of: components(of: artifact))
+    }
+
+    public static func kind(of components: Components) -> Kind {
+        if components.isPromoted {
+            return components.isManualOverride ? .overridePromoted : .sweepPromoted
         }
-        if !artifact.adapters.isEmpty { return .adapter }
-        if !artifact.injections.isEmpty { return .vectorOnly }
+        if !components.adapters.isEmpty { return .adapter }
+        if !components.injections.isEmpty { return .vectorOnly }
         return .exploratory
     }
 
@@ -105,6 +154,12 @@ public enum AgentLibrary {
     public static func isRunnableLocally(
         _ artifact: ModelVariantArtifact, availability: Availability
     ) -> Bool {
+        isRunnableLocally(components(of: artifact), availability: availability)
+    }
+
+    public static func isRunnableLocally(
+        _ artifact: Components, availability: Availability
+    ) -> Bool {
         guard availability.localModelIDs.contains(artifact.baseModelID) else {
             return false
         }
@@ -135,6 +190,12 @@ public enum AgentLibrary {
     public static func missingVectorRefs(
         _ artifact: ModelVariantArtifact, availability: Availability
     ) -> [String] {
+        missingVectorRefs(components(of: artifact), availability: availability)
+    }
+
+    public static func missingVectorRefs(
+        _ artifact: Components, availability: Availability
+    ) -> [String] {
         artifact.injections.map(\.vectorArtifactID).filter {
             !ArtifactIdentity.contains(availability.localVectorIDs, $0)
                 && !ArtifactIdentity.contains(availability.serverVectorIDs, $0)
@@ -150,6 +211,14 @@ public enum AgentLibrary {
         _ artifact: ModelVariantArtifact,
         currentAdapterHashes: [String: String]
     ) -> [String] {
+        driftedAdapterRefs(
+            components(of: artifact), currentAdapterHashes: currentAdapterHashes)
+    }
+
+    public static func driftedAdapterRefs(
+        _ artifact: Components,
+        currentAdapterHashes: [String: String]
+    ) -> [String] {
         artifact.adapters.compactMap { ref in
             guard let recorded = ref.adapterHash,
                 let current = currentAdapterHashes[ref.adapterDirectory],
@@ -163,6 +232,16 @@ public enum AgentLibrary {
     /// provenance, composition, runnability, then integrity warnings.
     public static func chips(
         for artifact: ModelVariantArtifact,
+        availability: Availability,
+        currentAdapterHashes: [String: String] = [:]
+    ) -> [Chip] {
+        chips(
+            for: components(of: artifact), availability: availability,
+            currentAdapterHashes: currentAdapterHashes)
+    }
+
+    public static func chips(
+        for artifact: Components,
         availability: Availability,
         currentAdapterHashes: [String: String] = [:]
     ) -> [Chip] {
@@ -262,9 +341,15 @@ public enum AgentLibrary {
     public static func baselineRows(
         for artifacts: [ModelVariantArtifact]
     ) -> [BaselineRow] {
-        Set(artifacts.map(\.baseModelID))
-            .sorted()
-            .map(BaselineRow.init(baseModelID:))
+        baselineRows(forBaseModelIDs: artifacts.map(\.baseModelID))
+    }
+
+    /// Same rule from the base-model ids alone — what a summary row can
+    /// supply without holding an artifact.
+    public static func baselineRows(
+        forBaseModelIDs ids: some Sequence<String>
+    ) -> [BaselineRow] {
+        Set(ids).sorted().map(BaselineRow.init(baseModelID:))
     }
 
     // MARK: Filters
@@ -301,12 +386,27 @@ public enum AgentLibrary {
         filter: Filter,
         runnableHere: Bool
     ) -> Bool {
+        matches(
+            components(of: artifact), filter: filter,
+            runnableHere: { runnableHere })
+    }
+
+    /// `runnableHere` arrives as a CLOSURE because deciding it is the
+    /// expensive part of a library row (a full availability judgement, or the
+    /// server-applicability rule against the remote catalog) and the filters
+    /// need it only when "Runnable here" is actually on. The list path called
+    /// it eagerly for every row on every body evaluation.
+    public static func matches(
+        _ artifact: Components,
+        filter: Filter,
+        runnableHere: () -> Bool
+    ) -> Bool {
         if let base = filter.baseModelID, artifact.baseModelID != base {
             return false
         }
-        if filter.sweepPromotedOnly, artifact.promotion == nil { return false }
+        if filter.sweepPromotedOnly, !artifact.isPromoted { return false }
         if filter.hasAdapter, artifact.adapters.isEmpty { return false }
-        if filter.runnableHere, !runnableHere { return false }
+        if filter.runnableHere, !runnableHere() { return false }
         return true
     }
 
@@ -315,15 +415,28 @@ public enum AgentLibrary {
         filter: Filter,
         runnableHere: Bool
     ) -> Bool {
+        matches(baseline: row, filter: filter, runnableHere: { runnableHere })
+    }
+
+    /// Closure form, for the same reason as the artifact overload.
+    public static func matches(
+        baseline row: BaselineRow,
+        filter: Filter,
+        runnableHere: () -> Bool
+    ) -> Bool {
         guard !filter.excludesBaselines else { return false }
         if let base = filter.baseModelID, row.baseModelID != base { return false }
-        if filter.runnableHere, !runnableHere { return false }
+        if filter.runnableHere, !runnableHere() { return false }
         return true
     }
 
     // MARK: Row summaries
 
     public static func componentsSummary(_ artifact: ModelVariantArtifact) -> String {
+        componentsSummary(components(of: artifact))
+    }
+
+    public static func componentsSummary(_ artifact: Components) -> String {
         var parts: [String] = []
         if !artifact.adapters.isEmpty {
             parts.append(

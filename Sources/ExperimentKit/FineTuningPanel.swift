@@ -84,6 +84,32 @@ public final class FineTuningPanel {
     public private(set) var adapters: [FineTuneArtifactRecord] = []
     public private(set) var variants: [ModelVariantRecord] = []
     public private(set) var status: String?
+
+    // MARK: Agent Library list state (see `AgentLibraryIndex`)
+
+    /// Row-ready summaries of `variants` — what the Agent Library list
+    /// renders. Kept here rather than in the view so it SURVIVES a section
+    /// switch: the view's `@State` does not, which is why re-entering the
+    /// Agents tab used to repeat the whole scan before drawing anything.
+    public private(set) var agentIndex: [AgentLibraryIndex.Entry] = []
+    /// Latest robustness evidence per agent index id — the deferred overlay,
+    /// filled in after the list is on screen.
+    public private(set) var robustnessByAgentID:
+        [String: AgentEvidence.RobustnessEvidence] = [:]
+    /// An off-main library scan is in flight (the list shows its previous
+    /// rows meanwhile; the section header says it is refreshing).
+    public private(set) var isScanningAgents = false
+    /// True once a scan has completed, so "no agents yet" and "not scanned
+    /// yet" are distinguishable empty states.
+    public private(set) var hasScannedAgents = false
+    /// The workspace root `agentIndex` describes — nil before the first scan
+    /// completes. Rendered so a stale list can never masquerade as the
+    /// workspace the toolbar names.
+    public private(set) var scannedAgentRoot: URL?
+    /// Latest-wins guard: a workspace switch during an in-flight scan must
+    /// not let the previous root's rows land afterwards. Same mechanism as
+    /// `DatasetInventoryModel.generation`.
+    private var agentScanGeneration = 0
     /// Where notes persist (A15). The shared per-workspace feed in the app;
     /// tests inject a hermetic instance.
     public var notices: PanelNotices = .shared
@@ -268,9 +294,79 @@ public final class FineTuningPanel {
         return loadable.filter { $0.artifact.baseModelID == modelID }
     }
 
-    public func refresh() {
-        adapters = FineTuneStore.scan()
-        variants = ModelVariantStore.scan()
+    /// The Agents section's refresh: the same scan as `refresh()`, but OFF
+    /// the main actor, so switching to the tab draws immediately and the
+    /// library lands when it lands.
+    ///
+    /// Follows `DatasetInventoryModel.refresh` verbatim — the house pattern
+    /// for a catalog that a section's appearance re-reads: capture the roots
+    /// on the main actor, scan in a detached task, apply under a
+    /// latest-wins generation token. Previously-scanned rows stay on screen
+    /// while a rescan runs, which is what makes RE-entering the tab instant;
+    /// it is invalidated exactly like the other catalogs, by calling this
+    /// again (`WorkspaceControls.resetCatalogs`, a save, a promote).
+    ///
+    /// Cheap to call. Nothing here is a new invalidation mechanism.
+    public func refreshAgentLibraryAsync() {
+        let library = ModelVariantStore.directory
+        let runs = VectorCatalog.runsDirectory
+        let root = VectorCatalog.projectRoot
+        agentScanGeneration &+= 1
+        let token = agentScanGeneration
+        isScanningAgents = true
+        Task.detached(priority: .userInitiated) {
+            let scannedAdapters = FineTuneStore.scan()
+            let records = ModelVariantStore.scan(
+                directory: library, importedRoot: runs)
+            let entries = AgentLibraryIndex.summarize(records)
+            await MainActor.run { [weak self] in
+                guard let self, token == self.agentScanGeneration else { return }
+                self.adapters = scannedAdapters
+                self.applyScannedVariants(records, entries: entries)
+                self.scannedAgentRoot = root
+                self.hasScannedAgents = true
+                self.isScanningAgents = false
+                self.reconcileSelectionsAfterScan()
+            }
+        }
+    }
+
+    /// Second phase: the robustness overlay for the rows already on screen.
+    /// Split from the scan because it costs a `runs/` walk plus a full-file
+    /// hash PER AGENT — the part that actually scaled with the number of
+    /// promoted agents — and no row needs it to draw. Callers run it only
+    /// for the region that shows it (the Library).
+    public func refreshAgentEvidenceAsync() {
+        let entries = agentIndex
+        guard !entries.isEmpty else {
+            robustnessByAgentID = [:]
+            return
+        }
+        let runs = ExperimentStore.runsDirectory
+        let token = agentScanGeneration
+        Task.detached(priority: .utility) {
+            let evidence = AgentLibraryIndex.evidence(
+                for: entries, runsDirectory: runs)
+            await MainActor.run { [weak self] in
+                guard let self, token == self.agentScanGeneration else { return }
+                self.robustnessByAgentID = evidence.byEntryID
+            }
+        }
+    }
+
+    private func applyScannedVariants(
+        _ records: [ModelVariantRecord],
+        entries: [AgentLibraryIndex.Entry]
+    ) {
+        variants = records
+        agentIndex = entries
+        // Evidence keyed on ids that no longer exist would render under the
+        // wrong row after a delete/rename; drop it rather than show it.
+        let live = Set(entries.map(\.id))
+        robustnessByAgentID = robustnessByAgentID.filter { live.contains($0.key) }
+    }
+
+    private func reconcileSelectionsAfterScan() {
         if let selectedVariantID,
             !variants.contains(where: { $0.id == selectedVariantID })
         {
@@ -292,6 +388,18 @@ public final class FineTuningPanel {
         if let selectedAdapter {
             loadTrainer(from: selectedAdapter)
         }
+    }
+
+    public func refresh() {
+        adapters = FineTuneStore.scan()
+        let records = ModelVariantStore.scan()
+        applyScannedVariants(records, entries: AgentLibraryIndex.summarize(records))
+        hasScannedAgents = true
+        scannedAgentRoot = VectorCatalog.projectRoot
+        // A synchronous refresh is a fresh truth: an async scan already in
+        // flight must not land on top of it.
+        agentScanGeneration &+= 1
+        reconcileSelectionsAfterScan()
     }
 
     /// View-facing status entry point. A non-nil message is a notice like
