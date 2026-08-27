@@ -57,6 +57,16 @@ public struct VariantRobustnessReport: Codable, Sendable, Equatable {
     /// written before the stamp, exactly as the record rows are.
     public var batteryFormat: Int?
     public var armingIsolated: Bool?
+    /// Which BACKEND judged — `local`, `claude`, or `openrouter`: the
+    /// manifest's own kind vocabulary. A report used to name only a model
+    /// string, which said nothing about who was actually called; with three
+    /// backends reachable from this pane, the kind IS the provenance.
+    /// Optional so reports written before the stamp still decode, and absent
+    /// — never null — when nothing judged.
+    public var judgeKind: String?
+    /// The pinned serving provider of an `openrouter` judge. Absent for every
+    /// other kind, exactly as `JudgeRef.provider` is.
+    public var judgeProvider: String?
 }
 
 public enum VariantRobustnessProgress: Sendable {
@@ -379,37 +389,22 @@ public enum VariantRobustness {
         try await ExperimentTasks.setInterventions(container, [])
         if cancelled { return nil }
 
+        // Three-way judge dispatch, the SAME kind vocabulary the study paths
+        // use (`SweepObjectives.sweepJudgeRoute`, the evaluate loop's
+        // `judge.kind == "openrouter"`), reached here through the
+        // single-string spelling `JudgeModelSpelling` parses. Before this,
+        // the split was local-vs-Claude and the engine's third judge backend
+        // was unreachable from this pane.
+        let selection = JudgeModelSpelling.parse(judgeModel)
         let localJudgeContainer: ModelContainer?
-        let trimmedJudge = judgeModel?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let trimmedJudge, !trimmedJudge.isEmpty, !ClaudePairedJudge.isClaudeModel(trimmedJudge) {
-            localJudgeContainer = try await SteeredContainerLoader.load(modelID: trimmedJudge)
+        if case .local(let model) = selection {
+            localJudgeContainer = try await SteeredContainerLoader.load(modelID: model)
         } else {
             localJudgeContainer = nil
         }
-        let judge: JudgeClosure?
-        if let trimmedJudge, !trimmedJudge.isEmpty {
-            judge = { prompt, baseline, steered in
-                if let localJudgeContainer {
-                    return try await LocalPairedJudge.judge(
-                        container: localJudgeContainer,
-                        modelID: trimmedJudge,
-                        rubric: judgeRubric,
-                        structuredPrompt: nil,
-                        prompt: prompt,
-                        responseA: baseline,
-                        responseB: steered)
-                }
-                return try await ClaudePairedJudge.judge(
-                    model: trimmedJudge,
-                    rubric: judgeRubric,
-                    structuredPrompt: nil,
-                    prompt: prompt,
-                    responseA: baseline,
-                    responseB: steered)
-            }
-        } else {
-            judge = nil
-        }
+        let route = judgeRoute(
+            selection, rubric: judgeRubric, localContainer: localJudgeContainer)
+        let judge = route.judge
 
         return try await assembleReport(
             variant: variant,
@@ -419,7 +414,12 @@ public enum VariantRobustness {
             batteryFile: batteryFile,
             coherencePromptsFile: coherencePromptsFile,
             presetID: presetID,
-            judgeModel: trimmedJudge?.isEmpty == false ? trimmedJudge : nil,
+            // Only a judge that actually RAN is stamped: an unpinned
+            // OpenRouter selection judged nothing, and a report claiming it
+            // did would be the silent-skip bug wearing a stamp.
+            judgeModel: judge == nil ? nil : selection?.model,
+            judgeKind: judge == nil ? nil : selection?.kind,
+            judgeProvider: judge == nil ? nil : selection?.provider,
             battery: battery,
             coherencePrompts: coherencePrompts,
             baselineBatteryScores: baselineBatteryScores,
@@ -427,13 +427,95 @@ public enum VariantRobustness {
             baselineCoherenceResponses: baselineCoherenceResponses,
             variantCoherenceResponses: variantCoherenceResponses,
             judge: judge,
-            extraWarnings: batteryWarnings,
+            extraWarnings: batteryWarnings + route.warnings,
             progress: progress)
     }
 
     typealias JudgeClosure = @Sendable (
         _ prompt: String, _ baseline: String, _ steered: String
     ) async throws -> PairedJudgeResponse?
+
+    /// The ONE judge dispatch both robustness routes use.
+    ///
+    /// Three backends, named by the study paths' own kind vocabulary
+    /// (`SweepObjectives.sweepJudgeRoute`, the evaluate loop's
+    /// `judge.kind == "openrouter"`) and reached here through the
+    /// single-string spelling `JudgeModelSpelling` parses. The dispatch used
+    /// to be a local-vs-Claude split written twice, which left a fully
+    /// implemented judge client unreachable from this pane and let the server
+    /// route's skip warning swallow every spelling that was not Claude's.
+    ///
+    /// `localContainer` is what separates the routes: nil on the server
+    /// route, because nothing is loaded on this Mac there, and that is
+    /// precisely what turns a LOCAL pick into the skip warning. An OpenRouter
+    /// or Claude pick is reachable from either route and is never skipped.
+    ///
+    /// A missing OpenRouter key is deliberately NOT pre-checked into a
+    /// warning here: the client's own typed refusal ("no OpenRouter key —
+    /// save one in the Compute section…") is the single message for that, on
+    /// every path that calls it.
+    static func judgeRoute(
+        _ selection: JudgeModelSpelling.Selection?,
+        rubric: String,
+        localContainer: ModelContainer?,
+        openRouterTransport: @escaping OpenRouterPairedJudge.Transport =
+            OpenRouterPairedJudge.liveTransport
+    ) -> (judge: JudgeClosure?, warnings: [String]) {
+        switch selection {
+        case nil:
+            return (nil, [])
+        case .local(let model):
+            guard let localContainer else {
+                return (
+                    nil,
+                    [
+                        "coherence judge '\(model)' is a local model — judging "
+                            + "skipped in a server workspace; pick a Claude or "
+                            + "OpenRouter judge"
+                    ])
+            }
+            return (
+                { prompt, baseline, steered in
+                    try await LocalPairedJudge.judge(
+                        container: localContainer,
+                        modelID: model,
+                        rubric: rubric,
+                        structuredPrompt: nil,
+                        prompt: prompt,
+                        responseA: baseline,
+                        responseB: steered)
+                }, []
+            )
+        case .claude(let model):
+            return (
+                { prompt, baseline, steered in
+                    try await ClaudePairedJudge.judge(
+                        model: model,
+                        rubric: rubric,
+                        structuredPrompt: nil,
+                        prompt: prompt,
+                        responseA: baseline,
+                        responseB: steered)
+                }, []
+            )
+        case .openRouter(let model, let provider):
+            return (
+                { prompt, baseline, steered in
+                    try await OpenRouterPairedJudge.judge(
+                        model: model,
+                        provider: provider,
+                        rubric: rubric,
+                        structuredPrompt: nil,
+                        prompt: prompt,
+                        responseA: baseline,
+                        responseB: steered,
+                        transport: openRouterTransport)
+                }, []
+            )
+        case .openRouterUnpinned(let model):
+            return (nil, [JudgeModelSpelling.unpinnedProviderRefusal(model: model)])
+        }
+    }
 
     /// The ONE scoring/judging/report assembly, shared by the local-container
     /// and server paths so the pure scoring code and warning rules cannot
@@ -451,6 +533,8 @@ public enum VariantRobustness {
         coherencePromptsFile: String,
         presetID: String?,
         judgeModel: String?,
+        judgeKind: String? = nil,
+        judgeProvider: String? = nil,
         battery: CapabilityBattery,
         coherencePrompts: [String],
         baselineBatteryScores: [BatteryItemScore],
@@ -558,7 +642,9 @@ public enum VariantRobustness {
             // server runners say the same thing about the same file. Legacy
             // readings carry neither key, mirroring `battery.jsonl` rows.
             batteryFormat: battery.isolated ? battery.formatVersion : nil,
-            armingIsolated: battery.isolated ? true : nil)
+            armingIsolated: battery.isolated ? true : nil,
+            judgeKind: judgeKind,
+            judgeProvider: judgeProvider)
     }
 
     // MARK: - Server path
@@ -809,27 +895,22 @@ public enum VariantRobustness {
             }
         }
 
-        let trimmedJudge = judgeModel?.trimmingCharacters(in: .whitespacesAndNewlines)
-        var judge: JudgeClosure?
-        var reportedJudge: String?
-        if let trimmedJudge, !trimmedJudge.isEmpty {
-            if ClaudePairedJudge.isClaudeModel(trimmedJudge) {
-                reportedJudge = trimmedJudge
-                judge = { prompt, baseline, steered in
-                    try await ClaudePairedJudge.judge(
-                        model: trimmedJudge,
-                        rubric: judgeRubric,
-                        structuredPrompt: nil,
-                        prompt: prompt,
-                        responseA: baseline,
-                        responseB: steered)
-                }
-            } else {
-                extraWarnings.append(
-                    "coherence judge '\(trimmedJudge)' is a local model — judging "
-                        + "skipped in a server workspace; pick a Claude judge")
-            }
-        }
+        // The server route runs GENERATION remotely and judges from this Mac,
+        // so an API-backed judge is reachable here and a local one is not.
+        // Both API backends now ARE reachable: the skip warning below used to
+        // swallow every non-Claude spelling, OpenRouter's included, which is
+        // how a fully-implemented judge client became unreachable from this
+        // pane.
+        // Same dispatch as the local route, with NO local container: that is
+        // what keeps the "local judge skipped" warning for a genuinely local
+        // pick while letting both API backends through.
+        let selection = JudgeModelSpelling.parse(judgeModel)
+        let route = judgeRoute(selection, rubric: judgeRubric, localContainer: nil)
+        let judge = route.judge
+        extraWarnings += route.warnings
+        let reportedJudge = judge == nil ? nil : selection?.model
+        let reportedKind = judge == nil ? nil : selection?.kind
+        let reportedProvider = judge == nil ? nil : selection?.provider
 
         let report = try await assembleReport(
             variant: variant,
@@ -840,6 +921,8 @@ public enum VariantRobustness {
             coherencePromptsFile: coherencePromptsFile,
             presetID: presetID,
             judgeModel: reportedJudge,
+            judgeKind: reportedKind,
+            judgeProvider: reportedProvider,
             battery: battery,
             coherencePrompts: coherencePrompts,
             // Format 2: the server's own scored records. Format 1: generated

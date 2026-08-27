@@ -139,15 +139,16 @@ struct JudgingSectionControls: View {
         // pinned panel it is ignored by resolution, so it is hidden — the
         // panel state keeps its value either way.
         if panel.judges.isEmpty {
-            Picker("Ad-hoc judge model", selection: $panel.judgeModel) {
-                ForEach(panel.judgeModelOptions, id: \.self) { model in
-                    Text(model).tag(model)
-                }
-            }
-            .help(
-                "used only by Run Paired Judge in Results while no judges "
+            JudgeModelPicker(
+                title: "Ad-hoc judge model",
+                help:
+                    "used only by Run Paired Judge in Results while no judges "
                     + "are pinned above — one unpinned judge for "
-                    + "exploratory judging, never freeze-grade evidence")
+                    + "exploratory judging, never freeze-grade evidence",
+                offers: panel.judgeModelOffers,
+                selection: $panel.judgeModel,
+                openRouterModel: $panel.adHocOpenRouterModel,
+                openRouterProvider: $panel.adHocOpenRouterProvider)
         }
 
         RubricFileControls(manifest: manifest, panel: panel)

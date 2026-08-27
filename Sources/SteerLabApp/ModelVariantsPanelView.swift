@@ -414,21 +414,45 @@ struct ModelVariantsPanelView: View {
                             path: panel.robustnessPromptsFile)
                     }
                 }
-                HStack {
-                    Stepper(
-                        "Prompts: \(panel.robustnessMaxPrompts)",
-                        value: Binding(
-                            get: { panel.robustnessMaxPrompts },
-                            set: {
-                                panel.robustnessMaxPrompts = $0
-                                if VariantRobustness.preset(id: panel.robustnessPresetID)?
-                                    .maxCoherencePrompts != $0
-                                {
-                                    panel.robustnessPresetID = VariantRobustness.customPresetID
-                                }
-                            }),
-                        in: 1 ... 12)
-                    Spacer()
+                // Prompts is a COUNT, not a fixed knob: it gets the same
+                // affordance Max tokens has (a typed field plus stepper
+                // arrows), and it states the selected file's actual supply
+                // beside it. Both labels are `fixedSize` — "Max tokens" used
+                // to wrap across three lines while the stepper was crushed
+                // against the right edge. No frame minimums here (macOS 27):
+                // the fields are fixed-width, the labels intrinsic, and the
+                // captions compressible.
+                let promptsBinding = Binding(
+                    get: { panel.robustnessMaxPrompts },
+                    set: { requested in
+                        let value = RobustnessPromptSupply.clamp(requested)
+                        panel.robustnessMaxPrompts = value
+                        if VariantRobustness.preset(id: panel.robustnessPresetID)?
+                            .maxCoherencePrompts != value
+                        {
+                            panel.robustnessPresetID = VariantRobustness.customPresetID
+                        }
+                    })
+                HStack(spacing: 8) {
+                    Text("Prompts")
+                        .fixedSize()
+                    TextField(
+                        "Prompts", value: promptsBinding,
+                        format: .number.grouping(.never))
+                        .labelsHidden()
+                        .frame(width: 48)
+                        .multilineTextAlignment(.trailing)
+                    Stepper("Prompts", value: promptsBinding, in: RobustnessPromptSupply.range)
+                        .labelsHidden()
+                    if let supply = panel.robustnessPromptSupplyCaption {
+                        Text(supply)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                    }
+                    Spacer(minLength: 8)
+                    Text("Max tokens")
+                        .fixedSize()
                     TextField(
                         "Max tokens",
                         value: Binding(
@@ -442,19 +466,34 @@ struct ModelVariantsPanelView: View {
                                 }
                             }),
                         format: .number.grouping(.never))
-                        .frame(width: 88)
-                        .multilineTextAlignment(.leading)
+                        .labelsHidden()
+                        .frame(width: 72)
+                        .multilineTextAlignment(.trailing)
+                }
+                .help(
+                    "how many coherence prompts to read from the selected "
+                        + "file, and the generation cap for each")
+                // The engine takes a PREFIX when the request outruns the
+                // file. That behaviour is unchanged; the row now says so
+                // rather than truncating in silence.
+                if let truncation = panel.robustnessPromptTruncationCaption {
+                    Text(truncation)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Toggle("AI coherence judge", isOn: $panel.robustnessUseJudge)
                     .help("asks a judge model to compare baseline and variant outputs for coherence and prompt-following")
                 if panel.robustnessUseJudge {
-                    Picker("Judge", selection: $panel.robustnessJudgeModel) {
-                        Text("select…").tag("")
-                        ForEach(judgeModelOptions, id: \.self) { model in
-                            Text(model).tag(model)
-                        }
-                    }
-                    .help("local or Claude judge model used for pairwise coherence checks")
+                    JudgeModelPicker(
+                        title: "Judge",
+                        help:
+                            "local, Claude, or OpenRouter judge used for "
+                            + "pairwise coherence checks",
+                        offers: panel.robustnessJudgeOffers,
+                        selection: $panel.robustnessJudgeModel,
+                        openRouterModel: $panel.robustnessOpenRouterModel,
+                        openRouterProvider: $panel.robustnessOpenRouterProvider)
                 }
                 Button(panel.isRobustnessRunning ? "Checking…" : "Run Robustness Check") {
                     panel.runRobustnessCheck()
@@ -1081,25 +1120,6 @@ struct ModelVariantsPanelView: View {
 
     private var compatibleNeutralBases: [NeutralPCArtifactRecord] {
         service.neutralPCBases.filter { $0.basis.modelID == baseModelID }
-    }
-
-    private var judgeModelOptions: [String] {
-        var seen = Set<String>()
-        var options: [String] = []
-        func append(_ value: String?) {
-            guard let value else { return }
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, !seen.contains(trimmed) else { return }
-            seen.insert(trimmed)
-            options.append(trimmed)
-        }
-        append(panel.robustnessJudgeModel)
-        append(service.loadedModelID)
-        append(service.selectedModelID)
-        for model in SteeredContainerLoader.localModelIDs() { append(model) }
-        for model in ChatService.availableModels.map(\.id) { append(model) }
-        append(ClaudePairedJudge.defaultModel)
-        return options
     }
 
     private func loadEditorForSelection() {
@@ -1801,9 +1821,17 @@ struct ModelVariantsPanelView: View {
                     + " variant · "
                     + report.meanBaselineDistinct2.formatted(.number.precision(.fractionLength(3)))
                     + " baseline")
-            if report.judgeModel != nil {
+            if let judgeModel = report.judgeModel {
                 let counts = Dictionary(grouping: report.coherenceItems.compactMap(\.judgeResult)) { $0 }
                     .mapValues(\.count)
+                // WHO judged, not only how it voted: with three reachable
+                // backends the kind (and an OpenRouter pin) is the
+                // provenance a reader needs.
+                LabeledContent(
+                    "Judge",
+                    value: VariantRobustnessReadout.judgeStamp(
+                        model: judgeModel, kind: report.judgeKind,
+                        provider: report.judgeProvider))
                 Text(
                     "Judge: baseline \(counts["baseline"] ?? 0) · variant \(counts["variant"] ?? 0) · ties \(counts["tie"] ?? 0)"
                 )

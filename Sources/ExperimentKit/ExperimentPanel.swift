@@ -766,31 +766,73 @@ public final class ExperimentPanel {
         displayLogLines = []
     }
 
-    public var judgeModelOptions: [String] {
-        var seen = Set<String>()
-        var options: [String] = []
-        func append(_ model: String?) {
-            guard let model else { return }
-            let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, !seen.contains(trimmed) else { return }
-            seen.insert(trimmed)
-            options.append(trimmed)
-        }
+    /// Test seams for the ad-hoc judge picker: the KEY one is a presence
+    /// boolean, so no test ever holds, reads, or renders a credential.
+    @ObservationIgnored public var judgeKeyPresenceOverrideForTesting: Bool?
+    @ObservationIgnored
+    public var judgeCapabilityOverrideForTesting: JudgeModelOffers.CapabilityCheck?
+    @ObservationIgnored public var localModelScanOverrideForTesting: [String]?
 
-        append(judgeModel)
-        append(selected?.modelID)
-        append(studyBaseModelID)
-        append(host?.selectedModelID)
-        for model in SteeredContainerLoader.localModelIDs() {
-            append(model)
-        }
-        if options.isEmpty {
-            for model in ChatService.availableModels.map(\.id) {
-                append(model)
+    /// What the ad-hoc judge picker offers. Same composition as the
+    /// Robustness Check's — one rule, two panes: the cache scan is
+    /// capability-filtered, curated entries pass by construction, and a
+    /// stored selection that fails is flagged rather than dropped.
+    public var judgeModelOffers: JudgeModelOffers.Offers {
+        var candidates: [JudgeModelOffers.Candidate] = []
+        if let model = selected?.modelID { candidates.append(.cached(model)) }
+        candidates.append(.cached(studyBaseModelID))
+        if let model = host?.selectedModelID { candidates.append(.cached(model)) }
+        let scanned = localModelScanOverrideForTesting
+            ?? SteeredContainerLoader.localModelIDs()
+        candidates += scanned.map { .cached($0) }
+        candidates += ChatService.availableModels.map { .curated($0.id) }
+        candidates.append(.curated(ClaudePairedJudge.defaultModel))
+        return JudgeModelOffers.compose(
+            selected: judgeModel,
+            candidates: candidates,
+            openRouterKeyPresent: judgeKeyPresenceOverrideForTesting
+                ?? (JudgeKeyStore.resolveKey(kind: "openrouter") != nil),
+            capability: judgeCapabilityOverrideForTesting
+                ?? JudgeModelOffers.liveCapability)
+    }
+
+    /// The flat id list the web surface's `<select>` consumes — the same
+    /// offers, flattened, so the wire contract is unchanged by the filter.
+    public var judgeModelOptions: [String] {
+        let offers = judgeModelOffers
+        return (offers.models + offers.openRouter).map(\.id)
+    }
+
+    /// The ad-hoc judge selection parsed — what the pane keys its OpenRouter
+    /// fields off, so the pane never re-implements the spelling.
+    public var adHocJudgeSelection: JudgeModelSpelling.Selection? {
+        JudgeModelSpelling.parse(judgeModel)
+    }
+
+    public var adHocOpenRouterModel: String {
+        get {
+            switch adHocJudgeSelection {
+            case .openRouter(let model, _), .openRouterUnpinned(let model): model
+            default: ""
             }
         }
-        append(ClaudePairedJudge.defaultModel)
-        return options
+        set {
+            judgeModel = JudgeModelSpelling.spellOpenRouter(
+                model: newValue, provider: adHocOpenRouterProvider)
+        }
+    }
+
+    public var adHocOpenRouterProvider: String {
+        get {
+            if case .openRouter(_, let provider) = adHocJudgeSelection {
+                return provider
+            }
+            return ""
+        }
+        set {
+            judgeModel = JudgeModelSpelling.spellOpenRouter(
+                model: adHocOpenRouterModel, provider: newValue)
+        }
     }
 
     /// Rubric files available for pinning (prompts/rubrics/*), refreshed on

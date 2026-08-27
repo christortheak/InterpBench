@@ -6470,11 +6470,26 @@ public enum ExperimentTasks {
         }
         let model = (evaluation?.judgeModel ?? ClaudePairedJudge.defaultModel)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let kind = ClaudePairedJudge.isClaudeModel(model) ? "claude" : "local"
+        // The ad-hoc selector is a single string, read through the SAME
+        // spelling the Robustness Check's judge uses — so an `openrouter:…`
+        // pick resolves to an openrouter judge with its provider pin intact
+        // rather than being mistaken for a local repo id. Blank still means
+        // the default Claude judge.
+        guard let selection = JudgeModelSpelling.parse(model) else {
+            return [
+                ResolvedJudge(
+                    name: "judge-1", kind: "claude",
+                    model: ClaudePairedJudge.defaultModel)
+            ]
+        }
+        if case .openRouterUnpinned(let slug) = selection {
+            throw ExperimentError(
+                reason: JudgeModelSpelling.unpinnedProviderRefusal(model: slug))
+        }
         return [
             ResolvedJudge(
-                name: "judge-1", kind: kind,
-                model: model.isEmpty ? ClaudePairedJudge.defaultModel : model)
+                name: "judge-1", kind: selection.kind, model: selection.model,
+                provider: selection.provider)
         ]
     }
 

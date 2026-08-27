@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import PDFKit
+import SteeringKit
 
 @Observable @MainActor
 public final class FineTuningPanel {
@@ -1751,6 +1752,107 @@ public final class FineTuningPanel {
         robustnessPromptsFile = preset.coherencePromptsFile
         robustnessMaxPrompts = preset.maxCoherencePrompts
         robustnessMaxTokens = preset.maxTokens
+    }
+
+    /// Test seams for the judge picker: the KEY one is a presence boolean, so
+    /// no test ever holds, reads, or renders a credential.
+    @ObservationIgnored public var judgeKeyPresenceOverrideForTesting: Bool?
+    @ObservationIgnored
+    public var judgeCapabilityOverrideForTesting: JudgeModelOffers.CapabilityCheck?
+    /// Cache-scan seam, so a test's picker sees synthetic ids only.
+    @ObservationIgnored public var localModelScanOverrideForTesting: [String]?
+
+    /// What the Robustness Check's Judge picker offers. The cache scan is
+    /// capability-filtered (it lists every artifact on disk, generative or
+    /// not); the app's own model tiers and the default Claude judge pass by
+    /// construction; a stored selection that fails is FLAGGED, never dropped.
+    public var robustnessJudgeOffers: JudgeModelOffers.Offers {
+        var candidates: [JudgeModelOffers.Candidate] = []
+        if let loaded = host?.loadedModelID { candidates.append(.cached(loaded)) }
+        if let selected = host?.selectedModelID { candidates.append(.cached(selected)) }
+        candidates += (localModelScanOverrideForTesting
+            ?? SteeredContainerLoader.localModelIDs()).map { .cached($0) }
+        candidates += ChatService.availableModels.map { .curated($0.id) }
+        candidates.append(.curated(ClaudePairedJudge.defaultModel))
+        return JudgeModelOffers.compose(
+            selected: robustnessJudgeModel,
+            candidates: candidates,
+            openRouterKeyPresent: judgeKeyPresenceOverrideForTesting
+                ?? (JudgeKeyStore.resolveKey(kind: "openrouter") != nil),
+            capability: judgeCapabilityOverrideForTesting
+                ?? JudgeModelOffers.liveCapability)
+    }
+
+    /// The judge selection parsed — what the pane keys its OpenRouter fields
+    /// off, so the pane never re-implements the spelling.
+    public var robustnessJudgeSelection: JudgeModelSpelling.Selection? {
+        JudgeModelSpelling.parse(robustnessJudgeModel)
+    }
+
+    /// Model and provider of the current OpenRouter selection, for the two
+    /// fields the pane reveals. Blank for every other kind.
+    public var robustnessOpenRouterModel: String {
+        get {
+            switch robustnessJudgeSelection {
+            case .openRouter(let model, _), .openRouterUnpinned(let model): model
+            default: ""
+            }
+        }
+        set {
+            robustnessJudgeModel = JudgeModelSpelling.spellOpenRouter(
+                model: newValue, provider: robustnessOpenRouterProvider)
+        }
+    }
+
+    public var robustnessOpenRouterProvider: String {
+        get {
+            if case .openRouter(_, let provider) = robustnessJudgeSelection {
+                return provider
+            }
+            return ""
+        }
+        set {
+            robustnessJudgeModel = JudgeModelSpelling.spellOpenRouter(
+                model: robustnessOpenRouterModel, provider: newValue)
+        }
+    }
+
+    /// Coherence-prompt row counts, remembered per PATH: the Prompts row
+    /// states the selected file's actual supply, and a view body must not
+    /// open a file on every render. Observation-ignored on purpose — filling
+    /// the memo is not a state change anyone should redraw for. Keyed by
+    /// path, so editing the file's CONTENTS in place is not noticed until the
+    /// path changes or the app restarts; the count is an advisory, and the
+    /// engine's prefix behaviour is unchanged either way.
+    @ObservationIgnored private var robustnessPromptSupplyMemo: [String: Int?] = [:]
+
+    /// How many prompts the named coherence file holds; nil when it cannot be
+    /// read or parsed (a half-typed path is not an empty file).
+    public func robustnessPromptSupply(for file: String) -> Int? {
+        let key = file.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let memo = robustnessPromptSupplyMemo[key] { return memo }
+        let supply = RobustnessPromptSupply.count(file: key)
+        robustnessPromptSupplyMemo[key] = supply
+        return supply
+    }
+
+    /// The supply of the CURRENTLY selected coherence file.
+    public var robustnessPromptSupply: Int? {
+        robustnessPromptSupply(for: robustnessPromptsFile)
+    }
+
+    /// "of 6 in dev-prompts.jsonl" — the inline note beside the count.
+    public var robustnessPromptSupplyCaption: String? {
+        RobustnessPromptSupply.supplyCaption(
+            file: robustnessPromptsFile, supply: robustnessPromptSupply)
+    }
+
+    /// "file has 6 — extra prompts are ignored" when the requested count
+    /// outruns the file. The engine still takes a prefix; this is the row
+    /// saying so out loud instead of truncating in silence.
+    public var robustnessPromptTruncationCaption: String? {
+        RobustnessPromptSupply.truncationCaption(
+            requested: robustnessMaxPrompts, supply: robustnessPromptSupply)
     }
 
     public func clearRobustnessViewer() {
