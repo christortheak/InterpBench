@@ -2162,7 +2162,7 @@ struct ChatView: View {
             return "Gemma Scope SAE"
         }
         return switch artifact.sidecar.extractionMethod {
-        case ExtractionMethod.lat.rawValue: "LAT paired direction (RepE-inspired)"
+        case ExtractionMethod.pairedDifferencePCA.rawValue: "Paired-difference PCA (RepE-inspired)"
         case ExtractionMethod.meanDifference.rawValue: "Mean difference"
         default: "mean difference*"  // pre-options artifact; it was the only method
         }

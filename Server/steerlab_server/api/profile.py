@@ -250,9 +250,9 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             "jlens-support", "jlens-qualify", "jlens-g0", "jlens-probe",
         ],
         "supportedAdapterSubstrates": ["hf-peft-lora"],
-        # Honest labels (REPE-IMPLEMENTATION-BRIEF): "lat" is the SteerLab
-        # paired direction (RepE-inspired), never plain "RepE"; the faithful
-        # template-mediated reader recipe is "repeReaderLAT".
+        # Honest labels (docs/REPE-IMPLEMENTATION-BRIEF.md): "lat" is
+        # SteerLab's paired-difference PCA (RepE-inspired), never plain
+        # "RepE"; the template-mediated reader recipe is "repeReaderLAT".
         "supportedVectorRecipes": [
             "meanDifference", "lat", "emotionGrandMean", "linearProbe", "saeFeature",
             "repeReaderLAT",

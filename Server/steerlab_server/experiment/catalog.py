@@ -246,6 +246,16 @@ class ReaderSummary:
     trainAccuracy: float | None
     heldOutAccuracy: float | None
     extracted: str | None
+    #: WHAT the pair differences contrast ("supervisedContent" /
+    #: "unsupervisedTemplatePair") and HOW the sign was fixed
+    #: ("heldOutPairAgreement" / "trainMajority"). Absent on a reader fitted
+    #: before 2026-08-27, which means supervisedContent + trainMajority — the
+    #: listing shows the stamp it has, never a guessed one.
+    contrastMode: str | None = None
+    signConvention: str | None = None
+    #: The set's argmax-held-out-accuracy layer — a RECOMMENDATION. The layer a
+    #: study reads is declared in its manifest; nothing selects it here.
+    recommendedLayer: int | None = None
 
     @property
     def id(self) -> str:
@@ -287,7 +297,10 @@ def list_readers(root: str | None = None) -> list[ReaderSummary]:
                     latTokenPosition=artifact.get("latTokenPosition"),
                     trainAccuracy=artifact.get("trainAccuracy"),
                     heldOutAccuracy=artifact.get("heldOutAccuracy"),
-                    extracted=(artifact.get("extractionDate") or "")[:10] or None))
+                    extracted=(artifact.get("extractionDate") or "")[:10] or None,
+                    contrastMode=artifact.get("contrastMode"),
+                    signConvention=artifact.get("signConvention"),
+                    recommendedLayer=artifact.get("recommendedLayer")))
             except (TypeError, ValueError):
                 continue
     return out

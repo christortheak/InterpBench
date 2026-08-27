@@ -369,7 +369,7 @@ function conceptsPane() {
     <div class="row"><label title="choose the data contract before entering data">Dataset recipe</label>
       <select id="c-recipe">
         <option value="caaMeanDifference">CAA mean difference</option>
-        <option value="repeLAT">LAT paired direction (RepE-inspired)</option>
+        <option value="repeLAT">Paired-difference PCA (RepE-inspired)</option>
         <option value="emotionGrandMean">Grand mean</option>
       </select></div>
     <details id="c-browse-details"><summary id="c-browse-title">Browse dataset</summary><div id="c-browse" style="max-height:260px;overflow-y:auto"></div></details>
@@ -451,8 +451,8 @@ function conceptsPane() {
     </div>
     <details><summary id="c-probe-title">Browse probe examples</summary><div id="c-probe-browse" style="max-height:220px;overflow-y:auto"></div></details>
   </fieldset>
-  <fieldset><legend>RepE reader (faithful)</legend>
-    <div class="muted">A reader is a fitted measurement instrument (task template + LAT token position + PCA training normalization + held-out accuracy) — not "positive/negative text → vector". The "LAT paired direction (RepE-inspired)" recipe above is a separate, direction-only comparison. Fit readers in the app or on the server workbench; this client lists and scores local reader artifacts only.</div>
+  <fieldset><legend>RepE reader (template-mediated)</legend>
+    <div class="muted">A reader is a fitted measurement instrument (task template + LAT token position + PCA training normalization + held-out accuracy) — not "positive/negative text → vector". The "Paired-difference PCA (RepE-inspired)" recipe above borrows the paper's PCA arithmetic and none of its pipeline — a separate, direction-only comparison. Fit readers in the app or on the server workbench; this client lists and scores local reader artifacts only.</div>
     <div class="row"><label>Reader</label>
       <select id="c-reader-sel" class="grow" title="fitted reader artifacts discovered under runs/; a reader is per-model and per-substrate — scoring through the wrong model is refused"></select>
       <button id="c-reader-refresh" title="rescan runs/ for reader artifacts">↻</button></div>
@@ -473,7 +473,7 @@ function conceptsPane() {
     <div class="row"><label>Dataset</label>
       <select id="c-vector-dataset">
         <option value="caaMeanDifference">CAA mean difference</option>
-        <option value="repeLAT">LAT paired direction (RepE-inspired)</option>
+        <option value="repeLAT">Paired-difference PCA (RepE-inspired)</option>
         <option value="emotionGrandMean">Grand mean</option>
       </select></div>
     <label class="row" id="c-build-all-row" title="when enabled, each checked concept becomes its own vector artifact from the same selected Grand Mean corpus">
@@ -767,7 +767,7 @@ function wireConcepts() {
     $("c-probe-draft").value = "";
   };
   $("c-probe-train").onclick = () => post("/api/concept/probe-train");
-  // RepE reader (faithful): list + score only — fitting stays in the app /
+  // RepE reader (template-mediated): list + score only — fitting stays in the app /
   // server workbench (this client has no local fit route on purpose).
   const readerLabel = r =>
     `${r.concept} · L${r.layer} · ${r.templateID}` +

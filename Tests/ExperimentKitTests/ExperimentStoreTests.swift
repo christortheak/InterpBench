@@ -656,7 +656,7 @@ import Testing
                 direction: [1, 0], activationCenter: [1, 0],
                 projectionCenter: 0.5, projectionScale: 2, orientation: 1,
                 positiveMean: 1, negativeMean: -1),
-            pc1ExplainedVariance: 0.9, trainAccuracy: 1, heldOutAccuracy: 0.8,
+            differenceCloudExplainedVariance: 0.9, trainAccuracy: 1, heldOutAccuracy: 0.8,
             trainPairCount: 4, heldOutPairCount: 2, substrate: substrate)
     }
 

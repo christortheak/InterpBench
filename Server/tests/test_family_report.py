@@ -111,6 +111,27 @@ def test_family_labels_come_from_the_stamp_or_the_declaration():
                                                                   "declared")
 
 
+def test_paired_difference_pca_and_the_reader_are_separate_families():
+    """Two families, not two spellings of one (naming honesty ruling
+    2026-08-27).
+
+    They used to share the label "RepE/LAT", which put a direction that borrows
+    the paper's PCA arithmetic and a direction produced by the paper's actual
+    pipeline — task template, template-mediated LAT token, persisted fit
+    parameters, held-out sign and layer selection — in ONE row of the paper's
+    own side-by-side. A reader of that report could not tell which rows were
+    RepE and which were RepE-shaped, which is precisely the comparison the
+    report exists to support.
+    """
+    lat = family_report.family_for("lat")
+    reader = family_report.family_for("repeReaderLAT")
+    assert lat == ("paired-difference-PCA", "extractionMethod")
+    assert reader == ("RepE-reader-LAT", "extractionMethod")
+    assert lat[0] != reader[0]
+    # And neither label claims to BE RepE's LAT.
+    assert "RepE/LAT" not in set(family_report.FAMILY_BY_METHOD.values())
+
+
 def test_an_unknown_method_becomes_its_own_family_not_the_nearest_one():
     """A recipe this report has never seen must not be folded into a family it
     resembles — the family column would then be an inference."""

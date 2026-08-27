@@ -185,7 +185,7 @@
             <div class="row" style="margin-bottom:10px">
               <div><label>recipe family</label><select id="recipeFamily">
                 <option value="caa">CAA mean difference</option>
-                <option value="lat">LAT paired direction (RepE-inspired)</option>
+                <option value="lat">Paired-difference PCA (RepE-inspired)</option>
                 <option value="grandmean">Grand-mean (multi-concept)</option></select></div>
               <div><label>reading position</label><select id="readingPos">
                 <option value="">last token</option>
@@ -273,21 +273,22 @@
           <div id="neutralBases" class="muted" style="margin-top:8px"></div>
         </div>
         <div class="panel" id="readerPanel">
-          <h2>RepE reader (faithful)</h2>
+          <h2>RepE reader (template-mediated)</h2>
           <p class="muted" style="margin-top:0;font-size:12px">Concept data → reader artifact → optional steering variant.
             A reader is a fitted measurement instrument (task template + LAT token position + PCA training
-            normalization + held-out accuracy) — not "positive/negative text → vector". The
-            "LAT paired direction (RepE-inspired)" recipe above is a separate, direction-only comparison.
+            normalization + held-out sign/layer selection + held-out accuracy) — not "positive/negative text → vector". The
+            "Paired-difference PCA (RepE-inspired)" recipe above borrows the paper's PCA arithmetic and none of its pipeline — a separate, direction-only comparison.
             Readers are per-model, per-substrate; they fit on this server's loaded model as a durable job.</p>
           <div class="row">
             <div><label>task template</label><select id="rdTemplate">
               <option value="amount-in-scenario-v1">amount-in-scenario-v1 (named — RepE-faithful)</option>
               <option value="unnamed-scenario-v1">unnamed-scenario-v1 (unnamed clean-room — divergence)</option>
+              <option value="instructed-stance-pair-v1">instructed-stance-pair-v1 (T+/T− pair — needs a one-stimulus dataset)</option>
             </select></div>
             <div><label>held-out pairs (last k → split "test")</label>
               <input type="number" id="rdHeldOut" value="2" min="0" style="width:70px"></div>
           </div>
-          <p class="muted" style="font-size:12px">No template-listing API yet: these are the two registry ids
+          <p class="muted" style="font-size:12px">No template-listing API yet: these are the three registry ids
             committed under <span class="mono">prompts/templates/</span>. The server re-reads and validates the
             template file at fit time, so an unknown or edited id fails loudly instead of fitting silently.</p>
           <div class="split" style="gap:10px">
@@ -1014,7 +1015,7 @@ $("#probeTrainBtn").onclick = async ()=>{ if(!CUR) return; if(!STATE.loadedModel
   try{ const r = await api(`/api/concept/${encodeURIComponent(CUR.name)}/probe-train`,{method:"POST"});
     toast(`probe train job ${r.jobId} started`); showTab("jobs"); }catch(e){ toast(e.message,true); } };
 
-// ---- RepE reader (faithful) ----
+// ---- RepE reader (template-mediated) ----
 let READERS = [];
 // Mirrors ConceptBuilder.readerPairRows (sorted JSON keys, ids
 // "<concept>-pair-<i>" from 0, LAST k pairs split "test", k clamped so >=2

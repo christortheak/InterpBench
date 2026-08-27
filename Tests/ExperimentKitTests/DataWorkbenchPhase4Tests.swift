@@ -120,24 +120,25 @@ struct DataWorkbenchPhase4Tests {
 
     /// The READER of those paths agrees with the authority: a mirror written
     /// through it is the mirror `ConceptBuilder.pairedRecipeFamilyOnDisk`
-    /// finds, including the most-recently-written tie-break.
+    /// finds — and when BOTH mirrors exist, the answer comes from recorded
+    /// provenance, not from whichever file the filesystem was touched last.
     @Test func theOnDiskRecipeProbeReadsTheAuthoritysPaths() throws {
         try withTempWorkspace { root in
             let builder = ConceptBuilder()
             try makeConcept("tidiness", in: root)
             #expect(
-                ConceptBuilder.pairedRecipeFamilyOnDisk(for: "tidiness")
+                ConceptBuilder.pairedRecipeFamilyOnDisk(for: "tidiness").family
                     == .caaMeanDifference)
 
             let repePairs = VectorCatalog.pairedStimuliFile(
                 family: .repe, name: "tidiness", root: root)
             try write(#"{"positive": "p", "negative": "n"}"# + "\n", to: repePairs)
             #expect(
-                ConceptBuilder.pairedRecipeFamilyOnDisk(for: "tidiness") == .repeLAT)
+                ConceptBuilder.pairedRecipeFamilyOnDisk(for: "tidiness").family
+                    == .pairedDifferencePCA)
 
-            // Both mirrors present: the probe breaks the tie by modification
-            // time ("most recently written wins"), which is exactly what the
-            // new paired-set advisory warns about.
+            // Both mirrors present and nothing recorded: unknowable, and the
+            // probe says so instead of picking the newest file.
             try write(
                 #"{"concept": "tidiness", "positiveStimulus": "p", "#
                     + #""negativeStimulus": "n", "templateID": "t1"}"# + "\n",
@@ -146,9 +147,9 @@ struct DataWorkbenchPhase4Tests {
             try FileManager.default.setAttributes(
                 [.modificationDate: Date(timeIntervalSince1970: 4_000_000)],
                 ofItemAtPath: repePairs.path)
-            #expect(
-                ConceptBuilder.pairedRecipeFamilyOnDisk(for: "tidiness")
-                    == .repeReaderLAT)
+            let ambiguous = ConceptBuilder.pairedRecipeFamilyOnDisk(for: "tidiness")
+            #expect(ambiguous.family == nil)
+            #expect(ambiguous.source.contains("cannot be read off disk"))
             _ = builder
         }
     }

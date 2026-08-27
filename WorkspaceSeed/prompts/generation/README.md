@@ -14,7 +14,7 @@ like any other pinned input.
 | Template | Produces | Lands at |
 |---|---|---|
 | `caa-paired-stimuli.md` | content-matched contrastive pairs for CAA | `prompts/concepts/<concept>/{positive,negative}.jsonl` |
-| `repe-paired-reader-data.md` | paired prompt data for RepE/LAT | `prompts/repe/<concept>/pairs.jsonl` |
+| `repe-paired-reader-data.md` | paired prompt data for paired-difference PCA and the RepE reader | `prompts/repe/<concept>/pairs.jsonl` |
 | `emotion-grand-mean-stories.md` | multi-concept story corpora for grand-mean extraction | `prompts/emotions/<dataset>/stories.jsonl` |
 | `grand-mean-cowork-agent.md` | agent instructions for generating a balanced multi-concept corpus in parallel | pasted back as JSONL |
 | `probe-validation-items.md` | held-out labeled probe items | `prompts/probes/<probe>/items.jsonl` |

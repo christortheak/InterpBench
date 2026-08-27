@@ -266,7 +266,7 @@ workbench. Open `http://localhost:8080` after `serve`. Tabs:
   steering **mixer** (`h + Σ αᵢ·vᵢ`: pick saved vectors, set layer/alpha, toggle),
   and chat with **live SSE token streaming** + stop.
 - **Concept Lab** — full concept authoring (parity with the SwiftUI Concepts panel):
-  create/rename/delete concepts; edit/import contrastive pairs (CAA) or **RepE/LAT**;
+  create/rename/delete concepts; edit/import contrastive pairs (CAA) or **paired-difference PCA**;
   the **grand-mean (emotion multi-concept)** family with a story corpus editor,
   include-vs-build concept selection, and per-concept extraction; reading-position
   (last token / pool-from-token); all seven generation-prompt helpers (incl.

@@ -183,10 +183,13 @@ public final class WorkspaceStore {
         "prompts/tasks/example-task-prompts.jsonl",
         // Templates: the shapes every study-data scaffold copies from
         // (`StudyDataReadiness.Template.seedRelativePath` names several of
-        // these exactly), plus the two RepE reader task templates the
-        // Concept Lab's registry picker scans.
+        // these exactly), plus the three RepE reader task templates the
+        // Concept Lab's registry picker scans — two single-template
+        // (supervised content contrast) and one T+/T− template pair (the
+        // paper's unsupervised construction, §3.1 step 1b).
         "prompts/templates/amount-in-scenario-v1.json",
         "prompts/templates/unnamed-scenario-v1.json",
+        "prompts/templates/instructed-stance-pair-v1.json",
         "prompts/templates/battery/capability-battery-v2.template.jsonl",
         "prompts/templates/human-baseline/README.md",
         "prompts/templates/human-baseline/human-baseline-template.csv",

@@ -73,10 +73,18 @@ DESCRIPTIVE_NOTICE = (
 #: paper groups by. Deliberately a lookup and not a heuristic: an unknown
 #: method becomes its own labelled row (see :func:`family_for`) rather than
 #: being folded into whichever family looks closest.
+#:
+#: ``lat`` and ``repeReaderLAT`` are TWO FAMILIES, not two spellings of one
+#: (naming honesty ruling 2026-08-27). They used to share the label
+#: "RepE/LAT", which put a direction that borrows the paper's PCA arithmetic
+#: and a direction produced by the paper's actual pipeline — task template,
+#: template-mediated LAT token, persisted fit parameters, held-out sign and
+#: layer selection — in one row of the paper's own side-by-side. A reader of
+#: that report could not tell which rows were RepE and which were RepE-shaped.
 FAMILY_BY_METHOD = {
     "meanDifference": "CAA",
-    "lat": "RepE/LAT",
-    "repeReaderLAT": "RepE/LAT",
+    "lat": "paired-difference-PCA",
+    "repeReaderLAT": "RepE-reader-LAT",
     "emotionGrandMean": "grand-mean",
     "designatedReference": "designated-reference",
     "pinnedArtifact": "pinned-artifact",

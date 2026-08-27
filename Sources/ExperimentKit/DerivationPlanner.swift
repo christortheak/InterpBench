@@ -78,7 +78,7 @@ public enum DerivationPlanner {
         case .server:
             switch method {
             case .caaMeanDifference: return ExtractionMethod.meanDifference.rawValue
-            case .repeLAT: return ExtractionMethod.lat.rawValue
+            case .pairedDifferencePCA: return ExtractionMethod.pairedDifferencePCA.rawValue
             // Reader fits are server jobs now, but readers are measurement
             // artifacts outside the substrate VECTOR catalog; the raw value
             // keeps the pin honest if a vector record ever appears.

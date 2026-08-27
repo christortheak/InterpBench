@@ -109,7 +109,7 @@ struct ConceptBuilderSelectionAndModelTests {
             #expect(builder.vectorBuilderSelectedExisting == "tired")
 
             // ...and survives unrelated edits.
-            builder.recipeFamily = .repeLAT
+            builder.recipeFamily = .pairedDifferencePCA
             #expect(builder.vectorBuilderSelectedExisting == "tired")
 
             // The next dataset-selection change re-converges them.

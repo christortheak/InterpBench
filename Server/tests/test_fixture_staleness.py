@@ -261,6 +261,33 @@ def test_evidence_bundle_fixture_is_current():
     assert fixture["extractRun"] in declared, REGENERATE
 
 
+def test_paired_difference_pca_fixture_is_not_stale():
+    """The PCA path's numbers, re-derived.
+
+    Stale bytes here would let the Swift engine keep agreeing with an old
+    power-iteration — a different unit vector with the same norm and a
+    plausible cosine, on artifacts nobody re-derives.
+    """
+    from steerlab_server.steering import vector_math as vm
+
+    fixture = _load("paired-difference-pca.json")
+    assert fixture["degenerateStartRelativeThreshold"] == \
+        vm.DEGENERATE_START_RELATIVE_THRESHOLD, REGENERATE
+    for case in fixture["principalComponents"]:
+        assert vm.first_principal_component(case["rows"]) == \
+            pytest.approx(case["firstPrincipalComponent"], abs=1e-6), \
+            f"{case['label']}: {REGENERATE}"
+    for case in fixture["directions"]:
+        assert vm.mean_difference(case["positive"], case["negative"]) == \
+            pytest.approx(case["meanDifference"], abs=1e-6), \
+            f"{case['label']}: {REGENERATE}"
+        assert vm.direction(
+            case["positive"], case["negative"],
+            vm.ExtractionMethod.PAIRED_DIFFERENCE_PCA) == \
+            pytest.approx(case["pairedDifferencePCA"], abs=1e-6), \
+            f"{case['label']}: {REGENERATE}"
+
+
 def test_every_committed_fixture_has_a_staleness_test():
     """A new fixture with no staleness check is the gap this file closes, so
     adding one must not silently reopen it."""
@@ -268,6 +295,7 @@ def test_every_committed_fixture_has_a_staleness_test():
         "promotion-keys.json", "scenario-row-hashes.json",
         "auto-prompt-ids.json", "server-minted-agent.json",
         "extraction-rendering-and-positions.json",
+        "paired-difference-pca.json",
         "server-minted-adapter-agent.json",
         # Checked inline in their own suites.
         "scenario-diagnostics.json", "validation-layers.json",

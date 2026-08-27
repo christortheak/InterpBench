@@ -589,7 +589,7 @@ public enum DatasetFileSlot: String, Sendable, CaseIterable, Identifiable, Codab
         switch self {
         case .positiveStimuli: "Positive stimuli"
         case .negativeStimuli: "Negative stimuli"
-        case .repePairs: "RepE/LAT pairs"
+        case .repePairs: "Paired-difference PCA pairs"
         case .readerPairs: "Reader pairs"
         case .stories: "Story rows"
         case .validation: "Held-out scenarios"

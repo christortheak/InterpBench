@@ -232,7 +232,7 @@ public enum VectorRecipeGrouping {
     public static func methodLabel(_ method: String) -> String {
         switch method {
         case "caaMeanDifference", "meanDifference": "CAA"
-        case "repeLAT", "lat": "LAT"
+        case "repeLAT", "lat": "paired-difference PCA"
         case "repeReaderLAT": "RepE reader LAT"
         case "emotionGrandMean": "grand-mean"
         case "designatedReference": "designated-reference"

@@ -1520,15 +1520,16 @@ def build_router(state: ServiceState) -> APIRouter:
 
     @router.post("/api/reader/fit")
     def reader_fit(body: dict):
-        """Fit a faithful RepE reader (template + LAT token + PC1 + persisted
-        probe) as a DURABLE JOB, on the model pinned at submission (explicit
+        """Fit a template-mediated RepE reader (template + LAT token + PC1 +
+        persisted probe + held-out sign/layer selection) as a DURABLE JOB, on
+        the model pinned at submission (explicit
         ``modelID``/``revision``, else a synchronous snapshot of the active
         model). Artifacts land in a fresh immutable run directory (discovered
         by GET /api/readers); an uploaded pairs file is validated in memory
         first and only then atomically written to its canonical
         git-versionable home under ``prompts/``, so the pinned bytes exist
         outside the run and a rejected upload leaves nothing behind."""
-        from ..steering import repe_reader
+        from ..steering import extraction_rendering, repe_reader
 
         concept = str(body.get("concept") or "").strip()
         if not concept:
@@ -1575,6 +1576,29 @@ def build_router(state: ServiceState) -> APIRouter:
             raise HTTPException(
                 status_code=400,
                 detail="exactly one of pairsJSONL/pairsPath is required")
+
+        # HOW the scaffold reaches the model. Absent = raw, byte-identically
+        # to every reader fitted before the option existed; a declaration is
+        # parsed HERE so a malformed one is a 400, never a failed job.
+        try:
+            fit_rendering = extraction_rendering.parse_declaration(
+                body.get("extractionRendering"))
+        except extraction_rendering.ExtractionRenderingError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        # The unsupervised T+/T− orientation draw's seed. Stamped into every
+        # artifact, so a fit is reproducible from the artifact alone.
+        orientation_seed = body.get("orientationSeed")
+        if orientation_seed is None:
+            orientation_seed = repe_reader.DEFAULT_ORIENTATION_SEED
+        elif (not isinstance(orientation_seed, int)
+                or isinstance(orientation_seed, bool)
+                or orientation_seed < 0):
+            raise HTTPException(
+                status_code=400,
+                detail="orientationSeed must be a non-negative integer — it is "
+                       "stamped into the artifact so the unsupervised "
+                       "template-pair orientation draw can be reproduced")
 
         layers = body.get("layers")
         if layers is not None:
@@ -1683,17 +1707,28 @@ def build_router(state: ServiceState) -> APIRouter:
                     f"{fit_model_id}"
                     + (f"@{fit_revision}" if fit_revision else ""))
             with state.acquire_model(fit_model_id, fit_revision) as model:
-                artifacts = repe_reader.fit(model, dataset, fit_template,
-                                            layers=layers)
+                artifacts = repe_reader.fit(
+                    model, dataset, fit_template, layers=layers,
+                    orientation_seed=orientation_seed,
+                    extraction_rendering=fit_rendering)
                 artifact_paths = repe_reader.save_readers(artifacts, run_dir)
             job.log(f"fitted {len(artifacts)} layer reader(s) → {run_dir}")
             return {"runDirectory": run_dir,
                     "artifacts": artifact_paths,
-                    "layerScores": [{"layer": a.layer,
-                                     "trainAccuracy": a.train_accuracy,
-                                     "heldOutAccuracy": a.held_out_accuracy,
-                                     "pc1ExplainedVariance": a.pc1_explained_variance}
-                                    for a in artifacts]}
+                    "layerScores": [
+                        {"layer": a.layer,
+                         "trainAccuracy": a.train_accuracy,
+                         "heldOutAccuracy": a.held_out_accuracy,
+                         "signConvention": a.sign_convention,
+                         "signHeldOutAccuracy": a.sign_held_out_accuracy,
+                         "pc1ExplainedVarianceOfDifferences":
+                             a.difference_cloud_explained_variance,
+                         "pc1ExplainedVarianceBasis": a.explained_variance_basis}
+                        for a in artifacts],
+                    "contrastMode": artifacts[0].contrast_mode if artifacts else None,
+                    "recommendedLayer": (artifacts[0].recommended_layer
+                                         if artifacts else None),
+                    "layerRecommendationNote": repe_reader.LAYER_RECOMMENDATION_NOTE}
 
         return _run_or_submit(state, "reader:fit", work,
                                path="/api/reader/fit", body=body)
@@ -2262,6 +2297,29 @@ def build_router(state: ServiceState) -> APIRouter:
                                                 allow_local_absolute=True)
         name = os.path.basename(vector_ref)
         _safe_name(name)
+
+        # HOW the scaffold reaches the model. Absent = raw, byte-identically
+        # to every reader fitted before the option existed; a declaration is
+        # parsed HERE so a malformed one is a 400, never a failed job.
+        try:
+            fit_rendering = extraction_rendering.parse_declaration(
+                body.get("extractionRendering"))
+        except extraction_rendering.ExtractionRenderingError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        # The unsupervised T+/T− orientation draw's seed. Stamped into every
+        # artifact, so a fit is reproducible from the artifact alone.
+        orientation_seed = body.get("orientationSeed")
+        if orientation_seed is None:
+            orientation_seed = repe_reader.DEFAULT_ORIENTATION_SEED
+        elif (not isinstance(orientation_seed, int)
+                or isinstance(orientation_seed, bool)
+                or orientation_seed < 0):
+            raise HTTPException(
+                status_code=400,
+                detail="orientationSeed must be a non-negative integer — it is "
+                       "stamped into the artifact so the unsupervised "
+                       "template-pair orientation draw can be reproduced")
 
         layers = body.get("layers")
         if layers is not None:

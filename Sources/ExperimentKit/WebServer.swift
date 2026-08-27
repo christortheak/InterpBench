@@ -940,6 +940,17 @@ struct ReaderListDTO: Encodable {
         let latTokenPosition: String
         let trainAccuracy: Float
         let heldOutAccuracy: Float?
+        /// WHAT the pair differences contrast, and HOW the sign was fixed —
+        /// the two facts that distinguish one reader from another fitted on
+        /// the same pairs. Legacy artifacts decode to the documented legacy
+        /// values (`supervisedContent` / `trainMajority`), so the row always
+        /// says what the artifact means rather than leaving it blank.
+        let contrastMode: String
+        let signConvention: String
+        /// The set's argmax-held-out-accuracy layer — a RECOMMENDATION. Which
+        /// layer a study reads is declared in its manifest; nothing here
+        /// selects it. nil on a reader fitted before the stamp existed.
+        let recommendedLayer: Int?
         let extracted: String
 
         init(record: VectorCatalog.ReaderArtifactRecord) {
@@ -961,6 +972,9 @@ struct ReaderListDTO: Encodable {
             latTokenPosition = artifact.latTokenPosition
             trainAccuracy = artifact.trainAccuracy
             heldOutAccuracy = artifact.heldOutAccuracy
+            contrastMode = artifact.contrastMode.rawValue
+            signConvention = artifact.signConvention.rawValue
+            recommendedLayer = artifact.recommendedLayer
             extracted = artifact.extractionDate
         }
     }

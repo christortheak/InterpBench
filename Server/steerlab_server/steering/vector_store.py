@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 import numpy as np
 from safetensors.numpy import load_file, save_file
 
+from . import vector_math
 from .reading_position import ReadingPosition
 
 # The single definition of this engine's substrate identity, stamped into every
@@ -143,6 +144,31 @@ class SteeringVectorSidecar:
     readerID: str | None = None
     readerHash: str | None = None
     controlMode: str | None = None
+    # The reader's layer, template pin, contrast construction and sign rule,
+    # copied onto the derived vector so an attached reader-derived concept can
+    # be verified against the instrument it came from without re-opening the
+    # reader file (which may not travel with a bundle). Absent on every
+    # non-reader artifact and on reader-derived vectors written before
+    # 2026-08-27. Pinned cross-engine contract: same keys on the Swift
+    # ``SteeringVectorSidecar``.
+    readerLayer: int | None = None
+    readerTemplateID: str | None = None
+    readerTemplateHash: str | None = None
+    readerContrastMode: str | None = None
+    readerSignConvention: str | None = None
+    # The reader probe's ``orientation`` at derive time (+1 or −1). Recorded
+    # because the derived BYTES have the orientation folded in: a reader with
+    # orientation −1 stores a direction pointing AWAY from the concept, and the
+    # conversion negates it. Without this stamp there is no way to tell, from
+    # the artifact alone, whether the sign was applied.
+    readerProbeOrientation: float | None = None
+    # HOW this direction's sign was fixed — "heldOutPairAgreement" (the RepE
+    # paper's step 4) or "trainMajority" (the reference implementation's
+    # get_signs). Stamped by every family whose direction has a sign to choose,
+    # so the difference between "held out decided this" and "the training
+    # labels decided this" is visible on the artifact instead of being a fact
+    # about which code path produced it. Absent = legacy train-majority.
+    signConvention: str | None = None
     # Residual-norm backfill provenance (norm_backfill.backfill_norms): the
     # pinned {"sourceArtifact", "sourceVectorsHash", "date"} shape stamped on
     # a NEW artifact whose norms were measured after the fact on a neutral
@@ -368,6 +394,20 @@ def save(vectors: ConceptVectors, sidecar: SteeringVectorSidecar,
     # so a legacy artifact's unknown origin is never overwritten with a guess.
     if sidecar.substrate is None:
         sidecar.substrate = SUBSTRATE
+
+    # The paired-difference-PCA family's sign comes from TRAIN-label majority —
+    # it has no held-out split to run the RepE paper's step-4 rule on, unlike a
+    # reader. Stamping it here (rather than at each sidecar constructor) means
+    # the difference between "held-out data decided this direction's sign" and
+    # "the training labels did" is readable off any artifact, without a reader
+    # having to know which code path wrote it. A sidecar that already carries a
+    # convention — a reader-derived vector does — is left alone. Swift twin:
+    # ``SteeringVectorStore.stamped``.
+    if sidecar.signConvention is None and (
+            sidecar.extractionMethod
+            == vector_math.ExtractionMethod.PAIRED_DIFFERENCE_PCA.value
+            or sidecar.recipeMethod == "repeLAT"):
+        sidecar.signConvention = "trainMajority"
 
     sidecar_url = os.path.join(directory, f"{name}.json")
     with open(sidecar_url, "w", encoding="utf-8") as handle:

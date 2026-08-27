@@ -47,7 +47,7 @@ import Testing
         let meanDiff = try SteeringVectorMath.direction(
             positive: positive, negative: negative, method: .meanDifference)
         let lat = try SteeringVectorMath.direction(
-            positive: positive, negative: negative, method: .lat)
+            positive: positive, negative: negative, method: .pairedDifferencePCA)
 
         #expect(SteeringVectorMath.dot(lat, meanDiff) > 0)
         #expect(
@@ -69,7 +69,7 @@ import Testing
         negative.append([0, 0, 0])
 
         let lat = try SteeringVectorMath.direction(
-            positive: positive, negative: negative, method: .lat)
+            positive: positive, negative: negative, method: .pairedDifferencePCA)
         let axisA: [Float] = [1, 0, 0]
         let axisB: [Float] = [0, 1, 0]
         #expect(
@@ -85,7 +85,7 @@ import Testing
         let positive: [[Float]] = (0 ..< 6).map { _ in [10, 0, 0] }
         let negative: [[Float]] = (0 ..< 6).map { _ in [0, 0, 0] }
         let lat = try SteeringVectorMath.direction(
-            positive: positive, negative: negative, method: .lat)
+            positive: positive, negative: negative, method: .pairedDifferencePCA)
         let meanDiff = try SteeringVectorMath.direction(
             positive: positive, negative: negative, method: .meanDifference)
         #expect(try SteeringVectorMath.cosineSimilarity(lat, meanDiff) > 0.999)
@@ -98,7 +98,7 @@ import Testing
         let negative: [[Float]] = (0 ..< 4).map { _ in [1, 2, 3] }
         #expect(throws: SteeringVectorError.degenerateData) {
             try SteeringVectorMath.direction(
-                positive: positive, negative: negative, method: .lat)
+                positive: positive, negative: negative, method: .pairedDifferencePCA)
         }
     }
 
@@ -114,8 +114,35 @@ import Testing
                 == [
                     "meanDifference", "lat", "emotionGrandMean",
                     "designatedReference", "pinnedArtifact", "optvec",
-                    "gemmaScopeSAE",
+                    "gemmaScopeSAE", "repeReaderLAT",
                 ])
+    }
+
+    /// A reader-derived direction is the artifact the FAITHFUL RepE pipeline
+    /// produces, and until 2026-08-27 it was the one artifact a study could
+    /// not attach: `attachArtifact` resolves the sidecar's extractionMethod to
+    /// ask where the concept's held-out data lives, and an unknown method is
+    /// refused. Its data questions have honest answers — they are just not a
+    /// plain concept's.
+    @Test func repeReaderLATAnswersTheLifecycleQuestions() {
+        let reader = ExtractionMethod.repeReaderLAT
+        #expect(ExtractionMethod(rawValue: "repeReaderLAT") == reader)
+        #expect(reader.isRepeReaderLAT)
+        #expect(!reader.hasSourceConcept)
+        #expect(!reader.isPaired)
+        #expect(!reader.isRecipeMethod)
+        #expect(!reader.isPinnedArtifact)
+        #expect(!reader.isGrandMean)
+        #expect(!reader.usesStoryCorpus)
+        #expect(!reader.usesContrastiveValidation)
+        let absence = ExtractionMethod.repeReaderLAT.sourceConceptAbsence
+        #expect(absence?.evidence.contains("held-out accuracy") == true)
+        #expect(absence?.hashReferent.contains("prompts/readers/") == true)
+        // …and it never reaches the direction math.
+        #expect(throws: SteeringVectorError.self) {
+            try SteeringVectorMath.direction(
+                positive: [[1, 0]], negative: [[0, 0]], method: reader)
+        }
     }
 
     /// A Gemma Scope decoder row is a coordinate in a published dictionary:
@@ -135,10 +162,15 @@ import Testing
         #expect(!sae.isGrandMean)
         #expect(!sae.usesStoryCorpus)
         #expect(!sae.usesContrastiveValidation)
-        // The only two methods with no source concept.
+        // The three methods with no source concept, and each says WHY in
+        // its own words instead of a call site carrying a two-way condition.
         #expect(
             ExtractionMethod.allCases.filter { !$0.hasSourceConcept }
-                == [.optvec, .gemmaScopeSAE])
+                == [.optvec, .gemmaScopeSAE, .repeReaderLAT])
+        #expect(
+            ExtractionMethod.allCases.allSatisfy {
+                ($0.sourceConceptAbsence == nil) == $0.hasSourceConcept
+            })
         // …and it never reaches the direction math.
         #expect(throws: SteeringVectorError.self) {
             try SteeringVectorMath.direction(
@@ -151,7 +183,7 @@ import Testing
         let negative: [[Float]] = [[0, 0], [0, 1]]
         #expect(throws: SteeringVectorError.self) {
             try SteeringVectorMath.direction(
-                positive: positive, negative: negative, method: .lat)
+                positive: positive, negative: negative, method: .pairedDifferencePCA)
         }
     }
 }

@@ -25,6 +25,8 @@ import shutil
 import sys
 import tempfile
 
+import numpy as np
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "Server"))
 
@@ -848,9 +850,84 @@ def extraction_rendering_and_positions() -> None:
     })
 
 
+def paired_difference_pca() -> None:
+    """The PCA path's NUMBERS, produced by the Python engine and asserted by
+    the Swift one (audit finding 6).
+
+    Until now the two engines' PCA agreed only by construction — same
+    algorithm, same two starts, same float32 — and nothing checked it. The
+    deterministic Gram power-iteration is exactly the kind of code where a
+    "harmless" refactor on one side (a different start, an `np.linalg.svd`
+    swap, a changed convergence test) silently produces a DIFFERENT unit
+    vector, with the same norm and a plausible cosine, on artifacts nobody
+    re-derives. These cases pin the bytes.
+
+    Three of them matter beyond coverage:
+
+    * ``alternating`` is the case that motivated the third start. Its rows are
+      ±d, so the uniform start is exactly orthogonal to the dominant
+      eigenvector; before 2026-08-27 the iteration rode float noise from there.
+    * ``three-row-ramp-degenerate`` is orthogonal to BOTH the uniform and the
+      ramp start at once — the case that made the honest degenerate-start
+      guard refuse until the alternating start was added.
+    * ``paired-difference-direction`` is the whole family end to end, sign rule
+      and norm-matching included.
+    """
+    from steerlab_server.steering import vector_math as vm
+
+    def rows(seed: int, n: int, d: int) -> list[list[float]]:
+        rng = np.random.default_rng(seed)
+        return [[round(float(x), 6) for x in rng.standard_normal(d)]
+                for _ in range(n)]
+
+    pca_cases = []
+    for label, matrix in (
+        ("random-5x6", rows(11, 5, 6)),
+        ("random-8x4", rows(23, 8, 4)),
+        # ±d rows: the uniform start is exactly orthogonal to PC1.
+        ("alternating", [[1.0, 2.0, -0.5, 0.25], [-1.0, -2.0, 0.5, -0.25],
+                         [1.0, 2.0, -0.5, 0.25], [-1.0, -2.0, 0.5, -0.25]]),
+        # Three ±d rows: orthogonal to the uniform AND the ramp start.
+        ("three-row-ramp-degenerate",
+         [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
+    ):
+        pca_cases.append({
+            "label": label,
+            "rows": matrix,
+            "firstPrincipalComponent": vm.first_principal_component(matrix),
+        })
+
+    direction_cases = []
+    for label, positive, negative in (
+        ("clean-separation",
+         [[3.0, 0.0], [3.2, 0.1], [2.8, -0.1]],
+         [[0.0, 0.0], [0.1, 0.1], [-0.1, -0.1]]),
+        ("noisy-6d", rows(31, 5, 6), rows(37, 5, 6)),
+    ):
+        direction_cases.append({
+            "label": label,
+            "positive": positive,
+            "negative": negative,
+            "meanDifference": vm.mean_difference(positive, negative),
+            "pairedDifferencePCA": vm.direction(
+                positive, negative, vm.ExtractionMethod.PAIRED_DIFFERENCE_PCA),
+        })
+
+    _write(os.path.join(FIXTURES, "paired-difference-pca.json"), {
+        "note": "Produced by the Python engine; asserted by the Swift one. "
+                "A diff means one engine's PCA path changed — decide "
+                "deliberately whether the other should follow.",
+        "degenerateStartRelativeThreshold":
+            vm.DEGENERATE_START_RELATIVE_THRESHOLD,
+        "principalComponents": pca_cases,
+        "directions": direction_cases,
+    })
+
+
 def main() -> int:
     os.makedirs(FIXTURES, exist_ok=True)
     promotion_keys()
+    paired_difference_pca()
     extraction_rendering_and_positions()
     system_prompt_composition()
     server_minted_agent()

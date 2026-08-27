@@ -607,6 +607,24 @@ def _verify_optvec_eval_run(reference: str, tensor_hash: str,
     return {"verified": True, "reason": None}
 
 
+def reader_derived_norm_backfill_refusal(rel: str) -> str:
+    """The named repair for attaching a reader-derived vector that has not been
+    through the residual-norm backfill.
+
+    Not a defect of the artifact but a missing LIFECYCLE STEP, exactly as for
+    an OptVec vector: a reader measures a task template's LAT token, not a
+    neutral corpus, so its reading direction is born with no denominator and
+    alpha in norm units would be meaningless. Cross-engine twin literal (Swift:
+    ``ExperimentStore.readerDerivedNormBackfillRefusal``).
+    """
+    return (f"vector artifact '{rel}' is a RepE-reader-derived direction with "
+            "no residualNormSource — a reader measures a task template's LAT "
+            "token, not a neutral corpus, so its reading direction is BORN "
+            "without a denominator. Run the residual-norm backfill against the "
+            "pinned neutral corpus first and attach the BACKFILLED artifact: "
+            "α in norm units is meaningless until the denominator is measured")
+
+
 def attach_artifact(name: str, concept: str, artifact_path: str, *,
                     source_concept: str | None = None,
                     eval_run: str | None = None,
@@ -751,6 +769,9 @@ def attach_artifact(name: str, concept: str, artifact_path: str, *,
                 "steering.norm_backfill.backfill_norms) and attach the "
                 "BACKFILLED artifact: α in norm units is meaningless until "
                 "the denominator is measured")
+        if source_method == ExtractionMethod.REPE_READER_LAT.value:
+            raise ExperimentStoreError(
+                reader_derived_norm_backfill_refusal(rel))
         raise ExperimentStoreError(
             f"vector artifact '{rel}' records no residualNormSource — its "
             "norm denominator (and so its recipe identity, which promotion "
@@ -772,10 +793,12 @@ def attach_artifact(name: str, concept: str, artifact_path: str, *,
     data_concept = (source_concept or "").strip() or concept
     optvec_block: dict | None = None
     if not method.has_source_concept:
-        # Two families invert (or sidestep) the pipeline and have no source
+        # Three families invert (or sidestep) the pipeline and have no source
         # concept anywhere in them: an OptVec direction is behavior → vector
-        # with no stimulus set, and an imported Gemma Scope SAE decoder row is
-        # a coordinate in a published dictionary. Every data-side question
+        # with no stimulus set, an imported Gemma Scope SAE decoder row is a
+        # coordinate in a published dictionary, and a RepE-reader-derived
+        # direction's data is the READER's own dataset and held-out split (its
+        # reader is pinned separately as a readerRef). Every data-side question
         # below (source stimuli hash-check, the --source-concept hint, the
         # grand-mean population, the designated reference, the held-out
         # validation.jsonl) presumes a source CONCEPT and must be SKIPPED
@@ -784,11 +807,7 @@ def attach_artifact(name: str, concept: str, artifact_path: str, *,
         # hashes) and the provenance that says where it came from.
         if (source_concept or "").strip() and \
                 (source_concept or "").strip() != concept:
-            evidence = ("the OptVec eval run (eval.json)" if method.is_optvec
-                        else "the pinned SAE candidate roster's discovery "
-                             "snapshot and qualification artifact")
-            kind = ("an OptVec vector" if method.is_optvec
-                    else "an imported Gemma Scope SAE decoder row")
+            kind, evidence, _referent = method.source_concept_absence
             raise ExperimentStoreError(
                 f"vector artifact '{rel}' is {kind}, which has no source "
                 f"concept — '{source_concept}' names stimuli and a held-out "
@@ -818,10 +837,7 @@ def attach_artifact(name: str, concept: str, artifact_path: str, *,
         # published SAE is the referent, and the roster records what
         # justified nominating that feature).
         live = sidecar["stimulusSetHash"]
-        where = ("the OptVec training run's pinned dataset splits"
-                 if method.is_optvec else
-                 "the published Gemma Scope dictionary the feature was "
-                 "imported from")
+        _kind, _evidence, where = method.source_concept_absence
     elif method.uses_story_corpus:
         live = multiconcept.stories_hash(data_concept, root)
         where = f"prompts/emotions/{data_concept}/stories.jsonl"

@@ -49,7 +49,7 @@ extension ExperimentStoreTests {
                 == VectorExtractionRecipe.Method.emotionGrandMean.rawValue)
         #expect(!ExtractionMethod.emotionGrandMean.isPaired)
         #expect(ExtractionMethod.meanDifference.isPaired)
-        #expect(ExtractionMethod.lat.isPaired)
+        #expect(ExtractionMethod.pairedDifferencePCA.isPaired)
         #expect(throws: SteeringVectorError.notPairedMethod("emotionGrandMean")) {
             _ = try SteeringVectorMath.direction(
                 positive: [[1, 0]], negative: [[0, 1]], method: .emotionGrandMean)

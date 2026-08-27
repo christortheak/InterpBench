@@ -11,7 +11,7 @@ public struct VectorArtifact: Identifiable, Sendable {
 
     public var id: String { directory.appending(component: name).path }
 
-    /// e.g. "french · french-qwen3 · LAT · pooled@50 · 2026-06-10". Method
+    /// e.g. "french · french-qwen3 · paired-difference PCA · pooled@50 · 2026-06-10". Method
     /// and pooling appear so that vectors extracted from the same stimuli
     /// under different options stay distinguishable in the picker.
     public var label: String {
@@ -20,8 +20,8 @@ public struct VectorArtifact: Identifiable, Sendable {
             switch recipe {
             case VectorExtractionRecipe.Method.caaMeanDifference.rawValue:
                 parts.append("CAA")
-            case VectorExtractionRecipe.Method.repeLAT.rawValue:
-                parts.append("LAT paired direction")
+            case VectorExtractionRecipe.Method.pairedDifferencePCA.rawValue:
+                parts.append("paired-difference PCA")
             case VectorExtractionRecipe.Method.emotionGrandMean.rawValue:
                 parts.append("emotion-grand-mean")
             default:
@@ -29,7 +29,7 @@ public struct VectorArtifact: Identifiable, Sendable {
             }
         } else {
             switch sidecar.extractionMethod {
-            case "lat": parts.append("LAT")
+            case "lat": parts.append("paired-difference PCA")
             case "meanDifference": parts.append("mean-diff")
             case "repeReaderLAT": parts.append("RepE reader-derived")
             default: break  // pre-options artifact: mean difference implied
@@ -239,7 +239,7 @@ public enum VectorCatalog {
 
         public var title: String {
             switch self {
-            case .repe: "RepE/LAT pairs"
+            case .repe: "Paired-difference PCA pairs"
             case .readers: "Reader pairs"
             }
         }

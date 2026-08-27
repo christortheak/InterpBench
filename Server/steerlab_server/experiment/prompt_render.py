@@ -430,10 +430,26 @@ READER_RENDERING_CONVENTION = (
     "with the tokenizer's default special tokens — single BOS added by the "
     "tokenizer, LAT token = final scaffold token")
 
+#: The convention stamped into a CHAT-TEMPLATE-rendered reader artifact. This
+#: is the reference implementation's ``user_tag``/``assistant_tag``
+#: construction: the scaffold is the user turn's content and the family
+#: template supplies every special token, so the final token is the generation
+#: prompt's tail — exactly what ``rep_token=-1`` reads in
+#: ``f"{user_tag} {instruction} {scenario} {assistant_tag}"``. Swift twin:
+#: ``RepEReader.chatTemplateRenderingConvention``.
+READER_CHAT_TEMPLATE_RENDERING_CONVENTION = (
+    "chatTemplate scaffold: the rendered scaffold is the USER TURN's content "
+    "and the family chat template supplies every special token (single BOS, "
+    "turn markers, generation prompt); tokenized by the extraction path "
+    "(extractor.activations) through PromptRendering — LAT token = final token "
+    "of the generation prompt, the repo's assistant_tag position")
+
 # Chat-template / special-token markers that must never appear in a reader
-# scaffold: the scaffold is tokenized with the tokenizer's defaults, so an
-# embedded BOS or turn marker is the double-BOS / hand-tokenized-template
-# hazard this renderer exists to prevent.
+# scaffold. Under a RAW rendering the scaffold IS the whole token sequence, so
+# an embedded BOS or turn marker is the double-BOS / hand-tokenized-template
+# hazard; under a CHAT-TEMPLATE rendering the scaffold is the user turn's
+# CONTENT, so an embedded marker forges a turn boundary inside a turn. Same
+# list, two different reasons — see :func:`render_reader`.
 _READER_FORBIDDEN_MARKERS = (
     "<bos>", "<eos>", "<start_of_turn>", "<end_of_turn>",   # Gemma
     "<|im_start|>", "<|im_end|>", "<|endoftext|>",          # Qwen/ChatML
@@ -441,14 +457,25 @@ _READER_FORBIDDEN_MARKERS = (
 )
 
 
-def render_reader(text: str, *, model_id: str) -> str:
+def reader_rendering_convention(rendering=None) -> str:
+    """The convention string for a declared reader rendering. Raw resolves to
+    the byte-frozen :data:`READER_RENDERING_CONVENTION`, so a raw fit is
+    byte-identical to every reader written before the option existed."""
+    if rendering is None or getattr(rendering, "is_raw", True):
+        return READER_RENDERING_CONVENTION
+    return READER_CHAT_TEMPLATE_RENDERING_CONVENTION
+
+
+def render_reader(text: str, *, model_id: str, rendering=None) -> str:
     """Family-aware pass for a RepE reader scaffold (measurement, not chat).
 
-    Reader scaffolds are deliberately **rawCompletion-style plain text**: the
-    RepE LAT reader reads the hidden state at the scaffold's final token, so
-    the rendered string must reach the model through exactly the tokenizer
-    conventions the extractor uses (``extractor.activations`` tokenizes with
-    the tokenizer defaults — single BOS, no chat template). Family notes:
+    **Under ``raw``** (the default, and every reader fitted before the
+    rendering became declarable) reader scaffolds are **rawCompletion-style
+    plain text**: the RepE LAT reader reads the hidden state at the scaffold's
+    final token, so the rendered string must reach the model through exactly
+    the tokenizer conventions the extractor uses (``extractor.activations``
+    tokenizes with the tokenizer defaults — single BOS, no chat template).
+    Family notes:
 
     - **Gemma**: no system role exists and the HF tokenizer adds BOS itself; a
       scaffold that embeds ``<bos>``/turn markers would double them.
@@ -456,17 +483,35 @@ def render_reader(text: str, *, model_id: str) -> str:
       *generation* path) — nothing is generated, and appending it would move
       the LAT token off the scaffold's final position.
 
-    The convention is stamped into every reader artifact as
-    :data:`READER_RENDERING_CONVENTION`.
+    **Under ``chatTemplate``** the family template IS the marker mechanism — it
+    supplies BOS, the turn markers and the generation prompt exactly once, and
+    the scaffold becomes the user turn's content. The double-BOS rationale
+    above therefore does not apply and its refusal must not fire. What survives
+    is a narrower hazard: a marker embedded in the CONTENT forges a turn
+    boundary inside the turn, splitting the scaffold the model was meant to
+    read as one unit and moving the LAT token off the generation prompt's tail.
+    The manual-``<s>`` check is dropped there, because under a template a
+    leading ``<s>`` in content is ordinary text, not a hand-written BOS.
+
+    The convention actually applied is stamped into every reader artifact as
+    ``renderingConvention`` (see :func:`reader_rendering_convention`).
     """
     del model_id  # both families share the plain-text contract today
+    is_raw = rendering is None or getattr(rendering, "is_raw", True)
     for marker in _READER_FORBIDDEN_MARKERS:
         if marker in text:
+            if is_raw:
+                raise ValueError(
+                    f"reader scaffold embeds special/chat-template marker {marker!r} — "
+                    "scaffolds must be plain text; the tokenizer adds special tokens "
+                    "exactly once (double-BOS / hand-tokenized-template hazard)")
             raise ValueError(
-                f"reader scaffold embeds special/chat-template marker {marker!r} — "
-                "scaffolds must be plain text; the tokenizer adds special tokens "
-                "exactly once (double-BOS / hand-tokenized-template hazard)")
-    if text.lstrip().startswith("<s>"):
+                f"reader scaffold embeds turn marker {marker!r} inside the user "
+                "turn's content — under a chatTemplate rendering the template "
+                "supplies the markers, so an embedded one forges a turn boundary "
+                "and moves the LAT token off the generation prompt. Repair: write "
+                "the scaffold as plain content and let the template do the framing")
+    if is_raw and text.lstrip().startswith("<s>"):
         raise ValueError(
             "reader scaffold embeds a manual '<s>' BOS — the tokenizer adds it")
     return text

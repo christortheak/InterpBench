@@ -191,7 +191,7 @@ extension ExperimentStoreTests {
         #expect(
             OptimizationComposer.mapMethod(
                 recipeMethodRaw: "repeLAT", extractionMethodRaw: nil)
-                == .mapped(.lat))
+                == .mapped(.pairedDifferencePCA))
         #expect(
             OptimizationComposer.mapMethod(
                 recipeMethodRaw: "emotionGrandMean", extractionMethodRaw: "meanDifference")
@@ -200,7 +200,7 @@ extension ExperimentStoreTests {
         #expect(
             OptimizationComposer.mapMethod(
                 recipeMethodRaw: nil, extractionMethodRaw: "lat")
-                == .mapped(.lat))
+                == .mapped(.pairedDifferencePCA))
         // Reader-derived vectors are conversions, not recipes.
         if case .mapped = OptimizationComposer.mapMethod(
             recipeMethodRaw: "repeReaderLAT", extractionMethodRaw: nil)

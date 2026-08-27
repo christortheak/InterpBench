@@ -237,7 +237,7 @@ larger hardware:
 
 | Axis | Options | Status |
 |---|---|---|
-| Direction finding | mean-difference \| LAT (RepE C.1: per-pair differences **L2-normalized before PCA** so high-norm pairs cannot dominate PC1; fed to PCA in alternating ± orientation, reproducing the paper's unsupervised random pairing deterministically; sign fixed by the directionality of per-pair scores, stable exactly where PC1 diverges from the mean difference; then norm-matched to the mean difference so α stays comparable — our deliberate addition) \| emotion grand-mean (concept mean minus population mean over a multi-concept story corpus) | paired methods implemented in the extractor (`ExtractionMethod`; Gram-matrix PCA); current LAT-vs-CAA is a direction-only comparison because LAT is norm-matched to the CAA vector; emotion grand-mean math, schema, UI orchestration, and server extraction are implemented |
+| Direction finding | mean-difference \| **paired-difference PCA** (PC1 of the per-pair differences. What is the paper's: differences enter PCA in alternating ± orientation, a deterministic stand-in for the reference implementation's per-pair `random.shuffle` + `[::2] − [1::2]`; and the sign follows train-label agreement, its `get_signs`. What is OURS, and was mis-attributed to "RepE Appendix C.1" until 2026-08-27: the per-pair **L2 normalization before PCA**, so high-norm pairs cannot dominate PC1 — `PCARepReader` mean-centres the difference matrix and never normalizes — and the **norm-matching to the mean difference** so α stays comparable) \| **RepE reader LAT** (the paper's full template-mediated pipeline; see `docs/REPE-IMPLEMENTATION-BRIEF.md`) \| emotion grand-mean (concept mean minus population mean over a multi-concept story corpus) | paired methods implemented in the extractor (`ExtractionMethod`; Gram-matrix PCA); paired-difference-PCA-vs-CAA is a direction-only comparison because the PC is norm-matched to the CAA vector; the reader recipe is implemented on both engines with held-out sign/layer selection, T+/T− template pairs and declarable rendering; emotion grand-mean math, schema, UI orchestration, and server extraction are implemented |
 | Reading position | last token \| mean over tokens from index k (emotion paper uses k=50 on ~paragraph stories) | **both implemented** (`ReadingPosition`; activation caches key on it) |
 | Data contract | CAA paired positive/negative files \| RepE paired reader prompts \| multi-concept emotion stories \| neutral corpus \| held-out probe validation items | **schema implemented** (`StimulusSet.loadPairs`, `loadMultiConceptTexts`, `VectorExtractionRecipe`, `ReadingProbeArtifact`); prompt templates live in `prompts/generation/` |
 | Scalar estimation | projection onto calibrated reading direction; sign-oriented so higher scores mean more concept-positive; centered at class midpoint and scaled by projection variance | implemented as math/artifact type and exposed through probe data import, probe training, and chat highlighting; treat the workbench probe as diagnostic unless trained on genuinely independent probe data |
@@ -254,7 +254,7 @@ universal "concept prompt" folder:
 
 - **CAA:** `prompts/concepts/<concept>/{positive,negative}.jsonl`, paired
   or at least class-matched sentence stimuli.
-- **LAT paired direction (RepE-inspired):** `prompts/repe/<concept>/pairs.jsonl`, one
+- **Paired-difference PCA (RepE-inspired):** `prompts/repe/<concept>/pairs.jsonl`, one
   `{"positive": "...", "negative": "...", "split": "train|test"}` object
   per line, with optional answer scaffolds/templates. The same family also
   produces calibrated scalar probes (`ReadingProbeArtifact`) from held-out
@@ -310,7 +310,7 @@ construction has two failure modes this policy exists to avoid.
    negative class defines the direction's semantics and is chosen
    deliberately). Grand-mean is the recipe for diffuse whole-passage
    concepts with no non-trivializing minimal pair (character traits,
-   dispositions, stances, story-format emotions). RepE/LAT is never a
+   dispositions, stances, story-format emotions). Paired-difference PCA is never a
    primary extraction recipe: it serves triangulation (convergence of PC1
    with the mean difference is evidence the direction is geometry, not
    recipe artifact; divergence is a confound alarm) and the reading/probe
@@ -682,27 +682,43 @@ substrate and validated as separate artifacts.
 the norm-unit denominator now follows the paper's fixed-dataset convention;
 LAT now normalizes pair differences per RepE C.1 — all 2026-06-12.)
 
-**Labeling note (2026-07-03).** The
-current LAT pathway is a *paired-direction* method faithful to RepE's
-Appendix C.1 direction math, but NOT the paper's full template-mediated
-reader pipeline (task-template rendering, LAT token position bound to the
-scaffold, PCA fit parameters persisted for exact inference). It is labeled
-"LAT paired direction (RepE-inspired)" everywhere. The faithful
-`RepE reader LAT` recipe landed 2026-07-03 on both engines (hashed template
-registry in `prompts/templates/`, fitted reader artifacts with persisted PCA
-parameters, exact same-template inference, `repeReaderScore` outcome
-instrument, derive-steering conversion with provenance); reader artifacts
-are substrate-specific by rule.
+**Labeling note (2026-07-03; corrected and renamed 2026-08-27).** The
+paired-difference pathway borrows RepE's PC1-of-paired-differences IDEA and
+none of the paper's pipeline (no task-template rendering, no LAT token bound
+to a scaffold, no persisted PCA fit parameters, no held-out sign or layer
+selection). It is labeled **"Paired-difference PCA (RepE-inspired)"**
+everywhere; its symbol was `lat`/`repeLAT` until the 2026-08-27 naming ruling,
+and the RAW VALUES stay `"lat"`/`"repeLAT"` forever for artifact and
+recipe-identity compatibility (`docs/REPE-IMPLEMENTATION-BRIEF.md` §10). Two
+of its steps are OURS and were mis-attributed to "RepE Appendix C.1" until the
+same date: the per-pair L2 normalization before PCA, and the norm-matching to
+the mean difference. The reference implementation's `PCARepReader` mean-centres
+the difference matrix and never normalizes.
+
+The faithful `RepE reader LAT` recipe landed 2026-07-03 on both engines
+(hashed template registry in `prompts/templates/`, fitted reader artifacts with
+persisted PCA parameters, exact same-template inference, `repeReaderScore`
+outcome instrument, derive-steering conversion with provenance) and was
+completed 2026-08-27: held-out SIGN and LAYER selection (the paper's step 4),
+the paper's T+/T− instruction-pair contrast (§3.1 step 1b) beside the
+supervised content contrast, and a declarable extraction rendering so the
+scaffold can reach the model through the family chat template — the repo's
+`user_tag`/`assistant_tag` construction. Reader artifacts are
+substrate-specific by rule. The itemised faithful-vs-departure table lives in
+`docs/REPE-IMPLEMENTATION-BRIEF.md` §9; what is still NOT implemented from the
+paper is listed there too (LoRRA control training, strided control bands,
+prompt-span steering).
 
 1. **Reading template.** RepE reads the last token of an instruction
    template ("Consider the amount of `<concept>` in …; the amount of
    `<concept>` is") — the template focuses the representation. The **CAA and
-   LAT paired-direction pathways** read raw stimulus text (last token or
+   paired-difference-PCA pathways** read raw stimulus text (last token or
    pooled), a clean-room choice that avoids naming the concept anywhere near
    extraction; this divergence is scoped to those pathways only. The
    `RepE reader LAT` recipe implements the paper's template-mediated reading
    faithfully (registry templates in `prompts/templates/`, including an
-   unnamed clean-room scaffold stamped as a divergence). Revisit the
+   unnamed clean-room scaffold and a T+/T− instruction pair, both stamped as
+   divergences because the paper's own templates name the concept). Revisit the
    raw-stimulus choice if paired-direction probe accuracy is weak at small
    scale.
 2. **Stimulus genre.** Hand-written sentences vs the emotion paper's
@@ -723,7 +739,10 @@ are substrate-specific by rule.
 4. **Validation scoring.** Never-named scenarios are classified by
    projection against the midpoint of the training-class mean projections
    (CAA-style). RepE normalizes test activations with the PCA model's
-   parameters before projecting; the emotion paper uses logistic probes.
+   parameters before projecting; the emotion paper uses logistic probes. The
+   `RepE reader LAT` recipe DOES persist the training centre and scale and
+   reuse them at inference (the paper's rule); the classifier on top of that
+   projection is still our midpoint rule, not the paper's logistic probe.
    Upgrade if midpoint accuracy looks unstable.
 5. **Neutral-corpus design remains experimental.** Neutral corpora and PC
    bases can now be built and selected, but the corpus design is load-bearing:

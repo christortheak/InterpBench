@@ -3624,6 +3624,24 @@ public enum ExperimentStore {
     /// is written — attach never records a hash the very next verify would
     /// reject.
     @discardableResult
+    /// The named repair for attaching a reader-derived vector that has not
+    /// been through the residual-norm backfill.
+    ///
+    /// Not a defect of the artifact but a missing LIFECYCLE STEP, exactly as
+    /// for an OptVec vector: a reader measures a task template's LAT token, not
+    /// a neutral corpus, so its reading direction is born with no denominator
+    /// and α in norm units would be meaningless. Cross-engine twin literal
+    /// (server: `experiment_store.reader_derived_norm_backfill_refusal`).
+    public static func readerDerivedNormBackfillRefusal(artifact rel: String) -> String {
+        "vector artifact '\(rel)' is a RepE-reader-derived direction with no "
+            + "residualNormSource — a reader measures a task template's LAT "
+            + "token, not a neutral corpus, so its reading direction is BORN "
+            + "without a denominator. Run the residual-norm backfill against "
+            + "the pinned neutral corpus first and attach the BACKFILLED "
+            + "artifact: α in norm units is meaningless until the denominator "
+            + "is measured"
+    }
+
     public static func attachArtifact(
         _ concept: String,
         artifact reference: String,
@@ -3775,6 +3793,10 @@ public enum ExperimentStore {
                         + "BACKFILLED artifact: α in norm units is "
                         + "meaningless until the denominator is measured")
             }
+            if sourceMethodRaw == ExtractionMethod.repeReaderLAT.rawValue {
+                throw ExperimentError(
+                    reason: Self.readerDerivedNormBackfillRefusal(artifact: rel))
+            }
             throw ExperimentError(
                 reason: "vector artifact '\(rel)' records no "
                     + "residualNormSource — its norm denominator (and so its "
@@ -3799,23 +3821,22 @@ public enum ExperimentStore {
         let dataConcept = requestedSource.isEmpty ? name : requestedSource
         var optvecBlock: [String: Any]?
         if !method.hasSourceConcept {
-            // Two families invert (or sidestep) the pipeline and have no
+            // Three families invert (or sidestep) the pipeline and have no
             // source concept anywhere in them: an OptVec direction is
-            // behavior → vector with no stimulus set, and an imported Gemma
+            // behavior → vector with no stimulus set, an imported Gemma
             // Scope SAE decoder row is a coordinate in a published
-            // dictionary. Every data-side question below must be SKIPPED
-            // rather than answered with an invention; the artifact's own
-            // identity and the provenance that says where it came from are
-            // not skipped. Server twin: the `has_source_concept` branch of
-            // `attach_artifact`.
-            if !requestedSource.isEmpty, requestedSource != name {
-                let kind = method.isOptvec
-                    ? "an OptVec vector"
-                    : "an imported Gemma Scope SAE decoder row"
-                let evidence = method.isOptvec
-                    ? "the OptVec eval run (eval.json)"
-                    : "the pinned SAE candidate roster's discovery snapshot "
-                        + "and qualification artifact"
+            // dictionary, and a RepE-reader-derived direction's data is the
+            // READER's own dataset and held-out split (its reader is pinned
+            // separately as a readerRef). Every data-side question below must
+            // be SKIPPED rather than answered with an invention; the
+            // artifact's own identity and the provenance that says where it
+            // came from are not skipped. Server twin: the
+            // `has_source_concept` branch of `attach_artifact`.
+            if !requestedSource.isEmpty, requestedSource != name,
+                let absence = method.sourceConceptAbsence
+            {
+                let kind = absence.kind
+                let evidence = absence.evidence
                 throw ExperimentError(
                     reason: "vector artifact '\(rel)' is \(kind), which has "
                         + "no source concept — '\(requestedSource)' names "
@@ -3850,12 +3871,11 @@ public enum ExperimentStore {
             // compares against it — for optvec the composite
             // "optvec:<sha256>" over the split files (pinned in the training
             // run), for a Gemma Scope import the
-            // "gemmascope:<release>:<saeID>:<feature>" dictionary coordinate.
+            // "gemmascope:<release>:<saeID>:<feature>" dictionary coordinate,
+            // for a reader-derived vector the reader dataset's own hash.
             live = sidecar.stimulusSetHash
-            where_ = method.isOptvec
-                ? "the OptVec training run's pinned dataset splits"
-                : "the published Gemma Scope dictionary the feature was "
-                    + "imported from"
+            where_ = method.sourceConceptAbsence?.hashReferent
+                ?? "the artifact's own recorded identity"
         } else if method.usesStoryCorpus {
             live = storiesHash(for: dataConcept)
             where_ = "prompts/emotions/\(dataConcept)/stories.jsonl"

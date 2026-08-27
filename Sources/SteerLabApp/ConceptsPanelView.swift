@@ -168,7 +168,7 @@ struct ConceptsPanelView: View {
                         DisclosureGroup("Add pairs manually (+ and - line by line)") {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(
-                                    builder.recipeFamily == .repeLAT
+                                    builder.recipeFamily == .pairedDifferencePCA
                                         ? "Positive reader prompt (concept-present)"
                                         : "Positive (expresses the concept)"
                                 )
@@ -180,7 +180,7 @@ struct ConceptsPanelView: View {
                                         "one item per line. For RepE/LAT, this may be a matched "
                                             + "reader prompt or scaffold whose positive side is concept-present")
                                 Text(
-                                    builder.recipeFamily == .repeLAT
+                                    builder.recipeFamily == .pairedDifferencePCA
                                         ? "Negative reader prompt (matched control)"
                                         : "Negative (content-matched, without the concept)"
                                 )
@@ -1386,7 +1386,7 @@ struct ConceptsPanelView: View {
         }
     }
 
-    // MARK: RepE reader UI (thin: renders ConceptBuilder state; brief §8)
+    // MARK: RepE reader UI (thin: renders ConceptBuilder state; REPE-IMPLEMENTATION-BRIEF §8)
 
     @ViewBuilder
     private var repeReaderSection: some View {
@@ -1487,24 +1487,19 @@ struct ConceptsPanelView: View {
                 ) {
                     Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
                         GridRow {
-                            Text("layer").font(.caption2).foregroundStyle(.secondary)
-                            Text("train").font(.caption2).foregroundStyle(.secondary)
-                            Text("held-out").font(.caption2).foregroundStyle(.secondary)
-                            Text("PC1 var").font(.caption2).foregroundStyle(.secondary)
+                            ForEach(Self.readerLayerColumns, id: \.self) { column in
+                                Text(column).font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         ForEach(builder.readerLayerScores) { score in
                             GridRow {
-                                Text("\(score.layer)").font(.caption.monospaced())
-                                Text(String(format: "%.0f%%", score.trainAccuracy * 100))
-                                    .font(.caption.monospaced())
-                                Text(
-                                    score.heldOutAccuracy.map {
-                                        String(format: "%.0f%%", $0 * 100)
-                                    } ?? "—"
-                                )
-                                .font(.caption.monospaced())
-                                Text(String(format: "%.2f", score.explainedVariance))
-                                    .font(.caption.monospaced())
+                                ForEach(
+                                    Array(Self.readerLayerCells(score).enumerated()),
+                                    id: \.offset
+                                ) { cell in
+                                    Text(cell.element).font(.caption.monospaced())
+                                }
                             }
                         }
                     }
@@ -1513,6 +1508,47 @@ struct ConceptsPanelView: View {
 
             readerArtifactRows
         }
+    }
+
+    /// The fit-score grid's columns, in the order `readerLayerCells` returns.
+    /// "★" on a layer marks the fit's RECOMMENDED layer (argmax held-out
+    /// accuracy) — a recommendation, not a selection: which layer a study
+    /// reads is declared in its manifest.
+    static let readerLayerColumns = [
+        "layer", "train", "held-out", "PC1 var (diffs)", "sign from",
+    ]
+
+    /// One reader-layer row's cells, as plain strings.
+    ///
+    /// Split out of the grid deliberately: the cells are now four formatted
+    /// values with two optionals among them, and SwiftUI's type checker gives
+    /// up on the inline form ("unable to type-check this expression in
+    /// reasonable time"). Formatting is not layout, and it is testable here.
+    ///
+    /// An absent explained variance prints "—", not "0.00": PC1's share of a
+    /// difference cloud with no variance is undefined, and 0 would read as
+    /// "PC1 explains nothing" — the opposite of what an all-identical cloud
+    /// means. The sign cell says whether the HELD-OUT split fixed this layer's
+    /// direction (the RepE paper's step 4) or the train labels did.
+    static func readerLayerCells(
+        _ score: ConceptBuilder.ReaderLayerScore
+    ) -> [String] {
+        let layer = score.isRecommendedLayer
+            ? "\(score.layer) ★" : "\(score.layer)"
+        let train = String(format: "%.0f%%", score.trainAccuracy * 100)
+        let held =
+            score.heldOutAccuracy.map { String(format: "%.0f%%", $0 * 100) } ?? "—"
+        let variance =
+            score.differenceCloudVarianceLabel
+        let sign: String
+        switch score.signConvention {
+        case .heldOutPairAgreement:
+            sign = score.signHeldOutAccuracy
+                .map { String(format: "held-out %.0f%%", $0 * 100) } ?? "held-out"
+        case .trainMajority:
+            sign = "train"
+        }
+        return [layer, train, held, variance, sign]
     }
 
     @ViewBuilder

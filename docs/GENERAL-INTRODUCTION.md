@@ -473,6 +473,7 @@ through.)*
 | [README.md](../README.md) | Orientation, requirements, install, quickstart |
 | [ONBOARDING.md](ONBOARDING.md) | **Start here to use it.** The hands-on tour: first vector, first experiment, first freeze |
 | [METHODS.md](METHODS.md) | The math, the source lineage, and every logged divergence from it |
+| [REPE-IMPLEMENTATION-BRIEF.md](REPE-IMPLEMENTATION-BRIEF.md) | What is actually implemented from Zou et al.'s Representation Engineering: pipeline, schemas, and the faithful-vs-departure table |
 | [CONDUCTING-A-STUDY.md](CONDUCTING-A-STUDY.md) | The working rulebook: lifecycle, artifacts, current limitations and their workarounds |
 | [RESULTS-ARCHITECTURE.md](RESULTS-ARCHITECTURE.md) | What each layer of result can claim, and what gates it |
 | [CLI-REFERENCE.md](CLI-REFERENCE.md) | Every verb, flag, default, and refusal on both command lines |

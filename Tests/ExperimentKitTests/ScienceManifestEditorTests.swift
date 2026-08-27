@@ -404,7 +404,7 @@ import Testing
             probe: SteeringVectorMath.ScalarProbe(
                 direction: [1, 0], projectionCenter: 0, projectionScale: 1,
                 orientation: 1, positiveMean: 1, negativeMean: -1),
-            pc1ExplainedVariance: 0.5, trainAccuracy: 0.9,
+            differenceCloudExplainedVariance: 0.5, trainAccuracy: 0.9,
             heldOutAccuracy: nil, trainPairCount: 10, heldOutPairCount: 2,
             substrate: "python-hf-transformers")
         let directory = root.appending(
@@ -527,7 +527,7 @@ import Testing
                         direction: [1], projectionCenter: 0,
                         projectionScale: 1, orientation: 1,
                         positiveMean: 1, negativeMean: -1),
-                    pc1ExplainedVariance: 0.5, trainAccuracy: 0.9,
+                    differenceCloudExplainedVariance: 0.5, trainAccuracy: 0.9,
                     heldOutAccuracy: nil, trainPairCount: 4,
                     heldOutPairCount: 1, substrate: substrate)
             }

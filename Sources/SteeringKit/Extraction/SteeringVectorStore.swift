@@ -98,6 +98,32 @@ public struct SteeringVectorSidecar: Codable, Sendable {
     public var readerID: String?
     public var readerHash: String?
     public var controlMode: String?
+    /// The reader's layer, template pin, contrast construction and sign rule,
+    /// copied onto the derived vector so an attached reader-derived concept
+    /// can be verified against the instrument it came from without re-opening
+    /// the reader file (which may not travel with a bundle). Absent on every
+    /// non-reader artifact and on reader-derived vectors written before
+    /// 2026-08-27. JSON keys are the cross-engine contract (server twin:
+    /// `vector_store.SteeringVectorSidecar`).
+    public var readerLayer: Int?
+    public var readerTemplateID: String?
+    public var readerTemplateHash: String?
+    public var readerContrastMode: String?
+    public var readerSignConvention: String?
+    /// The reader probe's `orientation` at derive time (+1 or −1). Recorded
+    /// because the derived BYTES have the orientation folded in: a reader with
+    /// orientation −1 stores a direction pointing AWAY from the concept, and
+    /// the conversion negates it. Without this stamp there is no way to tell,
+    /// from the artifact alone, whether the sign was applied.
+    public var readerProbeOrientation: Float?
+    /// HOW this direction's sign was fixed — `"heldOutPairAgreement"` (the
+    /// paper's step 4) or `"trainMajority"` (the reference implementation's
+    /// `get_signs`). Stamped by every family whose direction has a sign to
+    /// choose, so the difference between "held out decided this" and "the
+    /// training labels decided this" is visible on the artifact instead of
+    /// being a fact about which code path produced it. Absent = legacy
+    /// train-majority.
+    public var signConvention: String?
     /// Which engine extracted this vector — a pinned cross-engine contract
     /// (same JSON key on the server's `vector_store.SteeringVectorSidecar`):
     /// `RepEReader.substrate` ("swift-mlx") here, "python-hf-transformers"
@@ -293,6 +319,16 @@ public struct SteeringVectorSidecar: Codable, Sendable {
         self.readerID = nil
         self.readerHash = nil
         self.controlMode = nil
+        self.readerLayer = nil  // stamped by RepEReader.deriveSteeringArtifact
+        self.readerTemplateID = nil
+        self.readerTemplateHash = nil
+        self.readerContrastMode = nil
+        self.readerSignConvention = nil
+        self.readerProbeOrientation = nil
+        // Every paired direction has a sign rule; the extraction paths stamp
+        // theirs after construction (the reader's from its artifact, the
+        // paired-difference PCA family's train-majority rule at extract time).
+        self.signConvention = nil
         self.substrate = nil  // stamped at save (SteeringVectorStore.stamped)
         self.normBackfill = nil
         self.gemmascopeConvention = nil  // stamped by the Gemma Scope importer
@@ -390,6 +426,21 @@ public enum SteeringVectorStore {
         var sidecar = sidecar
         if sidecar.substrate == nil {
             sidecar.substrate = RepEReader.substrate
+        }
+        // The paired-difference-PCA family's sign comes from TRAIN-label
+        // majority — it has no held-out split to run the RepE paper's step-4
+        // rule on, unlike a reader. Stamping it here (rather than at each of
+        // the six sidecar constructors) means the difference between "held-out
+        // data decided this direction's sign" and "the training labels did" is
+        // readable off any artifact, without a reader having to know which code
+        // path wrote it. A sidecar that already carries a convention — a
+        // reader-derived vector does — is left alone.
+        if sidecar.signConvention == nil,
+            sidecar.extractionMethod == ExtractionMethod.pairedDifferencePCA.rawValue
+                || sidecar.recipeMethod
+                    == VectorExtractionRecipe.Method.pairedDifferencePCA.rawValue
+        {
+            sidecar.signConvention = "trainMajority"
         }
         return sidecar
     }

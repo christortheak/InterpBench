@@ -17,7 +17,12 @@ public final class ConceptBuilder {
 
     public enum RecipeFamily: String, Codable, Sendable, CaseIterable, Identifiable {
         case caaMeanDifference
-        case repeLAT
+        /// PCA over normalized paired differences — RepE-INSPIRED direction
+        /// math, not the paper's pipeline. Raw value pinned to the legacy
+        /// `"repeLAT"` so persisted builder state and every sidecar written
+        /// under the old symbol keep decoding (naming ruling 2026-08-27).
+        case pairedDifferencePCA = "repeLAT"
+        /// The faithful template-mediated RepE reader.
         case repeReaderLAT
         case emotionGrandMean
         /// A direction for one exact vocabulary token, derived from an imported
@@ -32,7 +37,7 @@ public final class ConceptBuilder {
         public var label: String {
             switch self {
             case .caaMeanDifference: "CAA mean difference"
-            case .repeLAT: "LAT paired direction (RepE-inspired)"
+            case .pairedDifferencePCA: "Paired-difference PCA (RepE-inspired)"
             case .repeReaderLAT: "RepE reader LAT"
             case .emotionGrandMean: "Grand mean"
             case .jlensTokenDirection: "J-lens token direction"
@@ -42,7 +47,7 @@ public final class ConceptBuilder {
         public var recipeMethod: VectorExtractionRecipe.Method {
             switch self {
             case .caaMeanDifference: .caaMeanDifference
-            case .repeLAT: .repeLAT
+            case .pairedDifferencePCA: .pairedDifferencePCA
             case .repeReaderLAT: .repeReaderLAT
             case .emotionGrandMean: .emotionGrandMean
             case .jlensTokenDirection: .jlensTokenDirection
@@ -51,8 +56,24 @@ public final class ConceptBuilder {
 
         public var isPaired: Bool {
             switch self {
-            case .caaMeanDifference, .repeLAT, .repeReaderLAT: true
+            case .caaMeanDifference, .pairedDifferencePCA, .repeReaderLAT: true
             case .emotionGrandMean, .jlensTokenDirection: false
+            }
+        }
+
+        /// The direction-finding method this family ALREADY means, or nil for
+        /// a family that reads no activations. The extraction-method picker
+        /// consults it before demoting a family: `repeReaderLAT` means a
+        /// paired-difference PCA read, and `emotionGrandMean` means a mean
+        /// difference over its corpus, so seeing those methods arrive is not
+        /// evidence that the researcher left the family.
+        public var impliedExtractionMethod: ExtractionMethod? {
+            switch self {
+            case .caaMeanDifference: .meanDifference
+            case .pairedDifferencePCA: .pairedDifferencePCA
+            case .repeReaderLAT: .pairedDifferencePCA
+            case .emotionGrandMean: .meanDifference
+            case .jlensTokenDirection: nil
             }
         }
 
@@ -62,7 +83,7 @@ public final class ConceptBuilder {
         /// them apply — and would silently imply provenance it does not have.
         public var extractsFromStimuli: Bool {
             switch self {
-            case .caaMeanDifference, .repeLAT, .repeReaderLAT, .emotionGrandMean:
+            case .caaMeanDifference, .pairedDifferencePCA, .repeReaderLAT, .emotionGrandMean:
                 true
             case .jlensTokenDirection:
                 false
@@ -96,9 +117,9 @@ public final class ConceptBuilder {
                     "Data needed: matched positive/negative sentences that differ mainly in the concept.",
                     "Workflow: save or select a concept, copy the LLM prompt, paste JSONL into the two dataset boxes (or import a file), click Add to set, then build the vector.",
                 ]
-            case .repeLAT:
+            case .pairedDifferencePCA:
                 [
-                    "LAT paired direction is the RepE-inspired PCA direction over matched positive-minus-negative activation differences.",
+                    "Paired-difference PCA is the RepE-inspired PCA direction over matched positive-minus-negative activation differences — the paper's direction math without its template-mediated pipeline.",
                     "Data needed: matched concept-present/control pairs with train/test metadata when available.",
                     "Workflow: copy the recipe prompt, paste or import its JSONL pairs, add them to the dataset, then build the per-layer direction.",
                 ]
@@ -336,13 +357,13 @@ public final class ConceptBuilder {
             case .caaMeanDifference:
                 extractionMethod = .meanDifference
                 if poolFromToken == 50 { poolFromToken = nil }
-            case .repeLAT:
-                extractionMethod = .lat
+            case .pairedDifferencePCA:
+                extractionMethod = .pairedDifferencePCA
                 if poolFromToken == 50 { poolFromToken = nil }
             case .repeReaderLAT:
                 // Reader fit is template-rendered LAT at the scaffold's final
                 // token; the pooled reading position does not apply.
-                extractionMethod = .lat
+                extractionMethod = .pairedDifferencePCA
                 poolFromToken = nil
                 refreshReaderTemplates()
             case .jlensTokenDirection:
@@ -364,8 +385,21 @@ public final class ConceptBuilder {
     public var extractionMethod: ExtractionMethod = .meanDifference {
         didSet {
             guard oldValue != extractionMethod else { return }
-            if !syncingRecipeFamily {
-                recipeFamily = extractionMethod == .lat ? .repeLAT : .caaMeanDifference
+            // Reverse sync, but only when the standing family does NOT
+            // already imply this method (audit finding 4, fixed 2026-08-27).
+            // The old rule was unconditional. Setting the method to the very
+            // value a repeReaderLAT (or emotionGrandMean) family already
+            // implies then DEMOTED the family — a reader concept silently
+            // became a paired-difference-PCA one, and the pane's Build Reader
+            // button, its template picker and its held-out control all
+            // vanished with it. A family that already means this method is
+            // not news.
+            if !syncingRecipeFamily,
+                recipeFamily.impliedExtractionMethod != extractionMethod
+            {
+                recipeFamily =
+                    extractionMethod == .pairedDifferencePCA
+                    ? .pairedDifferencePCA : .caaMeanDifference
             }
             lastDirection = nil
             noteMutation()
@@ -1179,7 +1213,15 @@ public final class ConceptBuilder {
             positives = set.positive
             negatives = set.negative
             if !set.positive.isEmpty || !set.negative.isEmpty {
-                recipeFamily = Self.pairedRecipeFamilyOnDisk(for: name)
+                let inferred = Self.pairedRecipeFamilyOnDisk(for: name)
+                if let family = inferred.family {
+                    recipeFamily = family
+                } else {
+                    // Unknowable, not guessable: keep the standing selection
+                    // and say why, rather than flipping the picker (and with
+                    // it "Copy LLM prompt") on no evidence.
+                    promptNotice(inferred.source)
+                }
                 notes.append("\(set.positive.count)+\(set.negative.count) stimuli")
             }
         } else {
@@ -1219,33 +1261,109 @@ public final class ConceptBuilder {
         refreshStaleness()
     }
 
-    /// Which paired recipe produced a concept's on-disk dataset. The shared
-    /// paired files (`prompts/concepts/<name>/{positive,negative}.jsonl`)
-    /// cannot distinguish CAA from RepE rows by shape, but the
-    /// recipe-specific mirrors can: a RepE-LAT vector build also writes
-    /// `prompts/repe/<name>/pairs.jsonl`, and a reader fit writes
+    /// Which paired recipe produced a concept's on-disk dataset, and WHERE
+    /// that answer came from. The shared paired files
+    /// (`prompts/concepts/<name>/{positive,negative}.jsonl`) cannot
+    /// distinguish CAA from paired-difference-PCA rows by shape, but the
+    /// recipe-specific mirrors can: a paired-difference-PCA vector build also
+    /// writes `prompts/repe/<name>/pairs.jsonl`, and a reader fit writes
     /// `prompts/readers/<name>/pairs.jsonl`. Selecting an existing concept
     /// must restore ITS recipe — before 2026-07-14 this defaulted the picker
     /// (and therefore "Copy LLM prompt") back to CAA for every paired
-    /// concept, so a RepE concept quietly copied the CAA dataset prompt.
-    /// When both mirrors exist, the most recently written one wins (the
-    /// user's latest build under that concept); with neither, plain paired
-    /// data is CAA.
-    nonisolated static func pairedRecipeFamilyOnDisk(for name: String) -> RecipeFamily {
-        func modificationDate(_ url: URL) -> Date? {
-            (try? FileManager.default.attributesOfItem(atPath: url.path))?[
-                .modificationDate] as? Date
+    /// concept, so a paired-difference-PCA concept quietly copied the CAA
+    /// dataset prompt.
+    ///
+    /// **The tie-break is RECORDED PROVENANCE, not file mtimes (audit finding
+    /// 4, fixed 2026-08-27).** When both mirrors exist the old rule picked
+    /// whichever file the filesystem said was touched last — a quantity that
+    /// a `git checkout`, a workspace copy, an rsync, a bundle unpack, or an
+    /// editor's save-in-place rewrites wholesale, and that says nothing about
+    /// which recipe the researcher actually ran. The mirrors answer only when
+    /// exactly one exists (then they are unambiguous); otherwise the question
+    /// is put to the artifacts the concept has actually produced — a fitted
+    /// reader artifact, or the newest vector artifact's sidecar
+    /// `recipeMethod`. When nothing is recorded either, the answer is **nil**:
+    /// the family genuinely is not knowable from disk, and the caller keeps
+    /// its current selection and says so, rather than switching the picker on
+    /// a coin flip.
+    ///
+    /// Returns `(family, source)`; `source` is a phrase naming the evidence,
+    /// for the status line.
+    nonisolated static func pairedRecipeFamilyOnDisk(
+        for name: String, root: URL? = nil
+    ) -> (family: RecipeFamily?, source: String) {
+        let base = root ?? VectorCatalog.projectRoot
+        let fm = FileManager.default
+        let hasRepe = fm.fileExists(
+            atPath: VectorCatalog.pairedStimuliFile(
+                family: .repe, name: name, root: base).path)
+        let hasReaders = fm.fileExists(
+            atPath: VectorCatalog.pairedStimuliFile(
+                family: .readers, name: name, root: base).path)
+        switch (hasRepe, hasReaders) {
+        case (false, false):
+            return (
+                .caaMeanDifference,
+                "no recipe-specific mirror on disk — plain paired data is CAA")
+        case (true, false):
+            return (.pairedDifferencePCA, "the only recipe mirror on disk (prompts/repe/)")
+        case (false, true):
+            return (.repeReaderLAT, "the only recipe mirror on disk (prompts/readers/)")
+        case (true, true):
+            if let recorded = recordedRecipeFamily(for: name, root: base) {
+                return recorded
+            }
+            return (
+                nil,
+                "both recipe mirrors exist for '\(name)' and no build under it is "
+                    + "recorded in runs/ — which recipe this concept belongs to "
+                    + "cannot be read off disk, so the picker was left as it was. "
+                    + "Repair: pick the recipe deliberately, or build once so the "
+                    + "artifact records it")
         }
-        let repePairs = modificationDate(
-            VectorCatalog.pairedStimuliFile(family: .repe, name: name))
-        let readerPairs = modificationDate(
-            VectorCatalog.pairedStimuliFile(family: .readers, name: name))
-        switch (repePairs, readerPairs) {
-        case (nil, nil): return .caaMeanDifference
-        case (.some, nil): return .repeLAT
-        case (nil, .some): return .repeReaderLAT
-        case let (.some(repe), .some(reader)):
-            return reader > repe ? .repeReaderLAT : .repeLAT
+    }
+
+    /// The recipe family a concept's own ARTIFACTS record: a fitted reader
+    /// wins (it is the more specific instrument, and it is what a reader fit
+    /// writes), otherwise the newest vector artifact's sidecar. Both catalogs
+    /// enumerate run directories newest-first by their timestamped names,
+    /// which is recorded provenance rather than a filesystem attribute.
+    nonisolated static func recordedRecipeFamily(
+        for name: String, root: URL
+    ) -> (family: RecipeFamily?, source: String)? {
+        let runs = VectorCatalog.runsDirectory(root: root)
+        if VectorCatalog.scanReaders(runsDirectory: runs)
+            .contains(where: { $0.artifact.concept == name })
+        {
+            return (.repeReaderLAT, "a fitted reader artifact under runs/")
+        }
+        for artifact in VectorCatalog.scan(runsDirectory: runs)
+        where artifact.sidecar.concept == name {
+            if let recipe = artifact.sidecar.recipeMethod,
+                let family = RecipeFamily(rawValue: recipe)
+            {
+                return (family, "the newest vector artifact's recipeMethod '\(recipe)'")
+            }
+            if let method = artifact.sidecar.extractionMethod,
+                let family = Self.family(forExtractionMethod: method)
+            {
+                return (
+                    family,
+                    "the newest vector artifact's extractionMethod '\(method)'")
+            }
+        }
+        return nil
+    }
+
+    /// Manifest-vocabulary method → builder family, for sidecars that stamp
+    /// only `extractionMethod`. nil for a method with no paired family here.
+    nonisolated static func family(forExtractionMethod method: String) -> RecipeFamily? {
+        switch ExtractionMethod(rawValue: method) {
+        case .meanDifference: .caaMeanDifference
+        case .pairedDifferencePCA: .pairedDifferencePCA
+        case .repeReaderLAT: .repeReaderLAT
+        case .emotionGrandMean: .emotionGrandMean
+        default: nil
         }
     }
 
@@ -1292,7 +1410,7 @@ public final class ConceptBuilder {
                 concept: name, guidance: generationGuidance,
                 examplePositives: positives, exampleNegatives: negatives,
                 count: generationCount)
-        case .repeLAT, .repeReaderLAT:
+        case .pairedDifferencePCA, .repeReaderLAT:
             // The reader recipe consumes matched positive/negative STIMULI —
             // the task scaffold is applied at fit time from the selected
             // template, so the generation prompt asks for plain scenario
@@ -1664,20 +1782,41 @@ public final class ConceptBuilder {
             return
         }
 
+        // A probe must be trained the way the concept is READ (audit finding
+        // 4, fixed 2026-08-27). This flow used to hard-code `.lastToken` and
+        // `meanDifference` and then stamp the recipe `caaMeanDifference`,
+        // whatever the concept declared: a pooled-at-50 grand-mean concept, or
+        // a paired-difference-PCA one, got a probe fitted at a different
+        // position with a different direction and a recipe that named neither.
+        // A probe fitted somewhere the vectors are not read is not a check on
+        // those vectors; it is a different measurement wearing their name.
+        guard recipeFamily.extractsFromStimuli else {
+            status = "\(recipeFamily.label) reads no activations — there is nothing "
+                + "for a probe to be fitted on. Repair: train a probe under a "
+                + "family that extracts from stimuli"
+            return
+        }
+        guard readingPositionRefusal == nil, extractionRenderingRefusal == nil else {
+            status = "probe training did not start: the declared reading position or "
+                + "rendering stands refused — repair the declaration first"
+            return
+        }
+        let probePosition = readingPosition
+        let probeRendering = extractionRendering
+        let probeMethod = extractionMethod
         do {
             status = "recording probe activations..."
-            let positive = try await ConceptExtractor.activations(
-                container: container, texts: positives, position: .lastToken)
-            let negative = try await ConceptExtractor.activations(
-                container: container, texts: negatives, position: .lastToken)
+            func probeActivations(_ texts: [String]) async throws -> StimulusActivations {
+                try await ConceptExtractor.activations(
+                    container: container, texts: texts, position: probePosition,
+                    rendering: probeRendering ?? .raw)
+            }
+            let positive = try await probeActivations(positives)
+            let negative = try await probeActivations(negatives)
             let validationPositive = validationPositives.isEmpty
-                ? nil
-                : try await ConceptExtractor.activations(
-                    container: container, texts: validationPositives, position: .lastToken)
+                ? nil : try await probeActivations(validationPositives)
             let validationNegative = validationNegatives.isEmpty
-                ? nil
-                : try await ConceptExtractor.activations(
-                    container: container, texts: validationNegatives, position: .lastToken)
+                ? nil : try await probeActivations(validationNegatives)
             guard let layerCount = positive.values.first?.count,
                 layerCount > 0,
                 negative.values.allSatisfy({ $0.count == layerCount }),
@@ -1692,7 +1831,8 @@ public final class ConceptBuilder {
             for layer in 0 ..< layerCount {
                 let pos = positive.values.map { $0[layer] }
                 let neg = negative.values.map { $0[layer] }
-                let direction = try SteeringVectorMath.meanDifference(positive: pos, negative: neg)
+                let direction = try SteeringVectorMath.direction(
+                    positive: pos, negative: neg, method: probeMethod)
                 let center = try SteeringVectorMath.mean(pos + neg)
                 let probe = try SteeringVectorMath.scalarProbe(
                     direction: direction,
@@ -1734,7 +1874,7 @@ public final class ConceptBuilder {
             let validationHash = Self.sha256(validationText)
             let recipe = VectorExtractionRecipe(
                 name: "\(name)-reading-probe",
-                method: .caaMeanDifference,
+                method: recipeFamily.recipeMethod,
                 targetConcept: name,
                 datasets: [
                     .init(
@@ -1742,8 +1882,12 @@ public final class ConceptBuilder {
                         path: "prompts/probes/\(name)/items.jsonl",
                         sha256: calibrationHash)
                 ],
-                readingPosition: .lastToken,
-                notes: "Scalar reading probe trained from labeled build examples. Layer selected by held-out validation accuracy across all layers.")
+                readingPosition: probePosition,
+                extractionRendering: probeRendering,
+                notes: "Scalar reading probe trained from labeled build examples, "
+                    + "read at \(probePosition.label) under the concept's declared "
+                    + "\(probeMethod.label) direction. Layer selected by held-out "
+                    + "validation accuracy across all layers.")
             let artifact = ReadingProbeArtifact(
                 modelID: modelID,
                 revision: SteeredContainerLoader.cachedRevision(for: modelID),
@@ -2744,7 +2888,7 @@ public final class ConceptBuilder {
                     readingPosition: declaration.readingPosition,
                     extractionRendering: declaration.extractionRendering)
                 title = "Server Grand Mean Vector Build"
-            case .caaMeanDifference, .repeLAT:
+            case .caaMeanDifference, .pairedDifferencePCA:
                 // The job reads the SERVER's checkout of
                 // prompts/concepts/<name> — persist the drafted dataset
                 // locally first (the git-versioned recipe, the same write the
@@ -3262,7 +3406,7 @@ public final class ConceptBuilder {
         }
     }
 
-    // MARK: - RepE reader (faithful reader recipe; brief §8)
+    // MARK: - RepE reader (faithful reader recipe; REPE-IMPLEMENTATION-BRIEF §8)
     //
     // Mental model: concept data → reader artifact → optional steering
     // variant — never "positive/negative text → vector". The reader is a
@@ -3283,8 +3427,43 @@ public final class ConceptBuilder {
         public let layer: Int
         public let trainAccuracy: Float
         public let heldOutAccuracy: Float?
-        public let explainedVariance: Float
+        /// PC1's share of the DIFFERENCE CLOUD's variance. nil when the cloud
+        /// carries none to apportion (every difference identical) — absent,
+        /// never 0, which would read as "PC1 explains nothing".
+        public let explainedVariance: Float?
+        /// How this layer's sign was fixed, and the held-out agreement behind
+        /// it when the held-out split decided.
+        public let signConvention: RepEReader.SignConvention
+        public let signHeldOutAccuracy: Float?
+        /// True for the layer the fit RECOMMENDS (argmax held-out accuracy).
+        /// A recommendation: the layer a study reads stays declarable.
+        public let isRecommendedLayer: Bool
         public var id: Int { layer }
+
+        /// The explained-variance cell, formatted. "—" when the difference
+        /// cloud carries no variance to apportion: PC1's share of nothing is
+        /// undefined, and "0.00" would read as "PC1 explains nothing", which
+        /// is the opposite of what an all-identical cloud means.
+        public var differenceCloudVarianceLabel: String {
+            guard let explainedVariance else { return "—" }
+            return String(format: "%.2f", explainedVariance)
+        }
+
+        public init(
+            layer: Int, trainAccuracy: Float, heldOutAccuracy: Float?,
+            explainedVariance: Float?,
+            signConvention: RepEReader.SignConvention = .trainMajority,
+            signHeldOutAccuracy: Float? = nil,
+            isRecommendedLayer: Bool = false
+        ) {
+            self.layer = layer
+            self.trainAccuracy = trainAccuracy
+            self.heldOutAccuracy = heldOutAccuracy
+            self.explainedVariance = explainedVariance
+            self.signConvention = signConvention
+            self.signHeldOutAccuracy = signHeldOutAccuracy
+            self.isRecommendedLayer = isRecommendedLayer
+        }
     }
 
     /// Per-layer train/held-out accuracy from the newest local reader fit.
@@ -3782,7 +3961,8 @@ public final class ConceptBuilder {
                 modelID: modelID,
                 revision: SteeredContainerLoader.cachedRevision(for: modelID),
                 dataset: dataset,
-                template: template)
+                template: template,
+                extractionRendering: extractionRendering)
             for artifact in artifacts {
                 try RepEReader.saveArtifact(artifact, to: runDirectory)
             }
@@ -3791,19 +3971,25 @@ public final class ConceptBuilder {
                     layer: $0.layer,
                     trainAccuracy: $0.trainAccuracy,
                     heldOutAccuracy: $0.heldOutAccuracy,
-                    explainedVariance: $0.pc1ExplainedVariance)
+                    explainedVariance: $0.differenceCloudExplainedVariance,
+                    signConvention: $0.signConvention,
+                    signHeldOutAccuracy: $0.signHeldOutAccuracy,
+                    isRecommendedLayer: $0.recommendedLayer == $0.layer)
             }
             lastReaderRunDirectory = runDirectory
             refreshReaderArtifacts()
-            let best = artifacts.max {
-                ($0.heldOutAccuracy ?? $0.trainAccuracy)
-                    < ($1.heldOutAccuracy ?? $1.trainAccuracy)
-            }
-            let bestNote = best.map {
-                String(
-                    format: "best layer %d (%@ %.0f%%)", $0.layer,
-                    $0.heldOutAccuracy == nil ? "train" : "held-out",
-                    ($0.heldOutAccuracy ?? $0.trainAccuracy) * 100)
+            // The RECOMMENDATION comes off the artifacts themselves (the fit
+            // stamps it), not from a second argmax here: two places computing
+            // "best layer" is how the pane and the artifact come to disagree.
+            let bestNote = artifacts.first.flatMap { first -> String? in
+                guard let layer = first.recommendedLayer,
+                    let accuracy = first.recommendedLayerAccuracy
+                else { return nil }
+                return String(
+                    format: "recommended layer %d (%@ %.0f%%) — a recommendation; "
+                        + "the study declares which layer it reads",
+                    layer, first.layerRecommendationBasis == "heldOutAccuracy"
+                        ? "held-out" : "train", accuracy * 100)
             }
             status = "built \(artifacts.count) per-layer readers for '\(name)' "
                 + "→ \(runDirectory.lastPathComponent)"
@@ -3816,7 +4002,7 @@ public final class ConceptBuilder {
         }
     }
 
-    /// Explicit reader → steering-vector conversion (brief §6). The derived
+    /// Explicit reader → steering-vector conversion (REPE-IMPLEMENTATION-BRIEF §6). The derived
     /// artifact's sidecar stamps `source`, `readerID`, `readerHash`, and the
     /// honest `controlMode`, and it enters the normal vector catalog.
     public func deriveSteeringVectorFromReader(
@@ -4075,7 +4261,7 @@ public final class ConceptBuilder {
             // Readers are measurement artifacts outside the substrate vector
             // index; Build reader reports its own pass cost.
             return nil
-        case .caaMeanDifference, .repeLAT:
+        case .caaMeanDifference, .pairedDifferencePCA:
             let name = vectorBuildName
             guard !name.isEmpty else { return nil }
             let directory = VectorCatalog.conceptsDirectory.appending(component: name)
@@ -4223,7 +4409,7 @@ public final class ConceptBuilder {
             }
             let canonicalDatasetHash: String
             let canonicalDatasetPath: String
-            if recipeFamily == .repeLAT {
+            if recipeFamily == .pairedDifferencePCA {
                 let repeDirectory = VectorCatalog.pairedStimuliDirectory(
                     family: .repe, name: name)
                 try FileManager.default.createDirectory(
@@ -4272,7 +4458,7 @@ public final class ConceptBuilder {
                 targetConcept: name,
                 datasets: [
                     .init(
-                        role: recipeFamily == .repeLAT ? .pairedContrastive : .positive,
+                        role: recipeFamily == .pairedDifferencePCA ? .pairedContrastive : .positive,
                         path: canonicalDatasetPath,
                         sha256: canonicalDatasetHash)
                 ],
@@ -4282,8 +4468,8 @@ public final class ConceptBuilder {
                 // encoded bytes — and therefore its canonicalHash — exactly
                 // where they were.
                 extractionRendering: extraction.options.extractionRendering,
-                notes: recipeFamily == .repeLAT
-                    ? "RepE/LAT direction is norm-matched to the CAA mean-difference vector for direction-only comparison."
+                notes: recipeFamily == .pairedDifferencePCA
+                    ? "Paired-difference PCA direction is norm-matched to the CAA mean-difference vector for direction-only comparison — OUR normalization, not the paper's."
                     : nil)
             let sidecar = SteeringVectorSidecar(
                 modelID: modelID,

@@ -61,10 +61,27 @@ their coding agent, to run a defensible study end to end.
   with `prompts/`, `experiments/`, and `runs/` — created by
   `steerlab workspace init`, never inside the code checkout. Freeze commits
   the workspace and snapshots every pinned input beside the manifest.
+- **Representation Engineering, implemented and labelled as such.** The
+  template-mediated RepE reader (Zou et al., arXiv:2310.01405): a hashed task
+  template registry, the LAT token at the rendered scaffold's final position,
+  mean-centred PCA over paired differences, both of the paper's contrast
+  constructions (a supervised content contrast and the unsupervised T+/T−
+  instruction pair), held-out selection of sign and layer, persisted fit
+  parameters reused at inference, and either rendering — a raw scaffold or the
+  family chat template. Its reading direction converts to a steering vector
+  through an explicit, provenance-stamped conversion that is never described
+  as reproducing the paper's control experiments. The separate
+  PCA-over-difference-vectors family is called **paired-difference PCA
+  (RepE-inspired)**, because it borrows the paper's arithmetic and none of its
+  pipeline; the per-pair normalization and norm-matching it adds are ours and
+  are attributed as ours. `docs/REPE-IMPLEMENTATION-BRIEF.md` carries the
+  schemas and the itemised faithful-vs-departure table, including what is not
+  implemented (LoRRA control training, strided control bands, prompt-span
+  steering).
 - **Documentation and legal files.** A generated CLI reference, a methods
-  note, an end-to-end study guide, a results-architecture note, this
-  changelog, plus `LICENSE` (Apache-2.0), `NOTICE`, `SECURITY.md`, and
-  `CITATION.cff`.
+  note, a RepE implementation brief, an end-to-end study guide, a
+  results-architecture note, this changelog, plus `LICENSE` (Apache-2.0),
+  `NOTICE`, `SECURITY.md`, and `CITATION.cff`.
 
 ### Known limitations
 

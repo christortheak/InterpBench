@@ -9,9 +9,18 @@ public struct VectorExtractionRecipe: Codable, Sendable, Equatable {
         /// Paired contrastive activation addition:
         /// mean(positive activations) - mean(negative activations).
         case caaMeanDifference
-        /// RepE/LAT: PCA over normalized paired differences, plus optional
-        /// scalar probe calibration from held-out labeled activations.
-        case repeLAT
+        /// PCA over normalized paired differences, plus optional scalar probe
+        /// calibration from held-out labeled activations. RepE-INSPIRED: the
+        /// direction math of Zou et al. App. C.1 without the paper's pipeline
+        /// (no task template, no held-out sign/layer selection, no persisted
+        /// fit parameters). `repeReaderLAT` is the faithful one.
+        ///
+        /// **Raw value pinned to the legacy `"repeLAT"`** — it is stamped as
+        /// `recipeMethod` in every sidecar this workspace has written and is a
+        /// key in both engines' recipe-identity method maps. The symbol and
+        /// label carry the honesty (naming ruling 2026-08-27); the raw value
+        /// carries backward compatibility, and decode accepts it forever.
+        case pairedDifferencePCA = "repeLAT"
         /// Faithful RepE reader (template-rendered LAT + PCA training
         /// normalization + held-out scalar accuracy). The reader itself is a
         /// measurement artifact (`RepEReader.Artifact`); this method value
@@ -30,7 +39,7 @@ public struct VectorExtractionRecipe: Codable, Sendable, Equatable {
         public var label: String {
             switch self {
             case .caaMeanDifference: "CAA mean difference"
-            case .repeLAT: "LAT paired direction (RepE-inspired)"
+            case .pairedDifferencePCA: "Paired-difference PCA (RepE-inspired)"
             case .repeReaderLAT: "RepE reader LAT"
             case .emotionGrandMean: "Emotion grand mean"
             case .jlensTokenDirection: "J-lens token direction"

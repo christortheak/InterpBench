@@ -337,6 +337,9 @@ when you need it.
   firewall, the study lifecycle.
 - [docs/METHODS.md](docs/METHODS.md) — extraction, injection, and validation,
   with the math and the source lineage.
+- [docs/REPE-IMPLEMENTATION-BRIEF.md](docs/REPE-IMPLEMENTATION-BRIEF.md) —
+  what is actually implemented from Zou et al.'s Representation Engineering,
+  schema by schema, with the faithful-vs-departure table.
 - [docs/CONDUCTING-A-STUDY.md](docs/CONDUCTING-A-STUDY.md) — how to run a
   defensible study end to end.
 - [docs/RESULTS-ARCHITECTURE.md](docs/RESULTS-ARCHITECTURE.md) — what each

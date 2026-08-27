@@ -74,7 +74,7 @@ def test_lat_direction_aligns_with_mean_difference_when_clean():
     pos = [[3.0, 0.0], [3.2, 0.1], [2.8, -0.1]]
     neg = [[0.0, 0.0], [0.1, 0.1], [-0.1, -0.1]]
     mean_diff = vm.mean_difference(pos, neg)
-    lat = vm.direction(pos, neg, vm.ExtractionMethod.LAT)
+    lat = vm.direction(pos, neg, vm.ExtractionMethod.PAIRED_DIFFERENCE_PCA)
     assert vm.cosine_similarity(lat, mean_diff) == pytest.approx(1.0, abs=1e-2)
     assert vm.l2_norm(lat) == pytest.approx(vm.l2_norm(mean_diff), rel=1e-3)
 

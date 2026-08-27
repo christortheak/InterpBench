@@ -1,4 +1,5 @@
 import Foundation
+import SteeringKit
 import Testing
 
 @testable import ExperimentKit
@@ -116,7 +117,7 @@ struct ConceptPromptWorkflowTests {
 
             // The RepE-built concept restores RepE — and copies ITS prompt.
             builder.selectedExisting = "courage"
-            #expect(builder.recipeFamily == .repeLAT)
+            #expect(builder.recipeFamily == .pairedDifferencePCA)
             let repePrompt = try #require(builder.generationPrompt())
             #expect(repePrompt.contains("Representation Engineering"))
 
@@ -129,9 +130,13 @@ struct ConceptPromptWorkflowTests {
         }
     }
 
-    /// The mirror-file rule itself: neither mirror → CAA; one mirror → its
-    /// family; both mirrors → the most recently written build wins.
-    @Test func pairedRecipeFamilyOnDiskPrefersTheNewestMirror() throws {
+    /// The mirror rule: neither mirror → CAA; exactly one mirror → its family.
+    /// Both mirrors is the interesting case — it is decided by RECORDED
+    /// PROVENANCE (a fitted reader artifact, or a vector sidecar's
+    /// recipeMethod), never by file modification times, which a git checkout,
+    /// a workspace copy, an rsync or a bundle unpack rewrites wholesale. With
+    /// nothing recorded the answer is nil and the caller keeps its selection.
+    @Test func pairedRecipeFamilyOnDiskReadsRecordedProvenance() throws {
         try withTempWorkspace { root in
             func writeMirror(_ subtree: String, date: Date) throws {
                 let dir = root.appending(components: "prompts", subtree, "valor")
@@ -140,20 +145,44 @@ struct ConceptPromptWorkflowTests {
                 let url = dir.appending(component: "pairs.jsonl")
                 try #"{"positive": "p", "negative": "n"}"#.write(
                     to: url, atomically: true, encoding: .utf8)
+                // Deliberately BACKDATED relative to the other mirror: the old
+                // rule read this attribute, and the new one must not.
                 try FileManager.default.setAttributes(
                     [.modificationDate: date], ofItemAtPath: url.path)
             }
             #expect(
-                ConceptBuilder.pairedRecipeFamilyOnDisk(for: "valor")
+                ConceptBuilder.pairedRecipeFamilyOnDisk(for: "valor").family
                     == .caaMeanDifference)
             try writeMirror("repe", date: Date(timeIntervalSince1970: 2_000))
-            #expect(ConceptBuilder.pairedRecipeFamilyOnDisk(for: "valor") == .repeLAT)
-            try writeMirror("readers", date: Date(timeIntervalSince1970: 3_000))
             #expect(
-                ConceptBuilder.pairedRecipeFamilyOnDisk(for: "valor")
-                    == .repeReaderLAT)
-            try writeMirror("repe", date: Date(timeIntervalSince1970: 4_000))
-            #expect(ConceptBuilder.pairedRecipeFamilyOnDisk(for: "valor") == .repeLAT)
+                ConceptBuilder.pairedRecipeFamilyOnDisk(for: "valor").family
+                    == .pairedDifferencePCA)
+
+            // Both mirrors, nothing recorded: unknowable, and said so.
+            try writeMirror("readers", date: Date(timeIntervalSince1970: 3_000))
+            let ambiguous = ConceptBuilder.pairedRecipeFamilyOnDisk(for: "valor")
+            #expect(ambiguous.family == nil)
+            #expect(ambiguous.source.contains("cannot be read off disk"))
+
+            // A recorded vector build decides it — and keeps deciding it when
+            // the OTHER mirror is touched last, which the old rule would have
+            // flipped.
+            let runs = VectorCatalog.runsDirectory(root: root)
+            let runDirectory = runs.appending(component: "20260101T000000000-extract")
+            try FileManager.default.createDirectory(
+                at: runDirectory, withIntermediateDirectories: true)
+            var sidecar = SteeringVectorSidecar(
+                modelID: "org/m", revision: nil, concept: "valor",
+                stimulusSetHash: "sh",
+                vectors: ConceptVectors(perLayer: [[1, 0]]))
+            sidecar.recipeMethod = "repeLAT"
+            try SteeringVectorStore.save(
+                vectors: ConceptVectors(perLayer: [[1, 0]]), sidecar: sidecar,
+                to: runDirectory, name: "valor")
+            try writeMirror("readers", date: Date(timeIntervalSince1970: 9_000))
+            let recorded = ConceptBuilder.pairedRecipeFamilyOnDisk(for: "valor")
+            #expect(recorded.family == .pairedDifferencePCA)
+            #expect(recorded.source.contains("recipeMethod"))
         }
     }
 
@@ -181,7 +210,7 @@ struct ConceptPromptWorkflowTests {
         try withTempWorkspace { _ in
             let service = try freshService("guide")
             let builder = service.concepts
-            builder.recipeFamily = .repeLAT  // didSet presents the guide
+            builder.recipeFamily = .pairedDifferencePCA  // didSet presents the guide
             #expect(liveLogCount(service, containing: "**Technique — ") == 1)
 
             // Panel appearance re-presents: updates in place, no new entry.
@@ -204,7 +233,7 @@ struct ConceptPromptWorkflowTests {
 
             // And it keeps working across further clears, not just once.
             service.clearLiveLogs()
-            builder.recipeFamily = .repeLAT
+            builder.recipeFamily = .pairedDifferencePCA
             #expect(liveLogCount(service, containing: "**Technique — ") == 1)
         }
     }
@@ -224,7 +253,7 @@ struct ConceptPromptWorkflowTests {
             let service = try freshService("sentinel")
             let builder = service.concepts
             builder.conceptName = "integrity"
-            builder.recipeFamily = .repeLAT
+            builder.recipeFamily = .pairedDifferencePCA
 
             #expect(builder.generationPrompt() == nil)
             #expect(builder.lastCopiedPrompt == nil)

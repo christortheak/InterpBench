@@ -31,15 +31,32 @@ class SteeringVectorError(Exception):
 
 
 class ExtractionMethod(str, Enum):
-    """Direction-finding method. ``meanDifference``/``lat`` consume a paired
-    positive/negative stimulus set; ``emotionGrandMean`` consumes a
-    multi-concept story corpus (concept mean − corpus grand mean) and is
-    dispatched through ``extractor.extract_grand_mean``, never
+    """Direction-finding method. ``meanDifference``/``pairedDifferencePCA``
+    consume a paired positive/negative stimulus set; ``emotionGrandMean``
+    consumes a multi-concept story corpus (concept mean − corpus grand mean)
+    and is dispatched through ``extractor.extract_grand_mean``, never
     :func:`direction`. The value string matches the Swift
     ``VectorExtractionRecipe.Method`` raw value and existing sidecars."""
 
     MEAN_DIFFERENCE = "meanDifference"
-    LAT = "lat"
+    #: First principal component of the per-pair difference vectors,
+    #: sign-aligned and norm-matched to the mean difference.
+    #:
+    #: **RepE-INSPIRED, not RepE**: the direction math of Zou et al.
+    #: (arXiv:2310.01405) App. C.1 and none of the paper's pipeline — no task
+    #: template, no template-mediated LAT token, no persisted fit parameters,
+    #: no held-out sign/layer selection. :mod:`steerlab_server.steering.
+    #: repe_reader` is the faithful one. The member used to be spelled ``LAT``,
+    #: which read as "this IS RepE's LAT" (naming honesty ruling 2026-08-27).
+    #:
+    #: **The value stays ``"lat"``, permanently** — it is written into every
+    #: sidecar, every frozen manifest concept block, and every recipe-identity
+    #: hash this workspace has produced. Changing it would break decode of
+    #: existing artifacts AND move identity hashes. The value is an
+    #: artifact-compatibility constant; the member name and the label are where
+    #: honesty is expressed. Swift twin:
+    #: ``ExtractionMethod.pairedDifferencePCA``.
+    PAIRED_DIFFERENCE_PCA = "lat"
     GRAND_MEAN = "emotionGrandMean"
     #: mean(concept stories) − mean(DESIGNATED reference stories), both
     #: pooled (METHODS amendment ii). Same arithmetic as meanDifference over
@@ -79,19 +96,42 @@ class ExtractionMethod(str, Enum):
     #: the discovery snapshot + qualification artifact recorded in the pinned
     #: SAE candidate roster (proposal r2 §4/§6).
     GEMMA_SCOPE_SAE = "gemmaScopeSAE"
+    #: NOT a direction-finding method either: the reading direction of a
+    #: FITTED RepE READER (``repe_reader.ReaderArtifact``), converted to a
+    #: steering vector by ``repe_reader.derive_steering_vector`` with the
+    #: probe's orientation folded into the bytes.
+    #:
+    #: Listed here (2026-08-27, audit finding 2) because without it a
+    #: reader-derived vector could not be ATTACHED at all: ``attach_artifact``
+    #: resolves the sidecar's ``extractionMethod`` to ask where the concept's
+    #: held-out data lives, and an unknown method is refused — so the one
+    #: artifact the faithful RepE pipeline produces was the one artifact a
+    #: study could not cite. Its data questions have honest answers, and they
+    #: are not a plain concept's: the stimuli are the READER's dataset
+    #: (``prompts/readers/<concept>/pairs.jsonl``, whose SHA-256 is the
+    #: stimulusSetHash), there is no ``prompts/concepts/<c>/`` pair set, and
+    #: the held-out evidence is the reader artifact's own ``heldOutAccuracy``
+    #: — not a ``validation.jsonl``. Hence ``has_source_concept is False``:
+    #: every data-side branch must skip rather than invent. The reader itself
+    #: is pinned separately as a ``readerRef``, and the derived vector's
+    #: sidecar carries ``readerID``/``readerHash`` back to it.
+    REPE_READER_LAT = "repeReaderLAT"
 
     @property
     def label(self) -> str:
-        return {"meanDifference": "Mean difference", "lat": "LAT paired direction (RepE-inspired)",
+        return {"meanDifference": "Mean difference",
+                "lat": "Paired-difference PCA (RepE-inspired)",
                 "emotionGrandMean": "Grand mean (multi-concept)",
                 "designatedReference": "Designated reference (stories − reference stories)",
                 "pinnedArtifact": "Pinned artifact (hash-pinned derived vectors)",
                 "optvec": "Optimized injection vector (OptVec)",
-                "gemmaScopeSAE": "Gemma Scope SAE feature (decoder row)"}[self.value]
+                "gemmaScopeSAE": "Gemma Scope SAE feature (decoder row)",
+                "repeReaderLAT": "RepE reader LAT (derived from a fitted reader)"}[self.value]
 
     @property
     def is_paired(self) -> bool:
-        return self in (ExtractionMethod.MEAN_DIFFERENCE, ExtractionMethod.LAT)
+        return self in (ExtractionMethod.MEAN_DIFFERENCE,
+                        ExtractionMethod.PAIRED_DIFFERENCE_PCA)
 
     @property
     def is_designated_reference(self) -> bool:
@@ -116,6 +156,40 @@ class ExtractionMethod(str, Enum):
         return self is ExtractionMethod.GEMMA_SCOPE_SAE
 
     @property
+    def is_repe_reader_lat(self) -> bool:
+        """A direction derived from a fitted RepE reader (see the member)."""
+        return self is ExtractionMethod.REPE_READER_LAT
+
+    @property
+    def source_concept_absence(self) -> tuple[str, str, str] | None:
+        """For a method with NO source concept: ``(kind, evidence, hash
+        referent)``.
+
+        One place, so the three families that skip every data-side question
+        say WHY in their own words instead of each call site carrying a
+        two-way conditional that a third family silently falsified. ``None``
+        for every method that does have a source concept. Swift twin:
+        ``ExtractionMethod.sourceConceptAbsence``.
+        """
+        if self is ExtractionMethod.OPTVEC:
+            return ("an OptVec vector",
+                    "the OptVec eval run (eval.json)",
+                    "the OptVec training run's pinned dataset splits")
+        if self is ExtractionMethod.GEMMA_SCOPE_SAE:
+            return ("an imported Gemma Scope SAE decoder row",
+                    "the pinned SAE candidate roster's discovery snapshot and "
+                    "qualification artifact",
+                    "the published Gemma Scope dictionary the feature was "
+                    "imported from")
+        if self is ExtractionMethod.REPE_READER_LAT:
+            return ("a direction derived from a fitted RepE reader",
+                    "the reader artifact's own held-out accuracy (its "
+                    "pairs.jsonl test split), pinned as the study's readerRef",
+                    "the reader's dataset "
+                    "(prompts/readers/<concept>/pairs.jsonl)")
+        return None
+
+    @property
     def has_source_concept(self) -> bool:
         """False for directions that were never READ OFF a concept's stimuli:
         an optvec vector (optimized against hashed datasets) and a Gemma Scope
@@ -125,8 +199,12 @@ class ExtractionMethod(str, Enum):
         "which position was it read at". Answering those for a direction with
         no source concept means inventing an obligation it can never meet, and
         the lifecycle used to answer them by falling back to meanDifference.
+
+        A third family joined them 2026-08-27: ``repeReaderLAT``, whose
+        stimuli are the READER's dataset and whose held-out evidence is the
+        reader artifact, not a concept's validation.jsonl.
         """
-        return not (self.is_optvec or self.is_gemma_scope_sae)
+        return self.source_concept_absence is None
 
     # Explicit lifecycle semantics (external review 2026-07-31, finding 1):
     # "not is_paired" used to MEAN "grand mean", until a third method made
@@ -381,11 +459,27 @@ def scalar_probe(direction: Vector, positive: Rows, negative: Rows,
 def direction(positive: Rows, negative: Rows, method: ExtractionMethod) -> list[float]:
     """Concept direction by the chosen method.
 
-    LAT follows RepE Appendix C.1: each pair difference is L2-normalized
-    *before* PCA, differences enter in alternating ± orientation (the Swift
-    note explains the determinism), the sign follows the score-directionality
-    rule, and the unit PC is rescaled to the mean difference's norm so alpha
-    semantics stay comparable across methods.
+    ``pairedDifferencePCA`` takes RepE's PC1-of-paired-differences idea and
+    adds two steps of our own. **Attribution, corrected 2026-08-27 (audit
+    finding 9):** this docstring used to cite "RepE Appendix C.1" for the
+    per-pair L2 normalization. It is not the paper's. The reference
+    implementation (``repe/rep_readers.py``, ``PCARepReader``) mean-CENTERS the
+    difference matrix and fits ``PCA(n_components=1)`` on it — it never
+    normalizes a difference. Both departures are OURS, deliberately:
+
+    1. per-pair L2 normalization before PCA, so high-norm pairs cannot
+       dominate PC1 (without it PCA is pulled toward the mean difference,
+       eroding the method comparison this family exists to make);
+    2. rescaling the unit PC to ``‖mean_diff‖`` so alpha semantics stay
+       comparable across methods.
+
+    What IS the paper's: the alternating ± orientation (a deterministic stand-in
+    for the reference dataset builder's per-pair ``random.shuffle`` followed by
+    ``[::2] − [1::2]``) and the TRAIN-label sign rule (``get_signs``). The
+    paper's TEXT additionally selects sign and layer on a held-out set; this
+    family has no held-out split, so its sidecar stamps
+    ``signConvention: "trainMajority"``. The held-out rule lives in
+    :mod:`steerlab_server.steering.repe_reader`.
     """
     if not method.is_paired and not method.is_designated_reference:
         raise SteeringVectorError(
@@ -555,6 +649,14 @@ def projecting_out(v: Vector, components: Rows) -> list[float]:
     return result.tolist()
 
 
+#: How much of the Gram matrix's trace the first power-iteration product must
+#: reach for a start to count as carrying signal. Dimensionless: the trace IS
+#: the spectrum's scale, so the ratio is comparable across data of any
+#: magnitude. Identical constant in Swift
+#: ``SteeringVectorMath.degenerateStartRelativeThreshold``.
+DEGENERATE_START_RELATIVE_THRESHOLD = 1e-6
+
+
 def _first_component_of_centered(centered: np.ndarray) -> list[float]:
     """First unit eigenvector via the Gram-matrix power-iteration.
 
@@ -577,17 +679,54 @@ def _first_component_of_centered(centered: np.ndarray) -> list[float]:
     uniform = np.full(n, 1.0 / np.sqrt(n), dtype=_F32)
     ramp = np.arange(1, n + 1, dtype=_F32)
     ramp = ramp / _F32(l2_norm(ramp.tolist()))
-    starts = [uniform, ramp]
+    # The THIRD start is the alternating ± pattern itself. The paired-difference
+    # constructions feed PCA rows in alternating orientation, so on clean data
+    # the dominant eigenvector's weights ARE that pattern — and both earlier
+    # starts can be orthogonal to it at once (a uniform start always is when the
+    # signs balance; a three-row ramp is too, exactly). Before the
+    # degenerate-start guard became real, such data still "worked" because the
+    # guard's exact-zero test never fired and the iteration amplified float
+    # noise into roughly the right answer. Making the guard honest requires
+    # giving it a start that honestly has overlap. Swift twin: the third entry
+    # of `starts` in `SteeringVectorMath.firstComponentOfCentered`.
+    alternating = np.array([1.0 if i % 2 == 0 else -1.0 for i in range(n)],
+                           dtype=_F32) / _F32(np.sqrt(n))
+    # The LAST-RESORT start: the heaviest row's own basis vector. ``gram @
+    # e_j`` is column j, whose norm is at least the largest diagonal entry,
+    # which is at least trace/n — comfortably above the relative floor for any
+    # bank this engine builds. So a Gram matrix with any variance at all always
+    # has SOME start the guard accepts, and the guard can only ever refuse a
+    # genuinely degenerate matrix. Without it the honest guard stops deflation
+    # early on a flat spectrum, where the fixed starts' overlap with the
+    # surviving subspace shrinks each round.
+    heaviest = np.zeros(n, dtype=_F32)
+    heaviest[int(np.argmax(np.diag(gram)))] = _F32(1.0)
+    starts = [uniform, ramp, alternating, heaviest]
 
     weights: np.ndarray | None = None
     for start in starts:
         candidate = start.astype(_F32)
         diverged = False
-        for _ in range(200):
+        for iteration in range(200):
             nxt = (gram @ candidate).astype(_F32)
             norm = _F32(l2_norm(nxt.tolist()))
-            if norm <= 0:
-                diverged = True  # start orthogonal to the dominant eigenvector
+            # Degenerate START detection, on the FIRST product only.
+            #
+            # The old guard was ``norm <= 0`` — exact zero, which in float32
+            # essentially never fires: a start orthogonal to the dominant
+            # eigenvector still has rounding-level overlap with it and with
+            # every other, so ``gram @ start`` comes back as a vector of
+            # denormal noise and the iteration then "converges" to whichever
+            # direction that noise happened to point. The check has to be
+            # RELATIVE to the spectrum's own scale, which is what the trace
+            # measures. Only the first product is checked — later iterations
+            # legitimately shrink under deflation, and a relative floor there
+            # would abandon a converging run. Swift twin:
+            # ``SteeringVectorMath.firstComponentOfCentered``.
+            floor = (DEGENERATE_START_RELATIVE_THRESHOLD * trace
+                     if iteration == 0 else 0.0)
+            if norm <= floor:
+                diverged = True  # start carries no signal about the spectrum
                 break
             nxt = (nxt / norm).astype(_F32)
             delta = float(np.abs(nxt - candidate).max())

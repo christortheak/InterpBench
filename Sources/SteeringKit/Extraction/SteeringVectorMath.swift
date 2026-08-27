@@ -23,7 +23,7 @@ public enum SteeringVectorError: Error, Equatable, CustomStringConvertible {
 }
 
 /// Direction-finding method (METHODS.md › Method options). `meanDifference`
-/// and `lat` consume a paired positive/negative stimulus set;
+/// and `pairedDifferencePCA` consume a paired positive/negative stimulus set;
 /// `emotionGrandMean` consumes a multi-concept story corpus (concept mean −
 /// corpus grand mean) and is dispatched through
 /// `ConceptExtractor.extractGrandMean`, never `direction`. Raw values match
@@ -31,10 +31,25 @@ public enum SteeringVectorError: Error, Equatable, CustomStringConvertible {
 public enum ExtractionMethod: String, Codable, Sendable, CaseIterable {
     /// CAA direction: mean(positive) − mean(negative).
     case meanDifference
-    /// RepE's LAT: first principal component of the per-pair difference
-    /// vectors, sign-aligned and norm-matched to the mean difference so
-    /// alpha semantics stay comparable. Requires paired stimuli.
-    case lat
+    /// First principal component of the per-pair difference vectors,
+    /// sign-aligned and norm-matched to the mean difference so alpha
+    /// semantics stay comparable. Requires paired stimuli.
+    ///
+    /// **RepE-INSPIRED, not RepE.** It borrows the paper's direction math
+    /// (Zou et al., arXiv:2310.01405 App. C.1) and none of its pipeline: no
+    /// task template, no template-mediated LAT token, no persisted fit
+    /// parameters, no held-out sign/layer selection. The faithful pipeline is
+    /// `RepEReader` (`repeReaderLAT`). Naming honesty ruling 2026-08-27 —
+    /// the symbol used to be `lat`, which read as "this IS RepE's LAT".
+    ///
+    /// **The raw value stays `"lat"`, permanently.** It is written into every
+    /// steering-vector sidecar, every frozen manifest concept block, and every
+    /// recipe-identity hash this workspace has ever produced; changing it
+    /// would break decode of existing artifacts AND move identity hashes,
+    /// which is how a frozen experiment loses its promotions. The raw value
+    /// is an ARTIFACT-COMPATIBILITY constant; the symbol and the label are
+    /// where honesty is expressed.
+    case pairedDifferencePCA = "lat"
     /// Emotion-paper grand mean: concept mean − grand mean over every row
     /// of a multi-concept story corpus (no negative class).
     case emotionGrandMean
@@ -82,25 +97,46 @@ public enum ExtractionMethod: String, Codable, Sendable, CaseIterable {
     /// pinned SAE candidate roster. Cross-engine contract raw value (server
     /// `vector_math.ExtractionMethod.GEMMA_SCOPE_SAE`).
     case gemmaScopeSAE
+    /// NOT a direction-finding method either: the reading direction of a
+    /// FITTED RepE READER (`RepEReader.Artifact`), converted to a steering
+    /// vector by `RepEReader.deriveSteeringArtifact` with the probe's
+    /// orientation folded into the bytes.
+    ///
+    /// Listed here (2026-08-27, audit finding 2) because without it a
+    /// reader-derived vector could not be ATTACHED at all: `attachArtifact`
+    /// resolves the sidecar's `extractionMethod` to ask where the concept's
+    /// held-out data lives, and an unknown method is refused — so the one
+    /// artifact the faithful RepE pipeline produces was the one artifact a
+    /// study could not cite. Its data questions have honest answers, and they
+    /// are not a plain concept's: the stimuli are the READER's dataset
+    /// (`prompts/readers/<concept>/pairs.jsonl`, whose SHA-256 is the
+    /// stimulusSetHash), there is no `prompts/concepts/<c>/` pair set, and the
+    /// held-out evidence is the reader artifact's own `heldOutAccuracy` — not
+    /// a `validation.jsonl`. Hence `hasSourceConcept == false`: every
+    /// data-side branch must skip rather than invent. The reader itself is
+    /// pinned separately as a `readerRef`, and the derived vector's sidecar
+    /// carries `readerID`/`readerHash` back to it.
+    case repeReaderLAT
 
     public var label: String {
         switch self {
         case .meanDifference: "Mean difference"
-        case .lat: "LAT paired direction (RepE-inspired)"
+        case .pairedDifferencePCA: "Paired-difference PCA (RepE-inspired)"
         case .emotionGrandMean: "Grand mean (multi-concept)"
         case .designatedReference: "Designated reference (stories − reference stories)"
         case .pinnedArtifact: "Pinned artifact (hash-pinned derived vectors)"
         case .optvec: "Optimized injection vector (OptVec)"
         case .gemmaScopeSAE: "Gemma Scope SAE feature (decoder row)"
+        case .repeReaderLAT: "RepE reader LAT (derived from a fitted reader)"
         }
     }
 
     /// Whether the method consumes a paired positive/negative stimulus set.
     public var isPaired: Bool {
         switch self {
-        case .meanDifference, .lat: true
+        case .meanDifference, .pairedDifferencePCA: true
         case .emotionGrandMean, .designatedReference, .pinnedArtifact, .optvec,
-            .gemmaScopeSAE:
+            .gemmaScopeSAE, .repeReaderLAT:
             false
         }
     }
@@ -117,6 +153,42 @@ public enum ExtractionMethod: String, Codable, Sendable, CaseIterable {
     /// An imported Gemma Scope SAE decoder row (see the case's note).
     public var isGemmaScopeSAE: Bool { self == .gemmaScopeSAE }
 
+    /// A direction derived from a fitted RepE reader (see the case's note).
+    public var isRepeReaderLAT: Bool { self == .repeReaderLAT }
+
+    /// For a method with NO source concept: what it is, where its evidence
+    /// lives, and what its `stimulusSetHash` refers to. One place, so the
+    /// three families that skip every data-side question say WHY in their own
+    /// words instead of each call site carrying a two-way conditional that a
+    /// third family silently falsified. nil for every method that does have a
+    /// source concept. Server twin: `ExtractionMethod.source_concept_absence`.
+    public var sourceConceptAbsence:
+        (kind: String, evidence: String, hashReferent: String)?
+    {
+        switch self {
+        case .optvec:
+            return (
+                "an OptVec vector",
+                "the OptVec eval run (eval.json)",
+                "the OptVec training run's pinned dataset splits")
+        case .gemmaScopeSAE:
+            return (
+                "an imported Gemma Scope SAE decoder row",
+                "the pinned SAE candidate roster's discovery snapshot and "
+                    + "qualification artifact",
+                "the published Gemma Scope dictionary the feature was imported from")
+        case .repeReaderLAT:
+            return (
+                "a direction derived from a fitted RepE reader",
+                "the reader artifact's own held-out accuracy (its pairs.jsonl "
+                    + "test split), pinned as the study's readerRef",
+                "the reader's dataset (prompts/readers/<concept>/pairs.jsonl)")
+        case .meanDifference, .pairedDifferencePCA, .emotionGrandMean,
+            .designatedReference, .pinnedArtifact:
+            return nil
+        }
+    }
+
     /// False for directions that were never READ OFF a concept's stimuli: an
     /// optvec vector (optimized against hashed datasets) and a Gemma Scope
     /// SAE decoder row (a dictionary coordinate). Ask THIS — not `isOptvec` —
@@ -125,7 +197,7 @@ public enum ExtractionMethod: String, Codable, Sendable, CaseIterable {
     /// it read at". Answering those for a direction with no source concept
     /// means inventing an obligation it can never meet.
     /// Server twin: `ExtractionMethod.has_source_concept`.
-    public var hasSourceConcept: Bool { !(isOptvec || isGemmaScopeSAE) }
+    public var hasSourceConcept: Bool { sourceConceptAbsence == nil }
 
     /// A method the researcher can attach as a RECIPE (stimuli by hash,
     /// vector re-derived every run). `pinnedArtifact` attaches through
@@ -137,9 +209,9 @@ public enum ExtractionMethod: String, Codable, Sendable, CaseIterable {
     /// in `experiment_store.attach`).
     public var isRecipeMethod: Bool {
         switch self {
-        case .meanDifference, .lat, .emotionGrandMean, .designatedReference:
+        case .meanDifference, .pairedDifferencePCA, .emotionGrandMean, .designatedReference:
             true
-        case .pinnedArtifact, .optvec, .gemmaScopeSAE: false
+        case .pinnedArtifact, .optvec, .gemmaScopeSAE, .repeReaderLAT: false
         }
     }
 
@@ -171,7 +243,7 @@ public enum ExtractionMethod: String, Codable, Sendable, CaseIterable {
 
     public var validationSemantics: ValidationSemantics {
         switch self {
-        case .meanDifference, .lat, .designatedReference: .contrastive
+        case .meanDifference, .pairedDifferencePCA, .designatedReference: .contrastive
         case .emotionGrandMean: .population
         // Neither is ever validated UNDER ITS OWN NAME: a pinnedArtifact
         // concept validates with its SOURCE method's semantics (resolve
@@ -184,7 +256,11 @@ public enum ExtractionMethod: String, Codable, Sendable, CaseIterable {
         // this property can mislead them. `gemmaScopeSAE` is in the same
         // position as optvec: a decoder row has no classes and no held-out
         // set, and validate skips it (`owesHeldOutProbe`).
-        case .pinnedArtifact, .optvec, .gemmaScopeSAE: .population
+        // `repeReaderLAT` joins them: a reader-derived direction validates
+        // through the READER's held-out split (recorded on the reader
+        // artifact), never through a concept's validation.jsonl, and
+        // `hasSourceConcept == false` routes every validate path around it.
+        case .pinnedArtifact, .optvec, .gemmaScopeSAE, .repeReaderLAT: .population
         }
     }
 
@@ -416,19 +492,35 @@ public enum SteeringVectorMath {
 
     /// Concept direction by the chosen method.
     ///
-    /// LAT follows RepE Appendix C.1: each pair difference is L2-normalized
-    /// BEFORE PCA — D(sᵢ, sᵢ₊₁) = normalize(H(sᵢ) − H(sᵢ₊₁)) — so high-norm
-    /// pairs cannot dominate PC1 (without this, PCA is pulled toward the
-    /// mean difference, eroding the LAT-vs-CAA method comparison), and the
-    /// differences enter PCA in alternating ± orientation, reproducing the
-    /// paper's unsupervised random pairing (see the inline note). The sign
-    /// follows the paper's score-directionality rule: each (positive −
-    /// negative) difference should project positively onto the PC; flip on
-    /// a majority of negative scores (ties fall back to the class-mean
-    /// criterion). This is stable exactly where dot(pc, meanDiff) ≈ 0 — the
-    /// regime where LAT is informative. As a deliberate divergence, the
-    /// unit PC is then scaled to the mean difference's norm so injection
-    /// alphas mean roughly the same thing under either method.
+    /// `pairedDifferencePCA` takes RepE's PC1-of-paired-differences idea and
+    /// adds two steps of our own. **Attribution, corrected 2026-08-27 (audit
+    /// finding 9):** an earlier comment here cited "RepE Appendix C.1" for the
+    /// per-pair L2 normalization. It is not the paper's. The reference
+    /// implementation (`repe/rep_readers.py`, `PCARepReader`) mean-CENTERS the
+    /// difference matrix and fits `PCA(n_components=1)` on it — it never
+    /// normalizes a difference. Both departures below are OURS, deliberately:
+    ///
+    /// 1. **Per-pair L2 normalization before PCA** — D(sᵢ) = normalize(H(pᵢ) −
+    ///    H(nᵢ)) — so high-norm pairs cannot dominate PC1. Without it PCA is
+    ///    pulled toward the mean difference, which erodes the very
+    ///    method comparison this family exists to make. OUR addition.
+    /// 2. **Norm-matching the unit PC to ‖meanDiff‖** so injection α means
+    ///    roughly the same thing under either method. OUR addition.
+    ///
+    /// What IS the paper's: differences enter PCA in alternating ±
+    /// orientation, which reproduces deterministically the random per-pair
+    /// orientation the reference implementation's dataset builder produces
+    /// (`random.shuffle(d)` per pair, then `[::2] − [1::2]`); and the sign is
+    /// fixed from the TRAIN labels — each (positive − negative) difference
+    /// should project positively onto the PC, so we flip on a majority of
+    /// negative scores (ties fall back to the class-mean criterion), which is
+    /// `get_signs`' train-label agreement. The paper's TEXT additionally
+    /// selects sign and layer on a held-out set; this family has no held-out
+    /// split, so it cannot, and its sidecar stamps
+    /// `signConvention: "trainMajority"` to say so out loud. The
+    /// held-out rule lives in `RepEReader` (`repeReaderLAT`), which does.
+    /// This sign rule is stable exactly where dot(pc, meanDiff) ≈ 0 — the
+    /// regime where a paired-difference PC is informative at all.
     public static func direction(
         positive: [[Float]], negative: [[Float]], method: ExtractionMethod
     ) throws -> [Float] {
@@ -437,7 +529,8 @@ public enum SteeringVectorMath {
         }
         let meanDiff = try meanDifference(positive: positive, negative: negative)
         switch method {
-        case .emotionGrandMean, .pinnedArtifact, .optvec, .gemmaScopeSAE:
+        case .emotionGrandMean, .pinnedArtifact, .optvec, .gemmaScopeSAE,
+            .repeReaderLAT:
             // Unreachable past the guard above; listed so a new method must
             // decide its direction semantics here explicitly.
             throw SteeringVectorError.notPairedMethod(method.rawValue)
@@ -445,7 +538,7 @@ public enum SteeringVectorMath {
             // designatedReference IS the mean difference — the classes are
             // stories vs a designated reference corpus, not authored pairs.
             return meanDiff
-        case .lat:
+        case .pairedDifferencePCA:
             guard positive.count == negative.count else {
                 throw SteeringVectorError.unpairedStimuli(
                     positive: positive.count, negative: negative.count)
@@ -621,6 +714,13 @@ public enum SteeringVectorMath {
         return result
     }
 
+    /// How much of the Gram matrix's trace the first power-iteration product
+    /// must reach for a start to count as carrying signal. Dimensionless: the
+    /// trace IS the spectrum's scale, so the ratio is comparable across data
+    /// of any magnitude. Identical constant on the server
+    /// (`vector_math.DEGENERATE_START_RELATIVE_THRESHOLD`).
+    public static let degenerateStartRelativeThreshold: Float = 1e-6
+
     private static func firstComponentOfCentered(_ centered: [[Float]]) throws -> [Float] {
         guard centered.count >= 2, let dimension = centered.first?.count, dimension > 0
         else {
@@ -643,8 +743,18 @@ public enum SteeringVectorMath {
         // Power iteration with deterministic starts (no RNG — extraction
         // must be reproducible). The uniform start can be exactly
         // orthogonal to the dominant eigenvector (e.g. the alternating ±
-        // pattern LAT's orientation symmetry produces on clean data); the
-        // index ramp breaks that symmetry.
+        // pattern the paired-difference orientation symmetry produces on
+        // clean data); the index ramp breaks that symmetry.
+        // The THIRD start is the alternating ± pattern itself. The
+        // paired-difference constructions feed PCA rows in alternating
+        // orientation, so on clean data the dominant eigenvector's weights
+        // ARE that pattern — and both earlier starts can be orthogonal to it
+        // at once (a uniform start always is when the signs balance; a
+        // three-row ramp is too, exactly). Before the degenerate-start guard
+        // became real, such data still "worked" because the guard's
+        // exact-zero test never fired and the iteration amplified float
+        // noise into roughly the right answer. Making the guard honest
+        // requires giving it a start that honestly has overlap.
         let starts: [[Float]] = [
             [Float](repeating: 1 / Float(n).squareRoot(), count: n),
             {
@@ -652,14 +762,53 @@ public enum SteeringVectorMath {
                 let norm = l2Norm(ramp)
                 return ramp.map { $0 / norm }
             }(),
+            {
+                let scale = 1 / Float(n).squareRoot()
+                return (0 ..< n).map { $0.isMultiple(of: 2) ? scale : -scale }
+            }(),
+            // The LAST-RESORT start: the heaviest row's own basis vector.
+            // `gram · e_j` is column j, whose norm is at least the largest
+            // diagonal entry, which is at least trace/n — comfortably above
+            // the relative floor for any bank this engine builds (the token
+            // bank caps at 2048 rows). So a Gram matrix with any variance at
+            // all always has SOME start the guard accepts, and the guard can
+            // only ever refuse a genuinely degenerate matrix. Without it the
+            // honest guard stops deflation early on a flat spectrum, where the
+            // fixed starts' overlap with the surviving subspace shrinks each
+            // round — reporting fewer components than the data has.
+            {
+                var heaviest = 0
+                for i in 1 ..< n where gram[i][i] > gram[heaviest][heaviest] {
+                    heaviest = i
+                }
+                var basis = [Float](repeating: 0, count: n)
+                basis[heaviest] = 1
+                return basis
+            }(),
         ]
         var weights: [Float]?
         outer: for start in starts {
             var candidate = start
-            for _ in 0 ..< 200 {
+            for iteration in 0 ..< 200 {
                 var next = (0 ..< n).map { i in dot(gram[i], candidate) }
                 let norm = l2Norm(next)
-                guard norm > 0 else { continue outer }  // start ⊥ eigenvector
+                // Degenerate START detection, on the FIRST product only.
+                //
+                // The old guard was `norm > 0` — exact zero, which in float32
+                // essentially never fires: a start that is orthogonal to the
+                // dominant eigenvector still has rounding-level overlap with
+                // it and with every other, so `gram·start` comes back as a
+                // vector of denormal noise and the iteration then "converges"
+                // to whichever direction that noise happened to point. The
+                // check has to be RELATIVE to the spectrum's own scale, which
+                // is what the trace measures: below this fraction of it, the
+                // start carries no signal about the data and the next start
+                // must be tried instead. Only the first product is checked —
+                // later iterations legitimately shrink under deflation, and a
+                // relative floor there would abandon a converging run.
+                let floor =
+                    iteration == 0 ? degenerateStartRelativeThreshold * trace : 0
+                guard norm > floor else { continue outer }  // start ⊥ spectrum
                 next = next.map { $0 / norm }
                 let delta = zip(next, candidate).map { abs($0 - $1) }.max() ?? 0
                 candidate = next

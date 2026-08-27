@@ -15,7 +15,8 @@ import pytest
 from steerlab_server.experiment import catalog, tasks
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.experiment.prompt_render import (
-    READER_RENDERING_CONVENTION, render_reader)
+    READER_CHAT_TEMPLATE_RENDERING_CONVENTION, READER_RENDERING_CONVENTION,
+    render_reader)
 from steerlab_server.steering import extractor, repe_reader
 from steerlab_server.steering.vector_math import ScalarProbe
 
@@ -162,7 +163,7 @@ class _FakeActs:
         self.residual_norm_per_layer = [1.0]
 
 
-def _fake_activations(model, texts, position):
+def _fake_activations(model, texts, position, rendering=None):
     values = []
     for text in texts:
         key = next(k for k in ACTS if f"Scenario: {k}\n" in text)
@@ -192,7 +193,22 @@ def test_fit_math_orientation_and_accuracy(tmp_path, monkeypatch):
     # PC1 of the normalized pair differences is the +x concept axis, oriented
     # so the positive class scores positive.
     assert reader.probe.direction == pytest.approx([1.0, 0.0], abs=1e-5)
-    assert reader.pc1_explained_variance == pytest.approx(1.0, abs=1e-5)
+    # The two train differences are identical after normalization, so the
+    # DIFFERENCE CLOUD has no variance to apportion — absent, not 0 (which
+    # would read as "PC1 explains nothing"). The pre-2026-08-27 number here
+    # was 1.0, measured over the ± alternated copies PCA is fitted on.
+    assert reader.difference_cloud_explained_variance is None
+    assert reader.explained_variance_basis == "degenerateDifferenceCloud"
+    # The held-out pair (hp − hn = [0.5, 0]) projects positive on +x, so the
+    # HELD-OUT split fixes the sign — the paper's step 4, not get_signs.
+    # …but ONE held-out pair is below the minimum that may decide a sign, so
+    # the fit falls back to the reference implementation's train-label majority
+    # and says so out loud. See test_held_out_split_fixes_the_sign for the
+    # branch where the held-out split does decide.
+    assert reader.sign_convention == repe_reader.TRAIN_MAJORITY
+    assert reader.sign_held_out_accuracy is None
+    assert "below the minimum 2" in reader.sign_fallback_reason
+    assert reader.contrast_mode == repe_reader.SUPERVISED_CONTENT
     # Training normalization: centered at the train activation mean.
     assert reader.probe.activation_center == pytest.approx([1.0, 0.0], abs=1e-5)
     assert reader.train_accuracy == 1.0
@@ -256,7 +272,13 @@ def test_artifact_roundtrip_and_shape(tmp_path, monkeypatch):
                                "orientation", "activationCenter"}
     assert d["renderingConvention"] == READER_RENDERING_CONVENTION
     assert "trainAccuracy" in d and "heldOutAccuracy" in d
-    assert "pc1ExplainedVariance" in d
+    # The legacy `pc1ExplainedVariance` key is gone: its basis changed, and
+    # writing the old key with the new semantics would make every pre-existing
+    # consumer silently wrong instead of visibly out of date.
+    assert "pc1ExplainedVariance" not in d
+    assert d["pc1ExplainedVarianceBasis"] == "degenerateDifferenceCloud"
+    assert d["contrastMode"] == "supervisedContent"
+    assert d["signConvention"] == "trainMajority"
 
     with pytest.raises(repe_reader.RepeReaderError, match="not a repe-reader-lat"):
         repe_reader.ReaderArtifact.from_dict({"artifactType": "other"})
@@ -275,7 +297,8 @@ def _manual_reader(layer=0, substrate=repe_reader.SUBSTRATE):
     return repe_reader.ReaderArtifact(
         model_id="org/m", revision="abc", concept="fear", layer=layer,
         template=template, dataset_hash="dh", probe=probe,
-        pc1_explained_variance=0.9, train_accuracy=1.0, held_out_accuracy=0.8,
+        difference_cloud_explained_variance=0.9, train_accuracy=1.0,
+        held_out_accuracy=0.8,
         train_pair_count=4, held_out_pair_count=2, substrate=substrate)
 
 
@@ -283,7 +306,7 @@ def test_score_text_exact_inference(monkeypatch):
     reader = _manual_reader()
     seen = {}
 
-    def fake_activations(model, texts, position):
+    def fake_activations(model, texts, position, rendering=None):
         seen["texts"] = texts
         seen["position"] = position
         return _FakeActs([[[3.0, 7.0]] for _ in texts])
@@ -301,7 +324,7 @@ def test_score_text_exact_inference(monkeypatch):
 def test_score_rejects_foreign_substrate_and_bad_layer(monkeypatch):
     monkeypatch.setattr(
         extractor, "activations",
-        lambda model, texts, position: _FakeActs([[[1.0, 0.0]] for _ in texts]))
+        lambda model, texts, position, rendering=None: _FakeActs([[[1.0, 0.0]] for _ in texts]))
     foreign = _manual_reader(substrate="swift-mlx")
     with pytest.raises(repe_reader.RepeReaderError, match="substrate-specific"):
         repe_reader.score_texts(FAKE_MODEL, foreign, ["x"])
@@ -316,7 +339,7 @@ def test_score_rejects_wrong_model(monkeypatch):
     # meaningless numbers.
     monkeypatch.setattr(
         extractor, "activations",
-        lambda model, texts, position: _FakeActs([[[1.0, 0.0]] for _ in texts]))
+        lambda model, texts, position, rendering=None: _FakeActs([[[1.0, 0.0]] for _ in texts]))
     reader = _manual_reader()  # fitted on org/m
     other = SimpleNamespace(model_id="org/other", revision=None)
     with pytest.raises(repe_reader.RepeReaderError,
@@ -522,7 +545,7 @@ def test_api_reader_score_scores_texts(tmp_path, monkeypatch):
     # capture returned a fixed activation at the reader's layer.
     monkeypatch.setattr(
         extractor, "activations",
-        lambda model, texts, position: _FakeActs([[[3.0, 7.0]] for _ in texts]))
+        lambda model, texts, position, rendering=None: _FakeActs([[[3.0, 7.0]] for _ in texts]))
     resp = client.post("/api/reader/score",
                        json={"readerID": reader_path, "texts": ["a", "b"]})
     assert resp.status_code == 200
@@ -555,7 +578,7 @@ def test_api_reader_score_rejects_wrong_model_reader(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module.state, "acquire_active", fake_acquire)
     monkeypatch.setattr(
         extractor, "activations",
-        lambda model, texts, position: _FakeActs([[[1.0, 0.0]] for _ in texts]))
+        lambda model, texts, position, rendering=None: _FakeActs([[[1.0, 0.0]] for _ in texts]))
     resp = client.post("/api/reader/score",
                        json={"readerID": reader_path, "texts": ["a"]})
     assert resp.status_code == 400
@@ -711,7 +734,10 @@ def test_api_reader_fit_job_with_registry_template(tmp_path, monkeypatch):
         pairs_jsonl.encode("utf-8")).hexdigest()
     assert result["layerScores"] == [{
         "layer": 0, "trainAccuracy": 1.0, "heldOutAccuracy": 0.5,
-        "pc1ExplainedVariance": pytest.approx(1.0)}]
+        "signConvention": "trainMajority", "signHeldOutAccuracy": None,
+        "pc1ExplainedVarianceOfDifferences": None,
+        "pc1ExplainedVarianceBasis": "degenerateDifferenceCloud"}]
+    assert result["contrastMode"] == "supervisedContent"
     # The run-dir naming is discovered by the catalog (pattern-agnostic scan).
     listed = client.get("/api/readers").json()["readers"]
     assert any(r["runDirectory"] == run_dir for r in listed)
@@ -842,3 +868,454 @@ def test_api_reader_fit_job_with_custom_template_json(tmp_path, monkeypatch):
     loaded = repe_reader.load_reader(job["result"]["artifacts"][0])
     assert loaded.template.id == "custom-amount-v1"
     assert loaded.template.hash == hashlib.sha256(raw).hexdigest()
+
+
+# --- cross-engine twin literals for the new refusals -------------------------
+#
+# The twin-literal idiom: this table and its Swift counterpart
+# (`RepEReaderTests.newRefusalsAreCrossEngineTwinLiterals`) are two INDEPENDENT
+# copies of the same words. Neither engine can reword a refusal — or quietly
+# drop the repair off the end of one — without the other engine's suite going
+# red. A refusal a researcher meets on the Mac and on the cluster has to be the
+# same instruction, or "follow the repair" is advice about one machine.
+
+REFUSAL_TWINS = {
+    "chatTemplateMarker":
+        "reader scaffold embeds turn marker '<start_of_turn>' inside the user "
+        "turn's content — under a chatTemplate rendering the template supplies "
+        "the markers, so an embedded one forges a turn boundary and moves the "
+        "LAT token off the generation prompt. Repair: write the scaffold as "
+        "plain content and let the template do the framing",
+    "mixedShapes":
+        "S: mixes content-pair rows (positiveStimulus/negativeStimulus) with "
+        "template-pair rows (stimulus) — the two produce different "
+        "differences, so one file cannot mean both. Repair: split them into "
+        "two datasets",
+    "bothShapes":
+        "S: row declares both 'stimulus' and a positive/negative pair — a "
+        "template-pair row holds ONE stimulus (the T+/T− instructions carry "
+        "the contrast). Repair: drop 'stimulus' for a content pair, or drop "
+        "'positiveStimulus'/'negativeStimulus' for a template pair",
+    "contentPairsUnderTemplatePair":
+        "template 'tp' declares a T+/T− instructionPair but the dataset holds "
+        "content pairs (positiveStimulus/negativeStimulus) — under a template "
+        "pair the contrast is the INSTRUCTION and a second stimulus would be a "
+        "confound. Repair: fit these pairs through a single-template reader "
+        "template, or rewrite the dataset as one-stimulus ('stimulus') rows",
+    "singleStimulusUnderPlainTemplate":
+        "the dataset holds one-stimulus ('stimulus') rows but template 'pl' "
+        "declares no instructionPair — there is nothing to contrast the "
+        "stimulus against. Repair: choose a template-pair template (one with "
+        "'instructionPair'), or rewrite the dataset as "
+        "positiveStimulus/negativeStimulus content pairs",
+    "instructionPairWithoutSlot":
+        "template 'x' declares an instructionPair but its text has no "
+        "{{instruction}} slot — the T+/T− instructions would never reach the "
+        "model. Repair: add {{instruction}} to the text, or drop "
+        "instructionPair to make this a single-template reader",
+    "slotWithoutInstructionPair":
+        "template 'x' has a {{instruction}} slot but declares no "
+        "instructionPair — nothing would fill it. Repair: add an "
+        "instructionPair with 'experimental' and 'reference', or remove the "
+        "slot",
+    "emptyInstruction":
+        "template 'x': instructionPair needs both 'experimental' (T+) and "
+        "'reference' (T−) — one empty instruction makes the contrast a "
+        "rendering artifact. Repair: write both instructions",
+    "identicalInstructions":
+        "template 'x': instructionPair's experimental and reference "
+        "instructions are identical — every difference would be exactly zero. "
+        "Repair: write two instructions that differ in the quality under study",
+    "signFallbackNoHeldOut":
+        "no held-out pairs (every row is split 'train'): the sign follows "
+        "train-label majority, the reference implementation's get_signs. "
+        "Repair: mark some rows with a non-'train' split so the paper's "
+        "held-out sign selection can run",
+    "signFallbackTooFew":
+        "1 held-out pair(s) projected off zero, below the minimum 2: a "
+        "one-pair vote is a coin flip wearing a validation split's authority, "
+        "so the sign follows train-label majority instead",
+    "signFallbackTied":
+        "held-out pairs split evenly (2 for, 2 against): the held-out set does "
+        "not discriminate at this layer, so the sign follows train-label "
+        "majority. Read this layer's heldOutAccuracy before trusting its "
+        "direction",
+}
+
+
+def _produced_refusals() -> dict[str, str]:
+    """Every new refusal, produced by the engine rather than transcribed."""
+    from steerlab_server.steering.extraction_rendering import ExtractionRendering
+
+    out: dict[str, str] = {}
+
+    def capture(label, fn):
+        try:
+            fn()
+        except (ValueError, repe_reader.RepeReaderError) as exc:
+            out[label] = str(exc)
+        else:
+            pytest.fail(f"{label}: expected a refusal")
+
+    capture("chatTemplateMarker", lambda: render_reader(
+        "a <start_of_turn> b", model_id="m",
+        rendering=ExtractionRendering(mode="chatTemplate")))
+    capture("mixedShapes", lambda: repe_reader.parse_pairs(
+        '{"concept":"c","positiveStimulus":"p","negativeStimulus":"n",'
+        '"templateID":"t"}\n{"concept":"c","stimulus":"s","templateID":"t"}\n',
+        source="S"))
+    capture("bothShapes", lambda: repe_reader.parse_pairs(
+        '{"concept":"c","stimulus":"s","positiveStimulus":"p",'
+        '"templateID":"t"}\n', source="S"))
+
+    pair_template = repe_reader.TaskTemplate(
+        id="tp", text="{{instruction}} S: {{stimulus}}", concept_slot=False,
+        lat_token="final", hash="h",
+        instruction_pair=repe_reader.InstructionPair("a", "b"))
+    plain_template = repe_reader.TaskTemplate(
+        id="pl", text="S: {{stimulus}}", concept_slot=False, lat_token="final",
+        hash="h")
+    content_pairs = repe_reader.ReaderDataset(
+        concept="c", pairs=(repe_reader.ReaderPair("p", "n", "c", "tp"),), hash="h")
+    single = repe_reader.ReaderDataset(
+        concept="c",
+        pairs=(repe_reader.ReaderPair("", "", "c", "pl", stimulus="s"),), hash="h")
+    capture("contentPairsUnderTemplatePair",
+            lambda: repe_reader.resolve_contrast_mode(content_pairs, pair_template))
+    capture("singleStimulusUnderPlainTemplate",
+            lambda: repe_reader.resolve_contrast_mode(single, plain_template))
+
+    def template(text, pair):
+        return repe_reader.TaskTemplate(
+            id="x", text=text, concept_slot=False, lat_token="final", hash="h",
+            instruction_pair=pair)
+
+    capture("instructionPairWithoutSlot", lambda: template(
+        "S: {{stimulus}}",
+        repe_reader.InstructionPair("a", "b")).validate_instruction_slot())
+    capture("slotWithoutInstructionPair", lambda: template(
+        "{{instruction}} S: {{stimulus}}", None).validate_instruction_slot())
+    capture("emptyInstruction", lambda: template(
+        "{{instruction}} S: {{stimulus}}",
+        repe_reader.InstructionPair("a", "")).validate_instruction_slot())
+    capture("identicalInstructions", lambda: template(
+        "{{instruction}} S: {{stimulus}}",
+        repe_reader.InstructionPair("same", "same")).validate_instruction_slot())
+
+    out["signFallbackNoHeldOut"] = repe_reader.held_out_sign_fallback_reason(
+        held_out_pair_count=0, decided=0, agree=0, disagree=0)
+    out["signFallbackTooFew"] = repe_reader.held_out_sign_fallback_reason(
+        held_out_pair_count=1, decided=1, agree=1, disagree=0)
+    out["signFallbackTied"] = repe_reader.held_out_sign_fallback_reason(
+        held_out_pair_count=4, decided=4, agree=2, disagree=2)
+    return out
+
+
+def test_new_refusals_are_cross_engine_twin_literals():
+    produced = _produced_refusals()
+    assert set(produced) == set(REFUSAL_TWINS), \
+        "a new refusal must be added to BOTH engines' twin-literal tables"
+    for label, expected in REFUSAL_TWINS.items():
+        assert produced[label] == expected, label
+
+
+# --- paper step 4: held-out sign and layer selection --------------------------
+
+def _template(tmp_path):
+    return repe_reader.load_template(_write_template(str(tmp_path)))
+
+
+def _fit_from_rows(tmp_path, rows, acts, layers=None, **kwargs):
+    """Fit purely over supplied activations — no monkeypatching, no model."""
+    template = _template(tmp_path)
+    dataset = repe_reader.load_pairs(
+        _write_pairs(str(tmp_path / "rows.jsonl"), rows))
+    captured = []
+    for pair in dataset.train + dataset.held_out:
+        captured.append(acts[pair.positive_stimulus])
+        captured.append(acts[pair.negative_stimulus])
+    return repe_reader.fit_activations(
+        dataset, template, captured, model_id="org/m", revision="abc",
+        layers=layers, **kwargs)
+
+
+def test_held_out_split_fixes_the_sign(tmp_path):
+    """Two held-out pairs pointing the OPPOSITE way from the train majority:
+    the held-out split wins, which is the paper's rule and not get_signs'."""
+    acts = {
+        "p0": [[2.0, 0.5]], "n0": [[0.0, 0.5]],
+        "p1": [[2.0, -0.5]], "n1": [[0.0, -0.5]],
+        "hp0": [[0.0, 0.2]], "hn0": [[1.0, 0.2]],
+        "hp1": [[0.1, -0.2]], "hn1": [[1.1, -0.2]],
+    }
+    rows = [_pair_row(0, "p0", "n0"), _pair_row(1, "p1", "n1"),
+            _pair_row(2, "hp0", "hn0", split="test"),
+            _pair_row(3, "hp1", "hn1", split="test")]
+    reader = _fit_from_rows(tmp_path, rows, acts)[0]
+    assert reader.sign_convention == repe_reader.HELD_OUT_PAIR_AGREEMENT
+    assert reader.sign_held_out_accuracy == pytest.approx(1.0)
+    assert reader.sign_fallback_reason is None
+    # Train majority alone would have chosen +x; the held-out split flips it.
+    assert reader.probe.direction == pytest.approx([-1.0, 0.0], abs=1e-5)
+
+
+def test_evenly_split_held_out_falls_back_loudly(tmp_path):
+    acts = {
+        "p0": [[2.0, 0.5]], "n0": [[0.0, 0.5]],
+        "p1": [[2.0, -0.5]], "n1": [[0.0, -0.5]],
+        "ha": [[1.0, 0.0]], "hb": [[0.0, 0.0]],
+        "hc": [[0.0, 0.1]], "hd": [[1.0, 0.1]],
+    }
+    rows = [_pair_row(0, "p0", "n0"), _pair_row(1, "p1", "n1"),
+            _pair_row(2, "ha", "hb", split="test"),
+            _pair_row(3, "hc", "hd", split="test")]
+    reader = _fit_from_rows(tmp_path, rows, acts)[0]
+    assert reader.sign_convention == repe_reader.TRAIN_MAJORITY
+    assert reader.sign_held_out_accuracy is None
+    assert "split evenly" in reader.sign_fallback_reason
+    assert reader.probe.direction == pytest.approx([1.0, 0.0], abs=1e-5)
+
+
+def test_layer_recommendation_is_stamped_on_the_whole_set(tmp_path):
+    def row(x0, x1):
+        return [[x0, 0.5], [x1, 0.5]]
+
+    acts = {"p0": row(2, 1), "n0": row(0, 0),
+            "p1": row(3, 2), "n1": row(0.5, 0.5),
+            "hp": row(2, 0), "hn": row(0, 3)}
+    rows = [_pair_row(0, "p0", "n0"), _pair_row(1, "p1", "n1"),
+            _pair_row(2, "hp", "hn", split="test")]
+    readers = _fit_from_rows(tmp_path, rows, acts)
+    assert len(readers) == 2
+    # Every artifact of the set carries the SAME recommendation — a reader
+    # opened alone must not have to re-derive it from its siblings.
+    assert len({r.recommended_layer for r in readers}) == 1
+    assert all(r.layer_recommendation_basis == "heldOutAccuracy" for r in readers)
+    best = readers[0].recommended_layer
+    by_layer = {r.layer: r for r in readers}
+    assert by_layer[best].held_out_accuracy == max(
+        r.held_out_accuracy for r in readers)
+    d = readers[0].to_dict()
+    assert d["recommendedLayer"] == best
+    assert "never selected automatically" in d["layerRecommendationNote"]
+
+
+# --- paper step 1b: T+/T- template pairs --------------------------------------
+
+STANCE_PAIR = {
+    "id": "instructed-stance-pair-v1", "conceptSlot": False,
+    "text": "{{instruction}}\nScenario: {{stimulus}}\nThe described state is",
+    "latToken": "final",
+    "instructionPair": {"experimental": "T-plus.", "reference": "T-minus."},
+}
+
+
+def test_committed_template_pair_template_loads_and_renders_both(tmp_path):
+    path = os.path.join(REPO_TEMPLATES, "instructed-stance-pair-v1.json")
+    template = repe_reader.load_template(path)
+    assert template.is_template_pair
+    pair = template.instruction_pair
+    assert pair.experimental != pair.reference
+    # Hygiene: the shipped example never names a concept, so a reader fitted
+    # through it cannot become a concept-word detector.
+    assert not template.concept_slot
+    assert "synthetic-neutral" in (template.divergence or "")
+    plus = template.render(stimulus="the room went quiet",
+                           instruction=pair.experimental)
+    minus = template.render(stimulus="the room went quiet",
+                            instruction=pair.reference)
+    assert plus != minus
+    assert plus.endswith("The described state is")
+    assert "{{" not in plus
+
+
+def test_unsupervised_template_pair_fit_is_seeded_and_stamped(tmp_path):
+    path = os.path.join(str(tmp_path), "instructed-stance-pair-v1.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(STANCE_PAIR, handle)
+    template = repe_reader.load_template(path)
+    rows = []
+    captured = []
+    for index in range(5):
+        rows.append({"id": f"fear-row-{index}", "concept": "fear",
+                     "stimulus": f"s{index}", "templateID": template.id,
+                     "split": "train" if index < 3 else "test"})
+        magnitude = float(index + 1)
+        captured.append([[magnitude, 0.1 * magnitude]])   # T+
+        captured.append([[0.0, 0.1 * magnitude]])         # T-
+    dataset = repe_reader.load_pairs(
+        _write_pairs(str(tmp_path / "single.jsonl"), rows))
+    assert dataset.shape == "singleStimulus"
+    reader = repe_reader.fit_activations(
+        dataset, template, captured, model_id="org/m", revision="abc")[0]
+    assert reader.contrast_mode == repe_reader.UNSUPERVISED_TEMPLATE_PAIR
+    assert reader.orientation_seed == repe_reader.DEFAULT_ORIENTATION_SEED
+    assert reader.sign_convention == repe_reader.HELD_OUT_PAIR_AGREEMENT
+    assert abs(reader.probe.direction[0]) > 0.99
+    assert repe_reader.score_activation(reader, [5.0, 0.0]) > 0
+    # Explained variance now MEANS the difference cloud's, and this cloud has
+    # variance (unlike the supervised fixture's identical rows).
+    assert 0 < reader.difference_cloud_explained_variance <= 1 + 1e-5
+    assert reader.explained_variance_basis == "differenceCloud"
+
+    # Both engines render the SAME two texts, in the same order.
+    texts = repe_reader.fit_texts(dataset, template, model_id="org/m")
+    assert texts[0].startswith("T-plus.")
+    assert texts[1].startswith("T-minus.")
+    assert len(texts) == 10
+
+    again = repe_reader.fit_activations(
+        dataset, template, captured, model_id="org/m", revision="abc",
+        orientation_seed=repe_reader.DEFAULT_ORIENTATION_SEED)[0]
+    assert again.probe.direction == pytest.approx(reader.probe.direction)
+    other = repe_reader.fit_activations(
+        dataset, template, captured, model_id="org/m", revision="abc",
+        orientation_seed=7)[0]
+    assert other.orientation_seed == 7
+
+
+def test_orientation_signs_are_deterministic():
+    a = repe_reader.orientation_signs(16, 231_001_405)
+    assert a == repe_reader.orientation_signs(16, 231_001_405)
+    assert set(a) == {1.0, -1.0}
+    assert repe_reader.orientation_signs(16, 1) != a
+
+
+# --- declarable rendering ------------------------------------------------------
+
+def test_raw_rendering_remains_the_default_and_the_stamp_is_absent(tmp_path,
+                                                                  monkeypatch):
+    monkeypatch.setattr(extractor, "activations", _fake_activations)
+    dataset, template = _fit_dataset(tmp_path)
+    reader = repe_reader.fit(FAKE_MODEL, dataset, template)[0]
+    assert reader.extraction_rendering is None
+    assert reader.rendering_convention == READER_RENDERING_CONVENTION
+    assert reader.resolved_extraction_rendering.is_raw
+    # Absent, not {"mode": "raw"} — a raw fit's bytes stay what they were.
+    assert "extractionRendering" not in reader.to_dict()
+
+
+def test_chat_template_rendering_is_stamped_and_threaded(tmp_path, monkeypatch):
+    from steerlab_server.steering.extraction_rendering import ExtractionRendering
+
+    seen = {}
+
+    def capture(model, texts, position, rendering=None):
+        seen["rendering"] = rendering
+        return _fake_activations(model, texts, position, rendering)
+
+    monkeypatch.setattr(extractor, "activations", capture)
+    dataset, template = _fit_dataset(tmp_path)
+    rendering = ExtractionRendering(mode="chatTemplate")
+    reader = repe_reader.fit(FAKE_MODEL, dataset, template,
+                             extraction_rendering=rendering)[0]
+    # The fit passes the declaration THROUGH to the extraction path…
+    assert seen["rendering"] is rendering
+    # …stamps it…
+    assert reader.extraction_rendering == rendering.to_dict()
+    assert reader.rendering_convention == \
+        READER_CHAT_TEMPLATE_RENDERING_CONVENTION
+    # …and scoring resolves the SAME rendering off the artifact.
+    assert not reader.resolved_extraction_rendering.is_raw
+    round_tripped = repe_reader.ReaderArtifact.from_dict(reader.to_dict())
+    assert not round_tripped.resolved_extraction_rendering.is_raw
+
+
+def test_marker_guard_reason_follows_the_rendering():
+    from steerlab_server.steering.extraction_rendering import ExtractionRendering
+
+    with pytest.raises(ValueError, match="double-BOS"):
+        render_reader("a <bos> b", model_id="org/m")
+    with pytest.raises(ValueError, match="forges a turn boundary"):
+        render_reader("a <start_of_turn> b", model_id="org/m",
+                      rendering=ExtractionRendering(mode="chatTemplate"))
+    with pytest.raises(ValueError, match="manual '<s>' BOS"):
+        render_reader("<s> hello", model_id="org/m")
+    # Under a chat template a leading "<s>" in CONTENT is ordinary text.
+    assert render_reader("<s> hello", model_id="org/m",
+                         rendering=ExtractionRendering(mode="chatTemplate")) \
+        == "<s> hello"
+
+
+# --- legacy artifacts stay decodable -------------------------------------------
+
+def test_legacy_artifact_decodes_with_stamped_legacy_semantics():
+    legacy = {
+        "artifactType": "repe-reader-lat", "schemaVersion": 1,
+        "modelID": "org/m", "revision": "abc",
+        "substrate": "python-hf-transformers", "concept": "fear", "layer": 3,
+        "templateID": "unnamed-scenario-v1", "templateHash": "th",
+        "template": {"conceptSlot": False, "hash": "th",
+                     "id": "unnamed-scenario-v1", "latToken": "final",
+                     "text": "S: {{stimulus}} q"},
+        "datasetHash": "dh", "latTokenPosition": "final",
+        "readingPosition": "last token",
+        "probe": {"direction": [1.0, 0.0], "projectionCenter": 0.5,
+                  "projectionScale": 2.0, "orientation": 1.0,
+                  "positiveMean": 1.0, "negativeMean": -1.0},
+        "pc1ExplainedVariance": 0.87, "trainAccuracy": 1.0,
+        "heldOutAccuracy": 0.8, "trainPairCount": 4, "heldOutPairCount": 2,
+        "renderingConvention": "rawCompletion scaffold",
+        "extractionDate": "2026-07-03T00:00:00Z",
+    }
+    reader = repe_reader.ReaderArtifact.from_dict(legacy)
+    assert reader.difference_cloud_explained_variance == pytest.approx(0.87)
+    assert reader.explained_variance_basis == "alternatedRows"
+    assert reader.contrast_mode == repe_reader.SUPERVISED_CONTENT
+    assert reader.sign_convention == repe_reader.TRAIN_MAJORITY
+    assert reader.sign_held_out_accuracy is None
+    assert reader.orientation_seed is None
+    assert reader.recommended_layer is None
+    assert reader.extraction_rendering is None
+    assert reader.resolved_extraction_rendering.is_raw
+    assert repe_reader.score_activation(reader, [3.0, 7.0]) == pytest.approx(1.25)
+
+
+# --- derive-steering conversion applies the probe orientation ------------------
+
+def test_derived_vector_applies_the_probe_orientation():
+    """Audit finding 1. ``ScalarProbe.score`` is ``orientation · (a·d − c)``,
+    so a reader whose PC1 came out anti-aligned with the positive class stores
+    a direction pointing AWAY from the concept."""
+    reader = _manual_reader(layer=1)
+    reader.probe = ScalarProbe(
+        direction=[1.0, 0.0], projection_center=0.5, projection_scale=2.0,
+        orientation=-1.0, positive_mean=-1.0, negative_mean=1.0,
+        activation_center=[1.0, 0.0])
+    vectors, sidecar = repe_reader.derive_steering_sidecar(
+        reader, reader_file_name="reader-fear-layer1.json", reader_bytes=b"{}")
+    assert vectors.per_layer[1] == pytest.approx([-1.0, 0.0])
+    assert sidecar.readerProbeOrientation == -1.0
+    # A concept-positive activation scores positive through the probe AND
+    # projects positive onto the derived vector — the two agreeing is the whole
+    # point of the fix.
+    concept_positive = [-4.0, 0.0]
+    assert repe_reader.score_activation(reader, concept_positive) > 0
+    assert sum(a * b for a, b in zip(concept_positive, vectors.per_layer[1])) > 0
+
+    forward = _manual_reader(layer=1)
+    forward_vectors, forward_sidecar = repe_reader.derive_steering_sidecar(
+        forward, reader_file_name="r.json", reader_bytes=b"{}")
+    assert forward_vectors.per_layer[1] == pytest.approx([1.0, 0.0])
+    assert forward_sidecar.readerProbeOrientation == 1.0
+
+
+def test_derived_sidecar_carries_reader_method_and_instrument_pins():
+    from steerlab_server.steering.vector_math import ExtractionMethod
+
+    reader = _manual_reader(layer=1)
+    _, sidecar = repe_reader.derive_steering_sidecar(
+        reader, reader_file_name="reader-fear-layer1.json", reader_bytes=b"{}")
+    assert sidecar.extractionMethod == "repeReaderLAT"
+    assert sidecar.recipeMethod == "repeReaderLAT"
+    assert sidecar.readerLayer == 1
+    assert sidecar.readerTemplateID == "unnamed-scenario-v1"
+    assert sidecar.readerTemplateHash == "th"
+    assert sidecar.readerContrastMode == "supervisedContent"
+    assert sidecar.readerSignConvention == "trainMajority"
+    assert sidecar.signConvention == "trainMajority"
+    # The method resolves in the ExtractionMethod vocabulary — without that,
+    # attaching the artifact was refused as an unknown method.
+    method = ExtractionMethod(sidecar.extractionMethod)
+    assert method.is_repe_reader_lat and not method.has_source_concept
+    assert "RepE reader" in method.source_concept_absence[0]

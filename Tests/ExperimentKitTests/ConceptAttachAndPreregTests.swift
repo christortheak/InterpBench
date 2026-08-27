@@ -77,11 +77,11 @@ extension ExperimentStoreTests {
             _ = try ExperimentStore.create(
                 name: "attach-paired", description: "", modelID: "test/model")
             let manifest = try ExperimentStore.attachConcept(
-                "french", method: .lat, poolFromToken: 7,
+                "french", method: .pairedDifferencePCA, poolFromToken: 7,
                 experimentName: "attach-paired")
             let ref = try #require(manifest.concepts.first { $0.name == "french" })
             #expect(ref.stimulusSetHash == (try realFrenchHash()))
-            #expect(ref.options.method == .lat)
+            #expect(ref.options.method == .pairedDifferencePCA)
             #expect(ref.options.readingPosition.label == "mean from token 7")
             // The validationHash key is ALWAYS written by new attaches:
             // either a real pin or an explicit pinned-absent null.

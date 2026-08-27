@@ -75,8 +75,8 @@ public enum OptimizationComposer {
             switch VectorExtractionRecipe.Method(rawValue: raw) {
             case .caaMeanDifference:
                 return .mapped(.meanDifference)
-            case .repeLAT:
-                return .mapped(.lat)
+            case .pairedDifferencePCA:
+                return .mapped(.pairedDifferencePCA)
             case .emotionGrandMean:
                 return .mapped(.emotionGrandMean)
             case .repeReaderLAT:

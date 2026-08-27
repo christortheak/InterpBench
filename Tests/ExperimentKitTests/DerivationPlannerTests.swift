@@ -52,7 +52,7 @@ struct DerivationPlannerTests {
         let serverRecord = record(method: "lat")
         let advice = DerivationPlanner.advise(
             records: [serverRecord],
-            concept: "french", method: .repeLAT,
+            concept: "french", method: .pairedDifferencePCA,
             workspace: serverWorkspace, modelID: "Qwen/Qwen3-4B-MLX-4bit",
             stimulusHash: "hash-1", cost: .paired(stimulusCount: 24))
         #expect(advice == .reusable(serverRecord, date: "2026-06-10T00:00:00Z"))
@@ -182,7 +182,7 @@ struct DerivationPlannerTests {
             DerivationPlanner.methodPin(for: .caaMeanDifference, workspace: .local)
                 == "caaMeanDifference")
         #expect(
-            DerivationPlanner.methodPin(for: .repeLAT, workspace: .local) == "repeLAT")
+            DerivationPlanner.methodPin(for: .pairedDifferencePCA, workspace: .local) == "repeLAT")
         #expect(
             DerivationPlanner.methodPin(for: .emotionGrandMean, workspace: .local)
                 == "emotionGrandMean")
@@ -190,7 +190,7 @@ struct DerivationPlannerTests {
             DerivationPlanner.methodPin(for: .caaMeanDifference, workspace: serverWorkspace)
                 == "meanDifference")
         #expect(
-            DerivationPlanner.methodPin(for: .repeLAT, workspace: serverWorkspace) == "lat")
+            DerivationPlanner.methodPin(for: .pairedDifferencePCA, workspace: serverWorkspace) == "lat")
         #expect(
             DerivationPlanner.methodPin(for: .emotionGrandMean, workspace: serverWorkspace)
                 == "emotionGrandMean")
