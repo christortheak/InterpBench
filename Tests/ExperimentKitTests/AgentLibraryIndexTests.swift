@@ -203,6 +203,7 @@ import Testing
             #expect(entry.promotionLine?.contains("from 'batch-1'") == true)
             #expect(entry.promotionLine?.contains("criterion judgeScore") == true)
             #expect(entry.promotionLine?.contains("L14 α1.5") == true)
+            #expect(entry.promotedExperiment == "batch-1")
             #expect(entry.overrideReason == nil)
         }
     }

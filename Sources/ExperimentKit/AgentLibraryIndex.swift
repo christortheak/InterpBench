@@ -51,6 +51,12 @@ public enum AgentLibraryIndex {
         /// "from 'x' · sweep y · criterion judgeScore · L14 α1.5", or nil for
         /// a hand-created agent.
         public var promotionLine: String?
+        /// The experiment named by the promotion birth certificate, when the
+        /// agent has one. Carried structured (not parsed back out of
+        /// `promotionLine`) so the Optimizations lifecycle strip's "Promoted"
+        /// evidence reads straight off the index instead of running its own
+        /// `ModelVariantStore.scan()`.
+        public var promotedExperiment: String?
         /// Stamped only on a manual-override promotion.
         public var overrideReason: String?
 
@@ -66,6 +72,7 @@ public enum AgentLibraryIndex {
             kind: AgentLibrary.Kind,
             componentsSummary: String,
             promotionLine: String? = nil,
+            promotedExperiment: String? = nil,
             overrideReason: String? = nil
         ) {
             self.id = id
@@ -77,6 +84,7 @@ public enum AgentLibraryIndex {
             self.kind = kind
             self.componentsSummary = componentsSummary
             self.promotionLine = promotionLine
+            self.promotedExperiment = promotedExperiment
             self.overrideReason = overrideReason
         }
 
@@ -93,6 +101,7 @@ public enum AgentLibraryIndex {
                 componentsSummary: AgentLibrary.componentsSummary(components),
                 promotionLine: record.artifact.promotion.map(
                     AgentLibraryIndex.promotionLine),
+                promotedExperiment: record.artifact.promotion?.experiment,
                 overrideReason: record.artifact.promotion?.overrideReason)
         }
     }
