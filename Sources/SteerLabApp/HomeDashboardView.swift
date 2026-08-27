@@ -31,8 +31,15 @@ struct HomeDashboardView: View {
         }
         .formStyle(.grouped)
         .onAppear {
-            service.fineTuning.refresh()
             service.experiments.refresh()
+        }
+        // The agent-library scan is IO that nothing on the appearance path
+        // needs before the dashboard draws: same rule as the Agents tab.
+        // `.task` runs after the first draw, the scan runs off the main
+        // actor (latest-wins inside the panel), and the previous visit's
+        // rows stay visible while it lands.
+        .task {
+            service.fineTuning.refreshAgentLibraryAsync()
         }
     }
 

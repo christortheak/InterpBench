@@ -40,7 +40,14 @@ struct OptimizationRunsView: View {
     /// the lifecycle strip's "Promoted" evidence (local tree; on a PAIRED
     /// server that IS the server's tree too. The server's variant listing
     /// carries no promotion block, so server-source optimizations stay tri-state).
-    @State private var promotedExperiments: Set<String> = []
+    ///
+    /// Read off the agent library's row index, which `refreshOptimizations`
+    /// rescans asynchronously — this used to be a second full
+    /// `ModelVariantStore.scan()` on the main thread just to collect these
+    /// names. Previous rows stay visible while a rescan is in flight.
+    private var promotedExperiments: Set<String> {
+        Set(service.fineTuning.agentIndex.compactMap(\.promotedExperiment))
+    }
 
     private var panel: ExperimentPanel { service.experiments }
 
@@ -244,10 +251,10 @@ struct OptimizationRunsView: View {
 
     private func refreshOptimizations() {
         panel.refresh()
-        promotedExperiments = Set(
-            ModelVariantStore.scan().compactMap {
-                $0.artifact.promotion?.experiment
-            })
+        // The "Promoted" lifecycle evidence (`promotedExperiments`) reads
+        // the agent library's row index; rescan it off the main actor so a
+        // just-minted agent shows up without a blocking library walk here.
+        service.fineTuning.refreshAgentLibraryAsync()
         if showsServerList {
             Task {
                 await panel.refreshRemoteOptimizations()

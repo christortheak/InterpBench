@@ -799,11 +799,6 @@ struct ExperimentsPanelView: View {
             // navigates here, so this view is not on screen when the rename
             // invitation is set and the onChange above never fires.
             consumeRenameInvitation(panel: panel)
-            // Evidence notes for attached agents: refresh the library (for
-            // the artifact-resolution check) and scan robustness reports
-            // once per appearance — never per frame.
-            service.fineTuning.refresh()
-            robustnessEvidence = AgentEvidence.scanRobustnessReports()
             // A cross-link (e.g. Optimizations' "Submit Bundle: sweep") preselected
             // the study and verb — surface the Run-on-Server controls so the
             // prepared submission is visible, then clear the one-shot flag.
@@ -814,6 +809,23 @@ struct ExperimentsPanelView: View {
             if service.cluster.computeTarget == .server {
                 Task { await panel.refreshRecentServerJobs() }
             }
+        }
+        // Evidence notes for attached agents: refresh the library (for the
+        // artifact-resolution check) and scan robustness reports once per
+        // appearance — never per frame, and never ON the appearance path:
+        // both are directory walks whose cost scales with the workspace, and
+        // no row needs them to draw (same rule as the Agents tab's
+        // `refreshAgentLibraryAsync`). `.task` runs after the first draw;
+        // the previous visit's evidence stays visible while the rescan runs,
+        // and the task's own cancellation is the latest-wins guard — a
+        // superseded appearance never lands its stale reports.
+        .task {
+            service.fineTuning.refreshAgentLibraryAsync()
+            let runs = ExperimentStore.runsDirectory
+            let reports = await Task.detached(priority: .utility) {
+                AgentEvidence.scanRobustnessReports(runsDirectory: runs)
+            }.value
+            if !Task.isCancelled { robustnessEvidence = reports }
         }
         // Preflight server residency whenever the selection or the active
         // workspace changes (cached per selection inside the panel — this
