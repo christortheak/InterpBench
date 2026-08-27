@@ -24,6 +24,8 @@ public struct VectorArtifact: Identifiable, Sendable {
                 parts.append("LAT paired direction")
             case VectorExtractionRecipe.Method.emotionGrandMean.rawValue:
                 parts.append("emotion-grand-mean")
+            case VectorExtractionRecipe.Method.designatedReference.rawValue:
+                parts.append("designated-reference")
             default:
                 parts.append(recipe)
             }
@@ -31,6 +33,7 @@ public struct VectorArtifact: Identifiable, Sendable {
             switch sidecar.extractionMethod {
             case "lat": parts.append("LAT")
             case "meanDifference": parts.append("mean-diff")
+            case "designatedReference": parts.append("designated-reference")
             case "repeReaderLAT": parts.append("RepE reader-derived")
             default: break  // pre-options artifact: mean difference implied
             }

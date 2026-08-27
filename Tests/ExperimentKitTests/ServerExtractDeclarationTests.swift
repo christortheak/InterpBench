@@ -229,6 +229,78 @@ import Testing
         }
     }
 
+    // MARK: - 3b. a declared reference is verified the same way
+
+    /// The designated-reference build's version-skew case: a server that
+    /// predates the route's designated-reference support reads the PAIRED
+    /// stimulus files, ignores `reference`, and answers an ordinary job id —
+    /// a different recipe than the panel shows, in silence. The route echoes
+    /// the pin it applied; this client refuses anything less.
+    @Test func aDeclaredReferenceTravelsAndItsEchoIsVerified() async throws {
+        let client = Self.client { request in
+            let object = try #require(Self.body(from: request))
+            #expect(object["method"] as? String == "designatedReference")
+            #expect(object["reference"] as? String == "plain-exposition")
+            #expect(object["poolFromToken"] as? Int == 50)
+            return (Data("""
+                {"jobId": "job-dr",
+                 "designatedReference": {"name": "plain-exposition",
+                                         "hash": "abc123"}}
+                """.utf8), 200)
+        }
+
+        let jobID = try await client.conceptExtract(
+            concept: "formality", method: "designatedReference",
+            reference: "plain-exposition", poolFromToken: 50)
+
+        #expect(jobID == "job-dr")
+    }
+
+    @Test func aServerThatEchoesNoReferenceIsRefusedNotTrusted() async throws {
+        let client = Self.client { _ in
+            (Data(#"{"jobId": "job-old-dr"}"#.utf8), 200)
+        }
+
+        do {
+            _ = try await client.conceptExtract(
+                concept: "formality", method: "designatedReference",
+                reference: "plain-exposition", poolFromToken: 50)
+            Issue.record("expected a refusal")
+        } catch let error as ClusterClient.ReferenceNotApplied {
+            #expect("\(error)".contains("predates designated-reference"))
+            #expect("\(error)".contains("no legacy spelling"))
+        }
+    }
+
+    @Test func aReferenceEchoThatDisagreesIsRefused() async throws {
+        let client = Self.client { _ in
+            (Data("""
+                {"jobId": "job-wrong-dr",
+                 "designatedReference": {"name": "neutral-stories",
+                                         "hash": "def456"}}
+                """.utf8), 200)
+        }
+
+        await #expect(throws: ClusterClient.ReferenceNotApplied.self) {
+            _ = try await client.conceptExtract(
+                concept: "formality", method: "designatedReference",
+                reference: "plain-exposition", poolFromToken: 50)
+        }
+    }
+
+    /// A call that declares no reference is the paired call it always was:
+    /// no `reference` key in the body, no echo demanded.
+    @Test func aReferencelessCallNeitherPostsNorDemandsTheEcho() async throws {
+        let client = Self.client { request in
+            let object = try #require(Self.body(from: request))
+            #expect(object["reference"] == nil)
+            return (Data(#"{"jobId": "job-plain"}"#.utf8), 200)
+        }
+
+        #expect(try await client.conceptExtract(
+            concept: "steadiness", method: "meanDifference") == "job-plain")
+    }
+
     /// Two spellings of one position are refused BEFORE the request — the
     /// engines' shared rule, in the engines' shared words.
     @Test func bothPositionSpellingsAreRefusedBeforeAnythingIsPosted() async throws {

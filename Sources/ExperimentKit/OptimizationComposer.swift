@@ -79,6 +79,8 @@ public enum OptimizationComposer {
                 return .mapped(.lat)
             case .emotionGrandMean:
                 return .mapped(.emotionGrandMean)
+            case .designatedReference:
+                return .mapped(.designatedReference)
             case .repeReaderLAT:
                 return .refused(readerRefusal)
             case .jlensTokenDirection:

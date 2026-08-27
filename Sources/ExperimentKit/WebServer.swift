@@ -521,6 +521,7 @@ public final class SteerLabWebServer: Sendable {
                 var poolFromToken: Int?
                 var pooling: Bool?
                 var buildAllGrandMeanConcepts: Bool?
+                var designatedReference: String?
                 var projectionNeutralCorpusName: String?
                 var projectionNeutralConcepts: String?
                 var projectionNeutralDomains: String?
@@ -542,6 +543,9 @@ public final class SteerLabWebServer: Sendable {
             }
             if let buildAll = request.buildAllGrandMeanConcepts {
                 builder.buildAllGrandMeanConcepts = buildAll
+            }
+            if let reference = request.designatedReference {
+                builder.designatedReferenceConcept = reference
             }
             if let value = request.projectionNeutralCorpusName {
                 builder.projectionNeutralCorpusName = value
@@ -1184,6 +1188,17 @@ struct StateDTO: Encodable {
         let name: String
         let recipeFamily: String
         let recipeFamilyLabel: String
+        /// Family semantics the page must not re-derive: which dataset pane
+        /// (paired vs story rows), and whether the grand-mean selectors
+        /// apply. The client's fallback for an older DTO keeps the historic
+        /// paired-unless-grand-mean reading.
+        let recipeIsPaired: Bool
+        let recipeUsesStoryCorpus: Bool
+        /// designatedReference only: the reference-class selection, its
+        /// candidates, and the standing refusal (a self-reference).
+        let designatedReference: String
+        let designatedReferenceOptions: [String]
+        let designatedReferenceRefusal: String?
         let method: String
         let poolFromToken: Int?
         let positives: [StimulusDTO]
@@ -1485,6 +1500,11 @@ struct StateDTO: Encodable {
             name: builder.conceptName,
             recipeFamily: builder.recipeFamily.rawValue,
             recipeFamilyLabel: builder.recipeFamily.label,
+            recipeIsPaired: builder.recipeFamily.isPaired,
+            recipeUsesStoryCorpus: builder.recipeFamily.usesStoryCorpus,
+            designatedReference: builder.designatedReferenceConcept,
+            designatedReferenceOptions: builder.designatedReferenceOptions,
+            designatedReferenceRefusal: builder.designatedReferenceRefusal,
             method: builder.extractionMethod.rawValue,
             poolFromToken: builder.poolFromToken,
             positives: builder.positives.enumerated().map { index, text in
