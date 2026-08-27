@@ -4444,6 +4444,45 @@ def build_router(state: ServiceState) -> APIRouter:
             lambda n: experiment_store.detach(n, body.get("concepts", [])),
             name)
 
+    @router.post("/api/authoring/{name}/sweep-grid")
+    def authoring_sweep_grid(name: str, body: dict):
+        _safe_name(name)
+        from ..experiment import experiment_store
+        # The sweep block's GRID half. `sweep.selection` (the rule that picks
+        # a winner) is the protocol route's; this writes what the rule picks
+        # FROM, and it had no headless writer at all — the only way to obtain
+        # a grid was to duplicate a study that had one, which brings the
+        # donor's concepts with it.
+        #
+        # Every key is optional and edits its own field, so one axis moves
+        # without restating the block. "layers" is the absolute spelling of
+        # "layerFractions" and the two are exclusive — the store refuses a
+        # body that sends both, along with every other grid rule, and
+        # `_authoring` turns each typed refusal into a 400 carrying it.
+        if body.get("layerFractions") is not None \
+                and body.get("layers") is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="layerFractions and layers are two spellings of ONE "
+                       "axis — declaring both leaves no way to say which the "
+                       "grid is")
+        document = _authoring(
+            lambda n: experiment_store.set_sweep_grid(
+                n,
+                layer_fractions=body.get("layerFractions"),
+                layers=body.get("layers"),
+                alphas=body.get("alphas"),
+                dev_prompts_file=body.get("devPromptsFile"),
+                battery_file=body.get("batteryFile"),
+                max_tokens=body.get("maxTokens")),
+            name)
+        # The resolution report rides BESIDE the document rather than inside
+        # it: a client that posts the reply back must not send a key the
+        # manifest does not have.
+        report = dict(document)
+        grid = report.pop("_sweepGrid", {})
+        return {"experiment": report, "grid": grid}
+
     @router.post("/api/authoring/{name}/protocol")
     def authoring_protocol(name: str, body: dict):
         _safe_name(name)

@@ -160,6 +160,23 @@ public final class WorkspaceStore {
         // `authoring template` endpoint fail. The study's own authoring job
         // cards are NOT here; only the seven the code names, plus a README
         // written for this list.
+        // Generation-prompt templates for the `authoring prompt <kind>`
+        // emitter. The DIRECTORY is that registry's index (one file per kind,
+        // kind == filename stem), and both engines resolve the workspace's
+        // copy first and the seed copy second — so a study can edit the
+        // wording for itself, and the emission's `promptSpecHash` follows the
+        // bytes that were actually rendered. The two `_`-prefixed files are
+        // shared partials, not kinds.
+        "prompts/authoring-prompts/README.md",
+        "prompts/authoring-prompts/_delivery.md",
+        "prompts/authoring-prompts/_discipline.md",
+        "prompts/authoring-prompts/_reader-shape-contentPair.md",
+        "prompts/authoring-prompts/_reader-shape-singleStimulus.md",
+        "prompts/authoring-prompts/battery.md",
+        "prompts/authoring-prompts/choice-prompts.md",
+        "prompts/authoring-prompts/contrastive-pairs.md",
+        "prompts/authoring-prompts/reader-pairs.md",
+        "prompts/authoring-prompts/validation-set.md",
         "prompts/generation/README.md",
         "prompts/generation/caa-paired-stimuli.md",
         "prompts/generation/emotion-grand-mean-stories.md",

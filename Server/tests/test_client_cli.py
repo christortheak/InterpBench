@@ -596,11 +596,25 @@ def test_no_authoring_verb_accepts_a_server_locator():
     # opting itself out of the contract below.
     assert client_cli.RUNNER_FAMILY not in client_cli.AUTHORING_FAMILIES
     assert client_cli.RUN_FAMILY not in client_cli.AUTHORING_FAMILIES
+    # `authoring` is the THIRD, and it is excluded for the opposite reason to
+    # the other two: they address a runner, and it writes nothing at all. The
+    # generation-prompt emitter reads a template registry and prints text —
+    # the emitter of a prompt is never the acceptor of its output — so it is
+    # not an authoring family despite the name.
+    assert client_cli.AUTHORING_PROMPT_FAMILY \
+        not in client_cli.AUTHORING_FAMILIES
     excluded = ({spec.family for spec in client_cli.CLIENT_VERB_SPECS}
                 - set(client_cli.AUTHORING_FAMILIES))
-    assert excluded == {client_cli.RUNNER_FAMILY, client_cli.RUN_FAMILY}
+    assert excluded == {client_cli.RUNNER_FAMILY, client_cli.RUN_FAMILY,
+                        client_cli.AUTHORING_PROMPT_FAMILY}
     assert len(authoring) >= 16
-    for spec in authoring:
+    # The exclusion must not become a HOLE: `authoring` is checked against the
+    # same locator words, because "it writes nothing" is a reason not to call
+    # it authoring, never a reason to let it hold a server address.
+    checked = authoring + [spec for spec in client_cli.CLIENT_VERB_SPECS
+                           if spec.family
+                           == client_cli.AUTHORING_PROMPT_FAMILY]
+    for spec in checked:
         for flag in spec.declared_flags:
             lowered = flag.lower()
             for word in _LOCATOR_WORDS:

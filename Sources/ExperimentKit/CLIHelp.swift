@@ -33,7 +33,9 @@ public enum CLIFlagVocabulary {
     private static let metavars: [String: String] = [
         "--agent": "<name-or-path>",
         "--agent-name": "<name>",
+        "--alphas": "<a1,a2,…>",
         "--alpha-units": "<norm|raw>",
+        "--battery": "<path>",
         "--band-width": "<k>",
         "--bootstrap-partition": "<partition>",
         "--bundle": "<server-path>",
@@ -41,13 +43,17 @@ public enum CLIFlagVocabulary {
         "--cell": "<layer>:<alpha>",
         "--choice-prompts": "<path>",
         "--coherence-floor": "<ratio>",
+        "--concept": "<name>",
         "--control": "<name>",
         "--control-apply-to": "<winner|topK>",
         "--control-margin": "<margin>",
         "--control-top-k": "<k>",
         "--corpus": "<path>",
+        "--count": "<n>",
+        "--decision": "<text>",
         "--deltas": "<d1,d2>",
         "--description": "<text>",
+        "--dev-prompts": "<path>",
         "--env-file": "<path>",
         "--env-prefix": "<path>",
         "--experiment": "<name>",
@@ -56,13 +62,18 @@ public enum CLIFlagVocabulary {
         "--executor": "<local|slurm>",
         "--gres": "<spec>",
         "--hash": "<sha256>",
+        "--held-out": "<n>",
         "--home": "<dir>",
         "--job-class": "<class>",
         "--job-id": "<id>",
         "--judges": "<spec>",
+        "--layer-fractions": "<f1,f2,…>",
+        "--layers": "<L1,L2,…>",
         "--max-tokens": "<n>",
         "--method": "<name>",
         "--model": "<id>",
+        "--name": "<name>",
+        "--negative": "<text>",
         "--objective": "<metric>",
         "--ordinal-aggregation": "<name>",
         "--out": "<file>",
@@ -70,6 +81,7 @@ public enum CLIFlagVocabulary {
         "--payload": "<path>",
         "--plan-hash": "<sha256>",
         "--pool-from": "<k>",
+        "--positive": "<text>",
         "--reading-position": "<label>",
         "--python-version": "<version>",
         "--prompt": "<text>",
@@ -84,6 +96,7 @@ public enum CLIFlagVocabulary {
         "--run": "<run-dir>",
         "--run-substrate": "<local|server>",
         "--seat": "<seat>=<agent-artifact-path>",
+        "--shape": "<contentPair|singleStimulus>",
         "--sha256": "<hex>",
         "--since": "<date>",
         "--site": "<id>",
@@ -91,10 +104,12 @@ public enum CLIFlagVocabulary {
         "--squeue": "<command>",
         "--system": "<text>",
         "--target": "<rung>",
+        "--template-id": "<id>",
         "--temperature": "<t>",
         "--threshold": "<ratio>",
         "--token": "<token>",
         "--url": "<server>",
+        "--validation-count": "<n>",
         "--variant": "<server-path>",
         "--verb": "<verb>",
         "--walltime": "<hh:mm:ss>",
@@ -124,7 +139,11 @@ public enum CLIFlagVocabulary {
         "--allow-unverified-epoch":
             "Accept a legacy run that carries no experiment-hash stamp.",
         "--alpha-units": "Whether alpha is denominated by the residual-stream norm.",
+        "--alphas":
+            "The sweep's dose ladder, ascending, in residual-norm units above "
+            + "0 (0 is the baseline cell every sweep runs anyway).",
         "--band-width": "Layers per slot.",
+        "--battery": "The capability battery every swept cell is scored on.",
         "--baseline": "Declare the explicit no-intervention arm.",
         "--bootstrap-partition": "Scheduler partition the bootstrap job runs in.",
         "--bundle": "The bundle path, as an alternative to the positional.",
@@ -133,13 +152,17 @@ public enum CLIFlagVocabulary {
         "--check": "Compare the committed document with the tables; refuse on drift.",
         "--choice-prompts": "The hashed choice-prompt file the objective scores.",
         "--coherence-floor": "Minimum coherence a cell must hold.",
+        "--concept": "The concept this data is for; also names its destination.",
         "--control": "Attach a matched control condition to this arm.",
         "--control-apply-to": "Which swept cells the control runs against.",
         "--control-margin": "Margin the winner must beat its control by.",
         "--control-top-k": "How many cells topK covers.",
         "--corpus": "The neutral corpus the norms are measured on.",
+        "--count": "How many rows the prompt asks for.",
+        "--decision": "The decision each choice row puts to the model.",
         "--deltas": "Perturbation deltas around the anchor cell (default 0.2).",
         "--description": "Free text stored on the manifest.",
+        "--dev-prompts": "The dev split the sweep generates on.",
         "--dry-run": "Print what would be submitted and submit nothing.",
         "--env-file": "Path of the environment file the bootstrap step installs.",
         "--env-prefix": "Remote path prefix for the created environment.",
@@ -160,17 +183,27 @@ public enum CLIFlagVocabulary {
         "--gpu": "Also dispatch one Metal kernel, to prove the shaders load.",
         "--gres": "Scheduler GPU resource request.",
         "--hash": "Expected artifact hash of the variant.",
+        "--held-out": "Trailing rows marked split \"test\" — they decide the reader's sign.",
         "--help": "Print this surface and run nothing.",
         "--home": "Materialize the layout here instead of ~/SteerLab.",
         "--job-class": "Narrow the preview to one scheduler job class.",
         "--job-id": "Name the scheduler job explicitly instead of the recorded one.",
         "--json": "Print exactly one machine-readable envelope on stdout.",
         "--judges": "Judge panel: <name>:<kind>[:<model>[:<provider>]], comma-separated.",
+        "--layer-fractions":
+            "The sweep's layer axis as depths in [0, 1], ascending — the "
+            + "portable form, resolved against whatever model is loaded.",
+        "--layers":
+            "The sweep's layer axis as absolute block indices, ascending — "
+            + "converted to depths against the pinned model, which something "
+            + "must already have been extracted for.",
         "--materialize-env":
             "Install the env file rendered from the site profile (the default).",
         "--max-tokens": "Maximum tokens to generate (default 512).",
         "--method": "Extraction recipe for the named concepts.",
         "--model": "The model id.",
+        "--name": "Names the file the delivered data lands at.",
+        "--negative": "What the negative pole IS — a second considered position, never the absence of the first.",
         "--no-control": "Omit the control condition.",
         "--no-materialize-env":
             "Let the bootstrap script synthesize its own env file from built-in "
@@ -183,6 +216,7 @@ public enum CLIFlagVocabulary {
         "--payload": "Local directory pushed as the server payload.",
         "--plan-hash": "The reviewed plan this apply is allowed to run.",
         "--pool-from": "Read from token K onward instead of the last token.",
+        "--positive": "What the positive pole IS, in a sentence or two.",
         "--reading-position":
             "Where the residual stream is read, by name: 'last content token', "
             + "'content offset 2', 'mean content from token 0', 'offset from "
@@ -213,13 +247,16 @@ public enum CLIFlagVocabulary {
         "--site": "Name the server through the saved site registry.",
         "--slots": "Arm slots: <concept>:<layer>:<alpha>[:add|ablate], comma-separated.",
         "--squeue": "Command that queries the scheduler's queue.",
+        "--shape": "Which reader contrast the rows carry: content pair or single stimulus.",
         "--strip": "Strip the variant's interventions before generating.",
         "--system": "System text prepended to the turn.",
         "--target": "The lifecycle rung to reach (default connected).",
+        "--template-id": "The task template the reader fit will use; every row declares it.",
         "--temperature": "Sampling temperature.",
         "--threshold": "Minimum cosine below which the comparison refuses.",
         "--token": "Bearer token for --url; --site reads it from the Keychain instead.",
         "--url": "Name an unmanaged server by URL.",
+        "--validation-count": "How many held-out probe rows the prompt asks for.",
         "--variant": "The server-resident variant to generate through.",
         "--verb": "The verb the submitted job runs (defaults to run).",
         "--walltime": "Scheduler wall-time request.",
@@ -240,6 +277,9 @@ public enum CLIFlagVocabulary {
         "panel compile --max-tokens":
             "Override the study's max tokens before casting (default: the "
             + "manifest's).",
+        "experiment set-sweep-grid --max-tokens":
+            "Tokens generated per swept cell (default 80) — the grid's cost "
+            + "multiplier, not the study's generation length.",
         "experiment create --model": "The model this experiment is pinned to (required).",
         "vectors backfill-norms --model": "Load this model for the measurement.",
         "remote fetch --out": "Download into this directory (default `.`).",
@@ -473,6 +513,9 @@ public enum ExperimentCLIHelp {
                 synopsis: "install version | stamp | verify",
                 purpose: "This build's identity and the integrity of its "
                     + "install."),
+            .init(
+                synopsis: "authoring prompt <kind> …",
+                purpose: "Generation prompts for missing study data."),
             .init(
                 synopsis: "docs cli-reference [--check | --write]",
                 purpose: "Regenerate the reference document."),

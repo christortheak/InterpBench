@@ -238,6 +238,15 @@ STAGE_NOT_REACHED = "notReached"
 _RUNNER_FLAGS: frozenset = frozenset({"--runner", "--token-file", "--timeout",
                                       "--ca-bundle"})
 
+def _authoring_prompt_kinds():
+    """The emitter's registry, for the verb table. Imported by FUNCTION and
+    from `experiment.authoring_prompts`, which is stdlib plus `paths` — which
+    is why a generation-prompt emitter can ship inside a 30 MB client at all,
+    and why the light-install guard still reads honestly with it here."""
+    from .experiment import authoring_prompts
+    return authoring_prompts.KINDS
+
+
 CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     VerbSpec("experiment", "create", positional="<name>",
              purpose="Create a draft study in this workspace.",
@@ -268,6 +277,17 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     VerbSpec("experiment", "remove-condition",
              positional="<name> <condition>",
              purpose="Remove one declared arm from a draft study."),
+    # The sweep block's GRID half. `sweep.selection` (the RULE) is a protocol
+    # field reached through `set-protocol`, exactly as on the Mac's
+    # `set-sweep-selection`; the axes had no headless writer on either
+    # surface, so the only way to obtain a grid was to duplicate a study that
+    # had one — which brings the donor's concepts along with it.
+    VerbSpec("experiment", "set-sweep-grid", positional="<name>",
+             purpose="Declare the sweep's layer × alpha grid, its instrument "
+                     "files, and its per-cell token budget.",
+             value_flags=frozenset({"--layer-fractions", "--layers",
+                                    "--alphas", "--dev-prompts", "--battery",
+                                    "--max-tokens"})),
     VerbSpec("experiment", "set-protocol", positional="<name>",
              purpose="Set declared protocol fields on a draft study.",
              value_flags=frozenset({"--set"}),
@@ -288,6 +308,17 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
              boolean_flags=frozenset({"--force"})),
     VerbSpec("experiment", "list",
              purpose="List this workspace's experiments with their status."),
+    # The generation-prompt emitter. A family of its own rather than an
+    # `experiment` verb because it takes NO experiment: it answers "this study
+    # is missing X; what do I ask an LLM for", which is a question about a
+    # KIND of data, not about a manifest. It writes nothing into the workspace
+    # — the emitter is never the acceptor.
+    VerbSpec("authoring", "prompt", positional="<kind>",
+             purpose="Emit the generation prompt for one kind of missing "
+                     "study data, with its audit battery as numbers.",
+             value_flags=frozenset(
+                 {p.flag for k in _authoring_prompt_kinds()
+                  for p in k.parameters} | {"--out-file"})),
     VerbSpec("concept", "import", positional="<name>",
              purpose="Read stimuli out of a file and save them into a "
                      "concept's datasets.",
@@ -396,8 +427,8 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
 _SPECS_BY_LABEL = {spec.label: spec for spec in CLIENT_VERB_SPECS}
 
 #: Families this binary dispatches, in the order ``--help`` prints them.
-FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "runner",
-                             "run")
+FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "authoring",
+                             "runner", "run")
 
 #: Families whose ENTIRE surface is one verb, spelled as the family name and
 #: nothing after it: ``steerlab run <experiment>``. Maps family → the verb its
@@ -415,6 +446,13 @@ SOLO_FAMILIES: dict = {"run": "run"}
 #: than a judgement call about a flag name.
 AUTHORING_FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle")
 
+#: The generation-prompt emitter. NOT in :data:`AUTHORING_FAMILIES` despite
+#: its name, and the distinction is the point: an authoring family WRITES into
+#: the workspace, and this one reads a template registry and prints text. The
+#: emitter of a generation prompt is never the acceptor of its output, so the
+#: verb that emits one is structurally incapable of installing anything.
+AUTHORING_PROMPT_FAMILY = "authoring"
+
 #: The family that talks to a runner and authors nothing.
 RUNNER_FAMILY = "runner"
 
@@ -431,7 +469,12 @@ RUN_FAMILY = "run"
 #: runner what it is would be ceremony. A workspace IS resolved when one is
 #: named, so the envelope's ``workspace`` field stays truthful and a relative
 #: path still means what it looks like.
-WORKSPACE_OPTIONAL_FAMILIES: frozenset = frozenset({RUNNER_FAMILY})
+#: ``authoring`` joins it for a different reason: an emission reads the
+#: template registry, preferring a workspace's copy and falling back to the
+#: shipped one, so a caller with no workspace still gets the shipped prompt
+#: rather than a refusal about a study they never named.
+WORKSPACE_OPTIONAL_FAMILIES: frozenset = frozenset(
+    {RUNNER_FAMILY, AUTHORING_PROMPT_FAMILY})
 
 #: The global flag that names the workspace. Declared here rather than on each
 #: spec because it is lifted before the family is chosen — every verb takes it,
@@ -443,13 +486,16 @@ ROOT_FLAG = "--root"
 #: renders ``<value>`` — the honest fallback, never an invented shape.
 METAVARS: dict = {
     "--alpha-units": "<norm|raw>",
+    "--alphas": "<a1,a2,…>",
     "--artifact": "<runs/<run>/<name>>",
     "--band-width": "<k>",
+    "--battery": "<path>",
     "--bundle-path": "<runner-side-path>",
     "--bundle-sha": "<digest>",
     "--ca-bundle": "<path>",
     "--corpus": "<a,b,c>",
     "--description": "<text>",
+    "--dev-prompts": "<path>",
     "--device": "<cuda|cpu|mps>",
     "--dtype": "<auto|float16|bfloat16|float32>",
     "--eval-run": "<run-dir>",
@@ -458,7 +504,10 @@ METAVARS: dict = {
     "--reading-position": "<label>",
     "--executor": "<local|slurm>",
     "--file": "<path>",
+    "--layer-fractions": "<f1,f2,…>",
+    "--layers": "<L1,L2,…>",
     "--max-bytes": "<n>",
+    "--max-tokens": "<n>",
     "--method": "<method>",
     "--model": "<id>",
     "--out": "<file>",
@@ -1201,6 +1250,125 @@ def _experiment(invocation: Invocation) -> CLIResult:
                      "conceptCount": remaining},
             next_action=envelope.next_action(f"experiment verify {name}"))
 
+    if verb == "set-sweep-grid":
+        # Shape only here; every RULE (range, sign, ascent, the model's depth)
+        # is the store's, so the CLI, the HTTP route and the Mac verb refuse
+        # on one definition. An unparseable entry still refuses HERE: dropping
+        # it would silently shrink the grid, and a four-cell sweep reported as
+        # the five-cell one that was asked for is the quiet loss this surface
+        # exists to prevent.
+        def _axis(flag: str, cast, example: str):
+            raw = invocation.one(flag)
+            if raw is None:
+                return None
+            parts = [p.strip() for p in raw.split(",") if p.strip()]
+            if not parts:
+                raise ClientRefusal(
+                    code=USAGE_CODE,
+                    reason=f"{flag} is empty — an axis names at least one "
+                           "value",
+                    repair_action=(f"{PROGRAM} experiment set-sweep-grid "
+                                   f"{name} {flag} {example}"))
+            values = []
+            for part in parts:
+                try:
+                    values.append(cast(part))
+                except ValueError:
+                    raise ClientRefusal(
+                        code=USAGE_CODE,
+                        reason=(f"{flag} expects comma-separated "
+                                + ("whole block indices"
+                                   if cast is int else "numbers")
+                                + f" — got {part!r}"),
+                        repair_action=(f"{PROGRAM} experiment set-sweep-grid "
+                                       f"{name} {flag} {example}")) from None
+            return values
+
+        fractions = _axis("--layer-fractions", float, "0.5,0.7,0.85")
+        absolute = _axis("--layers", int, "13,18,22")
+        ladder = _axis("--alphas", float, "0.05,0.08,0.1,0.13")
+        budget_raw = invocation.one("--max-tokens")
+        dev = invocation.one("--dev-prompts")
+        battery = invocation.one("--battery")
+        if fractions is not None and absolute is not None:
+            raise ClientRefusal(
+                code=USAGE_CODE,
+                reason=("--layer-fractions and --layers are two spellings of "
+                        "ONE axis — declaring both leaves no way to say which "
+                        "the grid is"),
+                repair_action=(f"{PROGRAM} experiment set-sweep-grid {name} "
+                               "--layer-fractions 0.5,0.7,0.85  (portable "
+                               "across models), or --layers 13,18,22  (this "
+                               "model's own block indices)"))
+        if all(v is None for v in (fractions, absolute, ladder, budget_raw,
+                                   dev, battery)):
+            raise ClientRefusal(
+                code=USAGE_CODE,
+                reason=("set-sweep-grid needs at least one axis or input to "
+                        "set — it edits the grid a draft has rather than "
+                        "restating the whole block, so a call with no flags "
+                        "would write nothing and report a change"),
+                repair_action=f"usage: {synopsis(spec)}")
+        budget = None
+        if budget_raw is not None:
+            try:
+                budget = int(budget_raw)
+            except ValueError:
+                raise ClientRefusal(
+                    code=USAGE_CODE,
+                    reason=("--max-tokens must be a whole number of tokens — "
+                            f"got {budget_raw!r}"),
+                    repair_action=(f"{PROGRAM} experiment set-sweep-grid "
+                                   f"{name} --max-tokens 80")) from None
+        document = store.set_sweep_grid(
+            name, layer_fractions=fractions, layers=absolute, alphas=ladder,
+            dev_prompts_file=dev, battery_file=battery, max_tokens=budget)
+        report = document.get("_sweepGrid") or {}
+        block = document.get("sweep") or {}
+        cells = len(block.get("layerFractions") or []) \
+            * len(block.get("alphas") or [])
+        depth = report.get("layerCount")
+        resolved = report.get("resolvedLayers") or []
+        collapsed = int(report.get("collapsedFractions") or 0)
+        line = (f"declared the sweep grid on {name!r}: "
+                f"{len(block.get('layerFractions') or [])} depth(s) × "
+                f"{len(block.get('alphas') or [])} alpha(s) = {cells} cell(s)"
+                + (f" — layers {', '.join(str(x) for x in resolved)} "
+                   f"of {depth}" if depth
+                   else " — layer indices unknown until something is "
+                        "extracted for this model")
+                + (f" ({collapsed} depth(s) collapsed onto a layer already in "
+                   "the grid — widen the spacing if that was not the intent)"
+                   if collapsed else ""))
+        print(line)
+        return CLIResult(
+            message=line, changed=True,
+            payload={
+                "experiment": name,
+                "layerFractions": block.get("layerFractions"),
+                "alphas": block.get("alphas"),
+                "alphaUnits": "residualNorm",
+                "cellCount": cells,
+                "collapsedFractions": collapsed,
+                # Stated, never guessed: an absent depth is a fact about this
+                # workspace, and a caller must be able to tell "no layers"
+                # from "not resolvable yet".
+                "layerCount": depth,
+                "resolvedLayers": resolved if depth else None,
+                "devPromptsFile": block.get("devPromptsFile"),
+                "batteryFile": block.get("batteryFile"),
+                "maxTokens": block.get("maxTokens"),
+                "declaredAbsoluteLayers": bool(
+                    report.get("declaredAbsoluteLayers")),
+            },
+            # `experiment verify` rather than a pointer at the selection
+            # criterion: `sweep.selection` is NOT reachable from this client
+            # (`set_protocol`'s allowed-key set does not carry `sweep`), and a
+            # nextAction naming a call that would write nothing is worse than
+            # none. Declaring the criterion is Mac-authority, and
+            # `cli_envelope.MAC_AUTHORITY_VERBS` is where an agent reads that.
+            next_action=envelope.next_action(f"experiment verify {name}"))
+
     if verb == "declare-condition":
         _require(args, 2, spec)
         condition_name = args[1].strip()
@@ -1489,6 +1657,101 @@ def _concept(invocation: Invocation) -> CLIResult:
                  "negativeCount": info["negativeCount"],
                  "contentHash": info.get("contentHash"),
                  "stimulusSetHash": info.get("hash")})
+
+
+# --- verbs: authoring ----------------------------------------------------------
+
+
+def _authoring_prompt(invocation: Invocation) -> CLIResult:
+    """``authoring prompt <kind>`` — render one generation prompt and print it.
+
+    Reads the template registry, writes NOTHING into the workspace. That
+    asymmetry is the design: a study is blocked by missing data far more often
+    than by a missing verb, and the answer to missing data is a prompt — but
+    the emitter of a prompt must never be the acceptor of its output, so this
+    verb stops at the text. Mac twin: ``ExperimentCLIRunner
+    .runAuthoringCommand``; the rendered bytes are identical on both engines
+    for the same registry and the same arguments.
+    """
+    from .experiment import authoring_prompts
+
+    spec = invocation.spec
+    args = invocation.positionals
+    _require(args, 1, spec)
+    kind_id = args[0]
+    entry = authoring_prompts.kind(kind_id)
+    flags = {p.flag: p.key for k in authoring_prompts.KINDS
+             for p in k.parameters}
+    # A flag the PARSER accepts (it accepts every kind's flags, since the verb
+    # is one spec) but this KIND does not own would otherwise vanish silently,
+    # leaving a caller convinced they had set something.
+    if entry is not None:
+        owned = {p.flag for p in entry.parameters}
+        foreign = sorted(f for f in flags
+                         if f not in owned and invocation.one(f) is not None)
+        if foreign:
+            raise ClientRefusal(
+                code=USAGE_CODE,
+                reason=(f"'{kind_id}' does not take {foreign[0]} — it takes "
+                        + " ".join(p.flag for p in entry.parameters)),
+                repair_action=" ".join(
+                    [f"{PROGRAM} authoring prompt {kind_id}"]
+                    + [f'{p.flag} "…"' for p in entry.parameters
+                       if p.required]))
+    arguments = {}
+    for parameter in (entry.parameters if entry is not None else ()):
+        value = invocation.one(parameter.flag)
+        if value is not None:
+            arguments[parameter.key] = value
+    try:
+        emission = authoring_prompts.emit(
+            kind_id, arguments, program=PROGRAM)
+    except authoring_prompts.AuthoringPromptError as exc:
+        # Typed on the store's terms: a gate id when the refusal is about the
+        # WORKSPACE's state (a registry file that is not there), a usage code
+        # when it is about the invocation.
+        raise ClientRefusal(
+            code=exc.gate or USAGE_CODE, gate=exc.gate, reason=str(exc),
+            state="refused" if exc.gate else "blocked",
+            repair_action=exc.repair_action) from None
+    print(emission.text)
+    wrote = None
+    # `--out-file`, not `--out`: this client lifts `--out` before the family is
+    # chosen (it names the ENVELOPE's file), so unlike the Mac verb this one
+    # cannot re-own that spelling. The two engines' flag differs; the emitted
+    # bytes do not.
+    out_file = invocation.one("--out-file")
+    if out_file:
+        with open(out_file, "w", encoding="utf-8") as handle:
+            handle.write(emission.text)
+        wrote = out_file
+    payload = {
+        "kind": emission.kind,
+        "prompt": emission.text,
+        # The provenance citation. Named exactly as a manifest would record
+        # it, so a study can carry it verbatim.
+        "promptSpecHash": f"sha256:{emission.prompt_spec_hash}",
+        "templateFiles": list(emission.template_files),
+        "fromWorkspaceCopy": emission.from_workspace_copy,
+        "destination": emission.destination,
+        "parameters": dict(emission.parameters),
+    }
+    if wrote:
+        payload["outPath"] = wrote
+    return CLIResult(
+        message=(f"emitted the {emission.kind!r} authoring prompt "
+                 f"({len(emission.text)} characters, promptSpecHash "
+                 f"sha256:{emission.prompt_spec_hash[:12]}…)"
+                 + (f" → {wrote}" if wrote else "")),
+        changed=bool(wrote),
+        payload=payload,
+        # Never "install this": the emitter is not the acceptor, and the next
+        # action is a review that runs the prompt's own battery.
+        next_action=envelope.next_action(
+            "hand the prompt to an author, then have a SECOND reviewer re-run "
+            "its audit battery against the delivery before any file is "
+            "installed",
+            requires_human=True))
 
 
 # --- verbs: bundle -------------------------------------------------------------
@@ -3413,7 +3676,7 @@ def _iso(value) -> str | None:
 
 
 HANDLERS = {"experiment": _experiment, "concept": _concept, "bundle": _bundle,
-            "runner": _runner, "run": _run}
+            "authoring": _authoring_prompt, "runner": _runner, "run": _run}
 
 
 # --- envelope construction -----------------------------------------------------

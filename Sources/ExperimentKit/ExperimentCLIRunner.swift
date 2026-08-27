@@ -107,7 +107,7 @@ public struct ExperimentCLIRunner: Sendable {
     /// nothing is dispatched twice.
     public static let namespaces: Set<String> = [
         "init", "workspace", "data", "vectors", "remote", "experiment", "docs",
-        "install", "panel",
+        "install", "panel", "authoring",
     ]
 
     /// The top-level spelling of `install version`. `--version` is what a
@@ -185,6 +185,7 @@ public struct ExperimentCLIRunner: Sendable {
             case "remote": result = try await runRemoteCommand(invocation)
             case "experiment": result = try await runExperimentCommand(invocation)
             case "docs": result = try runDocsCommand(invocation)
+            case "authoring": result = try runAuthoringCommand(invocation)
             case "install": result = try runInstallCommand(invocation)
             case "panel": result = try runPanelCommand(invocation)
             default:
@@ -969,6 +970,107 @@ public struct ExperimentCLIRunner: Sendable {
     /// readable on GitHub with no toolchain, so the generated text is
     /// COMMITTED and a test compares. `--check` is the same comparison from a
     /// command line; it refuses (65) on drift, and the repair is one command.
+    /// `authoring prompt <kind>` — render one generation prompt and print it.
+    ///
+    /// Reads the registry, writes NOTHING into the workspace. That asymmetry
+    /// is the design: a study is blocked by missing data far more often than
+    /// by a missing verb, and the answer to missing data is a prompt — but the
+    /// emitter of a prompt must never be the acceptor of its output, so this
+    /// verb stops at the text.
+    func runAuthoringCommand(_ invocation: ExperimentCLIInvocation) throws
+        -> ExperimentCLIResult
+    {
+        let args = invocation.args
+        func flag(_ name: String) -> String? {
+            guard let index = args.firstIndex(of: name), args.count > index + 1
+            else { return nil }
+            return args[index + 1]
+        }
+        guard args.first == "prompt" else {
+            throw ExperimentError(
+                reason: "usage: authoring prompt <"
+                    + AuthoringPrompts.kinds.map(\.id).joined(separator: "|")
+                    + "> [parameters]  (steerlab-cli authoring prompt --help "
+                    + "names each kind's parameters)")
+        }
+        guard args.count >= 2, !args[1].hasPrefix("--") else {
+            throw ExperimentError(
+                reason: "usage: authoring prompt <"
+                    + AuthoringPrompts.kinds.map(\.id).joined(separator: "|")
+                    + "> [parameters] [--out <file>]")
+        }
+        let kindID = args[1]
+        // Arguments are collected by KEY, not by flag, so the CLI reaches the
+        // same function an HTTP caller or a test would.
+        var arguments: [String: String] = [:]
+        for kind in AuthoringPrompts.kinds where kind.id == kindID {
+            for parameter in kind.parameters {
+                if let value = flag(parameter.flag) {
+                    arguments[parameter.key] = value
+                }
+            }
+        }
+        // A flag the PARSER accepts (it accepts every kind's flags, since the
+        // verb is one spec) but this KIND does not own would otherwise vanish
+        // silently, leaving a caller convinced they had set something.
+        if let kind = AuthoringPrompts.kind(kindID) {
+            let owned = Set(kind.parameters.map(\.flag))
+            let foreign = AuthoringPrompts.kinds
+                .flatMap { $0.parameters.map(\.flag) }
+                .filter { !owned.contains($0) && args.contains($0) }
+                .sorted()
+            if let first = foreign.first {
+                throw ExperimentError.malformed(
+                    "'\(kindID)' does not take \(first) — it takes "
+                        + kind.parameters.map(\.flag).joined(separator: " "),
+                    repair: (["steerlab-cli authoring prompt \(kindID)"]
+                        + kind.parameters
+                            .filter(\.isRequired)
+                            .map { "\($0.flag) \"…\"" })
+                        .joined(separator: " "))
+            }
+        }
+        let emission = try AuthoringPrompts.emit(
+            kind: kindID, arguments: arguments)
+        // The prompt itself goes to the sink — stdout in human mode, stderr in
+        // `--json`, where `result.prompt` carries it instead. A caller in
+        // either mode gets the whole text; neither gets it twice.
+        sink.out(emission.text)
+        var wrotePath: String?
+        if let out = invocation.outPath ?? flag("--out") {
+            try emission.text.write(
+                to: URL(filePath: out), atomically: true, encoding: .utf8)
+            wrotePath = out
+        }
+        var payload: [String: JSONValue] = [
+            "kind": .string(emission.kind),
+            "prompt": .string(emission.text),
+            // The provenance citation. Named exactly as a manifest would
+            // record it, so a study can carry it verbatim.
+            "promptSpecHash": .string("sha256:\(emission.promptSpecHash)"),
+            "templateFiles": .array(emission.templateFiles.map { .string($0) }),
+            "fromWorkspaceCopy": .bool(emission.fromWorkspaceCopy),
+            "destination": .string(emission.destination),
+            "parameters": .object(
+                emission.parameters.mapValues { JSONValue.string($0) }),
+        ]
+        if let wrotePath { payload["outPath"] = .string(wrotePath) }
+        return ExperimentCLIResult(
+            message: "emitted the '\(emission.kind)' authoring prompt "
+                + "(\(emission.text.count) characters, promptSpecHash "
+                + "sha256:\(emission.promptSpecHash.prefix(12))…)"
+                + (wrotePath.map { " → \($0)" } ?? ""),
+            changed: wrotePath != nil,
+            payload: payload,
+            // Never `install this`: the emitter is not the acceptor, and the
+            // next action is a review that runs the prompt's own battery.
+            nextAction: .init(
+                verb: "hand the prompt to an author, then have a SECOND "
+                    + "reviewer re-run its audit battery against the delivery "
+                    + "before any file is installed",
+                requiresHuman: true))
+    }
+
     func runDocsCommand(_ invocation: ExperimentCLIInvocation) throws
         -> ExperimentCLIResult
     {
@@ -2954,6 +3056,136 @@ public struct ExperimentCLIRunner: Sendable {
                 advisories: selectionAdvisories,
                 nextAction: .init(verb: "experiment sweep \(declared.name)"))
 
+        case "set-sweep-grid":
+            // THE grid. `set-sweep-selection` declares how a winner is picked;
+            // this declares what it is picked FROM, and until now the axes were
+            // reachable only from the Optimizations panel. The consequence was
+            // structural, not cosmetic: the only headless way to obtain a grid
+            // was `duplicate`, which carries the donor study's concepts along
+            // with its sweep block — the passenger-concept problem.
+            guard args.count >= 2 else {
+                throw ExperimentError(
+                    reason: "usage: experiment set-sweep-grid <name> "
+                        + "[--layer-fractions 0.5,0.7,0.85 | --layers 13,18,22] "
+                        + "[--alphas 0.05,0.08,0.1,0.13] "
+                        + "[--dev-prompts prompts/dev/dev-prompts.jsonl] "
+                        + "[--battery prompts/batteries/basic.jsonl] "
+                        + "[--max-tokens 80]\n"
+                        + "       alphas are residual-norm units; both axes "
+                        + "ascend; the selection RULE is a different verb "
+                        + "(experiment set-sweep-selection)")
+            }
+            let gridFlags = [
+                "--layer-fractions", "--layers", "--alphas", "--dev-prompts",
+                "--battery", "--max-tokens",
+            ]
+            guard gridFlags.contains(where: { flag($0) != nil }) else {
+                throw ExperimentError.malformed(
+                    "set-sweep-grid needs at least one axis or input to set — "
+                        + "it edits the grid a draft has rather than restating "
+                        + "the whole block, so a call with no flags would "
+                        + "write nothing and report a change",
+                    repair: "steerlab-cli experiment set-sweep-grid \(args[1]) "
+                        + "--layer-fractions 0.5,0.7,0.85 "
+                        + "--alphas 0.05,0.08,0.1,0.13")
+            }
+            let fractions = try flag("--layer-fractions").map {
+                try Self.parseNumberAxis($0, flag: "--layer-fractions")
+            }
+            let absolute = try flag("--layers").map {
+                try Self.parseLayerIndices($0)
+            }
+            if fractions != nil, absolute != nil {
+                throw ExperimentError.malformed(
+                    "--layer-fractions and --layers are two spellings of ONE "
+                        + "axis — declaring both leaves no way to say which "
+                        + "the grid is",
+                    repair: "steerlab-cli experiment set-sweep-grid \(args[1]) "
+                        + "--layer-fractions 0.5,0.7,0.85  (portable across "
+                        + "models), or --layers 13,18,22  (this model's own "
+                        + "block indices)")
+            }
+            let ladder = try flag("--alphas").map {
+                try Self.parseNumberAxis($0, flag: "--alphas")
+            }
+            var budget: Int?
+            if let text = flag("--max-tokens") {
+                guard let parsed = Int(text) else {
+                    throw ExperimentError.malformed(
+                        "--max-tokens must be a whole number of tokens — "
+                            + "got '\(text)'",
+                        repair: "steerlab-cli experiment set-sweep-grid "
+                            + "\(args[1]) --max-tokens 80")
+                }
+                budget = parsed
+            }
+            let grid = try ExperimentStore.setSweepGrid(
+                experimentName: args[1],
+                layerFractions: fractions, absoluteLayers: absolute,
+                alphas: ladder, devPromptsFile: flag("--dev-prompts"),
+                batteryFile: flag("--battery"), maxTokens: budget)
+            guard let gridSpec = grid.manifest.sweep else {
+                throw ExperimentError(
+                    reason: "set-sweep-grid wrote no sweep block on "
+                        + "'\(args[1])' — this is a bug, not a refusal")
+            }
+            // The ECHO. A grid is the one declaration whose written form and
+            // its run form differ (depths become blocks), so a caller that
+            // cannot see both cannot check the thing it just declared — which
+            // is exactly what the contract's grid dialog asks a human to do.
+            let gridCells = gridSpec.layerFractions.count * gridSpec.alphas.count
+            let gridLine =
+                "declared the sweep grid on '\(grid.manifest.name)': "
+                + "\(gridSpec.layerFractions.count) depth"
+                + "\(gridSpec.layerFractions.count == 1 ? "" : "s") × "
+                + "\(gridSpec.alphas.count) alpha"
+                + "\(gridSpec.alphas.count == 1 ? "" : "s") = "
+                + "\(gridCells) cell\(gridCells == 1 ? "" : "s")"
+                + (grid.layerCount.map {
+                    " — layers \(grid.resolvedLayers.map(String.init).joined(separator: ", ")) of \($0)"
+                } ?? " — layer indices unknown until something is extracted "
+                    + "for this model")
+                // A grid of "four depths" that is really three is a silently
+                // smaller sweep. Not a refusal: the fractions are legal and
+                // the collapse is a property of THIS model's depth.
+                + (grid.collapsedFractions > 0
+                    ? " (\(grid.collapsedFractions) depth"
+                        + "\(grid.collapsedFractions == 1 ? "" : "s") "
+                        + "collapsed onto a layer already in the grid — widen "
+                        + "the spacing if that was not the intent)"
+                    : "")
+            sink.out(gridLine)
+            var gridPayload: [String: JSONValue] = [
+                "experiment": .string(grid.manifest.name),
+                "layerFractions": .array(gridSpec.layerFractions.map { .number($0) }),
+                "alphas": .array(gridSpec.alphas.map { .number($0) }),
+                "alphaUnits": .string("residualNorm"),
+                "cellCount": .number(Double(gridCells)),
+                "collapsedFractions": .number(Double(grid.collapsedFractions)),
+                "devPromptsFile": .string(gridSpec.devPromptsFile),
+                "batteryFile": .string(gridSpec.batteryFile),
+                "maxTokens": .number(Double(gridSpec.maxTokens)),
+                "declaredAbsoluteLayers": .bool(grid.declaredAbsoluteLayers),
+            ]
+            if let depth = grid.layerCount {
+                gridPayload["layerCount"] = .number(Double(depth))
+                gridPayload["resolvedLayers"] = .array(
+                    grid.resolvedLayers.map { .number(Double($0)) })
+            } else {
+                // Stated, never guessed: an absent depth is a fact about this
+                // workspace, and a caller reading `resolvedLayers` must be
+                // able to tell "no layers" from "not resolvable yet".
+                gridPayload["layerCount"] = .null
+                gridPayload["resolvedLayers"] = .null
+            }
+            return ExperimentCLIResult(
+                message: gridLine, changed: true, payload: gridPayload,
+                nextAction: .init(
+                    verb: grid.manifest.sweep?.selection == nil
+                        ? "experiment set-sweep-selection \(grid.manifest.name) "
+                            + "--objective judgeScore|logprobShift"
+                        : "experiment sweep \(grid.manifest.name)"))
+
         case "set-instruments":
             // WHAT the study measures. `outcomeInstruments` is provenance —
             // written explicitly, never inferred from the prompt data — which
@@ -3210,8 +3442,9 @@ public struct ExperimentCLIRunner: Sendable {
 
         default:
             throw ExperimentError(
-                reason: "verbs: list | create | attach | pin-prompts | pin-rubric "
-                    + "| declare-condition | set-sweep-selection | set-instruments "
+                reason: "verbs: list | create | attach | detach | pin-prompts "
+                    + "| pin-rubric | declare-condition | set-sweep-selection "
+                    + "| set-sweep-grid | set-instruments "
                     + "| set-style-taxonomy | verify "
                     + "| freeze | duplicate | extract | validate | sweep | run "
                     + "| analyze | rescore-style | evaluate | promote | confirm")
@@ -3285,6 +3518,64 @@ public struct ExperimentCLIRunner: Sendable {
             throw ExperimentError(reason: "--slots is empty — \(shape)")
         }
         return slots
+    }
+
+    /// One comma-separated grid axis → numbers. SHAPE only: whether the axis
+    /// is legal as a GRID (range, sign, ascent) is
+    /// `ExperimentStore.sweepGridProblem`'s, so the same rule answers the CLI,
+    /// the HTTP route, and the client. An unparseable entry has to refuse
+    /// HERE, though: dropping it would silently shrink the grid, and a
+    /// four-cell sweep reported as the five-cell one that was asked for is
+    /// the class of quiet loss this surface exists to prevent.
+    static func parseNumberAxis(_ raw: String, flag: String) throws -> [Double] {
+        let parts = raw.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !parts.isEmpty else {
+            throw ExperimentError.malformed(
+                "\(flag) is empty — an axis names at least one value",
+                repair: "steerlab-cli experiment set-sweep-grid <name> "
+                    + "\(flag) \(flag == "--alphas" ? "0.05,0.08,0.1,0.13" : "0.5,0.7,0.85")")
+        }
+        var values: [Double] = []
+        for part in parts {
+            guard let value = Double(part), value.isFinite else {
+                throw ExperimentError.malformed(
+                    "\(flag) expects comma-separated numbers — got '\(part)'",
+                    repair: "steerlab-cli experiment set-sweep-grid <name> "
+                        + "\(flag) \(flag == "--alphas" ? "0.05,0.08,0.1,0.13" : "0.5,0.7,0.85")")
+            }
+            values.append(value)
+        }
+        return values
+    }
+
+    /// `--layers` → absolute block indices. Whole numbers only: "layer 12.5"
+    /// is not a place in a network, and rounding one would name a cell the
+    /// caller did not ask for.
+    static func parseLayerIndices(_ raw: String) throws -> [Int] {
+        let parts = raw.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !parts.isEmpty else {
+            throw ExperimentError.malformed(
+                "--layers is empty — an axis names at least one layer",
+                repair: "steerlab-cli experiment set-sweep-grid <name> "
+                    + "--layers 13,18,22")
+        }
+        var layers: [Int] = []
+        for part in parts {
+            guard let value = Int(part) else {
+                throw ExperimentError.malformed(
+                    "--layers expects comma-separated whole block indices — "
+                        + "got '\(part)'",
+                    repair: "steerlab-cli experiment set-sweep-grid <name> "
+                        + "--layers 13,18,22  ; or declare depths instead: "
+                        + "--layer-fractions 0.5,0.7,0.85")
+            }
+            layers.append(value)
+        }
+        return layers
     }
 
     /// The sweep-selection flags → the manifest's own `SweepSelection` shape

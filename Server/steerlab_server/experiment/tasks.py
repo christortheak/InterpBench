@@ -38,6 +38,7 @@ from . import system_prompt as system_prompt_mod
 from . import choice_deltas
 from . import turn_endpoint
 from .generate import CellInjection, generate
+from . import manifest as manifest_mod
 from .manifest import JudgeRef, Manifest, VariantCondition
 from .run_config import write_run_config
 from .run_status import RunStatus, heal_after_completion
@@ -2182,16 +2183,12 @@ DEFAULT_SWEEP_LAYER_FRACTIONS = (0.5, 0.7, 0.85)
 DEFAULT_SWEEP_ALPHAS = (0.05, 0.08, 0.1, 0.13)
 
 
-def resolve_sweep_layers(layer_count: int, fractions) -> list[int]:
-    """Depth-fraction → block-index resolution for the spec'd sweep grid.
-
-    Truncating (``int(layer_count * f)``), clamped to a valid block,
-    deduplicated, sorted — the same rule the Swift engine applies in
-    ``SweepSpec.resolvedLayers`` (``Int(Double(layerCount) * f)``), so a
-    fraction grid names the same cells on both engines for a given layer
-    count."""
-    return sorted({min(layer_count - 1, max(0, int(layer_count * float(f))))
-                   for f in fractions})
+#: Depth-fraction → block-index resolution for the spec'd sweep grid. Defined
+#: in ``manifest`` and re-exported here, where it was written and where every
+#: run-loop caller still reads it: the AUTHORING side has to resolve a grid too
+#: (``experiment_store.set_sweep_grid`` converts absolute layers against it),
+#: and that side must never import this module's torch-bearing run loop.
+resolve_sweep_layers = manifest_mod.resolve_sweep_layers
 
 
 def concept_sweep_layers(concept, vectors, layers: list[int], log) -> list[int]:

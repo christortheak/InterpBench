@@ -144,6 +144,15 @@ public enum LifecycleGate: String, CaseIterable, Sendable, Codable {
     /// run in between would have measured a study nobody declared.
     case conceptInUse
 
+    /// The declared sweep GRID cannot be run: an empty axis, a depth fraction
+    /// outside [0, 1], an alpha at or below zero (0 is the implied baseline
+    /// cell, not a rung), a ladder that does not ascend, or an absolute layer
+    /// outside the pinned model's depth. `sweepSelectionRule`'s sibling, and
+    /// deliberately not the same id: that gate says the RULE for picking a
+    /// winner cannot resolve, this one says there are no honest cells to pick
+    /// from, and the two repairs are different verbs.
+    case sweepGridRule
+
     /// The vocabulary as wire strings, in the fixed cross-engine order. Python
     /// twin (step 8): `LIFECYCLE_GATE_IDS`.
     public static let vocabulary: [String] = allCases.map(\.rawValue)
@@ -279,7 +288,8 @@ public enum RefusalSiteRegistry {
                 "experiment attach", "experiment detach",
                 "experiment pin-prompts",
                 "experiment pin-rubric", "experiment declare-condition",
-                "experiment set-sweep-selection", "experiment set-instruments",
+                "experiment set-sweep-selection", "experiment set-sweep-grid",
+                "experiment set-instruments",
                 "experiment set-style-taxonomy", "experiment confirm",
                 // `panel compile` writes a FILE before it writes the manifest,
                 // so it checks the status itself and refuses before compiling
@@ -431,6 +441,12 @@ public enum RefusalSiteRegistry {
                 // class, one direction over: the thing the verb needs was
                 // never declared, and the repair is to read what IS pinned.
                 "experiment detach",
+                // `set-sweep-grid --layers` on a model nothing has been
+                // extracted for. ABSOLUTE layers are only meaning-bearing
+                // against a depth, this workspace holds no artifact that
+                // states one, and inventing a depth would silently name
+                // different cells than the sweep will.
+                "experiment set-sweep-grid",
                 // The same class one family over: `--seat <id>=<path>` naming
                 // an agent artifact that is not on disk, or a file that does
                 // not decode as one (open-issues §18).
@@ -475,6 +491,16 @@ public enum RefusalSiteRegistry {
             repairAction: "steerlab-cli experiment declare-condition <name> "
                 + "<condition> …  (re-declare onto a concept that stays), "
                 + "then steerlab-cli experiment detach <name> <concept>…"),
+        .init(
+            gate: .sweepGridRule,
+            verbs: ["experiment set-sweep-grid"],
+            origin: "ExperimentStore.sweepGridProblem — the grid audit "
+                + "(axis emptiness, fraction range, alpha sign, ladder "
+                + "ascent, absolute layers against the pinned model's depth)",
+            repairAction: "steerlab-cli experiment set-sweep-grid <name> "
+                + "--layer-fractions 0.5,0.7,0.85 --alphas 0.05,0.08,0.1,0.13 "
+                + "(both axes ascend; alphas are residual-norm units > 0, and "
+                + "0 is the implied baseline cell)"),
     ]
 
     /// The site claiming a gate, or nil — nil is what the exhaustiveness test

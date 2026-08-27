@@ -153,16 +153,22 @@ Everything above speaks `--json` and answers in the **same envelope** the two
 engines share (§7.7's vocabulary, §4 of the contracts document) — same states,
 same exit codes, same `error.code` / `error.repairAction`. Verb families:
 `experiment` (create, attach, detach, declare-condition, remove-condition,
-set-protocol, pin-revision, set-style-taxonomy, pin-sae-candidates, duplicate,
+set-sweep-grid, set-protocol, pin-revision, set-style-taxonomy,
+pin-sae-candidates, duplicate,
 verify, freeze, list), `concept import`, `bundle` (package, inspect, import),
-`runner` (below — including `runner serve`, which starts a managed local
-runner), `run` (the composite, below), plus `--version`. `steerlab <family>
+`authoring prompt <kind>` (§3.12's emitter, identical bytes to the Mac's —
+its file destination is spelled `--out-file` here, because this client lifts
+`--out` before the family is chosen), `runner` (below — including `runner
+serve`, which starts a managed local runner), `run` (the composite, below),
+plus `--version`. `steerlab <family>
 --help` prints the roster; the workspace comes from `--root` or
 `$STEERLAB_WORKSPACE` and there is **no default** — except for the `runner`
 family, which addresses a remote engine and names its local paths explicitly,
 so it runs without one (a named workspace is still honoured and still reported
-in the envelope). `run` is not an exception: it reads a study out of a
-workspace and imports evidence back into it, so it requires one.
+in the envelope), and `authoring`, whose template registry falls back to the
+shipped copy so a caller who named no study still gets the shipped prompt.
+`run` is not an exception: it reads a study out of a workspace and imports
+evidence back into it, so it requires one.
 
 #### The `runner` family (Phase 2)
 
@@ -761,6 +767,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   remote <verb> (--site <id> | --url <server>)  Cluster client.
   cluster <verb> …                              Cluster lifecycle.
   install version | stamp | verify              This build's identity and the integrity of its install.
+  authoring prompt <kind> …                     Generation prompts for missing study data.
   docs cli-reference [--check | --write]        Regenerate the reference document.
   panel <verb> …                                Panel scenarios and seat casting.
   artifacts audit [--json]                      Vector-sidecar audit.
@@ -866,6 +873,7 @@ steerlab-cli experiment pin-prompts <name> <prompts/…/file.jsonl>
 steerlab-cli experiment pin-rubric <name> <prompts/rubrics/file.md> [--judges <spec>]
 steerlab-cli experiment declare-condition <name> <condition> [--alpha-units <norm|raw>] [--band-width <k>] [--baseline] [--control <name>] [--slots <spec>]
 steerlab-cli experiment set-sweep-selection <name> [--capability-tolerance <ratio>] [--choice-prompts <path>] [--coherence-floor <ratio>] [--control-apply-to <winner|topK>] [--control-margin <margin>] [--control-top-k <k>] [--objective <metric>]
+steerlab-cli experiment set-sweep-grid <name> [--alphas <a1,a2,…>] [--battery <path>] [--dev-prompts <path>] [--layer-fractions <f1,f2,…>] [--layers <L1,L2,…>] [--max-tokens <n>]
 steerlab-cli experiment set-instruments <name> <instrument>[,…] [--ordinal-aggregation <expectedValue|argmax>]
 steerlab-cli experiment set-style-taxonomy <name> <prompts/taxonomies/file.json>
 steerlab-cli experiment verify <name>
@@ -883,6 +891,7 @@ steerlab-cli experiment duplicate <name> <new-name>
 | `experiment pin-rubric` | Pin the judging rubric, the judge panel, and the evaluation declaration they imply. |
 | `experiment declare-condition` | Declare one experimental arm, or the explicit baseline. |
 | `experiment set-sweep-selection` | Declare the sweep's selection criterion as manifest data. |
+| `experiment set-sweep-grid` | Declare the sweep's layer × alpha grid, its instrument files, and its per-cell token budget. |
 | `experiment set-instruments` | Declare which outcome instruments the run measures (sampledText, answerTokenLogprob, choiceProbability, repeReaderScore, ordinalScale; "" clears the declaration). |
 | `experiment set-style-taxonomy` | Pin the reasoning-style taxonomy and its hash. |
 | `experiment verify` | Re-check every pinned input against the file bytes on disk. |
@@ -957,6 +966,51 @@ manifest's own vocabulary; a multi-slot condition IS the linear mix
 | `--band-width K` | 1 | Layers per slot. |
 | `--alpha-units norm\|raw` | **required** (no default) | `norm` denominates α by the residual-stream norm at that layer on the pinned neutral corpus — what makes α comparable across concepts; `raw` is α as typed. Required on every arm, `--baseline` included: it used to default to `norm` here and to `raw` on the server engine, so the same undeclared arm authored a different study depending on which engine served it (portability gap G6). α units are dose semantics, so neither engine guesses. |
 | `--control` | none | `randomMatchedNorm` (steering) or `randomDirectionAblation` (ablation): the same slots with a deterministic random direction substituted. |
+
+**`set-sweep-grid`** — the other half of the sweep block. `set-sweep-selection`
+declares how a winner is picked; this declares what it is picked *from*. Until
+it existed the axes were reachable only from the app's Optimizations panel, so
+the only headless way to obtain a grid was `duplicate` — which brings the donor
+study's **concepts** along with its sweep block, and a concept that arrives that
+way is swept but cannot be cited (the passenger-concept problem).
+
+Every flag is optional and each edits its own field, so one axis can move
+without restating the block; a call with no flags is refused rather than
+reported as a change. Draft-only.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--layer-fractions` | `0.5,0.7,0.85` | The layer axis as depths in `[0, 1]`, **ascending, each value once**. This is what the manifest stores, and the portable form: the same declaration names the proportionally same site in a 26-block model and a 62-block one, resolved at sweep time as `Int(depth · f)`. |
+| `--layers` | — | The same axis as absolute block indices. Converted here to the depth fractions that resolve back to exactly those blocks, against the pinned model's depth **as read from an already-extracted vector**. With nothing extracted for the model there is no depth to read, and the verb refuses `missingPrerequisite` rather than assume one. Exclusive with `--layer-fractions`. |
+| `--alphas` | `0.05,0.08,0.1,0.13` | The dose ladder, **ascending, each value once**, in residual-norm units above 0. `0` is the baseline cell every sweep runs anyway, so it is never a rung. |
+| `--dev-prompts` | `prompts/dev/dev-prompts.jsonl` | The dev split the sweep generates on. Re-pointing it clears `sweep.devPromptsHash`; freeze re-pins from the bytes on disk. |
+| `--battery` | `prompts/batteries/basic.jsonl` | The capability battery every cell is scored on. Re-pointing it clears `sweep.batteryHash` on the same rule. |
+| `--max-tokens` | `80` | Tokens per swept cell — the grid's cost multiplier, not the study's generation length. |
+
+Both axes must **ascend with no repeats**. `resolvedLayers` sorts and
+deduplicates anyway, so an unordered or repeated declaration is a grid whose
+written form and run form disagree; a repeated α is a cell paid for twice and
+reported once, and a ladder that doubles back is not a dose-response. Violations
+refuse `sweepGridRule`.
+
+The manifest gains **no** key for absolute layers. An axis with two stored
+spellings is an axis that can disagree with itself, and the depth those layers
+were read against is a property of the pinned model, which the manifest already
+names. Both forms are reported instead: the `--json` result carries
+`layerFractions` *and* `resolvedLayers`, `layerCount` (null when nothing has been
+extracted for the model yet — stated, never guessed), `cellCount`,
+`collapsedFractions`, and `alphaUnits: "residualNorm"`.
+
+Two legal fractions can still land on one layer at a given depth. That is not a
+refusal — the declaration is legal and the collapse is a property of *this*
+model's depth — but a grid of "four depths" that is really three is a silently
+smaller sweep, so `collapsedFractions` reports it and the human line says so.
+
+Typing a `set-sweep-selection` flag here (`--objective`, `--coherence-floor`,
+`--choice-prompts`, `--capability-tolerance`, `--control-margin`,
+`--control-apply-to`, `--control-top-k`) is answered with a pointer to the verb
+that owns it rather than with this verb's flag list: the intent was right and
+aimed one verb over.
 
 **`set-style-taxonomy`** validates that the taxonomy file loads on this engine,
 then stamps its path and the SHA-256 of its bytes. Drift after pinning is a
@@ -1970,7 +2024,68 @@ Run the smoke test after any change to `SteeringKit`: it asserts hooks fire on
 every pass, steered ≠ baseline, and α=0 reproduces baseline exactly.
 `toy-french.json` adds the concept ≠ matched-norm-random check.
 
-### 3.12 `docs cli-reference` — the generator behind this document
+### 3.12 `authoring prompt` — generation prompts for missing study data
+
+<!-- GENERATED:swift-authoring BEGIN -->
+<!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
+
+```
+steerlab-cli authoring prompt <kind> [--concept <name>] [--count <n>] [--decision <text>] [--held-out <n>] [--name <name>] [--negative <text>] [--positive <text>] [--shape <contentPair|singleStimulus>] [--template-id <id>] [--validation-count <n>]
+```
+
+| Verb | Purpose |
+|---|---|
+| `authoring prompt` | Emit the generation prompt for one kind of missing study data, with its audit battery as numbers. |
+
+Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
+<!-- GENERATED:swift-authoring END -->
+
+A study is blocked by **missing data** far more often than by a missing verb,
+and the answer to missing data is a prompt for an LLM. Those prompts were being
+re-improvised per study, which meant each one re-learned the same lessons the
+hard way — a corpus whose poles are readable from sentence shape, a choice
+instrument whose longer option is the target, a probe that names the concept it
+is testing — and each re-improvisation lost the audit numbers, which are the
+only part an acceptor can check.
+
+So the prompts are **data**. They live in `prompts/authoring-prompts/`, one
+Markdown file per kind, plus `_`-prefixed shared partials; the directory is the
+registry index, and the kind is the filename's stem. **A workspace's copy wins
+over the shipped one** — edit the wording for your study, and the emission's
+hash follows your bytes.
+
+| Kind | Produces | Required |
+|---|---|---|
+| `contrastive-pairs` | `prompts/concepts/<c>/{positive,negative,validation}.jsonl` | `--concept --positive --negative` |
+| `choice-prompts` | the sweep's `logprobShift` instrument | `--concept --decision` |
+| `validation-set` | `prompts/concepts/<c>/validation.jsonl` alone | `--concept --positive --negative` |
+| `reader-pairs` | `prompts/readers/<c>/pairs.jsonl` | `--concept --positive --negative --template-id` |
+| `battery` | a format-2 capability battery | — |
+
+Counts and shapes default (`--count`, `--validation-count`, `--held-out`,
+`--shape`, `--name`); **nothing that describes the study is ever defaulted**. A
+missing `--positive` refuses with exit 64 naming what it is, because a
+plausible default there would be a study nobody declared. A flag belonging to a
+different kind refuses the same way rather than being ignored.
+
+Every emission stamps a header carrying `promptSpecHash` — the SHA-256 of the
+partials plus the template, in assembly order — and the `--json` result repeats
+it as `result.promptSpecHash`, together with `templateFiles`,
+`fromWorkspaceCopy`, the resolved `parameters`, and the whole `prompt`. That
+hash is what a study's provenance cites: it makes the exact wording a corpus was
+generated from recoverable from a finished study.
+
+`--out <file>` writes the prompt (this verb owns `--out`; the envelope is
+stdout). **The verb writes nothing else, ever.** Its `nextAction` says so:
+`requiresHuman`, and the action is a *second* reviewer re-running the prompt's
+own audit battery against the delivery. The emitter is never the acceptor — see
+§4.15 of the workspace contract.
+
+A registry file that is not on disk is a `missingPrerequisite` refusal naming
+the path, never a prompt with a hole in it; an unknown `{{placeholder}}` in an
+edited template survives verbatim into the output for the same reason.
+
+### 3.13 `docs cli-reference` — the generator behind this document
 
 <!-- GENERATED:swift-docs BEGIN -->
 <!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->

@@ -284,9 +284,10 @@ import Testing
             #expect(recorder.standardOutput == "")
             #expect(
                 renderedStandardError(outcome)
-                    == "steerlab-cli experiment: verbs: list | create | attach "
-                        + "| pin-prompts | pin-rubric | declare-condition "
-                        + "| set-sweep-selection | set-instruments "
+                    == "steerlab-cli experiment: verbs: list | create "
+                        + "| attach | detach | pin-prompts | pin-rubric "
+                        + "| declare-condition | set-sweep-selection "
+                        + "| set-sweep-grid | set-instruments "
                         + "| set-style-taxonomy | verify | freeze | duplicate "
                         + "| extract | validate | sweep | run | analyze "
                         + "| rescore-style | evaluate | promote | confirm\n")
@@ -610,11 +611,18 @@ import Testing
         // (no sub-verb), and it is here rather than in `main.swift` for the
         // same reason as the rest — strict flags, one envelope, and a body a
         // test can drive against a temp home instead of the real `~/SteerLab`.
+        //
+        // `authoring` is the newest, and the odd one: it is the only family
+        // that touches no manifest and writes nothing into the workspace. It
+        // emits a generation prompt for a KIND of missing study data, which
+        // is a question about data rather than about a study — and it is on
+        // the agent path because an agent meets missing data far more often
+        // than it meets a missing verb.
         #expect(
             ExperimentCLIRunner.namespaces
                 == [
                     "init", "workspace", "data", "vectors", "remote",
-                    "experiment", "docs", "install", "panel",
+                    "experiment", "docs", "install", "panel", "authoring",
                 ])
     }
 

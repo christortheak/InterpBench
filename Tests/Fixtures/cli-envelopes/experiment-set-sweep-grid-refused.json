@@ -1,0 +1,19 @@
+{
+  "changed" : false,
+  "engine" : "swift-mlx",
+  "error" : {
+    "code" : "sweepGridRule",
+    "gate" : "sweepGridRule",
+    "gates" : [
+      "sweepGridRule"
+    ],
+    "reason" : "the alpha ladder does not ascend at 0.05 — declare doses in increasing order, each one once (a ladder that doubles back is not a dose-response)",
+    "repairAction" : "steerlab-cli experiment set-sweep-grid demo --layer-fractions 0.5,0.7,0.85 --alphas 0.05,0.08,0.1,0.13  (both axes ascend, each value once; alphas are residual-norm units above 0)"
+  },
+  "message" : "the alpha ladder does not ascend at 0.05 — declare doses in increasing order, each one once (a ladder that doubles back is not a dose-response)",
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "schemaVersion" : 1,
+  "state" : "refused",
+  "verb" : "experiment set-sweep-grid",
+  "workspace" : "<workspace>"
+}

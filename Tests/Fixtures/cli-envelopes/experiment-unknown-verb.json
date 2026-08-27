@@ -3,10 +3,10 @@
   "engine" : "swift-mlx",
   "error" : {
     "code" : "unknownVerb",
-    "reason" : "verbs: list | create | attach | pin-prompts | pin-rubric | declare-condition | set-sweep-selection | set-instruments | set-style-taxonomy | verify | freeze | duplicate | extract | validate | sweep | run | analyze | rescore-style | evaluate | promote | confirm",
+    "reason" : "verbs: list | create | attach | detach | pin-prompts | pin-rubric | declare-condition | set-sweep-selection | set-sweep-grid | set-instruments | set-style-taxonomy | verify | freeze | duplicate | extract | validate | sweep | run | analyze | rescore-style | evaluate | promote | confirm",
     "repairAction" : "steerlab-cli experiment --help  (the family's verbs), then steerlab-cli experiment <verb> --help  (one verb's arguments)"
   },
-  "message" : "verbs: list | create | attach | pin-prompts | pin-rubric | declare-condition | set-sweep-selection | set-instruments | set-style-taxonomy | verify | freeze | duplicate | extract | validate | sweep | run | analyze | rescore-style | evaluate | promote | confirm",
+  "message" : "verbs: list | create | attach | detach | pin-prompts | pin-rubric | declare-condition | set-sweep-selection | set-sweep-grid | set-instruments | set-style-taxonomy | verify | freeze | duplicate | extract | validate | sweep | run | analyze | rescore-style | evaluate | promote | confirm",
   "observedAt" : "1970-01-01T00:16:40Z",
   "schemaVersion" : 1,
   "state" : "blocked",

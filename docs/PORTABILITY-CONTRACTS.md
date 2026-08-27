@@ -401,6 +401,29 @@ spelling the store itself dispatches). The Mac's `pin-prompts`, `pin-rubric`,
 reachable through `set-protocol --set <key>=<json>`, because that is the shape
 `set_protocol` actually has.
 
+A fourth family, `authoring`, joined for a different reason again. Its one
+verb — `authoring prompt <kind>` — renders a generation prompt from the
+`prompts/authoring-prompts/` registry and prints it. It is deliberately **not**
+in `AUTHORING_FAMILIES` despite the name: an authoring family WRITES into the
+workspace, and this one reads a template registry and emits text, because the
+emitter of a generation prompt must never be the acceptor of its output. The
+rendered bytes are identical to the Mac verb's for the same registry and
+arguments (checked by rendering both), and the one deliberate divergence is the
+flag that names the output FILE: the Mac verb owns `--out`, this client cannot,
+because `--out` is lifted here before the family is chosen, so it is
+`--out-file`. Repairs name the binary the caller actually ran — the repair
+builders take a program, and both engines' spellings are pinned by test.
+
+Since v0 the table has gained `detach` and `set-sweep-grid`. Both are verbs
+rather than protocol fields for the same reason: neither is a field assignment.
+`detach` audits the whole manifest for declarations that still name a concept
+before it removes a pin, and `set-sweep-grid` resolves absolute layers against
+the pinned model's depth and refuses a grid no engine could sweep — rules that
+live in `experiment_store` and answer identically on the Mac verb, this client,
+and the HTTP route (`POST /api/authoring/{name}/sweep-grid`). The sweep block's
+*other* half, `sweep.selection`, stays Mac-authority: the criterion is a
+preregistration decision and `set-sweep-selection` is where it is made.
+
 ### The envelope
 
 The client emits the **same document** the engine does: `cli_envelope` is the

@@ -1206,6 +1206,322 @@ def pin_model_revision(name: str, revision: str, root: str | None = None) -> dic
     return d
 
 
+# =============================================================================
+# The sweep GRID (`set-sweep-grid`) — Swift twins throughout
+# =============================================================================
+
+#: The sweep block's fields `set-sweep-selection` owns, as the flags that write
+#: them. `set-sweep-grid` owns exactly what is left — the two axes, the two
+#: instrument files, and the per-cell budget — and points here rather than
+#: silently writing a field it does not own. ``devPromptsHash`` /
+#: ``batteryHash`` are owned by NEITHER: they are pinned at freeze from the
+#: bytes on disk and never authored. Swift twin:
+#: ``ExperimentStore.sweepSelectionOwnedFlags``.
+SWEEP_SELECTION_OWNED_FLAGS: tuple[str, ...] = (
+    "--objective", "--choice-prompts", "--capability-tolerance",
+    "--coherence-floor", "--control-margin", "--control-apply-to",
+    "--control-top-k",
+)
+
+#: The engine defaults a draft with no sweep block starts from — identical to
+#: Swift ``ExperimentManifest.SweepSpec.init`` and to
+#: ``tasks.DEFAULT_SWEEP_LAYER_FRACTIONS`` / ``DEFAULT_SWEEP_ALPHAS``.
+_DEFAULT_SWEEP_BLOCK: dict = {
+    "layerFractions": [0.5, 0.7, 0.85],
+    "alphas": [0.05, 0.08, 0.1, 0.13],
+    "devPromptsFile": "prompts/dev/dev-prompts.jsonl",
+    "batteryFile": "prompts/batteries/basic.jsonl",
+    "maxTokens": 80,
+}
+
+
+def sweep_selection_owns_repair(name: str, flag: str) -> str:
+    """THE pointer for asking ``set-sweep-grid`` to write a field
+    ``set-sweep-selection`` owns. Swift twin:
+    ``ExperimentStore.sweepSelectionOwnsRepair``."""
+    return (f"steerlab-cli experiment set-sweep-selection {name} {flag} "
+            "<value>  (the selection RULE is that verb's; set-sweep-grid "
+            "writes the layer × alpha grid the rule then picks a winner from)")
+
+
+def _number_text(value: float) -> str:
+    """Locale-independent rendering for a number inside refusal prose, so the
+    twin literals compare byte-for-byte across engines. Swift twin:
+    ``ExperimentStore.numberText``."""
+    if value == value and abs(value) != float("inf") \
+            and float(value) == int(value) and abs(value) < 1e15:
+        return str(int(value))
+    return repr(float(value))
+
+
+def _first_non_ascending(values) -> float | None:
+    """The first entry that is not strictly greater than the one before it, or
+    None when the list ascends. Swift twin:
+    ``ExperimentStore.firstNonAscending``."""
+    for index, value in enumerate(values):
+        if index and not value > values[index - 1]:
+            return value
+    return None
+
+
+def _finite(value: float) -> bool:
+    return value == value and abs(value) != float("inf")
+
+
+def sweep_grid_problem(layer_fractions, alphas, dev_prompts_file: str,
+                       battery_file: str, max_tokens: int) -> str | None:
+    """Why one declared grid cannot be swept, or None when it can. Every check
+    is on the DECLARATION, so it answers at authoring time rather than after a
+    model has loaded.
+
+    The two ascent rules are the ones the shape of a dose-response makes
+    non-negotiable. Alphas are a LADDER: the sweep reports a dose-response
+    curve, and a ladder declared out of order reads as a curve that doubles
+    back, while a repeated rung is a cell paid for twice and reported once.
+    Layer fractions are the same argument one axis over, with an extra wrinkle
+    — ``resolve_sweep_layers`` sorts and deduplicates them anyway, so an
+    unsorted or repeated declaration is a grid whose written form and run form
+    disagree.
+
+    Swift twin: ``ExperimentStore.sweepGridProblem`` — the strings are the
+    cross-engine contract, because the refusal built from them is.
+    """
+    if not layer_fractions:
+        return "the layer axis is empty — a grid names at least one depth"
+    bad = next((f for f in layer_fractions
+                if not _finite(f) or f < 0 or f > 1), None)
+    if bad is not None:
+        return f"layer fractions are depths in [0, 1] — got {_number_text(bad)}"
+    out = _first_non_ascending(layer_fractions)
+    if out is not None:
+        return (f"the layer axis does not ascend at {_number_text(out)} — "
+                "declare depths in increasing order, each one once (the sweep "
+                "sorts and deduplicates them, so an unordered declaration "
+                "names a grid it will not run)")
+    if not alphas:
+        return "the alpha axis is empty — a grid names at least one dose"
+    bad = next((a for a in alphas if not _finite(a) or a <= 0), None)
+    if bad is not None:
+        return ("alphas are residual-norm units above 0 — got "
+                f"{_number_text(bad)} (0 is the baseline cell, which every "
+                "sweep runs anyway)")
+    out = _first_non_ascending(alphas)
+    if out is not None:
+        return (f"the alpha ladder does not ascend at {_number_text(out)} — "
+                "declare doses in increasing order, each one once (a ladder "
+                "that doubles back is not a dose-response)")
+    if max_tokens <= 0:
+        return f"max tokens must be above 0 — got {max_tokens}"
+    if not dev_prompts_file.strip():
+        return "the dev-prompts file is required — the sweep generates on it"
+    if not battery_file.strip():
+        return ("the capability-battery file is required — the sweep scores "
+                "every cell on it")
+    return None
+
+
+def depth_fraction_for_layer(layer: int, depth: int) -> float:
+    """The depth fraction that resolves to exactly ``layer`` in a network of
+    ``depth`` blocks — the MIDPOINT of the fraction band that truncates to it,
+    ``(layer + 0.5) / depth``.
+
+    The midpoint is not an aesthetic choice. ``resolve_sweep_layers``
+    truncates (``int(depth * f)``), so every fraction in
+    ``[L/depth, (L+1)/depth)`` names layer L, and the two ends of that band are
+    one rounding error from naming L-1 or L+1 instead. The midpoint sits half a
+    layer from either edge, which is ~10¹⁴ times the double-rounding error of
+    the round trip. Checked anyway at the call site rather than asserted here.
+
+    Swift twin: ``ExperimentStore.depthFraction(forLayer:depth:)``.
+    """
+    return (float(layer) + 0.5) / float(depth)
+
+
+def cached_layer_count(model_id: str, root: str | None = None) -> int | None:
+    """The pinned model's depth, from any vector sidecar already on disk for
+    it — None when nothing has been extracted for it yet.
+
+    Deliberately catalog-only, exactly as Swift
+    ``SweepPanelModel.cachedLayerCount`` is: loading a 27B model to answer
+    "what is 0.66 of this network?" is the reason that question went
+    unanswered. The import is local because this module is on the light-install
+    path and ``catalog`` walks the tree.
+    """
+    from . import catalog
+    for artifact in catalog.list_vectors(root):
+        if artifact.modelID == model_id and artifact.layerCount > 0:
+            return int(artifact.layerCount)
+    return None
+
+
+def sweep_grid_repair(name: str) -> str:
+    """THE repair for a grid no engine could sweep. Swift twin:
+    ``ExperimentStore.sweepGridRepair``."""
+    return (f"steerlab-cli experiment set-sweep-grid {name} "
+            "--layer-fractions 0.5,0.7,0.85 --alphas 0.05,0.08,0.1,0.13  "
+            "(both axes ascend, each value once; alphas are residual-norm "
+            "units above 0)")
+
+
+def absolute_layers_need_depth_repair(name: str) -> str:
+    """THE repair for absolute layers with no depth to read them against.
+    Extraction is named first because it makes the ORIGINAL request
+    answerable; fractions are the answer that needs no model at all. Swift
+    twin: ``ExperimentStore.absoluteLayersNeedDepthRepair``."""
+    return (f"steerlab-cli experiment extract {name}  (any vector for the "
+            f"pinned model states its depth) && steerlab-cli experiment "
+            f"set-sweep-grid {name} --layers <L>,…  ; or declare the grid in "
+            "depth fractions, which need no model: steerlab-cli experiment "
+            f"set-sweep-grid {name} --layer-fractions 0.5,0.7,0.85")
+
+
+def absolute_layers_out_of_range_repair(name: str, depth: int) -> str:
+    """THE repair for an absolute layer outside the pinned model. Swift twin:
+    ``ExperimentStore.absoluteLayersOutOfRangeRepair``."""
+    return (f"steerlab-cli experiment set-sweep-grid {name} "
+            f"--layers <0…{depth - 1}>,…  ; or declare depths instead, which "
+            "survive a change of model: steerlab-cli experiment set-sweep-grid "
+            f"{name} --layer-fractions 0.5,0.7,0.85")
+
+
+def set_sweep_grid(name: str, *, layer_fractions=None, layers=None,
+                   alphas=None, dev_prompts_file: str | None = None,
+                   battery_file: str | None = None,
+                   max_tokens: int | None = None,
+                   layer_count: int | None = None,
+                   root: str | None = None) -> dict:
+    """Declare the sweep's GRID on a draft — the layer × alpha ladder, the two
+    instrument files it reads, and its per-cell token budget.
+
+    The gap this closes is the one the passenger-concept problem sat in: the
+    grid was reachable only from the Mac app's Optimizations panel, so the ONLY
+    headless way to obtain one was to ``duplicate`` a study that already had it
+    — which carries the donor's concepts along with its grid, and a concept
+    that rode in that way is swept but not citable.
+
+    Layers are declarable both ways. ``layer_fractions`` are depths in [0, 1]
+    and are what the manifest stores: they are the portable form, and the sweep
+    resolves them at run time against the model it actually loaded.
+    ``layers`` is the spelling a researcher reading a paper has ("L28"), and it
+    is converted HERE against the pinned model's depth as this workspace knows
+    it, with both forms reported back. The manifest deliberately gains no
+    second key for the absolute layers: an axis with two stored spellings is an
+    axis that can disagree with itself, and the depth is a property of the
+    pinned model, which the manifest already names.
+
+    Alphas are RESIDUAL-NORM UNITS, the house convention everywhere in this
+    schema. 0 is the implied baseline cell and is never a rung.
+
+    ``None`` arguments leave their field as it stands, so this verb can move
+    one axis without restating the block. Returns the manifest document with a
+    non-persisted ``_sweepGrid`` report of what the declaration resolves to;
+    callers read it and drop it. Swift twin: ``ExperimentStore.setSweepGrid``.
+    """
+    d = load_raw(name, root)
+    status = str(d.get("status") or "draft")
+    if status != "draft":
+        raise ExperimentStoreError(
+            f"'{name}' is {status} and read-only — duplicate it to iterate",
+            gate=lifecycle_gates.STATUS_IMMUTABLE,
+            repair=(f"steerlab-cli experiment duplicate {name} {name}-v2 && "
+                    f"steerlab-cli experiment set-sweep-grid {name}-v2 …  "
+                    "(frozen studies are immutable; the duplicate is a draft "
+                    "again)"))
+    spec = dict(d.get("sweep") or {})
+    for key, value in _DEFAULT_SWEEP_BLOCK.items():
+        spec.setdefault(key, list(value) if isinstance(value, list) else value)
+    model_id = str(d.get("modelID") or "")
+    depth = layer_count if layer_count is not None \
+        else cached_layer_count(model_id, root)
+    fractions = list(layer_fractions) if layer_fractions is not None \
+        else list(spec["layerFractions"])
+    if layers is not None:
+        absolute = [int(layer) for layer in layers]
+        if not depth or depth <= 0:
+            raise ExperimentStoreError(
+                f"absolute layers were declared for '{name}', but nothing in "
+                f"this workspace states how deep '{model_id}' is — no "
+                "extracted vector for it carries a layer count, and a layer "
+                "index means nothing without one",
+                gate=lifecycle_gates.MISSING_PREREQUISITE,
+                repair=absolute_layers_need_depth_repair(name))
+        out = _first_non_ascending(absolute)
+        if out is not None:
+            # Checked on the INDICES, before conversion: the same rule fires
+            # on the fractions below, but it would say "the layer axis does
+            # not ascend at 0.42" about a declaration that named 11.
+            raise ExperimentStoreError(
+                f"the layer axis does not ascend at {int(out)} — declare "
+                "blocks in increasing order, each one once (the sweep sorts "
+                "and deduplicates them, so an unordered declaration names a "
+                "grid it will not run)",
+                gate=lifecycle_gates.SWEEP_GRID_RULE,
+                repair=absolute_layers_out_of_range_repair(name, depth))
+        bad = next((layer for layer in absolute
+                    if layer < 0 or layer >= depth), None)
+        if bad is not None:
+            raise ExperimentStoreError(
+                f"layer {bad} is outside '{model_id}', which has {depth} "
+                f"block(s) — legal layers are 0…{depth - 1}",
+                gate=lifecycle_gates.SWEEP_GRID_RULE,
+                repair=absolute_layers_out_of_range_repair(name, depth))
+        fractions = [depth_fraction_for_layer(layer, depth)
+                     for layer in absolute]
+        # Defensive, and cheap: the midpoint rule is exact for every depth a
+        # language model has, but "exact by argument" is not the standard this
+        # schema holds its own writes to.
+        from .manifest import resolve_sweep_layers
+        round_trip = resolve_sweep_layers(depth, fractions)
+        if round_trip != sorted(absolute):
+            raise ExperimentStoreError(
+                f"the declared layers {absolute} do not survive conversion to "
+                f"depth fractions at depth {depth} (they would name "
+                f"{round_trip}) — declare the grid as fractions instead",
+                gate=lifecycle_gates.SWEEP_GRID_RULE,
+                repair=absolute_layers_out_of_range_repair(name, depth))
+    ladder = list(alphas) if alphas is not None else list(spec["alphas"])
+    dev = dev_prompts_file if dev_prompts_file is not None \
+        else str(spec["devPromptsFile"])
+    battery = battery_file if battery_file is not None \
+        else str(spec["batteryFile"])
+    budget = int(max_tokens) if max_tokens is not None \
+        else int(spec["maxTokens"])
+    problem = sweep_grid_problem(fractions, ladder, dev, battery, budget)
+    if problem:
+        raise ExperimentStoreError(
+            problem, gate=lifecycle_gates.SWEEP_GRID_RULE,
+            repair=sweep_grid_repair(name))
+    spec["layerFractions"] = [float(f) for f in fractions]
+    spec["alphas"] = [float(a) for a in ladder]
+    spec["devPromptsFile"] = dev
+    spec["batteryFile"] = battery
+    spec["maxTokens"] = budget
+    # A grid edit re-opens the two block-level pins: they certify the bytes of
+    # files this verb may have just re-pointed, and a pin kept over a path that
+    # moved is a claim about a file nobody read. Freeze re-pins from disk when
+    # they are absent, which is the one moment a pin is allowed to be minted.
+    if dev_prompts_file is not None:
+        spec.pop("devPromptsHash", None)
+    if battery_file is not None:
+        spec.pop("batteryHash", None)
+    d["sweep"] = spec
+    save_raw(d, root)
+    resolved: list[int] = []
+    collapsed = 0
+    if depth and depth > 0:
+        from .manifest import resolve_sweep_layers
+        resolved = resolve_sweep_layers(depth, spec["layerFractions"])
+        collapsed = max(0, len(set(spec["layerFractions"])) - len(resolved))
+    report = dict(d)
+    report["_sweepGrid"] = {
+        "layerCount": depth if depth and depth > 0 else None,
+        "resolvedLayers": resolved,
+        "collapsedFractions": collapsed,
+        "declaredAbsoluteLayers": layers is not None,
+    }
+    return report
+
+
 def set_protocol(name: str, fields: dict, root: str | None = None) -> dict:
     d = load_raw(name, root)
     allowed = {"experimentDescription", "taskDescription", "outcomeMeasures", "promptMode",

@@ -610,7 +610,13 @@ def test_there_is_no_token_flag_on_any_runner_verb():
     for spec in client_cli.CLIENT_VERB_SPECS:
         for flag in spec.declared_flags:
             assert flag != "--token", f"{spec.label} declares --token"
-            if "token" in flag:
+            # Matched on WORD segments, not substrings. A CREDENTIAL flag says
+            # "token" singular (`--token`, `--auth-token`, `--bearer-token`);
+            # `--max-tokens` is plural and counts LLM tokens, which is a
+            # generation budget and not a secret. The substring form flagged
+            # it — a false positive that would have to be silenced somehow,
+            # and silencing a secret guard is worse than tightening it.
+            if "token" in flag.lstrip("-").split("-"):
                 assert flag == "--token-file", (
                     f"{spec.label} declares {flag} — the only token spelling "
                     "on this surface is --token-file (a path, not a secret)")

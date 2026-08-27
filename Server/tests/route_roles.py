@@ -254,6 +254,9 @@ CENSUS: tuple[RouteRole, ...] = (
     _r("POST", "/api/authoring/{name}/detach", W,
        "Removes concept pins from a draft — attach's inverse. Authoring "
        "write."),
+    _r("POST", "/api/authoring/{name}/sweep-grid", W,
+       "Declares the sweep's layer × alpha grid on a draft. Authoring "
+       "write."),
     _r("POST", "/api/authoring/{name}/protocol", W,
        "Sets protocol fields on a draft. Authoring write."),
     _r("POST", "/api/authoring/{name}/condition", W,

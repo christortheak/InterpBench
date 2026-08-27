@@ -236,7 +236,13 @@ import Testing
         // §18): casting is authoring, it is the only headless way to make a
         // multi-agent study runnable, and a contract that did not name it
         // would send an agent back to hand-editing the manifest.
-        let namespaces: Set<String> = ["workspace", "data", "experiment", "panel"]
+        // `authoring` joined it when the generation-prompt emitter landed:
+        // §4.15's missing-data rule is unfollowable without naming the verb
+        // that emits the prompt, and a contract that described the rule
+        // without the command would send an agent back to improvising one.
+        let namespaces: Set<String> = [
+            "workspace", "data", "experiment", "panel", "authoring",
+        ]
         let code = Self.codeText(in: AgentContract.body)
         var missing: [String] = []
         for spec in ExperimentCLIParser.specs where namespaces.contains(spec.namespace) {

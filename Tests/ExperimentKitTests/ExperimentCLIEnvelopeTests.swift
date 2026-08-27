@@ -249,6 +249,45 @@ import Testing
         }
     }
 
+    /// The grid, echoed. A grid is the one declaration whose written form and
+    /// its run form differ (depths become blocks), so `layerFractions` AND
+    /// `resolvedLayers` both belong in the document — the contract's grid
+    /// dialog asks a human to read them side by side. This golden is produced
+    /// with nothing extracted, which is the honest common case for a fresh
+    /// draft: `layerCount` and `resolvedLayers` are explicitly null, never
+    /// zero and never an empty list that reads as "no layers".
+    @Test func experimentSetSweepGridEnvelope() async throws {
+        try await withTempRoot { root in
+            await invoke(
+                "experiment",
+                ["create", "demo", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            let outcome = await invoke(
+                "experiment",
+                ["set-sweep-grid", "demo", "--layer-fractions", "0.5,0.7,0.85",
+                 "--alphas", "0.05,0.08,0.1,0.13"])
+            #expect(outcome.envelope.state == .ready)
+            try check(outcome, fixture: "experiment-set-sweep-grid", root: root)
+        }
+    }
+
+    /// The refusal an agent meets on a ladder that doubles back — pinned as a
+    /// golden because its `error.code`/`error.gate`/`repairAction` are the
+    /// machine surface a caller acts on.
+    @Test func experimentSetSweepGridRefusalEnvelope() async throws {
+        try await withTempRoot { root in
+            await invoke(
+                "experiment",
+                ["create", "demo", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            let outcome = await invoke(
+                "experiment", ["set-sweep-grid", "demo", "--alphas", "0.1,0.05"])
+            #expect(outcome.envelope.state == .refused)
+            #expect(outcome.envelope.error?.code == "sweepGridRule")
+            #expect(outcome.envelope.error?.gate == "sweepGridRule")
+            try check(
+                outcome, fixture: "experiment-set-sweep-grid-refused", root: root)
+        }
+    }
+
     // MARK: The three authoring verbs (WP0 step 5½)
 
     /// A workspace override, not just an experiment-root override: a rubric
@@ -550,7 +589,12 @@ import Testing
             "experiment detach",
             "experiment pin-prompts", "experiment pin-rubric",
             "experiment declare-condition",
-            "experiment set-sweep-selection", "experiment set-instruments",
+            "experiment set-sweep-selection",
+            // The other half of the sweep block: the RULE had a headless
+            // writer, the GRID it selects over had none, so the only way to
+            // obtain one was `duplicate` — with the donor's concepts aboard.
+            "experiment set-sweep-grid",
+            "experiment set-instruments",
             "experiment set-style-taxonomy", "experiment verify",
             "experiment freeze", "experiment duplicate", "experiment extract",
             "experiment validate", "experiment sweep", "experiment run",
@@ -572,6 +616,13 @@ import Testing
             // pre-existing read verbs, declared when the family joined the
             // agent path; their human output is unchanged.
             "panel list", "panel check", "panel compile",
+            // The generation-prompt emitter: the only verb here that touches
+            // no manifest and writes nothing into the workspace. It answers
+            // "this study is missing X; what do I ask an LLM for", which is a
+            // question about a KIND of data rather than about a study — and
+            // it is on the agent path because an agent meets missing data far
+            // more often than it meets a missing verb.
+            "authoring prompt",
         ]
         #expect(declared == expected)
         // The audit's sixteen lifecycle verbs, the three headless authoring
@@ -579,12 +630,14 @@ import Testing
         // P13: the sweep's selection criterion and the study's outcome
         // instruments were manifest data no headless caller could declare, so
         // the sweep silently selected on marker density and a pinned choice
-        // task was measured as prose), and `detach` — the owed inverse of
+        // task was measured as prose), `detach` — the owed inverse of
         // `attach`, without which a concept pin was the one authoring
-        // declaration that could only ever be ADDED.
+        // declaration that could only ever be ADDED — and `set-sweep-grid`,
+        // the sweep block's other half, without which a grid could only be
+        // inherited by duplicating a study and its concepts with it.
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 22,
-            "the experiment lifecycle is twenty-two verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
+            declared.filter { $0.hasPrefix("experiment ") }.count == 23,
+            "the experiment lifecycle is twenty-three verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
     }
 
     @Test func everySpecIsInARunnerOwnedNamespace() {

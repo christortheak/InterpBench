@@ -95,7 +95,7 @@ import Testing
             "samplingPolicy", "thinkingModeConflict", "inertConditions",
             "responseFormat", "confirmationPool", "confirmationAgentShape",
             "parityThreshold", "missingPrerequisite", "armsCleared",
-            "conceptInUse",
+            "conceptInUse", "sweepGridRule",
         ]
         #expect(LifecycleGate.vocabulary == serverLiteral)
         // Round-trips: every wire id parses back to its case, so a gate id read
@@ -193,6 +193,110 @@ import Testing
                 == "steerlab-cli experiment list  (result.experiments[]"
                 + ".concepts names what 'demo' pins), then steerlab-cli "
                 + "experiment detach demo <one of those>")
+    }
+
+    /// Copied from `experiment_store.sweep_grid_repair` /
+    /// `.absolute_layers_need_depth_repair` /
+    /// `.absolute_layers_out_of_range_repair` /
+    /// `.sweep_selection_owns_repair`. `set-sweep-grid`'s refusals are the same
+    /// rules on both engines, so the repairs an agent follows verbatim must be
+    /// the same bytes — and all of them name `steerlab-cli`, because a grid is
+    /// authoring and authoring is Mac-authority (§3.2) whichever engine
+    /// answered. Server twin test:
+    /// `test_sweep_grid_repairs_match_the_swift_literals`.
+    @Test func sweepGridRepairsMatchServerLiterals() {
+        #expect(
+            ExperimentStore.sweepGridRepair("demo")
+                == "steerlab-cli experiment set-sweep-grid demo "
+                + "--layer-fractions 0.5,0.7,0.85 --alphas 0.05,0.08,0.1,0.13  "
+                + "(both axes ascend, each value once; alphas are "
+                + "residual-norm units above 0)")
+        #expect(
+            ExperimentStore.absoluteLayersNeedDepthRepair("demo")
+                == "steerlab-cli experiment extract demo  (any vector for the "
+                + "pinned model states its depth) && steerlab-cli experiment "
+                + "set-sweep-grid demo --layers <L>,…  ; or declare the grid "
+                + "in depth fractions, which need no model: steerlab-cli "
+                + "experiment set-sweep-grid demo --layer-fractions 0.5,0.7,0.85")
+        #expect(
+            ExperimentStore.absoluteLayersOutOfRangeRepair("demo", depth: 34)
+                == "steerlab-cli experiment set-sweep-grid demo "
+                + "--layers <0…33>,…  ; or declare depths instead, which "
+                + "survive a change of model: steerlab-cli experiment "
+                + "set-sweep-grid demo --layer-fractions 0.5,0.7,0.85")
+        #expect(
+            ExperimentStore.sweepSelectionOwnsRepair("demo", flag: "--objective")
+                == "steerlab-cli experiment set-sweep-selection demo "
+                + "--objective <value>  (the selection RULE is that verb's; "
+                + "set-sweep-grid writes the layer × alpha grid the rule then "
+                + "picks a winner from)")
+    }
+
+    /// The grid audit itself is a twin: the refusal PROSE is what an agent
+    /// reads, so the two engines must not paraphrase each other. Server twin
+    /// test: `test_sweep_grid_problem_matches_the_swift_literals`.
+    @Test func sweepGridProblemsMatchServerLiterals() {
+        func problem(
+            _ fractions: [Double], _ alphas: [Double], maxTokens: Int = 80,
+            dev: String = "d", battery: String = "b"
+        ) -> String? {
+            ExperimentStore.sweepGridProblem(
+                layerFractions: fractions, alphas: alphas, devPromptsFile: dev,
+                batteryFile: battery, maxTokens: maxTokens)
+        }
+        #expect(problem([0.5, 0.7], [0.05, 0.08]) == nil)
+        #expect(
+            problem([], [0.05])
+                == "the layer axis is empty — a grid names at least one depth")
+        #expect(
+            problem([1.5], [0.05])
+                == "layer fractions are depths in [0, 1] — got 1.5")
+        #expect(
+            problem([0.7, 0.5], [0.05])
+                == "the layer axis does not ascend at 0.5 — declare depths in "
+                + "increasing order, each one once (the sweep sorts and "
+                + "deduplicates them, so an unordered declaration names a grid "
+                + "it will not run)")
+        #expect(
+            problem([0.5], [])
+                == "the alpha axis is empty — a grid names at least one dose")
+        #expect(
+            problem([0.5], [0])
+                == "alphas are residual-norm units above 0 — got 0 (0 is the "
+                + "baseline cell, which every sweep runs anyway)")
+        #expect(
+            problem([0.5], [0.1, 0.05])
+                == "the alpha ladder does not ascend at 0.05 — declare doses "
+                + "in increasing order, each one once (a ladder that doubles "
+                + "back is not a dose-response)")
+        #expect(
+            problem([0.5], [0.05], maxTokens: 0)
+                == "max tokens must be above 0 — got 0")
+        #expect(
+            problem([0.5], [0.05], dev: " ")
+                == "the dev-prompts file is required — the sweep generates on it")
+        #expect(
+            problem([0.5], [0.05], battery: "")
+                == "the capability-battery file is required — the sweep scores "
+                + "every cell on it")
+    }
+
+    /// The midpoint conversion is the one piece of ARITHMETIC the two engines
+    /// share on this path, and a fraction that resolves to a different block
+    /// on one of them is a different study. Exercised over every layer of
+    /// several plausible depths rather than a sample: the round trip is
+    /// claimed to be exact, and "exact" is cheap to check.
+    @Test func absoluteLayersSurviveTheDepthFractionRoundTrip() {
+        for depth in [1, 2, 12, 18, 26, 28, 32, 34, 42, 48, 62, 64, 80, 126] {
+            for layer in 0 ..< depth {
+                let fraction = ExperimentStore.depthFraction(
+                    forLayer: layer, depth: depth)
+                #expect(
+                    ExperimentManifest.SweepSpec(layerFractions: [fraction])
+                        .resolvedLayers(layerCount: depth) == [layer],
+                    "layer \(layer) of \(depth) did not survive the round trip")
+            }
+        }
     }
 
     // MARK: - The document itself

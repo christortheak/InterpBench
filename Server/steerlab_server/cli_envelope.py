@@ -507,6 +507,8 @@ MAC_AUTHORITY_VERBS: dict = {
                            "<instrument>[,…]",
         "set-sweep-selection": "steerlab-cli experiment set-sweep-selection "
                                "<name> --objective <metric>",
+        "set-sweep-grid": "steerlab-cli experiment set-sweep-grid <name> "
+                          "--layer-fractions <f1,f2,…> --alphas <a1,a2,…>",
         "set-style-taxonomy": "steerlab-cli experiment set-style-taxonomy "
                               "<name> prompts/taxonomies/<file>.json",
     },

@@ -35,7 +35,7 @@ the short name is the cross-platform Python client, with a smaller verb surface
 | 2 | stimulus texts, and their independence from the outcome | authoring (§2.2) | the whole result |
 | 3 | which instrument measures the endpoint | `set-instruments` (§2.4) | prose parsing, and a parser confound |
 | 4 | extraction recipe and reading position | `attach` (§4.1) | re-extract, re-validate, re-freeze |
-| 5 | dose (layer × α), and how it was chosen | `set-sweep-selection` → `sweep` → `promote` (§4.4) | selection on the confound you meant to rule out |
+| 5 | dose (layer × α), and how it was chosen | `set-sweep-grid` → `set-sweep-selection` → `sweep` → `promote` (§4.4) | selection on the confound you meant to rule out |
 | 6 | the control set | `declare-condition` (§5.1) | an effect indistinguishable from perturbation |
 | 7 | all of the above, jointly | `freeze` (§4.6) | the firewall itself |
 | 8 | the substrate the measured run executes on | before `validate` (§6) | evidence that does not satisfy its own gate |
@@ -329,8 +329,24 @@ evidence; if that matters to your record, say which run did.
 `sweep` walks a layer × α grid on the **dev prompts** — never the measured task
 set — scoring each cell for concept expression, degeneration (distinct-bigram
 ratio; repetition collapse → 0), and capability-battery accuracy, and records a
-recommendation per concept in its own run directory. **Selection is manifest
-data**, declared before sweeping:
+recommendation per concept in its own run directory.
+
+**The grid is manifest data too**, and it is a cost as well as a
+preregistration — cells × concepts generations, every one of them paid for:
+
+```bash
+steerlab-cli experiment set-sweep-grid formality-pilot \
+    --layer-fractions 0.5,0.7,0.85 --alphas 0.05,0.08,0.1,0.13
+```
+
+Layers are stored as depth FRACTIONS, so one declaration names the
+proportionally same sites in a 26-block model and a 62-block one; `--layers
+13,18,28` is the absolute spelling, converted against the pinned model's depth
+as read from an already-extracted vector. α is in residual-norm units, and 0 is
+the baseline cell every sweep runs anyway. The defaults above are the engine's,
+recalibrated on live testing — a starting grid, not a finding.
+
+**Selection is manifest data**, declared before sweeping:
 
 ```bash
 steerlab-cli experiment set-sweep-selection formality-pilot \

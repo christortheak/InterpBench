@@ -101,6 +101,14 @@ ARMS_CLEARED = "armsCleared"
 #: reference that only the next ``verify`` names, and the run in between would
 #: have measured a study nobody declared.
 CONCEPT_IN_USE = "conceptInUse"
+#: The declared sweep GRID cannot be run: an empty axis, a depth fraction
+#: outside [0, 1], an alpha at or below zero (0 is the implied baseline cell,
+#: not a rung), a ladder that does not ascend, or an absolute layer outside the
+#: pinned model's depth. ``SWEEP_SELECTION_RULE``'s sibling, and deliberately
+#: not the same id: that gate says the RULE for picking a winner cannot
+#: resolve, this one says there are no honest cells to pick from, and the two
+#: repairs are different verbs.
+SWEEP_GRID_RULE = "sweepGridRule"
 
 #: The closed vocabulary, in the fixed cross-engine order. Swift twin:
 #: ``LifecycleGate.vocabulary`` (declaration order of the enum's cases).
@@ -125,6 +133,7 @@ LIFECYCLE_GATE_IDS: tuple[str, ...] = (
     MISSING_PREREQUISITE,
     ARMS_CLEARED,
     CONCEPT_IN_USE,
+    SWEEP_GRID_RULE,
 )
 
 

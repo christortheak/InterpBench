@@ -64,13 +64,25 @@ public struct ExperimentCLIVerbSpec: Sendable {
     /// destination rather than a mode. Accepted for one release with a
     /// deprecation warning (audit §2.2); `--out <path>` is the replacement.
     public let acceptsLegacyJSONPath: Bool
+    /// Flags this verb does NOT accept but a caller plausibly reaches for
+    /// here, mapped to the command that does own them.
+    ///
+    /// The case that earned it: `set-sweep-grid` and `set-sweep-selection`
+    /// write two halves of ONE manifest block, so `--objective` typed on the
+    /// grid verb is not a typo — it is a correct intent aimed one verb over.
+    /// The generic refusal ("accepts: …") answers a different question, and
+    /// leaves the caller to infer which of twenty-three verbs owns the field.
+    /// Declaring the owner as DATA keeps the pointer beside the split it
+    /// describes.
+    public let redirectedFlags: [String: String]
 
     public init(
         namespace: String, verb: String,
         positional: String = "", purpose: String = "",
         booleanFlags: Set<String> = [], valueFlags: Set<String> = [],
         requiredFlags: Set<String> = [],
-        ownsOutFlag: Bool = false, acceptsLegacyJSONPath: Bool = false
+        ownsOutFlag: Bool = false, acceptsLegacyJSONPath: Bool = false,
+        redirectedFlags: [String: String] = [:]
     ) {
         self.namespace = namespace
         self.verb = verb
@@ -81,6 +93,7 @@ public struct ExperimentCLIVerbSpec: Sendable {
         self.requiredFlags = requiredFlags
         self.ownsOutFlag = ownsOutFlag
         self.acceptsLegacyJSONPath = acceptsLegacyJSONPath
+        self.redirectedFlags = redirectedFlags
     }
 
     /// `experiment attach` — the verb as it is typed and as the envelope
@@ -118,17 +131,38 @@ public struct ExperimentCLIUsageError: Error, CustomStringConvertible, Equatable
     public let verb: String
     /// Every flag the verb does accept.
     public let declaredFlags: [String]
+    /// The verb that DOES own this flag, when the table declares one
+    /// (`ExperimentCLIVerbSpec.redirectedFlags`). nil for an ordinary typo.
+    public let ownedBy: String?
 
-    public init(flag: String, verb: String, declaredFlags: [String]) {
+    public init(
+        flag: String, verb: String, declaredFlags: [String],
+        ownedBy: String? = nil
+    ) {
         self.flag = flag
         self.verb = verb
         self.declaredFlags = declaredFlags
+        self.ownedBy = ownedBy
     }
 
-    public var reason: String { "\(verb) does not accept \(flag)" }
+    public var reason: String {
+        guard let ownedBy else { return "\(verb) does not accept \(flag)" }
+        return "\(flag) is \(ownedBy)'s flag, not \(verb)'s"
+    }
 
     public var repairAction: String {
-        declaredFlags.isEmpty
+        if let ownedBy {
+            // The owner FIRST: the caller's intent was right and only aimed
+            // one verb over, so the runnable answer is the other command, not
+            // this one's flag list. The list still follows, because the next
+            // question is what this verb would have taken.
+            return "steerlab-cli \(ownedBy) <name> \(flag) <value>"
+                + (declaredFlags.isEmpty
+                    ? ""
+                    : "  ; \(verb) accepts: "
+                        + declaredFlags.joined(separator: " "))
+        }
+        return declaredFlags.isEmpty
             ? "\(verb) takes no flags — remove \(flag)"
             : "\(verb) accepts: \(declaredFlags.joined(separator: " "))"
     }
@@ -392,6 +426,29 @@ public enum ExperimentCLIParser {
                 "--coherence-floor", "--control-margin", "--control-apply-to",
                 "--control-top-k",
             ]),
+        // The grid's other half, and the gap that made the passenger-concept
+        // problem possible: `sweep.selection` had a writer, the GRID it
+        // selects over had none outside the Optimizations panel. The only
+        // headless way to obtain a grid was to `duplicate` a study that had
+        // one — which brings the donor's concepts with it.
+        //
+        // The two verbs split the block cleanly: `set-sweep-selection` owns
+        // `sweep.selection` entire, this one owns the axes, the two
+        // instrument files, and the per-cell budget. The selection flags are
+        // DECLARED here as redirects so typing one lands on a pointer to its
+        // owner rather than on a flag list.
+        .init(
+            namespace: "experiment", verb: "set-sweep-grid",
+            positional: "<name>",
+            purpose: "Declare the sweep's layer × alpha grid, its instrument "
+                + "files, and its per-cell token budget.",
+            valueFlags: [
+                "--layer-fractions", "--layers", "--alphas", "--dev-prompts",
+                "--battery", "--max-tokens",
+            ],
+            redirectedFlags: Dictionary(
+                uniqueKeysWithValues: ExperimentStore.sweepSelectionOwnedFlags
+                    .map { ($0, "experiment set-sweep-selection") })),
         // The legal values come from `ExperimentStore.knownOutcomeInstruments`
         // — the SAME constant the 64-refusal prints — so `--help` and the
         // refusal cannot name different vocabularies (gate-5 dry run #2, P3:
@@ -479,6 +536,21 @@ public enum ExperimentCLIParser {
             namespace: "install", verb: "verify",
             purpose: "Check the installed tree against its resource manifest.",
             booleanFlags: ["--gpu"], valueFlags: ["--root"]),
+
+        // authoring — the generation-prompt emitter. A family of its own
+        // rather than an `experiment` verb because it takes NO experiment: it
+        // answers "this study is missing X; what do I ask an LLM for", which
+        // is a question about a KIND of data, not about a manifest. Nothing
+        // here writes anything into the workspace — the emitter is never the
+        // acceptor, and installing generated data is a separate, reviewed act.
+        .init(
+            namespace: "authoring", verb: "prompt",
+            positional: "<kind>",
+            purpose: "Emit the generation prompt for one kind of missing "
+                + "study data, with its audit battery as numbers.",
+            valueFlags: Set(
+                AuthoringPrompts.kinds.flatMap { $0.parameters.map(\.flag) }),
+            ownsOutFlag: true),
 
         // docs — the generator behind the reference document's marked regions
         // (step 11). It reads the same table `--help` renders.
@@ -627,7 +699,8 @@ public enum ExperimentCLIParser {
 
             throw ExperimentCLIUsageError(
                 flag: token, verb: spec.label,
-                declaredFlags: spec.declaredFlags)
+                declaredFlags: spec.declaredFlags,
+                ownedBy: spec.redirectedFlags[token])
         }
 
         return ExperimentCLIInvocation(

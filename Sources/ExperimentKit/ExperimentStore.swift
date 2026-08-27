@@ -3024,6 +3024,324 @@ public enum ExperimentStore {
         }
     }
 
+    // MARK: - The sweep GRID (`set-sweep-grid`)
+
+    /// The sweep block's fields, split by which verb owns each one. The split
+    /// is the whole design of `set-sweep-grid`: `set-sweep-selection` already
+    /// owns `sweep.selection` entire (objective, capability tolerance,
+    /// coherence floor, matched-norm control, the per-concept choice
+    /// instruments), so this verb owns exactly what was left — the two grid
+    /// axes and the block-level inputs and budget no verb owned at all.
+    ///
+    /// `devPromptsHash` / `batteryHash` are owned by NEITHER: they are pinned
+    /// at freeze from the bytes on disk and never authored.
+    ///
+    /// Server twin: `experiment_store.SWEEP_SELECTION_OWNED_FLAGS`.
+    static let sweepSelectionOwnedFlags = [
+        "--objective", "--choice-prompts", "--capability-tolerance",
+        "--coherence-floor", "--control-margin", "--control-apply-to",
+        "--control-top-k",
+    ]
+
+    /// THE pointer a caller gets for asking `set-sweep-grid` to write a field
+    /// `set-sweep-selection` owns. Server twin:
+    /// `experiment_store.sweep_selection_owns_repair`.
+    static func sweepSelectionOwnsRepair(_ name: String, flag: String) -> String {
+        "steerlab-cli experiment set-sweep-selection \(name) \(flag) <value>  "
+            + "(the selection RULE is that verb's; set-sweep-grid writes the "
+            + "layer × alpha grid the rule then picks a winner from)"
+    }
+
+    /// Why one declared grid cannot be swept, or nil when it can. Every check
+    /// is on the DECLARATION, so it answers at authoring time rather than
+    /// after a model has loaded.
+    ///
+    /// The two ascent rules are the ones the shape of a dose-response makes
+    /// non-negotiable. Alphas are a LADDER: the sweep reports a dose-response
+    /// curve, and a ladder declared out of order reads as a curve that doubles
+    /// back — while a repeated rung is a cell paid for twice and reported once.
+    /// Layer fractions are the same argument one axis over, with an extra
+    /// wrinkle: `resolvedLayers` sorts and deduplicates them anyway, so an
+    /// unsorted or repeated declaration is a grid whose written form and run
+    /// form disagree. Requiring ascent here makes the manifest say what the
+    /// sweep will do.
+    ///
+    /// Server twin: `experiment_store.sweep_grid_problem` — the strings are
+    /// the cross-engine contract, because the refusal built from them is.
+    static func sweepGridProblem(
+        layerFractions: [Double], alphas: [Double], devPromptsFile: String,
+        batteryFile: String, maxTokens: Int
+    ) -> String? {
+        if layerFractions.isEmpty {
+            return "the layer axis is empty — a grid names at least one depth"
+        }
+        if let bad = layerFractions.first(where: { !$0.isFinite || $0 < 0 || $0 > 1 }) {
+            return "layer fractions are depths in [0, 1] — got "
+                + numberText(bad)
+        }
+        if let out = firstNonAscending(layerFractions) {
+            return "the layer axis does not ascend at \(numberText(out)) — "
+                + "declare depths in increasing order, each one once "
+                + "(the sweep sorts and deduplicates them, so an unordered "
+                + "declaration names a grid it will not run)"
+        }
+        if alphas.isEmpty {
+            return "the alpha axis is empty — a grid names at least one dose"
+        }
+        if let bad = alphas.first(where: { !$0.isFinite || $0 <= 0 }) {
+            return "alphas are residual-norm units above 0 — got "
+                + numberText(bad)
+                + " (0 is the baseline cell, which every sweep runs anyway)"
+        }
+        if let out = firstNonAscending(alphas) {
+            return "the alpha ladder does not ascend at \(numberText(out)) — "
+                + "declare doses in increasing order, each one once "
+                + "(a ladder that doubles back is not a dose-response)"
+        }
+        if maxTokens <= 0 {
+            return "max tokens must be above 0 — got \(maxTokens)"
+        }
+        if devPromptsFile.trimmingCharacters(in: .whitespaces).isEmpty {
+            return "the dev-prompts file is required — the sweep generates on it"
+        }
+        if batteryFile.trimmingCharacters(in: .whitespaces).isEmpty {
+            return "the capability-battery file is required — the sweep scores "
+                + "every cell on it"
+        }
+        return nil
+    }
+
+    /// The first entry that is not strictly greater than the one before it,
+    /// or nil when the list ascends. Server twin:
+    /// `experiment_store._first_non_ascending`.
+    static func firstNonAscending(_ values: [Double]) -> Double? {
+        for (index, value) in values.enumerated() where index > 0 {
+            if !(value > values[index - 1]) { return value }
+        }
+        return nil
+    }
+
+    /// Locale-independent rendering for a number inside refusal prose, so the
+    /// twin literals compare byte-for-byte across engines. Server twin:
+    /// `experiment_store._number_text`.
+    static func numberText(_ value: Double) -> String {
+        if value.isFinite, value == value.rounded(), abs(value) < 1e15 {
+            return String(Int(value))
+        }
+        return "\(value)"
+    }
+
+    /// The depth fraction that resolves to exactly `layer` in a network of
+    /// `depth` blocks — the MIDPOINT of the fraction band that truncates to
+    /// it, `(layer + 0.5) / depth`.
+    ///
+    /// The midpoint is not an aesthetic choice. `resolvedLayers` truncates
+    /// (`Int(depth · f)`), so every fraction in `[L/depth, (L+1)/depth)` names
+    /// layer L, and the two ends of that band are one rounding error from
+    /// naming L-1 or L+1 instead. The midpoint sits half a layer from either
+    /// edge, which is ~10¹⁴ times the double-rounding error of the round trip,
+    /// so `Int(depth · midpoint(L)) == L` for every depth a language model has.
+    /// Checked anyway at the call site rather than asserted here.
+    ///
+    /// Server twin: `experiment_store.depth_fraction_for_layer`.
+    static func depthFraction(forLayer layer: Int, depth: Int) -> Double {
+        (Double(layer) + 0.5) / Double(depth)
+    }
+
+    /// What `setSweepGrid` wrote, and everything a caller needs to SHOW it —
+    /// the fractions as this model's actual layers, and the depth that
+    /// resolution stands on.
+    public struct SweepGridOutcome: Sendable {
+        public let manifest: ExperimentManifest
+        /// The pinned model's depth, from any vector sidecar already on disk
+        /// for it. nil = nothing has been extracted for this model yet, so
+        /// the fractions stay unresolved until something has.
+        public let layerCount: Int?
+        /// `layerFractions` at that depth — empty when it is unknown.
+        public let resolvedLayers: [Int]
+        /// How many declared fractions landed on a layer another fraction
+        /// already claimed. A grid of "four depths" that is really three is a
+        /// silently smaller sweep, so it is reported rather than refused —
+        /// the fractions themselves are legal and the collapse is a property
+        /// of THIS model's depth, not of the declaration.
+        public let collapsedFractions: Int
+        /// True when the caller declared absolute layers and this verb
+        /// converted them to the fractions the manifest stores.
+        public let declaredAbsoluteLayers: Bool
+    }
+
+    /// Declare the sweep's GRID on a draft — the layer × alpha ladder, the two
+    /// instrument files it reads, and its per-cell token budget.
+    ///
+    /// The gap this closes is the one the passenger-concept problem sat in:
+    /// the grid was reachable only from the Optimizations panel, so the ONLY
+    /// headless way to obtain one was to `duplicate` a study that already had
+    /// it — which carries the donor's concepts along with its grid, and a
+    /// concept that rode in that way is swept but not citable.
+    ///
+    /// Layers are declarable both ways. `layerFractions` are depths in [0, 1]
+    /// and are what the manifest stores: they are the portable form, because
+    /// the same declaration names the proportionally same site in a 26-block
+    /// model and a 62-block one, and the sweep resolves them at run time
+    /// against the model it actually loaded. `absoluteLayers` is the spelling
+    /// a researcher reading a paper has ("L28"), and it is converted HERE,
+    /// against the pinned model's depth as this workspace knows it, with both
+    /// forms reported back. The manifest deliberately gains no second key for
+    /// the absolute layers: an axis with two stored spellings is an axis that
+    /// can disagree with itself, and the depth is a property of the pinned
+    /// model, which the manifest already names.
+    ///
+    /// Alphas are RESIDUAL-NORM UNITS, the house convention everywhere in this
+    /// schema (injected norm = α · r exactly). 0 is the implied baseline cell
+    /// and is never a rung.
+    ///
+    /// Draft-only through `updateDraft`; nil arguments leave their field as it
+    /// stands, so this verb can move one axis without restating the block.
+    /// Refuses `sweepGridRule` for a grid no engine could sweep and
+    /// `missingPrerequisite` for absolute layers on a model this workspace has
+    /// extracted nothing for. Server twin: `experiment_store.set_sweep_grid`.
+    @discardableResult
+    public static func setSweepGrid(
+        experimentName: String,
+        layerFractions: [Double]? = nil,
+        absoluteLayers: [Int]? = nil,
+        alphas: [Double]? = nil,
+        devPromptsFile: String? = nil,
+        batteryFile: String? = nil,
+        maxTokens: Int? = nil,
+        layerCount: Int? = nil
+    ) throws -> SweepGridOutcome {
+        var depth: Int?
+        var resolved: [Int] = []
+        var collapsed = 0
+        let manifest = try updateDraft(name: experimentName) { manifest in
+            var spec = manifest.sweep ?? ExperimentManifest.SweepSpec()
+            depth = layerCount ?? SweepPanelModel.cachedLayerCount(
+                modelID: manifest.modelID)
+            var fractions = layerFractions ?? spec.layerFractions
+            if let absolute = absoluteLayers {
+                guard let depth, depth > 0 else {
+                    throw ExperimentError.refusing(
+                        .missingPrerequisite,
+                        "absolute layers were declared for '\(experimentName)', "
+                            + "but nothing in this workspace states how deep "
+                            + "'\(manifest.modelID)' is — no extracted vector "
+                            + "for it carries a layer count, and a layer index "
+                            + "means nothing without one",
+                        repair: absoluteLayersNeedDepthRepair(experimentName))
+                }
+                if let out = firstNonAscending(absolute.map(Double.init)) {
+                    // Checked on the INDICES, before conversion: the same
+                    // rule fires on the fractions below, but it would say
+                    // "the layer axis does not ascend at 0.42" about a
+                    // declaration that named 11.
+                    throw ExperimentError.refusing(
+                        .sweepGridRule,
+                        "the layer axis does not ascend at \(Int(out)) — "
+                            + "declare blocks in increasing order, each one "
+                            + "once (the sweep sorts and deduplicates them, "
+                            + "so an unordered declaration names a grid it "
+                            + "will not run)",
+                        repair: absoluteLayersOutOfRangeRepair(
+                            experimentName, depth: depth))
+                }
+                if let bad = absolute.first(where: { $0 < 0 || $0 >= depth }) {
+                    throw ExperimentError.refusing(
+                        .sweepGridRule,
+                        "layer \(bad) is outside '\(manifest.modelID)', which "
+                            + "has \(depth) block(s) — legal layers are 0…"
+                            + "\(depth - 1)",
+                        repair: absoluteLayersOutOfRangeRepair(
+                            experimentName, depth: depth))
+                }
+                fractions = absolute.map {
+                    depthFraction(forLayer: $0, depth: depth)
+                }
+                // Defensive, and cheap: the midpoint rule is exact for every
+                // depth a language model has, but "exact by argument" is not
+                // the standard this schema holds its own writes to.
+                let roundTrip = ExperimentManifest.SweepSpec(
+                    layerFractions: fractions
+                ).resolvedLayers(layerCount: depth)
+                guard roundTrip == absolute.sorted() else {
+                    throw ExperimentError.refusing(
+                        .sweepGridRule,
+                        "the declared layers \(absolute) do not survive "
+                            + "conversion to depth fractions at depth \(depth) "
+                            + "(they would name \(roundTrip)) — declare the "
+                            + "grid as fractions instead",
+                        repair: absoluteLayersOutOfRangeRepair(
+                            experimentName, depth: depth))
+                }
+            }
+            let ladder = alphas ?? spec.alphas
+            let dev = devPromptsFile ?? spec.devPromptsFile
+            let battery = batteryFile ?? spec.batteryFile
+            let budget = maxTokens ?? spec.maxTokens
+            if let problem = sweepGridProblem(
+                layerFractions: fractions, alphas: ladder, devPromptsFile: dev,
+                batteryFile: battery, maxTokens: budget)
+            {
+                throw ExperimentError.refusing(
+                    .sweepGridRule, problem,
+                    repair: sweepGridRepair(experimentName))
+            }
+            spec.layerFractions = fractions
+            spec.alphas = ladder
+            spec.devPromptsFile = dev
+            spec.batteryFile = battery
+            spec.maxTokens = budget
+            // A grid edit re-opens the two block-level pins: they certify the
+            // bytes of files this verb may have just re-pointed, and a pin
+            // kept over a path that moved is a claim about a file nobody read.
+            // Freeze re-pins from disk when they are absent, which is the one
+            // moment a pin is allowed to be minted.
+            if devPromptsFile != nil { spec.devPromptsHash = nil }
+            if batteryFile != nil { spec.batteryHash = nil }
+            spec = SweepSpecForm.workspaceRelativeNormalized(spec)
+            manifest.sweep = spec
+            if let depth, depth > 0 {
+                resolved = spec.resolvedLayers(layerCount: depth)
+                collapsed = max(0, Set(spec.layerFractions).count - resolved.count)
+            }
+        }
+        return SweepGridOutcome(
+            manifest: manifest, layerCount: depth, resolvedLayers: resolved,
+            collapsedFractions: collapsed,
+            declaredAbsoluteLayers: absoluteLayers != nil)
+    }
+
+    /// THE repair for a grid no engine could sweep. Server twin:
+    /// `experiment_store.sweep_grid_repair`.
+    static func sweepGridRepair(_ name: String) -> String {
+        "steerlab-cli experiment set-sweep-grid \(name) "
+            + "--layer-fractions 0.5,0.7,0.85 --alphas 0.05,0.08,0.1,0.13  "
+            + "(both axes ascend, each value once; alphas are residual-norm "
+            + "units above 0)"
+    }
+
+    /// THE repair for absolute layers with no depth to read them against.
+    /// Extraction is named first because it is the one that makes the
+    /// ORIGINAL request answerable; fractions are the answer that needs no
+    /// model at all. Server twin:
+    /// `experiment_store.absolute_layers_need_depth_repair`.
+    static func absoluteLayersNeedDepthRepair(_ name: String) -> String {
+        "steerlab-cli experiment extract \(name)  (any vector for the pinned "
+            + "model states its depth) && steerlab-cli experiment "
+            + "set-sweep-grid \(name) --layers <L>,…  ; or declare the grid in "
+            + "depth fractions, which need no model: steerlab-cli experiment "
+            + "set-sweep-grid \(name) --layer-fractions 0.5,0.7,0.85"
+    }
+
+    /// THE repair for an absolute layer outside the pinned model. Server twin:
+    /// `experiment_store.absolute_layers_out_of_range_repair`.
+    static func absoluteLayersOutOfRangeRepair(_ name: String, depth: Int) -> String {
+        "steerlab-cli experiment set-sweep-grid \(name) --layers <0…\(depth - 1)>,…"
+            + "  ; or declare depths instead, which survive a change of model: "
+            + "steerlab-cli experiment set-sweep-grid \(name) "
+            + "--layer-fractions 0.5,0.7,0.85"
+    }
+
     /// nil / empty = the engine default (sampled text only). The declared
     /// list is provenance: it is written explicitly, never inferred from the
     /// prompt data (fields preserved ≠ measurement enabled).

@@ -1,0 +1,40 @@
+{
+  "changed" : true,
+  "engine" : "swift-mlx",
+  "message" : "declared the sweep grid on 'demo': 3 depths × 4 alphas = 12 cells — layer indices unknown until something is extracted for this model",
+  "nextAction" : {
+    "missingPermissionFlags" : [
+
+    ],
+    "requiresHuman" : false,
+    "verb" : "experiment set-sweep-selection demo --objective judgeScore|logprobShift"
+  },
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "result" : {
+    "alphaUnits" : "residualNorm",
+    "alphas" : [
+      0.05,
+      0.08,
+      0.1,
+      0.13
+    ],
+    "batteryFile" : "prompts/batteries/basic.jsonl",
+    "cellCount" : 12,
+    "collapsedFractions" : 0,
+    "declaredAbsoluteLayers" : false,
+    "devPromptsFile" : "prompts/dev/dev-prompts.jsonl",
+    "experiment" : "demo",
+    "layerCount" : null,
+    "layerFractions" : [
+      0.5,
+      0.7,
+      0.85
+    ],
+    "maxTokens" : 80,
+    "resolvedLayers" : null
+  },
+  "schemaVersion" : 1,
+  "state" : "ready",
+  "verb" : "experiment set-sweep-grid",
+  "workspace" : "<workspace>"
+}

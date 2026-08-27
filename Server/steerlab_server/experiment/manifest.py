@@ -2474,6 +2474,24 @@ def concept_validation_hash(concept: str, *, paired: bool,
 DEFAULT_SWEEP_DEV_PROMPTS_FILE = "prompts/dev/dev-prompts.jsonl"
 
 
+def resolve_sweep_layers(layer_count: int, fractions) -> list[int]:
+    """Depth-fraction → block-index resolution for the spec'd sweep grid.
+
+    Truncating (``int(layer_count * f)``), clamped to a valid block,
+    deduplicated, sorted — the same rule the Swift engine applies in
+    ``SweepSpec.resolvedLayers`` (``Int(Double(layerCount) * f)``), so a
+    fraction grid names the same cells on both engines for a given layer count.
+
+    Lives HERE rather than in ``tasks`` (which re-exports it, and where it was
+    written) because the AUTHORING side has to resolve a grid too — the
+    ``set-sweep-grid`` verb converts absolute layers against it and echoes the
+    resolved cells — and ``tasks`` carries the torch-bearing run loop that the
+    light client install must never import. One definition, both sides.
+    """
+    return sorted({min(layer_count - 1, max(0, int(layer_count * float(f))))
+                   for f in fractions})
+
+
 def sweep_input_pin_surface() -> tuple:
     """The sweep-input pin surface (cross-engine contract, 2026-07-20):
     ``(fileKey, hashKey, engine default path, label)`` per pinned input of a

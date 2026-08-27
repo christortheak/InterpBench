@@ -65,6 +65,7 @@ public enum CLIReferenceDocument {
                 "experiment detach",
                 "experiment pin-prompts", "experiment pin-rubric",
                 "experiment declare-condition", "experiment set-sweep-selection",
+                "experiment set-sweep-grid",
                 "experiment set-instruments", "experiment set-style-taxonomy",
                 "experiment verify", "experiment freeze", "experiment duplicate",
             ]),
@@ -99,6 +100,7 @@ public enum CLIReferenceDocument {
                 "remote cancel", "remote fetch", "remote import",
                 "remote import-chain", "remote variants", "remote chat",
             ]),
+        .init(id: "swift-authoring", verbLabels: ["authoring prompt"]),
         .init(id: "swift-docs", verbLabels: ["docs cli-reference"]),
         .init(
             id: "swift-install",
