@@ -222,6 +222,76 @@ import Testing
         #expect(raw.isRaw)
     }
 
+    /// The RAW branch's own refusal text is a twin too (round-5 review), and
+    /// the vocabulary is the whole vocabulary: everything but `mode`.
+    @Test func theRawParametersRefusalTextIsATwin() throws {
+        let refusals = try Self.load().refusals
+        #expect(ExtractionRendering
+            .rawParametersError(["addGenerationPrompt", "voice"]).message
+            == refusals["rawParameters"])
+    }
+
+    /// A parameter under `raw` refuses at DECLARATION and at DECODE, in both
+    /// directions of one rule.
+    ///
+    /// The decode half is the round-5 finding: `declared(object:)` had always
+    /// refused `{"mode":"raw","addGenerationPrompt":false}`, and the server's
+    /// `from_json` refuses it on READ as well, but this engine's decoder
+    /// stepped over the key and handed back a plain raw rendering — a
+    /// manifest one engine reads happily and the other refuses, which is
+    /// exactly the cross-engine disagreement the strictness rule forbids.
+    @Test func aParameterUnderRawRefusesAtDeclarationAndAtDecode() throws {
+        // Declaration (unchanged behavior, pinned here beside its decode twin).
+        do {
+            _ = try ExtractionRendering.declared(
+                object: ["mode": "raw", "addGenerationPrompt": false])
+            Issue.record("addGenerationPrompt under raw was declared")
+        } catch let error as ExtractionRendering.DeclarationError {
+            #expect(error.message
+                == ExtractionRendering
+                    .rawParametersError(["addGenerationPrompt"]).message)
+        }
+        // DECODE: the same input, the same refusal, the same words.
+        for body in [
+            #"{"mode":"raw","addGenerationPrompt":false}"#,
+            #"{"mode":"raw","voice":"assistant"}"#,
+            #"{"mode":"raw","systemPrompt":"be brief"}"#,
+            // A STRANGER under raw — not even in this type's vocabulary.
+            #"{"mode":"raw","addGenerationPromt":false}"#,
+        ] {
+            #expect(
+                throws: ExtractionRendering.DeclarationError.self,
+                "\(body) decoded"
+            ) {
+                try JSONDecoder().decode(
+                    ExtractionRendering.self, from: Data(body.utf8))
+            }
+        }
+        // Every extra key, listed sorted, in ONE refusal — the same shape the
+        // chat-template branch gives.
+        do {
+            _ = try JSONDecoder().decode(
+                ExtractionRendering.self,
+                from: Data(
+                    #"{"mode":"raw","voice":"user","addGenerationPrompt":true}"#
+                        .utf8))
+            Issue.record("two parameters under raw decoded")
+        } catch let error as ExtractionRendering.DeclarationError {
+            #expect(error.reason.contains("addGenerationPrompt, voice"))
+        }
+        // …while an explicit null declares nothing, so it decodes — the same
+        // rule the chat-template branch applies, and what keeps a manifest
+        // that spells absence out readable.
+        let nulled = try JSONDecoder().decode(
+            ExtractionRendering.self,
+            from: Data(
+                #"{"mode":"raw","addGenerationPrompt":null,"voice":null}"#.utf8))
+        #expect(nulled.isRaw)
+        // …and the bare raw block this engine actually writes still decodes.
+        #expect(try JSONDecoder().decode(
+            ExtractionRendering.self, from: Data(#"{"mode":"raw"}"#.utf8)).isRaw)
+    }
+
     // MARK: - 2. reading positions contribute the same identity
 
     @Test func everyReadingPositionAgreesWithThePythonEngine() throws {

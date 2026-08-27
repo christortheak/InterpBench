@@ -200,23 +200,45 @@ public struct ExtractionRendering: Codable, Sendable, Equatable {
         init?(intValue: Int) { nil }
     }
 
-    /// Decoding refuses an unknown chat-template key exactly as
-    /// ``declared(object:)`` does, and for a sharper reason: a stranger in a
-    /// RECORDED block — a manifest's `options.extractionRendering`, an
-    /// artifact sidecar's stamp — can only have been written by a newer engine
-    /// declaring a field this one does not understand, or by a hand edit with
-    /// a typo in it. Reading such a block as though the key were absent would
-    /// hand the study a rendering nobody declared, which is the whole failure
-    /// this type exists to end. Server twin: `from_json`, whose strictness the
-    /// declaration path and the read path already share.
+    /// Decoding refuses a parameter under `raw`, and an unknown chat-template
+    /// key, exactly as ``declared(object:)`` does — and for a sharper reason:
+    /// a stranger in a RECORDED block — a manifest's
+    /// `options.extractionRendering`, an artifact sidecar's stamp — can only
+    /// have been written by a newer engine declaring a field this one does not
+    /// understand, or by a hand edit with a typo in it. Reading such a block
+    /// as though the key were absent would hand the study a rendering nobody
+    /// declared, which is the whole failure this type exists to end. Server
+    /// twin: `from_json`, whose strictness the declaration path and the read
+    /// path already share.
+    ///
+    /// The RAW branch closed 2026-08-26 (external review round 5). Declaring
+    /// `{"mode": "raw", "addGenerationPrompt": false}` was already refused by
+    /// ``declared(object:)`` and by the server's `from_json` on read, but this
+    /// engine's DECODE accepted it and silently dropped the parameter — the
+    /// documented "reading is as strict as declaring" rule broken in exactly
+    /// the direction that lets the two engines disagree about a recorded
+    /// block: the server refusing a manifest this one reads happily.
     ///
     /// The encoder stays synthesized: what this engine WRITES is only ever the
-    /// five keys, so no artifact's bytes move.
+    /// five keys (and never a parameter under raw), so no artifact's bytes
+    /// move.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         // `mode` stays REQUIRED here (the synthesized decoder's rule, kept):
         // a recorded block with no mode at all is malformed, not raw.
         let mode = try container.decode(Mode.self, forKey: .mode)
+        if mode == .raw {
+            let everyKey = try decoder.container(keyedBy: AnyKey.self)
+            var extra: [String] = []
+            for key in everyKey.allKeys where key.stringValue != "mode" {
+                if try !everyKey.decodeNil(forKey: key) {
+                    extra.append(key.stringValue)
+                }
+            }
+            guard extra.isEmpty else {
+                throw ExtractionRendering.rawParametersError(extra.sorted())
+            }
+        }
         if mode == .chatTemplate {
             let everyKey = try decoder.container(keyedBy: AnyKey.self)
             var unknown: [String] = []
@@ -318,6 +340,37 @@ extension ExtractionRendering {
         "addGenerationPrompt", "mode", "qwenThinkingEnabled", "systemPrompt",
         "voice",
     ]
+
+    /// The non-null keys a `raw` block carries beyond `mode`, sorted.
+    ///
+    /// NON-null, for the same reason ``unknownChatTemplateKeys(in:)`` is: an
+    /// explicit `null` says "this parameter is absent", which is what an
+    /// absent key already says. Server twin:
+    /// `extraction_rendering.raw_parameters`.
+    public static func rawParameters(in object: [String: Any]) -> [String] {
+        object.keys
+            .filter { $0 != "mode" }
+            .filter { object[$0].map { !($0 is NSNull) } ?? false }
+            .sorted()
+    }
+
+    /// Refusal text shared VERBATIM with the server twin
+    /// (`extraction_rendering.raw_parameters_reason`), as
+    /// `DeclarationError.message`.
+    ///
+    /// ONE definition, reached by both the declaration path
+    /// (``declared(object:)``) and the DECODE path (`init(from:)`), so reading
+    /// a recorded block is as strict as declaring one and the two engines
+    /// refuse the same input with the same words.
+    public static func rawParametersError(
+        _ keys: [String]
+    ) -> DeclarationError {
+        DeclarationError(
+            reason: "extractionRendering mode 'raw' takes no parameters but "
+                + "declares \(keys.joined(separator: ", "))",
+            repair: "drop the parameters, or declare mode 'chatTemplate' if "
+                + "you meant the template rendering")
+    }
 
     /// The non-null keys of `object` this engine does not read, sorted.
     ///
@@ -426,17 +479,12 @@ extension ExtractionRendering {
         guard mode == .chatTemplate else {
             // A raw rendering takes no parameters: accepting them silently
             // would let a manifest look like it declared something it cannot
-            // get. Server twin: the same check in `from_json`.
-            let extra = object.keys
-                .filter { $0 != "mode" }
-                .filter { object[$0].map { !($0 is NSNull) } ?? false }
-                .sorted()
+            // get. Server twin: the same check in `from_json`. The refusal
+            // itself lives in `rawParametersError`, which `init(from:)` also
+            // reaches — declaring and READING refuse identically.
+            let extra = rawParameters(in: object)
             guard extra.isEmpty else {
-                throw DeclarationError(
-                    reason: "extractionRendering mode 'raw' takes no parameters "
-                        + "but declares \(extra.joined(separator: ", "))",
-                    repair: "drop the parameters, or declare mode "
-                        + "'chatTemplate' if you meant the template rendering")
+                throw rawParametersError(extra)
             }
             // Explicit raw == absent, byte for byte.
             return nil

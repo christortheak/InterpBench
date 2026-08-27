@@ -2505,9 +2505,21 @@ struct ConceptsPanelView: View {
 
     private var reExtractDisabled: Bool {
         if service.cluster.computeTarget == .server {
-            return service.selectedRemoteModelID == nil
+            return serverBuildDisabled
         }
         return localBuildDisabled
+    }
+
+    /// The server build's enablement. A standing declaration refusal turns it
+    /// off for the same reason it turns the local build off — building under
+    /// the last VALID declaration would produce a vector nobody asked for —
+    /// but NOT the two refusals that are this engine's limit alone (the
+    /// assistant voice, `addGenerationPrompt: false`), whose own repair text
+    /// says to extract on the server engine. Those are exactly the
+    /// declarations this button exists to reach.
+    private var serverBuildDisabled: Bool {
+        service.selectedRemoteModelID == nil
+            || builder.hasRefusedServerExtractionDeclaration
     }
 
     /// The local build actions' enablement, from the model layer. NOT "a model
@@ -2554,14 +2566,31 @@ struct ConceptsPanelView: View {
             Button("Build vector on \(service.cluster.substrateLabel)") {
                 Task { await builder.buildVectorOnActiveServer() }
             }
-            .disabled(service.selectedRemoteModelID == nil)
+            .disabled(serverBuildDisabled)
             .help(
                 "queue extraction as a durable server job with this panel's "
-                    + "method and pooling options. The server reads its own "
-                    + "tree of the stimuli — the build preflights it against "
-                    + "this panel's data (syncing when safe, refusing on "
-                    + "drift) — and the vector lands in the server's catalog, "
-                    + "not the local runs tree")
+                    + "method, reading position, and extraction rendering — "
+                    + "the whole declaration travels, and the server echoes "
+                    + "what it applied. The server reads its own tree of the "
+                    + "stimuli (the build preflights it against this panel's "
+                    + "data, syncing when safe, refusing on drift) and the "
+                    + "vector lands in the server's catalog, not the local "
+                    + "runs tree")
+            if let refusal = builder.serverExtractionDeclarationRefusal {
+                Text(refusal)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            } else if builder.extractionRenderingRefusalIsLocalEngineLimit {
+                // The one place the asymmetry is GOOD news: this pane's local
+                // build is off and this button is not, because the rendering
+                // is one the server engine renders and this one cannot.
+                Text(
+                    "this rendering is unavailable on the local engine and is "
+                        + "why the local build is off — the server engine "
+                        + "renders it, so build it here")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             Text(
                 "runs on the server's copy of the stimuli and the selected "
                     + "server model; progress appears in Compute and the "

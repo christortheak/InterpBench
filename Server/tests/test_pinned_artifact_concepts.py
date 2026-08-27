@@ -353,6 +353,77 @@ def test_attach_copies_the_artifacts_rendering_so_verify_passes(tmp_path):
     assert any(marker in v for v in Manifest.from_dict(d).verify(root))
 
 
+@pytest.mark.parametrize("label,codable", [
+    # The two that always survived…
+    ("last token", {"lastToken": {}}),
+    ("mean from token 50", {"meanFromToken": {"_0": 50}}),
+    # …and the six that used to collapse into `lastToken`.
+    ("offset from end 3", {"offsetFromEnd": {"_0": 3}}),
+    ("last content token", {"lastContentToken": {}}),
+    ("turn close token", {"turnCloseToken": {}}),
+    ("post-instruction 2", {"postInstruction": {"_0": 2}}),
+    ("content offset 2", {"contentOffset": {"_0": 2}}),
+    ("mean content from token 4", {"meanContentFromToken": {"_0": 4}}),
+])
+def test_attach_carries_every_reading_position_faithfully(
+        tmp_path, label, codable):
+    """The position travels VERBATIM, all eight of them (external review round
+    5).
+
+    The pin used to be rebuilt from the parsed position's
+    ``requested_start_index`` — an integer only ``meanFromToken`` has — so six
+    of the eight positions were silently rewritten as ``lastToken``. The
+    manifest then contradicted the very sidecar it had just read, and the
+    verify contradiction check refused the pin attach had written one line
+    earlier. Swift's ``ExperimentStore.attachArtifactPin`` copies the position
+    itself, and this is that behavior, in the identical Codable shape.
+    """
+    root, artifact = _workspace(tmp_path, reading=label)
+    d = es.attach_artifact("gm-study", "crit-gm", artifact,
+                           source_concept="crit", root=root)
+    assert d["concepts"][0]["options"]["readingPosition"] == codable
+    # …and the pin verify() sees is one it passes: attach never writes a pin
+    # the very next verify rejects.
+    marker = "held-out activations must be read where the vector was read"
+    assert not any(marker in v
+                   for v in Manifest.load("gm-study", root).verify(root))
+    # The manifest's own reader gets the same position back out of the block.
+    assert Manifest.load("gm-study", root).concepts[0] \
+        .options.reading_position.label == label
+
+
+def test_an_unreadable_reading_position_refuses_the_attach_by_name(tmp_path):
+    """The position's twin of the rendering refusal below, and strict for the
+    same reason: a label this engine cannot parse can only be a NEWER engine's
+    position or a typo, and last-token is not a safe guess — it would launder
+    a wrong reading into the recipe identity a promotion matches on. Swift
+    twin: the ``ReadingPosition(label:)`` guard in ``attachArtifactPin``."""
+    root, artifact = _workspace(tmp_path, reading="penultimate token")
+    with pytest.raises(es.ExperimentStoreError) as exc:
+        es.attach_artifact("gm-study", "crit-gm", artifact,
+                           source_concept="crit", root=root)
+    message = str(exc.value)
+    assert "records reading position 'penultimate token'" in message
+    assert "which this engine cannot parse" in message
+    assert "re-attach on the engine that wrote it" in message
+
+
+def test_a_sidecar_with_no_reading_position_attaches_as_legacy_last_token(
+        tmp_path):
+    """ABSENT is the legacy artifact, and stays the default — the Swift twin
+    leaves ``ExtractionOptions``' own default in place when the sidecar records
+    none, so a legacy attach still writes byte-identical manifest JSON."""
+    root, artifact = _workspace(tmp_path)
+    sidecar_path = os.path.join(root, artifact + ".json")
+    sidecar = json.load(open(sidecar_path))
+    del sidecar["readingPosition"]
+    with open(sidecar_path, "w", encoding="utf-8") as handle:
+        json.dump(sidecar, handle, sort_keys=True, indent=2)
+    d = es.attach_artifact("gm-study", "crit-gm", artifact,
+                           source_concept="crit", root=root)
+    assert d["concepts"][0]["options"]["readingPosition"] == {"lastToken": {}}
+
+
 def test_a_stranger_in_the_artifacts_rendering_refuses_the_attach_by_name(
         tmp_path):
     """READING is as strict as declaring (review 2026-08-26). A key this

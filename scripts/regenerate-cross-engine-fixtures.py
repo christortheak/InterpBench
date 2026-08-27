@@ -619,6 +619,12 @@ def system_prompt_composition() -> None:
         ("frame-only-blank-agent", "   ", "Respond in JSON."),
         ("neither", None, None),
         ("neither-empty", "", ""),
+        # The both-empty canonicalization (review 2026-08-26): every spelling
+        # of "nothing on either level" composes to null, whichever side the
+        # whitespace is on. These three used to disagree with each other.
+        ("neither-blank", "   ", "   "),
+        ("blank-agent-null-frame", "   ", None),
+        ("null-agent-blank-frame", None, "   "),
         ("untrimmed-both", "  padded persona  ", "  padded frame  "),
         ("multiline-agent", "line one\nline two", "Respond in JSON."),
         ("non-ascii", "Tu es un juge — précis.", "Réponds en JSON…"),
@@ -654,6 +660,8 @@ def system_prompt_composition() -> None:
         ("persona-only-blank-cast", "You are Adjudicator-7.", "   "),
         ("neither", None, ""),
         ("neither-null", None, None),
+        ("neither-blank", "  ", "   "),
+        ("null-persona-blank-cast", None, "   "),
         ("untrimmed-cast", "You are Adjudicator-7.", "  padded role  "),
         ("multiline-persona", "line one\nline two", "You represent Team South."),
         ("non-ascii", "Tu es un juge — précis.", "Tu représentes l'équipe Sud…"),
@@ -828,6 +836,13 @@ def extraction_rendering_and_positions() -> None:
             # as a fixture diff.
             "unknownChatTemplateKey":
                 er.unknown_chat_template_key_reason(["addGenerationPromt"]),
+            # The RAW branch's own stranger refusal, pinned the same way. Both
+            # engines refuse it while DECLARING and while READING a recorded
+            # block (round-5 review): a parameter under raw reaches no
+            # template at all, so accepting it on either path would let one
+            # engine read a manifest the other refuses.
+            "rawParameters": er.raw_parameters_reason(
+                ["addGenerationPrompt", "voice"]),
         },
         "chatTemplateKeys": list(er.CHAT_TEMPLATE_KEYS),
     })

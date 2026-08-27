@@ -164,6 +164,32 @@ def unknown_chat_template_key_reason(keys) -> str:
         f"{', '.join(CHAT_TEMPLATE_KEYS)}")
 
 
+def raw_parameters(value: dict) -> list[str]:
+    """The non-null keys a ``raw`` block carries beyond ``mode``, sorted.
+
+    NON-null, for the same reason :func:`unknown_chat_template_keys` is: an
+    explicit ``null`` says "this parameter is absent", which is what an absent
+    key already says. Swift twin: ``ExtractionRendering.rawParameters(in:)``.
+    """
+    return sorted(k for k in value
+                  if k != "mode" and value.get(k) is not None)
+
+
+def raw_parameters_reason(keys) -> str:
+    """Refusal text shared VERBATIM with the Swift twin
+    (``ExtractionRendering.rawParametersError``, as its
+    ``DeclarationError.message``).
+
+    A raw rendering takes no parameters: accepting them silently would let a
+    manifest look like it declared something it cannot get — an
+    ``addGenerationPrompt`` under ``raw`` reaches no template at all.
+    """
+    return (
+        f"extractionRendering mode 'raw' takes no parameters but declares "
+        f"{', '.join(keys)} — repair: drop the parameters, or declare mode "
+        f"'chatTemplate' if you meant the template rendering")
+
+
 class ExtractionRenderingError(ValueError):
     """A rendering declaration this engine cannot honor. Typed and carrying a
     repair, per house style — never a silent fallback to raw, because a silent
@@ -279,14 +305,9 @@ def from_json(value) -> ExtractionRendering:
     if mode == RAW:
         # A raw rendering takes no parameters: accepting them silently would
         # let a manifest look like it declared something it cannot get.
-        extra = sorted(k for k in value
-                       if k not in ("mode",) and value.get(k) is not None)
+        extra = raw_parameters(value)
         if extra:
-            raise ExtractionRenderingError(
-                f"extractionRendering mode 'raw' takes no parameters but "
-                f"declares {', '.join(extra)} — repair: drop the parameters, "
-                f"or declare mode 'chatTemplate' if you meant the template "
-                f"rendering")
+            raise ExtractionRenderingError(raw_parameters_reason(extra))
         return RAW_RENDERING
     # …and neither does a chat-template rendering, beyond the five parameters
     # it actually varies. Checked FIRST, before any of them is read, so a

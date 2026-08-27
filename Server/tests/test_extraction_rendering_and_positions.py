@@ -319,6 +319,34 @@ def test_raw_with_parameters_refuses_rather_than_pretending():
         er.from_json({"mode": "raw", "addGenerationPrompt": True})
 
 
+def test_every_parameter_and_stranger_under_raw_refuses_on_the_read_path():
+    """The RAW branch, on the path that READS a recorded block (round-5
+    review). ``from_json`` has always been the one door — declaration and read
+    alike — and Swift's DECODE used to step over these keys and hand back a
+    plain raw rendering, so a manifest this engine refuses was one that engine
+    accepted. Both refuse now, with the same words (pinned in the cross-engine
+    fixture's ``refusals.rawParameters``)."""
+    for block in ({"mode": "raw", "addGenerationPrompt": False},
+                  {"mode": "raw", "voice": "assistant"},
+                  {"mode": "raw", "systemPrompt": "be brief"},
+                  {"mode": "raw", "addGenerationPromt": False}):
+        with pytest.raises(er.ExtractionRenderingError,
+                           match="takes no parameters"):
+            er.from_json(block)
+    # Every extra key, listed sorted, in ONE refusal — and it is the shared
+    # text, not a lookalike.
+    with pytest.raises(er.ExtractionRenderingError) as exc:
+        er.from_json({"mode": "raw", "voice": "user",
+                      "addGenerationPrompt": True})
+    assert str(exc.value) == er.raw_parameters_reason(
+        ["addGenerationPrompt", "voice"])
+    # …while an explicit null declares nothing, so it reads — the same rule
+    # the chat-template branch applies.
+    assert er.from_json({"mode": "raw", "addGenerationPrompt": None,
+                         "voice": None}).is_raw
+    assert er.from_json({"mode": "raw"}).is_raw
+
+
 def test_a_stranger_under_chat_template_refuses_rather_than_being_ignored():
     """THE MISSPELLING BUG (review 2026-08-26). The chat-template branch read
     its five known keys and silently ignored every other one, so

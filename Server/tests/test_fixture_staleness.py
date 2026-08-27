@@ -101,6 +101,8 @@ def test_extraction_rendering_and_positions_fixture_is_current():
             er.ASSISTANT_VOICE_SYSTEM_PROMPT_REASON,
         "unknownChatTemplateKey":
             er.unknown_chat_template_key_reason(["addGenerationPromt"]),
+        "rawParameters":
+            er.raw_parameters_reason(["addGenerationPrompt", "voice"]),
     }, REGENERATE
     assert fixture["chatTemplateKeys"] == list(er.CHAT_TEMPLATE_KEYS), REGENERATE
 

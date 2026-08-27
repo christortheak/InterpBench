@@ -54,7 +54,10 @@ struct SystemPromptCompositionTests {
         (Self.persona, "", Self.persona),
         (Self.persona, "  \n ", Self.persona),
         (nil, nil, nil),
-        ("", "", ""),
+        ("", "", nil),
+        ("   ", "   ", nil),
+        ("   ", nil, nil),
+        (nil, "   ", nil),
     ] as [(String?, String?, String?)])
     func compositionDegradesGracefullyInEveryDirection(
         agent: String?, frame: String?, expected: String?
@@ -77,6 +80,42 @@ struct SystemPromptCompositionTests {
         }
         #expect(SystemPromptComposition.hash(nil) == nil)
         #expect(SystemPromptComposition.hash("") == nil)
+    }
+
+    /// Review 2026-08-26. `compose` classified `"   "` as empty on both
+    /// levels, but only the AGENT side's emptiness reached a nil: the frame
+    /// shortcut returned the whitespace survivor, so `compose(" ", nil)` was
+    /// nil and `compose(nil, " ")` was `" "` — one arm with a null effective
+    /// hash, one with a digest of a blank, from two contributions the rule
+    /// calls equally empty and both stamps call `null`. Argument order is not
+    /// allowed to decide effective identity. Server twin:
+    /// `test_two_empty_levels_compose_to_none_whichever_side_the_blank_is_on`.
+    @Test func twoEmptyLevelsComposeToNilWhicheverSideTheBlankIsOn() {
+        let blank = "   \n\t "
+        let pairs: [(String?, String?)] = [
+            (blank, nil), (nil, blank), (blank, blank), (blank, ""),
+            ("", blank), ("", ""), (nil, nil),
+        ]
+        for (agent, frame) in pairs {
+            let composed = SystemPromptComposition.compose(
+                agent: agent, frame: frame)
+            #expect(composed == nil)
+            #expect(SystemPromptComposition.hash(composed) == nil)
+            let arm = ArmSystemPrompt(agent: agent, study: frame)
+            #expect(arm.effective == nil)
+            #expect(arm.stamp == .none)
+            let seat = SeatSystemPrompt(agent: agent, cast: frame)
+            #expect(seat.effective == nil)
+            #expect(seat.stamp.agent == nil)
+            #expect(seat.stamp.cast == nil)
+        }
+        // The canonicalization reaches ONLY the both-empty case: a survivor
+        // with content in it comes back byte-identical, as it always has.
+        let survivor = "  a frame with edges  "
+        #expect(SystemPromptComposition.compose(agent: blank, frame: survivor)
+            == survivor)
+        #expect(SystemPromptComposition.compose(agent: survivor, frame: blank)
+            == survivor)
     }
 
     @Test func theCompositionStampAlwaysEncodesBothKeys() throws {
@@ -535,7 +574,9 @@ struct SystemPromptCompositionTests {
         ("   ", Self.role, Self.role),
         (Self.persona, "", Self.persona),
         (Self.persona, "   ", Self.persona),
-        (nil, "", ""),
+        (nil, "", nil),          // both empty → nothing, on either side…
+        (nil, "   ", nil),
+        ("   ", "", nil),
     ] as [(String?, String, String?)])
     func panelCastingDegradesGracefullyInEveryDirection(
         persona: String?, cast: String, expected: String?

@@ -454,25 +454,145 @@ public final class ConceptBuilder {
     /// where the assistant-voice and `addGenerationPrompt: false` engine
     /// asymmetries speak.
     public private(set) var extractionRenderingRefusal: String?
+    /// True when the standing rendering refusal is THIS engine's limit rather
+    /// than a malformed declaration — the assistant voice and
+    /// `addGenerationPrompt: false`, both of which the server engine renders
+    /// happily. Their own repair text says so ("extract this concept on the
+    /// python-hf-transformers engine, which supports it"), so a server build
+    /// under one of them must not be blocked by a refusal that names the
+    /// server as the fix.
+    public private(set) var extractionRenderingRefusalIsLocalEngineLimit = false
+
+    /// The refusals ``ExtractionRendering/declared(object:)`` raises for what
+    /// the swift-mlx renderer cannot do, as opposed to what no engine accepts.
+    /// Matched by REASON — the same constants the parser throws, so the two
+    /// cannot drift into two lists.
+    private static let localEngineRenderingLimits = [
+        PromptRendering.assistantVoiceReason,
+        PromptRendering.addGenerationPromptFalseReason,
+    ]
 
     private func redeclareExtractionRendering() {
         do {
             extractionRendering = try extractionRenderingChoice.declared()
             extractionRenderingRefusal = nil
+            extractionRenderingRefusalIsLocalEngineLimit = false
         } catch let error as ExtractionRendering.DeclarationError {
             extractionRenderingRefusal = "\(error.reason) — repair: \(error.repair)"
+            extractionRenderingRefusalIsLocalEngineLimit =
+                Self.localEngineRenderingLimits.contains(error.reason)
         } catch {
             extractionRenderingRefusal = "\(error)"
+            extractionRenderingRefusalIsLocalEngineLimit = false
         }
         lastDirection = nil
         noteMutation()
     }
 
-    /// True while either declaration stands refused: the build button is off,
-    /// because extracting under the last VALID declaration would silently
+    /// True while either declaration stands refused: the LOCAL build button is
+    /// off, because extracting under the last VALID declaration would silently
     /// produce a vector nobody asked for.
     public var hasRefusedExtractionDeclaration: Bool {
         readingPositionRefusal != nil || extractionRenderingRefusal != nil
+    }
+
+    /// The same question for a SERVER build, which is not the same question.
+    ///
+    /// The engines are asymmetric in exactly one direction: `swift-mlx`
+    /// refuses the assistant voice and `addGenerationPrompt: false` (its
+    /// tokenizer bridge cannot render either), and `python-hf-transformers`
+    /// renders both. Those two refusals were computed by the LOCAL parser and
+    /// literally name the server as their repair, so letting them switch off
+    /// the server build would refuse a declaration the server accepts. Every
+    /// other refusal — an out-of-vocabulary reading position, a malformed
+    /// rendering — is engine-independent and stops both paths.
+    ///
+    /// This gate is belt-and-braces, not the validation: the routes re-parse
+    /// the declaration with the SERVER's own parsers and answer a 400 in the
+    /// server engine's words, which is what the panel shows.
+    public var hasRefusedServerExtractionDeclaration: Bool {
+        if readingPositionRefusal != nil { return true }
+        guard extractionRenderingRefusal != nil else { return false }
+        return !extractionRenderingRefusalIsLocalEngineLimit
+    }
+
+    /// The standing refusal that blocks a server build, or nil.
+    public var serverExtractionDeclarationRefusal: String? {
+        guard hasRefusedServerExtractionDeclaration else { return nil }
+        return readingPositionRefusal ?? extractionRenderingRefusal
+    }
+
+    /// The rendering a SERVER build declares, built from the picker state
+    /// directly rather than through this engine's ``declared()`` parser.
+    ///
+    /// Deliberately not `extractionRendering`: that property is the LOCAL
+    /// engine's parse, and it is nil under the assistant voice precisely
+    /// because this engine cannot render it — sending nil there would post a
+    /// raw build under a panel showing a chat template, which is the silent
+    /// substitution this whole path exists to end. The server re-parses this
+    /// with its own strict parser and refuses anything it cannot honor.
+    public var serverExtractionRendering: ExtractionRendering? {
+        guard extractionRenderingChoice.mode == .chatTemplate else { return nil }
+        if extractionRenderingChoice.voice == .assistant {
+            // The declaration OMITS addGenerationPrompt under this voice —
+            // both engines refuse the key there as meaningless.
+            return ExtractionRendering(mode: .chatTemplate, voice: .assistant)
+        }
+        return ExtractionRendering(
+            mode: .chatTemplate,
+            addGenerationPrompt: extractionRenderingChoice.addGenerationPrompt
+                ? nil : false)
+    }
+
+    /// The whole extraction declaration in the shape the server-extract
+    /// routes take it.
+    public struct ServerExtractionDeclaration: Sendable, Equatable {
+        /// The LEGACY spelling of one position, sent only when it says
+        /// everything the declaration says.
+        public var poolFromToken: Int?
+        /// The cross-engine label, for every other position.
+        public var readingPosition: String?
+        public var extractionRendering: ExtractionRendering?
+    }
+
+    /// What ``buildVectorOnActiveServer()`` declares, for a route whose
+    /// pre-declaration reading of an ABSENT `poolFromToken` was
+    /// `legacyPooledDefault` (nil where the route read the last token — the
+    /// paired route; 50 where it pooled — the grand-mean route).
+    ///
+    /// THE COMPATIBILITY RULE, stated once: a declaration the legacy
+    /// `poolFromToken` field expresses COMPLETELY — a pooled mean from token
+    /// K, or the last token where absence already means that — is sent in
+    /// that legacy spelling, so the request bytes are identical to the ones
+    /// this panel has always posted and a server that predates the
+    /// declaration fields keeps building the recipes it can actually honor.
+    /// Anything else is sent as the label plus the rendering object, and the
+    /// client then REQUIRES the server's echo
+    /// (``ClusterClient/AppliedExtraction``): a declaration that cannot be
+    /// confirmed is a refusal, never a build.
+    ///
+    /// `mean from token 0` is deliberately NOT legacy-expressible on either
+    /// route: both read a zero pool as something else (the last token; a pool
+    /// from 50), so the label is the only spelling that says it.
+    public func serverExtractionDeclaration(
+        legacyPooledDefault: Int?
+    ) -> ServerExtractionDeclaration {
+        let rendering = serverExtractionRendering
+        let parameter = readingPositionParameter
+        if rendering == nil {
+            switch readingPositionChoice {
+            case .lastToken where legacyPooledDefault == nil:
+                return ServerExtractionDeclaration(poolFromToken: nil)
+            case .meanFromToken where parameter != 0:
+                return ServerExtractionDeclaration(poolFromToken: parameter)
+            default:
+                break
+            }
+        }
+        return ServerExtractionDeclaration(
+            readingPosition: readingPositionChoice.declarationLabel(
+                parameter: parameter),
+            extractionRendering: rendering)
     }
 
     // MARK: Staleness & dirty tracking
@@ -2518,6 +2638,16 @@ public final class ConceptBuilder {
             await buildReaderOnActiveServer()
             return
         }
+        // A declaration the SERVER would also refuse never becomes a queued
+        // job — answered first, because it does not depend on a connection.
+        // The two engine-asymmetry refusals are deliberately NOT here: their
+        // own repair text names this server as the fix.
+        if recipeFamily.extractsFromStimuli,
+            let refusal = serverExtractionDeclarationRefusal
+        {
+            reportBuildFailure(refusal, title: "Server Vector Build — refused")
+            return
+        }
         guard let host, case .server = host.cluster.activeWorkspace,
             let client = host.cluster.client
         else {
@@ -2603,9 +2733,16 @@ public final class ConceptBuilder {
                         return
                     }
                 }
+                // The grand-mean route pools from token 50 when the body says
+                // nothing, so THAT is its legacy default — and the whole
+                // declaration travels either way.
+                let declaration = serverExtractionDeclaration(
+                    legacyPooledDefault: 50)
                 jobID = try await client.multiConceptExtract(
                     concepts: included, targets: targets,
-                    poolFromToken: poolFromToken ?? 50)
+                    poolFromToken: declaration.poolFromToken,
+                    readingPosition: declaration.readingPosition,
+                    extractionRendering: declaration.extractionRendering)
                 title = "Server Grand Mean Vector Build"
             case .caaMeanDifference, .repeLAT:
                 // The job reads the SERVER's checkout of
@@ -2659,9 +2796,15 @@ public final class ConceptBuilder {
                     status = "server's '\(name)' already matches the local "
                         + "dataset — extracting from its copy"
                 }
+                // The paired route reads the last token when the body says
+                // nothing about the position — its legacy default.
+                let declaration = serverExtractionDeclaration(
+                    legacyPooledDefault: nil)
                 jobID = try await client.conceptExtract(
                     concept: name, method: extractionMethod.rawValue,
-                    poolFromToken: poolFromToken)
+                    poolFromToken: declaration.poolFromToken,
+                    readingPosition: declaration.readingPosition,
+                    extractionRendering: declaration.extractionRendering)
                 title = "Server Vector Build: \(name)"
             case .repeReaderLAT:
                 return  // delegated to buildReaderOnActiveServer above
@@ -2702,9 +2845,26 @@ public final class ConceptBuilder {
             }
         } catch {
             reportBuildFailure(
-                "server extraction failed: \(error)",
+                "server extraction failed: \(Self.serverFailureText(error))",
                 title: "Server Vector Build — failed")
         }
+    }
+
+    /// A server failure in the SERVER's words.
+    ///
+    /// A refused declaration comes back as `{"detail": "<the engine's refusal
+    /// — repair: …>"}`; showing that JSON wrapper in a builder notice buries
+    /// the repair inside quoting and escapes. Every other error prints as it
+    /// always did.
+    static func serverFailureText(_ error: any Error) -> String {
+        guard case ClusterClient.ClientError.badResponse(let code, let text) = error
+        else { return "\(error)" }
+        guard let data = text.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data)
+                as? [String: Any],
+            let detail = object["detail"] as? String
+        else { return "server returned \(code): \(text)" }
+        return detail
     }
 
     /// Queue reading-probe training on the active server (durable job over

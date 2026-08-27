@@ -1037,8 +1037,17 @@ class RunnerClient:
             try:
                 staged = os.fdopen(handle_fd, "w+b")
             except BaseException:
+                # Same identity rule as every other cleanup here: prove the
+                # name still refers to the inode ``mkstemp`` handed back
+                # before removing it. Stat FIRST — the descriptor is the only
+                # proof, and closing it throws that away.
+                try:
+                    reserved = os.fstat(handle_fd)
+                except OSError:
+                    reserved = None
                 os.close(handle_fd)
-                _unlink_quietly(temp_path)
+                if reserved is not None:
+                    _unlink_if_reserved(temp_path, reserved)
                 raise
 
         url = self._url("/api/bundles/download")
@@ -1088,13 +1097,21 @@ class RunnerClient:
                     "nothing was written to the destination. Retrying is "
                     "safe: a download is a GET, and this client verifies the "
                     "digest before the file moves anywhere.")) from exc
+        except RunnerRefusal as refusal:
+            # The cap refusals raised inside the stream. Same rule as the
+            # commit's: the document says what cleanup did with the staging
+            # name, and cleanup never removes an entry it cannot prove it owns.
+            discarded = _discard_staged(staged, temp_path)
+            refusal.detail.update(
+                _foreign_staging_detail(discarded, temp_path))
+            raise
         except BaseException:
             _discard_staged(staged, temp_path)
             raise
 
         digest = hasher.hexdigest()
         if digest != expected:
-            _discard_staged(staged, temp_path)
+            discarded = _discard_staged(staged, temp_path)
             raise RunnerRefusal(
                 f"the downloaded archive hashes to {digest}, not the "
                 f"{expected} the runner reported — refused before anything "
@@ -1108,7 +1125,8 @@ class RunnerClient:
                     "for. Re-download; if it disagrees again, the copy on the "
                     "runner is the problem."),
                 detail={"expectedSha256": expected, "downloadedSha256": digest,
-                        "bytes": total, "destination": destination})
+                        "bytes": total, "destination": destination,
+                        **_foreign_staging_detail(discarded, temp_path)})
 
         # ``hasher`` covers the bytes this client HANDED to the descriptor.
         # This covers the bytes the staging inode actually holds now, read back
@@ -1118,7 +1136,7 @@ class RunnerClient:
         # staging name before it was swapped away can arrange.
         restaged = _digest_open_file(staged)
         if restaged != expected:
-            _discard_staged(staged, temp_path)
+            discarded = _discard_staged(staged, temp_path)
             raise RunnerRefusal(
                 f"the staged file hashes to {restaged}, not the {expected} "
                 "the arriving bytes hashed to — something else wrote into the "
@@ -1131,11 +1149,12 @@ class RunnerClient:
                     "destination, which no other process has the name of."),
                 detail={"expectedSha256": expected, "stagedSha256": restaged,
                         "tempPath": temp_path, "bytes": total,
-                        "destination": destination})
+                        "destination": destination,
+                        **_foreign_staging_detail(discarded, temp_path)})
         try:
             _commit_no_replace(staged, temp_path, destination)
         except FileExistsError:
-            _discard_staged(staged, temp_path)
+            discarded = _discard_staged(staged, temp_path)
             raise RunnerRefusal(
                 f"{destination} appeared while this download was in flight — "
                 "refused rather than overwritten",
@@ -1147,7 +1166,20 @@ class RunnerClient:
                     "file that appeared aside. Nothing of this download was "
                     "kept."),
                 detail={"destination": destination, "sha256": digest,
-                        "bytes": total}) from None
+                        "bytes": total,
+                        **_foreign_staging_detail(discarded, temp_path)}
+                ) from None
+        except RunnerRefusal as refusal:
+            # The commit's own typed refusal — ``stagingPathHijacked``, whose
+            # whole finding is that the staging NAME stopped meaning what it
+            # did. Its document must say what the cleanup then did with that
+            # name, so the person is not left wondering whether the file that
+            # took it over is still there. It is: nothing removes an entry it
+            # cannot prove it owns.
+            discarded = _discard_staged(staged, temp_path)
+            refusal.detail.update(
+                _foreign_staging_detail(discarded, temp_path))
+            raise
         except BaseException:
             _discard_staged(staged, temp_path)
             raise
@@ -1198,21 +1230,109 @@ def _digest_open_file(handle, *, chunk: int = 1024 * 1024) -> str:
     return hasher.hexdigest()
 
 
-def _discard_staged(handle, temp_path: str) -> None:
+#: What a refusal says when cleanup found a STRANGER on the staging path.
+#: The user needs to know two things: their own file is still there, and this
+#: client did not touch it.
+FOREIGN_STAGING_NOTE = (
+    "the staging path is now occupied by a file this download did not create "
+    "— it was left exactly as it was found, bytes and directory entry both")
+
+
+def _foreign_staging_detail(discarded: bool, temp_path: str) -> dict:
+    """The extra ``detail`` keys a refusal carries when :func:`_discard_staged`
+    removed NOTHING because a stranger had taken the staging name.
+
+    Empty on the ordinary path, so every refusal's document keeps the exact
+    shape it had before this check existed.
+    """
+    if discarded:
+        return {}
+    return {"stagingPathForeignEntry": temp_path,
+            "stagingPathNote": FOREIGN_STAGING_NOTE}
+
+
+def _unlink_if_reserved(path: str, reserved) -> bool:
+    """Unlink ``path`` ONLY while it still names ``reserved``.
+
+    THE one identity check every cleanup in this adapter goes through
+    (external review round 5). ``reserved`` is an ``os.stat_result`` taken
+    from a descriptor this client is holding, or from the entry this call
+    itself created with ``O_EXCL`` — an inode this code has a right to remove.
+    ``lstat`` of the NAME is compared against it, and a mismatch means the
+    directory entry no longer points at that inode: somebody replaced it.
+
+    ``lstat``, not ``stat``: a symlink dropped onto the name has its own
+    inode, so it can never match, and following it would delete whatever it
+    aims at.
+
+    Returns True when the entry was removed (or was already gone — the same
+    outcome the caller wanted), False when the name refers to something else
+    and was therefore LEFT ALONE.
+
+    RESIDUAL: the name can still be swapped between the ``lstat`` and the
+    ``os.remove``. Closing that would need an unlink-this-inode primitive
+    POSIX does not offer; what this removes is the whole class of cases where
+    the swap is already visible — which is every case a refusal has just
+    DETECTED, and the one the review reproduced.
+    """
+    try:
+        present = os.lstat(path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    if ((present.st_dev, present.st_ino)
+            != (reserved.st_dev, reserved.st_ino)):
+        return False
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _discard_staged(handle, temp_path: str) -> bool:
     """Close the staging descriptor and drop its name, on any path that keeps
     nothing.
 
-    Unlinking by NAME is correct here even though writing by name was not:
-    unlink removes a directory entry, never content that is reachable
-    elsewhere, and the entry is the one this client reserved. The descriptor
-    closes first so the inode goes away with the last link on the ordinary
-    path.
+    THE INVARIANT (external review round 5): the staging NAME is unlinked only
+    while it still refers to the inode this client reserved and wrote through
+    — proved, by ``lstat`` of the name against ``fstat`` of the descriptor,
+    never assumed.
+
+    It used to be assumed, on the strength of "the entry is the one this client
+    reserved". That premise is exactly what fails on the paths this function
+    serves: ``stagedBytesChanged`` and ``stagingPathHijacked`` fire BECAUSE the
+    name no longer means what it did, and the reviewer's repro moved an
+    unrelated regular file onto the staging path mid-download — the refusal
+    fired correctly and the cleanup then deleted the replacement, which for a
+    file with no other link is the download client destroying somebody's data
+    while declining to overwrite anything.
+
+    The descriptor is closed first either way, so on the ordinary path the
+    inode still goes away with its last link.
+
+    Returns True when the staging entry was removed (or was already gone),
+    False when a foreign entry now occupies the staging path and was left
+    untouched — which every caller on an error path says out loud, via
+    :func:`_foreign_staging_detail`.
     """
+    try:
+        reserved = os.fstat(handle.fileno())
+    except (OSError, ValueError):
+        # No descriptor left to prove identity with: refuse to guess, and
+        # leave the name alone. A leftover partial is recoverable; a deleted
+        # stranger is not.
+        reserved = None
     try:
         handle.close()
     except OSError:
         pass
-    _unlink_quietly(temp_path)
+    if reserved is None:
+        return False
+    return _unlink_if_reserved(temp_path, reserved)
 
 
 def _commit_no_replace(staged, temp_path: str, destination: str) -> None:
@@ -1269,6 +1389,11 @@ def _commit_no_replace(staged, temp_path: str, destination: str) -> None:
     except OSError:
         handle_fd = os.open(destination,
                             os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        # The inode THIS call reserved under the destination name, so the
+        # cleanup below can prove it is removing its own reservation and not
+        # something that arrived on the name afterwards
+        # (:func:`_unlink_if_reserved`).
+        landing_id = os.fstat(handle_fd)
         # From here the destination NAME exists, so every exit from this block
         # is accounted for in a `finally`: a copy that died half way (or an
         # `os.fdopen` that never handed the descriptor over) must not leave a
@@ -1289,12 +1414,16 @@ def _commit_no_replace(staged, temp_path: str, destination: str) -> None:
             landed = True
         finally:
             if not landed:
-                _unlink_quietly(destination)
+                _unlink_if_reserved(destination, landing_id)
     else:
-        published = os.stat(destination)
+        # ``lstat``, not ``stat``: a symlink dropped onto the destination has
+        # its own inode, so it can never pass for the verified one.
+        published = os.lstat(destination)
         if ((published.st_dev, published.st_ino)
                 != (reserved.st_dev, reserved.st_ino)):
-            _unlink_quietly(destination)
+            # Remove the link this call just made — proved to still BE that
+            # entry, never merely named like it.
+            _unlink_if_reserved(destination, published)
             raise RunnerRefusal(
                 f"the staging path {temp_path} no longer names the file this "
                 f"download verified — {destination} was not published",
@@ -1308,16 +1437,16 @@ def _commit_no_replace(staged, temp_path: str, destination: str) -> None:
                     "and it mints a unique staging file beside the "
                     "destination."),
                 detail={"tempPath": temp_path, "destination": destination})
-    # Unlinking the staging NAME: it removes a directory entry, never content
-    # reachable elsewhere, and the entry is the one this call reserved. The
-    # bytes survive under the destination's link, which is the point.
-    os.remove(temp_path)
+    # Dropping the staging NAME. It removes a directory entry, never content
+    # reachable elsewhere — the bytes survive under the destination's link,
+    # which is the point — but it removes that entry only while the name still
+    # refers to the inode this call verified. The hardlink branch above has
+    # just proved that (a swap there is the hijack refusal); the O_EXCL branch
+    # never looked at ``temp_path`` at all, since it copies from the
+    # descriptor, so a stranger sitting on the staging name would have been
+    # deleted here on an otherwise SUCCESSFUL download. One helper, both
+    # branches. A stranger is left in place: a leftover partial is
+    # recoverable, somebody else's deleted file is not.
+    _unlink_if_reserved(temp_path, reserved)
 
 
-def _unlink_quietly(path: str) -> None:
-    """Remove a partial download. Best effort: the refusal the caller is about
-    to see is the news, and a failed cleanup must not replace it."""
-    try:
-        os.remove(path)
-    except OSError:
-        pass

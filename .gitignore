@@ -36,3 +36,4 @@ Server/steerlab_server/BUILD_COMMIT
 # the public scanner tier refuses any tracked path beneath them.
 Workspaces/
 workspaces/
+.steerlab-downloads/

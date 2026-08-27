@@ -212,10 +212,55 @@
         "agent": null,
         "battery": null
       },
-      "effective": "",
+      "effective": null,
       "effectiveHash": null,
       "label": "neither-empty",
       "study": "",
+      "studyStamp": {
+        "agent": null,
+        "study": null
+      }
+    },
+    {
+      "agent": "   ",
+      "batteryStamp": {
+        "agent": null,
+        "battery": null
+      },
+      "effective": null,
+      "effectiveHash": null,
+      "label": "neither-blank",
+      "study": "   ",
+      "studyStamp": {
+        "agent": null,
+        "study": null
+      }
+    },
+    {
+      "agent": "   ",
+      "batteryStamp": {
+        "agent": null,
+        "battery": null
+      },
+      "effective": null,
+      "effectiveHash": null,
+      "label": "blank-agent-null-frame",
+      "study": null,
+      "studyStamp": {
+        "agent": null,
+        "study": null
+      }
+    },
+    {
+      "agent": null,
+      "batteryStamp": {
+        "agent": null,
+        "battery": null
+      },
+      "effective": null,
+      "effectiveHash": null,
+      "label": "null-agent-blank-frame",
+      "study": "   ",
       "studyStamp": {
         "agent": null,
         "study": null
@@ -365,7 +410,7 @@
     {
       "agent": null,
       "cast": "",
-      "effective": "",
+      "effective": null,
       "effectiveHash": null,
       "label": "neither",
       "stamp": {
@@ -379,6 +424,28 @@
       "effective": null,
       "effectiveHash": null,
       "label": "neither-null",
+      "stamp": {
+        "agent": null,
+        "cast": null
+      }
+    },
+    {
+      "agent": "  ",
+      "cast": "   ",
+      "effective": null,
+      "effectiveHash": null,
+      "label": "neither-blank",
+      "stamp": {
+        "agent": null,
+        "cast": null
+      }
+    },
+    {
+      "agent": null,
+      "cast": "   ",
+      "effective": null,
+      "effectiveHash": null,
+      "label": "null-persona-blank-cast",
       "stamp": {
         "agent": null,
         "cast": null

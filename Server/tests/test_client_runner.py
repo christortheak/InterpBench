@@ -1440,9 +1440,21 @@ def test_a_swapped_staging_name_cannot_overwrite_what_it_points_at(
             "the download wrote through the staging NAME and hit its target"
     assert not os.path.exists(destination), \
         "an unverified inode was published under the destination's name"
-    debris = [name for name in os.listdir(os.path.dirname(destination))
-              if name.startswith(".steerlab-download-")]
-    assert debris == [], "the refusal left staging debris behind"
+    # The swapped-in entry SURVIVES the cleanup (external review round 5).
+    # It used to be deleted: cleanup unlinked the staging name on the premise
+    # that the entry was the one this client reserved — the very premise this
+    # refusal exists to say is false. What sits there is somebody else's
+    # symlink, and removing it is not this client's business.
+    left = [name for name in os.listdir(os.path.dirname(destination))
+            if name.startswith(".steerlab-download-")]
+    assert left == [os.path.basename(swapped["path"])], \
+        "cleanup removed an entry this download did not create"
+    assert os.path.islink(swapped["path"])
+    assert os.readlink(swapped["path"]) == victim
+    # …and the refusal SAYS so, rather than leaving the person to discover it.
+    assert caught.value.detail["stagingPathForeignEntry"] == swapped["path"]
+    assert caught.value.detail["stagingPathNote"] == \
+        runner_api.FOREIGN_STAGING_NOTE
 
 
 def test_a_swapped_explicit_temp_path_cannot_overwrite_its_target(
@@ -1473,7 +1485,72 @@ def test_a_swapped_explicit_temp_path_cannot_overwrite_its_target(
         assert handle.read() == victim_bytes, "--temp truncated its symlink's "\
             "target"
     assert not os.path.exists(destination)
-    assert not os.path.exists(temp_path)
+    # The symlink somebody put on the staging name is still there: cleanup
+    # unlinks the name only while it still refers to the inode this client
+    # reserved, and here it plainly does not.
+    assert os.path.islink(temp_path)
+    assert os.readlink(temp_path) == victim
+
+
+def test_a_foreign_file_moved_onto_the_staging_path_is_never_deleted(
+        adapter, service, monkeypatch):
+    """THE round-5 finding, in the reviewer's own shape: not a symlink but a
+    plain REGULAR file moved onto the staging path mid-download.
+
+    The refusal fired correctly and the cleanup then deleted the replacement.
+    If that name was the file's only link, a client whose entire purpose is to
+    refuse to overwrite evidence had just destroyed a file it was never asked
+    to touch — quieter than an overwrite, and worse.
+
+    Cleanup now proves the name still refers to the inode it reserved
+    (``lstat`` of the name against ``fstat`` of its own descriptor) and, when
+    it does not, leaves the name completely alone.
+    """
+    _job_id, meta = _evidence_bearing_job(service)
+    destination = os.path.join(str(service["tmp"]), "home", "foreign.tar.gz")
+    temp_path = os.path.join(str(service["tmp"]), "elsewhere", "foreign.part")
+    os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    victim_bytes = b"the only copy of something that matters\n"
+    victim = os.path.join(str(service["tmp"]), "elsewhere", "only-copy.txt")
+    with open(victim, "wb") as handle:
+        handle.write(victim_bytes)
+
+    # Move the file ONTO the staging name — one link, and the staging path is
+    # now it. Same window as the symlink repro: after the reservation, before
+    # the first byte.
+    real_stream = adapter._client.stream
+    moved = {}
+
+    def _stream(*args, **kwargs):
+        if not moved:
+            os.unlink(temp_path)
+            os.rename(victim, temp_path)
+            moved["done"] = True
+        return real_stream(*args, **kwargs)
+
+    monkeypatch.setattr(adapter._client, "stream", _stream)
+
+    with pytest.raises(runner_api.RunnerRefusal) as caught:
+        adapter.download_bundle(remote_path=meta["bundlePath"],
+                                expected_sha256=meta["bundleSha256"],
+                                destination=destination, temp_path=temp_path)
+
+    assert moved, "the repro never reached the staging window"
+    assert caught.value.code == "stagingPathHijacked"
+    assert caught.value.state == "refused"
+    # The directory ENTRY survives…
+    assert os.path.exists(temp_path), \
+        "cleanup deleted a file this download did not create"
+    # …and so do the bytes under it, exactly.
+    with open(temp_path, "rb") as handle:
+        assert handle.read() == victim_bytes
+    assert not os.path.exists(destination), \
+        "an unverified inode was published under the destination's name"
+    # The refusal names what it found and says it did not touch it.
+    assert caught.value.detail["stagingPathForeignEntry"] == temp_path
+    assert caught.value.detail["stagingPathNote"] == \
+        runner_api.FOREIGN_STAGING_NOTE
 
 
 def test_bytes_written_into_the_staging_inode_are_caught_before_the_commit(

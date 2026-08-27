@@ -81,7 +81,10 @@ def test_the_agent_persona_comes_first_joined_by_one_blank_line():
     (PERSONA, "", PERSONA),
     (PERSONA, "  \n ", PERSONA),
     (None, None, None),                          # both empty → none
-    ("", "", ""),
+    ("", "", None),
+    ("   ", "   ", None),
+    ("   ", None, None),
+    (None, "   ", None),
 ])
 def test_composition_degrades_gracefully_in_every_direction(agent, frame,
                                                             expected):
@@ -97,6 +100,27 @@ def test_the_surviving_side_is_returned_unchanged_never_reconstructed():
     assert sp.compose("", frame) is frame
     persona = "  a persona with edges  "
     assert sp.compose(persona, "") is persona
+
+
+def test_two_empty_levels_compose_to_none_whichever_side_the_blank_is_on():
+    """Review 2026-08-26. ``compose`` classified ``"   "`` as empty on both
+    levels, but only the AGENT side's emptiness reached a null: the frame
+    shortcut returned the whitespace survivor, so ``compose(" ", None)`` was
+    ``None`` and ``compose(None, " ")`` was ``" "`` — one arm with a null
+    effective hash, one with a digest of a blank, from two contributions the
+    rule calls equally empty and both stamps call ``null``. Argument order is
+    not allowed to decide effective identity."""
+    blank = "   \n\t "
+    for agent, frame in ((blank, None), (None, blank), (blank, blank),
+                         (blank, ""), ("", blank), ("", ""), (None, None)):
+        assert sp.compose(agent, frame) is None
+        assert sp.text_hash(sp.compose(agent, frame)) is None
+        assert sp.composition(agent, frame) == {"agent": None, "study": None}
+    # The canonicalization reaches ONLY the both-empty case: a survivor with
+    # content in it is still the very same object it always was.
+    survivor = "  a frame with edges  "
+    assert sp.compose(blank, survivor) is survivor
+    assert sp.compose(survivor, blank) is survivor
 
 
 def test_empty_persona_plus_frame_stamps_exactly_todays_frame_only_value():
@@ -641,7 +665,9 @@ def test_a_cast_seat_is_armed_with_the_persona_then_the_role(tmp_path):
     ("   ", ROLE, ROLE),
     (PERSONA, "", PERSONA),
     (PERSONA, "   ", PERSONA),
-    (None, "", ""),
+    (None, "", None),            # both empty → nothing, on either side…
+    (None, "   ", None),
+    ("   ", "", None),
 ])
 def test_panel_casting_degrades_gracefully_in_every_direction(
         tmp_path, persona, cast, expected):

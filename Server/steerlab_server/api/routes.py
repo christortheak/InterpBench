@@ -674,6 +674,87 @@ def _run_or_submit(state: ServiceState, kind: str, work, *,
     return {"jobId": state.jobs.submit(kind, work).id}
 
 
+def _declared_extraction(body: dict, *, legacy_position=None):
+    """The extraction DECLARATION a build route carries, through the ENGINE's
+    own strict parsers.
+
+    Both axes are ADDITIVE and optional, and the whole point is that an absent
+    one behaves byte-identically to the day before it existed:
+
+    - ``readingPosition`` — one of the cross-engine LABELS ("last content
+      token", "content offset 2", …), parsed by
+      :func:`reading_position.parse_declaration`. ``poolFromToken`` is the
+      LEGACY spelling of exactly one position (``mean from token K``), so
+      declaring both is the engines' shared refusal
+      (:func:`reading_position.declaration_conflict`) — never a silent pick.
+    - ``extractionRendering`` — the object the schema documents, or a bare
+      mode string, parsed by
+      :func:`extraction_rendering.parse_declaration`. Absent (and an explicit
+      ``{"mode": "raw"}``) is the legacy raw rendering.
+
+    A template-aware ROLE under a raw rendering is answered HERE, at
+    declaration time, exactly as the attach route answers it: the pin could
+    never resolve, and a person clicking Build deserves the refusal now rather
+    than after a GPU has warmed up.
+
+    ``legacy_position`` is the route's OWN pre-existing reading of
+    ``poolFromToken``, as a callable over the raw body value — passed rather
+    than reimplemented here because the two routes read it differently (the
+    grand-mean route pooled from token 50 for anything falsy; the paired route
+    read the last token), and this parser may not quietly unify them. Returns
+    ``(ReadingPosition, ExtractionRendering | None)``; every refusal is a 400
+    carrying the engine's own text and its repair.
+    """
+    from ..steering import extraction_rendering as er
+    from ..steering import reading_position as rp
+
+    declaration = body.get("readingPosition")
+    pool = body.get("poolFromToken")
+    conflict = rp.declaration_conflict(declaration, pool)
+    if conflict is not None:
+        raise HTTPException(status_code=400, detail=conflict)
+    try:
+        position = rp.parse_declaration(declaration)
+    except rp.ReadingPositionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if position is None:
+        # Nothing declared: the route's own legacy reading of poolFromToken,
+        # byte-for-byte what it did before this parser existed.
+        if legacy_position is not None:
+            position = legacy_position(pool)
+        elif pool not in (None, "", 0, "0"):
+            position = rp.mean_from_token(int(pool))
+        else:
+            position = rp.LAST_TOKEN
+    try:
+        rendering = er.parse_declaration(body.get("extractionRendering"))
+    except er.ExtractionRenderingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if rendering is None or rendering.is_raw:
+        refusal = rp.templated_rendering_refusal(position)
+        if refusal is not None:
+            raise HTTPException(status_code=400, detail=refusal)
+    return position, rendering
+
+
+def _applied_extraction(position, rendering) -> dict:
+    """What the route ACTUALLY applied, echoed back in the response.
+
+    The version-skew guard, and the reason it is not optional: a server that
+    predates :func:`_declared_extraction` accepts a body carrying
+    ``readingPosition``/``extractionRendering``, ignores both, and answers a
+    perfectly ordinary ``jobId`` — the silent measurement error this echo
+    exists to end. A client that declared either axis verifies this block and
+    refuses when it is absent or says something else. Absent-is-raw is
+    preserved here too: ``extractionRendering`` echoes ``None`` for the legacy
+    rendering, matching the sidecar's own stamp.
+    """
+    return {"readingPosition": position.label,
+            "extractionRendering": (rendering.to_dict()
+                                    if rendering is not None
+                                    and not rendering.is_raw else None)}
+
+
 def _jlens_supported() -> list[dict]:
     """The supported-lens table as data for clients.
 
@@ -2284,8 +2365,8 @@ def build_router(state: ServiceState) -> APIRouter:
     def concept_extract(name: str, body: dict | None = None):
         _safe_name(name)
         _require_model_or_worker(state)
+        from ..steering.extraction_rendering import RAW_RENDERING
         from ..steering.extractor import ExtractionOptions, extract
-        from ..steering.reading_position import LAST_TOKEN, mean_from_token
         from ..steering.stimulus_set import StimulusSet
         from ..steering.vector_math import ExtractionMethod
         from ..steering.vector_store import SteeringVectorSidecar, save as save_vec
@@ -2295,9 +2376,14 @@ def build_router(state: ServiceState) -> APIRouter:
             method = ExtractionMethod(body.get("method", "meanDifference"))
         except ValueError:
             raise HTTPException(status_code=400, detail=f"bad method {body.get('method')!r}")
-        pool = body.get("poolFromToken")
-        reading = mean_from_token(int(pool)) if pool not in (None, "", 0, "0") else LAST_TOKEN
-        options = ExtractionOptions(method=method, reading_position=reading)
+        # The FULL declaration, not the legacy pooled pair: the app's builder
+        # offers every reading position and the chat-template rendering, and a
+        # route that reconstructed only lastToken/meanFromToken produced a raw
+        # last-token vector while the panel displayed different scientific
+        # settings (external review round 5, finding 2).
+        reading, rendering = _declared_extraction(body)
+        options = ExtractionOptions(method=method, reading_position=reading,
+                                    extraction_rendering=rendering or RAW_RENDERING)
 
         def work(job):
             stimuli = StimulusSet.from_directory(paths.concept_directory(name))
@@ -2313,15 +2399,23 @@ def build_router(state: ServiceState) -> APIRouter:
                     extraction_method=method.value, reading_position=reading,
                     residual_norm_per_layer=result.residual_norm_per_layer,
                     residual_norm_source=result.residual_norm_source,
-                    residual_norm_convention=result.residual_norm_convention)
+                    residual_norm_convention=result.residual_norm_convention,
+                    # The same three stamps a CLI-driven extraction writes —
+                    # each absent-when-legacy, so a raw last-token build keeps
+                    # byte-identical sidecar bytes.
+                    residual_norm_rendering=result.residual_norm_rendering,
+                    extraction_rendering=rendering,
+                    reading_position_resolution=result.reading_position_resolution)
                 save_vec(result.vectors, sidecar, run_dir, name)
             job.log(f"built {result.vectors.layer_count}-layer {method.value} vector "
-                    f"({reading.label}) → {run_dir}")
+                    f"({reading.label}, rendering "
+                    f"{(rendering or RAW_RENDERING).label}) → {run_dir}")
             return {"runDirectory": run_dir, "name": name}
 
-        return _run_or_submit(state, f"concept-extract:{name}", work,
-                               path=f"/api/concept/{name}/extract",
-                               body=body)
+        return {**_run_or_submit(state, f"concept-extract:{name}", work,
+                                 path=f"/api/concept/{name}/extract",
+                                 body=body),
+                "appliedExtraction": _applied_extraction(reading, rendering)}
 
     # --- grand-mean (emotion multi-concept) ---------------------------------
 
@@ -2348,6 +2442,7 @@ def build_router(state: ServiceState) -> APIRouter:
         mean(its stories) − mean(all stories in the loaded corpus)."""
         _require_model_or_worker(state)
         from ..experiment import multiconcept
+        from ..steering.extraction_rendering import RAW_RENDERING
         from ..steering.extractor import extract_grand_mean
         from ..steering.reading_position import mean_from_token
         from ..steering.vector_store import (
@@ -2358,8 +2453,14 @@ def build_router(state: ServiceState) -> APIRouter:
 
         corpus_concepts = body.get("concepts")  # None = all
         targets = set(body.get("targets") or []) or None
-        pool = int(body.get("poolFromToken", 50) or 50)
-        reading = mean_from_token(pool)
+        # Grand mean takes the SAME full declaration the paired route does —
+        # ``extract_grand_mean`` has carried both a reading position and a
+        # rendering since they existed, so there is nothing structural to
+        # narrow and the panel is right to offer both here. Legacy bodies keep
+        # their own reading of ``poolFromToken`` (anything falsy pooled from
+        # token 50), which is why the rule is passed rather than reimplemented.
+        reading, rendering = _declared_extraction(
+            body, legacy_position=lambda pool: mean_from_token(int(pool or 50)))
 
         def work(job):
             rows, hashes = multiconcept.load_corpus(corpus_concepts)
@@ -2367,8 +2468,10 @@ def build_router(state: ServiceState) -> APIRouter:
                 raise RuntimeError("no stories in prompts/emotions/*/stories.jsonl")
             job.log(f"corpus: {len(rows)} stories across {len(hashes)} concepts")
             with state.acquire_active() as model:
-                result = extract_grand_mean(model, rows, target_concepts=targets,
-                                            reading_position=reading)
+                result = extract_grand_mean(
+                    model, rows, target_concepts=targets,
+                    reading_position=reading,
+                    extraction_rendering=rendering or RAW_RENDERING)
                 run_dir = paths.make_unique_run_directory("grandmean")
                 from ..experiment.run_config import write_run_config
                 write_run_config(run_dir, "extract", model_id=model.model_id,
@@ -2381,6 +2484,9 @@ def build_router(state: ServiceState) -> APIRouter:
                         residual_norm_per_layer=result.residual_norm_per_layer,
                         residual_norm_source=result.residual_norm_source,
                         residual_norm_convention=result.residual_norm_convention,
+                        residual_norm_rendering=result.residual_norm_rendering,
+                        extraction_rendering=rendering,
+                        reading_position_resolution=result.reading_position_resolution,
                         source_stimulus_count=len(rows),
                         included_stimulus_count=result.included,
                         excluded_short_stimulus_count=len(rows) - result.included)
@@ -2395,11 +2501,14 @@ def build_router(state: ServiceState) -> APIRouter:
                     stamp_grand_mean_provenance(sidecar, hashes)
                     save_vec(vectors, sidecar, run_dir, concept)
             job.log(f"built {len(result.per_concept)} grand-mean vectors "
-                    f"({result.included} stories pooled) → {run_dir}")
+                    f"({result.included} stories pooled at {reading.label}, "
+                    f"rendering {(rendering or RAW_RENDERING).label}) "
+                    f"→ {run_dir}")
             return {"runDirectory": run_dir, "concepts": list(result.per_concept)}
 
-        return _run_or_submit(state, "grandmean-extract", work,
-                               path="/api/multiconcept/extract", body=body)
+        return {**_run_or_submit(state, "grandmean-extract", work,
+                                 path="/api/multiconcept/extract", body=body),
+                "appliedExtraction": _applied_extraction(reading, rendering)}
 
     @router.post("/api/concept/{name}/stats")
     def concept_stats_route(name: str, body: dict | None = None):

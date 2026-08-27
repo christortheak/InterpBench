@@ -3100,37 +3100,158 @@ public struct ClusterClient: Sendable {
         return response.concepts.map(\.concept)
     }
 
+    /// What the server reports it ACTUALLY extracted under
+    /// (`appliedExtraction` on both extract routes). The version-skew guard's
+    /// other half — see ``verifiedApplied(_:declaredPosition:...)``.
+    public struct AppliedExtraction: Decodable, Sendable, Equatable {
+        /// The cross-engine reading-position label the server resolved to.
+        public var readingPosition: String
+        /// The rendering it applied, in stamp form — nil for the legacy raw
+        /// one, exactly as an artifact's sidecar omits it.
+        public var extractionRendering: ExtractionRendering?
+    }
+
+    /// A server that ACCEPTED an extraction declaration and did something
+    /// else with it — or is old enough not to have read it at all.
+    ///
+    /// THE FAILURE THIS EXISTS FOR: a server predating the declaration fields
+    /// takes a body carrying `readingPosition`/`extractionRendering`, ignores
+    /// both, extracts a raw last-token vector, and answers a perfectly
+    /// ordinary job id. Nothing anywhere says the recipe was dropped. So the
+    /// routes echo what they applied and this client VERIFIES the echo rather
+    /// than hoping — a declared axis that cannot be confirmed is a refusal,
+    /// never a build.
+    public struct DeclarationNotApplied: Error, CustomStringConvertible {
+        public let route: String
+        public let declared: String
+        public let applied: String?
+        public var description: String {
+            let got = applied.map { "it reports \($0)" }
+                ?? "it echoes nothing at all, which means it is older than "
+                    + "the declaration fields and silently ignored them"
+            return "the server did not apply the extraction declaration this "
+                + "build asked for on \(route): declared \(declared), and "
+                + "\(got) — repair: update the server (its extract routes "
+                + "must echo `appliedExtraction`), or build with the legacy "
+                + "reading positions ('last token', 'mean from token K') "
+                + "under the raw rendering, which every server honors"
+        }
+    }
+
+    /// The echo check, shared by both extract routes.
+    ///
+    /// A call that declared NEITHER new axis is the legacy call in every
+    /// byte, and is verified as it always was — not verified at all — so an
+    /// older server keeps serving the recipes it can actually honor.
+    static func verifyApplied(
+        _ applied: AppliedExtraction?,
+        declaredPosition: String?,
+        declaredRendering: ExtractionRendering?,
+        route: String
+    ) throws {
+        guard declaredPosition != nil || declaredRendering != nil else { return }
+        let declared = "reading position '\(declaredPosition ?? "(default)")' "
+            + "with rendering \((declaredRendering ?? .init()).label)"
+        guard let applied else {
+            throw DeclarationNotApplied(
+                route: route, declared: declared, applied: nil)
+        }
+        let appliedText = "reading position '\(applied.readingPosition)' with "
+            + "rendering \((applied.extractionRendering ?? .init()).label)"
+        if let declaredPosition, applied.readingPosition != declaredPosition {
+            throw DeclarationNotApplied(
+                route: route, declared: declared, applied: appliedText)
+        }
+        // Compare the STAMP forms: the server echoes `to_dict()`, whose twin
+        // on this side is `stamp` (defaults written explicitly, the user
+        // voice writing no `voice` key). Raw and absent are one value.
+        guard applied.extractionRendering?.stamp == declaredRendering?.stamp else {
+            throw DeclarationNotApplied(
+                route: route, declared: declared, applied: appliedText)
+        }
+    }
+
     /// Contrastive extraction from the server's checkout of
     /// `prompts/concepts/<concept>` (`POST /api/concept/{name}/extract`).
+    ///
+    /// `readingPosition` (a cross-engine LABEL) and `extractionRendering` are
+    /// additive and optional: omitting both sends exactly the body this
+    /// client always sent. `poolFromToken` is the LEGACY spelling of one
+    /// position, so declaring both spellings is refused HERE as well as
+    /// server-side — one recipe, never a silent pick between two.
     public func conceptExtract(
-        concept: String, method: String, poolFromToken: Int? = nil
+        concept: String, method: String, poolFromToken: Int? = nil,
+        readingPosition: String? = nil,
+        extractionRendering: ExtractionRendering? = nil
     ) async throws -> String {
+        if let conflict = ReadingPosition.declarationConflict(
+            readingPosition, poolFromToken: poolFromToken)
+        {
+            throw ClientError.badResponse(400, conflict)
+        }
         struct Body: Encodable {
             var method: String
             var poolFromToken: Int?
+            var readingPosition: String?
+            var extractionRendering: ExtractionRendering?
         }
-        struct Response: Decodable { var jobId: String }
+        struct Response: Decodable {
+            var jobId: String
+            var appliedExtraction: AppliedExtraction?
+        }
+        let route = "/api/concept/\(concept)/extract"
         let response: Response = try await post(
-            "/api/concept/\(concept)/extract",
-            body: Body(method: method, poolFromToken: poolFromToken))
+            route,
+            body: Body(
+                method: method, poolFromToken: poolFromToken,
+                readingPosition: readingPosition,
+                extractionRendering: extractionRendering))
+        try Self.verifyApplied(
+            response.appliedExtraction, declaredPosition: readingPosition,
+            declaredRendering: extractionRendering, route: route)
         return response.jobId
     }
 
     /// Grand-mean extraction over the server's story corpus
     /// (`POST /api/multiconcept/extract`). `concepts == nil` pools the whole
     /// corpus; `targets == nil` builds a vector for every pooled concept.
+    ///
+    /// The declaration axes are the paired route's, for the same reason: the
+    /// server's `extract_grand_mean` has taken a reading position AND a
+    /// rendering since both existed, so there is nothing structural to narrow
+    /// here.
     public func multiConceptExtract(
-        concepts: [String]? = nil, targets: [String]? = nil, poolFromToken: Int = 50
+        concepts: [String]? = nil, targets: [String]? = nil,
+        poolFromToken: Int? = 50,
+        readingPosition: String? = nil,
+        extractionRendering: ExtractionRendering? = nil
     ) async throws -> String {
+        if let conflict = ReadingPosition.declarationConflict(
+            readingPosition, poolFromToken: poolFromToken)
+        {
+            throw ClientError.badResponse(400, conflict)
+        }
         struct Body: Encodable {
             var concepts: [String]?
             var targets: [String]?
-            var poolFromToken: Int
+            var poolFromToken: Int?
+            var readingPosition: String?
+            var extractionRendering: ExtractionRendering?
         }
-        struct Response: Decodable { var jobId: String }
+        struct Response: Decodable {
+            var jobId: String
+            var appliedExtraction: AppliedExtraction?
+        }
+        let route = "/api/multiconcept/extract"
         let response: Response = try await post(
-            "/api/multiconcept/extract",
-            body: Body(concepts: concepts, targets: targets, poolFromToken: poolFromToken))
+            route,
+            body: Body(
+                concepts: concepts, targets: targets,
+                poolFromToken: poolFromToken, readingPosition: readingPosition,
+                extractionRendering: extractionRendering))
+        try Self.verifyApplied(
+            response.appliedExtraction, declaredPosition: readingPosition,
+            declaredRendering: extractionRendering, route: route)
         return response.jobId
     }
 

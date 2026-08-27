@@ -31,9 +31,11 @@ import Foundation
 /// **Degradation is graceful, and byte-exact.** An empty agent yields the
 /// frame itself — the SAME string, not a re-joined copy — so every historical
 /// empty-persona run stamps and renders exactly the bytes it always did. An
-/// empty frame yields the persona alone. Both empty yields nothing. Emptiness
-/// is whitespace-insensitive, but a non-empty value is never trimmed: what
-/// the researcher wrote is what the model is armed with.
+/// empty frame yields the persona alone. Both empty yields nil — whichever
+/// side the whitespace was on, so the two arguments' ORDER cannot decide an
+/// arm's effective identity. Emptiness is whitespace-insensitive, but a
+/// non-empty value is never trimmed: what the researcher wrote is what the
+/// model is armed with.
 ///
 /// Batteries compose the same way with a different second term — the
 /// battery's own declared arming text, never the study frame (see
@@ -66,7 +68,20 @@ public enum SystemPromptComposition {
     /// Returns the surviving side UNCHANGED when the other is empty —
     /// identity, not reconstruction, which is what makes the empty-persona
     /// case byte-exact against every run recorded before this rule existed.
+    ///
+    /// **Both levels empty canonicalizes to nil**, checked FIRST so it beats
+    /// both return-unchanged shortcuts (review 2026-08-26). Without it the
+    /// answer depended on which side the whitespace was on:
+    /// `compose(agent: " ", frame: nil)` fell through the first shortcut to
+    /// nil while `compose(agent: nil, frame: " ")` returned `" "` — one
+    /// non-null effective hash, one null, from two contributions this type's
+    /// own rule calls equally empty, with both stamps `null` either way. The
+    /// order of the arguments must not decide an arm's effective identity.
+    /// The byte-exactness claim above is untouched: it only ever mattered for
+    /// a survivor with content in it, and such a survivor is still returned
+    /// unchanged. Server twin: `system_prompt.compose`.
     public static func compose(agent: String?, frame: String?) -> String? {
+        if isEmpty(agent), isEmpty(frame) { return nil }
         if isEmpty(agent) { return frame }
         if isEmpty(frame) { return agent }
         return agent! + joiner + frame!

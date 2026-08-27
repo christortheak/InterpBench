@@ -660,7 +660,7 @@ def attach_artifact(name: str, concept: str, artifact_path: str, *,
     from the import's calibration donor), so no backfill step is implied.
     """
     from .manifest import concept_validation_hash
-    from ..steering.reading_position import from_label
+    from ..steering.reading_position import parse_label_strict
 
     d = load_raw(name, root)
     base = paths.project_root() if root is None else root
@@ -849,14 +849,42 @@ def attach_artifact(name: str, concept: str, artifact_path: str, *,
             f"{live[:12]}… — restore the bytes the artifact was built on, or "
             "pass the right --source-concept")
 
+    # The READING POSITION is copied from the sidecar so held-out activations
+    # are read where the vector was read — FAITHFULLY, which used to mean
+    # something much narrower than it says. The pin was built by asking the
+    # parsed position for its ``requested_start_index`` and re-deriving a
+    # position from that integer, and only two of the eight positions survive
+    # that round trip: ``meanFromToken(k)`` (the one with a start index) and
+    # ``lastToken`` (everything else answers None). ``offsetFromEnd``,
+    # ``lastContentToken``, ``turnCloseToken``, ``postInstruction``,
+    # ``contentOffset`` and ``meanContentFromToken`` all collapsed to
+    # last-token, so the manifest contradicted its own sidecar and the next
+    # verify refused the pin attach had just written (external review round 5).
+    #
+    # STRICT parse, and a named refusal on anything unreadable — the same
+    # answer the rendering copy below gives, and for the same reason: attach
+    # must never write a pin the next verify rejects, and guessing a position
+    # would launder a wrong guess into the recipe identity. An ABSENT label is
+    # the legacy artifact, and stays the default (last-token) — matching the
+    # Swift twin, ``ExperimentStore.attachArtifactPin``, which leaves
+    # ``ExtractionOptions``' default in place when the sidecar records none.
+    recorded_position_label = sidecar.get("readingPosition")
+    recorded_position = None
+    if recorded_position_label is not None:
+        recorded_position = parse_label_strict(recorded_position_label)
+        if recorded_position is None:
+            raise ExperimentStoreError(
+                f"vector artifact '{rel}' records reading position "
+                f"'{recorded_position_label}', which this engine cannot parse "
+                "— re-attach on the engine that wrote it")
+
     entry: dict = {
         "name": concept,
         "stimulusSetHash": sidecar["stimulusSetHash"],
         "options": {
             "method": ExtractionMethod.PINNED_ARTIFACT.value,
             "readingPosition": _reading_position_codable(
-                {"poolFromToken": from_label(
-                    sidecar.get("readingPosition")).requested_start_index}),
+                {}, recorded_position),
         },
         "vectorArtifact": {
             "path": rel,

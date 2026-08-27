@@ -31,10 +31,11 @@ this format" is an instruction TO whoever the model is being.
 **Degradation is graceful, and byte-exact.** An empty agent yields the frame
 itself — the SAME object, not a re-joined copy — so every historical
 empty-persona run stamps and renders exactly the bytes it always did. An empty
-frame yields the persona alone. Both empty yields nothing. Emptiness is
-whitespace-insensitive (a frame of ``"   "`` is not a persona-suppressing
-frame), but a non-empty value is never trimmed: what the researcher wrote is
-what the model is armed with.
+frame yields the persona alone. Both empty yields ``None`` — whichever side
+the whitespace was on, so the two arguments' ORDER cannot decide an arm's
+effective identity. Emptiness is whitespace-insensitive (a frame of ``"   "``
+is not a persona-suppressing frame), but a non-empty value is never trimmed:
+what the researcher wrote is what the model is armed with.
 
 Batteries compose the same way with a different second term — the battery's
 own declared arming text, never the study frame (see :mod:`.battery`).
@@ -75,7 +76,20 @@ def compose(agent: str | None, frame: str | None) -> str | None:
     Returns the surviving side UNCHANGED when the other is empty — identity,
     not reconstruction, which is what makes the empty-persona case byte-exact
     against every run recorded before this rule existed.
+
+    **Both levels empty canonicalizes to ``None``**, checked FIRST so it beats
+    both return-unchanged shortcuts (review 2026-08-26). Without it the answer
+    depended on which side the whitespace was on: ``compose(" ", None)`` fell
+    through the first shortcut to ``None`` while ``compose(None, " ")``
+    returned ``" "`` — one non-null effective hash, one null, from two
+    contributions this function's own rule calls equally empty, with both
+    stamps ``null`` either way. Order of the arguments must not decide an
+    arm's effective identity. The byte-exactness claim above is untouched: it
+    only ever mattered for a survivor with content in it, and a survivor with
+    content in it is still returned unchanged.
     """
+    if _empty(agent) and _empty(frame):
+        return None
     if _empty(agent):
         return frame
     if _empty(frame):
