@@ -492,6 +492,7 @@ MAC_AUTHORITY_VERBS: dict = {
     "experiment": {
         "create": "steerlab-cli experiment create <name> --model <id>",
         "attach": "steerlab-cli experiment attach <name> <concept>…",
+        "detach": "steerlab-cli experiment detach <name> <concept>…",
         "duplicate": "steerlab-cli experiment duplicate <name> <new-name>",
         "freeze": "steerlab-cli experiment freeze <name> "
                   "[--run-substrate server]",

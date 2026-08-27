@@ -95,6 +95,7 @@ import Testing
             "samplingPolicy", "thinkingModeConflict", "inertConditions",
             "responseFormat", "confirmationPool", "confirmationAgentShape",
             "parityThreshold", "missingPrerequisite", "armsCleared",
+            "conceptInUse",
         ]
         #expect(LifecycleGate.vocabulary == serverLiteral)
         // Round-trips: every wire id parses back to its case, so a gate id read
@@ -172,6 +173,26 @@ import Testing
         #expect(
             SweepSelectionRule.defaultedSelectionAdvisory(
                 spec: nil, choiceItemCount: 0, totalItemCount: 8) == nil)
+    }
+
+    /// Copied from `experiment_store.concept_in_use_repair` /
+    /// `.concept_not_pinned_repair`. `detach`'s two typed refusals are the
+    /// same rules on both engines, so the repairs an agent follows verbatim
+    /// must be the same bytes — and both name `steerlab-cli`, because
+    /// authoring is Mac-authority (§3.2) whichever engine answered.
+    /// Server twin test: `test_detach_repairs_match_the_swift_literals`.
+    @Test func detachRepairsMatchServerLiterals() {
+        #expect(
+            ExperimentStore.conceptInUseRepair("demo")
+                == "remove or re-declare those conditions first: steerlab-cli "
+                + "experiment declare-condition demo <condition> … (re-declare "
+                + "onto a concept that stays), then steerlab-cli experiment "
+                + "detach demo <concept>…")
+        #expect(
+            ExperimentStore.conceptNotPinnedRepair("demo")
+                == "steerlab-cli experiment list  (result.experiments[]"
+                + ".concepts names what 'demo' pins), then steerlab-cli "
+                + "experiment detach demo <one of those>")
     }
 
     // MARK: - The document itself

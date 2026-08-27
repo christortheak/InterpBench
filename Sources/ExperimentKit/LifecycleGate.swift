@@ -133,6 +133,17 @@ public enum LifecycleGate: String, CaseIterable, Sendable, Codable {
     /// `clearing_arms`).
     case armsCleared
 
+    /// A concept pin cannot be removed because the manifest still DECLARES
+    /// something that reads it by name: an injection condition's slot, a
+    /// per-concept sweep-selection instrument, a variant condition's
+    /// `fromPromotion` forward reference, or a confirmation perturbation
+    /// policy. The same class `armsCleared` belongs to — a write that would
+    /// silently take a declaration away from the measured surface — narrowed
+    /// to the one direction `detach` can travel in. Detaching anyway would
+    /// leave a dangling reference that only the next `verify` names, and the
+    /// run in between would have measured a study nobody declared.
+    case conceptInUse
+
     /// The vocabulary as wire strings, in the fixed cross-engine order. Python
     /// twin (step 8): `LIFECYCLE_GATE_IDS`.
     public static let vocabulary: [String] = allCases.map(\.rawValue)
@@ -265,7 +276,8 @@ public enum RefusalSiteRegistry {
         .init(
             gate: .statusImmutable,
             verbs: [
-                "experiment attach", "experiment pin-prompts",
+                "experiment attach", "experiment detach",
+                "experiment pin-prompts",
                 "experiment pin-rubric", "experiment declare-condition",
                 "experiment set-sweep-selection", "experiment set-instruments",
                 "experiment set-style-taxonomy", "experiment confirm",
@@ -415,6 +427,10 @@ public enum RefusalSiteRegistry {
                 "experiment attach", "experiment pin-prompts",
                 "experiment pin-rubric", "experiment set-style-taxonomy",
                 "experiment extract", "experiment validate", "experiment sweep",
+                // `detach` naming a concept the manifest does not pin. Same
+                // class, one direction over: the thing the verb needs was
+                // never declared, and the repair is to read what IS pinned.
+                "experiment detach",
                 // The same class one family over: `--seat <id>=<path>` naming
                 // an agent artifact that is not on disk, or a file that does
                 // not decode as one (open-issues §18).
@@ -449,6 +465,16 @@ public enum RefusalSiteRegistry {
             repairAction: "steerlab-cli experiment verify <name> ; then "
                 + "steerlab-cli experiment attach <name> <concept>… && "
                 + "steerlab-cli experiment declare-condition <name> …"),
+        .init(
+            gate: .conceptInUse,
+            verbs: ["experiment detach"],
+            origin: "ExperimentStore.detachConcepts — the concept-dependent "
+                + "audit (conditions' slots, per-concept sweep-selection "
+                + "instruments, variantConditions' fromPromotion, "
+                + "perturbationPolicy)",
+            repairAction: "steerlab-cli experiment declare-condition <name> "
+                + "<condition> …  (re-declare onto a concept that stays), "
+                + "then steerlab-cli experiment detach <name> <concept>…"),
     ]
 
     /// The site claiming a gate, or nil — nil is what the exhaustiveness test

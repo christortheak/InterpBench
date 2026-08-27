@@ -251,6 +251,9 @@ CENSUS: tuple[RouteRole, ...] = (
        "Creates a study in the served workspace. Authoring write."),
     _r("POST", "/api/authoring/{name}/attach", W,
        "Attaches a concept/artifact to a draft. Authoring write."),
+    _r("POST", "/api/authoring/{name}/detach", W,
+       "Removes concept pins from a draft — attach's inverse. Authoring "
+       "write."),
     _r("POST", "/api/authoring/{name}/protocol", W,
        "Sets protocol fields on a draft. Authoring write."),
     _r("POST", "/api/authoring/{name}/condition", W,

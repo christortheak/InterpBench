@@ -152,7 +152,7 @@ steerlab bundle package <name>            # hand the bundle to an engine
 Everything above speaks `--json` and answers in the **same envelope** the two
 engines share (§7.7's vocabulary, §4 of the contracts document) — same states,
 same exit codes, same `error.code` / `error.repairAction`. Verb families:
-`experiment` (create, attach, declare-condition, remove-condition,
+`experiment` (create, attach, detach, declare-condition, remove-condition,
 set-protocol, pin-revision, set-style-taxonomy, pin-sae-candidates, duplicate,
 verify, freeze, list), `concept import`, `bundle` (package, inspect, import),
 `runner` (below — including `runner serve`, which starts a managed local
@@ -861,6 +861,7 @@ subverb errors with the usage line.
 steerlab-cli experiment list
 steerlab-cli experiment create <name> [--description <text>] --model <id> [--revision <commit>]
 steerlab-cli experiment attach <name> <concept>… [--corpus <a,b,c>] [--extraction-rendering <json>] [--method <name>] [--pool-from <k>] [--project-neutral <k>] [--reading-position <label>] [--reference <concept>]
+steerlab-cli experiment detach <name> <concept>…
 steerlab-cli experiment pin-prompts <name> <prompts/…/file.jsonl>
 steerlab-cli experiment pin-rubric <name> <prompts/rubrics/file.md> [--judges <spec>]
 steerlab-cli experiment declare-condition <name> <condition> [--alpha-units <norm|raw>] [--band-width <k>] [--baseline] [--control <name>] [--slots <spec>]
@@ -877,6 +878,7 @@ steerlab-cli experiment duplicate <name> <new-name>
 | `experiment list` | List this workspace's experiments with their status. |
 | `experiment create` | Create a draft manifest pinned to a model. |
 | `experiment attach` | Pin each named concept's stimulus hash and extraction options. |
+| `experiment detach` | Remove each named concept's pin from a draft — refused while a declaration still names one. |
 | `experiment pin-prompts` | Pin the measured task-prompt file and its hash ("" clears the pin). |
 | `experiment pin-rubric` | Pin the judging rubric, the judge panel, and the evaluation declaration they imply. |
 | `experiment declare-condition` | Declare one experimental arm, or the explicit baseline. |

@@ -992,6 +992,181 @@ def attach_artifact(name: str, concept: str, artifact_path: str, *,
     return d
 
 
+#: Every DECLARATION in a manifest that reads a pinned concept BY NAME and
+#: would be left dangling if the pin went away, as
+#: ``(label, extractor)`` — the extractor answers the declaration names that
+#: reference one concept. Named once so :func:`concept_dependents` and its
+#: Swift twin (``ExperimentStore.conceptDependents``) can be read against each
+#: other, and so a new concept-referencing block is added in ONE place.
+#:
+#: The audit behind the list (every concept-name reference in the schema) and
+#: what is deliberately OUT of it:
+#:
+#: * ``grandMeanCorpus.concepts`` / ``.hashes`` — HANDLED, not gated: the
+#:   corpus is dropped when the last grand-mean target leaves, and a corpus
+#:   wider than the remaining targets is kept (the population is part of the
+#:   remaining vectors' recipe).
+#: * ``concepts[].designatedReference.name`` and
+#:   ``concepts[].vectorArtifact.sourceConcept`` — they name an on-disk DATA
+#:   concept (``prompts/emotions/<n>/stories.jsonl``, ``prompts/concepts/<n>/``),
+#:   which need never be attached; detaching a pin cannot dangle them.
+#: * ``validationControls[].concept`` — a discriminant control is refused if it
+#:   IS a study concept, so it is never a dependent of one.
+#: * ``readerRefs[].concept`` — binds to a fitted reader ARTIFACT, checked
+#:   against the artifact's own concept, never against the pin list.
+#: * ``conditions[].selection`` and ``variantConditions[].artifact.promotion``
+#:   embed a criterion copy whose ``choicePromptsFiles`` is concept-keyed —
+#:   but those are stamped PROVENANCE (what a past sweep selected on), and the
+#:   live reference in the same condition is its slot, which is row one.
+_CONCEPT_DEPENDENT_SOURCES: tuple = (
+    ("condition", lambda d, c: [
+        str(cond.get("name") or "?")
+        for cond in (d.get("conditions") or [])
+        if any((slot or {}).get("concept") == c
+               for slot in (cond.get("slots") or []))]),
+    ("sweep selection instrument", lambda d, c: [
+        f"sweep.selection.objective.{key}[{c}]"
+        for key in ("choicePromptsFiles", "choicePromptsHashes")
+        if isinstance((((d.get("sweep") or {}).get("selection") or {})
+                       .get("objective") or {}).get(key), dict)
+        and c in ((((d.get("sweep") or {}).get("selection") or {})
+                   .get("objective") or {})[key])]),
+    ("variant condition", lambda d, c: [
+        str(variant.get("name") or "?")
+        for variant in (d.get("variantConditions") or [])
+        if isinstance(variant.get("fromPromotion"), dict)
+        and (variant["fromPromotion"].get("concept") or "") == c]),
+    ("perturbation policy", lambda d, c: [
+        "perturbationPolicy"
+        for policy in [d.get("perturbationPolicy")]
+        if isinstance(policy, dict) and (policy.get("concept") or "") == c]),
+)
+
+
+def concept_dependents(d: dict, concept: str) -> list[str]:
+    """Every declaration in ``d`` that names ``concept``, as
+    ``"<label> '<name>'"`` strings in :data:`_CONCEPT_DEPENDENT_SOURCES` order.
+
+    Empty means the pin can be removed without orphaning anything. Swift twin:
+    ``ExperimentStore.conceptDependents(_:in:)`` — the strings are the
+    cross-engine contract, because the refusal built from them is.
+    """
+    found: list[str] = []
+    for label, extract in _CONCEPT_DEPENDENT_SOURCES:
+        for name in extract(d, concept):
+            found.append(f"{label} '{name}'")
+    return found
+
+
+#: THE repair for :data:`lifecycle_gates.CONCEPT_IN_USE`, on both engines.
+#: Authoring is Mac-authority (audit §10.x), so the server's copy names that
+#: binary too. Swift twin: ``ExperimentStore.conceptInUseRepair``.
+def concept_in_use_repair(name: str) -> str:
+    return (f"remove or re-declare those conditions first: steerlab-cli "
+            f"experiment declare-condition {name} <condition> … (re-declare "
+            f"onto a concept that stays), then steerlab-cli experiment detach "
+            f"{name} <concept>…")
+
+
+#: THE repair for detaching a concept the manifest never pinned. Swift twin:
+#: ``ExperimentStore.conceptNotPinnedRepair``.
+def concept_not_pinned_repair(name: str) -> str:
+    return (f"steerlab-cli experiment list  (result.experiments[].concepts "
+            f"names what '{name}' pins), then steerlab-cli experiment detach "
+            f"{name} <one of those>")
+
+
+def detach(name: str, concepts: list[str], root: str | None = None) -> dict:
+    """Remove pinned concepts from a DRAFT manifest — the inverse of
+    :func:`attach`, and the reason it exists: before it, a pinned concept could
+    not be removed or re-pointed HEADLESSLY at all, so a draft carried whatever
+    it was first attached with and a re-pointing across many drafts was not
+    expressible as a command.
+
+    All-or-nothing (the ``add_conditions`` rule, for the same reason): every
+    named concept is checked against the whole manifest BEFORE anything is
+    written, so a two-concept detach cannot land the first and refuse on the
+    second, leaving a draft nobody asked for.
+
+    Two typed refusals:
+
+    * a concept the manifest does not pin — ``missingPrerequisite``, naming
+      what IS pinned, because the commonest cause is a typo and the list is
+      the answer;
+    * a concept some DECLARATION still reads by name —
+      ``conceptInUse``, naming every dependent. Detaching anyway would leave
+      a dangling reference that only the next ``verify`` finds, and a run in
+      between would have measured a study nobody declared. That is the
+      silent-drop class this engine refuses on principle.
+
+    The grand-mean corpus follows the pins: when the last grand-mean target
+    leaves, the corpus goes with it (nothing left to define). A corpus wider
+    than the remaining targets is deliberately KEPT — the population is part
+    of the remaining vectors' recipe. Swift twin:
+    ``ExperimentStore.detachConcepts``.
+    """
+    wanted = [c.strip() for c in concepts]
+    if not wanted or any(not c for c in wanted):
+        raise ExperimentStoreError(
+            "detach needs at least one concept name — "
+            f"'{name}' keeps every pin it has")
+    d = load_raw(name, root)
+    # Status FIRST, before the pin list is even consulted. `save_raw` would
+    # refuse a frozen manifest anyway, but only after the two refusals below
+    # had had their chance — so a frozen study with a dependent condition
+    # would have answered `conceptInUse` here and `statusImmutable` on the
+    # Mac (whose `updateDraft` checks status before it mutates). Same input,
+    # same gate id, either engine.
+    status = str(d.get("status") or "draft")
+    if status != "draft":
+        raise ExperimentStoreError(
+            f"'{name}' is {status} and read-only — duplicate it to iterate",
+            gate=lifecycle_gates.STATUS_IMMUTABLE,
+            repair=(f"steerlab-cli experiment duplicate {name} {name}-v2 && "
+                    f"steerlab-cli experiment detach {name} <concept>…  "
+                    "(frozen studies are immutable; the duplicate is a draft "
+                    "again)"))
+    pinned = [str(c.get("name") or "") for c in (d.get("concepts") or [])]
+    for concept in wanted:
+        if concept not in pinned:
+            raise ExperimentStoreError(
+                f"concept '{concept}' is not pinned to '{name}' — pinned: "
+                + (", ".join(pinned) if pinned else "(none)"),
+                gate=lifecycle_gates.MISSING_PREREQUISITE,
+                repair=concept_not_pinned_repair(name))
+    for concept in wanted:
+        dependents = concept_dependents(d, concept)
+        if dependents:
+            raise ExperimentStoreError(
+                f"concept '{concept}' is still declared by "
+                + ", ".join(dependents)
+                + " — remove or re-declare those conditions first",
+                gate=lifecycle_gates.CONCEPT_IN_USE,
+                repair=concept_in_use_repair(name))
+    removed = set(wanted)
+    d["concepts"] = [c for c in (d.get("concepts") or [])
+                     if str(c.get("name") or "") not in removed]
+    if not any(_is_grand_mean_ref(c) for c in d["concepts"]):
+        d.pop("grandMeanCorpus", None)
+    # THE intentional clear-all flow, the same one `remove_condition` declares
+    # (open-issues §8): detaching the last concept of a condition-less draft
+    # is a researcher removing one named pin they authored, one call at a
+    # time — declared intent, not a stale document landing on a populated one.
+    save_raw(d, root, clearing_arms=True)
+    return d
+
+
+def _is_grand_mean_ref(ref: dict) -> bool:
+    """Whether a stored concept pin was attached by the grand-mean recipe —
+    the only pins the ``grandMeanCorpus`` block exists for.
+    ``designatedReference`` is deliberately NOT one: it pins its reference
+    corpus inside the concept ref itself. Same predicate as
+    ``ExtractionMethod.is_grand_mean`` / Swift ``ExtractionMethod.isGrandMean``,
+    read off the STORED string because this path never inflates a Manifest."""
+    return str(((ref or {}).get("options") or {}).get("method") or "") \
+        == "emotionGrandMean"
+
+
 def _sha256_path(path: str) -> str:
     with open(path, "rb") as handle:
         return hashlib.sha256(handle.read()).hexdigest()

@@ -216,6 +216,39 @@ import Testing
         }
     }
 
+    @Test func experimentDetachEnvelope() async throws {
+        try await withTempRoot { root in
+            await invoke(
+                "experiment",
+                ["create", "demo", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            await invoke("experiment", ["attach", "demo", "french"])
+            let outcome = await invoke("experiment", ["detach", "demo", "french"])
+            #expect(outcome.envelope.state == .ready)
+            try check(outcome, fixture: "experiment-detach", root: root)
+        }
+    }
+
+    /// The refusal an agent meets when a declaration still names the concept —
+    /// pinned as a golden because its `error.code`/`error.gate`/`repairAction`
+    /// are the machine surface a caller acts on.
+    @Test func experimentDetachRefusalEnvelope() async throws {
+        try await withTempRoot { root in
+            await invoke(
+                "experiment",
+                ["create", "demo", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            await invoke("experiment", ["attach", "demo", "french"])
+            await invoke(
+                "experiment",
+                ["declare-condition", "demo", "arm", "--slots", "french:10:0.1",
+                 "--alpha-units", "norm"])
+            let outcome = await invoke("experiment", ["detach", "demo", "french"])
+            #expect(outcome.envelope.state == .refused)
+            #expect(outcome.envelope.error?.code == "conceptInUse")
+            #expect(outcome.envelope.error?.gate == "conceptInUse")
+            try check(outcome, fixture: "experiment-detach-refused", root: root)
+        }
+    }
+
     // MARK: The three authoring verbs (WP0 step 5½)
 
     /// A workspace override, not just an experiment-root override: a rubric
@@ -511,6 +544,10 @@ import Testing
             "remote fetch", "remote import", "remote import-chain",
             "remote variants", "remote chat",
             "experiment list", "experiment create", "experiment attach",
+            // `attach`'s inverse — the one authoring pin that could be added
+            // and never removed, so a draft carried whatever it was first
+            // attached with.
+            "experiment detach",
             "experiment pin-prompts", "experiment pin-rubric",
             "experiment declare-condition",
             "experiment set-sweep-selection", "experiment set-instruments",
@@ -538,14 +575,16 @@ import Testing
         ]
         #expect(declared == expected)
         // The audit's sixteen lifecycle verbs, the three headless authoring
-        // verbs step 5½ added (P0-3), and step 7's two (punch list #1 P3 +
+        // verbs step 5½ added (P0-3), step 7's two (punch list #1 P3 +
         // P13: the sweep's selection criterion and the study's outcome
         // instruments were manifest data no headless caller could declare, so
         // the sweep silently selected on marker density and a pinned choice
-        // task was measured as prose).
+        // task was measured as prose), and `detach` — the owed inverse of
+        // `attach`, without which a concept pin was the one authoring
+        // declaration that could only ever be ADDED.
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 21,
-            "the experiment lifecycle is twenty-one verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
+            declared.filter { $0.hasPrefix("experiment ") }.count == 22,
+            "the experiment lifecycle is twenty-two verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
     }
 
     @Test func everySpecIsInARunnerOwnedNamespace() {

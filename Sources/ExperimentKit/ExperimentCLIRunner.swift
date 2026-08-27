@@ -2197,6 +2197,39 @@ public struct ExperimentCLIRunner: Sendable {
                 payload: payload,
                 nextAction: .init(verb: "experiment validate \(manifest.name)"))
 
+        case "detach":
+            // The inverse of `attach`, and the reason it exists: a pinned
+            // concept could be replaced but never REMOVED headlessly, so a
+            // draft carried whatever it was first attached with — a study
+            // could reach freeze carrying a concept nothing cites, and
+            // re-pointing one concept across many drafts had no command.
+            guard args.count >= 3 else {
+                throw ExperimentError(
+                    reason: "usage: experiment detach <name> <concept>…")
+            }
+            let detaching = Array(args.dropFirst(2))
+            // All-or-nothing in the store (one load, one save): a two-concept
+            // detach cannot land the first and refuse on the second. The
+            // per-concept lines are therefore printed only after it returns —
+            // the same "refusal before success" rule `attach` follows.
+            let after = try ExperimentStore.detachConcepts(
+                detaching, experimentName: args[1])
+            for concept in detaching {
+                sink.out("detached \(concept) from '\(after.name)'")
+            }
+            let detachLine =
+                "detached \(detaching.count) concept(s) from '\(after.name)' "
+                + "(\(after.concepts.count) remaining)"
+            sink.out(detachLine)
+            return ExperimentCLIResult(
+                message: detachLine, changed: true,
+                payload: [
+                    "experiment": .string(after.name),
+                    "detached": .array(detaching.map { .string($0) }),
+                    "conceptCount": .number(Double(after.concepts.count)),
+                ],
+                nextAction: .init(verb: "experiment verify \(after.name)"))
+
         // MARK: The three headless authoring verbs (WP0 step 5½, P0-3)
         //
         // Before these, the CLI could pin CONCEPTS and nothing else: no task

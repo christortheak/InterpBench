@@ -1239,7 +1239,7 @@ struct ExperimentsPanelView: View {
                         .buttonStyle(.plain)
                         .help(
                             "detach '\(ref.name)' from this draft — refused "
-                                + "while a condition still references it")
+                                + "while a declaration still names it")
                     }
                 }
             }

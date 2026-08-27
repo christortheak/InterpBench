@@ -91,6 +91,16 @@ MISSING_PREREQUISITE = "missingPrerequisite"
 #: manifest it did not just write. Declaring the intent (``clearing_arms`` /
 #: ``mayClearArms``) is how a deliberate clear says so.
 ARMS_CLEARED = "armsCleared"
+#: A concept pin cannot be removed because the manifest still DECLARES
+#: something that reads it by name: an injection condition's slot, a
+#: per-concept sweep-selection instrument, a variant condition's
+#: ``fromPromotion`` forward reference, or a confirmation perturbation policy.
+#: The same class ``ARMS_CLEARED`` belongs to — a write that would silently
+#: take a declaration away from the measured surface — narrowed to the one
+#: direction ``detach`` can travel in. Detaching anyway would leave a dangling
+#: reference that only the next ``verify`` names, and the run in between would
+#: have measured a study nobody declared.
+CONCEPT_IN_USE = "conceptInUse"
 
 #: The closed vocabulary, in the fixed cross-engine order. Swift twin:
 #: ``LifecycleGate.vocabulary`` (declaration order of the enum's cases).
@@ -114,6 +124,7 @@ LIFECYCLE_GATE_IDS: tuple[str, ...] = (
     PARITY_THRESHOLD,
     MISSING_PREREQUISITE,
     ARMS_CLEARED,
+    CONCEPT_IN_USE,
 )
 
 

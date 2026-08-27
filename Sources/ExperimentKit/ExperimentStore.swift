@@ -4130,40 +4130,161 @@ public enum ExperimentStore {
         return (true, nil)
     }
 
-    /// Removes a pinned concept from a DRAFT manifest. Refuses while any
-    /// condition still references it (verify() would flag the dangling slot
-    /// anyway — refusing here keeps the draft sound instead of quietly
-    /// breaking it). When the last grand-mean target leaves, the pinned
-    /// grand-mean corpus goes with it (nothing left to define); a corpus
-    /// wider than the remaining targets is deliberately kept — the
-    /// population is part of the remaining vectors' recipe.
+    /// Every DECLARATION in a manifest that reads a pinned concept BY NAME and
+    /// would be left dangling if the pin went away, as `"<label> '<name>'"`
+    /// strings in a fixed order. Empty means the pin can be removed without
+    /// orphaning anything.
+    ///
+    /// The audit behind the list (every concept-name reference in the schema)
+    /// and what is deliberately OUT of it:
+    ///
+    /// * `grandMeanCorpus.concepts` / `.hashes` — HANDLED, not gated:
+    ///   `detachConcepts` drops the corpus when the last grand-mean target
+    ///   leaves, and keeps a corpus wider than the remaining targets (the
+    ///   population is part of the remaining vectors' recipe).
+    /// * `concepts[].designatedReference.name` and
+    ///   `concepts[].vectorArtifact.sourceConcept` — they name an on-disk DATA
+    ///   concept (`prompts/emotions/<n>/stories.jsonl`,
+    ///   `prompts/concepts/<n>/`), which need never be attached, so detaching
+    ///   a pin cannot dangle them.
+    /// * `validationControls[].concept` — a discriminant control is refused if
+    ///   it IS a study concept, so it is never a dependent of one.
+    /// * `readerRefs[].concept` — binds to a fitted reader ARTIFACT, checked
+    ///   against that artifact's own concept, never against the pin list.
+    /// * `conditions[].selection` and `variantConditions[].artifact.promotion`
+    ///   embed a criterion copy whose `choicePromptsFiles` is concept-keyed —
+    ///   but those are stamped PROVENANCE (what a past sweep selected on), and
+    ///   the live reference in the same condition is its slot, which is the
+    ///   first row below.
+    ///
+    /// Server twin: `experiment_store.concept_dependents` — the strings are
+    /// the cross-engine contract, because the refusal built from them is.
+    public static func conceptDependents(
+        _ concept: String, in manifest: ExperimentManifest
+    ) -> [String] {
+        var found: [String] = []
+        for condition in manifest.conditions
+        where condition.slots.contains(where: { $0.concept == concept }) {
+            found.append("condition '\(condition.name)'")
+        }
+        // The per-concept sweep instrument: one choice-prompt file per
+        // attached concept, so a multi-concept sweep never scores one
+        // concept's cells on another's items. Keyed BY concept — detaching
+        // the key leaves an instrument pointing at nothing.
+        if let objective = manifest.sweep?.selection?.objective {
+            if objective.choicePromptsFiles?[concept] != nil {
+                found.append(
+                    "sweep selection instrument "
+                        + "'sweep.selection.objective.choicePromptsFiles[\(concept)]'")
+            }
+            if objective.choicePromptsHashes?[concept] != nil {
+                found.append(
+                    "sweep selection instrument "
+                        + "'sweep.selection.objective.choicePromptsHashes[\(concept)]'")
+            }
+        }
+        for variant in manifest.variantConditions
+        where variant.fromPromotion?.concept == concept {
+            found.append("variant condition '\(variant.name)'")
+        }
+        if manifest.perturbationPolicy?.concept == concept {
+            found.append("perturbation policy 'perturbationPolicy'")
+        }
+        return found
+    }
+
+    /// THE repair for a `conceptInUse` refusal, as runnable commands. Server
+    /// twin: `experiment_store.concept_in_use_repair`.
+    static func conceptInUseRepair(_ name: String) -> String {
+        "remove or re-declare those conditions first: steerlab-cli "
+            + "experiment declare-condition \(name) <condition> … (re-declare "
+            + "onto a concept that stays), then steerlab-cli experiment detach "
+            + "\(name) <concept>…"
+    }
+
+    /// THE repair for detaching a concept the manifest never pinned: read what
+    /// IS pinned. Server twin: `experiment_store.concept_not_pinned_repair`.
+    static func conceptNotPinnedRepair(_ name: String) -> String {
+        "steerlab-cli experiment list  (result.experiments[].concepts names "
+            + "what '\(name)' pins), then steerlab-cli experiment detach "
+            + "\(name) <one of those>"
+    }
+
+    /// Removes pinned concepts from a DRAFT manifest — the inverse of
+    /// `attachConcept`, and the reason the verb exists: before it, a pinned
+    /// concept could not be removed or re-pointed HEADLESSLY, so a draft
+    /// carried whatever it was first attached with and re-pointing one concept
+    /// across many drafts was not expressible as a command.
+    ///
+    /// All-or-nothing: every named concept is checked against the whole
+    /// manifest before anything is written, so a two-concept detach cannot
+    /// land the first and refuse on the second, leaving a draft nobody asked
+    /// for.
+    ///
+    /// Two typed refusals — a concept the manifest does not pin
+    /// (`missingPrerequisite`, naming what IS pinned, because the commonest
+    /// cause is a typo and the list is the answer) and a concept some
+    /// DECLARATION still reads by name (`conceptInUse`, naming every
+    /// dependent). Detaching over a dependent would leave a dangling
+    /// reference that only the next `verify` finds, and a run in between would
+    /// have measured a study nobody declared.
+    ///
+    /// When the last grand-mean target leaves, the pinned grand-mean corpus
+    /// goes with it (nothing left to define); a corpus wider than the
+    /// remaining targets is deliberately kept. Server twin:
+    /// `experiment_store.detach`.
     @discardableResult
-    public static func detachConcept(
-        _ concept: String, experimentName: String
+    public static func detachConcepts(
+        _ concepts: [String], experimentName: String
     ) throws -> ExperimentManifest {
+        let wanted = concepts.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !wanted.isEmpty, !wanted.contains(where: \.isEmpty) else {
+            throw ExperimentError(
+                reason: "detach needs at least one concept name — "
+                    + "'\(experimentName)' keeps every pin it has")
+        }
         // Declared intent (open-issues §8): detaching the last concept of a
         // condition-less draft legitimately lands on both-empty. It is a
-        // researcher removing one named arm, one call at a time — not a
-        // document arriving from somewhere stale.
-        try updateDraft(name: experimentName, mayClearArms: true) { manifest in
-            guard manifest.concepts.contains(where: { $0.name == concept }) else {
-                throw ExperimentError(
-                    reason: "concept '\(concept)' is not attached to '\(experimentName)'")
+        // researcher removing one named pin they authored, one call at a
+        // time — not a document arriving from somewhere stale.
+        return try updateDraft(name: experimentName, mayClearArms: true) { manifest in
+            let pinned = manifest.concepts.map(\.name)
+            for concept in wanted where !pinned.contains(concept) {
+                throw ExperimentError.refusing(
+                    .missingPrerequisite,
+                    "concept '\(concept)' is not pinned to "
+                        + "'\(experimentName)' — pinned: "
+                        + (pinned.isEmpty
+                            ? "(none)" : pinned.joined(separator: ", ")),
+                    repair: conceptNotPinnedRepair(experimentName))
             }
-            let referencing = manifest.conditions
-                .filter { $0.slots.contains { $0.concept == concept } }
-                .map(\.name)
-            guard referencing.isEmpty else {
-                throw ExperimentError(
-                    reason: "concept '\(concept)' is referenced by condition(s) "
-                        + referencing.joined(separator: ", ")
-                        + " — remove those conditions first")
+            for concept in wanted {
+                let dependents = conceptDependents(concept, in: manifest)
+                guard dependents.isEmpty else {
+                    throw ExperimentError.refusing(
+                        .conceptInUse,
+                        "concept '\(concept)' is still declared by "
+                            + dependents.joined(separator: ", ")
+                            + " — remove or re-declare those conditions first",
+                        repair: conceptInUseRepair(experimentName))
+                }
             }
-            manifest.concepts.removeAll { $0.name == concept }
+            let removed = Set(wanted)
+            manifest.concepts.removeAll { removed.contains($0.name) }
             if !manifest.concepts.contains(where: { $0.options.method.isGrandMean }) {
                 manifest.grandMeanCorpus = nil
             }
         }
+    }
+
+    /// The one-concept spelling the Studies panel's detach button calls.
+    @discardableResult
+    public static func detachConcept(
+        _ concept: String, experimentName: String
+    ) throws -> ExperimentManifest {
+        try detachConcepts([concept], experimentName: experimentName)
     }
 
     // MARK: - Run-directory lookup (App gap A11)

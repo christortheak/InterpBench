@@ -4608,8 +4608,10 @@ public final class ExperimentPanel {
         }
     }
 
-    /// Detach a pinned concept from the selected draft (store-refused for
-    /// frozen studies and for concepts still referenced by conditions).
+    /// Detach a pinned concept from the selected draft — the same store call
+    /// `steerlab-cli experiment detach` makes, so a click and a command author
+    /// the same manifest. Store-refused for frozen studies and for a concept
+    /// any declaration still names (see `ExperimentStore.conceptDependents`).
     public func detachConcept(_ concept: String) {
         guard let experiment = selectedName else { return }
         do {

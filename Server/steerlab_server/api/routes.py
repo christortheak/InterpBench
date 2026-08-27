@@ -4300,6 +4300,23 @@ def build_router(state: ServiceState) -> APIRouter:
         except (ExtractionRenderingError, ReadingPositionError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
+    @router.post("/api/authoring/{name}/detach")
+    def authoring_detach(name: str, body: dict):
+        _safe_name(name)
+        from ..experiment import experiment_store
+        # The inverse of attach, and the write the family shipped without:
+        # every other pin on this surface could be replaced or cleared, and a
+        # CONCEPT pin could only ever be added. "concepts" is the same key
+        # attach takes, so the two bodies read as a pair.
+        #
+        # Draft-only, all-or-nothing, and refused while any declaration still
+        # names one of the concepts — all three are the store's rules, and
+        # `_authoring` turns each typed refusal into a 400 carrying its
+        # reason. Nothing is written when one is refused.
+        return _authoring(
+            lambda n: experiment_store.detach(n, body.get("concepts", [])),
+            name)
+
     @router.post("/api/authoring/{name}/protocol")
     def authoring_protocol(name: str, body: dict):
         _safe_name(name)

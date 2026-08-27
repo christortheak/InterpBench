@@ -168,6 +168,13 @@ Everything the extraction reads is these two files.
 `--project-neutral K` exists and is **legacy, draft-only** — verified and
 frozen manifests reject it. Do not use it.
 
+`steerlab-cli experiment detach <name> <concept>…` is the inverse: it removes
+each named concept's pin from a draft, all-or-nothing, and refuses
+(`conceptInUse`) while any declaration still names one — an injection
+condition's slot, a per-concept sweep-selection instrument, a variant
+condition's `fromPromotion`, a perturbation policy. Remove or re-declare those
+first. Re-pointing a draft at a different concept is `detach` then `attach`.
+
 ### 4.4 Author `validation.jsonl` — do this before you validate
 
 `prompts/concepts/<name>/validation.jsonl` is the **held-out probe**: scenarios
@@ -602,7 +609,7 @@ performing the repair first.**
   agent's artifact is editable in place there; frozen studies are protected by
   the manifest snapshot and the artifact hash, not by the directory.
 - **Frozen manifests are read-only** — the verbs that WRITE the manifest
-  (`attach`, `pin-prompts`, `pin-rubric`, `declare-condition`,
+  (`attach`, `detach`, `pin-prompts`, `pin-rubric`, `declare-condition`,
   `set-style-taxonomy`, `confirm`) refuse on a frozen or complete one;
   `duplicate`, then edit the copy. The verbs that only read it stay legal,
   including two that surprise people: **`sweep`**, which records its

@@ -251,6 +251,13 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
                                     "--source-concept", "--eval-run",
                                     "--extraction-rendering",
                                     "--reading-position"})),
+    # The inverse, and the reason it exists: a pinned concept could not be
+    # removed or re-pointed HEADLESSLY, so a draft carried whatever it was
+    # first attached with. Re-pointing one concept across many drafts is a
+    # mechanical edit that had no command.
+    VerbSpec("experiment", "detach", positional="<name> <concept>…",
+             purpose="Remove pinned concepts from a draft study — refused "
+                     "while a declaration still names one."),
     VerbSpec("experiment", "declare-condition",
              positional="<name> <condition>",
              purpose="Declare one measured arm of the study.",
@@ -1171,6 +1178,28 @@ def _experiment(invocation: Invocation) -> CLIResult:
             next_action=envelope.next_action(
                 f"experiment declare-condition {name} <condition> "
                 "--slots <concept>:<layer>:<alpha> --alpha-units norm|raw"))
+
+    if verb == "detach":
+        concepts = args[1:]
+        if not concepts:
+            raise ClientRefusal(
+                code=USAGE_CODE, reason=f"usage: {synopsis(spec)}",
+                repair_action="name at least one pinned concept to remove")
+        # Every refusal is the STORE's (one definition, both engines): a
+        # not-pinned concept and a concept some declaration still reads are
+        # typed lifecycle refusals there, and `_typed_envelope_for_exception`
+        # already carries a gate id out as `error.code` + `error.gate`.
+        document = store.detach(name, list(concepts))
+        remaining = len(document.get("concepts") or [])
+        for concept in concepts:
+            print(f"detached {concept} from {name!r}")
+        return CLIResult(
+            message=(f"detached {len(concepts)} concept(s) from {name!r} "
+                     f"({remaining} remaining)"),
+            changed=True,
+            payload={"experiment": name, "detached": list(concepts),
+                     "conceptCount": remaining},
+            next_action=envelope.next_action(f"experiment verify {name}"))
 
     if verb == "declare-condition":
         _require(args, 2, spec)

@@ -348,6 +348,17 @@ public enum ExperimentCLIParser {
                 "--project-neutral", ExtractionRendering.declarationFlag,
                 ReadingPosition.declarationFlag,
             ]),
+        // `attach`'s inverse, and the writer the authoring surface shipped
+        // without: every other pin here could be replaced or cleared, and a
+        // CONCEPT pin could only ever be ADDED. A draft therefore carried
+        // whatever it was first attached with — a mis-pinned concept had to
+        // ride along to freeze, and re-pointing one concept across a shelf of
+        // drafts was a mechanical edit no command expressed.
+        .init(
+            namespace: "experiment", verb: "detach",
+            positional: "<name> <concept>…",
+            purpose: "Remove each named concept's pin from a draft — refused "
+                + "while a declaration still names one."),
         // The headless authoring three (WP0 step 5½, punch-list P0-3): pin
         // the measured task, pin the judging instrument, declare an arm.
         .init(
