@@ -1301,6 +1301,7 @@ entries. `--no-control` omits the control condition.
 steerlab-cli data check <experiment>
 steerlab-cli vectors compare <a.safetensors> <b.safetensors> [--threshold <ratio>]
 steerlab-cli vectors backfill-norms <runDir/name> [--corpus <path>] [--model <id>] [--redenominate]
+steerlab-cli vectors mirror-poles <runDir/name> --concept <name> [--output-name <value>]
 ```
 
 | Verb | Purpose |
@@ -1308,6 +1309,7 @@ steerlab-cli vectors backfill-norms <runDir/name> [--corpus <path>] [--model <id
 | `data check` | Report which study-data inputs the manifest still needs. |
 | `vectors compare` | Compare two vector artifacts and refuse below the cosine threshold. |
 | `vectors backfill-norms` | Measure per-layer residual norms for an existing artifact into a new artifact, stamped with the current denominator convention (the opt-in migration for legacy unstamped artifacts). |
+| `vectors mirror-poles` | Mint the opposite pole of a contrastive direction as a new artifact — every layer negated bit-exactly, under a required new concept name, with a negatedFrom stamp. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-diagnostics END -->
@@ -1471,6 +1473,70 @@ that convention: artifacts with no stamp are LEGACY and are never rewritten,
 recomputed, or warned about, so an α that meant one dose yesterday means the
 same dose today. Run this when you want a specific artifact's denominator
 brought onto the stamped convention.
+
+**`vectors mirror-poles`** — mints the **opposite pole** of a contrastive
+direction as an artifact of its own. A CAA direction points from its negative
+file's pole toward its positive file's pole (`mean(pos) − mean(neg)`), so a
+researcher who wants to inject the other pole has otherwise only a negative α
+— which every dose surface reads as "less of the concept" rather than "the
+opposite concept", and which no artifact records. This verb writes the negation
+down: every layer multiplied by −1 into a **new** artifact in a fresh run
+directory; the source is never modified. Same reference resolution as
+`backfill-norms`. No model is loaded and nothing is measured.
+
+The negation is a **bit-exact IEEE sign-bit flip** on the stored floats, never
+a decode/re-encode: `-0.0` round-trips as `-0.0`, and mirroring a mirror
+returns the parent's `.safetensors` bytes byte-for-byte. Only the `layer_<i>`
+tensors flip — a stored `neutral_mean_layer_<i>` is the residual stream's own
+mean, an absolute activation statistic, and negating it would corrupt ablation
+mean-centring.
+
+**`--concept <newName>` is required**, and it may not be the source's own name.
+A mirrored pole under the same name would leave two artifacts with one concept
+name pointing in opposite directions, and every selector, pin, and promotion
+matcher addresses a direction by concept. `--output-name` names the file inside
+the run directory (default: the mirrored concept name).
+
+What the new sidecar says. Everything sign-invariant is preserved — including
+`normsPerLayer` and the whole `residualNorm*` denominator family, because
+‖−v‖ = ‖v‖, so a mirrored artifact's α in norm units means exactly the dose the
+source's did — plus the model pins, reading position, rendering,
+`coversModelDepth`, and the extraction-method and reader/SAE/OptVec provenance
+blocks, which describe how the SOURCE direction was produced. Added:
+
+```json
+"negatedFrom": {
+  "path": "<runDir>/<name>", "sha256TensorHash": "…",
+  "sha256SidecarHash": "…", "concept": "<source concept>",
+  "date": "2026-08-27T21:00:00Z"
+},
+"polesSwappedFromSource": true
+```
+
+`stimulusSetHash` is **preserved and qualified**: the mirrored concept's
+stimuli are the same two files with the positive/negative roles swapped, so a
+fresh hash would claim different bytes were read and the source's hash carried
+silently would claim the same recipe — the hash travels, and
+`polesSwappedFromSource` says what changed about its meaning. Exactly one field
+is dropped: `recipeIdentityHash`, an identity claim about *these* bytes whose
+canonical form includes the concept name and which promotion matches on.
+
+Refusals: a missing source is `notFound`/66; `--concept` missing or equal to
+the source's is `usage`/64 *with the reason*; a destination that already holds
+that artifact is `artifactExists`/65 (mirroring never replaces); and mirroring
+a mirror back to its own parent concept is `doubleMirror`/65, naming the
+original.
+
+**Validation is not minted.** A mirrored concept has no `validation.jsonl`, and
+this verb writes nothing into `prompts/concepts/` — an engine that invented
+held-out evidence would be manufacturing the thing the validate gate exists to
+demand. Attach behaves accordingly: a source-concept-less artifact (a
+reader-derived direction) pins the absence explicitly and the existing vacuity
+machinery reports it. The success message names the file to author:
+
+> to validate the mirrored pole, author
+> `prompts/concepts/<newName>/validation.jsonl` — the source concept's rows
+> with every `expresses` label inverted are the natural starting point
 
 ### 3.8 Remote (cluster client)
 
@@ -3016,11 +3082,13 @@ handed straight to `finetune train` is unsized.
 
 ```
 steerlab-server vectors compare <a.safetensors> <b.safetensors> [--threshold <ratio>]
+steerlab-server vectors mirror-poles <runDir/name> --concept <name> [--output-name <value>]
 ```
 
 | Verb | Purpose |
 |---|---|
 | `vectors compare` | Compare two vector artifacts and refuse below the cosine threshold. |
+| `vectors mirror-poles` | Mint the opposite pole of a contrastive direction as a new artifact — every layer negated bit-exactly, under a required new concept name, with a negatedFrom stamp. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:server-vectors END -->
@@ -3071,6 +3139,20 @@ train` (`STEERLAB_DEVICE`, then CUDA → MPS → CPU; dtype auto per device).
 Exit codes: **0** backfilled; **2** refused; **64** usage. This verb loads
 the model in-process — on a serving/delegating deployment use the API route
 instead, which runs it as a durable job on the pinned model.
+
+**`mirror-poles`** — mints the opposite pole of a contrastive direction as its
+own artifact: every layer × −1 (a bit-exact IEEE sign-bit flip, never a
+decode/re-encode) into a new artifact in a fresh `mirror-<name>` run directory,
+under a REQUIRED new concept name, with a `negatedFrom` stamp naming the source
+bytes and `polesSwappedFromSource: true` qualifying the inherited
+`stimulusSetHash`. The source is never modified, no model is loaded, and
+nothing is written into `prompts/concepts/`. Behaviour, sidecar shape, refusal
+texts, and states are identical to the Swift twin — see §3.7 for the full
+account. Unlike `backfill-norms` this verb IS on the agent path: it answers in
+the envelope, and its refusals carry `error.code` `notFound` (66), `usage`
+(64), `artifactExists` (65), or `doubleMirror` (65). There is no API route,
+because the analogous derive operation (reader → steering vector) has none
+either: this is local file work with no compute to delegate.
 
 ### 6.2 `panel`
 

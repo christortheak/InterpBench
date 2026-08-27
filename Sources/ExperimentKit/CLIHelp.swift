@@ -282,6 +282,13 @@ public enum CLIFlagVocabulary {
             + "multiplier, not the study's generation length.",
         "experiment create --model": "The model this experiment is pinned to (required).",
         "vectors backfill-norms --model": "Load this model for the measurement.",
+        "vectors mirror-poles --concept":
+            "The mirrored pole's concept name (required) — it must differ from "
+            + "the source's, because the negated direction points at the "
+            + "opposite pole.",
+        "vectors mirror-poles --output-name":
+            "File name for the new artifact inside its run directory "
+            + "(default: the mirrored concept name).",
         "remote fetch --out": "Download into this directory (default `.`).",
         "remote import --out": "Download into this directory (default .steerlab-downloads).",
         "docs cli-reference --path": "The document to read or rewrite.",

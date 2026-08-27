@@ -80,6 +80,17 @@ public enum DerivedArtifactInventory {
             facts.appendIfPresent("Neutral projection", sidecar.neutralProjection)
             facts.appendIfPresent("Substrate", sidecar.substrate)
             facts.append(.init("Stimulus sha256", sidecar.stimulusSetHash))
+            // A mirrored pole inherits the stimulus hash above (same two files,
+            // roles swapped), so the inventory row would otherwise be
+            // indistinguishable from its source's while the two directions
+            // point opposite ways.
+            if let negation = sidecar.negatedFrom {
+                facts.append(
+                    .init(
+                        "Mirrored from",
+                        "\(negation.concept) — every layer × −1 "
+                            + "(\(negation.path))"))
+            }
             facts.appendIfPresent("Recipe sha256", sidecar.recipeHash)
             facts.appendIfPresent("Recipe identity sha256", sidecar.recipeIdentityHash)
             facts.appendIfPresent("Neutral corpus sha256", sidecar.neutralCorpusHash)

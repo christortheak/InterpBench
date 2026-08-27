@@ -2703,7 +2703,9 @@ _VECTORS_USAGE = (
     "       steerlab-server vectors backfill-norms <runDir/name> "
     "[--corpus prompts/neutral/corpus.jsonl] [--output-name N] "
     "[--redenominate] [--model <id>] [--revision R] [--device D] "
-    "[--dtype T]\n")
+    "[--dtype T]\n"
+    "       steerlab-server vectors mirror-poles <runDir/name> "
+    "--concept <newName> [--output-name N]\n")
 
 
 def _parity_could_not_compare_repair(*, incomparable: bool, path_a: str,
@@ -2729,9 +2731,13 @@ def _vectors(args: list[str]):
     ``steerlab-cli vectors compare``); ``backfill-norms`` — residual-norm
     backfill for artifacts that predate norm-unit alphas (Swift twin:
     ``steerlab-cli vectors backfill-norms``; API twin:
-    ``POST /api/vectors/backfill-norms``)."""
+    ``POST /api/vectors/backfill-norms``); ``mirror-poles`` — the opposite
+    pole of a contrastive direction as its own artifact (Swift twin:
+    ``steerlab-cli vectors mirror-poles``)."""
     if args and args[0] == "backfill-norms":
         return _vectors_backfill_norms(args[1:])
+    if args and args[0] == "mirror-poles":
+        return _vectors_mirror_poles(args[1:])
     usage = _VECTORS_USAGE
     if len(args) < 3 or args[0] != "compare":
         sys.stderr.write(usage)
@@ -2944,6 +2950,131 @@ def _vectors_backfill_norms(args: list[str]) -> int:
                      indent=2, sort_keys=True))
     print(f"source artifact untouched: {base}", file=sys.stderr)
     return 0
+
+
+#: Envelope state and machine code per mirroring refusal. Non-gate codes on
+#: purpose: :mod:`lifecycle_gates` describes a STUDY's state, and these describe
+#: an artifact transform — the split ``vectors compare``'s ``notFound`` already
+#: makes. Swift twin: ``ExperimentCLIRunner.mirrorStopState`` /
+#: ``mirrorStopCode``, which carry the same pairs.
+_MIRROR_REFUSALS: dict = {
+    "sourceNotFound": ("notFound", "notFound", 66),
+    "unreadableArtifact": ("notFound", "notFound", 66),
+    "conceptRequired": ("blocked", "usage", 64),
+    "destinationOccupied": ("refused", "artifactExists", 65),
+    "doubleMirror": ("refused", "doubleMirror", 65),
+}
+
+
+def _vectors_mirror_poles(args: list[str]):
+    """``vectors mirror-poles <runDir/name> --concept <newName>`` — mint the
+    OPPOSITE pole of a contrastive direction as its own artifact.
+
+    A CAA direction points from its negative file's pole toward its positive
+    file's pole, so a researcher who wants to inject the other pole at a
+    positive α has, today, only a negative α — which nothing records and every
+    dose surface reads as "less of the concept". This verb writes the negation
+    down: every layer multiplied by −1 (a bit-exact IEEE sign-bit flip, never a
+    decode/re-encode), under a REQUIRED new concept name, into a fresh
+    immutable run directory, with a ``negatedFrom`` stamp naming the bytes it
+    came from and ``polesSwappedFromSource: true`` qualifying the inherited
+    ``stimulusSetHash``. The source artifact is never modified.
+
+    No model is loaded and nothing is measured — this is pure file work, and
+    the same verb exists on the Swift CLI with the same path resolution
+    (absolute stays absolute, ``runs/…`` joins the workspace root, anything
+    else lands under ``runs/``), the same refusal texts, and the same states.
+
+    It deliberately writes NOTHING into ``prompts/concepts/``: the mirrored
+    pole's held-out evidence is a file only the researcher can author, and an
+    engine that invented it would be manufacturing the very evidence the
+    validate gate exists to demand. The success message names the file.
+    """
+    from .cli_envelope import CLIResult
+    from .experiment import paths, run_config
+    from .steering import pole_mirror
+
+    if not args or args[0].startswith("--"):
+        sys.stderr.write(_VECTORS_USAGE)
+        return 64
+
+    reference = args[0]
+    if os.path.isabs(reference):
+        base = reference
+    elif reference.startswith("runs/") or reference.startswith("runs" + os.sep):
+        base = os.path.join(paths.project_root(), reference)
+    else:
+        base = os.path.join(paths.runs_directory(), reference)
+    vector_dir, name = os.path.split(base)
+
+    # `--concept` is enforced HERE rather than by the parser so the refusal can
+    # explain why the mirrored pole needs a name of its own.
+    concept = (_flag(args, "--concept") or "").strip()
+    if not concept:
+        reason = pole_mirror.concept_required_reason("")
+        sys.stderr.write(f"vectors mirror-poles: {reason}\n")
+        return CLIResult(
+            state="blocked", exit_code=64, code="usage", message=reason,
+            repair_action=pole_mirror.concept_required_repair(
+                "steerlab-server", base),
+            payload={"sourceArtifact": base})
+
+    output_name = _flag(args, "--output-name")
+    run_dir = paths.make_unique_run_directory(
+        f"mirror-{output_name or concept}")
+    try:
+        result = pole_mirror.mirror_poles(
+            vector_dir, name, concept=concept, run_directory=run_dir,
+            output_name=output_name)
+    except pole_mirror.PoleMirrorError as exc:
+        # A refused mint leaves an empty run directory behind; remove it so the
+        # catalog is not littered with directories that hold no artifact.
+        try:
+            os.rmdir(run_dir)
+        except OSError:
+            pass
+        state, code, exit_code = _MIRROR_REFUSALS[exc.kind]
+        sys.stderr.write(f"vectors mirror-poles: {exc.reason}\n")
+        return CLIResult(
+            state=state, exit_code=exit_code, code=code, message=exc.reason,
+            repair_action=exc.repair_action,
+            payload={"sourceArtifact": base, "concept": concept})
+    except OSError as exc:
+        try:
+            os.rmdir(run_dir)
+        except OSError:
+            pass
+        sys.stderr.write(f"vectors mirror-poles: {exc}\n")
+        return CLIResult(
+            state="notFound", exit_code=66, code="notFound", message=str(exc),
+            repair_action=pole_mirror.source_not_found_repair(
+                "steerlab-server"),
+            payload={"sourceArtifact": base, "concept": concept})
+
+    sidecar = {}
+    with open(result.sidecar_path, encoding="utf-8") as handle:
+        sidecar = json.load(handle)
+    run_config.write_run_config(run_dir, "pole-mirror",
+                                model_id=sidecar.get("modelID"),
+                                revision=sidecar.get("revision"))
+    note = pole_mirror.validation_authoring_note(concept)
+    print(f"source artifact untouched: {result.source_artifact}",
+          file=sys.stderr)
+    print(note, file=sys.stderr)
+    return CLIResult(
+        message=f"mirrored pole -> {result.artifact_id}", changed=True,
+        payload={
+            "artifact": result.artifact_id,
+            "concept": result.concept,
+            "sourceArtifact": result.source_artifact,
+            "sourceConcept": result.source_concept,
+            "sourceVectorsHash": result.source_vectors_hash,
+            "sourceSidecarHash": result.source_sidecar_hash,
+            "layerCount": result.layer_count,
+            "polesSwappedFromSource": True,
+            "runDirectory": result.run_directory,
+            "validationAuthoring": note,
+        })
 
 
 _SITE_USAGE = ("usage: steerlab-server site qualify [--json OUT] "

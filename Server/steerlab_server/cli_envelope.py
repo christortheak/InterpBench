@@ -455,6 +455,18 @@ VERB_SPECS: tuple[VerbSpec, ...] = (
                      "threshold.",
              value_flags=frozenset({"--threshold"}),
              accepts_legacy_json_path=True),
+    # Pole mirroring: the OTHER end of a contrastive direction, as an artifact
+    # rather than as a negative α. `--concept` is declared required here (so
+    # `--help` and the reference document say so) but ENFORCED in the verb
+    # body, because the refusal has to explain why the mirrored pole needs a
+    # name of its own and a bare "missing required flag" would not. Swift twin:
+    # `steerlab-cli vectors mirror-poles`.
+    VerbSpec("vectors", "mirror-poles", positional="<runDir/name>",
+             purpose="Mint the opposite pole of a contrastive direction as a "
+                     "new artifact — every layer negated bit-exactly, under a "
+                     "required new concept name, with a negatedFrom stamp.",
+             value_flags=frozenset({"--concept", "--output-name"}),
+             required_flags=frozenset({"--concept"})),
     VerbSpec("site", "qualify",
              purpose="Run the committed fixtures on this node and report "
                      "structural parity, check by check.",

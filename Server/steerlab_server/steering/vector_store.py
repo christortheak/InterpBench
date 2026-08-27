@@ -269,6 +269,24 @@ class SteeringVectorSidecar:
     # which must then prove every recipe field from their other sidecar
     # fields or be refused for promotion.
     recipeIdentityHash: str | None = None
+    # Set when this artifact was produced by POLE MIRRORING (``pole_mirror``;
+    # Swift twin ``PoleMirror``): the source artifact's tensors multiplied by
+    # −1 at every layer — a bit-exact sign flip, never a re-encode — under a
+    # NEW concept name. A CAA direction points from its negative file's pole
+    # toward its positive file's pole, so its negation points at the other
+    # pole, which is a different concept label; that is why the mint requires
+    # one. Shape follows ``pinnedFrom``'s idiom: {"path", "sha256TensorHash",
+    # "sha256SidecarHash", "concept", "date"}. Pinned cross-engine additive
+    # contract (same JSON key on the Swift ``SteeringVectorSidecar``).
+    negatedFrom: dict | None = None
+    # Present (and always True) on a mirrored artifact, qualifying
+    # ``stimulusSetHash``: the mirrored pole's stimuli are the SAME two files
+    # as the source's with the positive/negative ROLES swapped. A fresh hash
+    # would claim different bytes were read; the source's hash carried
+    # silently would claim the same recipe. The hash travels AND this stamp
+    # says what changed about its meaning. Absent on every non-mirrored
+    # artifact; never False.
+    polesSwappedFromSource: bool | None = None
 
     @classmethod
     def make(cls, *, model_id: str, concept: str, stimulus_set_hash: str,

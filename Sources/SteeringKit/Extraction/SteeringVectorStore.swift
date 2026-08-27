@@ -161,6 +161,24 @@ public struct SteeringVectorSidecar: Codable, Sendable {
     /// a pinned cross-engine contract (server twin writes the same keys):
     /// `{"sourceArtifact": "...", "sourceVectorsHash": "...", "date": "..."}`.
     public var normBackfill: NormBackfillProvenance?
+    /// Set when this artifact was produced by POLE MIRRORING: the source
+    /// artifact's tensors multiplied by −1 at every layer (a bit-exact sign
+    /// flip, never a re-encode), under a NEW concept name. A CAA direction
+    /// points from its negative file's pole toward its positive file's pole,
+    /// so the negation points at the other pole — a different concept label,
+    /// which is why the mint requires one. The JSON shape is a pinned
+    /// cross-engine contract (server twin writes the same keys), and follows
+    /// `pinnedFrom`'s idiom: `{"path": …, "sha256TensorHash": …,
+    /// "sha256SidecarHash": …, "concept": …, "date": …}`.
+    public var negatedFrom: NegationProvenance?
+    /// Present (and always `true`) on a mirrored artifact, qualifying the
+    /// `stimulusSetHash` immediately above it: the mirrored pole's stimuli are
+    /// the SAME two files as the source's, with the positive/negative ROLES
+    /// swapped. Minting a fresh hash would claim different bytes were read;
+    /// carrying the source's hash silently would claim the same recipe. The
+    /// hash travels AND this stamp says what changed about its meaning.
+    /// Absent on every non-mirrored artifact; never `false`.
+    public var polesSwappedFromSource: Bool?
     /// Gemma Scope import convention (pinned cross-engine contract, WS7.2;
     /// same JSON keys on the server's `vector_store.SteeringVectorSidecar`).
     /// Both engines import an SAE feature the way this app always has —
@@ -265,6 +283,37 @@ public struct SteeringVectorSidecar: Codable, Sendable {
             self.sourceVectorsHash = sourceVectorsHash
             self.date = date
             self.replacedNormSource = replacedNormSource
+        }
+    }
+
+    /// Where a mirrored pole came from. Key names follow `pinnedFrom`'s
+    /// (server `vector_store.SteeringVectorSidecar.pinnedFrom`) so one reader
+    /// idiom answers "which bytes is this a transform of?" for both stamps.
+    public struct NegationProvenance: Codable, Sendable, Equatable {
+        /// The source artifact's base path (`<runDir>/<name>`, no extension).
+        public var path: String
+        /// SHA-256 hex of the SOURCE `.safetensors` bytes. Not this
+        /// artifact's: mirroring flips every sign bit, so the two differ —
+        /// which is exactly what makes the stamp checkable (negate the named
+        /// bytes and you get these bytes back).
+        public var sha256TensorHash: String
+        /// SHA-256 hex of the source `.json` sidecar bytes.
+        public var sha256SidecarHash: String
+        /// The SOURCE artifact's concept — the opposite pole's label. The
+        /// mirrored artifact's own `concept` is the new one the mint required.
+        public var concept: String
+        /// ISO8601 UTC timestamp of the mirroring.
+        public var date: String
+
+        public init(
+            path: String, sha256TensorHash: String, sha256SidecarHash: String,
+            concept: String, date: String
+        ) {
+            self.path = path
+            self.sha256TensorHash = sha256TensorHash
+            self.sha256SidecarHash = sha256SidecarHash
+            self.concept = concept
+            self.date = date
         }
     }
 

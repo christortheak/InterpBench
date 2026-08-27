@@ -32,6 +32,7 @@ METAVARS: dict = {
     "--agent": "<name-or-path>",
     "--agent-name": "<name>",
     "--cell": "<layer>:<alpha>",
+    "--concept": "<name>",
     "--deltas": "<d1,d2>",
     "--dependency": "<spec>",
     "--device": "<device>",
@@ -73,6 +74,10 @@ FLAG_PURPOSES: dict = {
     "--allow-unverified-epoch":
         "Accept a legacy run that carries no experiment-hash stamp.",
     "--cell": "Override the sweep-selected cell, loudly.",
+    "--concept":
+        "The mirrored pole's concept name (required) — it must differ from "
+        "the source's, because the negated direction points at the opposite "
+        "pole.",
     "--deltas": "Perturbation deltas around the anchor cell (default 0.2).",
     "--dependency":
         "Hold the submission behind a Slurm dependency, e.g. afterok:12345.",
@@ -94,6 +99,9 @@ FLAG_PURPOSES: dict = {
     "--no-control": "Omit the control condition.",
     "--no-evidence": "Skip packaging an evidence bundle for the job.",
     "--out": "Write the same document to this file.",
+    "--output-name":
+        "File name for the new artifact inside its run directory (default: "
+        "the mirrored concept name).",
     "--parallel": "Shard a Slurm run across N GPU jobs.",
     "--parallel-jobs": "Cap how many shard jobs are submitted at once.",
     "--partition": "Scheduler partition.",

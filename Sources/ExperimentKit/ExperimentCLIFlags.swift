@@ -275,6 +275,20 @@ public enum ExperimentCLIParser {
                 + "convention (the opt-in migration for legacy unstamped "
                 + "artifacts).",
             booleanFlags: ["--redenominate"], valueFlags: ["--corpus", "--model"]),
+        // Pole mirroring: the OTHER end of a contrastive direction, as an
+        // artifact rather than as a negative α. `--concept` is required and
+        // enforced in the verb body rather than by the parser, because the
+        // refusal has to explain WHY a new name is not optional (two artifacts
+        // under one concept name pointing opposite ways) and a bare
+        // "missing required flag" would not.
+        .init(
+            namespace: "vectors", verb: "mirror-poles",
+            positional: "<runDir/name>",
+            purpose: "Mint the opposite pole of a contrastive direction as a "
+                + "new artifact — every layer negated bit-exactly, under a "
+                + "required new concept name, with a negatedFrom stamp.",
+            valueFlags: ["--concept", "--output-name"],
+            requiredFlags: ["--concept"]),
 
         // panel — the multi-agent authoring family (open-issues §18). `list`
         // and `check` are the pre-existing read verbs, declared here when the

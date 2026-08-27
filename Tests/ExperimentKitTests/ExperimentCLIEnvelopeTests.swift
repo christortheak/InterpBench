@@ -577,7 +577,11 @@ import Testing
             // moved.
             "init",
             "workspace init", "data check",
-            "vectors compare", "vectors backfill-norms",
+            // POLE MIRRORING: the opposite pole of a contrastive direction as
+            // its own artifact. A new verb in an existing family, not a
+            // changed one — nothing in the lifecycle moved, and the experiment
+            // count asserted below is untouched.
+            "vectors compare", "vectors backfill-norms", "vectors mirror-poles",
             "remote capabilities", "remote package", "remote upload",
             "remote submit-bundle", "remote jobs", "remote logs", "remote cancel",
             "remote fetch", "remote import", "remote import-chain",

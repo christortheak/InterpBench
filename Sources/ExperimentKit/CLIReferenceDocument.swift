@@ -91,6 +91,7 @@ public enum CLIReferenceDocument {
             id: "swift-diagnostics",
             verbLabels: [
                 "data check", "vectors compare", "vectors backfill-norms",
+                "vectors mirror-poles",
             ]),
         .init(
             id: "swift-remote",

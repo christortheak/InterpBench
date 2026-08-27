@@ -2063,6 +2063,14 @@ struct ChatView: View {
         if let substrate = artifact.sidecar.substrate {
             line += " · \(substrate)"
         }
+        // A mirrored pole is the NEGATION of another artifact's direction, and
+        // its method/date/norm fragments are all inherited from that source —
+        // so without this fragment the caption of a mirror and the caption of
+        // its parent read identically while the two point opposite ways. The
+        // one caption that has to say so is this one.
+        if artifact.sidecar.negatedFrom != nil {
+            line += " · mirrored pole"
+        }
         return line
     }
 
@@ -2083,6 +2091,15 @@ struct ChatView: View {
         }
         line += "; method and reading position are the extraction choices "
             + "recorded in this vector's sidecar"
+        // The mirror's whole story, because every other fragment above is the
+        // SOURCE's: the stimulus hash is the source's two files with their
+        // poles swapped, and the direction is the source's negated.
+        if let negation = artifact.sidecar.negatedFrom {
+            line += ". Mirrored pole: every layer × −1 from concept "
+                + "'\(negation.concept)' (\(negation.path)), so the stimulus "
+                + "hash above is that concept's two files with the positive "
+                + "and negative roles swapped"
+        }
         // A pre-scaled OptVec vector must announce itself wherever it can be
         // selected for steering — scaling it like an ordinary direction is an
         // orders-of-magnitude dose error (open-issues §24).

@@ -667,12 +667,12 @@ def test_no_authoring_verb_accepts_a_server_locator():
 
 def test_the_client_table_is_separate_from_the_engines_twin_literal():
     """The engine's ``VERB_SPECS`` is a cross-engine twin literal whose exact
-    fifteen labels ``CLIEnvelopeParityTests`` pins. Appending client verbs to
+    sixteen labels ``CLIEnvelopeParityTests`` pins. Appending client verbs to
     it would assert the ENGINE grew verbs it does not have — and would break
     the Swift half."""
     engine = {spec.label for spec in cli_envelope.VERB_SPECS}
     client = {spec.label for spec in client_cli.CLIENT_VERB_SPECS}
-    assert len(cli_envelope.VERB_SPECS) == 15
+    assert len(cli_envelope.VERB_SPECS) == 16
     # `experiment list` and `experiment verify` exist on both by design (a
     # client reads its own workspace); everything else is disjoint.
     assert engine & client == {"experiment list", "experiment verify"}

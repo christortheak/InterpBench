@@ -311,9 +311,11 @@ def test_undeclared_verbs_pass_through_untouched():
 
 def test_the_declared_verbs_are_the_audits_fourteen_plus_site_qualify():
     """Audit §2.1's table, server column, plus `site qualify` (WP6/gate 7 — a
-    server-only verb, added after the audit). `data check` is counted once (its
-    argument domain differs from Swift's — a documented §3.2 divergence, not a
-    second verb)."""
+    server-only verb, added after the audit) and `vectors mirror-poles` (pole
+    mirroring, added later still: pure local file work, so it joined the agent
+    path rather than following `backfill-norms` off it). `data check` is
+    counted once (its argument domain differs from Swift's — a documented §3.2
+    divergence, not a second verb)."""
     labels = sorted(spec.label for spec in cli_envelope.VERB_SPECS)
     assert labels == sorted([
         "data check", "experiment analyze", "experiment confirm",
@@ -321,8 +323,9 @@ def test_the_declared_verbs_are_the_audits_fourteen_plus_site_qualify():
         "experiment promote", "experiment run", "experiment sweep",
         "experiment validate", "experiment verify", "jobs list",
         "site qualify", "study submit", "vectors compare",
+        "vectors mirror-poles",
     ])
-    assert len(cli_envelope.VERB_SPECS) == 15
+    assert len(cli_envelope.VERB_SPECS) == 16
 
 
 # =============================================================================

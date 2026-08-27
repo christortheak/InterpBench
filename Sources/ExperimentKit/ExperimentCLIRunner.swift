@@ -1592,7 +1592,23 @@ public struct ExperimentCLIRunner: Sendable {
         let usage = "usage: vectors backfill-norms <runDir/name> "
             + "[--corpus prompts/neutral/corpus.jsonl] [--model <id>] [--redenominate]\n"
             + "       vectors compare <a.safetensors> <b.safetensors> "
-            + "[--out OUT] [--threshold T]"
+            + "[--out OUT] [--threshold T]\n"
+            + "       vectors mirror-poles <runDir/name> --concept <newName> "
+            + "[--output-name N]"
+
+        /// The base URL a `<runDir/name>` reference names, under the same
+        /// three-way rule `backfill-norms` published (CLI-REFERENCE §3.7):
+        /// absolute stays absolute, `runs/…` joins the workspace root,
+        /// anything else lands under `runs/`.
+        func artifactBase(_ reference: String) -> URL {
+            if reference.hasPrefix("/") {
+                URL(filePath: reference)
+            } else if reference.hasPrefix("runs/") {
+                VectorCatalog.projectRoot.appending(path: reference)
+            } else {
+                VectorCatalog.runsDirectory.appending(path: reference)
+            }
+        }
 
         switch args.first {
         case "compare":
@@ -1714,14 +1730,7 @@ public struct ExperimentCLIRunner: Sendable {
                 throw ExperimentError(reason: usage)
             }
             let reference = args[1]
-            let base: URL =
-                if reference.hasPrefix("/") {
-                    URL(filePath: reference)
-                } else if reference.hasPrefix("runs/") {
-                    VectorCatalog.projectRoot.appending(path: reference)
-                } else {
-                    VectorCatalog.runsDirectory.appending(path: reference)
-                }
+            let base = artifactBase(reference)
             let sidecarURL = base.appendingPathExtension("json")
             guard FileManager.default.fileExists(atPath: sidecarURL.path) else {
                 throw ExperimentError(
@@ -1763,8 +1772,106 @@ public struct ExperimentCLIRunner: Sendable {
                     "redenominated": .bool(args.contains("--redenominate")),
                 ])
 
+        case "mirror-poles":
+            // POLE MIRRORING: the other end of a contrastive direction, minted
+            // as its own artifact instead of being reached by a negative α.
+            // Pure file work — no model, no measurement — so the whole verb is
+            // `PoleMirror.mirrorPoles` plus this engine's path resolution and
+            // the fresh immutable run directory the house rule requires.
+            guard args.count >= 2, !args[1].hasPrefix("--") else {
+                throw ExperimentError(reason: usage)
+            }
+            let base = artifactBase(args[1])
+            // `--concept` is enforced HERE rather than by the parser so the
+            // refusal can explain why the mirrored pole needs a name of its
+            // own; a bare "missing required flag" would not.
+            let requested = (flag("--concept") ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !requested.isEmpty else {
+                throw ExperimentCLIStop(
+                    exitCode: SteerLabCLIState.blocked.exitCode,
+                    state: .blocked, code: "usage",
+                    reason: "vectors mirror-poles: "
+                        + PoleMirror.conceptRequiredReason(sourceConcept: ""),
+                    repairAction: PoleMirror.conceptRequiredRepair(
+                        program: PoleMirror.program, base: base.path),
+                    payload: ["sourceArtifact": .string(base.path)])
+            }
+            let outputName = flag("--output-name") ?? requested
+            let runDirectory = try VectorCatalog.makeUniqueRunDirectory(
+                slug: "mirror-\(outputName)")
+            let mirrored: PoleMirror.MirrorResult
+            do {
+                mirrored = try PoleMirror.mirrorPoles(
+                    artifact: base, concept: requested, into: runDirectory,
+                    outputName: flag("--output-name"))
+            } catch let error as PoleMirror.MirrorError {
+                // A refused mint leaves an empty run directory behind; remove
+                // it so the catalog is not littered with directories that hold
+                // no artifact.
+                try? FileManager.default.removeItem(at: runDirectory)
+                sink.err("vectors mirror-poles: \(error.reason)\n")
+                throw ExperimentCLIStop(
+                    exitCode: Self.mirrorStopState(error.kind).exitCode,
+                    state: Self.mirrorStopState(error.kind),
+                    code: Self.mirrorStopCode(error.kind),
+                    reason: "vectors mirror-poles: \(error.reason)",
+                    repairAction: error.repairAction,
+                    payload: [
+                        "sourceArtifact": .string(base.path),
+                        "concept": .string(requested),
+                    ])
+            }
+            try RunMetadata.write(
+                runType: "pole-mirror", to: runDirectory,
+                modelID: mirrored.modelID, revision: mirrored.revision)
+            let note = PoleMirror.validationAuthoringNote(concept: requested)
+            sink.out("mirrored pole → \(mirrored.artifact.path).{safetensors,json}")
+            sink.out(
+                "concept '\(mirrored.sourceConcept)' → '\(requested)' "
+                    + "(every layer × −1, bit-exact)")
+            sink.out("source artifact untouched: \(base.path)")
+            sink.out(note)
+            return ExperimentCLIResult(
+                message: "mirrored pole → \(mirrored.artifact.path)", changed: true,
+                payload: [
+                    "artifact": .string(mirrored.artifact.path),
+                    "concept": .string(mirrored.concept),
+                    "sourceArtifact": .string(base.path),
+                    "sourceConcept": .string(mirrored.sourceConcept),
+                    "sourceVectorsHash": .string(mirrored.sourceVectorsHash),
+                    "sourceSidecarHash": .string(mirrored.sourceSidecarHash),
+                    "layerCount": .number(Double(mirrored.layerCount)),
+                    "polesSwappedFromSource": .bool(true),
+                    "runDirectory": .string(runDirectory.path),
+                    "validationAuthoring": .string(note),
+                ])
+
         default:
             throw ExperimentError(reason: usage)
+        }
+    }
+
+    /// The envelope state each mirroring refusal answers with. Non-gate codes
+    /// on purpose: `LifecycleGate` describes a STUDY's state, and these
+    /// describe an artifact transform (the split `vectors compare`'s
+    /// `notFound` already makes). Python twin: `cli._vectors_mirror_poles`.
+    static func mirrorStopState(_ kind: PoleMirror.MirrorError.Kind)
+        -> SteerLabCLIState
+    {
+        switch kind {
+        case .sourceNotFound, .unreadableArtifact: .notFound
+        case .conceptRequired: .blocked
+        case .destinationOccupied, .doubleMirror: .refused
+        }
+    }
+
+    static func mirrorStopCode(_ kind: PoleMirror.MirrorError.Kind) -> String {
+        switch kind {
+        case .sourceNotFound, .unreadableArtifact: "notFound"
+        case .conceptRequired: "usage"
+        case .destinationOccupied: "artifactExists"
+        case .doubleMirror: "doubleMirror"
         }
     }
 
