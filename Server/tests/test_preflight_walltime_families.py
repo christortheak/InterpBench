@@ -73,9 +73,11 @@ def _entry(rate, family=None, gpu="A100", samples=3):
     return entry
 
 
-def _walltime(manifest, records, *, verb="run", walltime="04:00:00"):
+def _walltime(manifest, records, *, verb="run", walltime="04:00:00",
+              shard_count=1):
     return sub._check_walltime(manifest, _resources(walltime), records,
-                               ServerProfile.from_env(), verb)
+                               ServerProfile.from_env(), verb,
+                               shard_count=shard_count)
 
 
 EXTERNAL_PANEL = [
@@ -229,6 +231,49 @@ def test_no_history_at_all_still_warns_honestly(meta):
     assert "no throughput history for acme/tiny on A100" in check["message"]
     # The family is still recorded: the fold has something to attribute to.
     assert check["data"]["instrumentFamily"] == fam.LONG_FORM_TEXT
+
+
+# --- sharded fan-out prices the shard, not the matrix ---------------------------
+
+
+def test_an_unsharded_estimate_is_unchanged_and_carries_no_shard_keys(meta):
+    """shard_count=1 is the historical path, byte for byte: same estimate,
+    same message, and none of the sharding vocabulary in the data."""
+    _seed(meta, [_entry(220.0)])
+    check = _walltime(_manifest(), 1664)
+    assert check["data"]["estimatedHours"] == pytest.approx(11.35, abs=0.05)
+    assert "shardCount" not in check["data"]
+    assert "estimateIsPerShard" not in check["data"]
+    assert "PER-SHARD" not in check["message"]
+
+
+def test_a_sharded_estimate_is_the_unsharded_one_divided_by_k(meta):
+    _seed(meta, [_entry(220.0)])
+    whole = _walltime(_manifest(), 1664)["data"]["estimatedHours"]
+    check = _walltime(_manifest(), 1664, shard_count=4)
+    assert check["data"]["estimatedHours"] == pytest.approx(whole / 4, abs=0.01)
+    assert check["data"]["shardCount"] == 4
+    assert check["data"]["estimateIsPerShard"] is True
+
+
+def test_the_sharded_estimate_line_says_it_is_per_shard(meta):
+    _seed(meta, [_entry(220.0)])
+    check = _walltime(_manifest(), 1664, shard_count=4)
+    assert "÷ 4 shard jobs" in check["message"]
+    assert "PER-SHARD estimate" in check["message"]
+
+
+def test_the_refusal_threshold_follows_the_per_shard_estimate(meta):
+    """The field case (2026-08-28): a matrix whose per-shard need fits the
+    requested walltime was refused because the estimate priced the WHOLE
+    matrix against one shard's wall — demanding hours no single job would
+    ever use, the exact over-ask the check itself warns against."""
+    _seed(meta, [_entry(291.0)])
+    refused = _walltime(_manifest(), 7488, walltime="13:00:00")
+    assert refused["status"] == "fail"          # ≈38.6 h against 13 h
+    sharded = _walltime(_manifest(), 7488, walltime="13:00:00", shard_count=4)
+    assert sharded["status"] == "ok"            # ≈9.65 h per shard
+    assert sharded["data"]["estimatedHours"] == pytest.approx(9.65, abs=0.05)
 
 
 # --- the fold learns per family ------------------------------------------------

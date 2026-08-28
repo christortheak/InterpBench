@@ -314,7 +314,7 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
         manifest, _prompts_text_for_study(manifest, prompts_path, root))
     preflight = _preflight_report(manifest=manifest, resources=slurm_resources,
                                   profile=profile, planned_records=planned,
-                                  verb=verb)
+                                  verb=verb, shard_count=parallel)
     overridden = _gate_on_preflight(preflight, dry_run=dry_run, force=force)
 
     if parallel > 1:
@@ -483,12 +483,12 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     planned = _planned_records(
         manifest, _prompts_text_for_bundle(bundle_path, manifest, prompts_path))
     # ONE preflight per submission, sharded or not (the app shows one dialog,
-    # not K): the estimate is per-job conservative — each shard needs the
-    # same weights+KV memory, and the walltime estimate covers the whole
-    # matrix, an upper bound for any one shard.
+    # not K): each shard needs the same weights+KV memory, and the walltime
+    # estimate is sized to what one shard job actually runs — its 1/K slice
+    # of the record matrix — because the requested walltime is per shard job.
     preflight = _preflight_report(manifest=manifest, resources=slurm_resources,
                                   profile=profile, planned_records=planned,
-                                  verb=verb)
+                                  verb=verb, shard_count=parallel)
     overridden = _gate_on_preflight(preflight, dry_run=dry_run, force=force)
 
     # The judge fan-out needs the sharded-parent machinery even at K=1
@@ -1074,7 +1074,8 @@ def _check_gpu_request(resources: SlurmResources) -> dict:
 def _preflight_report(*, manifest: Manifest | None, resources: SlurmResources,
                       profile: ServerProfile,
                       planned_records: int | None,
-                      verb: str = "run") -> dict:
+                      verb: str = "run",
+                      shard_count: int = 1) -> dict:
     checks: list[dict] = []
     if verb in MODEL_FREE_VERBS:
         # Same check ids, honest "not applicable" verdicts: a model-free verb
@@ -1096,7 +1097,7 @@ def _preflight_report(*, manifest: Manifest | None, resources: SlurmResources,
          else _check_memory_fit(manifest, resources)),
         ("walltime", lambda: model_checks[2] if model_checks
          else _check_walltime(manifest, resources, planned_records, profile,
-                              verb)),
+                              verb, shard_count=shard_count)),
         ("quotaHeadroom", lambda: _check_quota_headroom(planned_records, profile)),
         ("maintenanceWindow", lambda: _check_maintenance(resources, profile)),
     ):
@@ -1411,7 +1412,8 @@ _WALLTIME_BOTH_DIRECTIONS = (
 
 def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
                     planned_records: int | None,
-                    profile: ServerProfile, verb: str = "run") -> dict:
+                    profile: ServerProfile, verb: str = "run",
+                    shard_count: int = 1) -> dict:
     """Size the requested walltime against what this submission will ACTUALLY
     do (open issues §4 + §7).
 
@@ -1423,6 +1425,16 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
       rate where one has been folded, falling back to the global (all
       families) figure and saying so, because a deterministic answer-token
       study and a sampled panel are not the same job at all.
+
+    ``shard_count`` is the RESOLVED fan-out (parallelJobs after
+    ``_resolve_parallel_jobs``): the requested walltime is what each shard
+    job gets, and a shard runs 1/K of the record matrix, so the record-based
+    estimate is divided by K and labelled per-shard. Pricing the full matrix
+    against a per-shard walltime refused a --parallel 4 submission unless it
+    asked for ~4× the time no single job would ever use — exactly the
+    over-ask this check warns against (field-observed 2026-08-28). The merge
+    parent holds no allocation of its own (the reconciler merges server-side),
+    so per-shard is the only wall any clock here has to fit.
 
     Every verdict that carries an estimate names the rate it used.
     """
@@ -1485,14 +1497,22 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
                  "figure mixes fast scored readouts with slow sampled "
                  "generation")
     estimated_hours = planned_records / rate * PREFLIGHT_WALLTIME_MARGIN
-    return _walltime_verdict(
-        estimated_hours, resources, basis,
-        {"plannedRecords": planned_records,
-         "recordsPerHour": rate,
-         "throughputSamples": entry.get("samples") if entry else None,
-         "rateSource": rate_source,
-         "gpuType": gpu_type,
-         **family_data})
+    data = {"plannedRecords": planned_records,
+            "recordsPerHour": rate,
+            "throughputSamples": entry.get("samples") if entry else None,
+            "rateSource": rate_source,
+            "gpuType": gpu_type,
+            **family_data}
+    if shard_count > 1:
+        # The requested walltime is per shard JOB, and each shard runs 1/K of
+        # the matrix — so the number compared against it must be per shard too.
+        estimated_hours /= shard_count
+        basis += (f", ÷ {shard_count} shard jobs — PER-SHARD estimate: each "
+                  "shard job runs its own slice of the record matrix within "
+                  "the requested walltime")
+        data["shardCount"] = shard_count
+        data["estimateIsPerShard"] = True
+    return _walltime_verdict(estimated_hours, resources, basis, data)
 
 
 def _check_parked_judgment_walltime(manifest: Manifest | None,
