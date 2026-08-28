@@ -159,6 +159,60 @@ def test_capability_ce_and_orthogonality_penalty():
     assert float(optvec_train.orthogonality_penalty(v, [])) == 0.0
 
 
+# ------------------------------------------------------------ prior vectors
+
+
+def _write_prior_artifact(directory, layer, *, layer_count=LAYERS,
+                          hidden=HIDDEN):
+    """A minimal OptVec-shaped prior: zeros everywhere except ``layer``."""
+    from steerlab_server.steering import vector_store
+    per_layer = [[0.0] * hidden for _ in range(layer_count)]
+    per_layer[layer] = [float(i + 1) for i in range(hidden)]
+    vectors = vector_store.ConceptVectors(per_layer=per_layer)
+    sidecar = vector_store.SteeringVectorSidecar(
+        modelID="test/tiny", concept=f"prior-l{layer}",
+        stimulusSetHash="optvec:test", layerCount=layer_count,
+        hiddenSize=hidden,
+        normsPerLayer=[vectors.norm(i) for i in range(layer_count)],
+        extractionDate="2026-08-28T00:00:00Z")
+    vector_store.save(vectors, sidecar, str(directory), f"prior-l{layer}")
+    return os.path.join(str(directory), f"prior-l{layer}")
+
+
+def test_prior_vectors_load_on_the_requested_device(tmp_path):
+    """The S3 penalty is dot(v, prior) against the injector's vector, which
+    lives on the model's device — a CPU prior against a CUDA/MPS vector is a
+    step-1 RuntimeError. Pinned with the meta device, which any host can
+    construct without accelerator hardware."""
+    reference = _write_prior_artifact(tmp_path, 2)
+    config = _s1_config(tmp_path, lambda_orth=0.5,
+                        prior_vector_paths=[reference])
+    default = optvec_train._load_prior_vectors(config, HIDDEN)
+    assert [p.device.type for p in default] == ["cpu"]
+    meta = optvec_train._load_prior_vectors(config, HIDDEN,
+                                            device=torch.device("meta"))
+    assert [p.device.type for p in meta] == ["meta"]
+
+
+def test_prior_all_zero_at_run_layer_refuses(tmp_path):
+    """An OptVec prior trained at another layer is all zeros at this run's
+    layer: cos would be exactly 0 at every step, and the run record would
+    claim orthogonality pressure that never existed. Refuse, not warn."""
+    reference = _write_prior_artifact(tmp_path, 1)   # run layer is 2
+    config = _s1_config(tmp_path, lambda_orth=0.5,
+                        prior_vector_paths=[reference])
+    with pytest.raises(optvec_train.OptVecConfigError) as exc:
+        optvec_train._load_prior_vectors(config, HIDDEN)
+    message = str(exc.value)
+    assert "all zeros at layer 2" in message
+    assert "priorVectorPaths" in message
+    # The same artifact used at ITS OWN layer loads fine.
+    at_own_layer = _s1_config(tmp_path, layer=1, lambda_orth=0.5,
+                              prior_vector_paths=[reference])
+    priors = optvec_train._load_prior_vectors(at_own_layer, HIDDEN)
+    assert len(priors) == 1 and float(priors[0].norm()) > 0
+
+
 # ------------------------------------------------------------- config rules
 
 
