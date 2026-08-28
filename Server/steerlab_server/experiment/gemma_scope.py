@@ -30,12 +30,14 @@ two are distinct stamps and are never silently mixed.
 
 Source identity: resolve the commit, THEN read the bytes
 --------------------------------------------------------
-Every by-id load resolves the repository and its exact commit sha BEFORE
-anything is fetched, and threads that sha into each download
-(:class:`PinnedSAESource`). The revision an artifact is stamped with is
-therefore the revision its weights came from by construction — not a second
-metadata query afterwards, which a re-tagged repository or a stale HF cache
-can make disagree with the bytes in hand.
+Every SAE load in this module — the by-id path and :func:`analyze` alike —
+resolves the repository and its exact commit sha BEFORE anything is fetched,
+and threads that sha into each download (:class:`PinnedSAESource`). The
+revision an artifact is stamped with is therefore the revision its weights
+came from by construction — not a second metadata query afterwards, which a
+re-tagged repository or a stale HF cache can make disagree with the bytes in
+hand. Reports record it (``saeRepository``/``saeRevision``) and both import
+paths stamp it, with the raw decoder-row hash, into ``gemmascopeSource``.
 """
 
 from __future__ import annotations
@@ -132,6 +134,12 @@ class GemmaScopeReport:
     vector_norm: float | None = None
     vector_concept: str | None = None
     artifact_sidecar: dict | None = None
+    # The SAE's own source identity: the repository the decoder rows were read
+    # from and the EXACT commit resolved before the fetch (the pinned path's
+    # rule). Additive keys — ``None`` on legacy reports, which then import
+    # without SAE source identity rather than refusing.
+    sae_repository: str | None = None
+    sae_revision: str | None = None
 
     def to_dict(self) -> dict:
         def rows(rs):
@@ -163,6 +171,10 @@ class GemmaScopeReport:
             out["vectorConcept"] = self.vector_concept
         if self.artifact_sidecar is not None:
             out["artifactSidecar"] = self.artifact_sidecar
+        if self.sae_repository is not None:
+            out["saeRepository"] = self.sae_repository
+        if self.sae_revision is not None:
+            out["saeRevision"] = self.sae_revision
         return out
 
 
@@ -217,7 +229,9 @@ def feature_rows(indices, *, cosines, decoder_rows, sparsity=None,
 
 def analyze(vector_directory: str, name: str, *, layer: int, release: str,
             sae_id: str, top_k: int = 25, output_path: str | None = None,
-            requested_feature_ids: list[int] | None = None) -> GemmaScopeReport:
+            requested_feature_ids: list[int] | None = None,
+            resolver: RepoRevisionResolver | None = None,
+            builder: PinnedSAELoader | None = None) -> GemmaScopeReport:
     """Cosine-rank an SAE's decoder rows against a stored concept vector.
 
     ``requested_feature_ids`` adds rows for caller-named features regardless of
@@ -225,20 +239,51 @@ def analyze(vector_directory: str, name: str, *, layer: int, release: str,
     and a semantically chosen shortlist. Requested rows are flagged, never
     merged into the ranked buckets: what ranked and what was asked for must stay
     distinguishable downstream.
+
+    Refuses (never clamps, never guesses): a ``layer`` outside the analyzed
+    artifact's depth, and a ``layer`` that disagrees with the SAE's own layer
+    (its id grammar, or its published config after the load) — an SAE's
+    dictionary lives at exactly one layer, and ``import_feature`` places the
+    decoder row at the REPORT layer, so a mismatched analysis would import a
+    steering artifact at a depth the SAE does not describe.
+
+    The SAE loads through the pinned resolve-then-fetch path (the module-note
+    rule every other loader here follows): the repository commit is resolved
+    before any byte is read, and the report records it (``saeRepository`` /
+    ``saeRevision``) so report-path imports carry the same source identity as
+    by-id imports.
     """
     try:
         import torch
-        from sae_lens import SAE
     except ImportError as exc:  # pragma: no cover - optional dep
         raise RuntimeError(
             "Gemma Scope analysis needs sae-lens and torch: "
             "pip install 'steerlab-server[gemmascope]' (or: pip install sae-lens)") from exc
 
     vectors, source_sidecar = vector_store.load(vector_directory, name)
-    safe_layer = min(max(0, layer), vectors.layer_count - 1)
-    vector = torch.tensor(vectors.per_layer[safe_layer], dtype=torch.float32)
+    if not (0 <= layer < vectors.layer_count):
+        raise ValueError(
+            f"layer {layer} is outside the analyzed artifact "
+            f"({vectors.layer_count} layers) — analyze at a layer the concept "
+            "vector actually has")
+    parsed_layer = parse_sae_id(sae_id).get("layer")
+    if parsed_layer is not None and parsed_layer != layer:
+        raise ValueError(
+            f"analysis layer {layer} disagrees with the SAE's own layer "
+            f"{parsed_layer} ({sae_id}) — an SAE's dictionary lives at exactly "
+            "one layer, and the report's feature rows import at the report "
+            "layer; analyze at the SAE's layer or pick an SAE at this layer")
+    vector = torch.tensor(vectors.per_layer[layer], dtype=torch.float32)
 
-    sae, _cfg, sparsity = _sae_with_cfg_and_sparsity(SAE, release, sae_id)
+    source = resolve_pinned_source(release, sae_id, resolver=resolver)
+    sae, cfg, sparsity = (builder or load_pinned_sae)(source)
+    config_layer = _config_layer(cfg if isinstance(cfg, dict) else {})
+    if config_layer is not None and config_layer != layer:
+        raise ValueError(
+            f"analysis layer {layer} disagrees with the loaded SAE's published "
+            f"config, which places it at layer {config_layer} ({sae_id}) — "
+            "an SAE's dictionary lives at exactly one layer; analyze at the "
+            "SAE's layer or pick an SAE at this layer")
     decoder = getattr(sae, "W_dec", None)
     if decoder is None:
         raise RuntimeError("loaded SAE does not expose W_dec")
@@ -277,15 +322,17 @@ def analyze(vector_directory: str, name: str, *, layer: int, release: str,
                                                int(scores.numel()))
 
     report = GemmaScopeReport(
-        release=release, sae_id=sae_id, layer=safe_layer,
+        release=release, sae_id=sae_id, layer=layer,
         decoder_shape=list(decoder.shape),
         top_positive=rows(torch.topk(scores, k=k).indices.tolist()),
         top_negative=rows(torch.topk(-scores, k=k).indices.tolist()),
         top_absolute=rows(torch.topk(scores.abs(), k=k).indices.tolist()),
         requested=rows(requested_ids, requested=True),
-        vector_norm=vectors.norm(safe_layer),
+        vector_norm=vectors.norm(layer),
         vector_concept=source_sidecar.concept,
-        artifact_sidecar=source_sidecar.to_dict())
+        artifact_sidecar=source_sidecar.to_dict(),
+        sae_repository=source.repo_id,
+        sae_revision=source.revision)
 
     if output_path:
         with open(output_path, "w", encoding="utf-8") as handle:
@@ -328,13 +375,27 @@ def import_feature(report_path: str, feature: int, *, model_id: str,
     and residual-norm calibration so norm-unit alphas keep meaning.
 
     Refuses reports that predate the convention (no ``vectorNorm`` /
-    ``artifactSidecar``): re-run the analysis, then import. ``model_id`` is a
+    ``artifactSidecar``): re-run the analysis, then import. Also refuses a
+    report whose ``layer`` disagrees with its own ``saeID`` — ``analyze`` now
+    refuses to produce one, but a pre-guard report would otherwise import a
+    decoder row at a depth the SAE does not describe. ``model_id`` is a
     fallback only — the embedded sidecar's model identity wins.
     """
+    from ..build_identity import engine_version
     from ..steering.vector_store import ConceptVectors, SteeringVectorSidecar, save
     with open(report_path, encoding="utf-8") as handle:
         report = json.load(handle)
     layer = int(report["layer"])
+    release = report.get("release", "")
+    sae_id = report.get("saeID", "")
+    sae_layer = parse_sae_id(sae_id).get("layer")
+    if sae_layer is not None and sae_layer != layer:
+        raise ValueError(
+            f"report layer {layer} disagrees with the SAE's own layer "
+            f"{sae_layer} ({sae_id}) — an SAE's dictionary lives at exactly "
+            "one layer, so this report would import the decoder row at a depth "
+            "the SAE does not describe; re-run the Gemma Scope analysis at the "
+            "SAE's layer, then import")
     values = None
     for bucket in ("topAbsolute", "topPositive", "topNegative"):
         for row in report.get(bucket, []):
@@ -363,13 +424,43 @@ def import_feature(report_path: str, feature: int, *, model_id: str,
             f"report layer {layer} is outside the analyzed artifact "
             f"({src.layerCount} layers)")
 
-    scaled, raw_norm = _convention_rescale(list(values), float(target_norm))
+    raw_values = [float(x) for x in values]
+    scaled, raw_norm = _convention_rescale(raw_values, float(target_norm))
+    # The applied/skipped marker, same shape as the by-id path's: when the
+    # degenerate guard returned the row RAW (zero-norm row, non-positive
+    # target), the artifact says so instead of stamping a transform that
+    # never ran.
+    rescale: dict = {"convention": IMPORT_CONVENTION,
+                     "rawDecoderNorm": raw_norm,
+                     "targetNorm": float(target_norm), "applied": True}
+    if raw_norm <= 0 or float(target_norm) <= 0:
+        rescale["applied"] = False
+        rescale["skippedReason"] = (
+            "zero-norm decoder row" if raw_norm <= 0 else
+            "non-positive analyzed-vector norm")
     per_layer = [[0.0] * src.hiddenSize for _ in range(src.layerCount)]
     per_layer[layer] = scaled
     vectors = ConceptVectors(per_layer=per_layer)
-    release = report.get("release", "")
-    sae_id = report.get("saeID", "")
     name = f"sae-feature-{feature}"
+    # The report path's source identity, mirroring the by-id path's stamp so
+    # the identity chain (repository commit + raw-row hash) covers both kinds
+    # of import. Repository/revision exist only on reports from the pinned
+    # ``analyze``; a legacy report imports without them rather than refusing.
+    source_stamp: dict = {
+        "importPath": "cosine-report",
+        "release": release, "saeID": sae_id, "feature": int(feature),
+        "layer": layer,
+        "decoderRowHash": decoder_row_hash(raw_values),
+        "rescale": rescale,
+        "reportPath": os.path.basename(report_path),
+        "importedBy": engine_version(),
+        "importedAt": _now_iso8601(),
+        "substrate": vector_store.SUBSTRATE,
+    }
+    if report.get("saeRepository"):
+        source_stamp["repository"] = str(report["saeRepository"])
+    if report.get("saeRevision"):
+        source_stamp["repositoryRevision"] = str(report["saeRevision"])
     sidecar = SteeringVectorSidecar(
         modelID=src.modelID or model_id,
         concept=f"sae:{src.concept}:L{layer}:F{int(feature)}",
@@ -387,7 +478,8 @@ def import_feature(report_path: str, feature: int, *, model_id: str,
                     f"{os.path.basename(report_path)}, scaled to analyzed vector norm"),
         gemmascopeConvention=IMPORT_CONVENTION,
         rawDecoderNorm=raw_norm,
-        gemmascopeTargetNorm=float(target_norm))
+        gemmascopeTargetNorm=float(target_norm),
+        gemmascopeSource=source_stamp)
     save(vectors, sidecar, run_directory, name)
     return os.path.join(run_directory, name)
 

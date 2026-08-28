@@ -4,6 +4,25 @@ import Testing
 
 @testable import ExperimentKit
 
+/// Catalog-shaped info whose recommended SAE agrees with the fixtures' layer
+/// 2: since the 2026-08-28 math audit the importer refuses a report whose
+/// layer disagrees with the SAE's own layer, and the 5-layer test artifact
+/// has no real Gemma Scope layer to borrow.
+private func catalogInfoAtLayer2(for modelID: String) throws -> GemmaScopeInfo {
+    let base = try #require(GemmaScopeCatalog.info(for: modelID, layerCount: 34))
+    return GemmaScopeInfo(
+        loadedModelID: base.loadedModelID, suiteName: base.suiteName,
+        modelSize: base.modelSize, tuning: base.tuning,
+        repository: base.repository, repositoryURL: base.repositoryURL,
+        landingPageURL: base.landingPageURL,
+        recommendedSite: base.recommendedSite,
+        recommendedRelease: base.recommendedRelease,
+        recommendedLayer: 2,
+        recommendedSAEID: "layer_2_width_16k_l0_medium",
+        availableLayers: base.availableLayers,
+        supportedSites: base.supportedSites, notes: base.notes)
+}
+
 /// The decided cross-engine Gemma Scope import convention (WS7.2,
 /// "analyzed-vector-norm-match" — this app's historical behavior, now shared
 /// with the server): the SAE decoder row is rescaled AT IMPORT to the
@@ -29,11 +48,11 @@ import Testing
     }
 
     private func report(
-        sidecar: SteeringVectorSidecar? = nil, layer: Int = 2, norm: Float = 10
+        sidecar: SteeringVectorSidecar? = nil, layer: Int = 2, norm: Float = 10,
+        info override: GemmaScopeInfo? = nil
     ) throws -> GemmaScopeFeatureReport {
         let source = sidecar ?? sourceSidecar()
-        let info = try #require(
-            GemmaScopeCatalog.info(for: source.modelID, layerCount: 34))
+        let info = try override ?? catalogInfoAtLayer2(for: source.modelID)
         return GemmaScopeFeatureReport(
             jobFile: "/tmp/job.json",
             vector: GemmaScopeReportVector(
@@ -77,13 +96,57 @@ import Testing
         #expect(sidecar.concept == "sae:french:L2:F7")
         #expect(
             sidecar.stimulusSetHash
-                == "gemmascope:gemma-scope-2-4b-it-res:layer_17_width_16k_l0_medium:7")
+                == "gemmascope:gemma-scope-2-4b-it-res:layer_2_width_16k_l0_medium:7")
         #expect(sidecar.extractionMethod == "gemmaScopeSAE")
         #expect(sidecar.residualNormPerLayer == [7.0, 7.5, 8.0, 8.5, 9.0])
         #expect(sidecar.residualNormSource == "neutral-token-bank")
         #expect(
             sidecar.recipeHash
-                == "gemma-scope-2-4b-it-res|layer_17_width_16k_l0_medium|feature:7")
+                == "gemma-scope-2-4b-it-res|layer_2_width_16k_l0_medium|feature:7")
+    }
+
+    // MARK: - Layer guards (math audit 2026-08-28; server twin refuses too)
+
+    @Test func layerSAEDisagreementRefuses() throws {
+        // The catalog's real recommendation for a 34-layer 4b model is the
+        // layer-17 SAE; a report pairing it with a layer-2 vector would
+        // import the decoder row at a depth the SAE does not describe.
+        let mismatched = try #require(
+            GemmaScopeCatalog.info(
+                for: "mlx-community/gemma-3-4b-it-4bit", layerCount: 34))
+        #expect(GemmaScopeReportCatalog.saeLayer(of: mismatched.recommendedSAEID) == 17)
+        do {
+            _ = try GemmaScopeReportCatalog.deriveFeatureArtifact(
+                report: try report(info: mismatched), row: row(7, [3, 0, 4]),
+                source: "unit test")
+            Issue.record("a layer/saeID disagreement must refuse")
+        } catch let error as GemmaScopeReportImportError {
+            #expect("\(error)".contains("disagrees with the SAE's own layer"))
+        }
+    }
+
+    @Test func layerOutOfRangeRefusesInsteadOfCrashing() throws {
+        // Placing the row indexes perLayer[report.vector.layer] — before the
+        // guard this was a fatal out-of-bounds, not a typed refusal.
+        do {
+            _ = try GemmaScopeReportCatalog.deriveFeatureArtifact(
+                report: try report(
+                    layer: 9,
+                    info: GemmaScopeInfo(
+                        loadedModelID: "m", suiteName: "Gemma Scope 2",
+                        modelSize: "4b", tuning: "it",
+                        repository: "google/gemma-scope-2-4b-it",
+                        repositoryURL: "", landingPageURL: "",
+                        recommendedSite: "resid_post",
+                        recommendedRelease: "gemma-scope-2-4b-it-res",
+                        recommendedLayer: 9,
+                        recommendedSAEID: "layer_9_width_16k_l0_medium",
+                        availableLayers: [9], supportedSites: [], notes: [])),
+                row: row(7, [3, 0, 4]), source: "unit test")
+            Issue.record("a report layer outside the artifact must refuse")
+        } catch let error as GemmaScopeReportImportError {
+            #expect("\(error)".contains("outside the analyzed artifact"))
+        }
     }
 
     @Test func degenerateRowsStayRawWithNormRecorded() throws {
@@ -199,8 +262,7 @@ import Testing
             ]),
             residualNormPerLayer: [7.0, 7.5, 8.0, 8.5, 9.0],
             residualNormSource: "neutral-token-bank")
-        let info = try #require(
-            GemmaScopeCatalog.info(for: source.modelID, layerCount: 34))
+        let info = try catalogInfoAtLayer2(for: source.modelID)
         let report = GemmaScopeFeatureReport(
             jobFile: "/tmp/job.json",
             vector: GemmaScopeReportVector(
@@ -250,7 +312,7 @@ import Testing
             // prompts/ is looked up for it.
             #expect(
                 ref.stimulusSetHash
-                    == "gemmascope:gemma-scope-2-4b-it-res:layer_17_width_16k_l0_medium:7")
+                    == "gemmascope:gemma-scope-2-4b-it-res:layer_2_width_16k_l0_medium:7")
             // No held-out validation.jsonl exists for a decoder row: the
             // hash is pinned EXPLICITLY absent, not merely missing.
             #expect(ref.validationHash == nil)

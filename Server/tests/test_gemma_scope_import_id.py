@@ -345,9 +345,14 @@ def _legacy_report() -> dict:
     }
 
 
-def test_report_import_keeps_its_own_convention_and_stamps_no_source(tmp_path):
-    """The report path is unchanged by this work: same convention, same target
-    (the ANALYZED vector's norm, not the residual norm), no source block."""
+def test_report_import_keeps_its_own_convention_and_boundary(tmp_path):
+    """The report path keeps its own convention and target (the ANALYZED
+    vector's norm, not the residual norm). Since the 2026-08-28 math audit it
+    stamps a ``gemmascopeSource`` too — but as ``importPath:
+    "cosine-report"``, which the qualification identity chain deliberately
+    does NOT treat as a direct-ID import."""
+    from steerlab_server.experiment import sae_qualification
+
     report_path = str(tmp_path / "report.json")
     with open(report_path, "w", encoding="utf-8") as handle:
         json.dump(_legacy_report(), handle)
@@ -359,7 +364,10 @@ def test_report_import_keeps_its_own_convention_and_stamps_no_source(tmp_path):
     assert vectors.per_layer[2] == pytest.approx([6.0, 0.0, 8.0])  # 10/5 = x2
     assert sidecar.gemmascopeConvention == "analyzed-vector-norm-match"
     assert sidecar.gemmascopeTargetNorm == pytest.approx(10.0)
-    assert sidecar.gemmascopeSource is None
+    assert sidecar.gemmascopeSource["importPath"] == "cosine-report"
+    # The boundary stands: a report import is never a citable direct-ID
+    # feature identity, so the qualification chain ignores it.
+    assert sae_qualification.feature_identity(sidecar.to_dict()) == {}
 
 
 def test_report_import_does_not_read_the_requested_bucket(tmp_path):
