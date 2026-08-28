@@ -833,7 +833,12 @@ extension ExperimentStoreTests {
             sourceStimulusSetHash: Self.parentStimulusHash)
         try ExperimentStore.save(manifest)
         // The matched artifact: what a run materializes for a pinned concept.
-        _ = try plantVectorArtifact(in: root, method: "pinnedArtifact")
+        // A faithful materialization of a MIRRORED pin stamps what the
+        // artifact records — the PARENT's order-sensitive hash, qualified by
+        // the swap — which is what the identity demands for a swapped pin.
+        _ = try plantVectorArtifact(
+            in: root, stimulusHash: Self.parentStimulusHash,
+            method: "pinnedArtifact")
     }
 
     @Test func promoteInheritsPoleProvenanceFromArtifactPin() throws {

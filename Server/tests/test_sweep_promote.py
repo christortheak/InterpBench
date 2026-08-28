@@ -935,7 +935,10 @@ def _mirror_pinned_experiment(root, name, *, sidecar_hash_pin=None):
     }
     es.save_raw(d, root)
     # The matched artifact: what a run materializes for a pinned concept.
-    _vector_artifact(root, stimulus_hash=stimulus_hash,
+    # A faithful materialization of a MIRRORED pin stamps what the artifact
+    # records — the PARENT's order-sensitive hash, qualified by the swap —
+    # which is exactly what required_identity demands for a swapped pin.
+    _vector_artifact(root, stimulus_hash=PARENT_STIMULUS_HASH,
                      method="pinnedArtifact")
     es.add_condition(name, {
         "name": "fear-recommended",
