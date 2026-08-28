@@ -433,13 +433,23 @@ Read §7 before a cluster session. The short list:
    now defaults to `http://127.0.0.1:8080`, the port every server surface
    serves. The default client and the default server meet.
 4. `--shard k/K` on `bundle execute` is the RAW knob and **nothing merges its
-   partials**. The merging fan-out is `study submit --parallel N` (added
-   2026-08-07) or `parallelJobs` on `POST /api/studies/submit-bundle` — and
-   in both cases the merge is performed by a **running** `steerlab-server
-   serve`, not by the submitting process. See §5.3.
-5. `--parallel N` **refuses** on a verb or executor that cannot shard; the
-   API's `parallelJobs` **degrades with a note** in the same situation. Same
-   rules, different answer, on purpose (§5.1).
+   partials**. The merging fan-out has three entry points — `study submit
+   --parallel N` (2026-08-07), `steerlab-cli remote submit-bundle --parallel
+   N` (2026-08-28, §3.8), and `parallelJobs` on
+   `POST /api/studies/submit-bundle` — and in all three the merge is
+   performed by a **running** `steerlab-server serve`, not by the submitting
+   process. See §5.3.
+5. `--parallel N` on `study submit` **refuses** on a verb or executor that
+   cannot shard; the bundle paths (`remote submit-bundle --parallel`, the
+   API's `parallelJobs`) **degrade with a note** in the same situation. Same
+   rules, different answer, on purpose (§5.1). The Swift client says which it
+   did: the envelope echoes `parallelJobsRequested` /
+   `parallelJobsEncoded` / `parallelJobsSuppressedBecause` (§3.8).
+5a. **A fan-out can partially fail while the submit still exits 0.** The abort
+   is reported through the *parent* job record, not the submitting process's
+   exit status — so verify the shard jobs landed in the scheduler queue
+   rather than trusting the exit code, and stagger submissions at a site that
+   caps queued jobs per user (§3.8, §5.3).
 6. GPU type is chosen by **`--gres`** (`--gres A100` → `gpu:A100:1`), not by
    any `--gpu`/`--gpu-type` flag; unset, it falls back to the site profile's
    `STEERLAB_SLURM_GRES`. There is no other lever (§5.1).
@@ -1033,6 +1043,35 @@ design freezes cleanly and carries a non-blocking advisory saying no
 inter-rater agreement will exist for its codings. Zero judges is what the
 `judgeValidity` freeze gate refuses.
 
+**`--judge-pin <judge-name>=<revision>[:<dtype>]`** — the local-judge weight
+pins, repeated once per judge and keyed by the judge's *name* (the `panel
+compile --seat` shape; position 4 of the `--judges` grammar is already
+OpenRouter's provider, and these two fields are local-only). A **local judge
+naming a model other than the study model** must pin both or `judgeValidity`
+refuses at freeze — the judge is a second measurement instrument, and an
+unpinned one is a different instrument next month. Dtypes are `bfloat16`,
+`float16`, `float32` (`bf16`/`fp16`/`fp32` alias in, stored canonically). The
+revision must be a **commit hash**: a branch or tag is re-pointed by
+definition, so it cannot identify the weights a run used, and that is refused
+at the declaration rather than at freeze. A `--judge-pin` naming no declared
+judge, or aimed at a `claude`/`openrouter` judge (which carry no revision or
+dtype), exits `64` rather than being written and normalized away.
+
+```bash
+steerlab-cli experiment pin-rubric <name> prompts/rubrics/default-paired-v1.md \
+    --judges strict:local:<judge-model-id>,lenient:claude \
+    --judge-pin strict=<commit-hash>:bfloat16
+```
+
+`--judges` replaces the **roster**; the pins **merge field by field beneath
+it**. A judge whose name, kind and model all survive keeps its revision and
+dtype; a judge whose model changed drops them, because they identify the old
+bytes; either way the echo names which under
+`result.inheritedFromExistingDeclaration` — the same key `set-sweep-selection`
+uses. Before the merge existed, a headless re-declaration silently destroyed
+pins written in the app and the study then refused at freeze for want of pins
+it used to have.
+
 **`declare-condition`** — the arm. Without one, a concept study runs the
 implicit baseline alone and `analyze` reports zero effect sizes. Slots use the
 manifest's own vocabulary; a multi-slot condition IS the linear mix
@@ -1090,6 +1129,67 @@ Typing a `set-sweep-selection` flag here (`--objective`, `--coherence-floor`,
 `--control-apply-to`, `--control-top-k`) is answered with a pointer to the verb
 that owns it rather than with this verb's flag list: the intent was right and
 aimed one verb over.
+
+**`set-sampling`** — the generation protocol, on the `set-sweep-grid` ownership
+pattern: six manifest fields that had no writer on either CLI until 2026-08-28,
+which is how a stochastic replication arm (25 samples × T=0.7 × 1024 tokens)
+came to be uncuttable-from-a-design-by-hand. Draft-only, and it **merges**:
+only the flags given move, `""` clears `--prompt-mode`/`--seed-policy`, and
+`--samples-per-item 1` clears back to the deterministic default.
+
+| Flag | Meaning |
+|---|---|
+| `--temperature <t>` | Sampling temperature. Non-numeric is refused at the write — a bad value bricks the manifest at the next decode. |
+| `--max-tokens <n>` | Generation length for the measured run (not the sweep's per-cell budget, which is `set-sweep-grid --max-tokens`). |
+| `--prompt-mode <chatAssistant\|rawCompletion>` | Closed vocabulary. Out-of-vocabulary is refused: downstream reads are equality tests, so a typo would silently behave as the default. |
+| `--samples-per-item <n>` | Stochastic replication count. |
+| `--seed-policy <manifestSeeds\|derivedSHA256>` | How each record's seed is derived. Closed vocabulary, same reason. |
+
+The **joint** stochastic rules — `samplesPerItem > 1` requires
+`temperature > 0` and `seedPolicy derivedSHA256` — stay `verify()` violations
+rather than write-time refusals, deliberately: the fields must be declarable
+one flag at a time, and a merge-style writer that refused a half-built
+protocol could never reach the finished one. Declaring the protocol is legal
+on either engine; §3.4's greedy-only rule then routes the *run* to the Python
+engine.
+
+**`set-exclusions <name> <rule>[,…]`** — the declared record-exclusion rules
+analysis applies (`failedAttentionCheck`, `unparseableEndpoint`,
+`outOfRange`); `""` clears the declaration. `--min`/`--max` bound the
+`outOfRange` keep-window and `--endpoint` names the parsed-value key the
+endpoint rules read (default `parsedMonths`). Refusals are the exclusion
+engine's own violation sentences. Exclusions apply **at analysis time only**
+and are stamped honestly — no record ever leaves `generations.jsonl`.
+
+**`set-parser <name> <parser>`** — the manifest's `numericParser`, resolved by
+name against the workspace registry (`prompts/parsers/parser-registry.json`),
+shape-checked, and pinned together with that registry's current SHA-256 as
+`parserRegistryHash`; `""` clears both. **The hash is never an argument.** The
+registry file is the authority on which parser *version* the study
+preregistered, so re-declaring the same name is also the drift repair, and a
+caller who could type a hash could claim a provenance nothing computed. An
+out-of-vocabulary name exits `64` with the registry's roster. Clearing the
+declaration on a numeric study drops it back to the **deprecated implicit
+selection** documented at the end of §3.5 (`caseFamily: "sentencing"` → the
+built-in duration parser), which is why clearing emits the
+`deprecatedImplicitSelection` advisory rather than passing in silence.
+
+**`set-instrument-scope <name> <responseFormat>[,…]`** — which response
+formats (`label`, `json`, `freeText`) the option-consuming instruments read,
+pinning the row set they select (`itemCount` + `itemIDsHash`, computed from
+the study's own pinned task prompts); `""` clears the declaration. This is the
+**non-lossy** repair the run-start `responseFormat` refusal names: on a mixed
+json+label prompt file it keeps `answerTokenLogprob`/`ordinalScale` on the
+label rows, where the other named repair (`set-instruments … sampledText`)
+drops the instrument entirely. A scope selecting **zero** rows is refused at
+the declaration rather than producing zero records at the run, and an
+out-of-vocabulary format exits `64`.
+
+Both of the last two are **Mac-authority** and redirect on the Python client
+(§1.4): neither is a field assignment — each *derives* its pin from a
+workspace file at the moment of declaration — and both pins are
+preregistration facts of the kind that keeps `set-sweep-selection`
+Mac-authority. `docs/PORTABILITY-CONTRACTS.md` §7 carries the reasoning.
 
 **`set-style-taxonomy`** validates that the taxonomy file loads on this engine,
 then stamps its path and the SHA-256 of its bytes. Drift after pinning is a
@@ -1165,6 +1265,37 @@ refuses. `--allow-unverified-epoch` bypasses the guard only for legacy runs
 carrying no stamp, and the output is then stamped `epochUnverified`. The guard
 is per-engine (canonicalization differs) — analyze a run on the engine that
 produced it.
+
+**Measurement-drift tolerance — and the sanctioned re-measurement path.** The
+guard's whole job is to refuse a run interpreted against settings that were
+not in force when it generated, so it tolerates exactly the drift that
+*cannot have moved a byte of the source run's generations*. Six manifest
+fields are compared out of the epoch on the measurement verbs (`analyze`,
+`evaluate`, `rescore-style`) — `judges`, `evaluation`, `pipeline`,
+`judgeRubricFile`, `judgeRubricHash`, `humanValidation` — and `name` is
+blanked on both sides by the same rule (identity, not a measurement setting;
+a rename cannot have reached the generator). Every tolerated field is named in
+the run's tolerated-drift stamp, like any other tolerated fact. `promote`
+passes no tolerance and still refuses a renamed or re-judged manifest, because
+a promotion is a claim about the settings that selected the cell.
+
+What that buys is the **re-measure-without-touching-the-source** path, which
+is the only sanctioned way to put a new instrument on a finished run:
+
+```bash
+steerlab-cli experiment duplicate <study> <study>-recoded
+steerlab-cli experiment pin-rubric <study>-recoded prompts/rubrics/<new>.md \
+    --judges a:local:<model>,b:claude --judge-pin a=<commit-hash>:bfloat16
+steerlab-cli experiment evaluate <study>-recoded --run runs/<original-run-dir>
+```
+
+The duplicate carries the source study's generation-side pins byte-identically
+(that is what keeps the epoch equal), the rename and the new rubric+panel are
+the tolerated drift, and the ORIGINAL run directory is never mutated — the
+evaluation writes beside it as always. Before `name` was blanked this refused
+on the one field duplication itself must change, and the only working path was
+mutating the source study in place, which is exactly what the firewall exists
+to prevent. Methodology framing: `docs/CONDUCTING-A-STUDY.md` §4.7.
 
 Source-run selection: `analyze` takes the newest completed run. `evaluate` and
 `rescore-style` take `--run <dir>` (a name under `runs/`, or an absolute path);
@@ -1362,6 +1493,41 @@ sweep run's `recommendations.json` entry (failure entries count and are stamped
 as `selectionOutcome`). An override with no sweep at all refuses. `--reason` is
 recommended but optional; omitted, the certificate records "no override reason
 recorded". Promotable from any manifest status.
+
+**`promotion.poleProvenance` — the certificate announces a negated direction.**
+When the promoted cell injects a **mirrored pole** (§3.7's `vectors
+mirror-poles`), the birth certificate says so, because the certificate is the
+one artifact an agent carries everywhere and an arm that injects the negation
+of another concept's direction must not be silently indistinguishable from one
+that injects the concept:
+
+```json
+"poleProvenance": {
+  "polesSwappedFromSource": true,
+  "sourceConcept": "<the parent concept>",
+  "sourceStimulusSetHash": "<the parent's order-sensitive hash>",
+  "sourceTensorHash": "<the parent artifact's tensor hash>"
+}
+```
+
+Every field is present **only when provable**, from one of two places in
+order: the matched artifact's own sidecar (`polesSwappedFromSource` +
+`negatedFrom` — the injected bytes are a minted mirror), or the manifest's
+hash-checked artifact pin, whose own facts inherit directly while the source
+concept and tensor hash are read from the pinned sidecar *only after* its
+bytes re-verify against the pin's `sha256SidecarHash`. A missing or drifted
+sidecar downgrades to the pin's facts, loudly, rather than inheriting an
+unverifiable claim or refusing a promotion the pin supports. Deliberately
+**not** inherited: a fresh extraction over role-swapped stimulus files. It is
+tensor-identical to a minted mirror, but the swap is recorded nowhere the pins
+can prove — `PROVENANCE.md` is prose and names are not evidence — so the
+honest certificate stays silent. Mint the mirror, or attach the minted
+artifact, to make the claim provable. The block sits **outside**
+`promotionKey`: the key is the cross-engine identity of the promotion request,
+and this is additional evidence about an already-identified promotion. Absent
+on every non-mirrored promotion and on every certificate minted before the
+record existed, never encoded when nil, so legacy certificate bytes are
+untouched.
 
 `confirm` declares a perturbation policy around a promoted agent's anchor cell,
 expanding mechanically into ordinary hashed conditions on the **draft**
@@ -1569,7 +1735,9 @@ mean, an absolute activation statistic, and negating it would corrupt ablation
 mean-centring.
 
 **Only a PAIRED, source-concept-bearing contrast can be mirrored** — the CAA
-family, `meanDifference` and `lat`. Those are the methods whose two poles ARE
+family, `meanDifference` and `pairedDifferencePCA` (the recipe the refusal and
+the manifest spell `lat`, per 0.9.3's rename: the label changed, the written
+bytes never do). Those are the methods whose two poles ARE
 two authored stimulus files, so swapping their roles is exactly what the
 negation means and the swapped files are evidence a researcher can author. Every
 other direction negates *generically*, with no method-specific evidence
@@ -1747,7 +1915,7 @@ id fails with the stable code `unknownSite`.
 | `capabilities` | Server capability snapshot. |
 | `package` | Builds a hash-pinned run bundle locally; prints its path. |
 | `upload` | Uploads a bundle. |
-| `submit-bundle` | **`--verb` defaults to `run`**; `--executor` defaults to `local`. Empty resource values are dropped. |
+| `submit-bundle` | **`--verb` defaults to `run`**; `--executor` defaults to `local`. Empty resource values are dropped. `--parallel <n>` fans a Slurm run out across N GPU jobs — see below. |
 | `jobs` | Job list as JSON. |
 | `logs` | Streams the job log. |
 | `cancel` | Prints `cancel requested`. |
@@ -1756,6 +1924,48 @@ id fails with the stable code `unknownSite`.
 | `import-chain` | Whole-chain import: the pipeline ledger dir plus every `stageResults` run dir, each packaged on the server (`POST /api/bundles/evidence`), downloaded, hash-verified, and imported **skip-if-present** — see below. Exit 1 only if a directory actually FAILED. |
 | `variants` | Server-side variant list. |
 | `chat` | `--max-tokens` 512, `--prompt-mode` `chatAssistant`; `--variant` and `--prompt` are both required. |
+
+**`submit-bundle --parallel <n>` — the multi-GPU fan-out, headless** (2026-08-28;
+the client and server have shared it since 2026-07-22, and until now only the
+app's stepper could reach it). The value is encoded onto the submission body
+by one rule, unchanged from the app's: sent **only when `n > 1`, the executor
+is `slurm`, and the verb shards** (`run`, or a `pipeline` whose declared chain
+starts with `run` — the server rules on the chain and the client encodes for
+both). The mechanics of what the server then does, and who merges the
+partials, are §5.3.
+
+The envelope echoes what actually went on the wire, so a suppressed request
+never looks honored:
+
+| Key | Value |
+|---|---|
+| `parallelJobsRequested` | the number you typed |
+| `parallelJobsEncoded` | the number sent, or `null` |
+| `parallelJobsSuppressedBecause` | `null` when encoded; otherwise the **first** clause of the rule that would have to change |
+
+The three suppression sentences are the guard's own clauses, in its order:
+`one job requested — sharding starts at 2`; `executor '<x>' — only Slurm
+submissions shard across GPU jobs`; and `the '<verb>' verb does not shard —
+only 'run' (and a run-first pipeline) has an independent per-record record
+set`. A suppressed request `> 1` also prints `warning: --parallel <n> not sent
+— <reason>` on stderr, because a headless caller who types `--parallel 8` at a
+`local` executor otherwise gets a perfectly ordinary single-job submission
+back with nothing said. A non-positive or non-integer value exits `64`
+(`--parallel must be a positive integer, not '<raw>'`).
+
+**Two operational disciplines the flag's own help carries, because both have
+cost real GPU time.** First, **verify the shard jobs landed** — a fan-out can
+**partially fail while the submit still exits 0**: the abort is reported
+through the *parent* job record, not the submitting process's exit status, so
+read `steerlab-cli remote jobs` (or the scheduler queue at the site) after
+submitting rather than trusting the exit code. Second, **stagger submissions
+at a site that caps queued jobs**: K shards are K independent sbatch
+submissions by design (§5.3), so a fan-out at a site with a per-user submit
+limit can have its later shards refused by the scheduler while the earlier
+ones run. Site profiles carry `maxParallelGPUJobs` for exactly this, and the
+field's own help names how to find the real limit
+(`sacctmgr show qos format=Name,MaxTRESPerUser`); with none declared the app's
+stepper caps at **16**.
 
 `remote import` is the path that runs revision adoption; a raw `fetch` does
 not. That reconciliation exists because a server-auto-pinned revision otherwise
@@ -2709,6 +2919,37 @@ loading a second one; a different-model local judge refuses at start wherever a
 second resident model is impossible (see §2.4). A judge's *name* is a label,
 never a model id.
 
+**Cross-substrate local judges — the economical path for a large batch.** A
+local judge naming a model *other* than the study model is what makes the
+judge an independent instrument rather than the study model grading its own
+output, and on an engine host it costs no per-token API spend. Two conditions,
+both refusals rather than surprises: the engine host needs
+`STEERLAB_MAX_LOADED_MODELS ≥ 2` (§2.4 — at 1 the different-model judge
+refuses *at start*, naming the variable, instead of dying partway through a
+panel), and the judge's `revision` and `dtype` must be pinned with
+`pin-rubric --judge-pin` (§3.3) or `judgeValidity` refuses at freeze. The
+model must also already be installed: a judging run never downloads weights on
+your behalf.
+
+**The coding report's agreement block** (`coding-report.json`, per-response
+coding rubrics). Each `fieldAgreement` entry is one (judge pair, field);
+categorical fields carry `percentAgreement`, `kappa`, and — since 2026-08-28,
+both engines — **`confusion`**, where `confusion[a][b]` is how many shared
+cells judgeA coded `a` while judgeB coded `b`, computed over the very label
+pairs kappa was computed over, so the counts always sum to the entry's `n`. An
+analysis layer therefore never re-derives the cell key, the intersection, or
+the label normalization (`null` for absent, `true`/`false` for booleans,
+strings as themselves) to see *where* two coders part ways — a κ of 0.55 from
+one systematically-confused label pair is a rubric-anchor finding, and the
+same κ spread evenly is a noisy-field finding. Numeric fields carry `n` and
+`meanAbsoluteDifference` and no confusion block, having no kappa to explain.
+
+For a **single-coder** design the block is not empty, it is **absent with a
+reason** — `fieldAgreementAbsentReason: "single-coder design: 1 judge coded
+this run, so no inter-rater agreement statistics exist"` — because an empty
+list would read as "agreement was measured and there was none", which is a
+different and false claim.
+
 ---
 
 ## 5. Python `steerlab-server` — cluster operations
@@ -2980,17 +3221,21 @@ record* reaches terminal success. That parent record is created only by
 2026-08-07, from `submit_study`** (`study submit --parallel N`). The
 reconciler keys on the parent's `shardChildren` / `shardMerge` resources, not
 on which entry point wrote them, so a CLI fan-out merges exactly like an
-app-submitted batch.
+app-submitted batch — and that is equally true of a Mac-side
+`remote submit-bundle --parallel N`, which reaches `submit_run_bundle`
+through the same `parallelJobs` body field the app has always sent.
 
 Consequences, stated plainly:
 
 - Running `bundle execute --shard 0/4 … 3/4` by hand still produces four
   partial run directories that **nothing merges**. There is no
   `merge-shards` verb; the raw flag is for a shard job, not for a human.
-- Automatic fan-out has two entry points: `study submit --parallel N` (a
-  server-resident experiment, packaged into a bundle here) and
+- Automatic fan-out has **three** entry points: `study submit --parallel N` (a
+  server-resident experiment, packaged into a bundle here),
   `POST /api/studies/submit-bundle` with `parallelJobs` (a client-staged
-  bundle). Both default to 1 and cap at 64.
+  bundle), and — since 2026-08-28 — `steerlab-cli remote submit-bundle
+  --parallel N` (§3.8), which is the Mac-side spelling of that same body
+  field. All three default to 1 and cap at 64.
 - **The merge happens in a running `steerlab-server serve` process, whichever
   entry point you use.** The submitting CLI process exits as soon as the
   shard jobs are submitted; `poll_slurm` — and therefore
@@ -3000,7 +3245,10 @@ Consequences, stated plainly:
 - Fan-out resolution differs by entry point, on purpose. The bundle/API path
   **degrades**: a non-Slurm executor, or a verb other than `run` (or a
   pipeline whose first stage is not `run`), logs a note explaining why
-  `parallelJobs` was ignored and runs as one job. `study submit --parallel`
+  `parallelJobs` was ignored and runs as one job — and on the Mac client the
+  suppression is additionally visible before the wire, in the envelope's
+  `parallelJobsSuppressedBecause` and a stderr warning (§3.8), so a degraded
+  request never merely *looks* honored. `study submit --parallel`
   **refuses** in those same cases (§5.1). Both share one resolver
   (`_resolve_parallel_jobs`), so the *rules* cannot drift; only the answer to
   a non-shardable request differs. A panel study with fewer transcripts than
@@ -4327,7 +4575,7 @@ submitted as a run.
 exit 64 with the vocabulary when absent. The default costs a GPU allocation;
 requiring it costs one word.
 
-### 7.2 Sharding is half-exposed *(partly closed 2026-08-07)*
+### 7.2 Sharding is half-exposed *(partly closed 2026-08-07, further 2026-08-28)*
 
 The original observation: `--shard k/K` was a CLI flag whose merge step had no
 CLI counterpart, and the automatic fan-out that *does* merge (`parallelJobs`)
@@ -4336,6 +4584,14 @@ was reachable only from `POST /api/studies/submit-bundle`.
 **Closed:** `study submit --parallel N` (§5.1) routes through the same
 `_submit_sharded_bundle` parent/shard-record machinery, so a terminal fan-out
 merges exactly like an app-submitted batch.
+
+**Also closed (2026-08-28):** the Swift twin. `steerlab-cli remote
+submit-bundle --parallel <n>` (§3.8) now parses the flag and threads it into
+the `ClusterClient.submitBundle(… parallelJobs:)` the app's Experiments panel
+already used, under the same `ShardedSubmission.encodedParallelJobs` rule —
+and echoes `parallelJobsRequested` / `parallelJobsEncoded` /
+`parallelJobsSuppressedBecause`, plus a stderr warning, so a request the rule
+suppressed never looks honored.
 
 **Still open:**
 
@@ -4347,12 +4603,9 @@ merges exactly like an app-submitted batch.
   headless `steerlab-server jobs poll` — one `poll_slurm()` tick against the
   store — would make `--parallel` usable on a login node with no daemon, and
   is a few lines. *Recommendation, not implemented.*
-- The Swift twin is untouched and is the closest remaining gap. The *library*
-  already fans out — `ClusterClient.submitBundle(… parallelJobs:)` with
-  `ShardedJobs.encodedParallelJobs`, which the app's Experiments panel uses —
-  but the `steerlab-cli remote submit-bundle` verb (`Sources/steerlab-cli/
-  main.swift`) calls it with the default 1 and parses no flag. A `--parallel`
-  there is a one-line thread-through of an API the Swift side already has.
+- There is still no headless **merge trigger** on either command line: the
+  merge is the running server's reconciler, so a fan-out submitted and then
+  left with no `serve` process never merges (the bullet above).
 - `_sweep_orphans` fails any sharded parent it finds in `pending`, so
   constructing a second `JobManager` (any other CLI verb) while a fan-out is
   mid-submission kills it. A short grace window on parent age would fix it.

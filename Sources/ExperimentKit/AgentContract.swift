@@ -743,6 +743,19 @@ In `--json` mode a refusal gives you `error.gate` (the gate whose message is in
 `error.reason`), `error.gates[]` (**every** gate that failed, not just the
 first), and `error.repairAction`. Fix the gate; do not retry the same command.
 
+**`validateEvidence` is keyed by PINS, not by the experiment's name — so a
+duplicate inherits its donor's evidence.** The gate matches on a validation
+scope hash built from the model id and pinned revision, the attached concepts
+with their pins, the neutral-corpus hash, the grand-mean corpus, the
+capability-battery hash (when variant conditions exist), and any declared
+validation depths. Conditions, sampling settings and the name are deliberately
+outside it. Practically: **do not re-run `validate` on a duplicate that
+changed only measurement-side declarations** — a new rubric, a different judge
+panel, new exclusion rules — because the donor's evidence already satisfies
+the gate and re-validating spends GPU time for nothing. Change something the
+scope covers (re-attach a concept, re-pin the revision, point at a different
+battery) and the inheritance correctly stops; then validate.
+
 **`--force` skips the seven gates and stamps the manifest** `freezeForced: true`
 plus `forcedGatesSkipped: [<gate ids>]`, and emits one `freezeGateSkipped`
 advisory per gate. A forced freeze is permanently non-citable — but checkably
@@ -789,6 +802,38 @@ failure. It means the source run had no non-baseline condition. Check for it.
 evaluation of a completed run through the manifest's pinned rubric and judges,
 writing a new evaluation directory beside the source run, which is never
 mutated. Same epoch guard as `analyze`; defaults to the newest completed run.
+
+Under a per-response coding rubric it writes `coding-report.json`. Read its
+`fieldAgreement` entries before the aggregates: each categorical entry carries
+`percentAgreement`, `kappa`, and a `confusion` block where `confusion[a][b]`
+is how many shared cells judgeA coded `a` while judgeB coded `b`, summing to
+the entry's `n` — so you can say WHERE two coders part ways without
+re-deriving anything. A single-coder run has **no** `fieldAgreement` key at
+all; it carries `fieldAgreementAbsentReason` instead. Do not report that as
+"agreement was measured and was zero" — report it as what it says.
+
+**To re-measure an existing run with a NEW instrument, duplicate — never edit
+the source study.** The epoch guard tolerates exactly the drift that cannot
+have moved a byte of the source run's generations: `judges`, `evaluation`,
+`pipeline`, `judgeRubricFile`, `judgeRubricHash`, `humanValidation`, and the
+study's own `name` (identity, not a measurement setting — and the one field a
+duplication must change). So the sanctioned path is:
+
+```bash
+steerlab-cli experiment duplicate <name> <name>-recoded
+steerlab-cli experiment pin-rubric <name>-recoded prompts/rubrics/<new>.md \
+  --judges a:local:<judge-model>,b:claude --judge-pin a=<commit-hash>:bfloat16
+steerlab-cli experiment evaluate <name>-recoded --run runs/<original-run-dir>
+```
+
+The original run directory is read, never mutated; the evaluation writes
+beside it as always. The tolerated fields are named in the output's
+`measurementDrift` stamp with a warning on stderr, so a re-measurement is
+never mistaken for the original measurement. Change any generation-side pin —
+model, concepts, task prompts, sampling protocol — and the guard refuses, as
+it should: those runs would have been different. **`promote` tolerates
+nothing** and still refuses a renamed or re-judged manifest, because a
+promotion binds a judged sweep's evidence.
 
 **`sweep <name>`** — walks layer × α on a dev split and records a
 recommendation per concept, selecting by the manifest's declared criterion
@@ -899,6 +944,27 @@ scoring; drift after pinning is a verify violation like any other.
 **`rescore-style <name> [--run <dir>]`** — recomputes reasoning-style features
 for a completed run through that taxonomy into a **new** run directory, never
 touching the source. Epoch-guarded like `analyze`. Pure CPU.
+
+**`vectors mirror-poles <runDir/name> --concept <newName>`** — mints the
+**opposite pole** of a contrastive direction as an artifact of its own,
+instead of leaving it as a negative α that every dose surface reads as "less
+of the concept" and no artifact records. A bit-exact sign flip on the
+`layer_<i>` tensors (never on `neutral_mean_layer_<i>`), under a **required
+new concept name**, stamped `negatedFrom` + `polesSwappedFromSource`. Restricted
+to paired, source-concept-bearing contrasts — the CAA family — because those
+are the methods whose two poles ARE two authored stimulus files, so swapping
+their roles is exactly what the negation means; every other method is refused
+`unmirrorableMethod`, pointing at the negative α that *is* available. No model
+is loaded. Three consequences you will meet downstream: the mirrored concept's
+own directory must hold the source's two files with their roles swapped, and
+`attach` proves it by hashing them **in the source's order**; `promote`
+matches the recipe identity against the pin's `sourceStimulusSetHash`, the
+hash the artifact actually stamps; and the birth certificate carries a
+`poleProvenance` block, so an arm injecting a negated direction never looks
+like one injecting the concept. Author the mirrored concept's
+`validation.jsonl` yourself — the verb writes nothing into `prompts/`, because
+an engine that invented held-out evidence would be manufacturing the thing
+`validate` exists to demand.
 
 ### 4.14 Multi-agent studies: casting a panel
 
@@ -1222,6 +1288,37 @@ tunnel open`, `cluster remote --site <id> …`, and `cluster import --site <id>`
 home's `Sites/cluster-sites/` registry — never invent one; ask the researcher
 for theirs.
 
+**Sharding a long run across GPUs, and the two ways it bites.** A measured
+`run` partitions cleanly (every generation record is independent), so a Slurm
+submission can fan out across N sibling jobs whose partials the server merges
+back into one ordinary run directory:
+
+```bash
+steerlab-cli remote submit-bundle <server-bundle-path> --site <id> \
+  --verb run --executor slurm --parallel 4 --json
+```
+
+The value goes on the wire only when `n > 1`, the executor is `slurm`, and the
+verb shards (`run`, or a pipeline whose declared chain starts with `run`). The
+envelope tells you which happened — `parallelJobsRequested`,
+`parallelJobsEncoded`, `parallelJobsSuppressedBecause` — so **read the echo**
+rather than assuming the request was honored; a suppressed one also warns on
+stderr. Sharding is execution logistics and never enters the manifest or its
+content hash, so a sharded run and a single-job run of the same frozen study
+are the same measurement.
+
+Two rules that are not optional. **Verify the shard jobs actually landed:** a
+fan-out can PARTIALLY FAIL while the submit still exits **0**, because the
+abort is reported through the parent job record rather than the process's exit
+status — so check `steerlab-cli remote jobs` (or the scheduler queue at the
+site) and count them, and never report a sharded submit as successful on the
+exit code alone. **And stagger submissions where the site caps queued jobs per
+user:** K shards are K independent scheduler submissions, so a fan-out that
+crosses the cap has its later shards refused while the earlier ones run. The
+site profile's `maxParallelGPUJobs` records that limit when the researcher has
+declared one; ask rather than guess. The merge is performed by a **running**
+`steerlab-server serve`, not by the submitting process.
+
 The shared SSH master EXPIRES — routinely, daily. A `Permission denied
 (publickey,keyboard-interactive)` from an otherwise-working site means
 expired authentication, not a broken site or profile: run
@@ -1273,7 +1370,27 @@ running. Only a site this machine has never pushed to falls back to comparing
 against the app bundle alone. When the deployed engine matches neither, the
 message says what a push would DO — *pushing will REPLACE deployed X with the
 bundle's Y* — because that flag is a repair in one direction and a silent
-rollback in the other. If a payload gate ever refuses on a site you have
+rollback in the other.
+
+**What `current` cannot promise: that YOUR build is running.** It says
+deployed == last pushed, which is the anti-rollback answer and is correct as
+far as it goes — but the app bundle can have moved on since that push. It once
+read `current` all day while the deployed engine trailed the bundle by eight
+commits of engine-side semantics, and six GPU sweeps ran on stale selection
+logic under a clean status line. So when the deployed revision differs from
+this build's payload, the detail now appends *"server-side changes since that
+push are NOT running; push a fresh payload if the study needs them"* — an
+advisory, never a state change, and never a rollback offer. `remote
+submit-bundle --site` prints the same warning once on stderr before
+submitting, computed from local records only (no SSH probe grows on the submit
+path), so a `--url` invocation or a never-pushed site stays honestly silent.
+
+**The rule for you: after engine-side changes land that a study depends on,
+push a fresh payload — do not read `current` as "my code is running."** Build
+the payload, push, then cycle the controller (below). If you see that warning
+on a submit, say so and ask before spending GPU time on it.
+
+If a payload gate ever refuses on a site you have
 reason to believe is current, the granular verbs reach `connected` without
 evaluating the payload at all:
 

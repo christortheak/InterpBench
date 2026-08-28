@@ -210,6 +210,8 @@ steerlab-cli experiment attach demo <concept> # pins stimulus hashes + options
 steerlab-cli experiment detach demo <concept> # attach's inverse, and gated
 steerlab-cli experiment extract demo
 steerlab-cli experiment validate demo
+steerlab-cli experiment set-sampling demo     # the generation protocol
+steerlab-cli experiment set-parser demo <p>   # the endpoint parser, registry-pinned
 steerlab-cli experiment set-sweep-grid demo   # the layer x alpha axes
 steerlab-cli experiment sweep demo            # layer x alpha on the dev split
 steerlab-cli experiment promote demo <concept>
@@ -218,6 +220,16 @@ steerlab-cli experiment run demo
 steerlab-cli experiment analyze demo
 steerlab-cli data check demo                  # data-readiness checklist
 ```
+
+Everything a run measures is **declared** rather than inferred, and each
+declaration has a headless writer: `set-instruments` and `set-instrument-scope`
+for which instruments read which rows, `set-parser` for the endpoint grammar
+(named from a workspace registry whose hash is pinned for you, never typed),
+`set-sampling` and `set-exclusions` for the generation protocol and the
+analysis-time exclusion rules, `pin-rubric --judges … --judge-pin` for the
+judging instrument down to each local judge's weights, and
+`set-sweep-selection` for the rule that picks a dose. A study is authorable
+end to end from a terminal, which is what makes it authorable by an agent.
 
 A study is blocked by missing *data* more often than by a missing verb, so
 `steerlab-cli authoring prompt <kind>` emits the generation prompt for each

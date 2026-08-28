@@ -147,6 +147,49 @@ carries options and no direct-scoring instrument is declared — the run will
 then record prose and nothing else. Thinking modes must be off for
 log-probability arms, and a manifest asking for both is refused.
 
+**Two declarations that scope what an instrument reads.** Both are draft-only
+Mac verbs, and both *derive* their pin from a workspace file rather than
+taking it as an argument — which is what makes them preregistration facts
+rather than settings.
+
+```bash
+steerlab-cli experiment set-parser formality-pilot <registry-entry-name>
+steerlab-cli experiment set-instrument-scope formality-pilot label,json
+```
+
+`set-parser` names an entry in `prompts/parsers/parser-registry.json` and pins
+that registry's SHA-256 alongside it. **The hash is never typed**: the
+registry file is the authority on which parser *version* the study
+preregistered, so what the study cites is a version, not a name, and
+re-declaring the same name is also the drift repair. Declare it on any study
+with a free-text numeric endpoint — §5.4 is why. Leaving it undeclared drops
+the study onto a deprecated implicit selection that now announces itself
+(`deprecatedImplicitSelection`), and an announced fallback is still a fallback.
+
+`set-instrument-scope` declares which `responseFormat` rows the
+option-consuming instruments read (`label`, `json`, `freeText`), pinning the
+row set they select. It exists for the mixed prompt file: without it, a file
+carrying both json and label rows meets a run-start refusal whose only other
+repair is to drop the instrument for `sampledText` — a **lossy** repair that
+quietly changes what the study measures. Declaring the scope keeps
+`answerTokenLogprob`/`ordinalScale` on the rows that can carry them. A scope
+selecting **zero** rows is refused at the declaration, hours before it would
+have produced zero records.
+
+**Judged semantic classification, not marker density, is the primary
+instrument for a reasoning-style question.** The temptation with "did the
+model reason differently?" is a word list: count how often the concept's own
+vocabulary appears and call the difference an effect. That number is a
+**manipulation check** — evidence the injection did *something* to the surface
+— and it is diagnostic-only, for the same reason §4.4 refuses it as a
+promotion objective: it optimizes for and measures surface style, which is
+precisely the confound a claim about reasoning has to rule out. The primary
+instrument is **judged classification against a hashed rubric**: a
+per-response coding rubric (§3.2) declaring the categories, pinned by
+`judgeRubricFile` + `judgeRubricHash`, coded blinded, with the agreement
+statistics of §5.3 saying whether the coding is a measurement at all. Report
+marker density beside it as the manipulation check it is, never in its place.
+
 ---
 
 ## 3. Data readiness
@@ -510,6 +553,20 @@ while any condition, sweep-selection instrument, variant condition, or
 perturbation policy still names the concept, which is what forces that ordering.
 Without it a donor's concepts ride along swept but uncitable.
 
+**A duplicate inherits its donor's validation evidence, and this saves real
+GPU time.** The `validateEvidence` gate matches on a **validation scope
+hash** — the model id and pinned revision, the attached concepts with their
+pins, the neutral-corpus hash, the grand-mean corpus, the capability-battery
+hash where variant conditions exist, and any declared validation depths. The
+experiment **name is deliberately not in it**. So a duplicate that changes
+only measurement-side declarations — a new rubric, a different judge panel,
+new exclusion rules — freezes against the evidence its donor already produced,
+with no re-extraction and no re-validation. Change anything the scope covers
+and the inheritance correctly stops: a re-attached concept, a re-pinned
+revision, a different battery each mint a new scope and demand their own
+`validate` run. The rule to carry: **evidence is keyed by pins, not by
+names**, so the cost of iterating is the cost of what you actually changed.
+
 ### 4.7 `run`, `evaluate`, `analyze`
 
 ```bash
@@ -558,6 +615,39 @@ the engine that produced it** — and through the bundle path (§7.2) it cannot 
 bypassed at all, since `bundle execute --verb evaluate|analyze` accepts
 `--source` but not `--allow-unverified-epoch`.
 
+**Re-measuring a finished run with a new instrument.** Sooner or later a study
+wants a different rubric, a different judge panel, or a human-validation
+anchor applied to generations that already exist — and the instinct is to edit
+the study. Do not: the epoch guard exists to stop exactly that, and editing
+the source study would destroy the record of what its own run was measured
+under. The guard instead tolerates the drift that **cannot have moved a byte
+of the source run's generations** — six manifest fields (`judges`,
+`evaluation`, `pipeline`, `judgeRubricFile`, `judgeRubricHash`,
+`humanValidation`), plus the study's `name`, which is identity rather than a
+measurement setting and which a duplication must change. So the sanctioned
+path is a duplicate that never touches the source:
+
+```bash
+steerlab-cli experiment duplicate formality-pilot formality-pilot-recoded
+steerlab-cli experiment pin-rubric formality-pilot-recoded \
+    prompts/rubrics/<new-rubric>.md --judges a:local:<judge-model>,b:claude \
+    --judge-pin a=<commit-hash>:bfloat16
+steerlab-cli experiment evaluate formality-pilot-recoded \
+    --run runs/<the-original-run-directory>
+```
+
+Three things make this defensible rather than a loophole. The tolerance is
+**by field, not by intent**: change a generation-side pin — the model, a
+concept, the task prompts, the sampling protocol — and the guard refuses,
+because those runs *would* have been different. The tolerated drift is
+**stamped** into the output (`measurementDrift`, naming the fields that
+moved), with a warning on stderr, so the re-measurement is never mistaken for
+the original measurement. And **`promote` never tolerates**: a promotion binds
+a judged sweep's evidence, and a judge swap changes what that evidence means,
+so a renamed or re-judged manifest still refuses there. Report a
+re-measurement as what it is — the same generations read by a second
+instrument — and cite both the run and the recoding study.
+
 ---
 
 ## 5. Controls and confounds
@@ -603,12 +693,42 @@ biasing them, and the battery is what tells you which happened.
 
 ### 5.3 Judge validity
 
-- **At least two genuinely distinct judges**, enforced at freeze; distinctness
-  is `(kind, model, provider)`. A judge's **name is a label, never a model id**
-  — an empty local-judge model resolves to the study model at its pinned
-  revision and generates through the already-resident model, while a
-  different-model local judge refuses at start wherever a second resident model
-  is impossible, rather than dying partway through a panel.
+- **At least one judge**, enforced at freeze; a panel of two or more must be
+  **genuinely distinct**, where distinctness is `(kind, model, provider)`. A
+  judge's **name is a label, never a model id** — an empty local-judge model
+  resolves to the study model at its pinned revision and generates through the
+  already-resident model, while a different-model local judge refuses at start
+  wherever a second resident model is impossible, rather than dying partway
+  through a panel. Zero judges is the state `judgeValidity` refuses: a judged
+  instrument with no judge codes nothing.
+- **A single-coder design is legal, and it carries no inter-rater
+  statistics.** The gate stopped demanding two judges on 2026-08-28: how many
+  coders a study declares is a methodological choice, not something an
+  instrument should forbid. What the choice costs is said rather than hidden.
+  A one-judge study freezes cleanly with a loud, non-blocking
+  `judgePanelTooSmall` advisory, and its coding report records
+  `fieldAgreement` as **absent with a reason** —
+  `fieldAgreementAbsentReason: "single-coder design: 1 judge coded this run,
+  so no inter-rater agreement statistics exist"` — rather than as an empty
+  list, which would read as "agreement was measured and there was none".
+  **The recommended shape when cost pushes you toward one coder: calibrate
+  once with a two-judge run, then run production single-judge, and report the
+  calibration's κ alongside the single-coder results.** That gives a reader
+  the one thing a single-coder design cannot otherwise supply — evidence that
+  the rubric is reproducible between coders at all — without paying for a
+  second coder on every record. Cite the calibration run by directory, and say
+  plainly that the production codings are single-coder.
+- **A cross-substrate local judge is the economical instrument for a large
+  batch.** A local judge naming a model other than the study model is a
+  genuinely independent coder that costs no per-token API spend, which is what
+  makes a many-thousand-record coding run affordable. It needs three things:
+  the judge model installed (a judging run never downloads weights on your
+  behalf), `STEERLAB_MAX_LOADED_MODELS ≥ 2` on the engine host so a second
+  model may be resident beside the study model, and the judge's exact bytes
+  pinned — `pin-rubric … --judge-pin <judge>=<commit-hash>[:<dtype>]`, or
+  `judgeValidity` refuses at freeze. The revision must be a commit hash: a
+  branch is re-pointed by definition and cannot identify the weights that
+  coded your data.
 - **A judging run never downloads weights on your behalf.** A local judge whose
   declared model is not installed refuses before any generation and names the
   install; it does not reach the hub loader. The judge picker likewise vets a
@@ -626,7 +746,17 @@ biasing them, and the battery is what tells you which happened.
   finding about the panel, not a reason to hand-fix rows.
 - For per-response coding, read the **inter-judge agreement** block before the
   aggregates: κ across judges is what says whether the coding instrument is a
-  measurement at all.
+  measurement at all. Each categorical `fieldAgreement` entry now carries a
+  **`confusion` block** beside its κ — `confusion[a][b]` is how many shared
+  cells judgeA coded `a` while judgeB coded `b`, computed over the very label
+  pairs κ was computed over, so the counts sum to the entry's `n`. Read it,
+  because κ alone cannot tell two very different findings apart: a κ of 0.55
+  concentrated in **one** systematically confused label pair is a
+  **rubric-anchor** problem — two categories your rubric does not separate,
+  fixable by re-anchoring them and re-coding — while the same κ spread evenly
+  across the matrix is a **noisy-field** problem, and says the field is not
+  measurable as written. Numeric fields carry `meanAbsoluteDifference` and no
+  confusion block, having no κ to explain.
 
 ### 5.4 Parser failure is a confound
 
@@ -744,6 +874,37 @@ submitting process. Sharding is execution logistics — it never enters the
 manifest or its content hash, so a sharded run and a single-job run of the same
 frozen study are the same measurement.
 
+**Sharding in practice, and the two ways it bites.** The fan-out is reachable
+from the Mac as well: `steerlab-cli remote submit-bundle <path> --site <id>
+--verb run --executor slurm --parallel 4`. It applies to Slurm submissions of
+the `run` verb only (or a pipeline whose declared chain starts with `run`), and
+the envelope echoes what actually went on the wire —
+`parallelJobsRequested`, `parallelJobsEncoded`, and
+`parallelJobsSuppressedBecause` — so a request the rule suppressed reads as
+suppressed rather than as honored.
+
+Then two disciplines, both learned the expensive way:
+
+1. **Verify the shard jobs landed; do not trust the exit code.** K shards are
+   K independent scheduler submissions by design, and a fan-out can
+   **partially fail while the submit still exits 0** — the abort is reported
+   through the *parent* job record, not the submitting process. After any
+   sharded submit, look at the queue (`steerlab-cli remote jobs`, or the
+   scheduler's own queue command at the site) and count the jobs. A run that
+   silently lost half its shards does not merge, and the missing cells are
+   found much later, at the merge's completeness check.
+2. **Stagger submissions where the site caps queued jobs per user.** Most
+   Slurm sites enforce a per-user submit and run limit through the QOS; a
+   fan-out that crosses it has its later shards refused by the scheduler while
+   the earlier ones run. Find your site's real limit
+   (`sacctmgr show qos format=Name,MaxTRESPerUser`), record it in the site
+   profile as `maxParallelGPUJobs`, and keep total queued work under it —
+   submitting several sharded studies back to back is the usual way to
+   discover the cap.
+
+The mechanics, the merge rules, and the completeness check are
+[CLI-REFERENCE.md](CLI-REFERENCE.md) §5.3.
+
 ### 7.3 Deploying, reaching a site, and auth
 
 Site profiles are workspace data, not repository data: keep your site's profile
@@ -770,6 +931,34 @@ otherwise erase it, and every later run would stamp the previous deploy's
 commit), and bootstrap installs the **committed platform lock** before the
 editable install, so a node's torch and transformers are the ones every other
 node resolved rather than whatever the index published that morning.
+
+**`payload: current` means deployed == last-pushed *intent*, not deployed ==
+your local code.** This is the anti-rollback design and it is right: `status`
+compares the deployed engine against the revision *this machine last pushed*,
+so a site deployed from another machine, or from a payload built outside the
+app bundle, is not accused of being stale and no push is offered that would
+silently roll it back. What that comparison cannot say on its own is that
+**your build has moved on since that push** — and it once did not say it for a
+whole day, while a deployed engine trailing the app bundle by eight commits of
+engine-side selection semantics ran six GPU sweeps under a clean status line.
+
+So the payload line now carries the missing half, as an advisory and never a
+state change: when the deployed revision differs from this build's payload it
+appends *"server-side changes since that push are NOT running; push a fresh
+payload if the study needs them"*. The same warning reaches the moment it
+matters — `remote submit-bundle --site` prints it once on stderr before
+submitting, computed from local records only, so a `--url` invocation or a
+never-pushed site stays honestly silent rather than guessing. Ancestry between
+the two revisions is deliberately not claimed: the deployed commit may not
+exist in any repository on this Mac, so the sentence states inequality, never
+"older than".
+
+**The operational rule that follows: after landing engine-side changes a study
+depends on, push a fresh payload — do not read `current` as "my code is
+running."** Build the payload, push it, then cycle the controller, since a
+push replaces files on disk and the running controller keeps the code it
+loaded. And re-run `site qualify` (§7.1) after any deploy that changes the
+engine.
 
 The Python engine **requires a bearer token by default, on every platform**:
 with no configuration, `serve` resolves token mode, hydrates the token from

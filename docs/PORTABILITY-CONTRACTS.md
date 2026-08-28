@@ -463,6 +463,25 @@ and the HTTP route (`POST /api/authoring/{name}/sweep-grid`). The sweep block's
 *other* half, `sweep.selection`, stays Mac-authority: the criterion is a
 preregistration decision and `set-sweep-selection` is where it is made.
 
+**Sharding is execution, so it splits the other way.** Nothing about the
+multi-GPU fan-out is authoring — `parallelJobs` never enters the manifest or
+its content hash, which is why a sharded run and a single-job run of the same
+frozen study are the same measurement — so it belongs to whichever surface
+submits, and every surface reaches the same server field. The Mac spells it
+`steerlab-cli remote submit-bundle --parallel <n>` (encoded only when `n > 1`,
+the executor is `slurm`, and the verb shards, with the envelope echoing
+`parallelJobsRequested` / `parallelJobsEncoded` /
+`parallelJobsSuppressedBecause`); the Python engine spells it `study submit
+--parallel N`, which **refuses** rather than degrades on a non-shardable
+request; the HTTP body spells it `parallelJobs`; and this client passes
+`--parallel` through on `runner submit` and the composite `run` exactly as the
+runner protocol exposes it, inventing no sharding surface of its own (§10.9).
+One resolver rules on all of them, so the *rules* cannot drift — only the
+answer to a non-shardable request differs, and deliberately. The merge is the
+running server's reconciler on every path, and on every path a fan-out can
+partially fail while the submit exits `0`, so the shard jobs are verified at
+the scheduler, never inferred from an exit code.
+
 ### The envelope
 
 The client emits the **same document** the engine does: `cli_envelope` is the

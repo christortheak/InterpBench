@@ -453,6 +453,10 @@ steerlab-cli experiment detach <name> <concept>…          # attach's inverse, 
 steerlab-cli experiment pin-prompts <name> prompts/tasks/<file>.jsonl
 steerlab-cli experiment pin-rubric  <name> prompts/rubrics/<file>.md --judges a:local,b:claude
 steerlab-cli experiment set-instruments <name> answerTokenLogprob
+steerlab-cli experiment set-sampling  <name> --temperature 0.7 --max-tokens 1024
+steerlab-cli experiment set-parser    <name> <parser-registry-entry>
+steerlab-cli experiment set-instrument-scope <name> label,json
+steerlab-cli experiment set-exclusions <name> unparseableEndpoint
 steerlab-cli experiment set-sweep-grid <name> --layer-fractions 0.5,0.7,0.85
 steerlab-cli experiment set-sweep-selection <name> --objective judgeScore
 steerlab-cli experiment declare-condition <name> <arm> --slots <concept>:<layer>:<alpha>
@@ -486,11 +490,39 @@ winner is chosen. `detach` is attach's inverse and is what lets a duplicated
 study shed the donor's concepts, which would otherwise ride along swept but
 uncitable; it refuses while any declaration still names the concept.
 
+The four `set-*` verbs between the instrument and the grid are the
+**measurement declarations**, and each exists because the alternative was a
+silent default. `set-sampling` owns the generation protocol — temperature,
+token budget, prompt mode, and the stochastic replication pair
+(`--samples-per-item` × `--seed-policy`) — merge-style, so only the flags you
+give move and the protocol can be built one flag at a time (the joint rule
+that many samples need a non-zero temperature and a derived seed policy
+surfaces at `verify`, not at the write). `set-exclusions` declares the
+record-exclusion rules analysis applies, which are stamped honestly: no record
+ever leaves `generations.jsonl`. `set-parser` names an entry in
+`prompts/parsers/parser-registry.json` and pins that registry's hash alongside
+it — you never type the hash, because the registry file is the authority on
+which parser *version* the study preregistered. And `set-instrument-scope`
+declares which `responseFormat` rows the option-consuming instruments read, so
+a prompt file mixing json and label rows keeps its log-probability instrument
+on the label rows instead of dropping it; a scope selecting zero rows is
+refused at the declaration rather than producing an empty run.
+
 `sweep` walks that grid and selects a cell by the criterion **declared in
 the manifest as data**; `promote` mints an arm from the winning cell carrying a
 birth certificate recording how it was selected. A manual override is permitted,
 loud, and stamped — and still requires evidence that a sweep ran. An arm should
 trace to the rule that produced it, not to someone's memory of a good afternoon.
+
+That certificate also records when the promoted direction is a **mirrored
+pole**. `steerlab-cli vectors mirror-poles` mints the opposite pole of a
+contrastive direction as its own provenance-stamped artifact — a bit-exact
+sign flip under a required new concept name — rather than leaving it as a
+negative α, which every dose surface reads as "less of the concept" and no
+artifact records. Promote from one and the certificate carries a
+`poleProvenance` block naming the source concept and its hashes, because an
+arm that injects the negation of a concept must not look identical to one that
+injects the concept.
 
 ### Freeze is the point, not the paperwork
 
@@ -537,6 +569,20 @@ change anything. That is not an inconvenience, it is what keeps the record of
 what you preregistered intact. Runs stamp the manifest epoch they came from, and
 `analyze`/`evaluate` refuse to interpret a run against a different epoch.
 
+Two consequences that save real time once you know them. A **duplicate
+inherits its donor's validation evidence**, because the `validateEvidence`
+gate matches on the study's *pins* — model, revision, concepts, corpora,
+battery — and not on its name: a duplicate that changes only measurement-side
+declarations freezes with no re-extraction and no re-validation. And the epoch
+guard tolerates measurement-side drift on `analyze`/`evaluate`/`rescore-style`
+(the judges, the evaluation block, the rubric pin, the human-validation pin,
+and the study's own name), which is what makes the sanctioned re-measurement
+path work: **duplicate the study, pin the new rubric and panel on the
+duplicate, and evaluate against the ORIGINAL run directory.** The source study
+is never edited, the tolerated drift is stamped into the output, and `promote`
+still refuses. [CONDUCTING-A-STUDY.md](CONDUCTING-A-STUDY.md) §4.6–4.7 has
+both in full.
+
 ---
 
 ## 7. Measuring what moved
@@ -554,10 +600,19 @@ result licenses you to claim.
   than counting which word came out. Give task-prompt rows `options` and a
   `target`, then declare `answerTokenLogprob`.
 - **Judges** score free text. The rubric is pinned as a *file* with its hash,
-  judging is paired against the same item's baseline, and a study needs at least
-  two genuinely distinct judges — identity resolves to (kind, model, provider),
-  so two local judges with blank model fields are one judge agreeing with
-  itself, and are refused.
+  and judging is paired against the same item's baseline. A study needs **at
+  least one** judge; a panel of two or more must be genuinely distinct —
+  identity resolves to (kind, model, provider), so two local judges with blank
+  model fields are one judge agreeing with itself, and are refused. A
+  **single-coder** design is legal and freezes cleanly, but it buys no
+  inter-rater statistics: it carries a loud `judgePanelTooSmall` advisory and
+  its coding report records `fieldAgreement` as *absent with that reason*
+  rather than empty. The usual answer when cost pushes you there is to
+  calibrate once with two judges and report that κ beside single-judge
+  production results. A local judge naming a model other than the study model
+  must pin its exact bytes — `pin-rubric … --judge-pin
+  <judge>=<commit-hash>[:<dtype>]` — and needs
+  `STEERLAB_MAX_LOADED_MODELS ≥ 2` on the engine host.
 - **Capability batteries** run per condition inside `run`. If capability drops
   under steering, an apparent behavioral finding is confounded by degradation
   and both must be reported — the difference between "the concept moved the
@@ -573,7 +628,10 @@ result licenses you to claim.
   *manipulation check*, not an outcome. Selecting doses on it optimizes for
   surface style, the precise confound most steering work falls into. Declare a
   behavioral objective (`judgeScore`, `logprobShift`) for anything whose outcome
-  is a decision rather than prose.
+  is a decision rather than prose. The same rule governs *reporting*, not just
+  dose selection: for a question about reasoning style, the primary instrument
+  is **judged classification against a pinned rubric**, with marker density
+  reported beside it as the diagnostic it is.
 
 **Sampling policy, which surprises people.** Local Swift/MLX measured runs are
 **greedy-only**: the runner requires `temperature == 0` and one seed, because
@@ -635,6 +693,22 @@ A node with six skips passed almost nothing; it is unverified, not healthy.
 Cluster deployment, Slurm submission, checkpoint/resume, and the bundle path for
 engines that cannot see your workspace are in
 [Server/README.md](../Server/README.md) and [CLI-REFERENCE.md](CLI-REFERENCE.md).
+
+**Sharding a long run across GPUs.** A measured `run` partitions cleanly —
+every generation record is independent — so a Slurm submission can fan out
+across N sibling jobs whose partials the server merges back into one ordinary
+run directory. Both command lines reach it: `steerlab-server study submit
+<name> --verb run --executor slurm --parallel 4` on the engine side, and
+`steerlab-cli remote submit-bundle <path> --site <id> --verb run --executor
+slurm --parallel 4` from the Mac. Sharding is execution logistics and never
+enters the manifest or its content hash, so a sharded run and a single-job run
+of the same frozen study are the same measurement. Two field rules before you
+use it: the merge is performed by a **running** `steerlab-server serve`, not
+by the submitting process; and a fan-out can **partially fail while the submit
+exits 0**, so check the scheduler queue rather than the exit code, and stagger
+submissions where the site caps queued jobs per user.
+[CONDUCTING-A-STUDY.md](CONDUCTING-A-STUDY.md) §7.2 has the discipline;
+[CLI-REFERENCE.md](CLI-REFERENCE.md) §5.3 has the mechanics.
 
 ---
 
