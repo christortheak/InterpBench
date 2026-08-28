@@ -1009,7 +1009,8 @@ def optimize(model, config: OptVecTrainConfig, *, pools: dict,
         layer=config.layer, hidden_size=model.hidden_size,
         alpha_absolute=alpha_absolute, position_mode=config.position_mode,
         device=model.device, generator=generator)
-    priors = _load_prior_vectors(config, model.hidden_size)
+    priors = _load_prior_vectors(config, model.hidden_size,
+                                 device=injector.u.device)
 
     checkpointing = _use_gradient_checkpointing(config, model)
     armed = _enable_gradient_checkpointing(model, emit) if checkpointing \
@@ -1257,8 +1258,18 @@ def _disable_gradient_checkpointing(model) -> None:
     model.model.eval()   # restores every module's training flag in one sweep
 
 
-def _load_prior_vectors(config: OptVecTrainConfig,
-                        hidden_size: int) -> list[torch.Tensor]:
+def _load_prior_vectors(config: OptVecTrainConfig, hidden_size: int,
+                        device: torch.device | None = None
+                        ) -> list[torch.Tensor]:
+    """The S3 priors, each one the row at ``config.layer``, on ``device``.
+
+    ``device`` must be where the injector's vector lives: the penalty is
+    ``dot(v, prior)`` and a CPU prior against a CUDA/MPS ``v`` is a step-1
+    RuntimeError. And the row must be NONZERO — OptVec artifacts are zeros
+    everywhere except their own layer, so a prior trained at another layer
+    would contribute cos = 0 to every step: the run record would claim
+    orthogonality pressure that never existed.
+    """
     priors: list[torch.Tensor] = []
     for reference in config.prior_vector_paths:
         resolved = paths.resolve_artifact(reference)
@@ -1273,7 +1284,15 @@ def _load_prior_vectors(config: OptVecTrainConfig,
             raise OptVecConfigError(
                 f"prior vector '{reference}' is {len(row)}-dimensional, model "
                 f"hidden size is {hidden_size}")
-        priors.append(torch.tensor(row, dtype=torch.float32))
+        if not any(row):
+            raise OptVecConfigError(
+                f"prior vector '{reference}' is all zeros at layer "
+                f"{config.layer} — it would contribute exactly zero "
+                "orthogonality pressure while lambdaOrth stamps the run as "
+                "S3. An OptVec artifact is nonzero only at its own "
+                "optimization layer; use a prior trained at this run's layer, "
+                "or drop it from priorVectorPaths")
+        priors.append(torch.tensor(row, dtype=torch.float32, device=device))
     return priors
 
 
