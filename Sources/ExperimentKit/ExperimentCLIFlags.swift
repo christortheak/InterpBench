@@ -333,7 +333,7 @@ public enum ExperimentCLIParser {
             booleanFlags: ["--dry-run"],
             valueFlags: remoteConnection.union([
                 "--bundle", "--verb", "--executor", "--gres", "--walltime",
-                "--parallel",
+                "--parallel", "--source",
             ])),
         .init(
             namespace: "remote", verb: "jobs",

@@ -1850,7 +1850,7 @@ workflow that works. The success message names the file to author:
 steerlab-cli remote capabilities [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote package <experiment> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote upload <bundle> [--site <id>] [--token <token>] [--url <server>]
-steerlab-cli remote submit-bundle <server-bundle-path> [--bundle <server-path>] [--dry-run] [--executor <local|slurm>] [--gres <spec>] [--parallel <n>] [--site <id>] [--token <token>] [--url <server>] [--verb <verb>] [--walltime <hh:mm:ss>]
+steerlab-cli remote submit-bundle <server-bundle-path> [--bundle <server-path>] [--dry-run] [--executor <local|slurm>] [--gres <spec>] [--parallel <n>] [--site <id>] [--source <run-dir>] [--token <token>] [--url <server>] [--verb <verb>] [--walltime <hh:mm:ss>]
 steerlab-cli remote jobs [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote logs <job-id> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote cancel <job-id> [--site <id>] [--token <token>] [--url <server>]

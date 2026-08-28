@@ -636,6 +636,20 @@ steerlab-cli experiment evaluate formality-pilot-recoded \
     --run runs/<the-original-run-directory>
 ```
 
+Executing remotely, the source run must be named the same way — the server's
+run *discovery* is scoped by experiment name, and a duplicate has no runs
+under its own name, so a submission without the override dies at discovery
+before the tolerance can rule:
+
+```bash
+steerlab-cli remote submit-bundle <bundle> --site <id> --verb evaluate \
+    --executor slurm --source runs/<the-original-run-directory>
+```
+
+(`--source` is the one spelling every surface uses — `bundle execute
+--source`, `study submit --source` — and the server refuses an unreadable
+directory at submit time, not on the allocation.)
+
 Three things make this defensible rather than a loophole. The tolerance is
 **by field, not by intent**: change a generation-side pin — the model, a
 concept, the task prompts, the sampling protocol — and the guard refuses,

@@ -123,6 +123,20 @@ migration that rewrites frozen bytes.
 
 ### Fixed
 
+- **`remote submit-bundle` can name the measurement verb's source run.** The
+  duplicate re-measurement path (duplicate → pin rubric+panel → evaluate
+  against the ORIGINAL run) worked locally (`experiment evaluate --run`) and
+  in the node child (`bundle execute --source`), but the remote submission
+  verb had no way to hand the child the flag its own help documents — and
+  run discovery is scoped by experiment name, so a renamed duplicate's
+  submission died at discovery ("no prior run with generations found") one
+  statement before the epoch tolerance built to accept it. `remote
+  submit-bundle --source <run-dir>` passes the override through (`sourcePath`
+  on the wire, encoded only when given so older servers never see it), the
+  envelope echoes `sourceRunRequested`, and the server keeps refusing an
+  unreadable directory at submit time rather than on the allocation. Spelled
+  `--source` — the one spelling every surface already uses.
+
 - **`pin-rubric --judges` no longer wipes the judge pins it cannot see.**
   Re-declaring the panel replaced every row with nil `revision`/`dtype`, so a
   headless re-declaration silently destroyed pins written in the app and the

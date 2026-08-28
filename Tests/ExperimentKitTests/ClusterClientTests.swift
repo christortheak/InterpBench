@@ -267,6 +267,50 @@ import Testing
         #expect(submission.dryRun)
     }
 
+    /// The source-run override (2026-08-28, the renamed-duplicate evaluate):
+    /// `sourcePath` rides the body exactly when given — and never otherwise,
+    /// so older servers see no unknown field and run discovery stays the
+    /// default newest-run-under-the-study's-name.
+    @Test func submitBundleEncodesSourceRunOnlyWhenGiven() async throws {
+        let answer = Data(
+            """
+            {
+              "jobId": "job-3", "experiment": "study", "verb": "evaluate",
+              "executor": "slurm", "dryRun": false, "runBundle": {},
+              "command": [], "recordsDirectory": "/r",
+              "submissionDirectory": "/s"
+            }
+            """.utf8)
+        let withSource = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { request in
+                let body = try #require(Self.bodyData(from: request))
+                let object = try #require(
+                    JSONSerialization.jsonObject(with: body) as? [String: Any])
+                #expect(
+                    object["sourcePath"] as? String
+                        == "runs/20260809T213747677-exp-donor-run")
+                return (answer, 200)
+            })
+        _ = try await withSource.submitBundle(
+            path: "/b.tar.gz", verb: "evaluate", executor: "slurm",
+            dryRun: false,
+            sourceRun: "runs/20260809T213747677-exp-donor-run")
+
+        let withoutSource = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { request in
+                let body = try #require(Self.bodyData(from: request))
+                let object = try #require(
+                    JSONSerialization.jsonObject(with: body) as? [String: Any])
+                #expect(object["sourcePath"] == nil)
+                return (answer, 200)
+            })
+        _ = try await withoutSource.submitBundle(
+            path: "/b.tar.gz", verb: "evaluate", executor: "slurm",
+            dryRun: false)
+    }
+
     @Test func submitBundleEncodesResumePolicyAsRealJSONTypes() async throws {
         // 2026-07-22 incident fix: the resume policy must ride resources as
         // JSON bool/number — the server coerces with bool()/int(), and a

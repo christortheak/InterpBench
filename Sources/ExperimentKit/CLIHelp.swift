@@ -110,6 +110,7 @@ public enum CLIFlagVocabulary {
         "--since": "<date>",
         "--site": "<id>",
         "--slots": "<spec>",
+        "--source": "<run-dir>",
         "--squeue": "<command>",
         "--system": "<text>",
         "--target": "<rung>",
@@ -282,6 +283,16 @@ public enum CLIFlagVocabulary {
             + "instant.",
         "--site": "Name the server through the saved site registry.",
         "--slots": "Arm slots: <concept>:<layer>:<alpha>[:add|ablate], comma-separated.",
+        "--source":
+            "The server-side run directory the measurement verb reads "
+            + "(default: the newest run under the study's own name). The one "
+            + "spelling every surface uses — `bundle execute --source`, "
+            + "`study submit --source` — and what makes a renamed "
+            + "duplicate's evaluate reach its donor's run: a duplicate has "
+            + "no runs under its own name, so without this the job dies at "
+            + "discovery, before the measurement-drift tolerance can rule. "
+            + "The server refuses an unreadable directory at SUBMIT time, "
+            + "not on the compute node.",
         "--squeue": "Command that queries the scheduler's queue.",
         "--shape": "Which reader contrast the rows carry: content pair or single stimulus.",
         "--strip": "Strip the variant's interventions before generating.",

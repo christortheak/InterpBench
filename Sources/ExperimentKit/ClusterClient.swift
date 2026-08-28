@@ -2542,7 +2542,8 @@ public struct ClusterClient: Sendable {
         resumePolicy: RemoteResumePolicy? = nil,
         targetRoot: String? = nil,
         force: Bool = false,
-        parallelJobs: Int = 1
+        parallelJobs: Int = 1,
+        sourceRun: String? = nil
     ) async throws -> RemoteStudySubmission {
         struct Body: Encodable {
             var bundlePath: String
@@ -2551,6 +2552,11 @@ public struct ClusterClient: Sendable {
             var dryRun: Bool
             var resources: [String: JSONValue]
             var targetRoot: String?
+            /// The measurement verb's source run (`bundle execute --source`
+            /// on the node). Encoded only when given, so older servers never
+            /// see it; the server refuses an unreadable directory at submit
+            /// time rather than on the allocation.
+            var sourcePath: String?
             /// WS4: resubmit past a preflight verdict of "fail" — loud and
             /// explicit, encoded only when true so older servers never see
             /// an unknown field.
@@ -2575,6 +2581,7 @@ public struct ClusterClient: Sendable {
             body: Body(
                 bundlePath: path, verb: verb, executor: executor, dryRun: dryRun,
                 resources: merged, targetRoot: targetRoot,
+                sourcePath: sourceRun,
                 force: force ? true : nil,
                 parallelJobs: ShardedSubmission.encodedParallelJobs(
                     requested: parallelJobs, executor: executor, verb: verb)))

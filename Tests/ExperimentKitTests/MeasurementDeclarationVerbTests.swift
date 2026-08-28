@@ -442,4 +442,24 @@ import Testing
         let help = CLIFlagVocabulary.purpose("--parallel")
         #expect(help.contains("verify the shard jobs landed"))
     }
+
+    // MARK: - remote submit-bundle --source
+
+    /// The source-run override is declared on the verb, spelled `--source`
+    /// like every other surface (`bundle execute --source`, `study submit
+    /// --source`), and its help names the workflow it exists for: a renamed
+    /// duplicate has no runs under its own name, so without the override a
+    /// measurement submission dies at name-scoped discovery before the epoch
+    /// tolerance can rule.
+    @Test func theSourceFlagIsDeclaredAndItsHelpNamesTheDuplicatePath() throws {
+        let spec = try #require(
+            ExperimentCLIParser.specs.first {
+                $0.namespace == "remote" && $0.verb == "submit-bundle"
+            })
+        #expect(spec.valueFlags.contains("--source"))
+        #expect(CLIFlagVocabulary.metavar("--source") == "<run-dir>")
+        let help = CLIFlagVocabulary.purpose("--source")
+        #expect(help.contains("renamed"))
+        #expect(help.contains("SUBMIT time"))
+    }
 }

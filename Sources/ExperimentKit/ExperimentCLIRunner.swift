@@ -1978,10 +1978,20 @@ public struct ExperimentCLIRunner: Sendable {
                 message: "uploaded \(args[1])")
         case "submit-bundle":
             guard let path = flag("--bundle") ?? (args.count >= 2 ? args[1] : nil) else {
-                throw ExperimentError(reason: "usage: remote submit-bundle <server-bundle-path> [--verb verify] [--executor local|slurm] [--dry-run] [--parallel <n>]")
+                throw ExperimentError(reason: "usage: remote submit-bundle <server-bundle-path> [--verb verify] [--executor local|slurm] [--dry-run] [--parallel <n>] [--source <run-dir>]")
             }
             let submitVerb = flag("--verb") ?? "run"
             let submitExecutor = flag("--executor") ?? "local"
+            // The measurement verb's source run, by the one spelling every
+            // surface uses (`bundle execute --source`, `study submit
+            // --source`). Field-discovered 2026-08-28: a renamed duplicate
+            // evaluated against its donor's run has no runs under its OWN
+            // name, so name-scoped discovery killed the job one statement
+            // before the epoch tolerance that was built to accept it — and
+            // this verb had no way to hand the child the escape its own
+            // help documents. The server refuses an unreadable directory at
+            // submit time, so a typo costs a request, not a queue slot.
+            let submitSourceRun = flag("--source")
             // Multi-GPU fan-out, headless. The machinery has been complete
             // underneath since 2026-07-22 — `submitBundle` takes
             // `parallelJobs`, the server route reads it and launches K shard
@@ -2029,10 +2039,17 @@ public struct ExperimentCLIRunner: Sendable {
                     "gres": flag("--gres") ?? "",
                     "walltime": flag("--walltime") ?? "",
                 ].filter { !$0.value.isEmpty },
-                parallelJobs: parallelJobs)
+                parallelJobs: parallelJobs,
+                sourceRun: submitSourceRun)
             return try respond(
                 submission, message: "submitted \(path)",
                 extra: [
+                    // What the client asked the measurement verb to read —
+                    // nil when discovery defaults to the newest run under
+                    // the study's own name.
+                    "sourceRunRequested": submitSourceRun.map {
+                        JSONValue.string($0)
+                    } ?? .null,
                     "parallelJobsRequested": .number(Double(parallelJobs)),
                     // nil when the rule suppressed the field — the echo says
                     // WHY rather than reporting the request as honored.
