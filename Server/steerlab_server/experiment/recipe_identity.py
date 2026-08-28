@@ -87,7 +87,12 @@ this revision and read at this position", which is the only recipe there is
 when the direction was derived post-hoc. Their ``residualNormSource`` /
 ``normCorpusHash`` come from the PIN BLOCK (copied from the artifact's sidecar
 at attach), not from the study's neutral corpus — the norms are the artifact's,
-so the denominator provenance must be too.
+so the denominator provenance must be too. A MIRRORED pole
+(pin ``polesSwappedFromSource``) takes its ``stimulusSetHash`` from the pin's
+``sourceStimulusSetHash`` for the same reason: the artifact — and every
+faithful materialization of it — records the SOURCE concept's hash, qualified
+by the swap stamp, while the ref's own hash is the mirrored directory's LIVE
+pin that verify recomputes; the identity must demand what the artifact stamps.
 """
 
 from __future__ import annotations
@@ -201,6 +206,7 @@ def required_identity(manifest, ref) -> dict:
     # (extract / extract_grand_mean use it whenever present); without one,
     # norms come from the extraction stimuli themselves.
     source = "neutral-corpus" if manifest.neutral_corpus_hash else "extraction-stimuli"
+    stimulus_set_hash = ref.stimulus_set_hash
     if ref.options.method.is_pinned_artifact:
         # An artifact-pinned concept CARRIES its denominator: the norms come
         # from the pinned artifact, not from anything this study measures, so
@@ -209,6 +215,24 @@ def required_identity(manifest, ref) -> dict:
         # attach (and re-checked at verify), so this is still pins-only.
         block = ref.vector_artifact or {}
         source = block.get("residualNormSource") or source
+        if block.get("polesSwappedFromSource"):
+            # A MIRRORED pole carries its stimulus identity the same way it
+            # carries its denominator: the sidecar records the SOURCE
+            # concept's hash (qualified ``polesSwappedFromSource``), the
+            # materialized copy stamps exactly that, and the pin's
+            # ``sourceStimulusSetHash`` is where attach parked it. The ref's
+            # own ``stimulus_set_hash`` is the mirrored directory's hash —
+            # the LIVE pin verify recomputes — which no faithful
+            # materialization ever stamps, so demanding it would refuse
+            # every mirrored artifact at promote.
+            inherited = block.get("sourceStimulusSetHash")
+            if not inherited:
+                raise ValueError(
+                    f"mirrored-pole concept '{ref.name}' pins "
+                    "polesSwappedFromSource with no sourceStimulusSetHash — "
+                    "the inherited hash is the identity its artifact stamps; "
+                    "re-attach the artifact")
+            stimulus_set_hash = inherited
     norm_corpus_hash = (manifest.neutral_corpus_hash
                         if source == "neutral-corpus" else None)
     if ref.options.method.is_pinned_artifact and source == "neutral-corpus":
@@ -243,7 +267,7 @@ def required_identity(manifest, ref) -> dict:
         "modelID": manifest.model_id,
         "revision": manifest.model_revision,
         "extractionMethod": ref.options.method.value,
-        "stimulusSetHash": ref.stimulus_set_hash,
+        "stimulusSetHash": stimulus_set_hash,
         "readingPositionMode": reading_mode,
         "readingPositionParameter": reading_parameter,
         "projectionMode": "legacyPooled" if pc_count > 0 else "none",

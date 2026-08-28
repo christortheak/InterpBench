@@ -727,7 +727,8 @@ def _write_concept(root, name, positive, negative, validation=None):
 
 def _mirror_workspace(tmp_path, *, mirror_positive=NEGATIVE_ROWS,
                       mirror_negative=POSITIVE_ROWS, mirror_validation=None,
-                      author_mirror=True):
+                      author_mirror=True, revision=None,
+                      neutral_corpus_hash=None):
     """A source concept, a CAA artifact extracted from it, its minted mirror,
     and (optionally) the mirrored concept's own stimulus directory."""
     from steerlab_server.experiment import experiment_store as es
@@ -738,10 +739,11 @@ def _mirror_workspace(tmp_path, *, mirror_positive=NEGATIVE_ROWS,
         root, SOURCE_CONCEPT, POSITIVE_ROWS, NEGATIVE_ROWS,
         validation='{"text": "she squinted", "expresses": true}\n')
     source_set = StimulusSet.from_directory(source_dir)
-    _write_artifact(os.path.join(root, "runs", "src"),
-                    extras={"stimulusSetHash": source_set.hash,
-                            "substrate": None})
-    es.create("mirror-study", model_id="org/m", root=root)
+    extras = {"stimulusSetHash": source_set.hash, "substrate": None}
+    if neutral_corpus_hash:
+        extras["neutralCorpusHash"] = neutral_corpus_hash
+    _write_artifact(os.path.join(root, "runs", "src"), extras=extras)
+    es.create("mirror-study", model_id="org/m", revision=revision, root=root)
     pole_mirror.mirror_poles(
         os.path.join(root, "runs", "src"), SOURCE_CONCEPT,
         concept=MIRROR_CONCEPT,
@@ -832,6 +834,157 @@ def test_verify_re_proves_the_swap_after_the_files_are_reordered(tmp_path):
     _write_concept(root, MIRROR_CONCEPT, POSITIVE_ROWS, NEGATIVE_ROWS)
     violations = Manifest.load("mirror-study", root=root).verify(root=root)
     assert any("is a MIRRORED pole" in v for v in violations), violations
+
+
+# --- the mirrored-pole PIPELINE: materialize → promote (2026-08-28) -------------
+#
+# The second half of the lifecycle above. Attach passes, but promotion could
+# still never succeed: the run's materialized copy stamps the artifact's OWN
+# stimulus identity — the PARENT's hash, qualified ``polesSwappedFromSource``
+# — while ``required_identity`` demanded the ref's own (role-swapped
+# directory) hash, so the copy's ``recipeIdentityHash`` could never equal the
+# required identity and ``promote._matching_vector_artifact`` refused every
+# mirrored pinned concept with a stimulusSetHash diff. The fix: a mirrored
+# pin's identity demands the pin's ``sourceStimulusSetHash`` (what every
+# faithful materialization stamps), and the copy carries the mirror stamps
+# (``polesSwappedFromSource`` + ``negatedFrom``) through materialization so
+# it never under-claims what it knows — the same defect class as the Gemma
+# Scope convention stamps (open-issues #14).
+#
+# Swift note: materialization is server-only (Swift ``extractAll`` refuses
+# pinned concepts), but ``RecipeIdentity.required`` mirrors the same pin
+# branches so the two engines agree on what identity a mirrored pin demands.
+
+NEUTRAL_CORPUS_HASH = "c" * 64
+
+
+def _promotable_workspace(tmp_path):
+    """The attach e2e's workspace, made promotable: a pinned revision (the
+    identity covers it) and a norm-corpus hash on the source artifact (a
+    neutral-corpus denominator without its corpus hash is an unprovable
+    recipe, refused at the writer)."""
+    from steerlab_server.experiment import experiment_store as es
+    from steerlab_server.experiment.manifest import Manifest
+
+    root, source_set = _mirror_workspace(
+        tmp_path,
+        mirror_validation='{"text": "she squinted", "expresses": false}\n',
+        revision="abc", neutral_corpus_hash=NEUTRAL_CORPUS_HASH)
+    es.attach_artifact("mirror-study", MIRROR_CONCEPT,
+                       f"runs/mirrored/{MIRROR_CONCEPT}", root=root)
+    return root, source_set, Manifest.load("mirror-study", root=root)
+
+
+def test_materialization_carries_the_mirror_stamps_and_a_matching_identity(
+        tmp_path):
+    from types import SimpleNamespace
+
+    from steerlab_server.experiment import promote, recipe_identity, tasks
+    from steerlab_server.steering import vector_store
+
+    root, source_set, manifest = _promotable_workspace(tmp_path)
+    model = SimpleNamespace(revision="abc")
+    bundles = tasks._extract_all(model, manifest, root)
+    bundle = bundles[MIRROR_CONCEPT]
+    # The bundle claims exactly what the artifact claims: the PARENT's hash,
+    # qualified by the swap stamp, plus the negation linkage.
+    assert bundle.stimulus_hash == source_set.hash
+    assert bundle.poles_swapped_from_source is True
+    assert bundle.negated_from["concept"] == SOURCE_CONCEPT
+
+    run_dir = os.path.join(root, "runs", "20260828T000001000-exp-extract")
+    os.makedirs(run_dir)
+    tasks._persist_vectors(bundles, manifest, model, run_dir)
+    _, sidecar = vector_store.load(run_dir, MIRROR_CONCEPT)
+    # The copy carries both mirror stamps — dropping them would claim the
+    # mirrored concept's own files were read in their own order.
+    assert sidecar.polesSwappedFromSource is True
+    assert sidecar.negatedFrom["concept"] == SOURCE_CONCEPT
+    assert sidecar.stimulusSetHash == source_set.hash
+
+    # The required identity demands the pin's inherited hash — the value the
+    # copy stamps — so the copy's own recipeIdentityHash satisfies it.
+    ref = manifest.concepts[0]
+    required = recipe_identity.required_identity(manifest, ref)
+    assert required["stimulusSetHash"] == source_set.hash
+    assert required["stimulusSetHash"] != ref.stimulus_set_hash
+    assert sidecar.recipeIdentityHash == recipe_identity.identity_hash(required)
+
+    # …and the production promotion matcher finds it.
+    artifact, identity_hash = promote._matching_vector_artifact(
+        manifest, ref, root)
+    assert artifact.runDirectory == run_dir
+    assert identity_hash == sidecar.recipeIdentityHash
+
+
+def test_the_minted_mirror_promotes_end_to_end_through_a_sweep(tmp_path,
+                                                               monkeypatch):
+    """attach minted mirror → sweep (which materializes and persists the
+    pinned bytes into its own run directory) → promote succeeds, and the
+    agent's pinned artifact carries the pole provenance."""
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from steerlab_server.experiment import experiment_store as es
+    from steerlab_server.experiment import promote, recipe_identity, tasks
+    from steerlab_server.experiment.manifest import Manifest
+
+    root, source_set, _ = _promotable_workspace(tmp_path)
+
+    def _write(path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+
+    _write(os.path.join(root, "prompts", "concepts", MIRROR_CONCEPT,
+                        "markers.json"), json.dumps({"words": ["dusk"]}))
+    _write(os.path.join(root, "prompts", "dev", "dev.jsonl"),
+           '{"text": "Write about the town."}\n')
+    _write(os.path.join(root, "prompts", "batteries", "b.jsonl"),
+           '{"prompt": "What is 1+1?", "answer": "2"}\n')
+    d = es.load_raw("mirror-study", root)
+    d["sweep"] = {"layerFractions": [0.5], "alphas": [0.4],
+                  "devPromptsFile": "prompts/dev/dev.jsonl",
+                  "batteryFile": "prompts/batteries/b.jsonl", "maxTokens": 16}
+    es.save_raw(d, root)
+
+    @contextmanager
+    def fake_model(model_id, revision):
+        yield SimpleNamespace(revision=revision)
+
+    def fake_generate(model, prompt, *, model_id=None, max_tokens=0,
+                      temperature=0.0, injections=None, prompt_mode=None,
+                      system_prompt=None, qwen_thinking_enabled=False):
+        return ("dusk settled over the dim town before night fell 2"
+                if injections else
+                "the town woke slowly to a bright morning 2")
+
+    monkeypatch.setattr(tasks, "generate", fake_generate)
+    run_dir = tasks.sweep("mirror-study", root, model_provider=fake_model,
+                          log=lambda *_: None)
+
+    out = promote.promote("mirror-study", MIRROR_CONCEPT, root=root,
+                          log=lambda *_: None)
+    promotion = out["variant"]["promotion"]
+    assert promotion["promotedBy"] == "criterion"
+    # The certificate's identity is the mirrored pin's required identity —
+    # inherited hash and all.
+    manifest = Manifest.load("mirror-study", root)
+    required = recipe_identity.required_identity(manifest, manifest.concepts[0])
+    assert promotion["recipeIdentityHash"] == \
+        recipe_identity.identity_hash(required)
+    # The agent injects the sweep run's materialized copy…
+    injection = out["variant"]["injections"][0]
+    assert injection["vectorArtifactID"] == os.path.join(
+        "runs", os.path.basename(run_dir), MIRROR_CONCEPT)
+    # …which carries the pole provenance the certificate's pin resolves to:
+    # the swap stamp, the negation linkage, and the parent's stimulus hash.
+    with open(os.path.join(root, injection["vectorArtifactID"] + ".json"),
+              encoding="utf-8") as handle:
+        pinned_sidecar = json.load(handle)
+    assert pinned_sidecar["polesSwappedFromSource"] is True
+    assert pinned_sidecar["negatedFrom"]["concept"] == SOURCE_CONCEPT
+    assert pinned_sidecar["stimulusSetHash"] == source_set.hash
 
 
 def test_extracting_from_the_swapped_files_reproduces_the_minted_direction():

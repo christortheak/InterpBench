@@ -118,6 +118,16 @@ class ConceptVectorBundle:
     # full-depth bundle, which keeps their sidecars byte-identical
     # (``to_dict`` drops None).
     covers_model_depth: bool | None = None
+    # Artifact-pinned MIRRORED poles only: the SOURCE sidecar's mirror stamps
+    # (``pole_mirror``). ``polesSwappedFromSource`` qualifies the stimulus
+    # hash — the copy carries the PARENT's order-sensitive hash, and dropping
+    # the qualifier would claim the mirrored concept's own files were read in
+    # their own order — and ``negatedFrom`` names the artifact whose tensors
+    # were sign-flipped. Same claiming-less-than-it-knows defect class as the
+    # SAE keys above; None for every non-mirrored bundle, which keeps their
+    # sidecars byte-identical (``to_dict`` drops None).
+    poles_swapped_from_source: bool | None = None
+    negated_from: dict | None = None
 
 
 def _effective_dtype(manifest: Manifest, dtype: str) -> str:
@@ -603,6 +613,12 @@ def _materialize_pinned_artifact(manifest: Manifest, concept,
         neutral_mean_per_layer=vector_store.load_neutral_mean(directory, name),
         designated_reference=sidecar.designatedReference,
         neutral_corpus_hash=sidecar.neutralCorpusHash,
+        # Mirror stamps travel WITH the vector, exactly like the SAE identity
+        # below: the copy's stimulusSetHash is the PARENT's (order-sensitive)
+        # hash, and only ``polesSwappedFromSource`` says what that hash means
+        # for this concept's role-swapped files.
+        poles_swapped_from_source=sidecar.polesSwappedFromSource,
+        negated_from=sidecar.negatedFrom,
         # SAE identity travels WITH the vector (open-issues #14): the copy is
         # the same decoder row under the same convention, so it says so.
         gemmascope_convention=sidecar.gemmascopeConvention,
@@ -791,6 +807,13 @@ def _persist_vectors(bundles: dict[str, ConceptVectorBundle], manifest: Manifest
         sidecar.gemmascopeTargetNorm = bundle.gemmascope_target_norm
         sidecar.gemmascopeSource = bundle.gemmascope_source
         sidecar.coversModelDepth = bundle.covers_model_depth
+        # Mirror stamps, carried from the SOURCE sidecar for the same reason:
+        # the copy's stimulusSetHash is the parent's, and without the
+        # qualifier the copy claims the wrong files were read. Absent on
+        # every non-mirrored bundle. `recipe_identity` reads neither field,
+        # so carrying them cannot move `recipeIdentityHash`.
+        sidecar.polesSwappedFromSource = bundle.poles_swapped_from_source
+        sidecar.negatedFrom = bundle.negated_from
         # Stamp the canonical full-recipe identity from the sidecar's own
         # recorded fields — the stamp always describes THIS artifact, and
         # stamping exercises the same reader promotion uses. An extraction

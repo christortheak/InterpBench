@@ -201,6 +201,50 @@ struct RecipeIdentityTests {
         }
     }
 
+    @Test func requiredIdentityForAPinnedArtifactReadsThePinBlock() throws {
+        // Server twin: the pinned-artifact branches in
+        // `recipe_identity.required_identity` (and
+        // `test_required_identity_for_a_mirrored_pin_demands_the_inherited_hash`).
+        // Both were missing here — a cross-engine identity divergence: this
+        // engine demanded the study's denominator and the ref's own stimulus
+        // hash for identities the server derives from the pin block.
+        let pin = ExperimentManifest.ConceptRef.VectorArtifactPin(
+            path: "runs/mirrored/dimness",
+            sha256TensorHash: String(repeating: "1", count: 64),
+            sha256SidecarHash: String(repeating: "2", count: 64),
+            sourceMethod: "meanDifference", sourceConcept: "dimness",
+            residualNormSource: "neutral-corpus",
+            normCorpusHash: String(repeating: "c", count: 64))
+        var ref = ExperimentManifest.ConceptRef(
+            name: "dimness", stimulusSetHash: String(repeating: "0", count: 64),
+            options: .init(method: .pinnedArtifact),
+            vectorArtifact: pin)
+        let ordinary = try RecipeIdentity.required(manifest: manifest(), ref: ref)
+        // The denominator provenance is the ARTIFACT's (the pin block's), not
+        // the study's — and an un-mirrored pin keeps the ref's own hash.
+        #expect(ordinary.residualNormSource == "neutral-corpus")
+        #expect(ordinary.normCorpusHash == String(repeating: "c", count: 64))
+        #expect(ordinary.stimulusSetHash == String(repeating: "0", count: 64))
+
+        // A MIRRORED pin demands the pin's inherited (source) hash — what the
+        // artifact, and every faithful materialization of it, stamps.
+        var mirroredPin = pin
+        mirroredPin.polesSwappedFromSource = true
+        mirroredPin.sourceStimulusSetHash = String(repeating: "e", count: 64)
+        ref.vectorArtifact = mirroredPin
+        let mirrored = try RecipeIdentity.required(manifest: manifest(), ref: ref)
+        #expect(mirrored.stimulusSetHash == String(repeating: "e", count: 64))
+        #expect(RecipeIdentity.hash(mirrored) != RecipeIdentity.hash(ordinary))
+
+        // A mirror pin with no inherited hash refuses instead of guessing.
+        var brokenPin = pin
+        brokenPin.polesSwappedFromSource = true
+        ref.vectorArtifact = brokenPin
+        #expect(throws: ExperimentError.self) {
+            try RecipeIdentity.required(manifest: manifest(), ref: ref)
+        }
+    }
+
     // MARK: - the identity a sidecar can prove
 
     private func fullSidecar(

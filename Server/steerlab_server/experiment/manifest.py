@@ -173,6 +173,15 @@ class ConceptRef:
     #                         self-describing about α-in-norm units and the
     #                         recipe identity needs no filesystem read.
     #                         Omitted when the sidecar records none.
+    #   polesSwappedFromSource, sourceStimulusSetHash
+    #                       — MIRRORED-POLE linkage (pole_mirror): true plus
+    #                         the SOURCE concept's inherited stimulus hash.
+    #                         The ref's own stimulusSetHash stays the mirrored
+    #                         directory's LIVE hash (what verify recomputes);
+    #                         the inherited hash is what the artifact — and
+    #                         its materialized copies — stamp, so the recipe
+    #                         identity demands it. Both absent on every
+    #                         ordinary pin.
     #
     # BOTH file hashes are re-checked against the bytes at every verify() and
     # again at materialization: drift refuses loudly, exactly like stimulus
