@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import tempfile
 import re
@@ -41,6 +42,17 @@ from .manifest import variant_is_evidence_grade
 KNOWN_OUTCOME_INSTRUMENTS = (
     "sampledText", "answerTokenLogprob", "choiceProbability",
     "repeReaderScore", "ordinalScale")
+#: The closed ``seedPolicy`` vocabulary (Swift twin:
+#: ``ExperimentStore.knownSeedPolicies``). The run loop RE-DERIVES the
+#: effective policy per run, so an out-of-vocabulary declaration is read by
+#: nothing — the silent-loss class :func:`set_protocol` gates against.
+KNOWN_SEED_POLICIES = ("manifestSeeds", "derivedSHA256")
+#: The closed ``promptMode`` vocabulary (Swift twin: the
+#: ``ExperimentManifest.PromptMode`` enum, via
+#: ``ExperimentStore.knownPromptModes``). Readers are equality tests against
+#: ``rawCompletion``, so an unrecognised value silently behaves as
+#: ``chatAssistant`` — same loss class.
+KNOWN_PROMPT_MODES = ("chatAssistant", "rawCompletion")
 from ..steering.stimulus_set import StimulusSet, load_texts
 from ..steering.vector_math import ExtractionMethod
 from ..steering.vector_store import SUBSTRATE as _THIS_SUBSTRATE
@@ -1697,13 +1709,22 @@ def set_sweep_grid(name: str, *, layer_fractions=None, layers=None,
 #: order. The Mac's analogue is the typed ``Body`` of
 #: ``WebServer`` ``POST /api/experiment/protocol`` (its own key spellings —
 #: the panel's, not the manifest's), plus its dedicated verbs for the fields
-#: that are verbs there: ``outcomeInstruments`` is ``set-instruments`` and
-#: ``sweep`` is ``set-sweep-selection``. Here they are protocol fields,
+#: that are verbs there: ``outcomeInstruments`` is ``set-instruments``,
+#: ``sweep`` is ``set-sweep-selection``, the sampling fields
+#: (``temperature``, ``maxTokens``, ``promptMode``, ``samplesPerItem``,
+#: ``seedPolicy``) are ``set-sampling``, and ``exclusionRules`` is
+#: ``set-exclusions``. Here they are protocol fields,
 #: because ``PORTABILITY-CONTRACTS.md`` §"authoring" promises exactly that
 #: reachability to the client.
 PROTOCOL_FIELDS: tuple[str, ...] = (
     "experimentDescription", "taskDescription", "outcomeMeasures", "promptMode",
     "systemPrompt", "qwenThinkingEnabled", "temperature", "maxTokens", "seeds",
+    # The stochastic replication policy (field-discovered gap: a replication
+    # arm of N samples × temperature × token budget could not be authored
+    # headlessly on either engine). The Mac's verb for the whole sampling
+    # protocol is `set-sampling`; here they are protocol fields like the
+    # rest, validated below with the same sentences that verb refuses with.
+    "samplesPerItem", "seedPolicy",
     # studyType: the researcher's declared study type (authoring
     # vocabulary: conceptStudy | agentComparison | confirmAgent |
     # multiAgent) — persisted verbatim; studyKind stays the
@@ -1714,10 +1735,10 @@ PROTOCOL_FIELDS: tuple[str, ...] = (
     "judgeRubricFile", "judgeRubricHash", "judges", "humanValidation",
     "capabilityBatteryFile", "capabilityBatteryHash",
     "reasoningStyleTaxonomyPath", "reasoningStyleTaxonomyHash",
-    # Declared record-exclusion rules (closed vocabulary,
-    # validated by verify(); joined at analyze) — measurement
-    # declarations, so draft-editable like the other protocol
-    # fields and frozen with the manifest.
+    # Declared record-exclusion rules (closed vocabulary, validated at
+    # declaration below and re-checked by verify(); joined at analyze) —
+    # measurement declarations, so draft-editable like the other protocol
+    # fields and frozen with the manifest. Mac verb: `set-exclusions`.
     "exclusionRules",
     # The two Mac VERBS the contract makes protocol FIELDS on this engine:
     # the declared instrument list (validated against
@@ -1762,6 +1783,73 @@ def set_protocol(name: str, fields: dict, root: str | None = None) -> dict:
             "— the declared shape is {\"selection\": {…}} "
             "(docs/CLI-REFERENCE.md, set-sweep-selection)",
             repair="re-run with --set sweep='{\"selection\": {…}}'")
+    # Per-field value gates for the sampling-protocol fields (Swift twin:
+    # `ExperimentStore.setSamplingProtocol` — the refusal sentences are the
+    # cross-engine contract). Two loss classes motivate gating HERE rather
+    # than at the next verify: an out-of-vocabulary promptMode/seedPolicy is
+    # read downstream by equality tests, so it silently behaves as the
+    # default; and a non-numeric temperature/maxTokens/samplesPerItem BRICKS
+    # the manifest — `Manifest.from_dict` raises on the next load, so every
+    # later verb (verify included, the one that would have named the
+    # problem) fails before it can. A JSON null clears like an absent key on
+    # decode, so None passes every gate.
+    if fields.get("temperature") is not None:
+        value = fields["temperature"]
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(float(value)) or value < 0):
+            raise ExperimentStoreError(
+                f"temperature must be a non-negative number — got {value!r}",
+                repair="re-run with --set temperature=<t≥0>")
+    if fields.get("maxTokens") is not None:
+        value = fields["maxTokens"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ExperimentStoreError(
+                f"maxTokens must be a positive integer — got {value!r}",
+                repair="re-run with --set maxTokens=<n≥1>")
+    if fields.get("promptMode") is not None:
+        value = fields["promptMode"]
+        if not isinstance(value, str) or value not in KNOWN_PROMPT_MODES:
+            raise ExperimentStoreError(
+                f"unknown promptMode {value!r} — known: "
+                + ", ".join(KNOWN_PROMPT_MODES),
+                repair="re-run with --set promptMode="
+                       + "|".join(KNOWN_PROMPT_MODES))
+    if fields.get("samplesPerItem") is not None:
+        value = fields["samplesPerItem"]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ExperimentStoreError(
+                f"samplesPerItem must be an integer — got {value!r}",
+                repair="re-run with --set samplesPerItem=<n≥1>")
+        if value < 1:
+            raise ExperimentStoreError(
+                f"samplesPerItem must be ≥ 1 — got {value}",
+                repair="re-run with --set samplesPerItem=<n≥1>")
+    if fields.get("seedPolicy") is not None:
+        value = fields["seedPolicy"]
+        if not isinstance(value, str) or value not in KNOWN_SEED_POLICIES:
+            raise ExperimentStoreError(
+                f"unknown seedPolicy {value!r} — known: "
+                + ", ".join(KNOWN_SEED_POLICIES),
+                repair="re-run with --set seedPolicy="
+                       + "|".join(KNOWN_SEED_POLICIES))
+    if fields.get("exclusionRules") is not None:
+        # The engine's own rule validation, at the moment of declaration
+        # (Swift twin: `ExperimentStore.setExclusionRules`) — verify() and
+        # analyze re-check the same sentences, but feedback belongs at the
+        # write. Imported lazily: `exclusions` pulls the scoring/battery
+        # modules, which the torch-free authoring path must not pay for
+        # unless rules are actually declared.
+        from . import exclusions
+        violations = exclusions.rule_violations(
+            {"exclusionRules": fields["exclusionRules"]})
+        if violations:
+            raise ExperimentStoreError(
+                "; ".join(violations),
+                repair=f"steerlab-cli experiment set-exclusions {name} <"
+                       + "|".join(exclusions.RULE_IDS)
+                       + ">[,…] [--endpoint <key>] [--min <x>] [--max <x>], "
+                       "or re-run with a --set exclusionRules=<json> the "
+                       "sentences above accept")
     for key, value in fields.items():
         d[key] = value
     save_raw(d, root)

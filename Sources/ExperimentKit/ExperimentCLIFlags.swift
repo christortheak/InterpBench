@@ -476,6 +476,37 @@ public enum ExperimentCLIParser {
                 + ExperimentStore.knownOutcomeInstruments.joined(separator: ", ")
                 + "; \"\" clears the declaration).",
             valueFlags: ["--ordinal-aggregation"]),
+        // The generation protocol's writer — the fields the Study Setup
+        // panel owned exclusively until now. Field-discovered gap: a
+        // stochastic replication arm (N samples × temperature × token
+        // budget) could not be authored headlessly, so it was cut from a
+        // study design. Same ownership reasoning as the sweep split: the
+        // manifest's TOP-LEVEL sampling fields live here; the sweep block's
+        // per-cell `--max-tokens` stays on `set-sweep-grid`.
+        .init(
+            namespace: "experiment", verb: "set-sampling",
+            positional: "<name>",
+            purpose: "Declare the generation protocol: temperature, token "
+                + "budget, prompt mode ("
+                + ExperimentStore.knownPromptModes.joined(separator: ", ")
+                + "), and the stochastic replication policy (samples per "
+                + "item × seed policy: "
+                + ExperimentStore.knownSeedPolicies.joined(separator: ", ")
+                + ").",
+            valueFlags: [
+                "--temperature", "--max-tokens", "--prompt-mode",
+                "--samples-per-item", "--seed-policy",
+            ]),
+        // The legal values come from `ExclusionEngine.ruleVocabulary` — the
+        // SAME constant the refusal prints — so `--help` and the refusal
+        // cannot name different vocabularies.
+        .init(
+            namespace: "experiment", verb: "set-exclusions",
+            positional: "<name> <rule>[,…]",
+            purpose: "Declare the record-exclusion rules analysis applies ("
+                + ExclusionEngine.ruleVocabulary.joined(separator: ", ")
+                + "; \"\" clears the declaration).",
+            valueFlags: ["--endpoint", "--min", "--max"]),
         .init(
             namespace: "experiment", verb: "set-style-taxonomy",
             positional: "<name> <prompts/taxonomies/file.json>",

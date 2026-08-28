@@ -517,6 +517,18 @@ MAC_AUTHORITY_VERBS: dict = {
                              "<concept>:<layer>:<alpha>",
         "set-instruments": "steerlab-cli experiment set-instruments <name> "
                            "<instrument>[,…]",
+        # The two sampling/exclusion writers are Mac VERBS; their FIELDS are
+        # reachable on this engine as `set_protocol` keys (temperature,
+        # maxTokens, promptMode, samplesPerItem, seedPolicy, exclusionRules)
+        # — the redirect names the Mac spelling like its siblings, and the
+        # client's `set-protocol` remains the local writer.
+        "set-sampling": "steerlab-cli experiment set-sampling <name> "
+                        "[--temperature <t>] [--max-tokens <n>] "
+                        "[--prompt-mode <mode>] [--samples-per-item <n>] "
+                        "[--seed-policy <policy>]",
+        "set-exclusions": "steerlab-cli experiment set-exclusions <name> "
+                          "<rule>[,…] [--endpoint <key>] [--min <x>] "
+                          "[--max <x>]",
         "set-sweep-selection": "steerlab-cli experiment set-sweep-selection "
                                "<name> --objective <metric>",
         "set-sweep-grid": "steerlab-cli experiment set-sweep-grid <name> "

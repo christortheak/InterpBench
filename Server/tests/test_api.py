@@ -275,6 +275,25 @@ def test_authoring_create_and_freeze(tmp_path, monkeypatch):
                                                    "revision": "abc"})
     assert r.status_code == 200 and r.json()["name"] == "web-study"
     client.post("/api/authoring/web-study/attach", json={"concepts": ["joy"]})
+    # The sampling-protocol fields land through the same untyped body →
+    # `set_protocol` path, value-gated at the store (nothing route-specific
+    # to keep in sync)…
+    p = client.post("/api/authoring/web-study/protocol",
+                    json={"temperature": 0.7, "maxTokens": 1024,
+                          "samplesPerItem": 25,
+                          "seedPolicy": "derivedSHA256"})
+    assert p.status_code == 200
+    stored = client.get("/api/experiment/web-study/manifest").json()
+    assert stored["samplesPerItem"] == 25
+    assert stored["seedPolicy"] == "derivedSHA256"
+    # …and an out-of-vocabulary value refuses with the twin sentence, writing
+    # nothing (it would be read by nothing downstream).
+    p = client.post("/api/authoring/web-study/protocol",
+                    json={"seedPolicy": "diceRoll"})
+    assert p.status_code == 400
+    assert "unknown seedPolicy 'diceRoll'" in p.json()["detail"]
+    stored = client.get("/api/experiment/web-study/manifest").json()
+    assert stored["seedPolicy"] == "derivedSHA256"
     # force-freeze (skips the validate-evidence gate; verify still runs)
     f = client.post("/api/authoring/web-study/freeze", json={"force": True})
     assert f.status_code == 200 and f.json()["status"] == "frozen"

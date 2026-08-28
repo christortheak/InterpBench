@@ -290,6 +290,7 @@ public enum RefusalSiteRegistry {
                 "experiment pin-rubric", "experiment declare-condition",
                 "experiment set-sweep-selection", "experiment set-sweep-grid",
                 "experiment set-instruments",
+                "experiment set-sampling", "experiment set-exclusions",
                 "experiment set-style-taxonomy", "experiment confirm",
                 // `panel compile` writes a FILE before it writes the manifest,
                 // so it checks the status itself and refuses before compiling

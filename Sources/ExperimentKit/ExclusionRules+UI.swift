@@ -200,7 +200,17 @@ extension ExperimentStore {
             }
             let problems = ExclusionEngine.violations(rules)
             guard problems.isEmpty else {
-                throw ExperimentError(reason: problems.joined(separator: "; "))
+                // A malformed INVOCATION (64), not a refusal: the reason is
+                // the engine's own violation wording, unchanged; only the
+                // classification is typed so the CLI's `set-exclusions`
+                // answers `blocked`/`usage` like every other
+                // out-of-vocabulary value (gate-5 dry run #2, P3).
+                throw ExperimentError.malformed(
+                    problems.joined(separator: "; "),
+                    repair: "steerlab-cli experiment set-exclusions "
+                        + "\(experimentName) <"
+                        + ExclusionEngine.ruleVocabulary.joined(separator: "|")
+                        + ">[,…] [--endpoint <key>] [--min <x>] [--max <x>]")
             }
             manifest.exclusionRules = rules
         }

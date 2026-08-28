@@ -194,6 +194,8 @@ import Testing
                     "declare-condition", "sealed", "other", "--slots",
                     "french:9:0.2", "--alpha-units", "norm",
                 ],
+                ["set-sampling", "sealed", "--temperature", "0.7"],
+                ["set-exclusions", "sealed", "unparseableEndpoint"],
             ]
             for attempt in attempts {
                 let outcome = await invoke(attempt)

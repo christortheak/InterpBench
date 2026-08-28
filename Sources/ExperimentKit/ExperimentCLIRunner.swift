@@ -3452,6 +3452,260 @@ public struct ExperimentCLIRunner: Sendable {
                 ],
                 advisories: instrumentAdvisories)
 
+        case "set-sampling":
+            // The study's generation protocol — temperature, token budget,
+            // prompt mode, and the stochastic replication policy. These
+            // fields were writable only from the Study Setup panel (field-
+            // discovered gap: a stochastic replication arm, N samples ×
+            // temperature × token budget, could not be authored headlessly
+            // and was cut from a study design). Merge semantics like
+            // set-sweep-grid: only the flags given move; the JOINT
+            // stochastic rules stay verify() violations so the fields can
+            // be declared one flag at a time.
+            guard args.count >= 2 else {
+                throw ExperimentError(
+                    reason: "usage: experiment set-sampling <name> "
+                        + "[--temperature <t>] [--max-tokens <n>] "
+                        + "[--prompt-mode "
+                        + ExperimentStore.knownPromptModes.joined(separator: "|")
+                        + "] [--samples-per-item <n>] [--seed-policy "
+                        + ExperimentStore.knownSeedPolicies.joined(separator: "|")
+                        + "]  (\"\" clears --prompt-mode/--seed-policy; "
+                        + "--samples-per-item 1 clears to the deterministic "
+                        + "default)")
+            }
+            let samplingFlags = [
+                "--temperature", "--max-tokens", "--prompt-mode",
+                "--samples-per-item", "--seed-policy",
+            ]
+            guard samplingFlags.contains(where: args.contains) else {
+                throw ExperimentError.malformed(
+                    "set-sampling with no fields would write nothing — pass "
+                        + "at least one of "
+                        + samplingFlags.joined(separator: ", "),
+                    repair: "steerlab-cli experiment set-sampling \(args[1]) "
+                        + "--temperature 0.7 --max-tokens 1024 "
+                        + "--samples-per-item 25 --seed-policy derivedSHA256")
+            }
+            var declaredTemperature: Double?
+            if let raw = flag("--temperature") {
+                guard let value = Double(raw) else {
+                    throw ExperimentError.malformed(
+                        "--temperature must be a number, not '\(raw)'",
+                        repair: "steerlab-cli experiment set-sampling "
+                            + "\(args[1]) --temperature 0.7")
+                }
+                declaredTemperature = value
+            }
+            var declaredMaxTokens: Int?
+            if let raw = flag("--max-tokens") {
+                guard let value = Int(raw) else {
+                    throw ExperimentError.malformed(
+                        "--max-tokens must be an integer, not '\(raw)'",
+                        repair: "steerlab-cli experiment set-sampling "
+                            + "\(args[1]) --max-tokens 512")
+                }
+                declaredMaxTokens = value
+            }
+            var declaredSamples: Int?
+            if let raw = flag("--samples-per-item") {
+                guard let value = Int(raw) else {
+                    throw ExperimentError.malformed(
+                        "--samples-per-item must be an integer, not '\(raw)'",
+                        repair: "steerlab-cli experiment set-sampling "
+                            + "\(args[1]) --samples-per-item 25")
+                }
+                declaredSamples = value
+            }
+            let sampling = try ExperimentStore.setSamplingProtocol(
+                temperature: declaredTemperature,
+                maxTokens: declaredMaxTokens,
+                promptMode: flag("--prompt-mode"),
+                samplesPerItem: declaredSamples,
+                seedPolicy: flag("--seed-policy"),
+                experimentName: args[1])
+            // The design line the panel shows, said where the values landed:
+            // the SAMPLES × TEMPERATURE × TOKENS product is the study's cost
+            // and replication shape, so the echo is the whole row, not just
+            // the flags that moved.
+            let effectiveSamples = max(1, sampling.samplesPerItem ?? 1)
+            let temperatureText =
+                sampling.temperature.rounded() == sampling.temperature
+                ? String(Int(sampling.temperature)) : "\(sampling.temperature)"
+            var samplingLine =
+                "declared sampling protocol on '\(sampling.name)': "
+                + "\(effectiveSamples) sample(s) × temperature "
+                + "\(temperatureText) × up to \(sampling.maxTokens) tokens"
+            samplingLine += "  ·  prompt mode "
+                + (sampling.promptMode ?? .chatAssistant).rawValue
+            if let policy = sampling.seedPolicy {
+                samplingLine += "  ·  seed policy \(policy)"
+            }
+            if sampling.temperature > 0 {
+                // The substrate rule, stated where the number is written: a
+                // local MLX run refuses a non-zero temperature outright.
+                samplingLine += "  ·  server substrate only"
+            }
+            sink.out(samplingLine)
+            var samplingAdvisories: [SteerLabCLIEnvelope.Advisory] = []
+            // A declared value nothing will read is a design mistake worth
+            // saying out loud at the moment it is declared, not at run time.
+            if let inert = ExecutionPlan.inertSamplingAdvisory(
+                instruments: sampling.outcomeInstruments,
+                temperature: sampling.temperature,
+                samplesPerItem: sampling.samplesPerItem)
+            {
+                samplingAdvisories.append(
+                    .init(CLIAdvisory.choiceItemsWithoutInstrument, inert))
+            }
+            return ExperimentCLIResult(
+                message: samplingLine, changed: true,
+                payload: [
+                    "experiment": .string(sampling.name),
+                    "temperature": .number(sampling.temperature),
+                    "maxTokens": .number(Double(sampling.maxTokens)),
+                    "promptMode": sampling.promptMode.map {
+                        JSONValue.string($0.rawValue)
+                    } ?? .null,
+                    // The EFFECTIVE replication count (absent = 1), so a
+                    // caller reading the echo never has to know the
+                    // absent-means-one normalization rule.
+                    "samplesPerItem": .number(Double(effectiveSamples)),
+                    "seedPolicy": sampling.seedPolicy.map {
+                        JSONValue.string($0)
+                    } ?? .null,
+                ],
+                advisories: samplingAdvisories,
+                // The joint stochastic rules (samplesPerItem > 1 needs
+                // temperature > 0 and seedPolicy derivedSHA256) surface at
+                // verify — point there rather than re-litigating them here.
+                nextAction: .init(verb: "experiment verify \(sampling.name)"))
+
+        case "set-exclusions":
+            // WHAT analysis drops, and why — the declared record-exclusion
+            // rules, previously writable only from the SwiftUI editor. The
+            // rules are manifest data (freeze pins them through the content
+            // hash), so declaring them is authoring like every other
+            // measurement declaration.
+            guard args.count >= 3 else {
+                throw ExperimentError(
+                    reason: "usage: experiment set-exclusions <name> "
+                        + "<rule>[,…]  (known: "
+                        + ExclusionEngine.ruleVocabulary.joined(separator: " | ")
+                        + ") [--endpoint <key>] [--min <x>] [--max <x>]  "
+                        + "(\"\" clears the declaration — analysis then "
+                        + "excludes nothing)")
+            }
+            let ruleIDs = args[2]
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            var declaredMin: Double?
+            if let raw = flag("--min") {
+                guard let value = Double(raw) else {
+                    throw ExperimentError.malformed(
+                        "--min must be a number, not '\(raw)'",
+                        repair: "steerlab-cli experiment set-exclusions "
+                            + "\(args[1]) outOfRange --min 0 --max 600")
+                }
+                declaredMin = value
+            }
+            var declaredMax: Double?
+            if let raw = flag("--max") {
+                guard let value = Double(raw) else {
+                    throw ExperimentError.malformed(
+                        "--max must be a number, not '\(raw)'",
+                        repair: "steerlab-cli experiment set-exclusions "
+                            + "\(args[1]) outOfRange --min 0 --max 600")
+                }
+                declaredMax = value
+            }
+            let declaredEndpoint = flag("--endpoint")?
+                .trimmingCharacters(in: .whitespaces)
+            // The flags attach to the rule that owns them, so a flag whose
+            // owner is not declared is aimed at nothing — a malformed
+            // invocation, not a silent drop.
+            if declaredMin != nil || declaredMax != nil,
+                !ruleIDs.contains(ExclusionEngine.ruleOutOfRange)
+            {
+                throw ExperimentError.malformed(
+                    "--min/--max declare the outOfRange keep-window — declare "
+                        + "the outOfRange rule or drop the flag",
+                    repair: "steerlab-cli experiment set-exclusions \(args[1]) "
+                        + "outOfRange --min <x> --max <x>")
+            }
+            if declaredEndpoint?.isEmpty == false,
+                !ruleIDs.contains(where: {
+                    $0 == ExclusionEngine.ruleUnparseableEndpoint
+                        || $0 == ExclusionEngine.ruleOutOfRange
+                })
+            {
+                throw ExperimentError.malformed(
+                    "--endpoint applies to the endpoint-reading rules ("
+                        + ExclusionEngine.ruleUnparseableEndpoint + ", "
+                        + ExclusionEngine.ruleOutOfRange
+                        + ") — declare one or drop the flag",
+                    repair: "steerlab-cli experiment set-exclusions \(args[1]) "
+                        + "unparseableEndpoint --endpoint <key>")
+            }
+            let declaredRules = ruleIDs.map { id -> ExclusionRule in
+                switch id {
+                case ExclusionEngine.ruleOutOfRange:
+                    return ExclusionRule(
+                        rule: id, endpoint: declaredEndpoint,
+                        min: declaredMin, max: declaredMax)
+                case ExclusionEngine.ruleUnparseableEndpoint:
+                    return ExclusionRule(rule: id, endpoint: declaredEndpoint)
+                default:
+                    // Unknown ids reach the store untouched and refuse there
+                    // with the engine's own violation wording — ONE
+                    // vocabulary, one sentence, both engines.
+                    return ExclusionRule(rule: id)
+                }
+            }
+            let exclusions = try ExperimentStore.setExclusionRules(
+                declaredRules.isEmpty ? nil : declaredRules,
+                experimentName: args[1])
+            let exclusionLine: String
+            if let rules = exclusions.exclusionRules, !rules.isEmpty {
+                let described = rules
+                    .map { ExclusionRulesUI.editorDescription(of: $0) }
+                    .joined(separator: " ")
+                exclusionLine =
+                    "declared \(rules.count) exclusion rule(s) on "
+                    + "'\(exclusions.name)': \(described)"
+            } else {
+                exclusionLine =
+                    "cleared the exclusion-rule declaration on "
+                    + "'\(exclusions.name)' — analysis excludes nothing"
+            }
+            sink.out(exclusionLine)
+            return ExperimentCLIResult(
+                message: exclusionLine, changed: true,
+                payload: [
+                    "experiment": .string(exclusions.name),
+                    // Echoed AS STORED — omit-when-nil like the manifest's
+                    // own encoding, so the echo is the declaration.
+                    "exclusionRules": .array(
+                        (exclusions.exclusionRules ?? []).map { rule in
+                            var object: [String: JSONValue] = [
+                                "rule": .string(rule.rule)
+                            ]
+                            if let endpoint = rule.endpoint {
+                                object["endpoint"] = .string(endpoint)
+                            }
+                            if let low = rule.min {
+                                object["min"] = .number(low)
+                            }
+                            if let high = rule.max {
+                                object["max"] = .number(high)
+                            }
+                            return .object(object)
+                        }),
+                    "ruleCount": .number(
+                        Double(exclusions.exclusionRules?.count ?? 0)),
+                ])
+
         case "set-style-taxonomy":
             // Pin a reasoning-style taxonomy (prompts/taxonomies/<name>.json)
             // into a draft manifest: validates the file loads on this engine,
@@ -3635,6 +3889,7 @@ public struct ExperimentCLIRunner: Sendable {
                 reason: "verbs: list | create | attach | detach | pin-prompts "
                     + "| pin-rubric | declare-condition | set-sweep-selection "
                     + "| set-sweep-grid | set-instruments "
+                    + "| set-sampling | set-exclusions "
                     + "| set-style-taxonomy | verify "
                     + "| freeze | duplicate | extract | validate | sweep | run "
                     + "| analyze | rescore-style | evaluate | promote | confirm")

@@ -288,6 +288,7 @@ import Testing
                         + "| attach | detach | pin-prompts | pin-rubric "
                         + "| declare-condition | set-sweep-selection "
                         + "| set-sweep-grid | set-instruments "
+                        + "| set-sampling | set-exclusions "
                         + "| set-style-taxonomy | verify | freeze | duplicate "
                         + "| extract | validate | sweep | run | analyze "
                         + "| rescore-style | evaluate | promote | confirm\n")

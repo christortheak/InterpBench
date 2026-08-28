@@ -178,7 +178,8 @@ public final class SteerLabWebServer: Sendable {
     static let protocolBodyKeys: [String] = [
         "description", "task", "outcomes", "judgeModel", "judgePrompt",
         "taskPromptsFile", "promptMode", "systemPrompt", "qwenThinkingEnabled",
-        "temperature", "maxTokens",
+        "temperature", "maxTokens", "samplesPerItem", "seedPolicy",
+        "exclusionRules",
     ]
 
     /// The body's top-level keys outside the vocabulary, sorted. A body that
@@ -737,6 +738,9 @@ public final class SteerLabWebServer: Sendable {
                 let qwenThinkingEnabled: Bool?
                 let temperature: Double?
                 let maxTokens: Int?
+                let samplesPerItem: Int?
+                let seedPolicy: String?
+                let exclusionRules: [ExclusionRule]?
             }
             // Refuse, never drop: keys the Body does not declare would be
             // silently ignored by the decoder below, and the route would
@@ -753,6 +757,28 @@ public final class SteerLabWebServer: Sendable {
                         + "; nothing was written")
             }
             guard let request = decode(Body.self, from: body) else { return .error("bad body") }
+            // Value gates BEFORE anything is applied: `saveProtocol` reports
+            // its refusals as panel notes, which this route cannot see, so
+            // an out-of-vocabulary value passed through would answer ok
+            // while writing nothing — the same silent loss the key check
+            // above refuses. Sentences are the store setters' own.
+            if let samples = request.samplesPerItem, samples < 1 {
+                return .error("samplesPerItem must be ≥ 1 — got \(samples)")
+            }
+            if let policy = request.seedPolicy, !policy.isEmpty,
+                !ExperimentStore.knownSeedPolicies.contains(policy)
+            {
+                return .error(
+                    "unknown seedPolicy '\(policy)' — known: "
+                        + ExperimentStore.knownSeedPolicies
+                            .joined(separator: ", "))
+            }
+            if let rules = request.exclusionRules {
+                let problems = ExclusionEngine.violations(rules)
+                guard problems.isEmpty else {
+                    return .error(problems.joined(separator: "; "))
+                }
+            }
             if let description = request.description {
                 service.experiments.protocolDescription = description
             }
@@ -786,6 +812,12 @@ public final class SteerLabWebServer: Sendable {
             if let maxTokens = request.maxTokens {
                 service.experiments.runMaxTokens = maxTokens
             }
+            if let samplesPerItem = request.samplesPerItem {
+                service.experiments.samplesPerItemField = samplesPerItem
+            }
+            if let seedPolicy = request.seedPolicy {
+                service.experiments.seedPolicyField = seedPolicy
+            }
             // This request has no model field, so a headless protocol save is
             // never a base-model change: adopt the manifest's own model as
             // the panel's choice before delegating, or a stale panel field
@@ -793,6 +825,23 @@ public final class SteerLabWebServer: Sendable {
             // (open-issues §8, residual (b)).
             service.experiments.adoptSelectedManifestBaseModel()
             service.experiments.saveProtocol()
+            // Exclusion rules go through their own store setter, AFTER
+            // `saveProtocol`: that save writes the whole manifest from the
+            // panel's copy, so a rules write placed before it would be
+            // overwritten by a document that predates it. The panel keeps no
+            // exclusion-rules field — the setter is the one writer on every
+            // surface (`ExclusionRulesEditorView` uses the same one).
+            if let rules = request.exclusionRules,
+                let name = service.experiments.selected?.name
+            {
+                do {
+                    try ExperimentStore.setExclusionRules(
+                        rules.isEmpty ? nil : rules, experimentName: name)
+                    service.experiments.refresh()
+                } catch {
+                    return .error("\(error)")
+                }
+            }
             return .ok()
 
         case ("POST", "/api/experiment/prompts/load"):

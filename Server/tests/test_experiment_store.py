@@ -75,6 +75,60 @@ def test_set_protocol_refuses_unknown_keys_at_the_store(tmp_path):
         es.set_protocol("s", {"sweep": "markerDensity"}, root=root)
 
 
+def test_set_protocol_gates_the_sampling_protocol_fields(tmp_path):
+    """The six generation-protocol fields carry declaration-time value gates
+    (Swift twins: ``ExperimentStore.setSamplingProtocol`` /
+    ``setExclusionRules``). Two loss classes: an out-of-vocabulary
+    promptMode/seedPolicy is read by equality tests downstream and silently
+    behaves as the default, and a non-numeric temperature/maxTokens/
+    samplesPerItem BRICKS the manifest — ``Manifest.from_dict`` raises on the
+    next load, so every later verb fails before it can repair. Nothing is
+    written on refusal, including the valid keys of the same call."""
+    root = str(tmp_path)
+    es.create("s", model_id="org/m", root=root)
+    # The stochastic replication arm that motivated the writers (25 samples ×
+    # T=0.7 × 1024 tokens): authorable, and the run loop's own decoder reads
+    # it back.
+    d = es.set_protocol(
+        "s", {"temperature": 0.7, "maxTokens": 1024, "samplesPerItem": 25,
+              "seedPolicy": "derivedSHA256", "promptMode": "chatAssistant"},
+        root=root)
+    assert d["samplesPerItem"] == 25 and d["seedPolicy"] == "derivedSHA256"
+    from steerlab_server.experiment.manifest import Manifest
+    manifest = Manifest.from_dict(d)
+    assert manifest.samples_per_item == 25
+    assert manifest.seed_policy == "derivedSHA256"
+    for bad in ({"temperature": "hot"}, {"temperature": -0.5},
+                {"temperature": True},
+                {"maxTokens": 0}, {"maxTokens": "lots"},
+                {"promptMode": "freestyle"},
+                {"samplesPerItem": 0}, {"samplesPerItem": "three"},
+                {"seedPolicy": "diceRoll"},
+                {"exclusionRules": [{"rule": "outOfRange"}]},
+                {"exclusionRules": "outOfRange"}):
+        with pytest.raises(es.ExperimentStoreError) as exc:
+            es.set_protocol("s", dict(bad, taskDescription="x"), root=root)
+        assert exc.value.repair_action, bad
+    d = es.load_raw("s", root)
+    assert "taskDescription" not in d  # the valid co-key never landed
+    assert d["samplesPerItem"] == 25  # the earlier declaration survives
+    # A JSON null clears like an absent key on decode, so None passes.
+    es.set_protocol("s", {"seedPolicy": None}, root=root)
+    # Valid exclusion rules land verbatim; an unknown rule id refuses with
+    # the engine's own wording and the Mac verb named in the repair.
+    d = es.set_protocol(
+        "s", {"exclusionRules": [
+            {"rule": "unparseableEndpoint"},
+            {"rule": "outOfRange", "min": 0, "max": 600}]}, root=root)
+    assert [r["rule"] for r in d["exclusionRules"]] == [
+        "unparseableEndpoint", "outOfRange"]
+    with pytest.raises(es.ExperimentStoreError) as exc:
+        es.set_protocol("s", {"exclusionRules": [{"rule": "outOfRnge"}]},
+                        root=root)
+    assert "not recognized" in str(exc.value)
+    assert "set-exclusions" in exc.value.repair_action
+
+
 def test_freeze_requires_revision_without_force(tmp_path):
     root = str(tmp_path)
     es.create("s2", model_id="org/m", root=root)  # no revision
