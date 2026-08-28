@@ -1878,6 +1878,26 @@ public struct ExperimentCLIRunner: Sendable {
 
     // MARK: - remote
 
+    /// The engine-lag advisory for a verb about to submit server-side work to
+    /// a saved site: what this Mac last pushed there (the deploy-intent record
+    /// the currency gate itself trusts) against the payload baked into this
+    /// build. Nil for a `--url` invocation (no site, no intent record) and
+    /// whenever either identity is unknowable — the advisory is computed from
+    /// local records only, never by probing the cluster mid-submit.
+    static func engineLagWarning(
+        forSite siteID: String?,
+        runtime: ClusterSiteRuntimeStore = ClusterSiteRuntimeStore(),
+        bundlePayloadRoot: String = ClusterProvisioner.defaultLocalRepoPath()
+    ) -> String? {
+        guard let siteID else { return nil }
+        let state = runtime.state(forSite: siteID)
+        return ClusterProvisioningOperations.engineLagAdvisory(
+            intent: .init(
+                payloadRevision: state.pushedPayloadRevision,
+                buildStamp: state.pushedBuildStamp),
+            bundlePayloadRoot: bundlePayloadRoot)
+    }
+
     func runRemoteCommand(_ invocation: ExperimentCLIInvocation) async throws
         -> ExperimentCLIResult
     {
@@ -1901,6 +1921,7 @@ public struct ExperimentCLIRunner: Sendable {
         let url: URL
         let token: String?
         var siteSummary: String?
+        var siteID: String?
         switch try ClusterRemoteSiteResolver.choose(site: flag("--site"), url: flag("--url")) {
         case .site(let reference):
             let resolved = try await ClusterRemoteSiteResolver.resolve(reference: reference)
@@ -1909,6 +1930,7 @@ public struct ExperimentCLIRunner: Sendable {
             // Presence and provenance only — never the value.
             sink.err("remote: \(resolved.redactedSummary)\n")
             siteSummary = resolved.redactedSummary
+            siteID = resolved.siteID
         case .url(let explicit):
             // 8080 is the port EVERY server surface serves (both `serve`
             // verbs, the app's default connection URL, the tunnel
@@ -1953,6 +1975,12 @@ public struct ExperimentCLIRunner: Sendable {
         case "submit-bundle":
             guard let path = flag("--bundle") ?? (args.count >= 2 ? args[1] : nil) else {
                 throw ExperimentError(reason: "usage: remote submit-bundle <server-bundle-path> [--verb verify] [--executor local|slurm] [--dry-run]")
+            }
+            // Engine-lag advisory (2026-08-27 incident): submitting server-side
+            // work while the deployed engine trails this build must be LOUD —
+            // stderr once, never a refusal, and never a rollback offer.
+            if let warning = Self.engineLagWarning(forSite: siteID) {
+                sink.err("warning: \(warning)\n")
             }
             let submission = try await client.submitBundle(
                 path: path,

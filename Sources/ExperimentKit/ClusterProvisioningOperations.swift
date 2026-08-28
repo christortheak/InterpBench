@@ -798,9 +798,13 @@ public struct ClusterProvisioningOperations: Sendable {
         if let pushed = intent.payloadRevision, !pushed.isEmpty,
             let deployedRevision, deployedRevision == pushed
         {
+            var detail = "deployed \(deployed) = last pushed; app bundle \(mine)"
+            if deployed != mine {
+                detail += " — " + Self.engineLagConsequence
+            }
             return .current(
                 deploymentHash: remote, localIdentity: localRevision,
-                detail: "deployed \(deployed) = last pushed; app bundle \(mine)")
+                detail: detail)
         }
         return .stale(reason: Self.forwardSkewReason(
             deployed: deployed, bundle: mine,
@@ -829,6 +833,41 @@ public struct ClusterProvisioningOperations: Sendable {
         }
         return reason + " — pushing will REPLACE deployed \(deployed) with "
             + "the bundle's \(bundle)"
+    }
+
+    /// The forward-lag ADVISORY's consequence clause (2026-08-27 field
+    /// incident: `payload: current` read clean all day while the deployed
+    /// engine trailed the app bundle by 8 commits of engine-side semantics,
+    /// and six GPU sweeps ran on stale selection logic).
+    ///
+    /// The §8.1 answer stands: deployed == last pushed IS current, no push is
+    /// offered, and no rollback ever will be. What "current" cannot say alone
+    /// is that this build has moved on since that push — so the detail gains
+    /// this sentence, a warning and never a state change. Ancestry between the
+    /// two revisions is deliberately not claimed (the deployed sha may not
+    /// exist in any repository on this Mac), so every use of the clause sits
+    /// after a plain-inequality statement, never an "older than" one.
+    static let engineLagConsequence =
+        "server-side changes since that push are NOT running; "
+        + "push a fresh payload if the study needs them"
+
+    /// The submit-time twin of the status detail's warning, computed WITHOUT
+    /// touching the cluster (a submit verb must not grow an SSH probe): the
+    /// recorded deploy intent — what this Mac last pushed, the same record the
+    /// currency gate trusts — against the bundle payload's own manifest
+    /// revision. Nil when either identity is unknowable, or when they agree:
+    /// an advisory is never invented.
+    public static func engineLagAdvisory(
+        intent: ClusterDeployIntent, bundlePayloadRoot: String
+    ) -> String? {
+        let pushed = [intent.payloadRevision, intent.buildStamp]
+            .compactMap { $0 }.first { !$0.isEmpty }
+        guard let pushed else { return nil }
+        guard let bundle = localPayloadRevision(payloadRoot: bundlePayloadRoot),
+            bundle != pushed
+        else { return nil }
+        return "the engine this Mac last pushed (\(pushed)) is not this "
+            + "build's payload (\(bundle)) — " + engineLagConsequence
     }
 
     /// Dev-checkout payload comparison: local git stamp vs the deployed
@@ -875,9 +914,12 @@ public struct ClusterProvisioningOperations: Sendable {
         // Same intent rule as the manifest path: a deployed stamp this machine
         // wrote is current, whatever the local checkout is sitting on now.
         if let pushed = intent.buildStamp, !pushed.isEmpty, remote == pushed {
+            // remote != local here (the equal case returned above), so the
+            // lag warning always applies.
             return .current(
                 deploymentHash: remote, localIdentity: local,
-                detail: "deployed \(remote) = last pushed; local payload \(local)")
+                detail: "deployed \(remote) = last pushed; local payload "
+                    + "\(local) — " + Self.engineLagConsequence)
         }
         return .stale(reason: Self.forwardSkewReason(
             deployed: remote, bundle: local, lastPushed: intent.buildStamp,

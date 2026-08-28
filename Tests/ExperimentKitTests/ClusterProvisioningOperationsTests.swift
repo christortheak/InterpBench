@@ -994,6 +994,148 @@ struct ClusterProvisioningOperationsTests {
         #expect(observation.summary.contains("e9a93c9a"))
     }
 
+    // MARK: The forward-lag advisory (2026-08-27 field incident)
+
+    /// "current" (deployed == last pushed) is the §8.1 anti-rollback answer
+    /// and stands — but when the bundle has moved on since that push, the
+    /// detail must say the consequence out loud. Six GPU sweeps once ran on
+    /// stale selection logic while this line read clean all day.
+    @Test func aCurrentButLaggingEngineWarnsThatServerChangesAreNotRunning()
+        async throws
+    {
+        let payload = try generatedPayload(revision: "818bab84")
+        defer { try? FileManager.default.removeItem(at: payload) }
+        var configuration = configuration()
+        configuration.localPayloadPath = payload.path
+        let deployed = try deployedManifestText(revision: "64786651")
+
+        let operations = ClusterProvisioningOperations(
+            shell: RecordingShell([ClusterShellResult(exitCode: 0, lines: [deployed])]),
+            secrets: RecordingSecretStore())
+        let observation = await operations.observePayload(
+            site: site(), configuration: configuration,
+            intent: .init(payloadRevision: "64786651"))
+        guard case .current = observation else {
+            Issue.record("the advisory must not change the state: \(observation)")
+            return
+        }
+        #expect(observation.summary.contains("NOT running"))
+        #expect(observation.summary.contains("push a fresh payload"))
+        // Never a rollback offer: the skew gate's REPLACE vocabulary stays
+        // out of the advisory entirely.
+        #expect(!observation.summary.contains("REPLACE"))
+    }
+
+    /// The same revision repackaged (identical `sourceRevision`, different
+    /// manifest bytes) is current WITHOUT the warning — no lag to warn about.
+    @Test func aRepackagedSameRevisionCarriesNoLagWarning() async throws {
+        let payload = try generatedPayload(revision: "818bab84")
+        defer { try? FileManager.default.removeItem(at: payload) }
+        var configuration = configuration()
+        configuration.localPayloadPath = payload.path
+        let deployed = try deployedManifestText(revision: "818bab84")
+
+        let operations = ClusterProvisioningOperations(
+            shell: RecordingShell([ClusterShellResult(exitCode: 0, lines: [deployed])]),
+            secrets: RecordingSecretStore())
+        let observation = await operations.observePayload(
+            site: site(), configuration: configuration,
+            intent: .init(payloadRevision: "818bab84"))
+        guard case .current = observation else {
+            Issue.record("the same revision must read current: \(observation)")
+            return
+        }
+        #expect(!observation.summary.contains("NOT running"))
+    }
+
+    /// The dev (BUILD_COMMIT) path carries the same warning: a stamp this
+    /// machine wrote is current, and the checkout having moved on is said.
+    @Test func aDevPathLaggingEngineWarnsToo() async throws {
+        let payload = FileManager.default.temporaryDirectory
+            .appending(component: "steerlab-dev-\(UUID().uuidString)")
+        let package = payload.appending(path: "Server/steerlab_server")
+        try FileManager.default.createDirectory(
+            at: package, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: payload) }
+        var configuration = configuration()
+        configuration.localPayloadPath = payload.path
+
+        // No deployed manifest, local git identity 818bab84 (clean), then a
+        // deployed BUILD_COMMIT this machine wrote earlier.
+        let operations = ClusterProvisioningOperations(
+            shell: RecordingShell([
+                ClusterShellResult(exitCode: 1),
+                ClusterShellResult(exitCode: 0, lines: ["818bab84"]),
+                ClusterShellResult(exitCode: 0, lines: []),
+                ClusterShellResult(exitCode: 0, lines: ["64786651"]),
+            ]),
+            secrets: RecordingSecretStore())
+        let observation = await operations.observePayload(
+            site: site(), configuration: configuration,
+            intent: .init(buildStamp: "64786651"))
+        guard case .current = observation else {
+            Issue.record("a stamp this machine wrote must stay current: \(observation)")
+            return
+        }
+        #expect(observation.summary.contains("NOT running"))
+    }
+
+    /// The submit-time twin: computed from the deploy-intent record and the
+    /// bundle payload's manifest alone — no SSH — and never invented.
+    @Test func theSubmitTimeLagAdvisoryComparesIntentAgainstTheBundle() throws {
+        let payload = try generatedPayload(revision: "818bab84")
+        defer { try? FileManager.default.removeItem(at: payload) }
+
+        let lagging = ClusterProvisioningOperations.engineLagAdvisory(
+            intent: .init(payloadRevision: "64786651"),
+            bundlePayloadRoot: payload.path)
+        #expect(lagging?.contains("64786651") == true)
+        #expect(lagging?.contains("818bab84") == true)
+        #expect(lagging?.contains("NOT running") == true)
+
+        // Agreement, an empty record, and an unreadable bundle payload all
+        // stay silent — plain inequality between two KNOWN identities is the
+        // only thing the advisory claims.
+        #expect(
+            ClusterProvisioningOperations.engineLagAdvisory(
+                intent: .init(payloadRevision: "818bab84"),
+                bundlePayloadRoot: payload.path) == nil)
+        #expect(
+            ClusterProvisioningOperations.engineLagAdvisory(
+                intent: .init(), bundlePayloadRoot: payload.path) == nil)
+        #expect(
+            ClusterProvisioningOperations.engineLagAdvisory(
+                intent: .init(payloadRevision: "64786651"),
+                bundlePayloadRoot: "/nonexistent-payload") == nil)
+    }
+
+    /// The CLI wiring: `remote submit-bundle --site` reads the per-machine
+    /// runtime record for that site; no site (a `--url` invocation) and a
+    /// site this machine never pushed to are silent.
+    @Test func theSubmitVerbLagWarningReadsTheSiteRuntimeRecord() throws {
+        let payload = try generatedPayload(revision: "818bab84")
+        defer { try? FileManager.default.removeItem(at: payload) }
+        let storeFile = FileManager.default.temporaryDirectory
+            .appending(component: "steerlab-runtime-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: storeFile) }
+        let runtime = ClusterSiteRuntimeStore(fileURL: storeFile)
+        try runtime.recordPush(
+            siteID: "lab", payloadRevision: "64786651", buildStamp: "64786651")
+
+        let warning = ExperimentCLIRunner.engineLagWarning(
+            forSite: "lab", runtime: runtime, bundlePayloadRoot: payload.path)
+        #expect(warning?.contains("64786651") == true)
+        #expect(warning?.contains("NOT running") == true)
+        #expect(
+            ExperimentCLIRunner.engineLagWarning(
+                forSite: nil, runtime: runtime,
+                bundlePayloadRoot: payload.path) == nil)
+        #expect(
+            ExperimentCLIRunner.engineLagWarning(
+                forSite: "never-pushed", runtime: runtime,
+                bundlePayloadRoot: payload.path) == nil)
+    }
+
     // MARK: Controller reconciliation (the doctrine, at the operation level)
 
     @Test func aFailedSchedulerQueryIsUnknownAndNeverAbsent() async throws {
