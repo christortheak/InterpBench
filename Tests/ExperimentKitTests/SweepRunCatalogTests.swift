@@ -152,7 +152,8 @@ struct SweepRunCatalogTests {
                 },
                 "devPromptsHash": "deadbeef",
                 "winningCell": {"layer": 12, "alpha": 0.4},
-                "metrics": {"markerDensity": 0.31}
+                "metrics": {"markerDensity": 0.31, "distinct2Ratio": 0.875,
+                            "lengthInflated": 0}
               },
               "authority": "no cell passed the capability/coherence gates"
             }
@@ -165,6 +166,12 @@ struct SweepRunCatalogTests {
         #expect(provenance.winningCell.layer == 12)
         #expect(provenance.criterion.objective?.metric == "markerDensity")
         #expect(provenance.devPromptsHash == "deadbeef")
+        // The report pair both engines stamp since the coherence-evidence
+        // change decodes through the same [String: Double] map — the flag
+        // is a NUMBER on the wire (a JSON bool would refuse to decode
+        // here), and records without the keys decode exactly as before.
+        #expect(provenance.metrics["distinct2Ratio"] == 0.875)
+        #expect(provenance.metrics["lengthInflated"] == 0)
         guard case .failure(let message)? = parsed["authority"] else {
             Issue.record("expected failure message for authority")
             return

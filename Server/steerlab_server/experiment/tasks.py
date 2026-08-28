@@ -3260,7 +3260,12 @@ def complete_sweep_judgment(name: str, sweep_run: str, judgments: list,
                 layer=int(c["layer"]), alpha=float(c["alpha"]),
                 metric=sum(scores) / len(scores),
                 distinct2=float(c["distinct2"]),
-                battery_accuracy=float(c["batteryAccuracy"])))
+                battery_accuracy=float(c["batteryAccuracy"]),
+                # A deferred context written before the words field leaves
+                # the length unrecorded — the winner's lengthInflated stamp
+                # is then absent rather than invented.
+                words=(float(c["words"])
+                       if c.get("words") is not None else None)))
         best = sel.select_cell(cells, baseline, criterion)
         if best is None:
             # Say WHICH gate refused. "Capability/coherence" is one of two
@@ -3307,7 +3312,15 @@ def complete_sweep_judgment(name: str, sweep_run: str, judgments: list,
                         "baselineJudgeScore": baseline.metric,
                         "distinct2": best.distinct2,
                         "batteryAccuracy": best.battery_accuracy,
-                        "baselineBatteryAccuracy": baseline.battery_accuracy},
+                        "baselineBatteryAccuracy": baseline.battery_accuracy,
+                        # Same report pair the inline path stamps — the
+                        # coherence gate's own evidence, in the metrics the
+                        # promotion certificate copies.
+                        **sel.selection_report_metrics(
+                            best.distinct2, baseline.distinct2, best.words,
+                            (float(base_info["words"])
+                             if base_info.get("words") is not None
+                             else None))},
         }
         if control_info is not None:
             selection_block["control"] = control_info
@@ -3828,7 +3841,13 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                         metric=(float(done["objective"]) if extra_metric
                                 else float(done["markerDensity"])),
                         distinct2=float(done["distinct2"]),
-                        battery_accuracy=float(done["batteryAccuracy"])))
+                        battery_accuracy=float(done["batteryAccuracy"]),
+                        # A journal row from before the words column leaves
+                        # the length unrecorded — the winner's lengthInflated
+                        # stamp is then absent rather than invented.
+                        words=(float(done["words"])
+                               if done.get("words") not in (None, "")
+                               else None)))
                     continue
                 _checkpoint_if_requested(
                     f"concept={concept_name} L{layer} α{alpha:g}")
@@ -3866,7 +3885,8 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                 _append_progress({"kind": "row", "row": row})
                 cells.append(sel.SweepCell(layer=layer, alpha=alpha,
                                            metric=metric_value, distinct2=distinct,
-                                           battery_accuracy=accuracy))
+                                           battery_accuracy=accuracy,
+                                           words=words))
                 if deferred_judging:
                     _emit_judging_packets(
                         deferred_packets, deferred_map, concept_name, "cell",
@@ -3918,6 +3938,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                              "batteryAccuracy": baseline_accuracy},
                 "cells": [{"layer": c.layer, "alpha": c.alpha,
                            "distinct2": c.distinct2,
+                           "words": c.words,
                            "batteryAccuracy": c.battery_accuracy}
                           for c in cells],
             }
@@ -4052,6 +4073,12 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
         metrics_block.update({"distinct2": best.distinct2,
                               "batteryAccuracy": best.battery_accuracy,
                               "baselineBatteryAccuracy": baseline_accuracy})
+        # The coherence gate's own evidence travels WITH the metrics it
+        # adjudicated — previously the ratio and the length flag lived only
+        # in sweep.csv, so a promotion certificate inheriting this block
+        # could not show what its own floor gated on.
+        metrics_block.update(sel.selection_report_metrics(
+            best.distinct2, baseline_distinct, best.words, baseline_words))
         selection_block: dict = {
             "sweepRun": os.path.basename(run_directory),
             # Per-concept instruments: the provenance block pins the choice

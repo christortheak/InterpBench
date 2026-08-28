@@ -291,6 +291,17 @@ def test_spec_sweep_selects_and_stamps_provenance(tmp_path, monkeypatch):
     with open(os.path.join(run_dir, "sweep.csv"), encoding="utf-8") as h:
         csv_text = h.read()
     assert "fear,-1,0," in csv_text
+    # The coherence gate's own evidence rides IN the metrics, matching the
+    # winning cell's CSV row — no more joining sweep.csv on (layer, alpha)
+    # to learn what the floor gated on. The flag is a NUMBER (the metrics
+    # block is a Double map on the Swift twin), never a JSON bool.
+    winning = next(r for r in csv.DictReader(csv_text.splitlines())
+                   if r["layer"] == "2")
+    assert block["metrics"]["distinct2Ratio"] == \
+        pytest.approx(float(winning["distinct2Ratio"]))
+    assert block["metrics"]["lengthInflated"] == 0.0
+    assert not isinstance(block["metrics"]["lengthInflated"], bool)
+    assert winning["lengthInflated"] == "False"
 
 
 def test_spec_sweep_declared_criterion_overrides_defaults(tmp_path, monkeypatch):
@@ -1805,6 +1816,30 @@ def test_no_selection_reason_names_the_relative_rule():
         sel.no_selection_reason([_DEGENERATE], _BASELINE, legacy)
 
 
+def test_selection_report_metrics_stamps_numbers_and_omits_the_undefined():
+    """The recommendation's metrics carry the coherence gate's own evidence
+    — the ratio the baseline-relative floor adjudicates on, and the length
+    flag beside it. The block is a Double map on the Swift twin (which
+    decodes server-written files), so the flag is a NUMBER, never a JSON
+    bool; an undefined input yields an ABSENT key, which is exactly how
+    every legacy record already decodes."""
+    report = sel.selection_report_metrics(0.535, 0.989, 41.0, 25.0)
+    assert report["distinct2Ratio"] == pytest.approx(0.535 / 0.989)
+    assert report["lengthInflated"] == 1.0
+    assert not isinstance(report["lengthInflated"], bool)
+    calm = sel.selection_report_metrics(0.93, 0.989, 25.0, 25.0)
+    assert calm["lengthInflated"] == 0.0
+    # A zero-distinct2 baseline has no ratio (same rule as the CSV column)…
+    assert "distinct2Ratio" not in sel.selection_report_metrics(
+        0.5, 0.0, 41.0, 25.0)
+    # …and a cell or baseline with no recorded length (a legacy checkpoint
+    # row, a pre-words deferred context) stamps no flag.
+    assert "lengthInflated" not in sel.selection_report_metrics(
+        0.5, 1.0, None, 25.0)
+    assert "lengthInflated" not in sel.selection_report_metrics(
+        0.5, 1.0, 41.0, None)
+
+
 def test_a_relative_floor_run_refuses_a_cell_the_absolute_floor_accepts(
         tmp_path, monkeypatch):
     """End to end, both halves of the ruling in one sweep: the cell is admitted
@@ -1839,6 +1874,17 @@ def test_a_relative_floor_run_refuses_a_cell_the_absolute_floor_accepts(
     legacy_recs, legacy_rows = run(
         "abs", {"constraints": {"coherenceFloor": 0.3}})
     assert not isinstance(legacy_recs["fear"], str), legacy_recs["fear"]
+    # The selected cell's recommendation now carries the gate's own evidence
+    # in its metrics — the block every promotion certificate copies — and it
+    # matches the CSV row it used to have to be joined back against: the
+    # degenerate winner is visibly half the baseline's coherence and
+    # length-inflated ON the certificate path, not only in the grid file.
+    legacy_metrics = legacy_recs["fear"]["metrics"]
+    legacy_cell = next(r for r in legacy_rows if r["layer"] != "-1")
+    assert legacy_metrics["distinct2Ratio"] == pytest.approx(
+        float(legacy_cell["distinct2Ratio"]))
+    assert legacy_metrics["distinct2Ratio"] < 0.5
+    assert legacy_metrics["lengthInflated"] == 1.0
 
     # BASELINE-RELATIVE floor, same backstop: the same cell is refused,
     # because 0.375 is nowhere near 0.85 of a baseline that scored 1.0 — and

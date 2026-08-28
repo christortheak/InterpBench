@@ -713,16 +713,24 @@ public enum SweepSelectionRule {
         public var metric: Double  // objective metric value (markerDensity today)
         public var distinct2: Double
         public var batteryAccuracy: Double
+        /// Mean output length in whitespace words — carried so the selection
+        /// can stamp `lengthInflated` for the winning cell (server twin:
+        /// `SweepCell.words`). Nil when the cell was rebuilt from a record
+        /// that predates the column, in which case the flag is simply not
+        /// stamped. Selection never reads it.
+        public var words: Double?
 
         public init(
             layer: Int, alpha: Double, metric: Double,
-            distinct2: Double, batteryAccuracy: Double
+            distinct2: Double, batteryAccuracy: Double,
+            words: Double? = nil
         ) {
             self.layer = layer
             self.alpha = alpha
             self.metric = metric
             self.distinct2 = distinct2
             self.batteryAccuracy = batteryAccuracy
+            self.words = words
         }
     }
 

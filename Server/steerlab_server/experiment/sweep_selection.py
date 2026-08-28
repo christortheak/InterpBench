@@ -218,6 +218,35 @@ def length_inflated(mean_words: float, baseline_mean_words: float) -> bool:
             and mean_words > LENGTH_INFLATION_FACTOR * baseline_mean_words)
 
 
+def selection_report_metrics(cell_distinct2: float, baseline_distinct2: float,
+                             cell_words: float | None,
+                             baseline_words: float | None) -> dict:
+    """The coherence gate's own evidence, stamped INTO the recommendation's
+    ``metrics`` (and therefore into every promotion certificate that copies
+    them): ``distinct2Ratio`` — the number the baseline-relative floor
+    adjudicates on — and ``lengthInflated`` beside it. Until now both lived
+    only in sweep.csv, so a certificate's coherence claim could only be
+    recovered by joining the CSV back on (layer, alpha).
+
+    The metrics block is a NUMBER map on both engines — the Swift engine
+    decodes it (server-written files included) as ``[String: Double]`` — so
+    the flag is stamped as ``1.0``/``0.0``; a JSON boolean would refuse to
+    decode on the Mac. Either key is simply ABSENT when its input is
+    undefined: the ratio when the baseline's own distinct-2 is 0 (the same
+    rule as the CSV column), the flag when the cell's mean length was never
+    recorded (a resumed legacy checkpoint row or a pre-words deferred
+    context) — and absent keys are exactly how every legacy record already
+    decodes. Swift twin: ``ExperimentTasks.sweepMetricsBlock``."""
+    report: dict = {}
+    ratio = distinct2_ratio(cell_distinct2, baseline_distinct2)
+    if ratio is not None:
+        report["distinct2Ratio"] = ratio
+    if cell_words is not None and baseline_words is not None:
+        report["lengthInflated"] = (
+            1.0 if length_inflated(cell_words, baseline_words) else 0.0)
+    return report
+
+
 # --- coherence refusals (cross-engine literals; Swift twin: SweepSelectionRule)
 
 def coherence_ratio_range_refusal(value: float) -> str:
@@ -806,6 +835,12 @@ class SweepCell:
     metric: float          # objective metric value (markerDensity today)
     distinct2: float
     battery_accuracy: float
+    #: Mean output length in whitespace words — carried so the selection can
+    #: stamp ``lengthInflated`` for the winning cell. None when the cell was
+    #: rebuilt from a record that predates the column (a legacy checkpoint
+    #: row or deferred context), in which case the flag is simply not
+    #: stamped. Selection never reads it.
+    words: float | None = None
 
 
 @dataclass(frozen=True)
