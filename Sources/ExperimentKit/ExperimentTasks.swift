@@ -8395,6 +8395,13 @@ public enum ExperimentTasks {
                         container, prompt: prompt, modelID: manifest.modelID,
                         maxTokens: spec.maxTokens)
                     texts.append(text)
+                    // Persisted AS GENERATED (server `_dev_texts` twin): the
+                    // texts are the sweep's qualitative evidence, and a
+                    // mid-grid kill must not reduce them to log previews.
+                    try SweepRunCatalog.appendDevGeneration(
+                        runDirectory: runDirectory, kind: "baseline",
+                        concept: nil, layer: -1, alpha: 0,
+                        promptIndex: index, text: text)
                     await emit(sweepDevPreviewLine(
                         label: "baseline", index: index + 1,
                         total: devPrompts.count, text: text))
@@ -8472,6 +8479,10 @@ public enum ExperimentTasks {
                             container, prompt: prompt, modelID: manifest.modelID,
                             maxTokens: spec.maxTokens, injections: cell)
                         texts.append(text)
+                        try SweepRunCatalog.appendDevGeneration(
+                            runDirectory: runDirectory, kind: "cell",
+                            concept: ref.name, layer: layer, alpha: alpha,
+                            promptIndex: index, text: text)
                         await emit(sweepDevPreviewLine(
                             label: cellLabel, index: index + 1,
                             total: devPrompts.count, text: text))
@@ -8629,6 +8640,11 @@ public enum ExperimentTasks {
                                 container, prompt: prompt, modelID: manifest.modelID,
                                 maxTokens: spec.maxTokens, injections: controlCell)
                             controlTexts.append(text)
+                            try SweepRunCatalog.appendDevGeneration(
+                                runDirectory: runDirectory, kind: "control",
+                                concept: ref.name, layer: candidate.layer,
+                                alpha: candidate.alpha,
+                                promptIndex: index, text: text)
                             await emit(sweepDevPreviewLine(
                                 label: controlLabel, index: index + 1,
                                 total: devPrompts.count, text: text))

@@ -354,4 +354,72 @@ public enum SweepRunCatalog {
         else { return nil }
         return try? load(directory: directory)
     }
+
+    // MARK: Dev generations — the sweep's qualitative record
+
+    /// One JSON line per dev-prompt generation ({kind, concept, layer, alpha,
+    /// promptIndex, text}), appended as each text is generated. Before this
+    /// file existed the only prose evidence a sweep left behind was the
+    /// 160-char log previews — an entire dose ladder's generations were
+    /// unreadable after the fact. `kind` is "baseline" (concept null, layer
+    /// -1, alpha 0), "cell", or "control". Server twin:
+    /// `tasks.DEV_GENERATIONS_FILE` — schema parity, not byte parity.
+    public static let devGenerationsFile = "dev-generations.jsonl"
+
+    /// Per-record bound on the persisted text. Dev generations are short by
+    /// construction (the sweep spec's maxTokens), so this is a safety rail
+    /// against a decohered cell, not a working limit; a capped record
+    /// carries `truncated: true`. Server twin: `DEV_GENERATION_TEXT_LIMIT`.
+    public static let devGenerationTextLimit = 20_000
+
+    /// One record, encoded exactly as the file carries it (sorted keys, one
+    /// line, no trailing newline). Pure, so the schema is testable without a
+    /// model or a run directory.
+    public static func devGenerationLine(
+        kind: String, concept: String?, layer: Int, alpha: Double,
+        promptIndex: Int, text: String
+    ) throws -> String {
+        var record: [String: Any] = [
+            "kind": kind,
+            "concept": concept.map { $0 as Any } ?? NSNull(),
+            "layer": layer,
+            "alpha": alpha,
+            "promptIndex": promptIndex,
+            "text": text,
+        ]
+        if text.count > devGenerationTextLimit {
+            record["text"] = String(text.prefix(devGenerationTextLimit))
+            record["truncated"] = true
+        }
+        let data = try JSONSerialization.data(
+            withJSONObject: record,
+            options: [.sortedKeys, .withoutEscapingSlashes])
+        guard let line = String(data: data, encoding: .utf8) else {
+            throw ExperimentError(
+                reason: "dev generation record did not encode as UTF-8")
+        }
+        return line
+    }
+
+    /// Append one dev generation to the run directory's record, durably
+    /// (created on first append, fsync'd per line — the server journal's
+    /// discipline): the texts ARE the sweep's qualitative evidence, and a
+    /// mid-grid kill must not reduce them to log previews.
+    public static func appendDevGeneration(
+        runDirectory: URL, kind: String, concept: String?, layer: Int,
+        alpha: Double, promptIndex: Int, text: String
+    ) throws {
+        let line = try devGenerationLine(
+            kind: kind, concept: concept, layer: layer, alpha: alpha,
+            promptIndex: promptIndex, text: text)
+        let url = runDirectory.appending(component: devGenerationsFile)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        _ = try handle.seekToEnd()
+        try handle.write(contentsOf: Data((line + "\n").utf8))
+        try handle.synchronize()
+    }
 }
