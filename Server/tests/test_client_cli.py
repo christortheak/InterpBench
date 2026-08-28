@@ -335,6 +335,62 @@ def test_set_protocol_refuses_an_unknown_instrument_value(workspace, capsys):
     assert "outcomeInstruments" not in document
 
 
+def test_set_protocol_authors_the_stochastic_replication_arm(
+        workspace, capsys):
+    """The field-discovered gap that motivated the sampling writers, closed
+    end-to-end: a 25-sample × T=0.7 × 1024-token replication arm is
+    authorable headlessly from this client, and the run loop's own decoder
+    reads it back. The joint stochastic rules stay verify()'s to enforce."""
+    assert _run(["experiment", "create", "demo", "--model", "org/m"]) == 0
+    capsys.readouterr()
+    assert _run(["experiment", "set-protocol", "demo",
+                 "--set", "temperature=0.7",
+                 "--set", "maxTokens=1024",
+                 "--set", "samplesPerItem=25",
+                 "--set", "seedPolicy=derivedSHA256", "--json"]) == 0
+    result = _document(capsys)["result"]
+    assert result["applied"] == [
+        "maxTokens", "samplesPerItem", "seedPolicy", "temperature"]
+    document = experiment_store.load_raw("demo", str(workspace))
+    assert document["samplesPerItem"] == 25
+    assert document["seedPolicy"] == "derivedSHA256"
+    assert document["temperature"] == 0.7
+    assert document["maxTokens"] == 1024
+    manifest = Manifest.from_dict(document)
+    assert manifest.samples_per_item == 25
+    assert manifest.seed_policy == "derivedSHA256"
+
+
+def test_set_protocol_refuses_an_out_of_vocabulary_sampling_value(
+        workspace, capsys):
+    """The store's declaration-time gates reach this surface as
+    ``authoringRefused``/65 (the ``outcomeInstruments`` shape): an unknown
+    seedPolicy would be read by nothing downstream, a samplesPerItem below 1
+    is not a replication count, and malformed exclusion rules refuse with
+    the exclusion engine's own sentences. Nothing is written."""
+    assert _run(["experiment", "create", "demo", "--model", "org/m"]) == 0
+    capsys.readouterr()
+    assert _run(["experiment", "set-protocol", "demo",
+                 "--set", "seedPolicy=diceRoll", "--json"]) == 65
+    error = _document(capsys)["error"]
+    assert error["code"] == "authoringRefused"
+    assert "diceRoll" in error["reason"]
+    assert "manifestSeeds" in error["reason"]  # the vocabulary is listed
+    assert _run(["experiment", "set-protocol", "demo",
+                 "--set", "samplesPerItem=0", "--json"]) == 65
+    assert "samplesPerItem must be ≥ 1" in _document(capsys)["error"]["reason"]
+    assert _run(["experiment", "set-protocol", "demo",
+                 "--set", 'exclusionRules=[{"rule": "outOfRange"}]',
+                 "--json"]) == 65
+    error = _document(capsys)["error"]
+    assert "declares no bounds" in error["reason"]
+    assert "set-exclusions" in error["repairAction"]
+    document = experiment_store.load_raw("demo", str(workspace))
+    assert "seedPolicy" not in document
+    assert "samplesPerItem" not in document
+    assert "exclusionRules" not in document
+
+
 def test_concept_import_asks_which_pole_unpaired_texts_join(workspace, capsys):
     """``authoring.parse_import``'s docstring says the UI decides which side
     single texts join. The client is that decider's headless twin and ASKS:
@@ -696,9 +752,10 @@ def test_the_client_declares_the_authoring_verbs_the_engine_refuses():
     """The two surfaces are complements, not rivals: every verb the engine
     redirects to the Mac as `macAuthorityVerb` is one this client can now
     perform against a LOCAL workspace. (`pin-prompts`, `pin-rubric`,
-    `set-instruments` and `set-sweep-selection` are protocol fields the client
-    reaches through `set-protocol` rather than as their own verbs, and
-    `panel compile` needs the scenario compiler, not the store.)"""
+    `set-instruments`, `set-sweep-selection`, `set-sampling` and
+    `set-exclusions` are protocol fields the client reaches through
+    `set-protocol` rather than as their own verbs, and `panel compile` needs
+    the scenario compiler, not the store.)"""
     client = {spec.verb for spec in client_cli.CLIENT_VERB_SPECS
               if spec.family == "experiment"}
     redirected = set(cli_envelope.MAC_AUTHORITY_VERBS["experiment"])

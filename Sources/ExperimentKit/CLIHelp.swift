@@ -56,6 +56,7 @@ public enum CLIFlagVocabulary {
         "--deltas": "<d1,d2>",
         "--description": "<text>",
         "--dev-prompts": "<path>",
+        "--endpoint": "<key>",
         "--env-file": "<path>",
         "--env-prefix": "<path>",
         "--experiment": "<name>",
@@ -71,8 +72,10 @@ public enum CLIFlagVocabulary {
         "--judges": "<spec>",
         "--layer-fractions": "<f1,f2,…>",
         "--layers": "<L1,L2,…>",
+        "--max": "<x>",
         "--max-tokens": "<n>",
         "--method": "<name>",
+        "--min": "<x>",
         "--model": "<id>",
         "--name": "<name>",
         "--negative": "<text>",
@@ -97,7 +100,9 @@ public enum CLIFlagVocabulary {
         "--root": "<dir>",
         "--run": "<run-dir>",
         "--run-substrate": "<local|server>",
+        "--samples-per-item": "<n>",
         "--seat": "<seat>=<agent-artifact-path>",
+        "--seed-policy": "<policy>",
         "--shape": "<contentPair|singleStimulus>",
         "--sha256": "<hex>",
         "--since": "<date>",
@@ -124,6 +129,10 @@ public enum CLIFlagVocabulary {
         // refusal cannot disagree (gate-5 dry run #2, P3).
         "experiment set-instruments --ordinal-aggregation":
             "<" + ExperimentStore.knownOrdinalAggregations.joined(separator: "|") + ">",
+        "experiment set-sampling --prompt-mode":
+            "<" + ExperimentStore.knownPromptModes.joined(separator: "|") + ">",
+        "experiment set-sampling --seed-policy":
+            "<" + ExperimentStore.knownSeedPolicies.joined(separator: "|") + ">",
         "remote fetch --out": "<dir>",
         "remote import --out": "<dir>",
         "docs cli-reference --path": "<file>",
@@ -168,6 +177,9 @@ public enum CLIFlagVocabulary {
         "--description": "Free text stored on the manifest.",
         "--dev-prompts": "The dev split the sweep generates on.",
         "--dry-run": "Print what would be submitted and submit nothing.",
+        "--endpoint":
+            "The record-level parsed-value key the endpoint rules read "
+            + "(default parsedMonths).",
         "--env-file": "Path of the environment file the bootstrap step installs.",
         "--env-prefix": "Remote path prefix for the created environment.",
         "--executor": "Where the server runs the job.",
@@ -203,8 +215,10 @@ public enum CLIFlagVocabulary {
             + "must already have been extracted for.",
         "--materialize-env":
             "Install the env file rendered from the site profile (the default).",
+        "--max": "Upper bound of the outOfRange keep-window.",
         "--max-tokens": "Maximum tokens to generate (default 512).",
         "--method": "Extraction recipe for the named concepts.",
+        "--min": "Lower bound of the outOfRange keep-window.",
         "--model": "The model id.",
         "--name": "Names the file the delivered data lands at.",
         "--negative": "What the negative pole IS — a second considered position, never the absence of the first.",
@@ -242,6 +256,12 @@ public enum CLIFlagVocabulary {
         "--root": "Act on this install root instead of the running binary's own.",
         "--run": "The source run directory; absent, the newest completed run.",
         "--run-substrate": "Which engine's validate and battery evidence the gates read.",
+        "--samples-per-item":
+            "Stochastic samples per (condition, prompt) — 1 clears to the "
+            + "deterministic default.",
+        "--seed-policy":
+            "How per-record sampling seeds are derived (\"\" clears the "
+            + "declaration).",
         "--seat":
             "Seat one agent artifact; repeat per seat. Unnamed seats stay baseline.",
         "--sha256": "Expected digest of the downloaded bundle.",
@@ -284,6 +304,17 @@ public enum CLIFlagVocabulary {
         "experiment set-sweep-grid --max-tokens":
             "Tokens generated per swept cell (default 80) — the grid's cost "
             + "multiplier, not the study's generation length.",
+        // The TOP-LEVEL sampling fields, disambiguated from the sweep grid's
+        // per-cell budget and `panel compile`'s pre-cast overrides.
+        "experiment set-sampling --temperature":
+            "The study's sampling temperature (0 = greedy; a local MLX run "
+            + "refuses any other value).",
+        "experiment set-sampling --max-tokens":
+            "Maximum tokens generated per record (default 512) — the study's "
+            + "generation length, not the sweep grid's per-cell budget.",
+        "experiment set-sampling --prompt-mode":
+            "How the prompt is rendered (default chatAssistant; \"\" clears "
+            + "the declaration).",
         "experiment create --model": "The model this experiment is pinned to (required).",
         "vectors backfill-norms --model": "Load this model for the measurement.",
         "vectors mirror-poles --concept":

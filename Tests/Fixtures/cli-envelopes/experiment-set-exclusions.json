@@ -1,0 +1,24 @@
+{
+  "changed" : true,
+  "engine" : "swift-mlx",
+  "message" : "declared 2 exclusion rule(s) on 'demo': Drop answers where no parsedMonths value could be read (parse failures). Drop answers whose parsedMonths is outside 0 to 600.",
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "result" : {
+    "exclusionRules" : [
+      {
+        "rule" : "unparseableEndpoint"
+      },
+      {
+        "max" : 600,
+        "min" : 0,
+        "rule" : "outOfRange"
+      }
+    ],
+    "experiment" : "demo",
+    "ruleCount" : 2
+  },
+  "schemaVersion" : 1,
+  "state" : "ready",
+  "verb" : "experiment set-exclusions",
+  "workspace" : "<workspace>"
+}

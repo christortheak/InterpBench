@@ -66,7 +66,8 @@ public enum CLIReferenceDocument {
                 "experiment pin-prompts", "experiment pin-rubric",
                 "experiment declare-condition", "experiment set-sweep-selection",
                 "experiment set-sweep-grid",
-                "experiment set-instruments", "experiment set-style-taxonomy",
+                "experiment set-instruments", "experiment set-sampling",
+                "experiment set-exclusions", "experiment set-style-taxonomy",
                 "experiment verify", "experiment freeze", "experiment duplicate",
             ]),
         .init(

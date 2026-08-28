@@ -133,7 +133,9 @@ import Testing
             {"description":"d","task":"t","outcomes":"o","judgeModel":"j",
              "judgePrompt":"p","taskPromptsFile":"f","promptMode":"rawCompletion",
              "systemPrompt":"s","qwenThinkingEnabled":false,
-             "temperature":0.1,"maxTokens":16}
+             "temperature":0.1,"maxTokens":16,"samplesPerItem":25,
+             "seedPolicy":"derivedSHA256",
+             "exclusionRules":[{"rule":"unparseableEndpoint"}]}
             """#.utf8)
         #expect(SteerLabWebServer.unknownProtocolBodyKeys(in: body).isEmpty)
     }

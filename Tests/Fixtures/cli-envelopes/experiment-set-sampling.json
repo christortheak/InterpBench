@@ -1,0 +1,25 @@
+{
+  "changed" : true,
+  "engine" : "swift-mlx",
+  "message" : "declared sampling protocol on 'demo': 25 sample(s) × temperature 0.7 × up to 1024 tokens  ·  prompt mode chatAssistant  ·  seed policy derivedSHA256  ·  server substrate only",
+  "nextAction" : {
+    "missingPermissionFlags" : [
+
+    ],
+    "requiresHuman" : false,
+    "verb" : "experiment verify demo"
+  },
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "result" : {
+    "experiment" : "demo",
+    "maxTokens" : 1024,
+    "promptMode" : "chatAssistant",
+    "samplesPerItem" : 25,
+    "seedPolicy" : "derivedSHA256",
+    "temperature" : 0.7
+  },
+  "schemaVersion" : 1,
+  "state" : "ready",
+  "verb" : "experiment set-sampling",
+  "workspace" : "<workspace>"
+}

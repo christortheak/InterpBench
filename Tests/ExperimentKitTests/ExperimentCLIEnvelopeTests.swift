@@ -270,6 +270,41 @@ import Testing
         }
     }
 
+    /// The sampling protocol, echoed — the whole row, not just the flags
+    /// that moved, because the samples × temperature × tokens product is the
+    /// study's cost and replication shape. This golden is the motivating
+    /// stochastic replication arm (25 × 0.7 × 1024, derivedSHA256).
+    @Test func experimentSetSamplingEnvelope() async throws {
+        try await withTempRoot { root in
+            await invoke(
+                "experiment",
+                ["create", "demo", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            let outcome = await invoke(
+                "experiment",
+                ["set-sampling", "demo", "--temperature", "0.7",
+                 "--max-tokens", "1024", "--samples-per-item", "25",
+                 "--seed-policy", "derivedSHA256"])
+            #expect(outcome.envelope.state == .ready)
+            try check(outcome, fixture: "experiment-set-sampling", root: root)
+        }
+    }
+
+    /// The declared exclusion rules, echoed as stored (omit-when-nil, like
+    /// the manifest's own encoding) — the echo IS the declaration.
+    @Test func experimentSetExclusionsEnvelope() async throws {
+        try await withTempRoot { root in
+            await invoke(
+                "experiment",
+                ["create", "demo", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            let outcome = await invoke(
+                "experiment",
+                ["set-exclusions", "demo", "unparseableEndpoint,outOfRange",
+                 "--min", "0", "--max", "600"])
+            #expect(outcome.envelope.state == .ready)
+            try check(outcome, fixture: "experiment-set-exclusions", root: root)
+        }
+    }
+
     /// The refusal an agent meets on a ladder that doubles back — pinned as a
     /// golden because its `error.code`/`error.gate`/`repairAction` are the
     /// machine surface a caller acts on.
@@ -599,6 +634,13 @@ import Testing
             // obtain one was `duplicate` — with the donor's concepts aboard.
             "experiment set-sweep-grid",
             "experiment set-instruments",
+            // The generation protocol and the exclusion rules — the six
+            // manifest fields (temperature, maxTokens, promptMode,
+            // samplesPerItem, seedPolicy, exclusionRules) that were writable
+            // only from the Study Setup panel and the SwiftUI rules editor,
+            // so a stochastic replication arm could not be authored
+            // headlessly and was cut from a study design.
+            "experiment set-sampling", "experiment set-exclusions",
             "experiment set-style-taxonomy", "experiment verify",
             "experiment freeze", "experiment duplicate", "experiment extract",
             "experiment validate", "experiment sweep", "experiment run",
@@ -638,10 +680,13 @@ import Testing
         // `attach`, without which a concept pin was the one authoring
         // declaration that could only ever be ADDED — and `set-sweep-grid`,
         // the sweep block's other half, without which a grid could only be
-        // inherited by duplicating a study and its concepts with it.
+        // inherited by duplicating a study and its concepts with it — plus
+        // `set-sampling` and `set-exclusions`, the writers for the six
+        // protocol fields the panel owned exclusively (a stochastic
+        // replication arm could not be authored headlessly).
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 23,
-            "the experiment lifecycle is twenty-three verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
+            declared.filter { $0.hasPrefix("experiment ") }.count == 25,
+            "the experiment lifecycle is twenty-five verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
     }
 
     @Test func everySpecIsInARunnerOwnedNamespace() {

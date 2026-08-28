@@ -10,6 +10,34 @@ A breaking change to a run, manifest, or JSON-envelope schema gets a new
 schema number, a reader for the old form, and an entry in this file — never a
 migration that rewrites frozen bytes.
 
+## [Unreleased]
+
+### Added
+
+- **The generation protocol and the exclusion rules gained headless
+  writers, on both engines.** Six manifest protocol fields — `temperature`,
+  `maxTokens`, `promptMode`, `samplesPerItem`, `seedPolicy`,
+  `exclusionRules` — had no writer on either CLI (field-discovered: a
+  stochastic replication arm of 25 samples × T=0.7 × 1024 tokens could not
+  be authored headlessly and was cut from a study design). The Mac grows two
+  verbs on the `set-sweep-grid` ownership pattern: `experiment set-sampling`
+  owns the top-level sampling fields with merge semantics (only the flags
+  given move; the joint stochastic rules stay `verify()` violations so the
+  fields can be declared one flag at a time), and `experiment
+  set-exclusions` owns the declared record-exclusion rules, refusing with
+  the exclusion engine's own violation sentences. The Python client's
+  `set-protocol` vocabulary gains `samplesPerItem` and `seedPolicy`, and all
+  six fields now carry declaration-time value gates with cross-engine twin
+  sentences — an out-of-vocabulary `promptMode`/`seedPolicy` is read by
+  equality tests downstream and silently behaves as the default, and a
+  non-numeric `temperature`/`maxTokens`/`samplesPerItem` bricks the manifest
+  at the next decode, so both engines refuse at the write. The Mac's
+  `POST /api/experiment/protocol` body accepts the three keys it was
+  missing (`samplesPerItem`, `seedPolicy`, `exclusionRules`) with the same
+  gates. **Behaviour break, deliberate:** a `set-protocol` call that used to
+  write a malformed value for one of these six fields verbatim now refuses
+  at `65` with nothing written.
+
 ## [0.9.3] — 2026-08-27
 
 Everything new since the internal `v0.9.2` cut, which was never

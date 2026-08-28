@@ -401,11 +401,25 @@ spelling the store itself dispatches). The Mac's `pin-prompts`, `pin-rubric`,
 reachable through `set-protocol --set <key>=<json>` — `taskPromptsFile` +
 `taskPromptsHash`, `judgeRubricFile` + `judgeRubricHash`,
 `outcomeInstruments`, and `sweep` respectively — because that is the shape
-`set_protocol` actually has. The field vocabulary is closed
+`set_protocol` actually has. The same shape covers the Mac's `set-sampling`
+and `set-exclusions`: the generation protocol (`temperature`, `maxTokens`,
+`promptMode`, `samplesPerItem`, `seedPolicy`) and the declared
+`exclusionRules` are protocol fields here, so a stochastic replication arm
+(`--set samplesPerItem=25 --set temperature=0.7 --set maxTokens=1024 --set
+seedPolicy=derivedSHA256`) is authorable from any machine. The field
+vocabulary is closed
 (`experiment_store.PROTOCOL_FIELDS`) and a key outside it **refuses at 64**,
 naming the key and listing the vocabulary, with nothing written — never a
 silent drop reported as success. An `outcomeInstruments` value outside the
-instrument vocabulary refuses the same way the Mac's `set-instruments` does.
+instrument vocabulary refuses the same way the Mac's `set-instruments` does,
+and the sampling/exclusion fields carry the same declaration-time gates as
+their Mac verbs, with the same sentences (`unknown seedPolicy …`, `unknown
+promptMode …`, `samplesPerItem must be ≥ 1 …`, and the exclusion engine's
+own violation wording): an out-of-vocabulary value would otherwise be read
+by equality tests downstream and silently behave as the default, and a
+non-numeric `temperature`/`maxTokens`/`samplesPerItem` would fail the next
+manifest decode — bricking every later verb — so both engines refuse it at
+the write.
 
 A fourth family, `authoring`, joined for a different reason again. Its one
 verb — `authoring prompt <kind>` — renders a generation prompt from the

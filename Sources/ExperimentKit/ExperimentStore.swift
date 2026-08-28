@@ -2849,6 +2849,11 @@ public enum ExperimentStore {
         "siliconFormalism", "katzZamir", "sentencing",
     ]
     public static let knownSeedPolicies = ["manifestSeeds", "derivedSHA256"]
+    /// The closed `promptMode` vocabulary, derived from the manifest's own
+    /// enum so `--help`, the refusal, and the decoder cannot name different
+    /// values (server twin: `experiment_store.KNOWN_PROMPT_MODES`).
+    public static let knownPromptModes =
+        ExperimentManifest.PromptMode.allCases.map(\.rawValue)
     public static let knownOutcomeInstruments = [
         "sampledText", "answerTokenLogprob", "choiceProbability",
         "repeReaderScore", "ordinalScale",
@@ -3486,25 +3491,118 @@ public enum ExperimentStore {
     /// default is 1); seedPolicy must be a known policy or empty (absent).
     /// The server-only-stochastic rule is surfaced by the UI, not enforced
     /// here — a local draft may legitimately declare a stochastic design it
-    /// will run on the server.
+    /// will run on the server. FULL-STATE semantics (the panel's shape): nil
+    /// clears, unlike the merge-semantics `setSamplingProtocol` below.
     @discardableResult
     public static func setSamplingPolicy(
         samplesPerItem: Int?, seedPolicy: String?, experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            if let samples = samplesPerItem, samples < 1 {
-                throw ExperimentError(
-                    reason: "samplesPerItem must be ≥ 1 — got \(samples)")
+            try applySamplesPerItem(
+                samplesPerItem ?? 1, to: &manifest,
+                experimentName: experimentName)
+            try applySeedPolicy(
+                seedPolicy ?? "", to: &manifest, experimentName: experimentName)
+        }
+    }
+
+    /// One rule per field, shared by the two sampling setters so the
+    /// full-state and merge paths cannot drift. An out-of-range/vocabulary
+    /// value is a MALFORMED invocation (64) — the caller typed a value the
+    /// field cannot hold, the shape `set-instruments` refuses at.
+    /// Refusal sentences are the cross-engine contract (server twin: the
+    /// per-field gates in `experiment_store.set_protocol`).
+    private static func applySamplesPerItem(
+        _ samples: Int, to manifest: inout ExperimentManifest,
+        experimentName: String
+    ) throws {
+        guard samples >= 1 else {
+            throw ExperimentError.malformed(
+                "samplesPerItem must be ≥ 1 — got \(samples)",
+                repair: "steerlab-cli experiment set-sampling \(experimentName) "
+                    + "--samples-per-item <n≥1>  (1 clears to the "
+                    + "deterministic default)")
+        }
+        manifest.samplesPerItem = samples > 1 ? samples : nil
+    }
+
+    private static func applySeedPolicy(
+        _ policy: String, to manifest: inout ExperimentManifest,
+        experimentName: String
+    ) throws {
+        let trimmed = policy.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty || knownSeedPolicies.contains(trimmed) else {
+            throw ExperimentError.malformed(
+                "unknown seedPolicy '\(trimmed)' — known: "
+                    + knownSeedPolicies.joined(separator: ", "),
+                repair: "steerlab-cli experiment set-sampling \(experimentName) "
+                    + "--seed-policy <"
+                    + knownSeedPolicies.joined(separator: "|") + ">")
+        }
+        manifest.seedPolicy = trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// The study's generation/sampling protocol, headlessly — the writer the
+    /// `set-sampling` verb dispatches to, with MERGE semantics like
+    /// `setSweepGrid`: every nil parameter leaves the manifest's value as it
+    /// stands, "" clears `promptMode`/`seedPolicy` to ABSENT, and
+    /// `samplesPerItem` 1 clears to ABSENT (the engine default). Value
+    /// refusals are malformed invocations (64); the JOINT stochastic rules
+    /// (samplesPerItem > 1 needs temperature > 0 and seedPolicy
+    /// derivedSHA256) stay verify() violations, because a merge setter that
+    /// enforced them would forbid declaring the fields one flag at a time.
+    @discardableResult
+    public static func setSamplingProtocol(
+        temperature: Double? = nil, maxTokens: Int? = nil,
+        promptMode: String? = nil, samplesPerItem: Int? = nil,
+        seedPolicy: String? = nil, experimentName: String
+    ) throws -> ExperimentManifest {
+        try updateDraft(name: experimentName) { manifest in
+            if let temperature {
+                guard temperature.isFinite, temperature >= 0 else {
+                    throw ExperimentError.malformed(
+                        "temperature must be a non-negative number — got "
+                            + "\(temperature)",
+                        repair: "steerlab-cli experiment set-sampling "
+                            + "\(experimentName) --temperature <t≥0>")
+                }
+                manifest.temperature = temperature
             }
-            let policy = seedPolicy?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let policy, !policy.isEmpty, !knownSeedPolicies.contains(policy) {
-                throw ExperimentError(
-                    reason: "unknown seedPolicy '\(policy)' — known: "
-                        + knownSeedPolicies.joined(separator: ", "))
+            if let maxTokens {
+                guard maxTokens >= 1 else {
+                    throw ExperimentError.malformed(
+                        "maxTokens must be a positive integer — got \(maxTokens)",
+                        repair: "steerlab-cli experiment set-sampling "
+                            + "\(experimentName) --max-tokens <n≥1>")
+                }
+                manifest.maxTokens = maxTokens
             }
-            manifest.samplesPerItem =
-                (samplesPerItem ?? 1) > 1 ? samplesPerItem : nil
-            manifest.seedPolicy = policy?.isEmpty == false ? policy : nil
+            if let promptMode {
+                let trimmed = promptMode
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    manifest.promptMode = nil
+                } else if let mode =
+                    ExperimentManifest.PromptMode(rawValue: trimmed)
+                {
+                    manifest.promptMode = mode
+                } else {
+                    throw ExperimentError.malformed(
+                        "unknown promptMode '\(trimmed)' — known: "
+                            + knownPromptModes.joined(separator: ", "),
+                        repair: "steerlab-cli experiment set-sampling "
+                            + "\(experimentName) --prompt-mode <"
+                            + knownPromptModes.joined(separator: "|") + ">")
+                }
+            }
+            if let samplesPerItem {
+                try applySamplesPerItem(
+                    samplesPerItem, to: &manifest, experimentName: experimentName)
+            }
+            if let seedPolicy {
+                try applySeedPolicy(
+                    seedPolicy, to: &manifest, experimentName: experimentName)
+            }
         }
     }
 

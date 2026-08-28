@@ -464,6 +464,26 @@ count and `freezeHash`. The cheapest orientation command; run it first.
 refuses (`pinDrift`, one line per drifted pin) if a byte moved. What the other
 verbs run for you, available alone, safe at any status.
 
+**`set-sampling <name> [--temperature <t>] [--max-tokens <n>]
+[--prompt-mode chatAssistant|rawCompletion] [--samples-per-item <n>]
+[--seed-policy manifestSeeds|derivedSHA256]`** — declares the generation
+protocol on a draft, merge-style: only the flags given move, `""` clears
+`--prompt-mode`/`--seed-policy`, and `--samples-per-item 1` clears to the
+deterministic default. A stochastic replication arm is `--samples-per-item 25
+--temperature 0.7 --max-tokens 1024 --seed-policy derivedSHA256` — legal to
+declare locally; §7's greedy-only rule then routes the run to the server
+engine. The joint rules (`samplesPerItem > 1` needs `temperature > 0` and
+seedPolicy `derivedSHA256`) surface at `verify`, not here, so the fields can
+be declared one flag at a time.
+
+**`set-exclusions <name> <rule>[,…] [--endpoint <key>] [--min <x>]
+[--max <x>]`** — declares the record-exclusion rules analysis applies
+(`failedAttentionCheck`, `unparseableEndpoint`, `outOfRange`) on a draft;
+`""` clears the declaration. `--min`/`--max` bound the `outOfRange`
+keep-window and `--endpoint` names the parsed-value key the endpoint rules
+read (default `parsedMonths`). Exclusions apply at analysis time only and
+are stamped honestly — records never leave `generations.jsonl`.
+
 **`set-style-taxonomy <name> prompts/taxonomies/<file>.json`** — pins a
 reasoning-style taxonomy (path + hash) on a draft. No pin, no reasoning-style
 scoring; drift after pinning is a verify violation like any other.

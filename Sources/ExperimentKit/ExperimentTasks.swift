@@ -4981,15 +4981,18 @@ public enum ExperimentTasks {
     /// PyTorch per record. Extracted so the refusal is unit-testable.
     /// The repair for the local greedy-only policy (WP0 step 7): the study
     /// either becomes deterministic here, or it moves to the substrate that
-    /// seeds per record. Both are commands; "set the temperature to 0" alone
-    /// was not, because no CLI verb sets it.
+    /// seeds per record. Both are commands — the stay-local arm became one
+    /// when `set-sampling` landed (before it, no CLI verb set the
+    /// temperature, so the repair could only say "edit the manifest").
     static func samplingPolicyRepair(_ name: String) -> String {
         "steerlab-cli remote package \(name) && steerlab-cli remote "
             + "submit-bundle <bundle> --verb run (--site <id> | --url <server>)"
             + "  — the Python server seeds PyTorch per record; the local MLX "
             + "generator pins no per-run seed, so a stochastic study runs "
-            + "there. To stay local instead, edit temperature to 0 and one "
-            + "seed in the DRAFT manifest and re-freeze."
+            + "there. To stay local instead: steerlab-cli experiment "
+            + "duplicate \(name) \(name)-v2 && steerlab-cli experiment "
+            + "set-sampling \(name)-v2 --temperature 0, set one seed, and "
+            + "re-freeze."
     }
 
     static func requireGreedyLocalDesign(_ manifest: ExperimentManifest) throws {
