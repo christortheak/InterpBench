@@ -841,6 +841,132 @@ def test_promote_cell_override_is_loud_and_stamped(tmp_path):
     assert any("manualOverride" in m for m in messages)
 
 
+# --- mirrored-pole inheritance (promotion.poleProvenance) -------------------
+
+PARENT_STIMULUS_HASH = "p" * 64
+SOURCE_TENSOR_HASH = "t" * 64
+NEGATED_FROM = {"path": "runs/20260707T000000100-extract/courage",
+                "sha256TensorHash": SOURCE_TENSOR_HASH,
+                "sha256SidecarHash": "s" * 64,
+                "concept": "courage",
+                "date": "2026-08-27T00:00:00Z"}
+
+
+def test_promotion_without_mirror_marks_carries_no_pole_key(tmp_path):
+    """Decodable-absent: an ordinary promotion's certificate never gains the
+    key, so legacy and non-mirrored certificates keep their exact bytes."""
+    root = str(tmp_path)
+    _promotable(root, name="np")
+    out = promote_mod.promote("np", "fear", root=root, log=lambda *_: None)
+    assert "poleProvenance" not in out["variant"]["promotion"]
+
+
+def test_promote_inherits_pole_provenance_from_mirrored_sidecar(tmp_path):
+    """The matched artifact's own sidecar declares the swap (a minted mirror,
+    ``pole_mirror``): the certificate inherits the source pole — concept and
+    tensor hash from ``negatedFrom``, the qualified parent stimulus hash the
+    sidecar carries verbatim — and the promote log announces the negation."""
+    root = str(tmp_path)
+    stimulus_hash = _experiment_with_concept(root, "mp")
+    _vector_artifact(root, stimulus_hash=stimulus_hash, extras={
+        "polesSwappedFromSource": True, "negatedFrom": NEGATED_FROM})
+    es.add_condition("mp", {
+        "name": "fear-recommended",
+        "slots": [{"concept": "fear", "layer": 3, "alpha": 0.4}],
+        "bandWidth": 1, "alphaInNormUnits": True,
+        "selection": {**SELECTION_BLOCK,
+                      "winningCell": {"layer": 3, "alpha": 0.4}}}, root)
+    _plant_completed_sweep_run(root)
+    messages: list = []
+    out = promote_mod.promote("mp", "fear", root=root, log=messages.append)
+    assert out["variant"]["promotion"]["poleProvenance"] == {
+        "polesSwappedFromSource": True,
+        "sourceConcept": "courage",
+        # The mirror carries the SOURCE concept's hash verbatim, qualified —
+        # so that is the source hash the certificate states.
+        "sourceStimulusSetHash": stimulus_hash,
+        "sourceTensorHash": SOURCE_TENSOR_HASH,
+    }
+    assert any("MIRRORED POLE" in m and "'courage'" in m for m in messages)
+
+
+def _mirror_pinned_experiment(root, name, *, sidecar_hash_pin=None):
+    """An artifact-pinned mirrored concept, promotable: the manifest pin
+    carries the mirror linkage (``polesSwappedFromSource`` +
+    ``sourceStimulusSetHash``), the PINNED original sidecar (with its
+    ``negatedFrom``) sits at the pin's path, and the matched artifact is a
+    materialized-copy-shaped sidecar satisfying the pinned recipe identity.
+    ``sidecar_hash_pin`` overrides the pin's ``sha256SidecarHash`` to
+    simulate a drifted/unverifiable pinned sidecar."""
+    stimulus_hash = _experiment_with_concept(root, name)
+    pinned_run = "20260707T000000500-mirror"
+    pinned_sidecar = {"modelID": "org/m", "concept": "fear",
+                      "stimulusSetHash": PARENT_STIMULUS_HASH,
+                      "polesSwappedFromSource": True,
+                      "negatedFrom": NEGATED_FROM}
+    raw = json.dumps(pinned_sidecar).encode("utf-8")
+    os.makedirs(os.path.join(root, "runs", pinned_run), exist_ok=True)
+    with open(os.path.join(root, "runs", pinned_run, "fear.json"),
+              "wb") as handle:
+        handle.write(raw)
+    d = es.load_raw(name, root)
+    d["concepts"][0]["options"]["method"] = "pinnedArtifact"
+    d["concepts"][0]["vectorArtifact"] = {
+        "path": f"runs/{pinned_run}/fear",
+        "sha256TensorHash": "a" * 64,
+        "sha256SidecarHash": (sidecar_hash_pin
+                              or hashlib.sha256(raw).hexdigest()),
+        "sourceMethod": "meanDifference",
+        "sourceConcept": "fear",
+        "residualNormSource": "extraction-stimuli",
+        "polesSwappedFromSource": True,
+        "sourceStimulusSetHash": PARENT_STIMULUS_HASH,
+    }
+    es.save_raw(d, root)
+    # The matched artifact: what a run materializes for a pinned concept.
+    _vector_artifact(root, stimulus_hash=stimulus_hash,
+                     method="pinnedArtifact")
+    es.add_condition(name, {
+        "name": "fear-recommended",
+        "slots": [{"concept": "fear", "layer": 3, "alpha": 0.4}],
+        "bandWidth": 1, "alphaInNormUnits": True,
+        "selection": {**SELECTION_BLOCK,
+                      "winningCell": {"layer": 3, "alpha": 0.4}}}, root)
+    _plant_completed_sweep_run(root)
+
+
+def test_promote_inherits_pole_provenance_from_artifact_pin(tmp_path):
+    """The manifest's artifact pin declares the swap: the pin's facts inherit
+    directly, and the source concept/tensor hash are read from the PINNED
+    sidecar only after its bytes re-verify against the pin."""
+    root = str(tmp_path)
+    _mirror_pinned_experiment(root, "pinmp")
+    out = promote_mod.promote("pinmp", "fear", root=root, log=lambda *_: None)
+    assert out["variant"]["promotion"]["poleProvenance"] == {
+        "polesSwappedFromSource": True,
+        "sourceConcept": "courage",
+        "sourceStimulusSetHash": PARENT_STIMULUS_HASH,
+        "sourceTensorHash": SOURCE_TENSOR_HASH,
+    }
+
+
+def test_pole_provenance_pin_with_drifted_sidecar_keeps_pin_facts_only(
+        tmp_path):
+    """An unverifiable pinned sidecar (drifted bytes) must not lend the
+    certificate its claims: the record keeps the manifest pin's own facts,
+    and the downgrade is loud."""
+    root = str(tmp_path)
+    _mirror_pinned_experiment(root, "pindrift", sidecar_hash_pin="0" * 64)
+    messages: list = []
+    out = promote_mod.promote("pindrift", "fear", root=root,
+                              log=messages.append)
+    assert out["variant"]["promotion"]["poleProvenance"] == {
+        "polesSwappedFromSource": True,
+        "sourceStimulusSetHash": PARENT_STIMULUS_HASH,
+    }
+    assert any("carries the manifest pin's facts only" in m for m in messages)
+
+
 def _plant_sweep_run(root, run, recommendations):
     """A sweep run directory (sweep.csv + recommendations.json) under runs/ —
     the manual-override path's evidence source."""

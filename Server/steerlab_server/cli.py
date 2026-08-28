@@ -2628,6 +2628,16 @@ def _experiment(args: list[str]):
                                or ("manualOverride" if cell else "criterion")),
                 **({"overrideReason": _flag(rest, "--reason")}
                    if cell and _flag(rest, "--reason") else {}),
+                # The certificate's mirrored-pole record surfaces in the
+                # envelope too: an agent that injects a NEGATED direction
+                # announces it at the CLI boundary, not only inside the
+                # artifact file. Absent for every non-mirrored promotion
+                # (Swift twin: the same key in ExperimentCLIRunner's promote
+                # payload).
+                **({"poleProvenance": (variant.get("promotion") or {})
+                    .get("poleProvenance")}
+                   if (variant.get("promotion") or {}).get("poleProvenance")
+                   else {}),
             },
             next_action=next_action(
                 f"experiment confirm {name} --agent {variant.get('name', '?')}"))

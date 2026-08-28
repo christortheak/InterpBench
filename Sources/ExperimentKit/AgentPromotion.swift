@@ -356,6 +356,19 @@ public enum AgentPromotion {
             return existing
         }
 
+        // MIRRORED-POLE inheritance: when the evidence proves the injected
+        // direction is another concept's negation, the certificate says so.
+        let poleProvenance = Self.poleProvenance(
+            ref: ref, matchedSidecar: artifact.sidecar, log: log)
+        if let pole = poleProvenance {
+            let source = pole.sourceConcept.map { "'\($0)'" }
+                ?? "its source concept"
+            log(
+                "promote '\(concept)': the injected direction is a MIRRORED "
+                    + "POLE — the negation of \(source) — stamped "
+                    + "poleProvenance")
+        }
+
         let promotion = ModelVariantArtifact.Promotion(
             experiment: experimentName,
             experimentHash: experimentHash,
@@ -378,7 +391,8 @@ public enum AgentPromotion {
             appVersion: SteerLabVersion.current,
             // WHICH bytes were injected, not merely which recipe they claim.
             vectorArtifactHash: artifactHash,
-            promotionKey: key)
+            promotionKey: key,
+            poleProvenance: poleProvenance)
 
         let variant = ModelVariantArtifact(
             name: variantName,
@@ -480,6 +494,82 @@ public enum AgentPromotion {
         guard let data = try? Data(contentsOf: url, options: .mappedIfSafe)
         else { return nil }
         return ExperimentStore.sha256Hex(data)
+    }
+
+    /// The certificate's MIRRORED-POLE inheritance (cross-engine contract;
+    /// server twin: `promote._pole_provenance`). Nil unless the promotion's
+    /// evidence carries a machine-readable swap claim, from one of two
+    /// provable places, in order:
+    ///
+    /// 1. The MATCHED artifact's own sidecar declares
+    ///    `polesSwappedFromSource` — the injected bytes are a minted mirror
+    ///    (`PoleMirror`), and the same sidecar the rest of the certificate
+    ///    already trusts names the source pole in `negatedFrom`.
+    /// 2. The manifest's artifact pin declares it (`attachArtifactPin`'s
+    ///    mirror linkage): the pin's own facts (`polesSwappedFromSource`,
+    ///    `sourceStimulusSetHash`) are the study's hash-checked claim and
+    ///    inherit directly; the source CONCEPT and TENSOR hash live in the
+    ///    pinned artifact's sidecar, which is read here only after its bytes
+    ///    re-verify against the pin's `sha256SidecarHash` — a missing or
+    ///    drifted sidecar downgrades to the pin's facts, loudly, rather than
+    ///    inheriting unverifiable claims or refusing a promotion the pin
+    ///    itself supports.
+    ///
+    /// Deliberately NOT inherited: a fresh extraction over role-swapped
+    /// stimulus files. It is tensor-identical to a minted mirror, but the
+    /// swap is recorded nowhere the pins can prove (PROVENANCE.md is prose,
+    /// and names are not evidence), so the honest certificate stays silent —
+    /// mint the mirror (`vectors mirror-poles`) or attach the minted
+    /// artifact to make the claim provable.
+    static func poleProvenance(
+        ref: ExperimentManifest.ConceptRef,
+        matchedSidecar sidecar: SteeringVectorSidecar,
+        log: (String) -> Void
+    ) -> ModelVariantArtifact.Promotion.PoleProvenance? {
+        if sidecar.polesSwappedFromSource == true {
+            return .init(
+                polesSwappedFromSource: true,
+                sourceConcept: sidecar.negatedFrom?.concept,
+                // The qualified hash the mirror carries VERBATIM — the
+                // SOURCE concept's order-sensitive stimulus hash.
+                sourceStimulusSetHash: sidecar.stimulusSetHash,
+                sourceTensorHash: sidecar.negatedFrom?.sha256TensorHash)
+        }
+        guard let pin = ref.vectorArtifact, pin.polesSwappedFromSource == true
+        else { return nil }
+        var record = ModelVariantArtifact.Promotion.PoleProvenance(
+            polesSwappedFromSource: true,
+            sourceStimulusSetHash: pin.sourceStimulusSetHash)
+        let sidecarURL = ArtifactIdentity.resolve(pin.path)
+            .appendingPathExtension("json")
+        if let bytes = try? Data(contentsOf: sidecarURL),
+            ExperimentStore.sha256Hex(bytes) == pin.sha256SidecarHash
+        {
+            // RAW decoded JSON, not `SteeringVectorSidecar` — the same rule
+            // `PoleMirror.mirroredSidecar` follows, and the Python twin's
+            // shape: the verified claim lives in `negatedFrom`, and a
+            // hash-verified sidecar carrying blocks this engine does not
+            // model must still surrender it.
+            let pinned = try? JSONDecoder().decode(
+                [String: SidecarJSON].self, from: bytes)
+            if case .object(let negated)? = pinned?["negatedFrom"] {
+                record.sourceConcept = PoleMirror.stringValue(
+                    negated["concept"])
+                record.sourceTensorHash = PoleMirror.stringValue(
+                    negated["sha256TensorHash"])
+            }
+            if record.sourceStimulusSetHash == nil {
+                record.sourceStimulusSetHash = PoleMirror.stringValue(
+                    pinned?["stimulusSetHash"])
+            }
+        } else {
+            log(
+                "⚠︎ promote '\(ref.name)': the pinned mirrored artifact's "
+                    + "sidecar at \(pin.path).json is missing or no longer "
+                    + "hashes \(pin.sha256SidecarHash.prefix(12))… — the "
+                    + "certificate carries the manifest pin's facts only")
+        }
+        return record
     }
 
     /// Evidence that a sweep RAN for this concept — the manual-override gate,

@@ -3555,6 +3555,26 @@ public struct ExperimentCLIRunner: Sendable {
             } else {
                 payload["promotedBy"] = .string("criterion")
             }
+            // The certificate's mirrored-pole record surfaces in the envelope
+            // too: an agent that injects a NEGATED direction announces it at
+            // the CLI boundary, not only inside the artifact file. Absent for
+            // every non-mirrored promotion (server twin: the same key in
+            // cli.py's promote payload).
+            if let pole = record.artifact.promotion?.poleProvenance {
+                var block: [String: JSONValue] = [
+                    "polesSwappedFromSource": .bool(pole.polesSwappedFromSource)
+                ]
+                if let source = pole.sourceConcept {
+                    block["sourceConcept"] = .string(source)
+                }
+                if let hash = pole.sourceStimulusSetHash {
+                    block["sourceStimulusSetHash"] = .string(hash)
+                }
+                if let hash = pole.sourceTensorHash {
+                    block["sourceTensorHash"] = .string(hash)
+                }
+                payload["poleProvenance"] = .object(block)
+            }
             return ExperimentCLIResult(
                 message: "promoted '\(args[2])' → agent '\(record.artifact.name)'",
                 changed: true, payload: payload,
