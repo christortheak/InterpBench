@@ -102,8 +102,10 @@ mkdir -p "$OUTPUT" || exit 1
 
 # ------------------------------------------------------------------ staging --
 # The EXACT filter rules of ClusterProvisioner.pushFilterArguments: local
-# environments, run outputs, and generated caches never enter the payload;
-# Server/ (including Server/tests/ — shipped today) and prompts/fixtures/ do.
+# environments, run outputs, generated caches, and wheel-build debris
+# (Server/build/, Server/dist/ — left behind by `python -m build`) never enter
+# the payload; Server/ (including Server/tests/ — shipped today) and
+# prompts/fixtures/ do.
 rsync -a --prune-empty-dirs \
   --exclude ".venv*" \
   --exclude "runs" \
@@ -115,6 +117,8 @@ rsync -a --prune-empty-dirs \
   --exclude "*.pyc" \
   --exclude ".coverage*" \
   --exclude ".DS_Store" \
+  --exclude "/Server/build/" \
+  --exclude "/Server/dist/" \
   --include "/Server/" \
   --include "/Server/***" \
   --include "/prompts/" \

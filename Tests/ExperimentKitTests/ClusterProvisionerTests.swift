@@ -178,6 +178,8 @@ struct ClusterProvisionerTests {
                 "--exclude", "*.pyc",
                 "--exclude", ".coverage*",
                 "--exclude", ".DS_Store",
+                "--exclude", "/Server/build/",
+                "--exclude", "/Server/dist/",
                 "--include", "/Server/",
                 "--include", "/Server/***",
                 "--include", "/prompts/",
