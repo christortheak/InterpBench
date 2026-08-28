@@ -3805,6 +3805,29 @@ public struct ExperimentCLIRunner: Sendable {
         var block = ExperimentManifest.SweepSelection.Objective(metric: objective)
         if let choicePrompts {
             block.choicePromptsFile = choicePrompts
+            // The objective is a nested object too, and its fields are not one
+            // declaration: naming the SAME file again re-states the
+            // instrument, it does not unpin it. A DIFFERENT file drops the pin
+            // (the hash belongs to the old bytes) and a single file replaces a
+            // per-concept map (the two are mutually exclusive by validation) —
+            // both said out loud, because a pin that disappears silently is
+            // the drift refusal that never fires.
+            let previous = existing?.objective
+            if previous?.choicePromptsFile == choicePrompts,
+                let hash = previous?.choicePromptsHash
+            {
+                block.choicePromptsHash = hash
+                inherited.append("the choice-prompt pin")
+            } else if let old = previous?.choicePromptsFile, old != choicePrompts {
+                inherited.append(
+                    "replaced the declared choice-prompt file (its pin goes "
+                        + "with it)")
+            }
+            if previous?.choicePromptsFiles != nil {
+                inherited.append(
+                    "replaced the per-concept choice-prompt map with a single "
+                        + "file")
+            }
         } else if objective == "logprobShift", let previous = existing?.objective {
             // The choice INSTRUMENT is its own axis: re-declaring the metric
             // must not silently unpin the file the objective reads (and whose
@@ -3828,11 +3851,12 @@ public struct ExperimentCLIRunner: Sendable {
                 "dropped the choice-prompt pin (only logprobShift reads one)")
         }
         var selection = ExperimentManifest.SweepSelection(objective: block)
+        let previousConstraints = existing?.constraints
         var tolerance = try number(capabilityTolerance, "--capability-tolerance")
         let floor = try number(coherenceFloor, "--coherence-floor")
         let ratio = try number(coherenceRatio, "--coherence-ratio")
         let backstop = try number(coherenceBackstop, "--coherence-backstop")
-        if tolerance == nil, let previous = existing?.constraints?.capabilityTolerance {
+        if tolerance == nil, let previous = previousConstraints?.capabilityTolerance {
             tolerance = previous
             inherited.append("capability tolerance \(previous)")
         }
@@ -3848,15 +3872,52 @@ public struct ExperimentCLIRunner: Sendable {
         // with neither field keeps meaning the legacy absolute rule forever.
         // `--coherence-floor` still declares that legacy rule, for a study
         // that genuinely wants a fixed number.
+        //
+        // Inside the coherence rule the merge is FIELD by field, not
+        // form-by-form (field report, minutes after the axis merge landed):
+        // `--coherence-ratio` alone used to rebuild the constraints block and
+        // reset the declared backstop to the engine default — the same silent
+        // drop the axis merge exists to kill, one granularity level down. A
+        // declared sibling is inherited; only a genuinely absent one defaults.
         if floor != nil {
+            if previousConstraints?.coherenceRatioToBaseline != nil
+                || previousConstraints?.coherenceAbsoluteBackstop != nil
+            {
+                inherited.append(
+                    "replaced the baseline-relative coherence floor with an "
+                        + "absolute one")
+            }
             selection.constraints = .init(
                 capabilityTolerance: tolerance, coherenceFloor: floor)
         } else if ratio != nil || backstop != nil {
+            if ratio == nil,
+                let previous = previousConstraints?.coherenceRatioToBaseline
+            {
+                inherited.append("coherence ratio \(previous)")
+            }
+            if backstop == nil,
+                let previous = previousConstraints?.coherenceAbsoluteBackstop
+            {
+                inherited.append("coherence backstop \(previous)")
+            }
+            // A form CHANGE is legal — the caller named a relative flag — but
+            // the absolute floor it discards is never converted into the
+            // backstop and never vanishes quietly.
+            if previousConstraints?.coherenceRatioToBaseline == nil,
+                previousConstraints?.coherenceAbsoluteBackstop == nil,
+                let old = previousConstraints?.coherenceFloor
+            {
+                inherited.append(
+                    "replaced the absolute coherence floor \(old) with the "
+                        + "baseline-relative form")
+            }
             selection.constraints = .init(
                 capabilityTolerance: tolerance,
                 coherenceRatioToBaseline: ratio
+                    ?? previousConstraints?.coherenceRatioToBaseline
                     ?? SweepSelectionRule.defaultCoherenceRatio,
                 coherenceAbsoluteBackstop: backstop
+                    ?? previousConstraints?.coherenceAbsoluteBackstop
                     ?? SweepSelectionRule.defaultCoherenceBackstop)
         } else if let previous = existing?.constraints,
             previous.coherenceFloor != nil
@@ -3894,19 +3955,29 @@ public struct ExperimentCLIRunner: Sendable {
         // live sweep arms ran with no matched-norm control and nobody was
         // told. `--control-margin ""` is the spelling that REMOVES it, so
         // merging is not a one-way ratchet.
+        //
+        // And the control's OWN fields merge the same way: re-declaring the
+        // margin used to rebuild the block, dropping the topK targeting the
+        // donor declared — a control that silently narrowed from three cells
+        // to one. Naming any control flag now edits that field and inherits
+        // the rest; `--control-apply-to winner` still drops the width, because
+        // a winner-scoped control covers exactly one cell by definition.
+        let previousControls = existing?.controls
         if controlMargin?.trimmingCharacters(in: .whitespaces) == "" ,
             controlMargin != nil
         {
             selection.controls = nil
         } else if controlMargin == nil, controlApplyTo == nil, controlTopK == nil,
-            let previous = existing?.controls
+            let previous = previousControls
         {
             selection.controls = previous
             inherited.append(
                 "matched-norm random control (margin "
                     + "\(previous.matchedNormRandomMargin ?? 0), "
                     + "\(previous.applyTo ?? "winner"))")
-        } else if let margin = try number(controlMargin, "--control-margin") {
+        } else if controlMargin != nil || controlApplyTo != nil
+            || controlTopK != nil
+        {
             var topK: Int?
             if let raw = controlTopK {
                 guard let value = Int(raw), value >= 1 else {
@@ -3916,27 +3987,51 @@ public struct ExperimentCLIRunner: Sendable {
                 }
                 topK = value
             }
-            let applyTo = controlApplyTo ?? "winner"
+            let margin: Double
+            if let named = try number(controlMargin, "--control-margin") {
+                margin = named
+            } else if let previous = previousControls?.matchedNormRandomMargin {
+                margin = previous
+                inherited.append("matched-norm control margin \(previous)")
+            } else {
+                throw ExperimentError(
+                    reason: "--control-apply-to / --control-top-k describe a "
+                        + "matched-norm random control that is not declared — "
+                        + "add --control-margin M")
+            }
+            let applyTo: String
+            if let named = controlApplyTo {
+                applyTo = named
+            } else if let previous = previousControls?.applyTo {
+                applyTo = previous
+                inherited.append("control scope \(previous)")
+            } else {
+                applyTo = "winner"
+            }
             guard ["winner", "topK"].contains(applyTo) else {
                 throw ExperimentError(
                     reason: "--control-apply-to must be winner | topK — got "
                         + "'\(applyTo)'")
             }
             if applyTo == "topK", topK == nil {
-                throw ExperimentError(
-                    reason: "--control-apply-to topK needs --control-top-k K — "
-                        + "how many cells the control covers is a "
-                        + "preregistration decision, not a default")
+                // An existing width is a DECLARATION, not a default: this
+                // refusal is about a number nobody ever preregistered.
+                if previousControls?.applyTo == "topK",
+                    let previous = previousControls?.topK
+                {
+                    topK = previous
+                    inherited.append("control width topK \(previous)")
+                } else {
+                    throw ExperimentError(
+                        reason: "--control-apply-to topK needs --control-top-k "
+                            + "K — how many cells the control covers is a "
+                            + "preregistration decision, not a default")
+                }
             }
             selection.controls = .init(
                 matchedNormRandomMargin: margin,
                 applyTo: applyTo == "winner" ? nil : applyTo,
                 topK: applyTo == "winner" ? nil : topK)
-        } else if controlApplyTo != nil || controlTopK != nil {
-            throw ExperimentError(
-                reason: "--control-apply-to / --control-top-k describe a "
-                    + "matched-norm random control that is not declared — add "
-                    + "--control-margin M")
         }
         return selection
     }

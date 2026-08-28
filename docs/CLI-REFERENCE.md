@@ -926,6 +926,15 @@ said. Whatever a merge carried over is named in the success line and echoed in
 the control rather than keep it, pass `--control-margin ""`; to clear the whole
 declaration, `--objective ""`.
 
+The merge is **field by field all the way down**, not object by object:
+`--coherence-ratio` alone keeps the declared `--coherence-backstop` (rather than
+resetting it to `0.6`) and vice versa, `--control-margin` alone keeps the
+control's `topK` targeting, and either targeting flag alone inherits the
+declared margin. Naming a coherence flag on a block carrying the legacy
+absolute floor still *changes the form* — that is what the flag asks for — but
+the discarded floor is named in `inheritedFromExistingDeclaration` and is never
+silently converted into the backstop.
+
 **The coherence floor is baseline-relative** (default for new declarations). An
 absolute distinct-2 number cannot know what the model's own prose looks like: a
 sweep admitted a cell at distinct-2 0.535 against a baseline of 0.989 — barely
@@ -941,9 +950,9 @@ said yes.
 | `--coherence-ratio` | `0.85` | A cell's distinct-2 must be at least this fraction of the **α=0 baseline cell's** distinct-2. Range `(0, 1]`. |
 | `--coherence-backstop` | `0.6` | The absolute distinct-2 no cell may fall below whatever the baseline was — what stops a degenerate baseline licensing a degenerate winner. Range `[0, 1)`, and it must sit **under** the ratio. |
 | `--coherence-floor` | — | The **legacy absolute** rule: a fixed distinct-2 floor, `[0, 1]`. Declares a different form from the two flags above, so passing it alongside either is refused. |
-| `--control-margin` | none | The winner must beat a matched-norm random direction by this margin. `""` removes a declared control. |
-| `--control-apply-to` | `winner` | `winner` \| `topK`. |
-| `--control-top-k` | — | Required with `--control-apply-to topK`. |
+| `--control-margin` | none | The winner must beat a matched-norm random direction by this margin. Inherited when only the targeting flags are named; `""` removes a declared control. |
+| `--control-apply-to` | `winner` | `winner` \| `topK`. `winner` drops any declared width — a winner-scoped control covers one cell. |
+| `--control-top-k` | — | Required with `--control-apply-to topK`, unless the existing declaration already carries a width (which is then inherited, never defaulted). |
 
 Which rule a criterion declares is decided by the **presence** of
 `coherenceRatioToBaseline` / `coherenceAbsoluteBackstop` in its constraints

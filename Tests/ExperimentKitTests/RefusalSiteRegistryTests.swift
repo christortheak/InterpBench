@@ -696,6 +696,226 @@ import Testing
         }
     }
 
+    /// The same silent-drop class one granularity level DOWN (field report,
+    /// minutes after the axis merge landed): the merge was axis-by-axis
+    /// between the selection's top-level fields, but each nested object was
+    /// still rebuilt as a unit — so declaring one coherence field reset its
+    /// SIBLING to the engine default, and re-declaring a control's margin
+    /// dropped the topK targeting the donor had declared. A block is merged
+    /// field by field all the way down, or it is not merged.
+    @Test func setSweepSelectionMergesFieldByFieldInsideNestedObjects()
+        async throws
+    {
+        try await withTempRoot { _ in
+            await invoke(
+                "experiment",
+                ["create", "deep", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            await invoke("experiment", ["attach", "deep", "french"])
+
+            // THE field case. A draft carrying a tolerance and nothing else,
+            // then a declaration of the coherence axis alone.
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "deep", "--objective",
+                        "markerDensity", "--capability-tolerance", "0.15",
+                    ]
+                ).exitCode == 0)
+            let coherenceDeclared = await invoke(
+                "experiment",
+                [
+                    "set-sweep-selection", "deep", "--objective",
+                    "markerDensity", "--coherence-ratio", "0.9",
+                    "--coherence-backstop", "0.65",
+                ])
+            #expect(coherenceDeclared.exitCode == 0)
+            var block = try #require(
+                try ExperimentStore.load(name: "deep").sweep?.selection)
+            #expect(block.constraints?.coherenceRatioToBaseline == 0.9)
+            #expect(block.constraints?.coherenceAbsoluteBackstop == 0.65)
+            // THE regression: the tolerance the caller did not name survives.
+            #expect(block.constraints?.capabilityTolerance == 0.15)
+            #expect(
+                coherenceDeclared.envelope.message.contains(
+                    "kept from the existing"))
+
+            // One coherence field named: its SIBLING is the existing
+            // declaration's, never the engine default (0.65, not 0.6).
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "deep", "--objective",
+                        "markerDensity", "--coherence-ratio", "0.8",
+                    ]
+                ).exitCode == 0)
+            block = try #require(
+                try ExperimentStore.load(name: "deep").sweep?.selection)
+            #expect(block.constraints?.coherenceRatioToBaseline == 0.8)
+            #expect(block.constraints?.coherenceAbsoluteBackstop == 0.65)
+            #expect(block.constraints?.capabilityTolerance == 0.15)
+
+            // …and the mirror image: a backstop-only declaration keeps the
+            // declared ratio rather than resetting it to 0.85.
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "deep", "--objective",
+                        "markerDensity", "--coherence-backstop", "0.55",
+                    ]
+                ).exitCode == 0)
+            block = try #require(
+                try ExperimentStore.load(name: "deep").sweep?.selection)
+            #expect(block.constraints?.coherenceRatioToBaseline == 0.8)
+            #expect(block.constraints?.coherenceAbsoluteBackstop == 0.55)
+
+            // A tolerance-only re-declare on a RELATIVE block keeps the whole
+            // coherence rule.
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "deep", "--objective",
+                        "markerDensity", "--capability-tolerance", "0.2",
+                    ]
+                ).exitCode == 0)
+            block = try #require(
+                try ExperimentStore.load(name: "deep").sweep?.selection)
+            #expect(block.constraints?.capabilityTolerance == 0.2)
+            #expect(block.constraints?.coherenceRatioToBaseline == 0.8)
+            #expect(block.constraints?.coherenceAbsoluteBackstop == 0.55)
+            #expect(block.constraints?.coherenceFloor == nil)
+        }
+    }
+
+    /// The 818bab8 rule that has to SURVIVE the finer granularity: a legacy
+    /// ABSOLUTE floor is never silently converted to the baseline-relative
+    /// form. Declaring only the tolerance on such a block keeps the absolute
+    /// floor verbatim and grows no relative keys.
+    @Test func toleranceOnlyReDeclareKeepsALegacyAbsoluteFloorVerbatim()
+        async throws
+    {
+        try await withTempRoot { _ in
+            await invoke(
+                "experiment",
+                ["create", "legacy", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            await invoke("experiment", ["attach", "legacy", "french"])
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "legacy", "--objective",
+                        "markerDensity", "--coherence-floor", "0.5",
+                    ]
+                ).exitCode == 0)
+            let redeclared = await invoke(
+                "experiment",
+                [
+                    "set-sweep-selection", "legacy", "--objective",
+                    "markerDensity", "--capability-tolerance", "0.12",
+                ])
+            #expect(redeclared.exitCode == 0)
+            let block = try #require(
+                try ExperimentStore.load(name: "legacy").sweep?.selection)
+            #expect(block.constraints?.capabilityTolerance == 0.12)
+            #expect(block.constraints?.coherenceFloor == 0.5)
+            #expect(block.constraints?.coherenceRatioToBaseline == nil)
+            #expect(block.constraints?.coherenceAbsoluteBackstop == nil)
+            #expect(
+                redeclared.envelope.message.contains("coherence floor 0.5"))
+        }
+    }
+
+    /// The CONTROL block's own sub-fields, same argument: re-declaring the
+    /// margin must not silently drop the topK targeting, and the two
+    /// targeting flags must be reachable without restating the margin.
+    @Test func controlSubFieldsMergeRatherThanBeingRebuilt() async throws {
+        try await withTempRoot { _ in
+            await invoke(
+                "experiment",
+                ["create", "ctl", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            await invoke("experiment", ["attach", "ctl", "french"])
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "ctl", "--objective",
+                        "markerDensity", "--control-margin", "0.05",
+                        "--control-apply-to", "topK", "--control-top-k", "3",
+                    ]
+                ).exitCode == 0)
+
+            // Margin only: the targeting the caller did not name survives.
+            let widened = await invoke(
+                "experiment",
+                [
+                    "set-sweep-selection", "ctl", "--objective",
+                    "markerDensity", "--control-margin", "0.06",
+                ])
+            #expect(widened.exitCode == 0)
+            var block = try #require(
+                try ExperimentStore.load(name: "ctl").sweep?.selection)
+            #expect(block.controls?.matchedNormRandomMargin == 0.06)
+            #expect(block.controls?.applyTo == "topK")
+            #expect(block.controls?.topK == 3)
+            #expect(widened.envelope.message.contains("kept from the existing"))
+
+            // Targeting only: the declared margin is inherited rather than
+            // the call being refused for not restating it.
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "ctl", "--objective",
+                        "markerDensity", "--control-top-k", "5",
+                    ]
+                ).exitCode == 0)
+            block = try #require(
+                try ExperimentStore.load(name: "ctl").sweep?.selection)
+            #expect(block.controls?.matchedNormRandomMargin == 0.06)
+            #expect(block.controls?.applyTo == "topK")
+            #expect(block.controls?.topK == 5)
+
+            // `--control-apply-to winner` NARROWS explicitly: the width goes
+            // with the targeting it described, because a winner-scoped
+            // control covers exactly one cell.
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "ctl", "--objective",
+                        "markerDensity", "--control-apply-to", "winner",
+                    ]
+                ).exitCode == 0)
+            block = try #require(
+                try ExperimentStore.load(name: "ctl").sweep?.selection)
+            #expect(block.controls?.matchedNormRandomMargin == 0.06)
+            #expect(block.controls?.applyTo == nil)
+            #expect(block.controls?.topK == nil)
+
+            // With no control declared at all, a targeting flag still refuses:
+            // there is nothing to inherit a margin from.
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "ctl", "--objective",
+                        "markerDensity", "--control-margin", "",
+                    ]
+                ).exitCode == 0)
+            let orphan = await invoke(
+                "experiment",
+                [
+                    "set-sweep-selection", "ctl", "--objective",
+                    "markerDensity", "--control-top-k", "4",
+                ])
+            #expect(orphan.exitCode != 0)
+            #expect(orphan.envelope.message.contains("--control-margin"))
+        }
+    }
+
     /// A NEW declaration takes the baseline-relative coherence floor, written
     /// explicitly — a constraints block with neither relative field keeps
     /// meaning the legacy absolute rule forever, so the default has to be
