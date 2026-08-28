@@ -1787,6 +1787,11 @@ public enum ExperimentTasks {
                     residualNormPerLayer: extraction.residualNormPerLayer,
                     residualNormSource: extraction.residualNormSource,
                     options: ref.options,
+                    // Carried, never re-defaulted: a grand-mean denominator may
+                    // have come from the token bank's per-position tally, and
+                    // relabelling it as the per-text rule here is the exact
+                    // stamp dishonesty F1 names.
+                    residualNormConvention: extraction.residualNormConvention,
                     residualNormRendering: extraction.residualNormRendering,
                     readingPositionResolution: extraction.readingPositionResolution,
                     neutralMeanPerLayer: extraction.neutralMeanPerLayer)

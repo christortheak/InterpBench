@@ -95,6 +95,77 @@ migration that rewrites frozen bytes.
 
 ### Changed
 
+- **The residual-norm denominator's two averaging rules stopped sharing one
+  stamp.** `residualNormConvention: "wholeCorpusMean-v1"` was defined by the
+  shared convention module as the **per-position** mean over every measured
+  corpus position — and was also written by every vector-sidecar writer, which
+  measures something else: `extract`, `extract_grand_mean` and `vectors
+  backfill-norms` (both engines) pool through the activations path, where each
+  capture already holds the mean norm over *its own* reading window and those
+  per-text numbers are then averaged with equal weight per text. Two rules,
+  one string, in direct violation of that string's own "bump the version when
+  the averaging RULE changes" contract. The Mac's `extractGrandMean` emitted
+  both from one function — the token bank's per-position tally for a
+  `neutral-token-bank` denominator, the per-text average otherwise — under the
+  single stamp. The second rule now has its own: **`perTextMean-v1`**, defined
+  beside `wholeCorpusMean-v1` with the same rigor, and every writer stamps the
+  rule it applied (extraction, backfill and the pooled grand-mean branches →
+  `perTextMean-v1`; the tally → `wholeCorpusMean-v1`). The rules coincide at
+  any single-position reading (`last token` and friends) or where every window
+  is the same length, and diverge at a pooled reading (`mean from token k`,
+  `mean content from token n`) over variable-length texts — the case no test
+  discriminated, now pinned on both engines by a fixture whose two texts are
+  read over 2 and 6 positions and whose two rules give 6.0 and 4.0.
+  **Nothing on disk is rewritten and nothing refuses.** A `wholeCorpusMean-v1`
+  stamp on an existing sidecar was written by a per-text writer (no tally
+  number has ever reached a sidecar on either engine), so it is grandfathered
+  as exactly that, documented in the convention module and in METHODS; and
+  because the string is read only by display and provenance surfaces —
+  `display_label`, the α-default convention note, the OptVec packaging
+  advisory — never by a gate, an old-stamp and a new-stamp artifact cannot
+  refuse against each other. What changed is that a reader of a
+  pooled-reading denominator can now tell which weighting produced it.
+
+- **The neutral token-bank draw no longer leans on `random.sample`.** The
+  server chose which token positions to bank with `random.sample` seeded from
+  `int(corpusHash[:16], 16) % 2**63`. CPython guarantees reproducibility
+  across versions only for `Random.random()` — `sample`'s algorithm is
+  explicitly allowed to change — so an interpreter upgrade could have silently
+  rebuilt a neutral-PC basis from different positions while every stamp said
+  the recipe was identical, and a basis is not the kind of artifact whose
+  bytes anyone notices drifting. The draw is now the Mac's, exactly:
+  SHA-256-derived seed (first 8 bytes, big-endian), SplitMix64, seeded partial
+  Fisher–Yates, in a new `steering/token_bank_downsampling.py` that is the
+  line-for-line twin of `TokenBankDownsampling.swift` — **so the two engines
+  select byte-identical rows for the same corpus and cap**, where before the
+  seed, the generator and the cap all differed. Twin literals pin the seed,
+  the RNG stream and the selected indices on both sides, so no future runtime
+  can move the draw undetected, and the contract is written down in
+  PORTABILITY-CONTRACTS §12, which said nothing about the bank before. The
+  default per-layer CAP deliberately did not converge (4096 on the Mac behind
+  a memory preflight, 2048 on the server, which has none): a cap is a memory
+  bound rather than a rule, and doubling an unguarded transient on the engine
+  that runs on shared cluster GPUs buys nothing. Pass the same `maxTokenRows`
+  on both engines for a bit-identical bank. **No pinned artifact moved** — a
+  basis travels by `neutralPCBasisHash`, the SHA-256 of its own bytes, so
+  every pinned basis keeps verifying; the draw only decides what a *new* basis
+  is built from, and a rebuild of the same corpus now banks different
+  positions than it did before this release. One edge case converged with the
+  algorithm: a cap of `0` or less now selects nothing, where the server read
+  it as "uncapped" and would have banked the whole corpus.
+
+- **Swift's element-wise mean accumulates in `Double`.**
+  `SteeringVectorMath.mean` — and with it `meanDifference`,
+  `grandMeanDifference` and the PCA centring that calls through it — summed
+  float32 rows sequentially, an error of order N·ε against numpy's pairwise
+  ~log₂(N)·ε. That difference, not any recipe divergence, was the ceiling on
+  cross-engine agreement for a re-derived grand mean (~1e-4..1e-3 relative in
+  unlucky cases). Rows stay float32 (the deliberate cross-engine storage
+  dtype) and the result stays `[Float]`; only the accumulator is `Double`,
+  cast once at the end, which moves this engine's value *toward* the exact
+  mean and therefore toward numpy's. `ConceptExtractor.neutralMeanPerLayer`
+  has always accumulated this way. Values may move in the last float32 ulp.
+
 - **Concept screening splits are drawn from the stimulus CONTENT, and the
   reported numbers move.** *Read this before comparing a concept's held-out
   accuracy or split-half cosine against a number recorded before this

@@ -51,7 +51,7 @@ import Testing
             stimulusSetHash: "stim-hash", vectors: vectors,
             residualNormPerLayer: [11.0, 12.0],
             residualNormSource: "neutral-corpus",
-            residualNormConvention: ResidualNormConvention.current)
+            residualNormConvention: ResidualNormConvention.perTextMean)
         sidecar.extractionMethod = "meanDifference"
         sidecar.recipeMethod = VectorExtractionRecipe.Method.caaMeanDifference.rawValue
         sidecar.coversModelDepth = true
@@ -737,7 +737,7 @@ import Testing
             stimulusSetHash: stimulusSetHash, vectors: vectors,
             residualNormPerLayer: [11.0, 12.0],
             residualNormSource: "neutral-corpus",
-            residualNormConvention: ResidualNormConvention.current)
+            residualNormConvention: ResidualNormConvention.perTextMean)
         sidecar.extractionMethod = ExtractionMethod.meanDifference.rawValue
         sidecar.coversModelDepth = true
         let directory = root.appending(components: "runs", "src")

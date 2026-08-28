@@ -190,8 +190,10 @@ def test_backfill_happy_path(tmp_path, monkeypatch):
     assert {k: v for k, v in new.items() if k not in UPDATED_KEYS} == old
     assert new["futureUnknownField"] == "keep-me"
     assert new["controlMode"] == "reading-vector activation addition"
-    # The convention the norms were just measured under — stamped, not guessed.
-    assert new["residualNormConvention"] == "wholeCorpusMean-v1"
+    # The convention the norms were just measured under — stamped, not
+    # guessed, and naming the rule backfill ACTUALLY applies: it measures
+    # through ``extractor.activations``, one window-mean per text.
+    assert new["residualNormConvention"] == "perTextMean-v1"
 
     # The original artifact is untouched on disk (runs are immutable).
     assert _read_bytes(os.path.join(orig, "fear.safetensors")) == orig_vec_bytes

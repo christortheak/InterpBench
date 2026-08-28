@@ -130,10 +130,15 @@ public struct ExtractionResult: Sendable {
     /// Where `residualNormPerLayer` came from: "neutral-corpus" or
     /// "extraction-stimuli".
     public let residualNormSource: String
-    /// HOW those positions were averaged — always the current convention,
-    /// because this value describes a measurement THIS code just made.
+    /// HOW those positions were averaged. `extract` measures every denominator
+    /// through `activations` — one window-mean per text, averaged with equal
+    /// weight per text — so the default is `perTextMean`, the rule that was
+    /// actually applied. It is a PARAMETER rather than a constant because the
+    /// grand-mean path rewraps a `MultiConceptExtractionResult` whose
+    /// denominator may have come from the token bank's per-position tally
+    /// instead; that carrier must not be relabelled on the way through.
     /// Sidecar writers stamp it verbatim; see `ResidualNormConvention`.
-    public let residualNormConvention: String = ResidualNormConvention.current
+    public let residualNormConvention: String
     /// WHICH RENDERING produced `residualNormPerLayer`. The denominator
     /// follows the extraction's rendering — α in norm units must divide by a
     /// number from the same distribution the vector was read from — and the
@@ -158,6 +163,7 @@ public struct ExtractionResult: Sendable {
         residualNormPerLayer: [Float],
         residualNormSource: String,
         options: ExtractionOptions,
+        residualNormConvention: String = ResidualNormConvention.perTextMean,
         residualNormRendering: String = ExtractionRendering.Mode.raw.rawValue,
         readingPositionResolution: ReadingPositionResolutionReport? = nil,
         neutralMeanPerLayer: [[Float]]? = nil
@@ -165,6 +171,7 @@ public struct ExtractionResult: Sendable {
         self.vectors = vectors
         self.residualNormPerLayer = residualNormPerLayer
         self.residualNormSource = residualNormSource
+        self.residualNormConvention = residualNormConvention
         self.options = options
         self.residualNormRendering = residualNormRendering
         self.readingPositionResolution = readingPositionResolution
@@ -176,8 +183,12 @@ public struct MultiConceptExtractionResult: Sendable {
     public let vectorsByConcept: [String: ConceptVectors]
     public let residualNormPerLayer: [Float]
     public let residualNormSource: String
-    /// See `ExtractionResult.residualNormConvention`.
-    public let residualNormConvention: String = ResidualNormConvention.current
+    /// See `ExtractionResult.residualNormConvention`. This is the function
+    /// that stamps BOTH rules: a `neutral-token-bank` denominator comes from
+    /// the per-position `ResidualNormConvention.Tally`, every other source
+    /// from the per-text `activations` average, and each branch now says which
+    /// one it applied.
+    public let residualNormConvention: String
     /// See `ExtractionResult.residualNormRendering`.
     public let residualNormRendering: String
     public let readingPosition: ReadingPosition
@@ -378,6 +389,12 @@ public enum ConceptExtractor {
                     }
                 }
             }
+            // PER-TEXT rule (`ResidualNormConvention.perTextMean`): every
+            // capture already holds the mean norm over ITS OWN reading window,
+            // so dividing the sum by the text count weights each TEXT equally,
+            // not each position. At a single-position reading the two rules
+            // agree; at a pooled one over variable-length texts they do not,
+            // which is why the rule has its own stamp.
             let count = Float(texts.count)
             return StimulusActivations(
                 values: results,
@@ -875,17 +892,28 @@ public enum ConceptExtractor {
             vectorsByConcept[concept] = ConceptVectors(perLayer: perLayer)
         }
 
+        // The denominator's SOURCE and its averaging RULE are decided together
+        // here, because they are not independent: the token bank accumulates
+        // through `ResidualNormConvention.Tally` (per position), while both
+        // `activations` paths average one window-mean per text. Stamping one
+        // rule for all three — which this function did until the 2026-08-28
+        // audit (F1) — makes "α = 1 norm unit" two different doses at a pooled
+        // reading position under a single string.
         let residualNorms: [Float]
         let normSource: String
+        let normConvention: String
         if let neutralActivations {
             residualNorms = neutralActivations.residualNormPerLayer
             normSource = "neutral-corpus"
+            normConvention = ResidualNormConvention.perTextMean
         } else if let neutralBank {
             residualNorms = neutralBank.residualNormPerLayer
             normSource = "neutral-token-bank"
+            normConvention = ResidualNormConvention.wholeCorpusMean
         } else {
             residualNorms = corpusActivations.residualNormPerLayer
             normSource = "multi-concept-corpus"
+            normConvention = ResidualNormConvention.perTextMean
         }
 
         let neutralMean: [[Float]]?
@@ -913,6 +941,7 @@ public enum ConceptExtractor {
             vectorsByConcept: vectorsByConcept,
             residualNormPerLayer: residualNorms,
             residualNormSource: normSource,
+            residualNormConvention: normConvention,
             residualNormRendering: rendering.mode.rawValue,
             readingPosition: readingPosition,
             extractionRendering: rendering,

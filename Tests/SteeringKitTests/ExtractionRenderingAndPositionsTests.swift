@@ -195,7 +195,7 @@ import Testing
             vectors: ConceptVectors(perLayer: [[1, 0]]),
             options: ExtractionOptions(),
             residualNormPerLayer: [1], residualNormSource: "extraction-stimuli",
-            residualNormConvention: ResidualNormConvention.current,
+            residualNormConvention: ResidualNormConvention.perTextMean,
             residualNormRendering: ExtractionRendering.Mode.raw.rawValue,
             extractionRendering: .raw)
         #expect(sidecar.residualNormRendering == nil)
@@ -217,7 +217,7 @@ import Testing
                 readingPosition: .turnCloseToken,
                 extractionRendering: .chatTemplate()),
             residualNormPerLayer: [1], residualNormSource: "neutral-corpus",
-            residualNormConvention: ResidualNormConvention.current,
+            residualNormConvention: ResidualNormConvention.perTextMean,
             residualNormRendering: ExtractionRendering.Mode.chatTemplate.rawValue)
         #expect(sidecar.residualNormRendering == "chatTemplate")
         #expect(sidecar.readingPosition == "turn close token")

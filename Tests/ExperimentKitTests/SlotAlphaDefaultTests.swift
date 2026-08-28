@@ -39,7 +39,7 @@ import Testing
     @Test func normsPlusPromotedCellAdoptsTheSelectedAlpha() {
         let decision = SlotAlphaDefault.decide(
             facts(
-                norms: 42, convention: ResidualNormConvention.current,
+                norms: 42, convention: ResidualNormConvention.perTextMean,
                 recommended: 0.35, recommendedNormUnits: true,
                 agent: "fear-a1", promotedBy: "criterion"))
 
@@ -48,7 +48,7 @@ import Testing
         #expect(decision.alphaLabel == "α in residual-norm units at L18")
         #expect(decision.rationale.contains("sweep-selected cell"))
         #expect(decision.rationale.contains("fear-a1"))
-        #expect(decision.conventionNote == "wholeCorpusMean-v1")
+        #expect(decision.conventionNote == "perTextMean-v1")
         // Nothing to repair — the artifact already has a denominator.
         #expect(decision.backfillHint == nil)
     }
@@ -78,13 +78,13 @@ import Testing
 
     @Test func normsWithoutARecommendationDefaultsToOneNormUnitNotTwo() {
         let decision = SlotAlphaDefault.decide(
-            facts(norms: 42, convention: ResidualNormConvention.current))
+            facts(norms: 42, convention: ResidualNormConvention.perTextMean))
 
         #expect(decision.alpha == 0.1)
         #expect(decision.alpha != 2)  // the reported bug, pinned
         #expect(decision.units == .normUnits)
         #expect(decision.alphaLabel == "α in residual-norm units at L18")
-        #expect(decision.conventionNote == "wholeCorpusMean-v1")
+        #expect(decision.conventionNote == "perTextMean-v1")
         #expect(decision.backfillHint == nil)
     }
 

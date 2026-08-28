@@ -17,7 +17,7 @@ sweepable.
 **Absent is LEGACY RAW, and is never retro-applied.** A recipe with no
 ``extractionRendering`` renders exactly as it always has, its manifest bytes
 are byte-identical to before, and its recipe-identity hash is unchanged — the
-same discipline ``residualNormConvention: wholeCorpusMean-v1`` follows. Only an
+same discipline ``residualNormConvention`` follows. Only an
 explicitly declared CHAT-TEMPLATE rendering changes a recipe's identity; an
 explicitly declared ``raw`` is the legacy semantics said out loud, and
 canonicalizes away (see :func:`canonical_identity_fragment`).

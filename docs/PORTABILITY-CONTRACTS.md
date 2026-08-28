@@ -1390,3 +1390,56 @@ read the table and refuse `workbench` routes with **typed refusals** carrying a
 an authoring verb against a runner would be told which service role it wanted
 and where to find one. Every `both` route is a decision that profile still has
 to make. **That is future work, and explicitly not this change.**
+
+---
+
+## 12. The neutral token-bank draw
+
+A contract rather than a phase, recorded here because the 2026-08-28 math audit
+found it was the one RNG seam in the extraction path that neither shared an
+algorithm across engines nor documented an accepted divergence — the sibling
+paths do one or the other (`repe_reader` shares SplitMix64; `vector_math` and
+`StudyStatistics` document their divergence out loud), and this one did
+neither.
+
+The neutral token bank feeds the neutral-PC basis: a corpus is tokenized, every
+token position past the reading position's start is a candidate row, and a
+per-layer cap bounds how many are kept. **Which rows are kept is now the same
+decision on both engines.**
+
+| Contract | Guarantees | Pinned by |
+|---|---|---|
+| Seed derivation | `seed = first 8 bytes of SHA-256(corpusHash.utf8), big-endian` | `TokenBankDownsamplerTests.seedDerivationIsThePinnedCrossEngineRule` ↔ `test_token_bank_downsampling.py::test_seed_derivation_is_the_pinned_cross_engine_rule` (twin literals) |
+| RNG | SplitMix64, the published constants, one 64-bit state word | `.splitMix64StreamIsThePinnedSequence` ↔ `test_splitmix64_stream_is_the_pinned_sequence` (twin literals) |
+| Draw | seeded partial Fisher–Yates over `0 ..< count`, first `cap` entries, returned sorted ascending | `.selectionIsThePinnedDraw` ↔ `test_selection_is_the_pinned_draw` (twin literals) |
+| Corpus hash from raw texts | SHA-256 over length-prefixed (`uint64` big-endian) UTF-8 texts | `.textCorpusHashIsLengthPrefixed` ↔ `test_corpus_hash_is_length_prefixed` |
+
+Given the same `(count, cap, seed)` the two engines select **byte-identical**
+rows. Before this the server derived its seed as `int(hash[:16], 16) % 2**63`
+and drew with `random.sample` — a different number through a different
+generator, and one whose stability CPython guarantees only for
+`Random.random()`, so a Python upgrade could have silently rebuilt a basis from
+different positions while every stamp said the recipe was unchanged. The
+literals above are what make that impossible: a property-based test would have
+passed straight through such a drift.
+
+**The default cap deliberately did NOT converge.** Swift caps at 4096 rows per
+layer (`TokenBankDownsampler.defaultRowCapPerLayer`) behind a
+`NeutralBankBudget.preflight` refusal; the server caps at 2048
+(`extractor.DEFAULT_MAX_TOKEN_ROWS`) and has no preflight, materializing kept
+rows as Python floats for every captured layer. A cap is a memory bound, not a
+rule: importing the larger default onto the engine with no preflight — the one
+that runs on shared cluster GPUs — would double an unguarded transient for no
+change in what the draw *means*. Pass the same `maxTokenRows` on both sides
+when a bit-identical bank is what you want. The one remaining signature
+difference is the server's `None` sentinel for "no cap at all", which Swift's
+`Int` cap cannot express; a cap of `0` or less now selects nothing on both
+engines (it used to mean "uncapped" on the server, turning a plausible typo
+into an unbounded bank).
+
+**Nothing pinned moved.** A neutral-PC basis travels by `neutralPCBasisHash`,
+the SHA-256 of the basis file's own bytes, so every pinned basis keeps
+verifying exactly as before — the draw only decides what a *new* basis is built
+from, and bank-projected vectors were already held to the 0.98-cosine parity
+bar rather than to fixture precision (the SVD-vs-Gram divergence recorded in
+METHODS).

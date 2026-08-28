@@ -11,8 +11,8 @@ The denominator convention is load-bearing: this module calls the *same*
 measurement path extraction uses for its neutral corpus —
 :func:`steerlab_server.steering.extractor.activations` — at the reading
 position stamped in the artifact's own sidecar, and averages exactly the way
-``extract()`` does, so a backfilled α means the same thing as an
-extraction-time α.
+``extract()`` does (the PER-TEXT rule, ``perTextMean-v1``), so a backfilled α
+means the same thing as an extraction-time α.
 
 Backfill is also THE opt-in migration onto the current residual-norm
 DENOMINATOR CONVENTION (:mod:`residual_norm_convention`). Existing sidecars
@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 
 from . import extractor, stimulus_set, vector_store
 from .reading_position import from_label
-from .residual_norm_convention import CURRENT as RESIDUAL_NORM_CONVENTION
+from .residual_norm_convention import PER_TEXT_MEAN as RESIDUAL_NORM_CONVENTION
 
 # Must match the string ``extractor.extract`` / ``extract_grand_mean`` write
 # when the norms come from a neutral corpus (extractor.py: ``norm_source =
@@ -149,10 +149,12 @@ def backfill_norms(model, vector_dir: str, name: str, corpus_path: str,
     sidecar_dict["residualNormPerLayer"] = list(norms)
     sidecar_dict["residualNormSource"] = RESIDUAL_NORM_SOURCE_NEUTRAL_CORPUS
     # Backfill IS the opt-in migration to the current denominator convention:
-    # these norms were measured just now, by this code, under
-    # ``residual_norm_convention.CURRENT``. Legacy artifacts are never stamped
-    # in place — running backfill is how a researcher chooses to move one onto
-    # the stamped convention.
+    # these norms were measured just now, by this code, through
+    # ``extractor.activations`` — one window-mean per text, averaged with equal
+    # weight per text — so the stamp is ``residual_norm_convention.
+    # PER_TEXT_MEAN``, the rule that was actually applied. Legacy artifacts are
+    # never stamped in place — running backfill is how a researcher chooses to
+    # move one onto the stamped convention.
     sidecar_dict["residualNormConvention"] = RESIDUAL_NORM_CONVENTION
     sidecar_dict["neutralCorpusHash"] = corpus.hash
     # Pinned provenance contract (Swift decodes this exact shape;

@@ -486,15 +486,47 @@ corpus and not the draw. The server was corrected to match, and both engines
 now accumulate through one shared tested unit
 (`ResidualNormConvention` / `steering.residual_norm_convention`).
 
-Fresh measurements stamp the sidecar `residualNormConvention:
-"wholeCorpusMean-v1"` — same key and value on both engines, absent when
-unknown. The stamp is **never retro-applied**: an artifact without it is
-legacy, is read exactly as it always was, and is displayed as
-"convention: legacy (pre-stamp)" rather than being credited with today's rule.
-`vectors backfill-norms` re-measures under the current convention and stamps
-it, which is the opt-in way to move a specific artifact forward. `α` remains
-comparable only within one `residualNormSource` AND one
-`residualNormConvention`.
+Fresh measurements stamp the sidecar `residualNormConvention` — same key and
+same value strings on both engines, absent when unknown. The stamp is **never
+retro-applied**: an artifact without it is legacy, is read exactly as it always
+was, and is displayed as "convention: legacy (pre-stamp)" rather than being
+credited with today's rule. `vectors backfill-norms` re-measures under the
+current convention and stamps it, which is the opt-in way to move a specific
+artifact forward. `α` remains comparable only within one `residualNormSource`
+AND one `residualNormConvention`.
+
+#### Two rules, two stamps (2026-08-28)
+
+The whole-corpus ruling above fixed *which positions count*. It did not, until
+the 2026-08-28 audit, fix *how they are weighted*, and two different weightings
+were shipping under one string:
+
+| stamp | rule |
+|---|---|
+| `wholeCorpusMean-v1` | the **per-position** mean: every measured position in the corpus counts once (the shared `ResidualNormTally`) |
+| `perTextMean-v1` | the **mean of per-text window-means**: each text contributes one number per layer — the mean norm over *its own* reading window — and those are averaged with equal weight per text |
+
+The denominator written into a vector sidecar has always been the second rule:
+extraction and `backfill-norms` measure through the pooled-activations path,
+whose every capture already carries its own window mean. The tally reaches only
+the neutral token bank (and through it the neutral-PC basis, and a
+`neutral-token-bank` grand-mean denominator on the Mac engine). The two
+coincide wherever every text contributes one position — `last token` and every
+other single-position reading — or where every window is the same length, and
+they diverge at a **pooled** reading (`mean from token k`,
+`mean content from token n`) over variable-length texts, because per-text
+weighting gives a long text's positions less weight each.
+
+Both engines now stamp the rule they applied, and the Mac's `extractGrandMean`
+— the one function that could emit either — branches the stamp with the
+source. **Existing artifacts are not rewritten.** A `wholeCorpusMean-v1` stamp
+on a sidecar was written by a per-text writer (no tally number has ever reached
+a sidecar), so it is grandfathered: it means the per-text number it has always
+meant, and at the single-position readings those artifacts use it is a number
+both rules produce. Nothing gates on the stamp — it is provenance and display
+only — so an old-stamp and a new-stamp artifact never refuse against each
+other; what changed is that a reader can now tell which weighting a
+pooled-reading denominator used.
 
 **Validation is unchanged.** The held-out probe runs exactly as it does for a
 derived vector: the same class means, the same scoring, the same cosine

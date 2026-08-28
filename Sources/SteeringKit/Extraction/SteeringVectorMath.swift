@@ -375,18 +375,33 @@ public enum SteeringVectorMath {
     }
 
     /// Element-wise mean of equal-length rows.
+    ///
+    /// **Accumulated in `Double`, returned as `[Float]`** (2026-08-28 audit,
+    /// convention note 16). The rows are float32 — the deliberate cross-engine
+    /// storage dtype, unchanged — but a SEQUENTIAL float32 sum accrues error
+    /// on the order of N·ε, while numpy's `ndarray.mean` sums pairwise at
+    /// ~log₂(N)·ε. Over a few hundred stimulus rows that difference was the
+    /// ceiling on cross-engine agreement for a re-derived grand mean
+    /// (~1e-4..1e-3 relative in unlucky cases), which is a numerics artifact
+    /// masquerading as a recipe divergence. Accumulating in `Double` and
+    /// casting ONCE at the end costs nothing here (these run over small
+    /// captured activations on the CPU) and moves this engine's value TOWARD
+    /// the exact mean — and therefore toward numpy's. `ConceptExtractor
+    /// .neutralMeanPerLayer` has always accumulated this way; this brings the
+    /// mean / meanDifference / grandMeanDifference paths, and the PCA
+    /// centring that also calls through here, into line with it.
     public static func mean(_ rows: [[Float]]) throws -> [Float] {
         guard let first = rows.first else { throw SteeringVectorError.emptyInput }
-        var sum = [Float](repeating: 0, count: first.count)
+        var sum = [Double](repeating: 0, count: first.count)
         for row in rows {
             guard row.count == first.count else {
                 throw SteeringVectorError.dimensionMismatch(
                     expected: first.count, found: row.count)
             }
-            for i in row.indices { sum[i] += row[i] }
+            for i in row.indices { sum[i] += Double(row[i]) }
         }
-        let n = Float(rows.count)
-        return sum.map { $0 / n }
+        let n = Double(rows.count)
+        return sum.map { Float($0 / n) }
     }
 
     /// CAA direction: mean(positive activations) − mean(negative activations).

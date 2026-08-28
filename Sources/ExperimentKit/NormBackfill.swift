@@ -129,11 +129,13 @@ public enum NormBackfill {
         sidecar.residualNormPerLayer = residualNormPerLayer
         sidecar.residualNormSource = residualNormSource(corpusHash: corpusHash)
         // Backfill IS the opt-in migration to the current denominator
-        // convention: these norms were measured just now, by this code, under
-        // `ResidualNormConvention.current`. Legacy artifacts are never
-        // stamped in place — running backfill is how a researcher chooses to
-        // move one onto the stamped convention.
-        sidecar.residualNormConvention = ResidualNormConvention.current
+        // convention: these norms were measured just now, by this code,
+        // through `ConceptExtractor.neutralCorpusResidualNorms` → `activations`
+        // — one window-mean per text, averaged with equal weight per text — so
+        // the stamp is `perTextMean`, the rule that was actually applied.
+        // Legacy artifacts are never stamped in place — running backfill is
+        // how a researcher chooses to move one onto the stamped convention.
+        sidecar.residualNormConvention = ResidualNormConvention.perTextMean
         sidecar.neutralCorpusHash = corpusHash
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]

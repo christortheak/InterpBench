@@ -82,7 +82,7 @@ import Testing
                 artifactID: "runs/20260820T000000Z-concept-fear/fear",
                 layer: 18,
                 residualNormAtLayer: 42,
-                residualNormConvention: ResidualNormConvention.current))
+                residualNormConvention: ResidualNormConvention.perTextMean))
         let dto = StateDTO.AlphaDefaultDTO(decision)
 
         #expect(dto.alpha == SlotAlphaDefault.normUnitsDefault)

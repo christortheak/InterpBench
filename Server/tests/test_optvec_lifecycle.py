@@ -235,8 +235,10 @@ def test_a_denominated_run_stamps_the_donor_denominator(tmp_path, monkeypatch):
     assert denominator["residualNormArtifact"] == donor
     assert denominator["residualNormSource"] == "neutral-corpus"
     assert denominator["neutralCorpusHash"] == donor_sidecar["neutralCorpusHash"]
-    # The Part-A convention stamp travels with the denominator it describes.
-    assert denominator["residualNormConvention"] == "wholeCorpusMean-v1"
+    # The Part-A convention stamp travels with the denominator it describes —
+    # the donor was measured by ``vectors backfill-norms``, whose rule is the
+    # per-text one.
+    assert denominator["residualNormConvention"] == "perTextMean-v1"
 
     # AND the top-level slot stays empty. That key means "denominator for MY
     # direction" in every other family; filling it on a PRE-SCALED artifact

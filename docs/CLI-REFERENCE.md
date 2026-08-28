@@ -1709,9 +1709,14 @@ else resolves under `runs/`. `--corpus` defaults to
 the hard sidecar-vs-loaded-model guard still applies, because norms are a
 per-model measurement. `--redenominate` additionally rewrites the norm units.
 
-The new artifact is stamped `residualNormConvention: "wholeCorpusMean-v1"` —
-the residual-norm DENOMINATOR CONVENTION (whole-corpus average; every measured
-position counts, banked or not). This verb is the **opt-in migration** onto
+The new artifact is stamped `residualNormConvention: "perTextMean-v1"` — the
+residual-norm DENOMINATOR CONVENTION for the rule this verb actually applies:
+each corpus text contributes one number per layer, the mean norm over its own
+reading window, and those are averaged with equal weight per text. (The sibling
+string `wholeCorpusMean-v1` names the per-position rule, which reaches only the
+neutral token bank; the two agree at single-position readings and part company
+at pooled ones over variable-length texts.) This verb is the **opt-in
+migration** onto
 that convention: artifacts with no stamp are LEGACY and are never rewritten,
 recomputed, or warned about, so an α that meant one dose yesterday means the
 same dose today. Run this when you want a specific artifact's denominator
@@ -3505,7 +3510,8 @@ divergence. `--threshold` defaults to `vector_parity.DEFAULT_THRESHOLD` =
 existing artifact (legacy / SAE import / reader-derived / optvec-trained) on
 the pinned neutral corpus and writes a **new** artifact into a fresh
 `backfill-norms-<name>` run directory; the source is never modified. The new
-artifact is stamped `residualNormConvention: "wholeCorpusMean-v1"`; unstamped
+artifact is stamped `residualNormConvention: "perTextMean-v1"` — the rule this
+verb applies, one window-mean per text averaged over texts; unstamped
 artifacts are legacy and are never migrated in place (Swift twin behaviour).
 Parameter-for-parameter the CLI form of `POST /api/vectors/backfill-norms`
 (result JSON key-identical), with the Swift twin's reference resolution

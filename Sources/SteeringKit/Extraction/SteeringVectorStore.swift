@@ -42,8 +42,9 @@ public struct SteeringVectorSidecar: Codable, Sendable {
     /// (those are stimulus-based).
     public var residualNormSource: String?
     /// WHICH AVERAGING RULE produced `residualNormPerLayer` — the denominator
-    /// convention (`ResidualNormConvention.current`,
-    /// `"wholeCorpusMean-v1"`). `residualNormSource` says which corpus was
+    /// convention (`ResidualNormConvention`: `"perTextMean-v1"` from every
+    /// extraction/backfill measurement, `"wholeCorpusMean-v1"` from the
+    /// per-position tally). `residualNormSource` says which corpus was
     /// measured; this says how its positions were averaged, and the two
     /// together are what make an α in norm units mean one dose.
     ///

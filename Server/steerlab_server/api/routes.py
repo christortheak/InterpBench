@@ -2808,6 +2808,7 @@ def build_router(state: ServiceState) -> APIRouter:
     def neutral_pcs_build(body: dict | None = None):
         state.require_model()
         from ..experiment import neutral
+        from ..steering import token_bank_downsampling
         from ..steering.extractor import neutral_activation_bank
         from ..steering.reading_position import mean_from_token
 
@@ -2827,8 +2828,14 @@ def build_router(state: ServiceState) -> APIRouter:
                 raise RuntimeError("neutral corpus needs ≥4 texts to build PCs")
             # Deterministic downsample seed FROM THE CORPUS HASH: the same
             # corpus always banks the same token positions, so the basis is
-            # reproducible without a seeds table.
-            seed = int((corpus_hash or "0" * 16)[:16], 16) % (2 ** 63)
+            # reproducible without a seeds table. The derivation is the Swift
+            # twin's (SHA-256 over the hash string, first 8 bytes big-endian)
+            # so the two engines draw the SAME rows from the same corpus at
+            # the same cap — it used to be this engine's own
+            # ``int(hash[:16], 16) % 2**63``, a different number entirely
+            # (2026-08-28 audit, convention note 9).
+            seed = token_bank_downsampling.seed_from_corpus_hash(
+                corpus_hash or "")
             with state.acquire_active() as model:
                 bank = neutral_activation_bank(model, texts,
                                                reading_position=mean_from_token(50),

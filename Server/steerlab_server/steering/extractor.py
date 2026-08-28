@@ -15,14 +15,15 @@ from dataclasses import dataclass, field
 import numpy as np
 import torch
 
+from . import token_bank_downsampling
 from . import vector_math as vm
 from .extraction_rendering import (DECLARATION_FLAG, RAW_RENDERING,
                                    ExtractionRendering)
 from .model_loader import SteeredModel
 from .reading_position import LAST_TOKEN, ReadingPosition, ReadingPositionError
 from .recorder import ActivationBankRecorder, ActivationRecorder
-from .residual_norm_convention import CURRENT as RESIDUAL_NORM_CONVENTION
-from .residual_norm_convention import ResidualNormTally
+from .residual_norm_convention import PER_TEXT_MEAN as RESIDUAL_NORM_CONVENTION
+from .residual_norm_convention import WHOLE_CORPUS_MEAN, ResidualNormTally
 from .vector_store import ConceptVectors
 
 
@@ -56,9 +57,12 @@ class ExtractionResult:
     residual_norm_per_layer: list[float]
     residual_norm_source: str
     options: ExtractionOptions
-    #: HOW those positions were averaged — always the current convention,
-    #: because this value describes a measurement THIS code just made.
-    #: Sidecar writers stamp it verbatim; see :mod:`residual_norm_convention`.
+    #: HOW those positions were averaged. ``extract`` measures every
+    #: denominator through :func:`activations` — one window-mean per text,
+    #: averaged with equal weight per text — so this is always
+    #: ``perTextMean-v1``, the rule that was actually applied. Sidecar writers
+    #: stamp it verbatim; see :mod:`residual_norm_convention` for why the
+    #: per-position rule has a string of its own.
     residual_norm_convention: str = RESIDUAL_NORM_CONVENTION
     #: WHICH RENDERING produced ``residual_norm_per_layer``. The denominator
     #: follows the extraction's rendering (α in norm units must divide by a
@@ -109,6 +113,12 @@ class NeutralActivationBank:
     positions_total: int = 0
     positions_kept: int = 0
     downsample_seed: int | None = None
+    #: WHICH averaging rule produced :attr:`residual_norm_per_layer` — the
+    #: PER-POSITION mean (``ResidualNormTally``), which is a different rule
+    #: from the per-text mean every vector sidecar's denominator is measured
+    #: under. Stated on the object so a future writer stamps the rule it was
+    #: handed rather than the extraction path's.
+    residual_norm_convention: str = WHOLE_CORPUS_MEAN
 
     def components_by_layer(self, *, count: int | None = None,
                             min_variance: float | None = None,
@@ -267,6 +277,12 @@ def activations_multi(model: SteeredModel, texts: list[str],
                     norm_sums[i] = list(norms)
                 elif len(norm_sums[i]) == len(norms):
                     norm_sums[i] = [a + b for a, b in zip(norm_sums[i], norms)]
+    # PER-TEXT rule (``residual_norm_convention.PER_TEXT_MEAN``): every capture
+    # already holds the mean norm over ITS OWN reading window
+    # (``recorder.Capture.residual_norm``), so dividing the sum by the text
+    # count weights each TEXT equally, not each position. At a single-position
+    # reading the two are the same number; at a pooled one over variable-length
+    # texts they are not, which is why the rule has its own stamp.
     count = max(1, len(texts))
     return [StimulusActivations(
                 values=results[i],
@@ -288,19 +304,30 @@ def activations(model: SteeredModel, texts: list[str],
 # banked token position, so an unbounded corpus explodes memory (the Swift
 # side's known hazard). Positions beyond the cap are deterministically
 # downsampled (seed from the corpus hash) so the basis stays reproducible.
+#
+# ENGINE-LOCAL ON PURPOSE. Swift caps at 4096
+# (``TokenBankDownsampler.defaultRowCapPerLayer``) behind a
+# ``NeutralBankBudget.preflight`` refusal; this engine has no preflight and
+# materializes kept rows as Python floats for every captured layer, so the two
+# defaults answer different memory questions. The DRAW is cross-engine
+# identical for a shared cap — see
+# :mod:`steerlab_server.steering.token_bank_downsampling`.
 DEFAULT_MAX_TOKEN_ROWS = 2048
 
 
 def deterministic_row_selection(total_rows: int, max_rows: int | None,
                                 seed: int) -> set[int] | None:
     """Which token positions (0..total_rows-1) to keep, or None for "all".
+
     Pure + deterministic for a given (total, cap, seed): the same corpus and
-    seed always bank the same positions on any machine."""
-    import random as _random
-    if not max_rows or total_rows <= max_rows:
-        return None
-    rng = _random.Random(seed)
-    return set(rng.sample(range(total_rows), max_rows))
+    seed always bank the same positions on any machine, on any Python, and on
+    either engine. The algorithm lives in
+    :mod:`steerlab_server.steering.token_bank_downsampling` — a seeded partial
+    Fisher–Yates over SplitMix64, byte-for-byte the Swift twin's. It used to be
+    ``random.sample``, whose stability CPython does not promise across
+    versions (2026-08-28 audit, convention note 9).
+    """
+    return token_bank_downsampling.selected_index_set(total_rows, max_rows, seed)
 
 
 @torch.no_grad()
@@ -343,6 +370,9 @@ def neutral_activation_bank(model: SteeredModel, texts: list[str], *,
     # "alpha = 1 norm units" did not mean the same dose on the two engines.
     # ``recorder.skipped_norms`` carries the cap-excluded positions, and they
     # are now folded in, matching ``ConceptExtractor.neutralActivationBank``.
+    # This is the ONE per-position measurement on this engine, and it is the
+    # rule ``WHOLE_CORPUS_MEAN`` names; the vector-sidecar denominator measured
+    # by ``activations`` is the per-text rule and stamps ``PER_TEXT_MEAN``.
     tally = ResidualNormTally()
     with model.hooked.session([recorder]):
         for input_ids, text_rows in zip(encoded, per_text_rows):

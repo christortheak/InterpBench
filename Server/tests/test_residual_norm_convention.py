@@ -1,14 +1,20 @@
-"""The residual-norm DENOMINATOR CONVENTION — whole-corpus average, stamped.
+"""The residual-norm DENOMINATOR CONVENTION — two averaging rules, two stamps.
 
 Cross-engine twin: ``Tests/SteeringKitTests/ResidualNormConventionTests.swift``.
-Both suites drive the SAME fixture (``FIXTURE_*`` below / ``fixture*`` there)
-and assert the same three numbers, so a divergence in the averaging rule fails
-on whichever engine drifted rather than surfacing months later as an
-uncomparable alpha.
+Both suites drive the SAME fixtures (``FIXTURE_*`` below / ``fixture*`` there)
+and assert the same numbers, so a divergence in an averaging rule fails on
+whichever engine drifted rather than surfacing months later as an uncomparable
+alpha.
 
-The fixture is chosen so the banked-positions mean and the whole-corpus mean
-are DIFFERENT numbers: a test that passed under either rule would not have
-caught the bug this convention closes.
+Two fixtures, each chosen so that a test passing under either rule would prove
+nothing:
+
+* the TALLY fixture separates the whole-corpus mean from the banked-only mean
+  the server used before the 2026-08-20 ruling;
+* the POOLED fixture (``FIXTURE_WINDOWS``) separates the two rules that shared
+  one stamp until the 2026-08-28 audit (F1) — variable-length texts read at a
+  pooled position, where the per-position mean and the mean of per-text
+  window-means are different numbers.
 """
 
 from __future__ import annotations
@@ -77,8 +83,20 @@ def test_unmeasured_layer_has_no_denominator():
     assert ResidualNormTally().mean(99) == 0.0
 
 
-def test_stamp_is_the_pinned_cross_engine_string():
-    assert convention.CURRENT == "wholeCorpusMean-v1"
+def test_stamps_are_the_pinned_cross_engine_strings():
+    """Twin literals. Each string names ONE averaging rule; the version suffix
+    moves only when that rule does."""
+    assert convention.WHOLE_CORPUS_MEAN == "wholeCorpusMean-v1"
+    assert convention.PER_TEXT_MEAN == "perTextMean-v1"
+    assert convention.WHOLE_CORPUS_MEAN != convention.PER_TEXT_MEAN
+
+
+def test_the_legacy_stamp_is_grandfathered_onto_the_per_text_rule():
+    """Every sidecar on disk stamped ``wholeCorpusMean-v1`` was written by a
+    PER-TEXT writer — extraction or backfill — because the tally has never
+    reached a sidecar. Frozen bytes are never rewritten, so the reader-side
+    rule is that such a stamp means the per-text number it has always meant."""
+    assert convention.GRANDFATHERED_PER_TEXT_STAMP == convention.WHOLE_CORPUS_MEAN
 
 
 def test_bank_driver_folds_the_excluded_positions_in():
@@ -102,14 +120,96 @@ def test_bank_driver_folds_the_excluded_positions_in():
     assert bank.residual_norm_per_layer == [pytest.approx(4.5)]
 
 
-def test_extraction_result_carries_the_convention():
+def test_extraction_result_carries_the_per_text_rule():
+    """``extract`` measures every denominator through ``activations``, so the
+    rule it stamps is the per-text one — not the tally's."""
     from steerlab_server.steering import extractor
 
     result = extractor.ExtractionResult(
         vectors=vector_store.ConceptVectors(per_layer=[[1.0, 0.0]]),
         residual_norm_per_layer=[1.0], residual_norm_source="neutral-corpus",
         options=extractor.ExtractionOptions())
-    assert result.residual_norm_convention == convention.CURRENT
+    assert result.residual_norm_convention == convention.PER_TEXT_MEAN
+    assert extractor.MultiConceptExtractionResult(
+        per_concept={}, residual_norm_per_layer=[1.0],
+        residual_norm_source="neutral-corpus"
+    ).residual_norm_convention == convention.PER_TEXT_MEAN
+
+
+def test_the_bank_states_the_rule_its_denominator_was_measured_under():
+    """The tally's number is the PER-POSITION one, and the object it travels
+    on says so — so a future writer stamps the rule it was handed instead of
+    the extraction path's."""
+    from steerlab_server.steering import extractor
+
+    bank = extractor.NeutralActivationBank(
+        layers=[0], rows_by_layer=[[[1.0]]], residual_norm_per_layer=[1.0],
+        token_row_count=1)
+    assert bank.residual_norm_convention == convention.WHOLE_CORPUS_MEAN
+
+
+# ------------------------------------------------- the two rules, discriminated
+#
+# THE fixture the audit asked for (F1): variable-length texts at a POOLED
+# reading position. Text A is read over 2 positions of norm 10; text B over 6
+# positions of norm 2.
+#
+#   per-TEXT mean     = (10 + 2) / 2            = 6.0
+#   per-POSITION mean = (10·2 + 2·6) / 8        = 4.0
+#
+# Both numbers are produced by REAL code below — ``extractor.activations`` for
+# the per-text rule, ``extractor.neutral_activation_bank``'s tally for the
+# per-position one — so the test pins the rules, not a restatement of them.
+FIXTURE_WINDOWS = ((2, 10.0), (6, 2.0))
+FIXTURE_POOLED_PER_TEXT_MEAN = 6.0
+FIXTURE_POOLED_PER_POSITION_MEAN = 4.0
+
+
+def test_pooled_fixture_actually_discriminates_the_two_rules():
+    """Guard on the guard, again: equal-length texts (the shape the pre-audit
+    fixtures used) cannot tell the two rules apart, which is exactly why no
+    test caught the shared stamp."""
+    assert FIXTURE_POOLED_PER_TEXT_MEAN != FIXTURE_POOLED_PER_POSITION_MEAN
+    assert len({length for length, _ in FIXTURE_WINDOWS}) > 1
+
+
+def test_activations_measure_the_per_text_rule_at_a_pooled_position():
+    from steerlab_server.steering import extractor
+
+    measured = extractor.activations(
+        _VariableStubModel(), _variable_texts(), _position())
+    assert measured.residual_norm_per_layer == \
+        pytest.approx([FIXTURE_POOLED_PER_TEXT_MEAN])
+    # And is NOT the per-position number, under a stamp that used to claim it.
+    assert measured.residual_norm_per_layer != \
+        pytest.approx([FIXTURE_POOLED_PER_POSITION_MEAN])
+
+
+def test_the_tally_measures_the_per_position_rule_on_the_same_corpus():
+    from steerlab_server.steering import extractor
+
+    bank = extractor.neutral_activation_bank(
+        _VariableStubModel(), _variable_texts(),
+        reading_position=_position(), max_token_rows=None)
+    assert bank.token_row_count == sum(n for n, _ in FIXTURE_WINDOWS)
+    assert bank.residual_norm_per_layer == \
+        pytest.approx([FIXTURE_POOLED_PER_POSITION_MEAN])
+
+
+def test_the_two_rules_agree_at_a_single_position_reading():
+    """Why the grandfathering is safe: at ``lastToken`` every text contributes
+    exactly one position, so per-text and per-position weighting are the same
+    arithmetic and a legacy stamp names a number both rules produce."""
+    from steerlab_server.steering import extractor
+    from steerlab_server.steering.reading_position import LAST_TOKEN
+
+    measured = extractor.activations(
+        _VariableStubModel(), _variable_texts(), LAST_TOKEN)
+    tally = ResidualNormTally()
+    for length, norm in FIXTURE_WINDOWS:
+        # The last position of each text — one per text, either way round.
+        tally.add(0, norm if length else 0.0)
+    assert measured.residual_norm_per_layer == pytest.approx([tally.mean(0)])
 
 
 # --------------------------------------------------------------- the stamping
@@ -125,11 +225,11 @@ def _sidecar(**kwargs) -> vector_store.SteeringVectorSidecar:
 def test_fresh_measurement_stamps_the_convention(tmp_path):
     sidecar = _sidecar(residual_norm_per_layer=[2.0, 3.0],
                        residual_norm_source="neutral-corpus abc123",
-                       residual_norm_convention=convention.CURRENT)
+                       residual_norm_convention=convention.PER_TEXT_MEAN)
     vector_store.save(vector_store.ConceptVectors(per_layer=[[1.0, 0.0], [0.0, 1.0]]),
                       sidecar, str(tmp_path), "v")
     payload = json.loads((tmp_path / "v.json").read_text())
-    assert payload["residualNormConvention"] == "wholeCorpusMean-v1"
+    assert payload["residualNormConvention"] == "perTextMean-v1"
 
 
 def test_unstamped_is_ABSENT_not_null(tmp_path):
@@ -173,11 +273,19 @@ def test_legacy_sidecar_reads_exactly_as_before(tmp_path):
 
 
 def test_display_label_rules():
-    assert convention.display_label([1.0], convention.CURRENT) == "wholeCorpusMean-v1"
+    # Both stamps display as themselves — the ONLY consumer of the string on
+    # either engine is display/provenance (this label, the α-default
+    # convention note, the OptVec packaging advisory). Nothing gates on it, so
+    # a new-stamp artifact and an old-stamp artifact cannot refuse against
+    # each other, and a reader sees which rule they hold rather than a
+    # normalized fiction.
+    assert convention.display_label([1.0], convention.PER_TEXT_MEAN) == "perTextMean-v1"
+    assert convention.display_label(
+        [1.0], convention.WHOLE_CORPUS_MEAN) == "wholeCorpusMean-v1"
     assert convention.display_label([1.0], None) == "legacy (pre-stamp)"
     # No norms at all: there is no denominator to describe.
     assert convention.display_label(None, None) is None
-    assert convention.display_label([], convention.CURRENT) is None
+    assert convention.display_label([], convention.PER_TEXT_MEAN) is None
 
 
 # ------------------------------------------------------------------ the stubs
@@ -220,6 +328,50 @@ class _StubTokenizer:
             input_ids = torch.zeros((1, 4), dtype=torch.long)
 
         return _Encoded()
+
+
+def _variable_texts() -> list[str]:
+    """One text per ``FIXTURE_WINDOWS`` entry, its LENGTH IN CHARACTERS equal
+    to its token count — the stub tokenizer's whole contract."""
+    return ["x" * length for length, _ in FIXTURE_WINDOWS]
+
+
+class _VariableTokenizer:
+    """One token per character, so the fixture's texts tokenize to different
+    lengths — the shape at which the two averaging rules part company."""
+
+    def __call__(self, text, return_tensors=None):
+        import torch
+
+        class _Encoded:
+            input_ids = torch.zeros((1, len(text)), dtype=torch.long)
+
+        return _Encoded()
+
+
+class _VariableStubModel:
+    """Emits, for the pass over text *i*, ``FIXTURE_WINDOWS[i][0]`` rows whose
+    L2 norm is all ``FIXTURE_WINDOWS[i][1]`` — a flat window per text, so the
+    only thing that can move the answer is HOW the windows are weighted."""
+
+    num_layers = 1
+    hidden_size = 2
+    device = "cpu"
+
+    def __init__(self):
+        self.hooked = _StubHooked()
+        self.tokenizer = _VariableTokenizer()
+
+    def model(self, input_ids=None, use_cache=False):
+        import torch
+
+        length = int(input_ids.shape[1])
+        norm = next(value for count, value in FIXTURE_WINDOWS if count == length)
+        values = torch.tensor(
+            [[[norm, 0.0] for _ in range(length)]], dtype=torch.float32)
+        for intervention in self.hooked._interventions:
+            intervention.apply(values, 0, 0)
+        return None
 
 
 class _StubModel:

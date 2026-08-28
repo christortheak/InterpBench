@@ -11,26 +11,79 @@ row-cap draw) — see the standing NOTE that used to sit in
 ``extractor.neutral_activation_bank``. On a downsampled corpus those are
 different numbers, so "alpha = 1 norm units" meant two different doses.
 
-**The ruling (2026-08-20): the convention is the WHOLE-CORPUS average.** Every
-measured position counts toward the denominator, banked or not — the
-denominator describes the corpus, not the draw. This engine was fixed to
-match; the Swift twin is
-``Sources/SteeringKit/Extraction/ResidualNormConvention.swift``.
+**The ruling (2026-08-20): a token bank's denominator is the WHOLE-CORPUS
+average.** Every measured position counts, banked or not — the denominator
+describes the corpus, not the draw. This engine was fixed to match; the Swift
+twin is ``Sources/SteeringKit/Extraction/ResidualNormConvention.swift``.
 
-The convention is STAMPED, never retro-applied. New measurements write
-``residualNormConvention: "wholeCorpusMean-v1"`` into the sidecar; artifacts
-without the stamp are LEGACY and are read exactly as before — no migration, no
+The convention is STAMPED, never retro-applied. Every measurement writes a
+``residualNormConvention`` stamp naming the rule it applied; artifacts without
+a stamp are LEGACY and are read exactly as before — no migration, no
 recompute, no warning. ``vectors backfill-norms`` re-measures under the current
 convention and stamps it, which is the researcher's opt-in migration path.
+
+**Two rules, two stamps (2026-08-28 audit, F1).** Until this landed there was
+one stamp string and two averaging rules behind it. ``ResidualNormTally``
+below averages POSITIONS; the ``activations``-based measurement that actually
+writes vector sidecars (``extract``/``extract_grand_mean``/``norm_backfill``,
+and their Swift twins) averages TEXTS — each capture already carries the mean
+norm over its own reading window, and those per-text numbers are then averaged
+with equal weight per text. The two coincide wherever every text contributes
+one position (``lastToken`` and every other single-position reading) or where
+every window has the same length, and they diverge at a POOLED reading
+position (``meanFromToken``, ``meanContentFromToken``) over variable-length
+texts, where per-text weighting gives a long text's positions less weight each
+than a short text's. One string could not say which number an artifact holds,
+which is precisely what the "bump the version when the averaging RULE changes"
+contract exists to prevent — so the second rule now has its own string and
+every writer stamps the rule it applied.
 """
 
 from __future__ import annotations
 
-#: The stamp written by every fresh measurement on BOTH engines. Pinned
-#: cross-engine contract: same JSON key (``residualNormConvention``), same
-#: value string. Bump the version suffix only when the averaging RULE changes
-#: — never for an unrelated sidecar edit.
-CURRENT = "wholeCorpusMean-v1"
+#: Rule A — the PER-POSITION mean: every measured position in the corpus counts
+#: once, banked or not (:class:`ResidualNormTally` is the only implementation
+#: on either engine). Pinned cross-engine contract: same JSON key
+#: (``residualNormConvention``), same value string. Bump the version suffix
+#: only when this averaging RULE changes — never for an unrelated sidecar edit.
+WHOLE_CORPUS_MEAN = "wholeCorpusMean-v1"
+
+#: Rule B — the MEAN OF PER-TEXT WINDOW-MEANS: each text contributes exactly
+#: one number per layer, the mean residual-stream L2 norm over that text's
+#: reading window (``recorder.Capture.residual_norm``), and those per-text
+#: numbers are averaged with equal weight per TEXT. This is what
+#: ``extractor.activations`` measures and therefore what ``extract``,
+#: ``extract_grand_mean`` and ``norm_backfill`` write into vector sidecars, on
+#: both engines.
+#:
+#: Equal to :data:`WHOLE_CORPUS_MEAN` when every text's reading window is a
+#: single position (``lastToken`` and friends) or when every window is the same
+#: length; different at pooled readings over variable-length texts.
+#:
+#: One documented sub-case: the paired ``extract`` fallback with NO neutral
+#: corpus averages the positive and negative CLASS means (``(p + n) / 2``),
+#: which is this rule exactly when the two classes hold the same number of
+#: texts — the paired-stimulus contract — and class-balanced rather than
+#: text-flat when they do not. The class-balanced reading is the intended one
+#: for a contrastive pair; the stamp is honest either way because both are
+#: means of per-text window-means.
+PER_TEXT_MEAN = "perTextMean-v1"
+
+#: GRANDFATHERING (reader-side, documented, never a rewrite). Artifacts on disk
+#: carry ``wholeCorpusMean-v1`` written by the per-text writers before the two
+#: rules were separated. Frozen bytes are never rewritten, so those stamps stay
+#: exactly as they are and keep meaning exactly what they always meant: the
+#: number the per-text rule produced. A reader comparing doses across such an
+#: artifact and a freshly stamped ``perTextMean-v1`` one may treat the two as
+#: the same rule — they are, and at a single-position reading (which is this
+#: engine's default and what the whole-corpus rule would have produced anyway)
+#: the numbers are identical. What a reader may NOT do is credit a legacy
+#: ``wholeCorpusMean-v1`` with the per-position rule: no writer has ever
+#: produced a sidecar under it. Nothing in either engine GATES on the stamp —
+#: it is provenance and display only (``display_label``, the α-default
+#: convention note, the OptVec packaging advisory) — so a new-stamp and an
+#: old-stamp artifact cannot refuse against each other.
+GRANDFATHERED_PER_TEXT_STAMP = WHOLE_CORPUS_MEAN
 
 #: Human-readable label for an artifact that predates the stamp. Surfaces that
 #: already show norm provenance may render this; nothing may treat it as
@@ -112,10 +165,14 @@ def residual_norm_problem(residual_norm_per_layer, layer: int, *,
 
 
 class ResidualNormTally:
-    """Per-layer running mean of residual norms under the whole-corpus rule.
+    """Per-layer running mean of residual norms under :data:`WHOLE_CORPUS_MEAN`
+    — the PER-POSITION rule, and the only implementation of it.
 
     Both the banked rows and the rows the token-bank cap EXCLUDED are added
-    here; :meth:`mean` is then the corpus mean, not the draw's mean. The Swift
+    here; :meth:`mean` is then the corpus mean, not the draw's mean. It feeds
+    the neutral token bank (and through it the neutral-PC basis) and nothing
+    else; a denominator written into a VECTOR SIDECAR comes from
+    ``extractor.activations`` and is stamped :data:`PER_TEXT_MEAN`. The Swift
     ``ResidualNormConvention.Tally`` is the line-for-line twin, and the two are
     pinned against one shared fixture (``test_residual_norm_convention.py`` /
     ``ResidualNormConventionTests``).

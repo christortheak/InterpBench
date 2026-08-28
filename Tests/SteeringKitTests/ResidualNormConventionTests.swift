@@ -3,17 +3,22 @@ import Testing
 
 @testable import SteeringKit
 
-/// The residual-norm DENOMINATOR CONVENTION — whole-corpus average, stamped.
+/// The residual-norm DENOMINATOR CONVENTION — two averaging rules, two stamps.
 ///
 /// Cross-engine twin: `Server/tests/test_residual_norm_convention.py`. Both
-/// suites drive the SAME fixture and assert the same three numbers, so a
-/// divergence in the averaging rule fails on whichever engine drifted rather
+/// suites drive the SAME fixtures and assert the same numbers, so a
+/// divergence in an averaging rule fails on whichever engine drifted rather
 /// than surfacing months later as an uncomparable α.
 ///
-/// The fixture is chosen so the banked-positions mean and the whole-corpus
-/// mean are DIFFERENT numbers: a test that passed under either rule would not
-/// have caught the bug this convention closes (the server averaged the draw,
-/// this engine averaged the corpus).
+/// Two fixtures, each chosen so that a test passing under either rule would
+/// prove nothing:
+///
+/// * the TALLY fixture separates the whole-corpus mean from the banked-only
+///   mean the server used before the 2026-08-20 ruling;
+/// * the POOLED fixture (`fixtureWindows`) separates the two rules that shared
+///   one stamp until the 2026-08-28 audit (F1) — variable-length texts read at
+///   a pooled position, where the per-position mean and the mean of per-text
+///   window-means are different numbers.
 @Suite struct ResidualNormConventionTests {
 
     // One layer, eight measured token positions. The row cap banked the four
@@ -65,17 +70,104 @@ import Testing
         #expect(ResidualNormConvention.Tally().mean(at: 99) == 0)
     }
 
-    @Test func stampIsThePinnedCrossEngineString() {
-        #expect(ResidualNormConvention.current == "wholeCorpusMean-v1")
+    /// Twin literals. Each string names ONE averaging rule; the version suffix
+    /// moves only when that rule does.
+    @Test func stampsAreThePinnedCrossEngineStrings() {
+        #expect(ResidualNormConvention.wholeCorpusMean == "wholeCorpusMean-v1")
+        #expect(ResidualNormConvention.perTextMean == "perTextMean-v1")
+        #expect(ResidualNormConvention.wholeCorpusMean != ResidualNormConvention.perTextMean)
     }
 
-    @Test func extractionResultCarriesTheConvention() {
+    /// Every sidecar on disk stamped `wholeCorpusMean-v1` was written by a
+    /// PER-TEXT writer — extraction or backfill — because the tally has never
+    /// reached a sidecar on either engine. Frozen bytes are never rewritten,
+    /// so the reader-side rule is that such a stamp means the per-text number
+    /// it has always meant.
+    @Test func theLegacyStampIsGrandfatheredOntoThePerTextRule() {
+        #expect(
+            ResidualNormConvention.grandfatheredPerTextStamp
+                == ResidualNormConvention.wholeCorpusMean)
+    }
+
+    /// `extract` measures every denominator through `activations`, so the rule
+    /// it stamps is the per-text one — not the tally's.
+    @Test func extractionResultCarriesThePerTextRule() {
         let result = ExtractionResult(
             vectors: ConceptVectors(perLayer: [[1, 0]]),
             residualNormPerLayer: [1],
             residualNormSource: "neutral-corpus",
             options: ExtractionOptions())
-        #expect(result.residualNormConvention == ResidualNormConvention.current)
+        #expect(result.residualNormConvention == ResidualNormConvention.perTextMean)
+    }
+
+    /// The rewrap seam: the grand-mean path builds an `ExtractionResult` out
+    /// of a `MultiConceptExtractionResult` whose denominator may have come
+    /// from the token bank's per-position tally. The carrier must not
+    /// re-default the stamp on the way through, or a bank-denominated vector
+    /// is filed under the per-text rule.
+    @Test func aCarriedConventionSurvivesTheRewrap() {
+        let result = ExtractionResult(
+            vectors: ConceptVectors(perLayer: [[1, 0]]),
+            residualNormPerLayer: [1],
+            residualNormSource: "neutral-token-bank",
+            options: ExtractionOptions(),
+            residualNormConvention: ResidualNormConvention.wholeCorpusMean)
+        #expect(result.residualNormConvention == ResidualNormConvention.wholeCorpusMean)
+    }
+
+    // MARK: The two rules, discriminated
+    //
+    // THE fixture the audit asked for (F1): variable-length texts at a POOLED
+    // reading position. Text A is read over 2 positions of norm 10; text B
+    // over 6 positions of norm 2.
+    //
+    //   per-TEXT mean     = (10 + 2) / 2      = 6.0
+    //   per-POSITION mean = (10·2 + 2·6) / 8  = 4.0
+    //
+    // The server twin drives both numbers out of real code (`activations` and
+    // the bank driver); here the MLX forward pass needs a model, so the
+    // per-position half runs through the shared `Tally` and the per-text half
+    // through the same arithmetic `ConceptExtractor.activations` performs on
+    // its captures — one window-mean per text, averaged over texts.
+    private let fixtureWindows: [(positions: Int, norm: Float)] =
+        [(2, 10), (6, 2)]
+    private let pooledPerTextMean: Float = 6
+    private let pooledPerPositionMean: Float = 4
+
+    /// Guard on the guard, again: equal-length texts (the shape the pre-audit
+    /// fixtures used) cannot tell the two rules apart, which is exactly why no
+    /// test caught the shared stamp.
+    @Test func pooledFixtureActuallyDiscriminatesTheTwoRules() {
+        #expect(pooledPerTextMean != pooledPerPositionMean)
+        #expect(Set(fixtureWindows.map(\.positions)).count > 1)
+    }
+
+    @Test func theTwoRulesDisagreeOnTheSamePooledCorpus() {
+        // Per-position: every measured position counts once.
+        var tally = ResidualNormConvention.Tally()
+        for window in fixtureWindows {
+            for _ in 0 ..< window.positions { tally.add(layer: 0, norm: window.norm) }
+        }
+        #expect(tally.mean(at: 0) == pooledPerPositionMean)
+
+        // Per-text: each capture already holds ITS OWN window mean, and those
+        // are averaged with equal weight per text.
+        let windowMeans = fixtureWindows.map(\.norm)
+        let perText = windowMeans.reduce(0, +) / Float(windowMeans.count)
+        #expect(perText == pooledPerTextMean)
+        #expect(perText != tally.mean(at: 0))
+    }
+
+    /// Why the grandfathering is safe: at a single-position reading every text
+    /// contributes exactly one position, so per-text and per-position
+    /// weighting are the same arithmetic and a legacy stamp names a number
+    /// both rules produce.
+    @Test func theTwoRulesAgreeAtASinglePositionReading() {
+        var tally = ResidualNormConvention.Tally()
+        for window in fixtureWindows { tally.add(layer: 0, norm: window.norm) }
+        let windowMeans = fixtureWindows.map(\.norm)
+        let perText = windowMeans.reduce(0, +) / Float(windowMeans.count)
+        #expect(perText == tally.mean(at: 0))
     }
 
     // MARK: The stamping
@@ -95,10 +187,10 @@ import Testing
         let encoded = try JSONEncoder().encode(
             sidecar(
                 residualNormPerLayer: [2, 3], source: "neutral-corpus abc123",
-                convention: ResidualNormConvention.current))
+                convention: ResidualNormConvention.perTextMean))
         let object = try #require(
             JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        #expect(object["residualNormConvention"] as? String == "wholeCorpusMean-v1")
+        #expect(object["residualNormConvention"] as? String == "perTextMean-v1")
     }
 
     /// Family convention: an unknown field is omitted, never written as
@@ -141,9 +233,19 @@ import Testing
     }
 
     @Test func displayLabelRules() {
+        // Both stamps display as themselves — the ONLY consumer of the string
+        // on either engine is display/provenance (this label,
+        // `SlotAlphaDefault`'s convention note, the OptVec packaging
+        // advisory). Nothing gates on it, so a new-stamp artifact and an
+        // old-stamp artifact cannot refuse against each other, and a reader
+        // sees which rule they hold rather than a normalized fiction.
         #expect(
             ResidualNormConvention.displayLabel(
-                residualNormPerLayer: [1], stamp: ResidualNormConvention.current)
+                residualNormPerLayer: [1], stamp: ResidualNormConvention.perTextMean)
+                == "perTextMean-v1")
+        #expect(
+            ResidualNormConvention.displayLabel(
+                residualNormPerLayer: [1], stamp: ResidualNormConvention.wholeCorpusMean)
                 == "wholeCorpusMean-v1")
         #expect(
             ResidualNormConvention.displayLabel(residualNormPerLayer: [1], stamp: nil)
@@ -154,7 +256,7 @@ import Testing
                 == nil)
         #expect(
             ResidualNormConvention.displayLabel(
-                residualNormPerLayer: [], stamp: ResidualNormConvention.current) == nil)
+                residualNormPerLayer: [], stamp: ResidualNormConvention.perTextMean) == nil)
     }
 
     // MARK: The denominator-table gate (2026-08-28 audit, F7/F13)

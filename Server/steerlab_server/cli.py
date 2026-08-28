@@ -2840,9 +2840,11 @@ def _vectors_backfill_norms(args: list[str]) -> int:
 
     This is also the OPT-IN MIGRATION onto the current residual-norm
     denominator convention: the new artifact is stamped
-    ``residualNormConvention: "wholeCorpusMean-v1"``. Artifacts without that
-    stamp are LEGACY and are never rewritten, recomputed, or warned about —
-    running this verb is how a researcher chooses to move one forward.
+    ``residualNormConvention: "perTextMean-v1"`` — the rule this verb applies,
+    one window-mean per corpus text averaged with equal weight per text.
+    Artifacts without that stamp are LEGACY and are never rewritten,
+    recomputed, or warned about — running this verb is how a researcher
+    chooses to move one forward.
 
     Parameter-for-parameter the CLI form of ``POST /api/vectors/backfill-norms``
     (``vectorID``/``neutralCorpusPath``/``outputName``/``redenominate``/

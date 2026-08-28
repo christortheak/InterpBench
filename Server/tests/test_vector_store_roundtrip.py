@@ -67,7 +67,8 @@ def test_the_convention_stamp_is_a_declared_cross_engine_field():
     assert "residualNormConvention" in SteeringVectorSidecar.__dataclass_fields__
     assert SteeringVectorSidecar.__dataclass_fields__[
         "residualNormConvention"].default is None
-    assert residual_norm_convention.CURRENT == "wholeCorpusMean-v1"
+    assert residual_norm_convention.PER_TEXT_MEAN == "perTextMean-v1"
+    assert residual_norm_convention.WHOLE_CORPUS_MEAN == "wholeCorpusMean-v1"
 
 
 def test_safetensors_keys_are_layer_indexed(tmp_path):

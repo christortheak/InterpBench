@@ -90,8 +90,9 @@ class SteeringVectorSidecar:
     residualNormPerLayer: list[float] | None = None
     residualNormSource: str | None = None
     # WHICH AVERAGING RULE produced ``residualNormPerLayer`` — the denominator
-    # convention (``residual_norm_convention.CURRENT``,
-    # ``"wholeCorpusMean-v1"``). ``residualNormSource`` says which corpus was
+    # convention (:mod:`residual_norm_convention`: ``"perTextMean-v1"`` from
+    # every extraction/backfill measurement, ``"wholeCorpusMean-v1"`` from the
+    # per-position tally). ``residualNormSource`` says which corpus was
     # measured; this says how its positions were averaged, and the two
     # together are what make an alpha in norm units mean one dose.
     #
