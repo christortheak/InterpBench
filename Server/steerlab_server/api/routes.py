@@ -4282,7 +4282,12 @@ def build_router(state: ServiceState) -> APIRouter:
         _safe_name(str(nm))
         vp = state.resolver.require_dir(vp, allow_local_absolute=True)
         try:
-            body_layer = int(body["layer"]) if body.get("layer") is not None else None
+            # `gemma_scope.coerce_layer` (not bare `int()`, which truncated
+            # 2.5 → 2 and took true → 1) — the same predicate the importer
+            # uses, and the one the Swift decoder has always enforced through
+            # `GemmaScopeReportVector.layer: Int`.
+            body_layer = (gemma_scope.coerce_layer(body["layer"])
+                          if body.get("layer") is not None else None)
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="layer must be an integer")
         info = gemma_scope.scope_info(body.get("modelID", ""),
@@ -4335,7 +4340,10 @@ def build_router(state: ServiceState) -> APIRouter:
             raise HTTPException(status_code=400, detail="reportPath + feature required")
         report_path = state.resolver.require_file(report_path, allow_local_absolute=True)
         try:
-            feature = int(feature)
+            # Real-integer predicate, not bare int(): 2.5 truncated to
+            # FEATURE 2 and imported the wrong dictionary entry — the same
+            # silent-truncation class as the layer field one route over.
+            feature = gemma_scope.coerce_layer(feature, label="feature")
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="feature must be an integer")
         run_dir = paths.make_unique_run_directory(f"sae-feature-{feature}")
@@ -4371,8 +4379,13 @@ def build_router(state: ServiceState) -> APIRouter:
             raise HTTPException(status_code=400,
                                 detail=f"missing: {', '.join(missing)}")
         try:
-            feature = int(body["feature"])
-            layer = int(body["layer"]) if body.get("layer") is not None else None
+            # Same real-integer predicate for BOTH fields: a truncated layer
+            # would place the decoder row at a depth the SAE does not
+            # describe, and a truncated feature imports the wrong dictionary
+            # entry outright.
+            feature = gemma_scope.coerce_layer(body["feature"], label="feature")
+            layer = (gemma_scope.coerce_layer(body["layer"])
+                     if body.get("layer") is not None else None)
         except (TypeError, ValueError):
             raise HTTPException(status_code=400,
                                 detail="feature/layer must be integers")

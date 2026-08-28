@@ -175,6 +175,49 @@ def test_an_explicit_json_null_clears_a_protocol_field(tmp_path):
         es.set_protocol("t", {"notAField": None}, root=root)
 
 
+def test_a_null_sweep_clears_like_every_other_protocol_field(tmp_path):
+    """Review round 11, finding 4. ``sweep`` was the one field in the
+    vocabulary whose shape gate spelled ``"sweep" in fields`` instead of
+    ``fields.get("sweep") is not None``, so an explicit null was refused —
+    "sweep must be an object, got NoneType" — before it could reach the
+    null-clears loop that the round-10 fix made the promise for. A declared
+    grid was removable only by hand-editing the manifest.
+
+    The non-dict, non-null refusal is untouched: a string still cannot be a
+    sweep block, and a refusal still writes nothing."""
+    from steerlab_server.experiment.manifest import Manifest
+
+    root = str(tmp_path)
+    es.create("s", model_id="org/m", root=root)
+    d = es.set_protocol(
+        "s", {"sweep": {"selection": {"instrument": "sampledText"}}},
+        root=root)
+    assert d["sweep"]["selection"]["instrument"] == "sampledText"
+
+    d = es.set_protocol("s", {"sweep": None}, root=root)
+    assert "sweep" not in d
+    assert "sweep" not in es.load_raw("s", root)
+    Manifest.from_dict(es.load_raw("s", root))
+
+    # Nulling a sweep that was never declared is a no-op, not a refusal.
+    es.create("t", model_id="org/m", root=root)
+    es.set_protocol("t", {"sweep": None}, root=root)
+    assert "sweep" not in es.load_raw("t", root)
+
+    # A non-dict, non-null sweep still refuses — and writes nothing, so the
+    # valid co-key in the same call does not land either.
+    es.set_protocol("s", {"sweep": {"selection": {}}}, root=root)
+    for bad in ("everything", ["selection"], 3):
+        with pytest.raises(es.ExperimentStoreError) as exc:
+            es.set_protocol("s", {"sweep": bad, "taskDescription": "x"},
+                            root=root)
+        assert "sweep must be an object" in str(exc.value), bad
+        assert exc.value.repair_action, bad
+    saved = es.load_raw("s", root)
+    assert saved["sweep"] == {"selection": {}}
+    assert "taskDescription" not in saved
+
+
 def test_freeze_requires_revision_without_force(tmp_path):
     root = str(tmp_path)
     es.create("s2", model_id="org/m", root=root)  # no revision

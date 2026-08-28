@@ -424,6 +424,73 @@ import Testing
         }
     }
 
+    /// Review round 11, finding 3. The upper gate used to read
+    /// `value <= Double(Int.max)` — and a `Double` cannot HOLD `Int.max`, so
+    /// that conversion rounds UP to 2^63 and the comparison then admitted
+    /// exactly 2^63, which `Int(_:)` TRAPS on: a crash, not a refusal, out of
+    /// one number in a sidecar. Representability is now asked of `Int` itself,
+    /// which answers nil and produces the same typed refusal as every other
+    /// non-layer-count. Python twin, where the mirror-image bug lived
+    /// (`float(10**400)` raised an OverflowError past every typed refusal):
+    /// `test_a_layer_count_too_large_to_represent_refuses_instead_of_crashing`
+    /// in `test_pole_mirror.py`.
+    @Test func aLayerCountTooLargeToRepresentRefuses() throws {
+        // 2^63 is exactly representable as a Double, and is one PAST the
+        // largest `Int`. `Infinity` is the shape a sidecar number too big for
+        // any Double takes on this engine — the value the Python twin sees as
+        // a 400-digit int.
+        let bound = 9_223_372_036_854_775_808.0
+        for (value, spelled) in [
+            (bound, "9.223372036854776e+18"),
+            (-bound, "-9.223372036854776e+18"),
+            (Double.greatestFiniteMagnitude, "1.7976931348623157e+308"),
+            (Double.infinity, "Infinity"),
+        ] {
+            let problem = try #require(
+                PoleMirror.layerCountProblem(value, path: "runs/r/x"),
+                "\(value) is not a layer count any Int can hold")
+            #expect(problem.contains("records layerCount \(spelled)"))
+            #expect(
+                problem.contains(
+                    "a steering-vector artifact's layer count is a whole "
+                        + "number of layers, 1 or more"))
+        }
+        // …and the largest Double BELOW the bound is representable, so the
+        // gate is a bound rather than a blanket refusal of large counts.
+        #expect(
+            PoleMirror.layerCountProblem(bound.nextDown, path: "runs/r/x")
+                == nil)
+
+        // End to end through a real sidecar: 2^63 is a number a hand-edited
+        // or foreign-engine sidecar can genuinely spell, and it must refuse
+        // before a byte is written rather than take the process down.
+        try withTempDirectory { temp in
+            let source = try Self.writeArtifact(
+                into: temp.appending(component: "src"))
+            let sidecarURL = source.appendingPathExtension("json")
+            let text = try String(contentsOf: sidecarURL, encoding: .utf8)
+            let patched = try #require(
+                Self.replacingLayerCount(
+                    in: text, with: "9223372036854775808"),
+                "no layerCount in the fixture sidecar")
+            try patched.write(to: sidecarURL, atomically: true, encoding: .utf8)
+
+            let out = temp.appending(component: "out")
+            let error = try refusal {
+                try PoleMirror.mirrorPoles(
+                    artifact: source, concept: Self.mirrorConcept, into: out)
+            }
+            #expect(error.kind == .unreadableArtifact)
+            #expect(
+                error.reason.contains(
+                    "records layerCount 9.223372036854776e+18"),
+                "\(error.reason)")
+            #expect(!error.repairAction.isEmpty)
+            // A refusal writes nothing.
+            #expect(!FileManager.default.fileExists(atPath: out.path))
+        }
+    }
+
     @Test func theSourceConceptIsNotAnAcceptableNewName() throws {
         try withTempDirectory { temp in
             let source = try Self.writeArtifact(into: temp.appending(component: "src"))

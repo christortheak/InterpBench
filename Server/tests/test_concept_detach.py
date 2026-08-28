@@ -396,10 +396,14 @@ def test_the_client_refuses_a_detach_that_names_no_concept(
     assert len(es.load_raw("c", root)["concepts"]) == 2
 
 
-def test_the_engine_cli_redirects_detach_to_the_mac(tmp_path, monkeypatch,
-                                                    capsys):
-    """Authoring is Mac-authority: the ENGINE's CLI answers the redirect, in a
-    document, naming the Mac spelling. Same treatment ``attach`` gets."""
+def test_the_engine_cli_redirects_detach_to_an_authoring_client(
+        tmp_path, monkeypatch, capsys):
+    """The ENGINE executes; it does not author. Its CLI answers the redirect
+    in a document, naming BOTH authoring spellings — the Mac's first (the
+    table's value, and where the Mac lifecycle continues), then this client's,
+    because the engine emitting this is very often on a machine that has no
+    ``steerlab-cli`` (review round 11, finding 1). Same treatment ``attach``
+    gets."""
     from steerlab_server import cli, cli_envelope
 
     assert "detach" in cli_envelope.MAC_AUTHORITY_VERBS["experiment"]
@@ -407,8 +411,10 @@ def test_the_engine_cli_redirects_detach_to_the_mac(tmp_path, monkeypatch,
     assert cli.main(["experiment", "detach", "demo", "--json"]) == 65
     envelope = json.loads(capsys.readouterr().out)
     assert envelope["error"]["code"] == cli_envelope.MAC_AUTHORITY_CODE
-    assert envelope["error"]["repairAction"] == \
+    assert envelope["error"]["repairAction"] == (
         "steerlab-cli experiment detach <name> <concept>…"
+        "  (off the Mac: steerlab experiment detach <name> <concept>… "
+        "--root <workspace-dir>)")
 
 
 # =============================================================================

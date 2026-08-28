@@ -219,6 +219,89 @@ def test_the_diagnostic_round_trips_and_the_warning_is_a_twin_literal():
         "before interpreting this direction.")
 
 
+# --- F2 second pass: deflation stops at the EFFECTIVE rank ------------------
+
+def _rank_one_rows() -> list[list[float]]:
+    """Mathematically rank-one and deliberately NOT axis-aligned: every row is
+    a multiple of one oblique direction, so no component past the first exists
+    and no coordinate accidentally hides the residue."""
+    d = np.array([0.3, -0.5, 0.2, 0.8], dtype=np.float32)
+    d /= np.linalg.norm(d)
+    return [(scale * d).tolist() for scale in (1.0, 2.0, 3.5, -1.0)]
+
+
+def test_deflation_stops_at_the_effective_rank_not_the_theoretical_one():
+    """2026-08-28 audit, F2 second pass. The rank cap bounds by SHAPE (n−1, and
+    now also the column count); rank-deficient data runs out sooner. Four
+    rank-one rows with count=3 used to return THREE unit components with shares
+    [1.0, 1.8e-15, 3.3e-17] — normalised float32 residue handed back as if it
+    were a direction, which is exactly what the rank cap was written to
+    prevent, arriving through the other door.
+
+    Swift twin: `SteeringVectorMath.principalComponentsWithVariance`.
+    """
+    with pytest.warns(UserWarning, match="effective rank is 1"):
+        result = vm.principal_components_with_variance(_rank_one_rows(), 3)
+    assert len(result.components) == 1
+    assert len(result.explained_variance) == 1
+    assert len(result.diagnostics) == 1
+    assert result.explained_variance[0] == pytest.approx(1.0, abs=1e-5)
+
+
+def test_deflation_stops_at_the_effective_rank_of_a_rank_two_cloud():
+    first = np.array([1.0, 0.0, 0.5, 0.2], dtype=np.float32)
+    second = np.array([0.1, 1.0, -0.3, 0.4], dtype=np.float32)
+    rows = [(a * first + b * second).tolist()
+            for a, b in [(1.0, 0.2), (2.0, -0.5), (0.5, 1.3),
+                         (-1.0, 0.7), (3.0, -2.0)]]
+    with pytest.warns(UserWarning, match="effective rank is 2"):
+        result = vm.principal_components_with_variance(rows, 4)
+    assert len(result.components) == 2
+    assert sum(result.explained_variance) == pytest.approx(1.0, abs=1e-5)
+    # A request AT the effective rank is untouched and silent — the components
+    # computed before the stop are the same ones, bit for bit.
+    import warnings as _warnings
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error")
+        exact = vm.principal_components_with_variance(rows, 2)
+    assert exact.components == result.components
+    assert exact.explained_variance == result.explained_variance
+
+
+def test_the_column_count_is_a_rank_bound_too():
+    """Six rows of two columns span at most TWO dimensions however many rows
+    arrive; the cap is min(count, rows − 1, columns) and the trim is announced."""
+    rows = [[1.0, 2.0], [2.0, 1.0], [3.0, -1.0],
+            [0.0, 0.5], [-2.0, 1.0], [4.0, 4.0]]
+    with pytest.warns(UserWarning, match="span at most 2 dimension"):
+        result = vm.principal_components_with_variance(rows, 4)
+    assert len(result.components) == 2
+
+
+def test_a_variance_target_of_one_stops_at_the_rank_not_at_the_target():
+    """The float32 first share of a rank-one cloud is 0.9999999, fractionally
+    short of a 1.0 target, and the loop used to spend the shortfall on a second
+    component made of round-off. The floor stops it; the advisory says the
+    target was not reachable rather than pretending it was met."""
+    with pytest.warns(UserWarning, match="effective rank is 1"):
+        result = vm.principal_components_by_variance(_rank_one_rows(), 1.0)
+    assert len(result.components) == 1
+    assert result.total_explained_variance == pytest.approx(1.0, abs=1e-5)
+
+
+def test_the_residual_floor_is_a_named_twin_constant():
+    """The floor is `factor · (rows + columns) · eps²` of the ORIGINAL total
+    variance (Swift twin: `deflationResidualTraceFloorEpsFactor` /
+    `residualTraceFloor(rows:columns:)`). Pinned here so a change to either
+    engine's value is a deliberate two-engine edit."""
+    assert vm.DEFLATION_RESIDUAL_TRACE_FLOOR_EPS_FACTOR == 8.0
+    eps = float(np.finfo(np.float32).eps)
+    assert vm._residual_trace_floor(4, 4) == pytest.approx(8.0 * 8 * eps * eps)
+    # Between the two measured populations: far above round-off residue,
+    # far below the smallest genuine component ever measured.
+    assert 1e-13 < vm._residual_trace_floor(4, 4) < 1e-11
+
+
 def test_deflation_reports_one_diagnostic_per_component():
     result = vm.principal_components_with_variance(
         [[3.0, 0.0, 0.0], [0.0, 2.0, 0.0], [-3.0, 0.0, 0.1], [0.0, -2.0, 0.0]], 2)

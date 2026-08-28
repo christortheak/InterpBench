@@ -347,9 +347,27 @@ declared beside the untouched `steerlab-server`.
 
 The **client** authors the LOCAL workspace it is pointed at. The **engine**
 (`steerlab-server`) executes. They are complements: every verb the engine
-redirects to the Mac as `macAuthorityVerb` is one the client can now perform
-against a local workspace on any platform — and the engine's redirects are
-unchanged, because on a cluster node the workspace really is a cache.
+redirects as `macAuthorityVerb` in the `experiment` family is one the client
+can perform against a local workspace on any platform — as its own verb, or as
+the `set-protocol` field it is a field assignment of. The comparison is
+exhaustive and asserted from both tables
+(`test_client_cli.py::test_the_client_declares_the_authoring_verbs_the_engine_refuses`),
+with each field-reachable verb named and its route checked against the
+vocabulary, so a verb added to either table without a decision fails. The one
+redirected verb with no client counterpart is `panel compile`, which compiles a
+scenario rather than writing through the store.
+The engine's redirects are unchanged, because on a cluster node the workspace
+really is a cache; what changed is the sentence they carry, which now names the
+client's spelling as well as the Mac's (a Linux caller cannot run
+`steerlab-cli`, and a repair they cannot run is not one).
+
+**The boundary is the client and the running hardware, not macOS and
+everything else.** That is the ruling this section was rewritten under (review
+round 11): an engine on compute hardware never authors — its workspace is a
+cache — but a client authoring a *local* workspace is as legitimate on Linux
+or Windows as on a Mac. `macAuthorityVerb` keeps its name for compatibility
+(it is a stable machine code, and agents switch on it); what it means is "this
+engine executes, it does not author", not "author on a Mac".
 
 The workspace comes from `--root <dir>` or `$STEERLAB_WORKSPACE`, and there is
 **no default**. The engine's `paths.project_root()` falls back to the current
@@ -367,7 +385,7 @@ verb added without a test is still covered. Submitting to a remote runner is
 
 | family | verbs |
 |---|---|
-| `experiment` | `create`, `attach`, `declare-condition`, `remove-condition`, `set-protocol`, `pin-revision`, `set-style-taxonomy`, `pin-sae-candidates`, `duplicate`, `verify`, `freeze`, `list` |
+| `experiment` | `create`, `attach`, `declare-condition`, `remove-condition`, `set-protocol`, `pin-revision`, `set-style-taxonomy`, `pin-sae-candidates`, `duplicate`, `verify`, `freeze`, `list` (since v0: `detach`, `set-sweep-grid`, `set-parser`, `set-instrument-scope`) |
 | `concept` | `import` |
 | `bundle` | `package`, `inspect`, `import` |
 
@@ -434,27 +452,62 @@ because `--out` is lifted here before the family is chosen, so it is
 `--out-file`. Repairs name the binary the caller actually ran — the repair
 builders take a program, and both engines' spellings are pinned by test.
 
-Two Mac verbs are deliberately **neither**: `set-parser` (the manifest's
-`numericParser` + `parserRegistryHash`) and `set-instrument-scope` (its
-`outcomeInstrumentScope`) are redirected here rather than mirrored, and their
-fields are **not** in `PROTOCOL_FIELDS`. Neither is a field assignment — each
-DERIVES its pin from a workspace file at the moment of declaration, the
-parser registry's SHA-256 for the first and the selected item ids
-(`itemCount` + `itemIDsHash`) for the second — and both pins are
-preregistration facts of the same kind that keeps `set-sweep-selection`
-Mac-authority: *which parser version measured* and *which rows were
-measured*. A `--set numericParser=…` that wrote a name without a pin, or a
-`--set outcomeInstrumentScope='{…}'` that accepted a caller's `itemIDsHash`,
-would let a study claim provenance nothing computed — so the closed-vocabulary
-refusal (64, naming the key and the vocabulary, nothing written) is the right
-answer to both, and the redirect names the Mac spelling like its siblings.
-The engine's own reading of those fields is unchanged and fully mirrored:
+**The two measurement declarations are client verbs, and their pins are always
+computed.** `set-parser` (the manifest's `numericParser` +
+`parserRegistryHash`) and `set-instrument-scope` (its
+`outcomeInstrumentScope`) are neither protocol fields nor Mac-only. They were
+Mac-only until review round 11, on the reading that authoring is
+"Mac-authority"; the ruling above replaced that reading, and these two joined
+`attach`, which has always derived `stimulusSetHash` from workspace bytes on
+any platform.
+
+Neither is a field assignment, which is why their keys stay **out** of
+`PROTOCOL_FIELDS` and `--set numericParser=…` / `--set
+outcomeInstrumentScope='{…}'` still refuse at 64 (naming the key, listing the
+vocabulary, nothing written). Each *derives* its pin from a workspace file at
+the moment of declaration — the parser registry's SHA-256 for the first, the
+selected item ids (`itemCount` + `itemIDsHash`) for the second — and both pins
+are preregistration facts: *which parser version measured*, and *which rows
+were measured*. **No surface anywhere accepts one as input.** There is no
+`--registry-hash` and no `--item-ids-hash`, on either engine, and there will
+not be: a caller-supplied pin would let a study claim provenance nothing
+computed. That guarantee is what the Mac-only carve-out was actually
+protecting, and it is untouched — only the *location* of the authoring machine
+changed.
+
+`experiment_store.set_numeric_parser` and
+`experiment_store.declare_outcome_instrument_scope` mirror
+`ExperimentStore.setNumericParser` and
+`ExperimentStore.declareOutcomeInstrumentScope` sentence for sentence: the
+undefined-parser and malformed-entry refusals are `parser_registry`'s own, the
+unknown-`responseFormat` and zero-selection refusals are the Swift twins'
+literals, `""` clears both declarations (and, for the scope, clears *before*
+the prompts-file guard, so a stale scope is removable in exactly the states —
+dropped pin, moved file, drifted bytes — that make clearing necessary), and an
+out-of-vocabulary value is **malformed at 64**, never a refusal at 65, because
+the caller typed a value the field cannot hold. Repairs name the binary the
+caller actually ran, like every other repair builder here, and rendered with
+the Mac's program they are the Swift literals byte for byte
+(`test_measurement_declarations.py`; Swift side,
+`MeasurementDeclarationVerbTests`).
+
+The scope's pin needs the study's task prompts, and the loader of record
+(`tasks._load_prompts`) imports torch. `experiment_store.scope_items` is the
+torch-free reader that answers the same question — same blank-line handling,
+same `prompt-<ordinal>` id fallback, same closed `responseFormat` vocabulary —
+held to `tasks._load_prompts` by test on the same file, because a pin computed
+under different rules would name a row set the run never selects.
+
+The engine's own *reading* of these fields is unchanged and fully mirrored:
 `parser_registry.py` and `response_format.py` carry the twin grammars,
 vocabularies (`KNOWN_KINDS`, `KNOWN_RESPONSE_FORMATS`) and refusal sentences,
-so a workspace authored on a Mac runs identically here.
+so a workspace authored anywhere runs identically here. The engine still
+redirects both verbs — it executes, it does not author — and the redirect now
+names both spellings.
 
-Since v0 the table has gained `detach` and `set-sweep-grid`. Both are verbs
-rather than protocol fields for the same reason: neither is a field assignment.
+Since v0 the table has gained `detach`, `set-sweep-grid` and the two
+measurement declarations above. All four are verbs rather than protocol fields
+for the same reason: none is a field assignment.
 `detach` audits the whole manifest for declarations that still name a concept
 before it removes a pin, and `set-sweep-grid` resolves absolute layers against
 the pinned model's depth and refuses a grid no engine could sweep — rules that

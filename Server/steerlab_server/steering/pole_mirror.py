@@ -45,6 +45,7 @@ import os
 import re
 import shutil
 import struct
+import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -71,6 +72,16 @@ POLES_SWAPPED_KEY = "polesSwappedFromSource"
 #: the Swift twin said "corrupt", for the same two refusals).
 #: Swift twin: ``PoleMirror.truncatedRepair``.
 _TRUNCATED_REPAIR = "re-extract the source artifact; its .safetensors is corrupt"
+
+#: One past the largest ``layerCount`` an artifact can record: 2**63, the
+#: bound of the signed 64-bit ``Int`` the Swift twin reads this key into.
+#: This engine's ints are UNBOUNDED, so the bound has to be stated rather
+#: than discovered — and it is compared AS AN INT, never by converting the
+#: sidecar's value to a float first: ``float(10**400)`` raises an
+#: ``OverflowError``, and a guard that raises is not a refusal (review round
+#: 11, finding 3). Swift twin: `Int(exactly:)` in
+#: ``PoleMirror.layerCountProblem``, which declines at the same value.
+_LAYER_COUNT_BOUND = 2 ** 63
 
 
 def mirrorable_methods() -> list[ExtractionMethod]:
@@ -156,12 +167,22 @@ def _sha256_hex(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _layer_count_reason(base: str, value: float) -> str:
+def _layer_count_reason(base: str, value: float | int) -> str:
     """A sidecar ``layerCount`` that is a number but not a layer count. The
     value is NAMED — a refusal about a field has to say what it read. Swift
     twin: ``PoleMirror.layerCountReason``, byte-for-byte, including how the
-    offending number is spelled."""
-    if isinstance(value, float) and math.isnan(value):
+    offending number is spelled.
+
+    An int too large for a float is spelled from its own digits: ``float()``
+    RAISES on it (``float(10**400)``), and a sentence that raises while
+    explaining a refusal is the crash the refusal exists to replace. Inside
+    float's range the spelling is the one the Swift twin gives the SAME
+    sidecar — whose decoder reads every JSON number as a Double — so the two
+    sentences stay byte-identical; beyond it there is no twin sentence to
+    match, because that sidecar decodes to Infinity over there."""
+    if isinstance(value, int) and abs(value) > sys.float_info.max:
+        spelled = str(value)
+    elif isinstance(value, float) and math.isnan(value):
         spelled = "NaN"
     elif isinstance(value, float) and math.isinf(value):
         spelled = "-Infinity" if value < 0 else "Infinity"
@@ -455,11 +476,26 @@ def mirror_poles(vector_dir: str, name: str, *, concept: str,
     # had; `0` and `-3` stamped an impossible one; `nan`/`inf` reach `int()`
     # and raise a bare ValueError/OverflowError past every typed refusal
     # (the Swift twin TRAPS there, which is why both engines check finiteness
-    # and integrality BEFORE converting). No upper bound is invented: no other
-    # sidecar reader on either engine bounds this key above.
-    if (not math.isfinite(layer_count_value)
-            or float(layer_count_value) != int(float(layer_count_value))
-            or layer_count_value < 1):
+    # and integrality BEFORE converting).
+    #
+    # The two JSON number types are checked AS THEIR OWN TYPES (review round
+    # 11, finding 3). This engine's ints are unbounded, and the guard used to
+    # begin by calling `math.isfinite`/`float` on whatever it was handed — so
+    # a sidecar recording a 400-digit layerCount raised a bare OverflowError
+    # straight past `PoleMirrorError`. An int is therefore already whole and
+    # finite by construction and only its MAGNITUDE is left to check, by int
+    # comparison against `_LAYER_COUNT_BOUND` and never through `float()`; a
+    # float is checked for finiteness, integrality and the same bound. The
+    # bound is what an `Int` holds on the Swift twin, where `Int(exactly:)`
+    # declines at exactly the same value; nothing narrower is invented, since
+    # no other sidecar reader on either engine bounds this key above.
+    if isinstance(layer_count_value, int):
+        acceptable = 1 <= layer_count_value < _LAYER_COUNT_BOUND
+    else:
+        acceptable = (math.isfinite(layer_count_value)
+                      and layer_count_value.is_integer()
+                      and 1 <= layer_count_value < _LAYER_COUNT_BOUND)
+    if not acceptable:
         raise PoleMirrorError(
             "unreadableArtifact",
             _layer_count_reason(base, layer_count_value),

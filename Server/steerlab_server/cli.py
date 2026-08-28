@@ -227,13 +227,44 @@ def _unknown_experiment_flag(verb: str, rest: list[str]) -> str | None:
     return None
 
 
+def _client_spelling(label: str) -> str:
+    """The cross-platform client's spelling of a redirected verb, or "".
+
+    Read from :data:`client_cli.CLIENT_VERB_SPECS` rather than written down
+    again, so a verb the client gains is named by the redirect the moment it
+    exists — and a verb it does not have is never claimed. The import is local
+    and cheap (the client module is stdlib plus ``cli_envelope``); it is a
+    module the ENGINE never dispatches, read here purely as a table.
+    """
+    from . import client_cli
+
+    family, _, verb = label.partition(" ")
+    spec = next((s for s in client_cli.CLIENT_VERB_SPECS
+                 if s.family == family and s.verb == verb), None)
+    if spec is None:
+        return ""
+    return f"{client_cli.synopsis(spec)} {client_cli.ROOT_FLAG} <workspace-dir>"
+
+
 def _mac_authority_refusal(label: str, repair: str, *, note: str = "",
                            exit_code: int = 64):
-    """A verb that lives on the Mac and will not be added here.
+    """A verb that authors, typed against the engine that executes.
 
     The table is :data:`cli_envelope.MAC_AUTHORITY_VERBS` — declared there
     because the parser has to know it too (it is the one unrecognised-verb
     class that must still answer a ``--json`` document).
+
+    THE SENTENCE, corrected (review round 11, finding 1). This used to say
+    authoring is "Mac-authority by policy: the Mac workspace is the source of
+    truth". The maintainer's ruling names the real boundary: it is not the Mac
+    that matters, it is the separation between the machine that AUTHORS and
+    the hardware that RUNS. An engine on a compute node never authors — its
+    workspace is a cache, which is why these verbs will not be added here —
+    but authoring itself is portable, and there are two spellings of it: the
+    Mac's ``steerlab-cli`` and the cross-platform ``steerlab`` client. A
+    redirect that names only the first strands a Linux caller with a repair
+    they cannot run, so the repair now names the client's spelling too
+    wherever the client has one (:func:`_client_spelling` reads its table).
 
     Gate-5 dry run #2 (P3) measured what typing one of these used to cost.
     With a positional it fell through to the verb ROSTER, which says the verb
@@ -253,10 +284,17 @@ def _mac_authority_refusal(label: str, repair: str, *, note: str = "",
     reason = (
         f"'{label}' is not a verb of this engine and will not become one — "
         "authoring (create/attach, the pin-*/declare-*/set-* verbs, freeze, "
-        "duplicate) is Mac-authority by policy: the Mac workspace is the "
-        "source of truth and this engine is a runner and a cache")
+        "duplicate) belongs to an authoring CLIENT: the client's workspace is "
+        "the source of truth and this engine is a runner and a cache")
     if note:
         reason += f". {note}"
+    # The Mac spelling stays FIRST — it is the table's value, the one an agent
+    # has always read, and the one the Mac lifecycle continues from. The
+    # client's is appended, not substituted, because a caller on Linux or
+    # Windows has no `steerlab-cli` and a repair they cannot run is not one.
+    client = _client_spelling(label)
+    if client:
+        repair = f"{repair}  (off the Mac: {client})"
     sys.stderr.write(f"{reason}\n  {repair}\n")
     return CLIResult(state="refused", exit_code=exit_code,
                      code=MAC_AUTHORITY_CODE, message=reason,

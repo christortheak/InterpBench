@@ -400,10 +400,11 @@ public enum PoleMirror {
         // `Int(Double.nan)` / `Int(.infinity)` TRAP — a crash, not a refusal,
         // on a hostile or corrupt sidecar. Finiteness and integer-exactness
         // are therefore checked BEFORE the conversion, and nothing here can
-        // trap. No upper bound is invented: no other sidecar reader on either
-        // engine bounds this key above, and a gate this file makes up alone
-        // would refuse artifacts every other reader accepts. Server twin: the
-        // same three conditions in `pole_mirror.mirror_poles`.
+        // trap. The only upper bound is what an `Int` can hold — no other
+        // sidecar reader on either engine bounds this key above, and a gate
+        // this file made up alone would refuse artifacts every other reader
+        // accepts. Server twin: the same conditions in
+        // `pole_mirror.mirror_poles`.
         if let problem = layerCountProblem(
             layerCountNumber, path: artifact.path)
         {
@@ -411,7 +412,17 @@ public enum PoleMirror {
                 kind: .unreadableArtifact, reason: problem,
                 repairAction: basePathRepair)
         }
-        let layerCount = Int(layerCountNumber)
+        // The conversion is written as `Int(exactly:)` — the same gate the
+        // predicate just applied — so the trap is not merely unreachable, it
+        // does not exist. `Int(_:)` stood here and traps on a value outside
+        // `Int`'s range (review round 11, finding 3).
+        guard let layerCount = Int(exactly: layerCountNumber) else {
+            throw MirrorError(
+                kind: .unreadableArtifact,
+                reason: layerCountReason(
+                    path: artifact.path, value: layerCountNumber),
+                repairAction: basePathRepair)
+        }
         // Which methods HAVE an opposite pole (see `mirrorableMethods`). This
         // gate is the reason the success message's validation-authoring note
         // is now always honest: it can only be printed for a method whose
@@ -637,10 +648,15 @@ public enum PoleMirror {
     /// gate happens to see it first.
     ///
     /// No upper bound beyond what `Int` can hold is invented: no other
-    /// sidecar reader on either engine bounds this key above.
+    /// sidecar reader on either engine bounds this key above. That bound is
+    /// asked of `Int` itself, via `Int(exactly:)`. It used to be written as
+    /// `value <= Double(Int.max)`, which admits exactly 2^63 — `Double` cannot
+    /// hold `Int.max`, so the conversion rounds UP to 2^63 and the comparison
+    /// passes a value `Int(_:)` then TRAPS on (review round 11, finding 3).
+    /// `Int(exactly:)` answers nil instead, which is this typed refusal.
     static func layerCountProblem(_ value: Double, path: String) -> String? {
         guard value.isFinite, value == value.rounded(.towardZero), value >= 1,
-            value <= Double(Int.max)
+            Int(exactly: value) != nil
         else { return layerCountReason(path: path, value: value) }
         return nil
     }

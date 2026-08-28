@@ -155,6 +155,32 @@ def test_route_refuses_an_unresolvable_donor_before_any_job(tmp_path, monkeypatc
     assert "names no vector artifact" in resp.json()["detail"]
 
 
+@pytest.mark.parametrize("raw_json", ["2.5", "true", '"2"', "NaN", "Infinity"])
+def test_route_refuses_a_non_integer_layer_before_any_job(tmp_path, monkeypatch,
+                                                          raw_json):
+    """Same real-integer predicate as /api/gemmascope/run and the importer
+    (review round 11, finding 5): bare `int()` took 2.5 -> 2 and true -> 1, and
+    the truncated layer then agrees with the SAE's own layer 2 — a decoder row
+    at a depth nobody asked for. Raw content because httpx's `json=` encoder
+    cannot emit the NaN/Infinity literals a real client may send."""
+    monkeypatch.setattr(gemma_scope, "load_sae_feature", _fake_loader)
+    client = _client(tmp_path, monkeypatch)
+    _donor(str(tmp_path / "runs" / "donor-run"))
+    resp = client.post(
+        "/api/gemmascope/import-id",
+        content=(f'{{"model": "{MODEL}", "release": "{RELEASE}", '
+                 f'"saeID": "{SAE_ID}", "feature": 62389, '
+                 '"label": "attributed-consciousness", '
+                 '"residualNormArtifact": "runs/donor-run/donor", '
+                 f'"layer": {raw_json}}}'),
+        headers={"content-type": "application/json"})
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["detail"] == "feature/layer must be integers"
+    assert "jobId" not in resp.json()
+    # Refusals never write.
+    assert not list((tmp_path / "runs").glob("sae-feature-*"))
+
+
 def test_route_submits_a_job_that_writes_the_artifact(tmp_path, monkeypatch):
     monkeypatch.setattr(gemma_scope, "load_sae_feature", _fake_loader)
     client = _client(tmp_path, monkeypatch)

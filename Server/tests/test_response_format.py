@@ -733,9 +733,12 @@ def test_adequate_sweep_length_earns_no_advisory():
     assert sel.coherence_length_advisory(80, None, declared=False) is None
 
 
-def test_the_scope_declaration_is_mac_authority_not_a_protocol_field():
-    """``outcomeInstrumentScope`` is declared by the Mac's ``experiment
-    set-instrument-scope``, and the redirect names that spelling.
+def test_the_scope_declaration_is_a_derived_pin_not_a_protocol_field():
+    """``outcomeInstrumentScope`` is declared by ``experiment
+    set-instrument-scope`` — on the Mac, and (since review round 11's ruling)
+    on the cross-platform client too, which computes the same pin from the
+    same task prompts. The ENGINE still redirects, because it executes rather
+    than authors, and this pins the Mac spelling its redirect carries.
 
     Deliberately NOT a ``set_protocol`` field: the declaration is a list of
     FORMATS, and the engine computes the pin (``itemCount`` +

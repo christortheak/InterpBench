@@ -639,6 +639,51 @@ public enum SteeringVectorMath {
         return try firstComponentOfCentered(centered)
     }
 
+    /// Safety multiple applied to the per-pass float32 rounding energy when
+    /// deciding that a deflation residual is round-off rather than data
+    /// (2026-08-28 audit, F2 second pass). Identical constant on the server
+    /// (`vector_math.DEFLATION_RESIDUAL_TRACE_FLOOR_EPS_FACTOR`).
+    ///
+    /// DERIVATION. One deflation pass rewrites every entry of the residual
+    /// matrix (`centered − p·cᵀ`), so each entry acquires a rounding of
+    /// relative size float32 eps (1.1920929e-07). Squared and summed over the
+    /// matrix that is a residual TRACE of order eps² times the original total
+    /// variance, per pass, and the passes' errors accumulate. Bounding that
+    /// accumulation by the problem's own dimensions — at most `rows − 1`
+    /// passes, each touching `columns` entries per row, so `(rows + columns)`
+    /// is a generous stand-in for the accumulation length — gives a floor of
+    /// `factor · (rows + columns) · eps²` on the residual's share of the total.
+    ///
+    /// CALIBRATION, measured over 120 random clouds (3–64 rows, 2–2048
+    /// columns, constructed rank 1...min(rows−1, columns), row scales spanning
+    /// 1e-6...1e6), recording the residual share both at the first pass PAST
+    /// the constructed rank (round-off) and at every pass still inside it
+    /// (data), each expressed in units of `(rows + columns)·eps²`:
+    ///
+    /// | residual share, in units  | median  | tail (p99/p1) | extreme (max/min) |
+    /// | ------------------------- | ------- | ------------- | ----------------- |
+    /// | round-off (past the rank) | 0.0012  | 0.0075 (p99)  | 0.0093 (max)      |
+    /// | data (inside the rank)    | 1.5e+10 | 1.8e+07 (p1)  | 2.2e+03 (min)     |
+    ///
+    /// The two populations are separated by five orders of magnitude, so the
+    /// floor only has to land between them. 8 sits about 860× above the
+    /// largest round-off residue ever measured and about 270× below the
+    /// smallest genuine one; the single tightest genuine case seen in any
+    /// sweep (37 rows, 271 columns, constructed rank 36 — the last component
+    /// of a saturated-rank cloud, explaining 1.8e-10 of the variance) still
+    /// clears it by 5×. The factor is deliberately at the tight end of that
+    /// window: cutting a component whose variance share is already at the
+    /// 1e-10 level costs nothing, while keeping one costs a normalized noise
+    /// direction that extraction then projects out of the science vector.
+    public static let deflationResidualTraceFloorEpsFactor: Float = 8
+
+    /// The residual-trace share below which further deflation would return
+    /// normalized round-off (server twin: `vector_math._residual_trace_floor`).
+    static func residualTraceFloor(rows: Int, columns: Int) -> Float {
+        deflationResidualTraceFloorEpsFactor * Float(rows + columns)
+            * Float.ulpOfOne * Float.ulpOfOne
+    }
+
     /// Top-k principal components (unit norm, mutually orthogonal) via
     /// deflation: extract PC1, remove its projection from the data, repeat.
     /// Used for nuisance removal — the emotion paper projects neutral-corpus
@@ -665,9 +710,11 @@ public enum SteeringVectorMath {
         var components: [[Float]] = []
         var explained: [Float] = []
         // RANK CAP (2026-08-28 audit, F2; server twin `vector_math._deflate`).
-        // n centred rows span at most n−1 dimensions, so after n−1 deflations
-        // the residual is float32 round-off — and round-off has a tiny but
-        // POSITIVE Gram trace, which is exactly what the power iteration's
+        // n centred rows span at most n−1 dimensions, and rows of d columns
+        // span at most d — both are real bounds and the smaller one binds, so
+        // a 6×2 corpus has rank ≤ 2 no matter how many rows it grows. Past
+        // that the residual is float32 round-off — and round-off has a tiny
+        // but POSITIVE Gram trace, which is exactly what the power iteration's
         // RELATIVE degenerate-start floor accepts. Without the cap this loop
         // normalises rounding noise into unit "components" that are
         // indistinguishable from real directions, and the neutral-PC
@@ -677,8 +724,28 @@ public enum SteeringVectorMath {
         // study-level knob applied to whatever neutral corpus each concept
         // has — over-asking is an honest declaration, not an error.
         var diagnostics: [PowerIterationDiagnostic] = []
-        let cap = min(count, max(0, rows.count - 1))
+        let columns = centered.first?.count ?? 0
+        let rankCap = max(0, min(centered.count - 1, columns))
+        let residualFloor = residualTraceFloor(rows: centered.count, columns: columns)
+        let cap = min(count, rankCap)
         for _ in 0 ..< cap {
+            // EFFECTIVE-RANK STOP (2026-08-28 audit, F2 second pass; server
+            // twin `vector_math._deflate`). The rank cap above is theoretical —
+            // it says how many directions the SHAPE could hold. Rank-deficient
+            // data runs out sooner: mathematically rank-one, non-axis-aligned
+            // rows with count = 3 used to return three unit components with
+            // shares [1.0, 1.8e-15, 3.3e-17], the last two being normalised
+            // float32 residue handed back as if they were directions — the very
+            // failure the rank cap was written to prevent, arriving through the
+            // other door. Once the residual's share of the ORIGINAL total
+            // variance is at the round-off floor there is nothing left to
+            // decompose, so stop, whichever branch asked. The server also emits
+            // a "the trim is never silent" advisory here; this engine has no
+            // `warnings` module, so the shorter component list — and the
+            // diagnostic per component beside it — is the record.
+            if varianceTrace(ofCenteredRows: centered) / totalVariance <= residualFloor {
+                break
+            }
             guard let fitted = try? firstComponentOfCenteredWithDiagnostic(centered)
             else { break }
             let component = fitted.component
@@ -711,9 +778,20 @@ public enum SteeringVectorMath {
         var components: [[Float]] = []
         var explained: [Float] = []
         var diagnostics: [PowerIterationDiagnostic] = []
-        let cap = maximumCount ?? max(0, rows.count - 1)
+        let columns = centered.first?.count ?? 0
+        // Same two caps as the count branch above: the dimensional bound
+        // min(rows − 1, columns), and — inside the loop — the effective-rank
+        // stop. The variance branch needs the stop for a second reason: a
+        // target the data cannot reach (1.0 against a rank-one cloud whose
+        // first share is 0.9999999) used to keep deflating past the rank in
+        // pursuit of the last 1e-7, returning a normalised-round-off component
+        // to close a gap that is itself float32 round-off.
+        let rankCap = max(0, min(centered.count - 1, columns))
+        let residualFloor = residualTraceFloor(rows: centered.count, columns: columns)
+        let cap = min(maximumCount ?? rankCap, rankCap)
         while components.count < cap,
-            explained.reduce(0, +) < min(minimumExplainedVariance, 1)
+            explained.reduce(0, +) < min(minimumExplainedVariance, 1),
+            varianceTrace(ofCenteredRows: centered) / totalVariance > residualFloor
         {
             guard let fitted = try? firstComponentOfCenteredWithDiagnostic(centered)
             else { break }

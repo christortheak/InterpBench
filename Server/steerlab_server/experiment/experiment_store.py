@@ -1774,10 +1774,20 @@ def set_protocol(name: str, fields: dict, root: str | None = None) -> dict:
         if problem:
             raise ExperimentStoreError(
                 problem, repair=unknown_outcome_instrument_repair(name))
-    if "sweep" in fields and not isinstance(fields["sweep"], dict):
+    if fields.get("sweep") is not None and not isinstance(fields["sweep"], dict):
         # Every reader guards with `isinstance(d.get("sweep"), dict)`, so a
         # non-dict sweep silently disables the whole block — the same loss
         # class as an unknown key.
+        #
+        # `fields.get(...) is not None`, not `"sweep" in fields` (review round
+        # 11, finding 4): this was the ONE gate here that fired on an explicit
+        # JSON null, so `--set sweep=null` refused with "sweep must be an
+        # object, got NoneType" instead of clearing — while the null-clears
+        # loop below promises every field in this vocabulary clears that way,
+        # and every other gate spells the test exactly like this. A declared
+        # grid was therefore removable only by hand-editing the manifest. The
+        # non-dict, non-null refusal is unchanged: a string or a list still
+        # cannot be a sweep block.
         raise ExperimentStoreError(
             f"sweep must be an object, got {type(fields['sweep']).__name__} "
             "— the declared shape is {\"selection\": {…}} "
@@ -1934,6 +1944,293 @@ def pin_sae_candidates(name: str, path: str, root: str | None = None) -> dict:
     d["saeCandidates"] = {"path": path, "hash": digest}
     save_raw(d, root)
     return d
+
+
+# --- the two measurement declarations ------------------------------------------
+#
+# `set-parser` and `set-instrument-scope`. Neither is a field assignment, which
+# is why neither key is in PROTOCOL_FIELDS and why `--set numericParser=…` /
+# `--set outcomeInstrumentScope={…}` still refuse: each DERIVES its pin from a
+# workspace file at the moment of declaration — the parser registry's SHA-256
+# for the first, the selected item ids for the second — and both pins are
+# preregistration facts (which parser VERSION measured, which rows were
+# measured). A caller-supplied `parserRegistryHash` or `itemIDsHash` would let
+# a study claim provenance nothing computed, so no surface here accepts one.
+#
+# THE RULING (review round 11, finding 1). These lived only on the Mac until
+# now, on the reading that authoring is "Mac-authority". The maintainer's
+# correction: the separation that matters is between the authoring CLIENT and
+# the RUNNING hardware, not between macOS and everything else. An engine on a
+# compute node never authors — its workspace is a cache — but a client
+# authoring a LOCAL workspace is as legitimate on Linux or Windows as on a Mac.
+# So these two join `attach`, which has always derived `stimulusSetHash` from
+# workspace bytes portably. What is preserved is the thing the carve-out was
+# actually protecting: THE PIN IS ALWAYS COMPUTED HERE, never typed by a
+# caller. The engine's redirect (`cli_envelope.MAC_AUTHORITY_VERBS`) is
+# unchanged — it now names both authoring spellings, because a Linux caller
+# cannot run `steerlab-cli`.
+#
+# Swift twins, sentence for sentence: `ExperimentStore.setNumericParser`
+# (`Sources/ExperimentKit/ParserRegistry+UI.swift`) and
+# `ExperimentStore.declareOutcomeInstrumentScope`
+# (`Sources/ExperimentKit/ExperimentStore.swift`).
+
+
+class MeasurementDeclarationError(ExperimentStoreError):
+    """A value outside a measurement declaration's vocabulary.
+
+    MALFORMED (64), not a refusal (65): the caller named a parser the registry
+    does not define, a ``responseFormat`` the field cannot hold, or a scope
+    that selects nothing — an out-of-vocabulary VALUE, not a gate declining a
+    well-formed request. The Swift twins throw ``ExperimentError.malformed``
+    for exactly these three, and this subclass is how that classification
+    survives the trip through a shared store.
+
+    It SUBCLASSES ``ExperimentStoreError`` deliberately: every existing catch
+    site (the HTTP routes' 400 path, the engine's classifier, the client's
+    ``authoringRefused`` rung) keeps working unchanged, and only a surface that
+    wants the finer answer looks for the subclass. Nothing is ever written
+    when one is raised — both setters validate before they touch the manifest.
+    """
+
+
+#: The program a repair sentence names when nothing says otherwise. These two
+#: setters are reached from the cross-platform CLIENT (the engine redirects the
+#: verbs), so its spelling is the default; ``program=`` renders the Mac's for
+#: the parity tests that hold these sentences equal to the Swift twins'.
+CLIENT_PROGRAM = "steerlab"
+MAC_PROGRAM = "steerlab-cli"
+
+
+def numeric_parser_repair(name: str, root: str | None = None,
+                          program: str = CLIENT_PROGRAM) -> str:
+    """The retype for a refused parser declaration: the verb, this study, and
+    the names the registry actually defines (or the file to create when it
+    defines none). READ FROM THE REGISTRY, so the repair and the refusal
+    cannot name different vocabularies. Swift twin:
+    ``ExperimentStore.numericParserRepair``."""
+    from . import parser_registry
+    try:
+        defined = sorted(parser_registry.load_registry(root)["parsers"])
+    except parser_registry.ParserRegistryError:
+        defined = []
+    choices = ("<" + "|".join(defined) + ">" if defined
+               else "<a parser declared in " + parser_registry.REGISTRY_FILE
+                    + ">")
+    return (f"{program} experiment set-parser {name} {choices}"
+            '  ("" clears the declaration and its registry pin)')
+
+
+def set_numeric_parser(name: str, parser: str | None,
+                       root: str | None = None) -> dict:
+    """Declare (or clear) the study's registry parser.
+
+    Declaring a name shape-checks the entry NOW (feedback at the moment of
+    action) and pins the registry file's current SHA-256 as
+    ``parserRegistryHash`` — later registry edits surface as drift, never as a
+    silent change of measurement. Re-declaring the same name deliberately
+    re-pins the current bytes (the drift-repair affordance). Clearing the
+    parser clears the pin too: an unused pin certifies nothing and is a
+    verify() finding.
+
+    The hash is DERIVED here and nowhere else, which is why this verb takes a
+    NAME and has no ``--registry-hash`` flag. Swift twin:
+    ``ExperimentStore.setNumericParser``.
+    """
+    from . import parser_registry
+    d = load_raw(name, root)
+    trimmed = (parser or "").strip()
+    if not trimmed:
+        d.pop("numericParser", None)
+        d.pop("parserRegistryHash", None)
+        save_raw(d, root)
+        return d
+    # Existence and shape, with ParserRegistry's own plain-language refusals —
+    # the cross-engine twins of `ParserRegistry.spec(named:)`.
+    try:
+        parser_registry.parser_spec(trimmed, root)
+    except parser_registry.ParserRegistryError as exc:
+        raise MeasurementDeclarationError(
+            str(exc), repair=numeric_parser_repair(name, root)) from exc
+    digest = parser_registry.registry_live_hash(root)
+    if digest is None:
+        raise MeasurementDeclarationError(
+            "no parser registry exists at " + parser_registry.REGISTRY_FILE,
+            repair=numeric_parser_repair(name, root))
+    d["numericParser"] = trimmed
+    d["parserRegistryHash"] = digest
+    save_raw(d, root)
+    return d
+
+
+def instrument_scope_repair(name: str, program: str = CLIENT_PROGRAM, *,
+                            clearing_only: bool = False) -> str:
+    """The retype for a refused scope declaration. ``clearing_only`` renders
+    the zero-selection variant, which has to say that the formats the caller
+    named are not the ones the pinned items declare. Swift twin: the two
+    ``repair:`` literals in ``declareOutcomeInstrumentScope``."""
+    from . import response_format
+    vocabulary = "|".join(response_format.KNOWN_RESPONSE_FORMATS)
+    head = (f"{program} experiment set-instrument-scope {name} "
+            f"<{vocabulary}>[,…]")
+    if clearing_only:
+        return (head + "  (a format the pinned items actually declare), or "
+                '"" to clear the declaration')
+    return head + '  ("" clears the declaration)'
+
+
+def _scope_needs_prompts_reason(name: str,
+                                program: str = CLIENT_PROGRAM) -> str:
+    """The refusal for a scope declared on a study with no pinned prompts.
+
+    The quoted command differs by surface because the surfaces differ: the Mac
+    has a ``pin-prompts`` verb, and this client pins the same two keys as
+    protocol fields. Everything after the parenthesis is the twin sentence.
+    """
+    if program == MAC_PROGRAM:
+        spelling = (f"{program} experiment pin-prompts {name} "
+                    "prompts/…/file.jsonl")
+    else:
+        spelling = (f"{program} experiment set-protocol {name} "
+                    "--set taskPromptsFile=prompts/tasks/<file>.jsonl "
+                    "--set taskPromptsHash=<sha256>")
+    return (f"declare the task prompts first ('{spelling}') — the scope pins "
+            "which of THEIR rows the instrument reads")
+
+
+def declare_outcome_instrument_scope(name: str, response_formats: list,
+                                     root: str | None = None) -> dict:
+    """Declare which response formats the option-consuming instruments apply
+    to, pinning the resulting row set (``itemCount`` + ``itemIDsHash``).
+
+    REPLACE semantics, like ``outcomeInstruments`` and ``exclusionRules``: the
+    declaration is one pinned subset and the pin is recomputed from the whole
+    format list every time — a merge that appended a format would leave a
+    count and a hash that belong to neither list.
+
+    Swift twin: ``ExperimentStore.declareOutcomeInstrumentScope``.
+    """
+    from . import response_format
+    formats = [str(f) for f in response_formats]
+    # The vocabulary gate, AHEAD of the file read: `scope_includes` compares
+    # raw strings, so an unrecognised format selects nothing and the pin
+    # silently becomes "zero items" — the same loss class an unknown
+    # instrument is refused for.
+    unknown = next(
+        (f for f in formats
+         if f not in response_format.KNOWN_RESPONSE_FORMATS), None)
+    if unknown is not None:
+        raise MeasurementDeclarationError(
+            f"unknown responseFormat '{unknown}' — known: "
+            + ", ".join(response_format.KNOWN_RESPONSE_FORMATS),
+            repair=instrument_scope_repair(name))
+    d = load_raw(name, root)
+    # CLEARING comes first, before the prompts-file guard and the read (review
+    # round 10, finding 10; Wave D on this engine). Clearing derives nothing
+    # from the prompts — it removes a declaration — and requiring the pin to be
+    # present, resolvable and loadable made `""` refuse in exactly the states
+    # that make clearing necessary: a stale scope left behind when the pin was
+    # dropped, a pin whose file has moved, a pin that drifted. DECLARING
+    # (non-empty) still requires the pin and still reads it: a scope is a
+    # selection over those rows and cannot be checked without them.
+    if not formats:
+        d.pop("outcomeInstrumentScope", None)
+        save_raw(d, root)
+        return d
+    prompts_file = d.get("taskPromptsFile")
+    if not isinstance(prompts_file, str) or not prompts_file:
+        raise ExperimentStoreError(
+            _scope_needs_prompts_reason(name),
+            repair=(f"{CLIENT_PROGRAM} experiment set-protocol {name} "
+                    "--set taskPromptsFile=prompts/tasks/<file>.jsonl "
+                    "--set taskPromptsHash=<sha256>, then re-run this verb"))
+    items = scope_items(prompts_file, root)
+    pin = response_format.pin_scope(formats, items)
+    # A scope that selects NOTHING is refused at the DECLARATION, not left to
+    # the run: `response_format.refusal` already owns the sentence for what
+    # such a scope does — the instrument would run on nothing and silently
+    # produce zero records — and a declaration guaranteed to reach that
+    # refusal is malformed (64), never written and reported as success.
+    if pin["itemCount"] <= 0:
+        raise MeasurementDeclarationError(
+            "the declared outcomeInstrumentScope selects zero task items of "
+            f"'{prompts_file}' — the instruments would run on nothing and "
+            "silently produce zero records",
+            repair=instrument_scope_repair(name, clearing_only=True))
+    d["outcomeInstrumentScope"] = pin
+    save_raw(d, root)
+    return d
+
+
+def scope_items(prompts_file: str, root: str | None = None) -> list:
+    """The ``response_format.items_of`` view of a task-prompts file, read
+    without the run path's model stack.
+
+    ``tasks._load_prompts`` is the loader of record, and it cannot be used
+    here: ``tasks`` imports torch, and the whole authoring lifecycle is
+    torch-free by contract (``PORTABILITY-CONTRACTS`` §7, the light install).
+    This reads the same file for the two fields the pin depends on — the item
+    ID and the declared ``responseFormat`` — under the SAME rules, because a
+    pin computed under different rules would name a row set the run never
+    selects:
+
+    * blank lines are skipped and do not consume an ordinal;
+    * an absent or null ``id`` falls back to ``prompt-<1-based ordinal of
+      PARSED items>`` (the 2026-07-26 parity fix — a file-line index here
+      would join the wrong items across engines);
+    * an empty or non-string ``id`` refuses, with the loader's sentence;
+    * ``responseFormat`` is validated against the closed vocabulary, so a
+      typo in the FILE refuses here exactly as it does at load.
+
+    ``test_measurement_declarations.py`` holds this reader and
+    ``tasks._load_prompts`` to the same items on the same file.
+    """
+    from . import response_format
+    base = paths.project_root() if root is None else root
+    path = (prompts_file if os.path.isabs(prompts_file)
+            else os.path.join(base, prompts_file))
+    prompts: list[dict] = []
+    if not os.path.isfile(path):
+        # Typed, with the WORKSPACE-RELATIVE path the manifest actually holds.
+        # Swift's twin reaches `Data(contentsOf:)` and throws Cocoa's own
+        # error here; letting Python's `FileNotFoundError` through produced a
+        # `notFound` whose repair was an absolute path on this machine and
+        # whose subject looked like a missing STUDY. A deliberate, additive
+        # divergence: the rule and the outcome are the same, the sentence is
+        # one an agent can act on.
+        raise ExperimentStoreError(
+            f"the pinned task prompts '{prompts_file}' are not in this "
+            "workspace — the scope is a selection over THEIR rows and cannot "
+            "be computed without them",
+            repair=(f"restore {prompts_file}, or re-pin the prompts: "
+                    f"{CLIENT_PROGRAM} experiment set-protocol <name> --set "
+                    "taskPromptsFile=prompts/tasks/<file>.jsonl --set "
+                    "taskPromptsHash=<sha256>"))
+    with open(path, encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line:
+                continue
+            obj = json.loads(line)
+            raw_id = obj.get("id")
+            if raw_id is None:
+                raw_id = f"prompt-{len(prompts) + 1}"
+            elif not isinstance(raw_id, str) or not raw_id.strip():
+                raise ExperimentStoreError(
+                    f"task prompts: item {len(prompts) + 1} declares an "
+                    "empty or non-string 'id' — declare a non-empty string, "
+                    "or omit the key for the prompt-<ordinal> fallback")
+            entry = {"id": raw_id, "options": obj.get("options"),
+                     "target": obj.get("target")}
+            if obj.get("responseFormat") is not None:
+                try:
+                    entry["responseFormat"] = response_format.parse(
+                        obj["responseFormat"])
+                except ValueError as exc:
+                    raise ExperimentStoreError(
+                        f"task prompt '{raw_id}': {exc}") from exc
+            prompts.append(entry)
+    return response_format.items_of(prompts)
 
 
 #: The repair for a NEW condition declaration that names no ``alphaInNormUnits``

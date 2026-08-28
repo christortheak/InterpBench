@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -90,6 +91,34 @@ def scope_info(model_id: str, *, layer_count: int | None = None,
         "saeID": f"layer_{layer}_width_16k_l0_medium",
         "site": "resid_post", "layer": layer, "availableLayers": layers,
     }
+
+
+def coerce_layer(value: object, *, label: str = "layer") -> int:
+    """A layer index out of untrusted JSON, or :class:`ValueError`.
+
+    Only a JSON integer (``2``) or a finite integral float (``2.0``) names a
+    layer; ``2.5``, ``true``, ``"2"``, NaN and Infinity do not. Bare ``int()``
+    accepted all of those — ``2.5`` truncated to ``2`` and ``true`` became
+    ``1`` — and a truncated layer can then AGREE with an ``saeID`` naming
+    layer 2, so the decoder row is imported at a depth nobody asked for while
+    every downstream layer/SAE-agreement check passes. That is a silent
+    scientific-correctness failure, not a typing nit.
+
+    This brings the Python engine in line with the Swift decoder, where
+    ``GemmaScopeReportVector.layer`` is an ``Int``
+    (``Sources/ExperimentKit/GemmaScopeReports.swift``) and ``JSONDecoder``
+    already refuses a fractional or boolean layer outright.
+    """
+    ok = (not isinstance(value, bool)) and isinstance(value, (int, float))
+    if ok and isinstance(value, float):
+        ok = math.isfinite(value) and value.is_integer()
+    if not ok:
+        raise ValueError(
+            f"{label} must be an integer, got {value!r} — a layer is a depth "
+            "index, so a fractional, boolean, string or non-finite value "
+            "cannot name one, and truncating it would place the decoder row "
+            "at a depth nothing analyzed")
+    return int(value)
 
 
 @dataclass
@@ -385,7 +414,18 @@ def import_feature(report_path: str, feature: int, *, model_id: str,
     from ..steering.vector_store import ConceptVectors, SteeringVectorSidecar, save
     with open(report_path, encoding="utf-8") as handle:
         report = json.load(handle)
-    layer = int(report["layer"])
+    # Refuse BEFORE anything is written: a non-integer report layer is not a
+    # layer, and truncating it would import at a depth the analysis never
+    # touched (see :func:`coerce_layer`).
+    try:
+        layer = coerce_layer(report.get("layer"), label="report layer")
+    except ValueError as exc:
+        raise ValueError(
+            f"{exc}; re-run the Gemma Scope analysis, then import") from exc
+    # The FEATURE has the same predicate (round-11 follow-up): the row match
+    # below used int() on both sides, so "7" and 7.5 both selected a row —
+    # and a truncated feature imports the wrong dictionary entry outright.
+    feature = coerce_layer(feature, label="feature")
     release = report.get("release", "")
     sae_id = report.get("saeID", "")
     sae_layer = parse_sae_id(sae_id).get("layer")
@@ -987,7 +1027,7 @@ def import_feature_by_id(
     from ..steering.vector_store import ConceptVectors, SteeringVectorSidecar, save
     from . import paths
 
-    feature = int(feature)
+    feature = coerce_layer(feature, label="feature")
     label = (label or "").strip()
     if not label:
         raise ValueError(
@@ -1337,7 +1377,7 @@ def load_sae_latent_feature(release: str, sae_id: str, feature: int, *,
                                              builder=builder)
     config = dict(cfg) if isinstance(cfg, dict) else {}
     d_in, d_sae = _sae_dimensions(sae, config)
-    feature = int(feature)
+    feature = coerce_layer(feature, label="feature")
     if not (0 <= feature < d_sae):
         raise ValueError(
             f"feature {feature} is outside this SAE's dictionary "

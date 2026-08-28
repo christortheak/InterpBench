@@ -495,3 +495,119 @@ def test_gemmascope_import_refuses_a_non_integer_feature(tmp_path, monkeypatch):
     assert resp.status_code == 400, resp.text
     assert "integer" in resp.json()["detail"]
     assert not (tmp_path.parent / "escaped").exists()
+
+
+# --------------------------------------------------------------------------
+# A layer input must be a REAL integer (review round 11, finding 5)
+# --------------------------------------------------------------------------
+# Both sites used bare `int()`, which took 2.5 -> 2 and true -> 1. A truncated
+# layer is not merely mistyped: `2.5` becomes `2`, which then AGREES with an
+# saeID naming layer 2, so the decoder row lands at a depth the caller never
+# asked for and every downstream layer/SAE check passes. Cross-engine parity —
+# Swift's `GemmaScopeReportVector.layer: Int` has always made JSONDecoder
+# refuse these outright.
+
+@pytest.mark.parametrize("bad", [2.5, True, False, "2", None,
+                                 float("nan"), float("inf"), float("-inf"),
+                                 [2], {"layer": 2}])
+def test_coerce_layer_refuses_everything_that_is_not_an_integer(bad):
+    with pytest.raises(ValueError, match="must be an integer"):
+        gemma_scope.coerce_layer(bad)
+
+
+def test_coerce_layer_accepts_integers_and_integral_floats():
+    """`2.0` IS layer 2 — JSON has one number type, so a client that writes
+    floats must still be able to name a layer. It normalizes to `int`."""
+    assert gemma_scope.coerce_layer(2) == 2
+    assert gemma_scope.coerce_layer(0) == 0
+    value = gemma_scope.coerce_layer(2.0)
+    assert value == 2 and isinstance(value, int) and not isinstance(value, bool)
+
+
+@pytest.mark.parametrize("bad", [2.5, True, "7", float("nan")])
+def test_import_refuses_a_non_integer_feature(tmp_path, bad):
+    """The FEATURE field has the same truncation shape as the layer one
+    (round-11 follow-up): bare int() took 2.5 to feature 2 and imported the
+    wrong dictionary entry outright. Same predicate, same refusal, nothing
+    written."""
+    report_path = _write_report(tmp_path, _report())
+    out = tmp_path / "out-feature"
+    out.mkdir()
+    with pytest.raises((ValueError, TypeError)):
+        gemma_scope.import_feature(report_path, bad, model_id="g",
+                                   run_directory=str(out))
+    assert list(out.iterdir()) == []
+
+
+@pytest.mark.parametrize("bad", [2.5, True, "2", float("nan"), float("inf")])
+def test_import_refuses_a_non_integer_report_layer(tmp_path, bad):
+    """The importer refuses, and writes nothing: truncating would place the
+    decoder row at a depth the analysis never touched."""
+    report_path = _write_report(tmp_path, _report(layer=bad))
+    out = tmp_path / "out"
+    out.mkdir()
+    with pytest.raises(ValueError, match="report layer must be an integer"):
+        gemma_scope.import_feature(report_path, 7, model_id="g",
+                                   run_directory=str(out))
+    assert list(out.iterdir()) == []
+
+
+def test_import_accepts_an_integral_float_report_layer(tmp_path):
+    """`2.0` is layer 2, and imports exactly as the integer 2 does — the row
+    lands at index 2 of a full-depth artifact."""
+    report_path = _write_report(tmp_path, _report(layer=2.0))
+    run_dir = tmp_path / "out"
+    run_dir.mkdir()
+    gemma_scope.import_feature(report_path, 7, model_id="g",
+                               run_directory=str(run_dir))
+    vectors, sidecar = vector_store.load(str(run_dir), "sae-feature-7")
+    assert vectors.per_layer[2] == pytest.approx([6.0, 0.0, 8.0])
+    assert sidecar.concept == "sae:french:L2:F7"
+
+
+def _run_with_layer(tmp_path, monkeypatch, *, raw_json: str,
+                    sae_id: str = "layer_2_width_16k_l0_medium"):
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from steerlab_server.api.app import app
+
+    monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path))
+    (tmp_path / "runs" / "vec").mkdir(parents=True, exist_ok=True)
+    return TestClient(app).post(
+        "/api/gemmascope/run",
+        # Raw content, not `json=`: httpx's `json=` encoder cannot emit NaN,
+        # and this route must survive a client that writes the JSON-superset
+        # literals `NaN` / `Infinity` (Python's json.loads accepts them).
+        content=('{"vectorPath": "runs/vec", "name": "french", '
+                 '"modelID": "google/gemma-3-4b-it", '
+                 '"release": "gemma-scope-2-4b-it-res", '
+                 f'"saeID": "{sae_id}", '
+                 f'"layer": {raw_json}}}'),
+        headers={"content-type": "application/json"})
+
+
+@pytest.mark.parametrize("raw_json", ["2.5", "true", "false", '"2"',
+                                      "NaN", "Infinity", "-Infinity",
+                                      "[2]", "{}"])
+def test_gemmascope_run_refuses_a_non_integer_layer(tmp_path, monkeypatch,
+                                                    raw_json):
+    resp = _run_with_layer(tmp_path, monkeypatch, raw_json=raw_json)
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["detail"] == "layer must be an integer"
+    # Refusals never write.
+    assert not list((tmp_path / "runs").glob("gemmascope-*"))
+
+
+@pytest.mark.parametrize("raw_json", ["2", "2.0"])
+def test_gemmascope_run_accepts_an_integer_layer(tmp_path, monkeypatch,
+                                                 raw_json):
+    """A real integer — and the integral float `2.0`, since JSON has one
+    number type — is still a layer. Proven by pushing it one step further, to
+    the saeID-disagreement check: it arrives there as the int `2`, not `2.0`
+    and not a truncation of something else."""
+    resp = _run_with_layer(tmp_path, monkeypatch, raw_json=raw_json,
+                           sae_id="layer_17_width_16k_l0_medium")
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["detail"].startswith("layer 2 disagrees with saeID")

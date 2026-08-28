@@ -14,6 +14,40 @@ migration that rewrites frozen bytes.
 
 ### Added
 
+- **The cross-platform client gained `experiment set-parser` and `experiment
+  set-instrument-scope`.** Both were Mac-only, on the reading that authoring
+  is "Mac-authority". The maintainer's ruling replaced that reading: *it is
+  not the Mac that matters, it is the client machine — the separation is
+  between the client and the running hardware.* An engine on compute
+  hardware never authors (its workspace is a cache, which is why the engine
+  still redirects both verbs); a client authoring a LOCAL workspace is as
+  legitimate on Linux or Windows as on a Mac, exactly as `attach` already
+  was, deriving `stimulusSetHash` from workspace bytes on any platform. So
+  these two joined it, spelled and refusing identically:
+  `experiment_store.set_numeric_parser` and
+  `declare_outcome_instrument_scope` mirror `ExperimentStore.setNumericParser`
+  and `declareOutcomeInstrumentScope` sentence for sentence — the registry's
+  own undefined-parser and malformed-entry refusals, the twin
+  unknown-`responseFormat` and zero-selection literals, `""` clearing both
+  (and, for the scope, clearing *before* the prompts-file guard, so a stale
+  declaration is removable in the dropped-pin, moved-file and drifted-bytes
+  states that make clearing necessary), and an out-of-vocabulary value
+  malformed at `64` rather than refused at `65`.
+
+  What the carve-out was actually protecting is untouched: **the pin is
+  computed from workspace bytes, never typed by a caller.** There is no
+  `--registry-hash` and no `--item-ids-hash` on either engine, the keys stay
+  out of `PROTOCOL_FIELDS` so `--set parserRegistryHash=…` still refuses, and
+  the scope's row set is read by a torch-free reader
+  (`experiment_store.scope_items`) held by test to the same items the run
+  path's loader selects. The engine's redirect now names the client's
+  spelling alongside the Mac's, read from the client's own verb table — a
+  Linux caller cannot run `steerlab-cli`, and a repair they cannot run is not
+  one. `test_client_cli.py` now compares the two surfaces exhaustively from
+  the real tables, with every deliberate exclusion named and its
+  `set-protocol` route asserted, so the next redirected verb cannot silently
+  regress the promise.
+
 - **The last two measurement declarations gained headless writers.** The
   manifest's `numericParser` + `parserRegistryHash` and its
   `outcomeInstrumentScope` were writable only from the app's pickers, which
@@ -31,11 +65,11 @@ migration that rewrites frozen bytes.
   the run-start `responseFormat` refusal names, where the only other repair
   (`set-instruments … sampledText`) drops the instrument. Both refuse an
   out-of-vocabulary value at 64, and a scope selecting zero rows is refused
-  at the declaration rather than producing zero records at the run. Both are
-  Mac-authority and redirect on the Python client: neither is a field
-  assignment (each derives its pin from a workspace file), and both pins are
-  preregistration facts, the reason `set-sweep-selection` stays Mac-authority
-  too.
+  at the declaration rather than producing zero records at the run. Neither
+  is a field assignment (each derives its pin from a workspace file), and
+  both pins are preregistration facts — the reason `set-sweep-selection` is
+  not a protocol field either, and the reason no surface accepts a pin as
+  input. The engine redirects both; the client implements both (see above).
 
 - **`remote submit-bundle --parallel <n>`** surfaces the multi-GPU fan-out
   the client and server have supported since 2026-07-22 and only the app's
@@ -221,6 +255,83 @@ migration that rewrites frozen bytes.
   requirement, which it would otherwise still be asserting.
 
 ### Fixed
+
+- **PCA deflation stops at the data's EFFECTIVE rank, not its theoretical
+  one.** The rank cap added earlier in this cycle bounded the component count
+  by `rows − 1`, which is what the SHAPE could hold, not what the cloud
+  contains — so mathematically rank-one, non-axis-aligned rows asked for three
+  components returned three, with explained-variance shares `[1.0, 1.9e-15,
+  1.5e-16]`: normalized float32 residue handed back as if it were a direction,
+  the exact failure the cap was written to prevent, arriving through the other
+  door. `extract()` then projected the concept vector's component along those
+  arbitrary directions OUT of the science vector. The `min_variance` path had
+  its own version — a target of 1.0 against a first share of 0.9999999 kept
+  deflating in pursuit of a gap that is itself round-off. Both engines now cap
+  at `min(count, rows − 1, columns)` (the column count is a real bound the old
+  cap omitted) and stop deflating once the residual trace falls below a
+  scale-relative floor of the ORIGINAL total variance:
+  `deflationResidualTraceFloorEpsFactor · (rows + columns) · eps²`, a named
+  twin constant whose factor of 8 was calibrated against 120 measured clouds —
+  round-off residues topped out at 0.0093 of that unit, genuine ones bottomed
+  at 2.2e+03, and 8 sits between. Components computed before the stop are
+  bit-identical: the cross-engine parity fixture passes unmodified, and 60
+  random full-rank clouds compare exactly against the old loop (review round
+  11, F2).
+
+- **`ComputeChoiceAccessory` states its main-actor isolation.** The type
+  builds `NSTextField`/`NSSegmentedControl`/Auto Layout constraints and took
+  the segmented control's callback through a `nonisolated` relay, which under
+  the strict toolchain produced a 29-warning isolation cascade in one 83-line
+  file. `@MainActor` on the type and on the relay records a fact rather than
+  imposing a rule — the panel is assembled on the main thread and AppKit
+  delivers control actions there — and the single caller (`WorkspaceSelector`,
+  a SwiftUI `View`) was already isolated, so no hop was needed anywhere.
+  Twenty-nine warnings gone, none added (review round 11, F6).
+
+- **`sweep: null` clears like every other protocol field.** `sweep` was the
+  one key in the vocabulary whose shape gate spelled `"sweep" in fields`
+  instead of `fields.get("sweep") is not None`, so an explicit null was
+  refused — *sweep must be an object, got NoneType* — before it could reach
+  the null-clears loop below it, whose whole promise is that every field in
+  this vocabulary clears that way. A declared grid was therefore removable
+  only by hand-editing the manifest, which is the one repair this store
+  exists to make unnecessary. The non-dict, non-null refusal is unchanged: a
+  string still cannot be a sweep block, and a refusal still writes nothing
+  (review round 11, F4).
+
+- **A Gemma Scope layer must be a real integer.** Both the route
+  (`POST /api/gemmascope/run`, and its `import-id` sibling next door) and the
+  importer took `int(body["layer"])`, so `2.5` truncated to `2` and `true`
+  became `1` — and a truncated layer can then PASS the SAE-agreement check
+  against the WRONG layer, which is a silent scientific error, not a typing
+  nit. One predicate now guards every entry point (`gemma_scope.coerce_layer`):
+  a JSON integer, or a finite integral float (`2.0` is layer 2 — JSON has one
+  number type), with `bool` excluded explicitly; anything else refuses under
+  the existing *layer must be an integer* contract, at the route's own 400 and
+  in the importer's own `ValueError` style, before anything is written. This
+  is also cross-engine parity: the Swift decoder (`GemmaScopeReportVector`)
+  has always refused fractionals, and the Python engine was the one out of
+  step (review round 11, F5). The **feature** field had the identical shape
+  one column over — `2.5` truncated to *feature 2* and imported the wrong
+  dictionary entry outright, and the report importer's row match coerced both
+  sides so even a string `"7"` selected a row — so the same predicate now
+  guards every feature entry point too: both import routes, the report
+  importer, and both by-id importers (found by the F5 fix's own agent while
+  in the code, verified and closed in the same landing).
+
+- **A `layerCount` that no integer can hold refuses instead of crashing.**
+  Both engines had a representability hole in the pole-mirror sidecar read.
+  Swift's gate was `value <= Double(Int.max)`, and `Double(Int.max)` rounds
+  UP to 2^63 — so exactly 2^63 was admitted and the following `Int(_:)`
+  TRAPPED, a crash rather than a refusal on a hostile or corrupt sidecar; the
+  gate is now `Int(exactly:)` and the trapping conversion is gone, not merely
+  unreachable. Python's guard called `float()` on the raw value, so a
+  400-digit integer raised a bare `OverflowError` past every typed refusal;
+  integers are now range-checked as integers against a named bound and floats
+  are handled on their own branch, so nothing converts before it is
+  validated. The twin refusal sentence and its repair are unchanged on both
+  engines, and every shape that refused before still refuses (review round 11,
+  F3).
 
 - **An explicit JSON null CLEARS a protocol field instead of bricking the
   manifest.** The client's `set-protocol` gates every sampling field with

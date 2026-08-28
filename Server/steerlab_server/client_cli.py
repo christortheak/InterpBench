@@ -292,6 +292,28 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
              purpose="Set declared protocol fields on a draft study.",
              value_flags=frozenset({"--set"}),
              required_flags=frozenset({"--set"})),
+    # The two MEASUREMENT DECLARATIONS. Verbs rather than `set-protocol`
+    # fields, and the reason is the same one that keeps their keys out of
+    # `PROTOCOL_FIELDS`: neither is a field assignment. Each takes a NAME (a
+    # parser, or a list of response formats) and DERIVES its pin from a
+    # workspace file — the registry's SHA-256, the selected item ids — so
+    # there is no `--registry-hash` and no `--item-ids-hash`, and there never
+    # will be: a caller-supplied pin would let a study claim provenance
+    # nothing computed.
+    #
+    # They are here because the separation that matters is between the
+    # authoring CLIENT and the RUNNING hardware, not between macOS and
+    # everything else (the maintainer's ruling, review round 11). An engine on
+    # a compute node never authors; a client authoring its LOCAL workspace is
+    # as legitimate on Linux or Windows as on a Mac, and `attach` has always
+    # derived `stimulusSetHash` from workspace bytes portably.
+    VerbSpec("experiment", "set-parser", positional="<name> <parser>",
+             purpose="Declare the registry parser that reads this study's "
+                     "numeric endpoint, pinning the registry's bytes."),
+    VerbSpec("experiment", "set-instrument-scope",
+             positional="<name> <responseFormat>[,…]",
+             purpose="Declare which response formats the option-consuming "
+                     "instruments apply to, pinning the rows they select."),
     VerbSpec("experiment", "pin-revision", positional="<name> <revision>",
              purpose="Pin the model revision a draft study resolves to."),
     VerbSpec("experiment", "set-style-taxonomy", positional="<name> <path>",
@@ -1468,6 +1490,81 @@ def _experiment(invocation: Invocation) -> CLIResult:
         return CLIResult(
             message=line, changed=bool(applied),
             payload={"experiment": name, "applied": applied})
+
+    if verb in ("set-parser", "set-instrument-scope"):
+        # Both take exactly one value positional, and both accept `""` as the
+        # CLEAR — which is why the arity check is `2` and not "at least one
+        # non-empty argument": an empty string is a legal value here, and the
+        # clear is the affordance a stale declaration is removed with.
+        _require(args, 2, spec)
+        value = args[1]
+        # The store owns every rule and every sentence (one definition, both
+        # engines). The only translation is the CLASSIFICATION: an
+        # out-of-vocabulary value is a MALFORMED invocation (64), the shape
+        # the Swift twins throw `ExperimentError.malformed` for, while the
+        # store's other refusals stay authoring refusals at 65. Doing it here
+        # rather than in `_typed_envelope_for_exception` keeps the mapping
+        # beside the verbs it describes.
+        try:
+            if verb == "set-parser":
+                document = store.set_numeric_parser(name, value)
+            else:
+                formats = [f.strip() for f in value.split(",") if f.strip()]
+                document = store.declare_outcome_instrument_scope(
+                    name, formats)
+        except store.MeasurementDeclarationError as exc:
+            raise ClientRefusal(
+                code=USAGE_CODE, state="blocked", reason=str(exc),
+                repair_action=exc.repair_action) from exc
+        if verb == "set-parser":
+            declared = document.get("numericParser")
+            digest = document.get("parserRegistryHash") or ""
+            line = (f"declared parser {declared!r} on {name!r} "
+                    f"(registry @ {digest[:12]}…)" if declared
+                    else f"cleared the parser declaration on {name!r}")
+            print(line)
+            # FLAT echo keys matching the Swift verb's result shape exactly
+            # (Tests/Fixtures/cli-envelopes/experiment-set-parser.json), so
+            # an agent reads the same fields after either spelling. The kind
+            # is read back from the registry the write just pinned, so the
+            # echo says what the study will actually parse WITH.
+            from .experiment import parser_registry
+            kind = None
+            if declared:
+                try:
+                    kind = parser_registry.parser_spec(declared).get("kind")
+                except parser_registry.ParserRegistryError:
+                    kind = None
+            return CLIResult(
+                message=line, changed=True,
+                payload={"experiment": name,
+                         "numericParser": declared,
+                         "parserKind": kind,
+                         # The pin is REPORTED, never accepted: a caller reads
+                         # which registry bytes this study preregistered.
+                         "parserRegistryHash":
+                             document.get("parserRegistryHash"),
+                         "registryFile": parser_registry.REGISTRY_FILE})
+        scope = document.get("outcomeInstrumentScope")
+        line = (f"declared the instrument scope on {name!r}: "
+                f"{', '.join(scope.get('responseFormats') or [])} — "
+                f"{scope.get('itemCount')} item(s) @ "
+                f"{(scope.get('itemIDsHash') or '')[:12]}…" if scope
+                else f"cleared the instrument scope on {name!r}")
+        print(line)
+        # FLAT echo keys, matching the Swift verb's result shape exactly
+        # (Tests/Fixtures/cli-envelopes/experiment-set-instrument-scope.json):
+        # an agent that reads result.responseFormats after running either
+        # spelling must find it — a nested block here would be the same
+        # two-speakers trap as result.response, one verb over.
+        return CLIResult(
+            message=line, changed=True,
+            payload={
+                "experiment": name,
+                "responseFormats": (scope or {}).get("responseFormats") or [],
+                "itemCount": (scope or {}).get("itemCount") or 0,
+                "itemIDsHash": (scope or {}).get("itemIDsHash"),
+            })
 
     if verb == "pin-revision":
         _require(args, 2, spec)

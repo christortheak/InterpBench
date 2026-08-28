@@ -153,8 +153,8 @@ Everything above speaks `--json` and answers in the **same envelope** the two
 engines share (§7.7's vocabulary, §4 of the contracts document) — same states,
 same exit codes, same `error.code` / `error.repairAction`. Verb families:
 `experiment` (create, attach, detach, declare-condition, remove-condition,
-set-sweep-grid, set-protocol, pin-revision, set-style-taxonomy,
-pin-sae-candidates, duplicate,
+set-sweep-grid, set-protocol, set-parser, set-instrument-scope, pin-revision,
+set-style-taxonomy, pin-sae-candidates, duplicate,
 verify, freeze, list), `concept import`, `bundle` (package, inspect, import),
 `authoring prompt <kind>` (§3.12's emitter, identical bytes to the Mac's —
 its file destination is spelled `--out-file` here, because this client lifts
@@ -1185,11 +1185,15 @@ drops the instrument entirely. A scope selecting **zero** rows is refused at
 the declaration rather than producing zero records at the run, and an
 out-of-vocabulary format exits `64`.
 
-Both of the last two are **Mac-authority** and redirect on the Python client
-(§1.4): neither is a field assignment — each *derives* its pin from a
-workspace file at the moment of declaration — and both pins are
-preregistration facts of the kind that keeps `set-sweep-selection`
-Mac-authority. `docs/PORTABILITY-CONTRACTS.md` §7 carries the reasoning.
+Both of the last two are also **client verbs** — `steerlab experiment
+set-parser` / `set-instrument-scope` (§1.4) — spelled identically and refusing
+identically. Neither is a field assignment, so neither key is reachable through
+`set-protocol`: each *derives* its pin from a workspace file at the moment of
+declaration, and no surface on either engine accepts a `parserRegistryHash` or
+an `itemIDsHash` as input. The *engine* (`steerlab-server`) still redirects
+both, because it executes rather than authors, and its redirect names the
+client's spelling alongside the Mac's.
+`docs/PORTABILITY-CONTRACTS.md` §7 carries the reasoning.
 
 **`set-style-taxonomy`** validates that the taxonomy file loads on this engine,
 then stamps its path and the SHA-256 of its bytes. Drift after pinning is a

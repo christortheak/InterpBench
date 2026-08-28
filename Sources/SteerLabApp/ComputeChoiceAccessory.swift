@@ -14,6 +14,12 @@ import ExperimentKit
 /// same dialog as the folder name; a second modal after the save panel is a
 /// step the researcher can dismiss, leaving exactly the undeclared state this
 /// is meant to prevent.
+///
+/// Main-actor isolation records a fact rather than imposing a rule: the views
+/// are built while the panel is being assembled on the main thread, and AppKit
+/// delivers a control's action on the main thread as well, so both the
+/// accessory and the `Relay` that receives the action already live there.
+@MainActor
 final class ComputeChoiceAccessory {
     private(set) var selected: WorkspaceCompute
     let view: NSView
@@ -73,6 +79,10 @@ final class ComputeChoiceAccessory {
             .OBJC_ASSOCIATION_RETAIN)
     }
 
+    /// The segmented control's target. `changed(_:)` is reached only through
+    /// the action chain, which AppKit runs on the main thread, so the callback
+    /// can read the accessory's state without a hop.
+    @MainActor
     private final class Relay: NSObject {
         private let onChange: (Int) -> Void
         init(_ onChange: @escaping (Int) -> Void) { self.onChange = onChange }

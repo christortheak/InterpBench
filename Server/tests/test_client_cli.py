@@ -748,21 +748,120 @@ def test_every_client_verb_has_a_purpose_and_a_synopsis():
                 f"{spec.label} renders the required {flag} as optional")
 
 
+#: Verbs the engine redirects that this client deliberately does NOT declare as
+#: verbs of its own — each mapped to the ``PROTOCOL_FIELDS`` keys it is
+#: reachable through instead, or to ``()`` when it is genuinely absent.
+#:
+#: This is the exclusion list the surface comparison below is measured against,
+#: and it is the whole point of the exercise: an exclusion has to be TYPED, and
+#: its claim of reachability has to be CHECKED. Every entry whose value names
+#: fields is asserted to name fields the vocabulary actually holds, so an
+#: exclusion cannot go on claiming a route that was renamed away.
+_REDIRECTED_AS_PROTOCOL_FIELDS: dict = {
+    "pin-prompts": ("taskPromptsFile", "taskPromptsHash"),
+    "pin-rubric": ("judgeRubricFile", "judgeRubricHash", "judges"),
+    "set-instruments": ("outcomeInstruments",),
+    "set-sampling": ("temperature", "maxTokens", "promptMode",
+                     "samplesPerItem", "seedPolicy"),
+    "set-exclusions": ("exclusionRules",),
+    # The sweep block's SELECTION half only. `set-sweep-grid` is a client verb
+    # (the axes need layer resolution against the pinned model's depth); the
+    # criterion is a field.
+    "set-sweep-selection": ("sweep",),
+}
+
+
 def test_the_client_declares_the_authoring_verbs_the_engine_refuses():
-    """The two surfaces are complements, not rivals: every verb the engine
-    redirects to the Mac as `macAuthorityVerb` is one this client can now
-    perform against a LOCAL workspace. (`pin-prompts`, `pin-rubric`,
-    `set-instruments`, `set-sweep-selection`, `set-sampling` and
-    `set-exclusions` are protocol fields the client reaches through
-    `set-protocol` rather than as their own verbs, and `panel compile` needs
-    the scenario compiler, not the store.)"""
+    """The two surfaces are COMPLEMENTS, and this is the assertion that says
+    so from the real tables rather than from a hand-picked subset.
+
+    It used to check five names — `create`, `attach`, `duplicate`, `freeze`,
+    `declare-condition` — against the redirect table, which proved almost
+    nothing: the promise is that EVERY verb the engine redirects is one the
+    client can perform against a local workspace, and a subset check cannot
+    fail when a new redirected verb arrives without a client implementation
+    (review rounds 10/11). So the comparison is now exhaustive and the
+    exclusions are named, each with the route it is reachable by instead.
+
+    What is NOT in the redirect table, and why it is not an omission: the
+    engine's own execution verbs (`extract`, `validate`, `sweep`, `run`,
+    `evaluate`, `analyze`) are verbs this engine HAS — they load a model and
+    execute, which is the one thing the client does not do — and `workspace
+    init` mints a workspace, which is Mac bootstrap, not authoring. Neither
+    family is redirected, so neither belongs here.
+
+    `set-parser` and `set-instrument-scope` moved from the exclusion list to
+    the implemented set in review round 11: the maintainer's ruling is that
+    the separation is authoring CLIENT vs running ENGINE, not macOS vs
+    everything else, and both verbs compute their pins from workspace bytes on
+    any platform.
+    """
+    from steerlab_server.experiment import experiment_store as store
+
     client = {spec.verb for spec in client_cli.CLIENT_VERB_SPECS
               if spec.family == "experiment"}
     redirected = set(cli_envelope.MAC_AUTHORITY_VERBS["experiment"])
-    assert {"create", "attach", "duplicate", "freeze",
-            "declare-condition"} <= (client & redirected)
+
+    # THE surface comparison. Not `<=` over a chosen few: the redirected verbs
+    # this client does not implement must be EXACTLY the declared exclusions,
+    # so a verb added to either table without a decision fails here.
+    assert redirected - client == set(_REDIRECTED_AS_PROTOCOL_FIELDS), (
+        "a redirected verb is neither a client verb nor a declared "
+        "exclusion — implement it, or add it to "
+        "_REDIRECTED_AS_PROTOCOL_FIELDS with the fields it is reachable by")
+
+    # …and every exclusion's claim is checked, not taken on trust.
+    for verb, fields in _REDIRECTED_AS_PROTOCOL_FIELDS.items():
+        assert fields, f"{verb} is excluded with no route named"
+        for field in fields:
+            assert field in store.PROTOCOL_FIELDS, (
+                f"{verb} is excluded as reachable through set-protocol "
+                f"{field}, which is not in the vocabulary")
+
+    # The two measurement declarations are verbs here now, and their fields
+    # stay OUT of the protocol vocabulary: the pin is derived, never assigned.
+    assert {"set-parser", "set-instrument-scope"} <= client
+    for field in ("numericParser", "parserRegistryHash",
+                  "outcomeInstrumentScope"):
+        assert field not in store.PROTOCOL_FIELDS
+
+    # `panel compile` is redirected too and has no client counterpart: it
+    # compiles a scenario, which is not a store operation. Asserted rather
+    # than assumed, so a client `panel` family cannot appear unnoticed.
+    assert set(cli_envelope.MAC_AUTHORITY_VERBS["panel"]) == {"compile"}
+    assert not any(spec.family == "panel"
+                   for spec in client_cli.CLIENT_VERB_SPECS)
+
     # …and the engine's refusals are untouched by this module's existence.
     assert "create" not in {spec.verb for spec in cli_envelope.VERB_SPECS}
+    assert {"set-parser", "set-instrument-scope"} <= redirected
+
+
+def test_the_redirect_names_the_client_spelling_off_the_mac():
+    """Review round 11, finding 1. The redirect's repair named only
+    `steerlab-cli`, which a Linux or Windows caller cannot run — and the
+    engine that emits it is very often ON such a machine. The Mac spelling
+    stays first (it is the table's value and the one the Mac lifecycle
+    continues from); the client's is appended for every redirected verb the
+    client implements, read from the client's own table so it cannot claim a
+    verb that does not exist."""
+    from steerlab_server import cli
+
+    for verb, mac in cli_envelope.MAC_AUTHORITY_VERBS["experiment"].items():
+        spelling = cli._client_spelling(f"experiment {verb}")
+        implemented = verb in {spec.verb
+                               for spec in client_cli.CLIENT_VERB_SPECS
+                               if spec.family == "experiment"}
+        assert bool(spelling) is implemented, verb
+        if implemented:
+            assert spelling.startswith(f"{client_cli.PROGRAM} experiment "
+                                       f"{verb} ")
+            assert spelling.endswith(f"{client_cli.ROOT_FLAG} "
+                                     "<workspace-dir>")
+        assert mac.startswith("steerlab-cli experiment ")
+    # `panel compile` has no client spelling, and the reader says so rather
+    # than inventing one.
+    assert cli._client_spelling("panel compile") == ""
 
 
 # =============================================================================

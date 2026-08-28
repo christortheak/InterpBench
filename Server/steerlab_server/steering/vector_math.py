@@ -565,6 +565,54 @@ class PrincipalComponentsResult:
         return float(sum(self.explained_variance))
 
 
+#: Safety multiple applied to the per-pass float32 rounding energy when
+#: deciding that a deflation residual is round-off rather than data
+#: (2026-08-28 audit, F2 second pass). Identical constant in Swift
+#: ``SteeringVectorMath.deflationResidualTraceFloorEpsFactor``.
+#:
+#: DERIVATION. One deflation pass rewrites every entry of the residual matrix
+#: (``centered − p·cᵀ``), so each entry acquires a rounding of relative size
+#: float32 eps (1.1920929e-07). Squared and summed over the matrix that is a
+#: residual TRACE of order eps² times the original total variance, per pass,
+#: and the passes' errors accumulate. Bounding that accumulation by the
+#: problem's own dimensions — at most ``rows − 1`` passes, each touching
+#: ``columns`` entries per row, so ``(rows + columns)`` is a generous stand-in
+#: for the accumulation length — gives a floor of
+#: ``factor · (rows + columns) · eps²`` on the residual's share of the total.
+#:
+#: CALIBRATION, measured over 120 random clouds (3–64 rows, 2–2048 columns,
+#: constructed rank 1..min(rows−1, columns), row scales spanning 1e-6..1e6),
+#: recording the residual share both at the first pass PAST the constructed
+#: rank (round-off) and at every pass still inside it (data), each expressed in
+#: units of ``(rows + columns)·eps²``:
+#:
+#: =========================  ==========  ===============  ==============
+#: residual share, in units   median      tail (p99/p1)    extreme (max/min)
+#: =========================  ==========  ===============  ==============
+#: round-off (past the rank)  0.0012      0.0075 (p99)     0.0093 (max)
+#: data (inside the rank)     1.5e+10     1.8e+07 (p1)     2.2e+03 (min)
+#: =========================  ==========  ===============  ==============
+#:
+#: The two populations are separated by five orders of magnitude, so the floor
+#: only has to land between them. 8 sits about 860× above the largest round-off
+#: residue ever measured and about 270× below the smallest genuine one; the
+#: single tightest genuine case seen in any sweep (37 rows, 271 columns,
+#: constructed rank 36 — the last component of a saturated-rank cloud,
+#: explaining 1.8e-10 of the variance) still clears it by 5×. The factor is
+#: deliberately at the tight end of that window: cutting a component whose
+#: variance share is already at the 1e-10 level costs nothing, while keeping
+#: one costs a normalized noise direction that ``extract()`` then projects out
+#: of the science vector.
+DEFLATION_RESIDUAL_TRACE_FLOOR_EPS_FACTOR = 8.0
+
+
+def _residual_trace_floor(rows: int, columns: int) -> float:
+    """The residual-trace share below which further deflation would return
+    normalized round-off (twin: Swift ``residualTraceFloor(rows:columns:)``)."""
+    eps = float(np.finfo(_F32).eps)
+    return DEFLATION_RESIDUAL_TRACE_FLOOR_EPS_FACTOR * (rows + columns) * eps * eps
+
+
 def _deflate(count: int | None, centered: np.ndarray, *,
              min_variance: float | None, maximum_count: int | None) -> PrincipalComponentsResult:
     total_variance = float(np.square(centered).sum(dtype=_F32))
@@ -573,6 +621,16 @@ def _deflate(count: int | None, centered: np.ndarray, *,
     components: list[list[float]] = []
     explained: list[float] = []
     diagnostics: list[PowerIterationDiagnostic] = []
+    row_count, column_count = int(centered.shape[0]), int(centered.shape[1])
+    # The DIMENSIONAL bound on how many orthogonal directions can exist at all:
+    # n centred rows span at most n−1 dimensions, and rows of d columns span at
+    # most d. Both are real bounds and the smaller one binds — a 6×2 corpus has
+    # rank ≤ 2 no matter how many rows it grows.
+    rank_cap = max(0, min(row_count - 1, column_count))
+    # The EFFECTIVE bound, below: the dimensional cap is what the geometry
+    # allows, not what this particular cloud contains, and rank-deficient data
+    # exhausts itself first (see DEFLATION_RESIDUAL_TRACE_FLOOR_EPS_FACTOR).
+    residual_floor = _residual_trace_floor(row_count, column_count)
     if min_variance is None:
         # RANK CAP (2026-08-28 audit, F2). n centred rows span at most n−1
         # dimensions, so after n−1 deflations the residual is float32
@@ -593,24 +651,40 @@ def _deflate(count: int | None, centered: np.ndarray, *,
         # the min_variance branch below and the bank path
         # (`extractor.components_by_layer`, `min(count, cap)`) already do; the
         # advisory says the request was trimmed so the trim is never silent.
-        rank_cap = max(0, centered.shape[0] - 1)
         cap = min(count or 0, rank_cap)
         if (count or 0) > rank_cap:
             warnings.warn(
                 f"requested {count} principal components from "
-                f"{centered.shape[0]} rows, which span at most {rank_cap} "
-                f"dimension(s) — returning {rank_cap}; components past the "
-                f"data's rank are float round-off, not directions",
+                f"{row_count} rows of {column_count} column(s), which span at "
+                f"most {rank_cap} dimension(s) — returning at most {rank_cap}; "
+                f"components past the data's rank are float round-off, not "
+                f"directions",
                 UserWarning, stacklevel=3)
     else:
-        cap = maximum_count if maximum_count is not None else max(0, centered.shape[0] - 1)
+        cap = min(maximum_count, rank_cap) if maximum_count is not None else rank_cap
+    exhausted = False  # set when the data, not the request, ended the loop
     while len(components) < cap:
         if min_variance is not None and sum(explained) >= min(min_variance, 1.0):
+            break
+        # EFFECTIVE-RANK STOP (2026-08-28 audit, F2 second pass; Swift twin
+        # `SteeringVectorMath.principalComponentsWithVariance`). The rank cap
+        # above is theoretical — it says how many directions the SHAPE could
+        # hold. Rank-deficient data runs out sooner: mathematically rank-one,
+        # non-axis-aligned rows with count=3 used to return three unit
+        # components with shares [1.0, 1.8e-15, 3.3e-17], the last two being
+        # normalised float32 residue handed back as if they were directions —
+        # the very failure the rank cap was written to prevent, arriving
+        # through the other door. Once the residual's share of the ORIGINAL
+        # total variance is at the round-off floor there is nothing left to
+        # decompose, so stop, whichever branch asked.
+        if float(np.square(centered).sum(dtype=_F32)) / total_variance <= residual_floor:
+            exhausted = True
             break
         try:
             component, diagnostic = _first_component_of_centered_with_diagnostic(
                 centered)
         except SteeringVectorError:
+            exhausted = True
             break
         comp = np.asarray(component, dtype=_F32)
         components.append(component)
@@ -619,6 +693,30 @@ def _deflate(count: int | None, centered: np.ndarray, *,
         captured = float(np.square(projections).sum(dtype=_F32))
         centered = (centered - np.outer(projections, comp)).astype(_F32)
         explained.append(captured / total_variance)
+    # The trim is never silent — the same promise the over-ask advisory above
+    # makes, kept for the other reason a request comes back short. Stopping at
+    # the effective rank is not an error (it is a fact about the corpus), but a
+    # caller who asked for k and got fewer should be told why rather than
+    # discovering it from a shorter list.
+    if exhausted and count is not None:
+        warnings.warn(
+            f"requested {count} principal components but this data's effective "
+            f"rank is {len(components)}: the residual after "
+            f"{len(components)} deflation(s) is at the float32 round-off floor "
+            f"({residual_floor:.3g} of the total variance), so any further "
+            f"component would be normalised rounding noise, not a direction",
+            UserWarning, stacklevel=3)
+    if (exhausted and min_variance is not None
+            and sum(explained) < min(min_variance, 1.0)):
+        warnings.warn(
+            f"requested principal components explaining "
+            f"{min(min_variance, 1.0):.6g} of the variance but this data's "
+            f"effective rank is {len(components)}, explaining "
+            f"{sum(explained):.9g}: the remaining residual is at the float32 "
+            f"round-off floor ({residual_floor:.3g} of the total variance), so "
+            f"any further component would be normalised rounding noise, not a "
+            f"direction",
+            UserWarning, stacklevel=3)
     return PrincipalComponentsResult(components=components,
                                      explained_variance=explained,
                                      diagnostics=diagnostics)

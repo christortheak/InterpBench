@@ -660,6 +660,55 @@ def test_layer_count_must_be_a_whole_positive_number(tmp_path):
     assert result.layer_count == 2
 
 
+def test_a_layer_count_too_large_to_represent_refuses_instead_of_crashing(
+        tmp_path):
+    """Review round 11, finding 3, on both engines.
+
+    This engine's ints are UNBOUNDED, and the guard used to reach for
+    ``float()`` on whatever the sidecar recorded — so a 400-digit
+    ``layerCount`` raised a bare ``OverflowError`` straight past
+    ``PoleMirrorError`` (and past the CLI's typed envelope with it). The Swift
+    twin had the mirror-image bug: its upper gate was ``value <=
+    Double(Int.max)``, and ``Double`` cannot hold ``Int.max``, so the
+    conversion rounds UP to 2**63 — the comparison then admitted exactly
+    2**63, which ``Int(_:)`` TRAPS on. Both engines now ask for
+    representability itself, and this one asks it of an int WITHOUT
+    converting to float. Swift twin:
+    ``PoleMirrorTests.aLayerCountTooLargeToRepresentRefuses``."""
+    huge = 10 ** 400
+    for index, (value, spelled) in enumerate([
+            # Exactly the bound, as the int a sidecar can spell exactly and as
+            # the float it decodes to on the twin — both one past the largest
+            # layer count a 64-bit Int holds.
+            (2 ** 63, "9.223372036854776e+18"),
+            (float(2 ** 63), "9.223372036854776e+18"),
+            # Beyond any float at all: `float(huge)` RAISES, so neither the
+            # guard nor the sentence that names the value may call it.
+            (huge, str(huge)),
+            (-(2 ** 63), "-9.223372036854776e+18")]):
+        source = _write_artifact(str(tmp_path / f"big{index}"),
+                                 extras={"layerCount": value})
+        out = os.path.join(str(tmp_path), f"big-out{index}")
+        with pytest.raises(pole_mirror.PoleMirrorError) as caught:
+            pole_mirror.mirror_poles(source, SOURCE_CONCEPT,
+                                     concept=MIRROR_CONCEPT,
+                                     run_directory=out)
+        assert caught.value.kind == "unreadableArtifact"
+        assert f"records layerCount {spelled}" in caught.value.reason, value
+        assert ("a steering-vector artifact's layer count is a whole number "
+                "of layers, 1 or more") in caught.value.reason
+        assert caught.value.repair_action
+        # A refusal writes nothing.
+        assert not os.path.isdir(out) or os.listdir(out) == []
+
+    # And the sentence-writer itself spells every magnitude without raising —
+    # it is reached only on a refusal, so an OverflowError in here would be
+    # the same crash wearing the refusal's clothes.
+    for value in (2 ** 63 - 1, huge, -huge, 2, 2.5):
+        assert "records layerCount" in \
+            pole_mirror._layer_count_reason("runs/r/x", value)
+
+
 def test_a_commit_that_cannot_drop_its_staging_name_takes_the_destination_back(
         tmp_path, monkeypatch):
     """Review round 10, finding 8, on all three mirrors of this primitive.

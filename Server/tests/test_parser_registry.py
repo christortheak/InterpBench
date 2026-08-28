@@ -393,15 +393,20 @@ def test_run_refuses_on_drifted_registry_pin(tmp_path, monkeypatch):
                   log=lambda *_: None)
 
 
-def test_the_parser_declaration_is_mac_authority_not_a_protocol_field():
-    """`numericParser`/`parserRegistryHash` are declared by the Mac's
-    ``experiment set-parser``, and the redirect names that spelling.
+def test_the_parser_declaration_is_a_derived_pin_not_a_protocol_field():
+    """``numericParser``/``parserRegistryHash`` are declared by ``experiment
+    set-parser`` — on the Mac, and (since review round 11's ruling) on the
+    cross-platform client too, which computes the same pin from the same
+    workspace bytes. The ENGINE still redirects, because it executes rather
+    than authors, and this pins the Mac spelling its redirect carries; the
+    client's is appended by ``cli._client_spelling`` and pinned in
+    ``test_client_cli.py``.
 
     They are deliberately NOT in ``PROTOCOL_FIELDS``: declaring a parser is
     not a field assignment — the engine RESOLVES the name against the
     registry and DERIVES the pin from the file's bytes — and the pin is a
     preregistration fact (which parser version measured), the same reason
-    ``set-sweep-selection`` stays Mac-authority. A ``--set
+    ``set-sweep-selection`` is not a field either. A ``--set
     parserRegistryHash=…`` would let a study claim provenance nothing
     computed, so the closed-vocabulary refusal is the right answer.
     Swift twin: ``MeasurementDeclarationVerbTests`` +

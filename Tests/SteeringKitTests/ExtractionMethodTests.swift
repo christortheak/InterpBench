@@ -49,6 +49,89 @@ import Testing
         #expect(try SteeringVectorMath.principalComponents(of: rows, count: 2).count == 2)
     }
 
+    // MARK: - F2 second pass: deflation stops at the EFFECTIVE rank
+
+    /// Mathematically rank-one and deliberately NOT axis-aligned: every row is
+    /// a multiple of one oblique direction, so no component past the first
+    /// exists and no coordinate accidentally hides the residue.
+    static let rankOneRows: [[Float]] = {
+        let raw: [Float] = [0.3, -0.5, 0.2, 0.8]
+        let norm = SteeringVectorMath.l2Norm(raw)
+        let unit = raw.map { $0 / norm }
+        let scales: [Float] = [1, 2, 3.5, -1]
+        return scales.map { scale in unit.map { $0 * scale } }
+    }()
+
+    /// 2026-08-28 audit, F2 second pass (server twin:
+    /// `test_deflation_stops_at_the_effective_rank_not_the_theoretical_one`).
+    /// The rank cap bounds by SHAPE (n−1, and now also the column count);
+    /// rank-deficient data runs out sooner. Four rank-one rows with count = 3
+    /// used to return THREE unit components with shares
+    /// [1.0, 1.8e-15, 3.3e-17] — normalised float32 residue handed back as if
+    /// it were a direction, which is exactly what the rank cap was written to
+    /// prevent, arriving through the other door.
+    @Test func deflationStopsAtTheEffectiveRankNotTheTheoreticalOne() throws {
+        let result = try SteeringVectorMath.principalComponentsWithVariance(
+            of: Self.rankOneRows, count: 3)
+        #expect(result.components.count == 1)
+        #expect(result.explainedVariance.count == 1)
+        #expect(result.diagnostics.count == 1)
+        #expect(abs(result.explainedVariance[0] - 1) < 1e-5)
+    }
+
+    @Test func deflationStopsAtTheEffectiveRankOfARankTwoCloud() throws {
+        let first: [Float] = [1, 0, 0.5, 0.2]
+        let second: [Float] = [0.1, 1, -0.3, 0.4]
+        let coefficients: [(Float, Float)] = [
+            (1, 0.2), (2, -0.5), (0.5, 1.3), (-1, 0.7), (3, -2),
+        ]
+        let rows: [[Float]] = coefficients.map { pair in
+            zip(first, second).map { pair.0 * $0 + pair.1 * $1 }
+        }
+        let over = try SteeringVectorMath.principalComponentsWithVariance(
+            of: rows, count: 4)
+        #expect(over.components.count == 2)
+        #expect(abs(over.explainedVariance.reduce(0, +) - 1) < 1e-5)
+        // A request AT the effective rank is untouched: the components
+        // computed before the stop are the same ones, bit for bit.
+        let exact = try SteeringVectorMath.principalComponentsWithVariance(
+            of: rows, count: 2)
+        #expect(exact.components == over.components)
+        #expect(exact.explainedVariance == over.explainedVariance)
+    }
+
+    /// Six rows of two columns span at most TWO dimensions however many rows
+    /// arrive; the cap is min(count, rows − 1, columns).
+    @Test func theColumnCountIsARankBoundToo() throws {
+        let rows: [[Float]] = [[1, 2], [2, 1], [3, -1], [0, 0.5], [-2, 1], [4, 4]]
+        let result = try SteeringVectorMath.principalComponentsWithVariance(
+            of: rows, count: 4)
+        #expect(result.components.count == 2)
+    }
+
+    /// The float32 first share of a rank-one cloud is 0.9999999, fractionally
+    /// short of a 1.0 target, and the loop used to spend the shortfall on a
+    /// second component made of round-off.
+    @Test func aVarianceTargetOfOneStopsAtTheRankNotAtTheTarget() throws {
+        let result = try SteeringVectorMath.principalComponents(
+            of: Self.rankOneRows, minimumExplainedVariance: 1)
+        #expect(result.components.count == 1)
+        #expect(abs(result.totalExplainedVariance - 1) < 1e-5)
+    }
+
+    /// The floor is `factor · (rows + columns) · eps²` of the ORIGINAL total
+    /// variance (server twin: `DEFLATION_RESIDUAL_TRACE_FLOOR_EPS_FACTOR` /
+    /// `_residual_trace_floor`). Pinned here so a change to either engine's
+    /// value is a deliberate two-engine edit.
+    @Test func theResidualFloorIsANamedTwinConstant() {
+        #expect(SteeringVectorMath.deflationResidualTraceFloorEpsFactor == 8)
+        let value = SteeringVectorMath.residualTraceFloor(rows: 4, columns: 4)
+        #expect(abs(value - 8 * 8 * Float.ulpOfOne * Float.ulpOfOne) < 1e-20)
+        // Between the two measured populations: far above round-off residue,
+        // far below the smallest genuine component ever measured.
+        #expect(value > 1e-13 && value < 1e-11)
+    }
+
     @Test func principalComponentsReportExplainedVariance() throws {
         let rows: [[Float]] = [
             [-3, 0], [-2, 0], [-1, 0], [1, 0], [2, 0], [3, 0],
