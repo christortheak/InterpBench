@@ -14,6 +14,7 @@ re-validation, not an assumed equivalence (see the plan's risks).
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from enum import Enum
 from typing import Sequence
@@ -553,7 +554,34 @@ def _deflate(count: int | None, centered: np.ndarray, *,
     components: list[list[float]] = []
     explained: list[float] = []
     if min_variance is None:
-        cap = count or 0
+        # RANK CAP (2026-08-28 audit, F2). n centred rows span at most n−1
+        # dimensions, so after n−1 deflations the residual is float32
+        # round-off — and round-off has a tiny but POSITIVE Gram trace, which
+        # is exactly what the power iteration's RELATIVE degenerate-start
+        # floor (1e-6·trace) accepts. The count branch therefore used to
+        # normalise rounding noise into unit "components" and hand them back
+        # indistinguishable from real directions: 4 rows with count=6 returned
+        # 6 components whose explained variances were [0.406, 0.310, 0.284,
+        # 7.9e-15, 4.2e-15, 2.1e-15]. `extract()` and `extract_grand_mean`
+        # then projected the concept vector's component along those three
+        # arbitrary noise directions OUT of the science vector.
+        #
+        # Clamp rather than refuse: `neutral_pc_count` is a study-level knob
+        # applied to whatever neutral corpus each concept has (as few as 4
+        # texts is legal), so over-asking is a normal, honest declaration and
+        # refusing it would strand existing manifests. The clamp is also what
+        # the min_variance branch below and the bank path
+        # (`extractor.components_by_layer`, `min(count, cap)`) already do; the
+        # advisory says the request was trimmed so the trim is never silent.
+        rank_cap = max(0, centered.shape[0] - 1)
+        cap = min(count or 0, rank_cap)
+        if (count or 0) > rank_cap:
+            warnings.warn(
+                f"requested {count} principal components from "
+                f"{centered.shape[0]} rows, which span at most {rank_cap} "
+                f"dimension(s) — returning {rank_cap}; components past the "
+                f"data's rank are float round-off, not directions",
+                UserWarning, stacklevel=3)
     else:
         cap = maximum_count if maximum_count is not None else max(0, centered.shape[0] - 1)
     while len(components) < cap:

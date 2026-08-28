@@ -210,8 +210,15 @@ def test_refuses_donor_without_residual_norms_at_the_layer(tmp_path):
     with pytest.raises(ValueError, match="no residualNormPerLayer at layer 2"):
         _import(tmp_path, residual_norm_artifact=donor)
 
+    # A TRUNCATED table no longer reaches the layer check: since the
+    # 2026-08-28 denominator-table gate (audit F7/F13) the loader refuses a
+    # table that covers some layers but not the artifact's depth, because a
+    # short table is malformed rather than absent — no writer produces one,
+    # and every verb that indexed it reacted differently. The refusal names
+    # both numbers.
     short = _donor(tmp_path, name="short", residualNormPerLayer=[7.0, 7.5])
-    with pytest.raises(ValueError, match="no residualNormPerLayer at layer 2"):
+    with pytest.raises(ValueError,
+                       match="carries 2 residual norms for 5 layers"):
         _import(tmp_path, out="out2", residual_norm_artifact=short)
 
 

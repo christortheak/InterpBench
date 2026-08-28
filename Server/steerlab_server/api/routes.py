@@ -260,7 +260,37 @@ def _resolve_optional_file(resolver: SafePathResolver, ref):
     return resolver.require_file(ref, allow_local_absolute=True)
 
 
-def _resolve_injections(items: list[dto.InjectionDTO]) -> list[CellInjection]:
+def _refuse_out_of_range_layer(layer: int, depth: int, *, subject: str) -> None:
+    """Refuse an ad-hoc injection layer the loaded model or the named artifact
+    cannot honour (2026-08-28 audit, F6).
+
+    This path used to clamp the layer it looked the VECTOR ROW up with and
+    then build the cell with the RAW request value. Nothing downstream
+    revalidated: ``VectorInjector.apply`` returns the hidden state untouched
+    when no injection is registered for a layer, and the hooks only dispatch
+    0…num_layers−1. So a layer past the end returned UNSTEERED output with
+    HTTP 200 — a silent null on the one surface researchers use to look
+    around — and a layer between the artifact's depth and the model's injected
+    the artifact's LAST row at a layer the artifact says nothing about.
+
+    Refusal, not a shared clamp: this is the playground, and a cell that
+    quietly moves to a layer nobody asked for is a wrong number wearing a 200.
+    The frozen-run paths keep their own (single, consistent) resolution.
+    """
+    if 0 <= layer < depth:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=f"injection layer {layer} is outside {subject} — valid layers "
+               f"are 0…{depth - 1} ({depth} layers). This path never clamps: "
+               f"a layer past the end would return unsteered output with a "
+               f"200, and a layer past the ARTIFACT's end would inject its "
+               f"last row where the artifact does not describe the residual "
+               f"stream")
+
+
+def _resolve_injections(items: list[dto.InjectionDTO], *,
+                        num_layers: int | None = None) -> list[CellInjection]:
     cells: list[CellInjection] = []
     for item in items:
         centering = item.centering or "none"
@@ -284,6 +314,17 @@ def _resolve_injections(items: list[dto.InjectionDTO]) -> list[CellInjection]:
                     detail="centering requires an artifact reference "
                            "(vectorPath+name); explicit-vector cells must be "
                            "centered by the client")
+            # An explicit vector carries no depth of its own, so the loaded
+            # model is the only authority on where it may go.
+            if num_layers is not None:
+                _refuse_out_of_range_layer(
+                    item.layer, num_layers,
+                    subject="the loaded model's depth")
+            elif item.layer < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"injection layer {item.layer} is negative — "
+                           f"layers are counted from 0")
             vector = item.vector
         elif item.vectorPath and item.name:
             path = SafePathResolver().require_dir(item.vectorPath, allow_local_absolute=True)
@@ -295,7 +336,13 @@ def _resolve_injections(items: list[dto.InjectionDTO]) -> list[CellInjection]:
                     sidecar, os.path.join(path, item.name))
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
-            layer = min(max(0, item.layer), vectors.layer_count - 1)
+            _refuse_out_of_range_layer(
+                item.layer, vectors.layer_count,
+                subject=f"artifact '{item.name}'")
+            if num_layers is not None:
+                _refuse_out_of_range_layer(
+                    item.layer, num_layers, subject="the loaded model's depth")
+            layer = item.layer
             vector = vectors.per_layer[layer]
             if item.mode == "ablate":
                 try:
@@ -872,8 +919,9 @@ def build_router(state: ServiceState) -> APIRouter:
 
     @router.post("/api/generate", response_model=dto.GenerateResponse)
     def generate_route(body: dto.GenerateRequest):
-        state.require_model()
-        cells = _resolve_injections(body.injections)
+        loaded = state.require_model()
+        cells = _resolve_injections(body.injections,
+                                    num_layers=loaded.num_layers)
         from ..experiment.generate import NonFiniteLogitsError
         from ..experiment.generate import generate as run_generate
         from ..experiment.generate import generate_messages
@@ -927,8 +975,9 @@ def build_router(state: ServiceState) -> APIRouter:
 
     @router.post("/api/generate/stream")
     def generate_stream(body: dto.GenerateRequest):
-        state.require_model()
-        cells = _resolve_injections(body.injections)
+        loaded = state.require_model()
+        cells = _resolve_injections(body.injections,
+                                    num_layers=loaded.num_layers)
         from ..experiment.generate import stream_generate_messages
 
         if body.continueFinalMessage and not body.messages:

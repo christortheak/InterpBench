@@ -5870,6 +5870,45 @@ public enum ExperimentStore {
         return entries.count
     }
 
+    /// SAE latent arms are carried faithfully by this engine but only the
+    /// Python server EXECUTES them (2026-08-28 audit, F12) — nothing on the
+    /// local run path reads `saeLatentConditions`, which appear here only in
+    /// decode/preserve/count.
+    ///
+    /// Two ways that went wrong, both silent. A latent-ONLY manifest ran
+    /// BASELINE ALONE, because the count above deliberately suppresses
+    /// `noMeasuredConditionsProblem` — the very arms that do not execute were
+    /// what convinced the baseline-only refusal there was something to
+    /// measure. And a MIXED manifest ran its ordinary/agent arms and produced
+    /// a run directory that looks complete while the latent arms simply were
+    /// not there. The 2026-08-11 declared-`studyType` incident through a
+    /// different door.
+    ///
+    /// **Mixed manifests refuse too**, deliberately. A partial run whose
+    /// record says nothing about the arms it skipped is the failure mode this
+    /// whole family of refusals exists to stop; the honest answer is one
+    /// place that executes every declared arm, and that place is the server.
+    /// Run-path only: `verify` must NOT reject these manifests — a latent
+    /// study authored on a Mac and submitted to the server is entirely legal,
+    /// and refusing at verify would make it unfreezable and unpackageable.
+    ///
+    /// Python twin: latent arms are ordinary members of
+    /// `manifest.effective_condition_names` there, because that engine runs
+    /// them.
+    static func latentArmsNotExecutableProblem(
+        _ manifest: ExperimentManifest
+    ) -> String? {
+        guard manifest.studyKind == .modelOutput else { return nil }
+        let count = saeLatentConditionCount(manifest)
+        guard count > 0 else { return nil }
+        return "study '\(manifest.name)' declares \(count) SAE latent arm(s), "
+            + "which EXECUTE on the Python server engine only — no local run "
+            + "path reads them. Running here would record the study's other "
+            + "arms (or, for a latent-only study, the implicit BASELINE "
+            + "alone) and say nothing about the latent arms that never "
+            + "happened. Submit this study to a server instead"
+    }
+
     /// One-line record of INERT carried concept machinery, for the runs
     /// that legally proceed (agent arms exist, so `inertConditionsProblem`
     /// does not refuse): a declared agent comparison whose manifest still

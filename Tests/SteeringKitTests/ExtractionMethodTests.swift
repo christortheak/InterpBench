@@ -20,6 +20,35 @@ import Testing
         }
     }
 
+    /// 2026-08-28 audit, F2 (server twin:
+    /// `test_principal_components_never_exceed_the_data_rank`). n centred
+    /// rows span at most n−1 dimensions, so after n−1 deflations the residual
+    /// is float32 round-off — whose own Gram trace is tiny but POSITIVE,
+    /// which is exactly what the power iteration's RELATIVE degenerate-start
+    /// floor accepts. The count branch therefore used to normalise rounding
+    /// noise into unit "components", and the neutral-PC projection then
+    /// removed the concept vector's component along those arbitrary
+    /// directions.
+    ///
+    /// Clamped rather than refused: `neutralPCCount` is a study-level knob
+    /// applied to whatever neutral corpus each concept has, so over-asking is
+    /// an honest declaration, not an error.
+    @Test func principalComponentsNeverExceedTheDataRank() throws {
+        let rows: [[Float]] = [
+            [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1],
+        ]
+        let over = try SteeringVectorMath.principalComponentsWithVariance(
+            of: rows, count: 6)
+        #expect(over.components.count == 3)
+        #expect(over.explainedVariance.count == 3)
+        // Every component returned carries real variance — no float-noise
+        // tail masquerading as a direction.
+        #expect(over.explainedVariance.allSatisfy { $0 > 1e-6 })
+        // A request within the rank is untouched.
+        #expect(try SteeringVectorMath.principalComponents(of: rows, count: 3).count == 3)
+        #expect(try SteeringVectorMath.principalComponents(of: rows, count: 2).count == 2)
+    }
+
     @Test func principalComponentsReportExplainedVariance() throws {
         let rows: [[Float]] = [
             [-3, 0], [-2, 0], [-1, 0], [1, 0], [2, 0], [3, 0],

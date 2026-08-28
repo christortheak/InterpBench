@@ -24,6 +24,19 @@ import Foundation
 /// migration, no recompute, no warning. `vectors backfill-norms` re-measures
 /// under the current convention and stamps it, which is the researcher's
 /// opt-in migration path.
+/// A denominator table that cannot answer for the layer being dosed — the
+/// truncated/empty `residualNormPerLayer` seam (2026-08-28 audit, F7/F13).
+/// Its own type rather than a `SteeringVectorError` case because the refusal
+/// carries prose naming the artifact and the layer, and `SteeringVectorError`
+/// is a closed enum of shape faults with no room for one.
+public struct ResidualNormTableError: Error, Equatable, CustomStringConvertible {
+    public let reason: String
+
+    public init(reason: String) { self.reason = reason }
+
+    public var description: String { reason }
+}
+
 public enum ResidualNormConvention {
 
     /// The stamp written by every fresh measurement on BOTH engines. Pinned
@@ -48,6 +61,79 @@ public enum ResidualNormConvention {
         // an empty table is no denominator, not an unstamped one.
         guard let residualNormPerLayer, !residualNormPerLayer.isEmpty else { return nil }
         return stamp ?? legacyLabel
+    }
+
+    /// LOAD-TIME gate on the shape of a denominator table (2026-08-28 audit,
+    /// F7/F13). Returns the refusal prose, or `nil` when the table is usable.
+    ///
+    /// A denominator table must cover every layer of the artifact it travels
+    /// with, or none of them. **Absent (or empty) is legal and stays legal**:
+    /// the OptVec, J-lens and Gemma-Scope-report families are born with no
+    /// norms at all and acquire them through `vectors backfill-norms`, so an
+    /// absent table is a state the writers deliberately produce and the
+    /// per-verb refusals already name. A table that is present but SHORTER
+    /// than the artifact's depth is the state no writer produces —
+    /// extraction measures one norm per layer, backfill writes exactly
+    /// `layerCount` of them, and the SAE by-id import slices the donor to its
+    /// layer count — so a short table is a malformed or hand-edited artifact,
+    /// and every verb that reads it with a layer index would otherwise dose
+    /// the layers past the end with some other layer's number.
+    ///
+    /// Server twin: `residual_norm_convention.table_length_problem`
+    /// (byte-identical prose, pinned on both engines).
+    public static func tableLengthProblem(
+        _ residualNormPerLayer: [Float]?, layerCount: Int, artifact: String
+    ) -> String? {
+        guard let norms = residualNormPerLayer, !norms.isEmpty else { return nil }
+        guard norms.count != layerCount else { return nil }
+        return "vector artifact '\(artifact)' carries \(norms.count) residual "
+            + "norms for \(layerCount) layers — a denominator table must "
+            + "cover every layer or none, and a short one silently doses the "
+            + "layers it does not reach with another layer's number; "
+            + "re-measure the norms (vectors backfill-norms), or re-extract "
+            + "the concept"
+    }
+
+    /// USE-SITE gate — the ONE out-of-range rule every verb applies
+    /// (condition, sweep, variant), on both engines. Returns the refusal
+    /// prose, or `nil` when the layer has a denominator.
+    ///
+    /// Before this landed the same truncated table produced four different
+    /// outcomes for one artifact: the server's condition path substituted
+    /// `0.0` and refused as `degenerateData`, its sweep and variant paths
+    /// clamped to the last entry and dosed the deepest layers with a
+    /// shallower layer's number, and this engine's condition path clamped as
+    /// well — while an EMPTY table indexed `[-1]` here and crashed. One
+    /// artifact, four behaviours, and three of them silent. The rule is now
+    /// the house one everywhere: refuse, and say which layer had no
+    /// denominator.
+    ///
+    /// Server twin: `residual_norm_convention.residual_norm_problem`
+    /// (byte-identical prose).
+    public static func residualNormProblem(
+        _ residualNormPerLayer: [Float]?, layer: Int, artifact: String
+    ) -> String? {
+        let norms = residualNormPerLayer ?? []
+        guard !norms.indices.contains(layer) else { return nil }
+        return "'\(artifact)' has no residual norm at layer \(layer) — its "
+            + "denominator table covers \(norms.count) layer(s), so an α in "
+            + "residual-norm units cannot be denominated there; re-measure "
+            + "the norms (vectors backfill-norms), or switch α to raw units"
+    }
+
+    /// The denominator at `layer`, or the typed refusal above. The four
+    /// injection-building sites (condition, variant, sweep grid, sweep
+    /// control) all read the table through this one accessor, so the rule
+    /// cannot drift between verbs again.
+    public static func residualNorm(
+        _ residualNormPerLayer: [Float]?, at layer: Int, artifact: String
+    ) throws -> Float {
+        if let problem = residualNormProblem(
+            residualNormPerLayer, layer: layer, artifact: artifact)
+        {
+            throw ResidualNormTableError(reason: problem)
+        }
+        return (residualNormPerLayer ?? [])[layer]
     }
 
     /// Per-layer running mean of residual norms under the whole-corpus rule.

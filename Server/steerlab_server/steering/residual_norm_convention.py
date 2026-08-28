@@ -51,6 +51,66 @@ def display_label(residual_norm_per_layer, stamp: str | None) -> str | None:
     return stamp or LEGACY_LABEL
 
 
+def table_length_problem(residual_norm_per_layer, *, layer_count: int,
+                         artifact: str) -> str | None:
+    """LOAD-TIME gate on the shape of a denominator table (2026-08-28 audit,
+    F7/F13). Returns the refusal prose, or ``None`` when the table is usable.
+
+    A denominator table must cover every layer of the artifact it travels
+    with, or none of them. **Absent (or empty) is legal and stays legal**: the
+    OptVec, J-lens and Gemma-Scope-report families are born with no norms at
+    all and acquire them through ``vectors backfill-norms``, so an absent
+    table is a state the writers deliberately produce and the per-verb
+    refusals already name. A table that is present but SHORTER than the
+    artifact's depth is the state no writer produces — extraction measures one
+    norm per layer, backfill writes exactly ``layer_count`` of them, and the
+    SAE by-id import slices the donor to its layer count — so a short table is
+    a malformed or hand-edited artifact, and every verb that reads it with a
+    layer index would otherwise dose the layers past the end with some other
+    layer's number.
+
+    Swift twin: ``ResidualNormConvention.tableLengthProblem`` (byte-identical
+    prose, pinned by ``ResidualNormConventionTests`` /
+    ``test_residual_norm_convention.py``).
+    """
+    norms = list(residual_norm_per_layer or [])
+    if not norms or len(norms) == int(layer_count):
+        return None
+    return (f"vector artifact '{artifact}' carries {len(norms)} residual "
+            f"norms for {int(layer_count)} layers — a denominator table must "
+            f"cover every layer or none, and a short one silently doses the "
+            f"layers it does not reach with another layer's number; "
+            f"re-measure the norms (vectors backfill-norms), or re-extract "
+            f"the concept")
+
+
+def residual_norm_problem(residual_norm_per_layer, layer: int, *,
+                          artifact: str) -> str | None:
+    """USE-SITE gate — the ONE out-of-range rule every verb applies (condition,
+    sweep, variant), on both engines. Returns the refusal prose, or ``None``
+    when the layer has a denominator.
+
+    Before this landed the same truncated table produced four different
+    outcomes for one artifact: the condition path substituted ``0.0`` and
+    refused as ``degenerateData``, the sweep and variant paths clamped to the
+    last entry and dosed the deepest layers with a shallower layer's number,
+    and the Swift condition path clamped as well — while an EMPTY table
+    indexed ``[-1]`` on Swift and crashed. One artifact, four behaviours, and
+    three of them silent. The rule is now the house one everywhere: refuse,
+    and say which layer had no denominator.
+
+    Swift twin: ``ResidualNormConvention.residualNormProblem`` (byte-identical
+    prose).
+    """
+    norms = list(residual_norm_per_layer or [])
+    if 0 <= int(layer) < len(norms):
+        return None
+    return (f"'{artifact}' has no residual norm at layer {int(layer)} — its "
+            f"denominator table covers {len(norms)} layer(s), so an α in "
+            f"residual-norm units cannot be denominated there; re-measure the "
+            f"norms (vectors backfill-norms), or switch α to raw units")
+
+
 class ResidualNormTally:
     """Per-layer running mean of residual norms under the whole-corpus rule.
 

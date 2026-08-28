@@ -1519,6 +1519,23 @@ class Manifest:
                 violations.append(f"neutral corpus: {exc}")
 
         attached = {c.name for c in self.concepts}
+        # A condition slot may only name an ATTACHED concept (2026-08-28
+        # audit, F8). Both run paths refuse this state, but on THIS engine it
+        # used to be discoverable only there — after a run has been scheduled
+        # and the model loaded — while the equivalent check for a variant's
+        # forward-referenced concept sat directly below. The Swift twin
+        # (`ExperimentStore.verify`) has always carried this check under the
+        # same machinery gate; the sentence is byte-identical to its
+        # violation. SAE LATENT arms are deliberately not covered: they live
+        # in their own collection (`saeLatentConditions`), name FEATURES
+        # rather than attached concepts, and have their own declaration check
+        # (`sae_latent.condition_violations`).
+        for condition in (self.conditions if machinery else []):
+            for slot in condition.slots:
+                if slot.concept not in attached:
+                    violations.append(
+                        f"condition '{condition.name}': references unattached "
+                        f"concept '{slot.concept}'")
         for variant in (self.variant_conditions if model_output else []):
             if variant.from_promotion is not None:
                 # Forward-referenced (stage 4): the DECLARATION is what

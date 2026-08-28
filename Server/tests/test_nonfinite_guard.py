@@ -197,7 +197,13 @@ def test_api_generate_returns_self_naming_400(tmp_path, monkeypatch):
 
     monkeypatch.setenv("STEERLAB_JOBS_DB", str(tmp_path / "jobs.sqlite"))
     state = ServiceState()
-    state.model = SimpleNamespace(model_id="org/fake", revision=None)
+    # ``num_layers`` is part of the stand-in because /api/generate now bounds
+    # every ad-hoc injection layer against the loaded model's depth (2026-08-28
+    # audit, F6) — an out-of-range layer used to return a 200 with unsteered
+    # output. This request declares no injections, so nothing is bounded here;
+    # the field simply has to exist.
+    state.model = SimpleNamespace(model_id="org/fake", revision=None,
+                                  num_layers=4)
 
     @contextmanager
     def fake_acquire_active():

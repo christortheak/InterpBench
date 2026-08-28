@@ -614,6 +614,21 @@ public enum SteeringVectorStore {
         let sidecar = try JSONDecoder().decode(
             SteeringVectorSidecar.self, from: Data(contentsOf: sidecarURL))
 
+        // LOAD-TIME denominator-table gate (2026-08-28 audit, F7/F13). Every
+        // injection-building path that reads a STORED artifact funnels
+        // through this loader, so tying the table's length to the artifact's
+        // depth here closes the seam for all of them at once instead of each
+        // one meeting a short table at a different layer and reacting
+        // differently. Absent/empty passes — that is the born-without state
+        // of the OptVec, J-lens and Gemma-Scope-report families, and the
+        // per-verb refusals name it. Server twin: `vector_store.load`.
+        if let problem = ResidualNormConvention.tableLengthProblem(
+            sidecar.residualNormPerLayer, layerCount: sidecar.layerCount,
+            artifact: directory.appending(component: name).path)
+        {
+            throw ResidualNormTableError(reason: problem)
+        }
+
         let vectorsURL = directory.appending(component: "\(name).safetensors")
         let arrays = try MLX.loadArrays(url: vectorsURL)
         let perLayer: [[Float]] = try (0 ..< sidecar.layerCount).map { index in

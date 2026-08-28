@@ -3544,8 +3544,20 @@ public enum ExperimentTasks {
                     // comes out.
                     alpha = Float(slot.alpha)
                 } else if condition.alphaInNormUnits {
-                    let norm = extraction.residualNormPerLayer[
-                        min(layer, extraction.residualNormPerLayer.count - 1)]
+                    // ONE out-of-range rule, every verb, both engines
+                    // (2026-08-28 audit, F7/F13). This site used to clamp to
+                    // the last entry — dosing the deepest layers with a
+                    // shallower layer's number while the server's condition
+                    // path refused on the same artifact — and an EMPTY table
+                    // made the clamp index [-1] and crash.
+                    if let problem = ResidualNormConvention.residualNormProblem(
+                        extraction.residualNormPerLayer, layer: layer,
+                        artifact: slot.concept)
+                    {
+                        throw ExperimentError(
+                            reason: "condition '\(condition.name)': \(problem)")
+                    }
+                    let norm = extraction.residualNormPerLayer[layer]
                     alpha = try SteeringVectorMath.normUnitScale(
                         alpha: Float(slot.alpha), residualNorm: norm,
                         vectorNorm: vectorNorm)
@@ -3654,7 +3666,16 @@ public enum ExperimentTasks {
                                 + "\(SteeringGuidance.normBackfillLocation), or switch "
                                 + "the variant to raw alpha")
                     }
-                    let norm = norms[min(layer, norms.count - 1)]
+                    // Same rule as the condition and sweep paths (2026-08-28
+                    // audit, F7/F13): a layer the denominator table does not
+                    // reach refuses, where this site used to clamp.
+                    if let problem = ResidualNormConvention.residualNormProblem(
+                        norms, layer: layer, artifact: injection.concept)
+                    {
+                        throw ExperimentError(
+                            reason: "variant '\(variant.name)': \(problem)")
+                    }
+                    let norm = norms[layer]
                     alpha = try SteeringVectorMath.normUnitScale(
                         alpha: Float(injection.alpha),
                         residualNorm: norm,
@@ -4072,6 +4093,20 @@ public enum ExperimentTasks {
                     + "\(manifest.name) <arm> --slots <concept>:<layer>:<alpha>  "
                     + "(a concept study with no injection arm runs the "
                     + "implicit baseline alone and measures nothing)")
+        }
+        // The third road to a silently incomplete run (2026-08-28 audit,
+        // F12): SAE latent arms, which this engine carries but cannot
+        // execute. Same place, same reason — before the model loads. Only
+        // the run path refuses; verify and freeze stay open, because a
+        // latent study authored here and submitted to a server is legal.
+        if let latentProblem = ExperimentStore.latentArmsNotExecutableProblem(manifest) {
+            throw ExperimentError.refusing(
+                .inertConditions, latentProblem,
+                repair: "steerlab-cli remote package \(manifest.name) && "
+                    + "steerlab-cli remote submit-bundle <bundle> --verb run "
+                    + "(--site <id> | --url <server>)  — the Python server "
+                    + "executes SAE latent arms; this engine only carries "
+                    + "them")
         }
         // The shape that legally proceeds (agent arms exist) while carrying
         // inert concepts/conditions must be LOUD at start — a baseline-only
@@ -8477,8 +8512,18 @@ public enum ExperimentTasks {
                     cancelled = true
                     break conceptLoop
                 }
-                let norm = extraction.residualNormPerLayer[
-                    min(layer, extraction.residualNormPerLayer.count - 1)]
+                // Same rule as the condition and variant paths (2026-08-28
+                // audit, F7/F13): a layer the denominator table does not
+                // reach refuses, where this site used to clamp to the last
+                // entry and dose the deepest sweep cells with a shallower
+                // layer's number.
+                if let problem = ResidualNormConvention.residualNormProblem(
+                    extraction.residualNormPerLayer, layer: layer,
+                    artifact: ref.name)
+                {
+                    throw ExperimentError(reason: "concept '\(ref.name)': \(problem)")
+                }
+                let norm = extraction.residualNormPerLayer[layer]
                 for alpha in spec.alphas {
                     let cellLabel = sweepCellLabel(layer: layer, alpha: alpha)
                     if await cancellationObserved(
@@ -8631,8 +8676,17 @@ public enum ExperimentTasks {
                 for candidate in candidates {
                     let conceptVector = extraction.vectors.perLayer[candidate.layer]
                     let vectorNorm = SteeringVectorMath.l2Norm(conceptVector)
-                    let residual = extraction.residualNormPerLayer[
-                        min(candidate.layer, extraction.residualNormPerLayer.count - 1)]
+                    // The control cell reads the denominator under the same
+                    // rule as the grid cell it controls (2026-08-28 audit,
+                    // F7/F13) — a clamp here would have matched the control's
+                    // dose to a layer the concept cell never used.
+                    if let problem = ResidualNormConvention.residualNormProblem(
+                        extraction.residualNormPerLayer, layer: candidate.layer,
+                        artifact: ref.name)
+                    {
+                        throw ExperimentError(reason: "concept '\(ref.name)': \(problem)")
+                    }
+                    let residual = extraction.residualNormPerLayer[candidate.layer]
                     let randomVector = try SweepSelectionRule.controlVector(
                         seedText: "\(ref.name)-recommended|\(ref.name)|\(candidate.layer)",
                         dimension: conceptVector.count, norm: vectorNorm)

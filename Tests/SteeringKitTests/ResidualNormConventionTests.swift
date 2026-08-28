@@ -156,4 +156,84 @@ import Testing
             ResidualNormConvention.displayLabel(
                 residualNormPerLayer: [], stamp: ResidualNormConvention.current) == nil)
     }
+
+    // MARK: The denominator-table gate (2026-08-28 audit, F7/F13)
+    //
+    // Twin prose, asserted as literals on both engines
+    // (`Server/tests/test_denominator_table_gate.py`). One truncated table
+    // used to produce four different behaviours across the two engines'
+    // verbs — a 0.0 substitution, two silent clamps, and (on an EMPTY table
+    // here) an index [-1] crash. The sentences below ARE the single rule.
+
+    @Test func loadTimeGateNamesTheArtifactAndBothNumbers() {
+        #expect(
+            ResidualNormConvention.tableLengthProblem(
+                [1, 2], layerCount: 5, artifact: "runs/r/c")
+                == """
+                vector artifact 'runs/r/c' carries 2 residual norms for 5 \
+                layers — a denominator table must cover every layer or none, \
+                and a short one silently doses the layers it does not reach \
+                with another layer's number; re-measure the norms (vectors \
+                backfill-norms), or re-extract the concept
+                """)
+    }
+
+    /// The born-without families (OptVec, J-lens, Gemma Scope report imports)
+    /// write no norms at all and acquire them through the backfill. Absent is
+    /// a state the writers deliberately produce; SHORT is a state none of
+    /// them produces, which is why only short refuses.
+    @Test func absentAndEmptyTablesAreLegalAtLoadTime() {
+        #expect(
+            ResidualNormConvention.tableLengthProblem(
+                nil, layerCount: 5, artifact: "a") == nil)
+        #expect(
+            ResidualNormConvention.tableLengthProblem(
+                [], layerCount: 5, artifact: "a") == nil)
+        #expect(
+            ResidualNormConvention.tableLengthProblem(
+                [1, 1, 1, 1, 1], layerCount: 5, artifact: "a") == nil)
+    }
+
+    @Test func useSiteGateNamesTheLayerAndTheCoverage() {
+        #expect(
+            ResidualNormConvention.residualNormProblem(
+                [1, 2], layer: 4, artifact: "fear")
+                == """
+                'fear' has no residual norm at layer 4 — its denominator \
+                table covers 2 layer(s), so an α in residual-norm units \
+                cannot be denominated there; re-measure the norms (vectors \
+                backfill-norms), or switch α to raw units
+                """)
+    }
+
+    /// The empty table is the case that indexed `[-1]` here: a clamp of
+    /// `min(layer, count - 1)` against a zero-length table is `-1`, which is
+    /// a fatal index on this engine and a silent 0.0 substitution on the
+    /// server's condition path.
+    @Test func useSiteGateRefusesEmptyTablesAndNegativeLayers() {
+        #expect(
+            ResidualNormConvention.residualNormProblem([], layer: 0, artifact: "f")
+                != nil)
+        #expect(
+            ResidualNormConvention.residualNormProblem(nil, layer: 0, artifact: "f")
+                != nil)
+        #expect(
+            ResidualNormConvention.residualNormProblem([1, 2], layer: -1, artifact: "f")
+                != nil)
+        #expect(
+            ResidualNormConvention.residualNormProblem([1, 2], layer: 1, artifact: "f")
+                == nil)
+    }
+
+    @Test func theAccessorReturnsTheDenominatorOrThrowsTheRefusal() throws {
+        #expect(
+            try ResidualNormConvention.residualNorm([2, 4, 6], at: 2, artifact: "f")
+                == 6)
+        #expect(throws: ResidualNormTableError.self) {
+            try ResidualNormConvention.residualNorm([2, 4], at: 2, artifact: "f")
+        }
+        #expect(throws: ResidualNormTableError.self) {
+            try ResidualNormConvention.residualNorm([], at: 0, artifact: "f")
+        }
+    }
 }

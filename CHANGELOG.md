@@ -123,6 +123,22 @@ migration that rewrites frozen bytes.
 
 ### Fixed
 
+- **A materialized default is not manifest drift.** `experiment duplicate`
+  decodes and re-encodes, so every non-optional defaulted field appears in
+  the copy even when the donor's bytes never carried it — and the epoch
+  comparison, over raw JSON where absent ≠ false, refused a duplicate's
+  `recordTokenIDs: false` against its donor's absent key as generation-side
+  drift: a refusal over a difference with no meaning. The comparison now
+  canonicalizes default-valued keys to absent on both sides
+  (`DEFAULT_VALUED_KEYS`, extensible); any non-default value still refuses,
+  pinned in both directions. Python-only — the Swift comparison decodes both
+  sides through the same struct and materializes symmetrically. And the
+  stamped-mismatch epoch refusal stops offering `allowUnverifiedEpoch`, a
+  flag consulted only in the unstamped branch — the offer sent an agent back
+  to spend a queue slot learning it does nothing; it now names the real
+  alternative (a measurement verb tolerates measurement-side drift and
+  stamps what it tolerated).
+
 - **`remote submit-bundle` can name the measurement verb's source run.** The
   duplicate re-measurement path (duplicate → pin rubric+panel → evaluate
   against the ORIGINAL run) worked locally (`experiment evaluate --run`) and
@@ -149,6 +165,80 @@ migration that rewrites frozen bytes.
   key the selection merge uses. A `--judge-pin` naming no declared judge, or
   aimed at a judge kind that carries no pins, is refused at 64 rather than
   written and silently normalized away.
+
+- **One artifact, one dose: the residual-norm denominator table now answers
+  the same way in every verb, on both engines.** A `residualNormPerLayer`
+  shorter than the artifact's depth used to produce four different outcomes
+  from the same bytes — the server's condition path substituted 0.0 and
+  refused as `degenerateData`, its sweep and variant paths clamped to the
+  last entry and dosed the deepest layers with a shallower layer's number,
+  the Mac condition path clamped too, and an EMPTY table indexed `[-1]` on
+  the Mac and crashed outright. Three of the four were silent, which meant a
+  sweep comparing layers could be comparing a denominator it shared. Two
+  gates close it. At LOAD, both engines tie the table's length to the
+  artifact's layer count and refuse a short one by name, with both numbers in
+  the sentence: no writer produces a short table (extraction measures one
+  norm per layer, `backfill-norms` writes exactly `layerCount`, the SAE
+  by-id import slices the donor), so a short one is malformed rather than
+  legacy. Absent stays legal and untouched — OptVec, J-lens and Gemma Scope
+  report imports are BORN with no norms and acquire them through the
+  backfill, and refusing them would strand three whole families. At USE, the
+  four injection-building sites read the table through one accessor that
+  refuses an uncovered layer in a sentence byte-identical across the engines.
+
+- **A condition slot naming a concept that was never extracted refuses on the
+  server, and is caught at verify.** The Mac has always thrown here; the
+  server's `_condition_injections` did `continue`, so the slot vanished and
+  the condition executed weaker — or, with one slot, as an unlabelled
+  baseline — under a steered arm's name, with nothing in the run record
+  saying so. The refusal is now the Mac's sentence verbatim, and
+  `Manifest.verify` gained the condition-slot check the Mac's `verify()`
+  already had, so the state is caught before a run is scheduled instead of
+  after a model has loaded. SAE latent arms keep their carve-out: they live
+  in their own collection, name features rather than attached concepts, and
+  have their own declaration check.
+
+- **SAE latent arms refuse to run on the Mac instead of quietly not
+  happening.** This engine carries latent conditions faithfully and executes
+  none of them — no local run path reads them — while their presence
+  suppresses the baseline-only refusal, because on the engine that DOES run
+  them they are perfectly good arms. A latent-only study therefore ran
+  BASELINE ALONE and looked complete: the 2026-08-11 declared-`studyType`
+  incident through a different door. `experiment run` now refuses before the
+  model loads, naming latent execution as server-only and carrying the
+  package-and-submit repair. Mixed manifests refuse too, deliberately — a
+  partial run whose record says nothing about the arms it skipped is the
+  failure this whole family of refusals exists to stop. `verify` and `freeze`
+  stay open: a latent study authored on a Mac and submitted to a server is
+  entirely legal.
+
+- **Ad-hoc generate cells bound their injection layer instead of silently
+  doing nothing.** `/api/generate` and `/api/generate/stream` clamped the
+  layer they looked the vector row up with and then built the cell with the
+  RAW request value, and nothing downstream revalidated: a layer past the
+  model's depth dispatched to no hook at all and returned UNSTEERED output
+  with HTTP 200, while a layer between the artifact's depth and the model's
+  injected the artifact's LAST row where the artifact describes nothing. Both
+  now refuse with a 400 naming the valid range and the depth it came from.
+  Refusal rather than a shared clamp: the frozen-run paths resolve the layer
+  once and use that value for both purposes, but this is the open playground,
+  and a cell that quietly moves to a layer nobody asked for is a wrong number
+  wearing a 200.
+
+- **PCA in count mode stops at the data's rank.** `n` centred rows span at
+  most `n − 1` dimensions, and the residual after that many deflations is
+  float round-off — whose Gram trace is tiny but positive, which is exactly
+  what the power iteration's relative degenerate-start floor accepts. Asking
+  for more components than the data has therefore returned rounding noise
+  normalised into unit "components", indistinguishable in the result from
+  real directions: four rows at `count: 6` returned six, the last three
+  carrying explained variances around 1e-15 — and the neutral-PC projection
+  then removed the concept vector's component along those three arbitrary
+  directions. Both engines now cap at `min(count, rows − 1)`, the bound the
+  variance-target branch and the neutral-bank path always applied. Clamped,
+  not refused, with an advisory when the request is trimmed: the PC count is
+  a study-level knob applied to whatever neutral corpus each concept has, so
+  over-asking is an honest declaration rather than an error.
 
 ## [0.9.3] — 2026-08-27
 

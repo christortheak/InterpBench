@@ -620,7 +620,20 @@ public enum SteeringVectorMath {
         guard totalVariance > 0 else { throw SteeringVectorError.degenerateData }
         var components: [[Float]] = []
         var explained: [Float] = []
-        for _ in 0 ..< count {
+        // RANK CAP (2026-08-28 audit, F2; server twin `vector_math._deflate`).
+        // n centred rows span at most n−1 dimensions, so after n−1 deflations
+        // the residual is float32 round-off — and round-off has a tiny but
+        // POSITIVE Gram trace, which is exactly what the power iteration's
+        // RELATIVE degenerate-start floor accepts. Without the cap this loop
+        // normalises rounding noise into unit "components" that are
+        // indistinguishable from real directions, and the neutral-PC
+        // projection then removes the concept vector's component along them.
+        // Clamping (not refusing) matches the variance branch below, the
+        // neutral-bank path, and the fact that `neutralPCCount` is a
+        // study-level knob applied to whatever neutral corpus each concept
+        // has — over-asking is an honest declaration, not an error.
+        let cap = min(count, max(0, rows.count - 1))
+        for _ in 0 ..< cap {
             guard let component = try? firstComponentOfCentered(centered) else { break }
             components.append(component)
             var captured: Float = 0

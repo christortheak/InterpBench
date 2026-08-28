@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 
 from . import neutral, paths
 from .generate import CellInjection
+from ..steering import residual_norm_convention
 from ..steering import vector_math as vm
 from ..steering import vector_store
 
@@ -190,8 +191,17 @@ def variant_injections(variant: ModelVariant, *,
                         f"{inj.get('concept')} has no residual norms — backfill norms "
                         f"(POST /api/vectors/backfill-norms) or switch the variant to "
                         f"raw alpha")
-                alpha = vm.norm_unit_scale(float(inj["alpha"]),
-                                           norms[min(layer, len(norms) - 1)], vnorm)
+                # Same rule as the condition and sweep paths (2026-08-28 audit,
+                # F7/F13): a layer the denominator table does not reach
+                # refuses, where this site used to clamp to the last entry.
+                # ValueError rather than the RuntimeError `tasks` raises,
+                # because this module's refusals are already ValueErrors and
+                # the routes map them to a 400 — the SENTENCE is the contract.
+                problem = residual_norm_convention.residual_norm_problem(
+                    norms, layer, artifact=str(inj.get("concept") or ""))
+                if problem is not None:
+                    raise ValueError(f"variant '{variant.name}': {problem}")
+                alpha = vm.norm_unit_scale(float(inj["alpha"]), norms[layer], vnorm)
             else:
                 alpha = float(inj["alpha"])
             cells.append(CellInjection(

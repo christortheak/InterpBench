@@ -24,6 +24,7 @@ import torch
 
 from .. import memory_diagnostic
 from ..steering import model_loader, vector_math as vm
+from ..steering import residual_norm_convention as norm_convention
 from ..steering.extractor import ExtractionOptions as CoreExtractionOptions, extract as core_extract
 from ..steering.stimulus_set import StimulusSet, load_texts
 from ..steering import vector_store
@@ -830,6 +831,24 @@ def _persist_vectors(bundles: dict[str, ConceptVectorBundle], manifest: Manifest
                      neutral_mean_per_layer=bundle.neutral_mean_per_layer)
 
 
+def _residual_norm_at(norms, layer: int, *, artifact: str, where: str) -> float:
+    """The α denominator at ``layer``, or the ONE typed refusal every verb
+    shares (2026-08-28 audit, F7/F13).
+
+    ``where`` is the caller's own subject ("condition 'x'", "concept 'y'",
+    "variant 'z'") and is the only thing that differs between the sites; the
+    sentence after it is byte-identical here, in ``model_variant`` and on the
+    Swift engine. Before this existed the condition path substituted 0.0 and
+    refused as ``degenerateData`` while the sweep and variant paths clamped to
+    the last entry — one artifact, three answers, two of them silent.
+    """
+    problem = norm_convention.residual_norm_problem(
+        norms, layer, artifact=artifact)
+    if problem is not None:
+        raise RuntimeError(f"{where}: {problem}")
+    return float(norms[layer])
+
+
 def _condition_injections(condition, bundles: dict[str, ConceptVectorBundle]) -> list[CellInjection]:
     """Resolve a condition's slots to per-layer injection cells, applying the
     layer band and norm-unit alpha conversion (parallel to
@@ -838,7 +857,17 @@ def _condition_injections(condition, bundles: dict[str, ConceptVectorBundle]) ->
     for slot in condition.slots:
         bundle = bundles.get(slot.concept)
         if bundle is None:
-            continue
+            # 2026-08-28 audit, F8. This used to `continue`, silently dropping
+            # the slot: the condition then executed weaker — or, for a
+            # single-slot condition, as an unlabelled baseline — under a
+            # steered arm's name, and nothing in the run record said so. The
+            # Swift twin (`ExperimentTasks.injections(for:extractions:)`) has
+            # always thrown here; the sentence is byte-identical to its
+            # `reason`, and `Manifest.verify` now catches the same state at
+            # verify time so a run rarely has to.
+            raise RuntimeError(
+                f"condition '{condition.name}' references unextracted concept "
+                f"'{slot.concept}'")
         layer_count = bundle.vectors.layer_count
         center = min(max(0, slot.layer), layer_count - 1)
         half = max(0, condition.band_width // 2)  # Swift uses width / 2
@@ -889,8 +918,15 @@ def _condition_injections(condition, bundles: dict[str, ConceptVectorBundle]) ->
             # comparable across concepts and layers, while ablation removes
             # exactly what is present and so already scales itself.
             if condition.alpha_in_norm_units and not is_ablation:
-                residual = bundle.residual_norm_per_layer[layer] \
-                    if layer < len(bundle.residual_norm_per_layer) else 0.0
+                # ONE out-of-range rule, every verb, both engines (2026-08-28
+                # audit, F7/F13). This site used to substitute 0.0 for a layer
+                # the table did not reach and refuse as `degenerateData` — a
+                # typed refusal, but one that named the wrong defect — while
+                # the sweep and variant paths clamped silently.
+                residual = _residual_norm_at(
+                    bundle.residual_norm_per_layer, layer,
+                    artifact=slot.concept,
+                    where=f"condition '{condition.name}'")
                 alpha = vm.norm_unit_scale(slot.alpha, residual, vector_norm)
             injections.append(CellInjection(
                 layer=layer, vector=vector, alpha=alpha,
@@ -3940,7 +3976,13 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                 break
             vector = bundle.vectors.per_layer[layer]
             vector_norm = vm.l2_norm(vector)
-            residual = residual_norms[min(layer, len(residual_norms) - 1)]
+            # Same rule as the condition and variant paths (2026-08-28 audit,
+            # F7/F13): a layer the denominator table does not reach refuses,
+            # where this site used to clamp to the last entry and dose the
+            # deepest sweep cells with a shallower layer's number.
+            residual = _residual_norm_at(
+                residual_norms, layer, artifact=concept_name,
+                where=f"concept '{concept_name}'")
             for alpha in alphas:
                 done = resumed_cells.get((int(layer), float(alpha)))
                 if done is not None:

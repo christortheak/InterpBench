@@ -390,7 +390,8 @@ public enum RefusalSiteRegistry {
             gate: .inertConditions,
             verbs: ["experiment run"],
             origin: "ExperimentStore.inertConditionsProblem / "
-                + "noMeasuredConditionsProblem",
+                + "noMeasuredConditionsProblem / "
+                + "latentArmsNotExecutableProblem",
             repairAction: "steerlab-cli experiment declare-condition <name> "
                 + "<arm> --slots <concept>:<layer>:<alpha>"),
         .init(

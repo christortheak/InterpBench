@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 import numpy as np
 from safetensors.numpy import load_file, save_file
 
-from . import vector_math
+from . import residual_norm_convention, vector_math
 from .reading_position import ReadingPosition
 
 # The single definition of this engine's substrate identity, stamped into every
@@ -492,6 +492,20 @@ def load(directory: str, name: str) -> tuple[ConceptVectors, SteeringVectorSidec
         # this loader, so the advisory reaches sweeps, variants, and studies
         # without each caller opting in. stacklevel points at the caller.
         warnings.warn(advisory, UserWarning, stacklevel=2)
+
+    # LOAD-TIME denominator-table gate (2026-08-28 audit, F7/F13). Every
+    # experiment/validation path funnels through this loader, so tying the
+    # table's length to the artifact's depth HERE closes the seam for the
+    # condition, sweep and variant paths at once, instead of each of them
+    # discovering a short table at a different layer and reacting differently.
+    # Absent/empty passes — that is the born-without state of the OptVec,
+    # J-lens and Gemma-Scope-report families, and the per-verb refusals name
+    # it. See ``residual_norm_convention.table_length_problem``.
+    problem = residual_norm_convention.table_length_problem(
+        sidecar.residualNormPerLayer, layer_count=sidecar.layerCount,
+        artifact=os.path.join(directory, name))
+    if problem is not None:
+        raise ValueError(problem)
 
     vectors_url = os.path.join(directory, f"{name}.safetensors")
     tensors = load_file(vectors_url)

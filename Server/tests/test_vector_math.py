@@ -95,3 +95,38 @@ def test_scalar_probe_orientation_and_sign():
 def test_mean_difference_dimension_mismatch():
     with pytest.raises(vm.SteeringVectorError):
         vm.mean_difference([[1.0, 2.0]], [[1.0, 2.0, 3.0]])
+
+
+def test_principal_components_never_exceed_the_data_rank():
+    """2026-08-28 audit, F2. n centred rows span at most n−1 dimensions, so
+    after n−1 deflations the residual is float32 round-off — whose own Gram
+    trace is tiny but POSITIVE, which is exactly what the power iteration's
+    relative degenerate-start floor accepts. The count branch used to hand
+    that noise back as unit "components": 4 rows with count=6 returned 6, with
+    explained variances [0.406, 0.310, 0.284, 7.9e-15, 4.2e-15, 2.1e-15], and
+    `extract()` then projected the concept vector's component along the three
+    arbitrary noise directions OUT of the science vector.
+
+    Clamped rather than refused: `neutralPCCount` is a study-level knob applied
+    to whatever neutral corpus each concept has (4 texts is legal), so
+    over-asking is an honest declaration. Swift twin:
+    `SteeringVectorMath.principalComponentsWithVariance`.
+    """
+    rows = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+    with pytest.warns(UserWarning, match="span at most 3 dimension"):
+        result = vm.principal_components_with_variance(rows, 6)
+    assert len(result.components) == 3
+    assert len(result.explained_variance) == 3
+    # Every component returned carries real variance — no float-noise tail.
+    assert all(share > 1e-6 for share in result.explained_variance)
+
+
+def test_a_request_within_the_rank_is_untouched_and_silent():
+    rows = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+    import warnings as _warnings
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error")
+        assert len(vm.principal_components(rows, 3)) == 3
+        assert len(vm.principal_components(rows, 2)) == 2
