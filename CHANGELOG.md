@@ -14,6 +14,59 @@ migration that rewrites frozen bytes.
 
 ### Added
 
+- **A judged run releases each finished judge's model before the next one
+  loads, so a panel needed sequentially costs the MAX of its models, not the
+  SUM.** The maintainer's ruling, verbatim: *any runs that require two models
+  will need to unload and load models in order not to OOM. We need to ensure
+  this happens.* The incident behind it (2026-08-28, the two-judge
+  calibration): a per-response-coding evaluate with the study model
+  (~55 GiB bf16) as reference coder and a second local judge (~24 GiB) codes
+  judge-column-outer — coder A finishes all 1,200 records, then B starts.
+  When B came to load, A's container was still resident (the registry does
+  not evict while a slot is free, and there were two), and the loader's
+  capacity gate refused on headroom: ~22.7 GiB needed against 23.3 GiB free
+  on an 80 GiB A100. A's container was dead weight; nothing in the run would
+  ever touch it again.
+
+  The guarantee now: at every model-boundary seam the engine computes the
+  set of models the REMAINDER of the run still needs and releases every
+  resident container outside it before loading the next one. The rule is
+  `tasks.judge_models_still_needed` — the resolved model of every local
+  judge from this column onward, plus the study model when a later stage
+  still generates (`_pipeline_needs_model` over the stages after evaluate;
+  analyze and rescore are CPU-side). Both roster loops are instrumented, the
+  per-response-coding one and the paired one; candidates are the run's own
+  models only, so an unrelated resident (chat, variant generate) is left to
+  the cache policy, which is deliberately unchanged. A single-judge run
+  releases nothing, and two consecutive same-model columns stay warm rather
+  than reloading the weights they are about to use.
+
+  The mechanics reuse the one eviction implementation rather than growing a
+  second: `ModelRegistry.release_models` drops the named containers through
+  `_evict` (skipping busy slots exactly as `unload`/`_make_room` do — the
+  pipeline's chain-held model is locked for the whole chain and can never be
+  taken away mid-chain), and `model_loader.free_device_memory` — factored
+  out of `_evict` — is what actually returns blocks to the driver, because
+  a dropped reference alone leaves them in torch's caching allocator, which
+  is what `cuda.mem_get_info` and therefore the capacity gate read. The
+  CLI/bundle path has no registry, so the column's private copy is dropped
+  by an `ExitStack` callback (previously it stayed pinned by the judge
+  closure until the NEXT column's callable replaced it — after that model
+  had already loaded) and the same trim runs at the boundary. Every release
+  is loud in the run log: `released 'X' (~55.0 GiB) from cuda:0 — column 'A'
+  complete, next judge 'B' needs 'Y'`.
+
+  What this restores: a two-local-judge panel in ONE run on a single 80 GiB
+  device, which is what the engine's own `fieldAgreement`/`confusion` blocks
+  (multi-judge `codings.jsonl`) need to exist at all.
+
+  The two engines answer this problem differently ON PURPOSE, and both are
+  right for their memory model: the Mac REFUSES up front
+  (`SweepObjectives.localJudgeSlotProblem` declines a two-model sweep before
+  any work starts, because an MLX unified-memory container is not cheaply
+  reclaimable mid-run), while CUDA can hand the weights back and so releases
+  between columns. No Swift changed.
+
 - **The cross-platform client gained `experiment set-parser` and `experiment
   set-instrument-scope`.** Both were Mac-only, on the reading that authoring
   is "Mac-authority". The maintainer's ruling replaced that reading: *it is
@@ -128,6 +181,19 @@ migration that rewrites frozen bytes.
   Numeric fields (which carry no kappa) carry no confusion block.
 
 ### Changed
+
+- **The loader's co-residency refusal says who can still reach it.** With the
+  judge-column release seam in place, a sequential panel never arrives at
+  `_assert_gpu_capacity`'s "another model is already resident" refusal, so
+  advice that pointed only at manual unloading would misdescribe who is
+  standing there. The message now names the callers that genuinely need two
+  models AT ONCE — a judgeScore sweep panel (every judge's model is held for
+  the whole grid, because judging is interleaved with the selection), an
+  interactive/API load beside a resident model, or another process on the
+  device — and keeps the unload/use-the-study-model/pin-an-external-judge
+  remedies for exactly those. The refusal's typed shape, its
+  `advice_complete` marking, and the margin (`_GPU_LOAD_HEADROOM_BYTES`,
+  reviewed and left alone) are unchanged.
 
 - **The residual-norm denominator's two averaging rules stopped sharing one
   stamp.** `residualNormConvention: "wholeCorpusMean-v1"` was defined by the

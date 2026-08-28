@@ -636,6 +636,17 @@ def _assert_gpu_capacity(dev: str, model_id: str, revision: str | None,
     # Fits the device, but not what is LEFT of it. Distinguished from the
     # absolute refusal above because the remedy is different: unload
     # something, or judge with the study model — not "get a bigger GPU".
+    #
+    # Who can still reach this after the judge-column release seam landed
+    # (2026-08-28): judged run/evaluate paths release every finished judge's
+    # container before the next judge loads, so a SEQUENTIAL panel no longer
+    # arrives here at all. What remains is genuine co-residency — a
+    # judgeScore SWEEP panel, whose foreign judge models are held for the
+    # whole grid because judging is interleaved with the selection — and
+    # ad-hoc loads: /api/load, chat, variant generate, reader fit, and any
+    # second process sharing the device. The remedy therefore still names
+    # manual unloading, but says WHERE it applies rather than implying the
+    # judged paths need a human.
     if free is not None and needed + _GPU_LOAD_HEADROOM_BYTES > free:
         at_dtype = (f" at {resolved_dtype}".replace("torch.", "")
                     if factor > 1.0 else "")
@@ -644,9 +655,43 @@ def _assert_gpu_capacity(dev: str, model_id: str, revision: str | None,
             f"weights{at_dtype} but only {free / (1 << 30):.1f} GiB of "
             f"{dev} ({name})'s {total / (1 << 30):.1f} GiB is free — "
             "another model is already resident. Two models fit only if the "
-            "device has room for both: unload the other model, use the "
-            "study model as judge, or pin an external judge.",
+            "device has room for both. A judged run or evaluate releases "
+            "each finished judge's model before the next one loads, so this "
+            "refusal means models genuinely needed AT ONCE: a judgeScore "
+            "sweep panel (every judge's model is held for the whole grid), "
+            "an interactive/API load beside a resident model, or another "
+            "process on this device. Unload the other model, use the study "
+            "model as judge, or pin an external judge.",
             advice_complete=True)
+
+
+def free_device_memory(device: str | None = None) -> None:
+    """Reclaim what a just-dropped model left behind on the accelerator.
+
+    The ONE implementation of "the container is gone, now make the device
+    believe it" (2026-08-28). Dropping the last Python reference to a
+    ``SteeredModel`` returns its blocks to torch's caching allocator, not to
+    the driver — the next ``cuda.mem_get_info`` still reports them as used,
+    which is precisely what the capacity gate reads. A cycle collection
+    (module trees are cyclic) followed by an allocator trim is what actually
+    moves the free-memory number.
+
+    Callers: ``ModelRegistry._evict`` (the registry's eviction path) and the
+    judge-column release seam on the CLI/bundle path, which holds a private
+    in-process copy with no registry to evict it. ``device`` is advisory —
+    the CUDA trim is device-global anyway, and an MPS trim is skipped for a
+    CUDA caller.
+    """
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    if (device is None or device == "mps") and hasattr(torch, "mps") \
+            and hasattr(torch.mps, "empty_cache"):
+        try:
+            torch.mps.empty_cache()
+        except Exception:  # pragma: no cover - best-effort cache trim
+            pass
 
 
 def _stage_model_locally(model_id: str, revision: str | None = None) -> str | None:

@@ -231,6 +231,14 @@ class ServiceState:
             model_id, revision=revision, dtype=dtype or self.default_dtype,
             device=self.default_device)
 
+    def release_models(self, model_ids) -> list[dict]:
+        """The explicit model-slot release a judged run's column seam calls
+        (2026-08-28). Named models only, busy slots skipped — see
+        ``ModelRegistry.release_models``. Passed to the experiment tasks as
+        ``model_release`` beside ``model_provider`` so a run that needs its
+        models SEQUENTIALLY pays the MAX of their weights, not the sum."""
+        return self.registry.release_models(model_ids)
+
 
 def _max_upload_bytes() -> int:
     """Upper bound on a single uploaded artifact (bundle or variant asset). A
@@ -1255,6 +1263,10 @@ def build_router(state: ServiceState) -> APIRouter:
                     name, model_provider=state.acquire_model, log=job.log,
                     allow_unverified_epoch=allow_unverified_epoch,
                     max_loaded=state.registry.max_loaded,
+                    # Judge columns release what they finish with (ruling,
+                    # 2026-08-28), so a two-local-judge panel runs on one
+                    # device instead of refusing on co-residency headroom.
+                    model_release=state.release_models,
                     resume_from=resume_from)
             elif verb == "analyze":
                 # Pure-CPU statistics/reporting pass — no model acquisition.
@@ -1278,6 +1290,7 @@ def build_router(state: ServiceState) -> APIRouter:
                 # resumes via the bundle path instead.
                 run_dir = tasks.pipeline(
                     name, model_provider=state.acquire_model,
+                    model_release=state.release_models,
                     should_cancel=should_cancel, log=job.log)
             else:
                 run_dir = fn(name, model_provider=state.acquire_model,

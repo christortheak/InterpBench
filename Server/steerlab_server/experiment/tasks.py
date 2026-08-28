@@ -7975,7 +7975,8 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
              should_cancel: Callable[[], bool] | None = None, log=None,
              checkpoint: "resume_mod.CheckpointFlag | None" = None,
              pipeline_run_directory: str | None = None,
-             on_pipeline_directory: Callable[[str], None] | None = None) -> str:
+             on_pipeline_directory: Callable[[str], None] | None = None,
+             model_release=None) -> str:
     """The chain runner: one submission runs the manifest's declared stage
     list (default ``extract → validate → sweep → promote → run``) with ONE
     model load, evaluating declared gates between stages.
@@ -7989,7 +7990,13 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
       stage's existing task receives a provider that re-yields the held
       object. A stage requesting a DIFFERENT model (e.g. a different-model
       local judge) refuses loudly. A remainder with only CPU stages never
-      loads the model.
+      loads the model. The chain's held model is LOCKED for the chain's
+      duration, so the evaluate stage's release seam (``model_release``,
+      2026-08-28) can never take it away mid-chain — that seam's work here
+      is freeing containers the chain did NOT load (a leftover interactive
+      model) before a judge column starts, and the generation→judging
+      question is answered by ``_pipeline_needs_model`` over the stages
+      that remain AFTER evaluate.
     - **Requeue/resume**: ``pipeline.json`` records completed stages and
       their run dirs; ``pipeline_run_directory`` reopens it, skipping
       completed stages (an interrupted extract/validate/sweep re-runs from
@@ -8417,6 +8424,15 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
                         _stage_done(stage, stage_dir,
                                     {"judgedVia": "deferredJudgment"})
                         continue
+                    # The generation→judging seam's conservative half
+                    # (2026-08-28): does anything AFTER evaluate still hold
+                    # the GPU model? On today's stage vocabulary nothing
+                    # after evaluate generates (analyze is CPU-side), but
+                    # the question is asked of the spec rather than assumed.
+                    after_evaluate = spec.stages[
+                        spec.stages.index(stage) + 1:]
+                    study_model_generates_later = _pipeline_needs_model(
+                        after_evaluate, manifest)
                     # Local judges needing models OTHER than the held study
                     # model: the chain cannot judge them inline (one model
                     # load) — EMIT blinded packets and STOP; the controller
@@ -8429,7 +8445,10 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
                             name, root, source_run=source,
                             model_provider=stage_provider,
                             should_cancel=should_cancel, log=_log,
-                            defer_local_judges=True)
+                            defer_local_judges=True,
+                            model_release=model_release,
+                            study_model_generates_later=(
+                                study_model_generates_later))
                         ledger["stageResults"][stage] = {
                             "status": "awaitingJudgment",
                             "runDirectory": stage_dir}
@@ -8447,7 +8466,10 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
                     stage_dir = evaluate(
                         name, root, source_run=source,
                         model_provider=stage_provider,
-                        should_cancel=should_cancel, log=_log)
+                        should_cancel=should_cancel, log=_log,
+                        model_release=model_release,
+                        study_model_generates_later=(
+                            study_model_generates_later))
                 else:
                     stage_dir = analyze(
                         name, root, source_run=source,
@@ -8483,6 +8505,118 @@ def _judge_roster(manifest: Manifest, spec) -> list[JudgeRef]:
     model = spec.judge_model or paired_judge.DEFAULT_JUDGE_MODEL
     kind = "claude" if paired_judge.is_claude_model(model) else "local"
     return [JudgeRef(name=model, kind=kind, model=model)]
+
+
+def judge_models_still_needed(remaining_roster, *, study_model: str,
+                              study_model_generates_later: bool) -> set[str]:
+    """The models the REMAINDER of a judged run still needs.
+
+    The still-needed rule, exactly (maintainer's ruling, 2026-08-28: "any
+    runs that require two models will need to unload and load models in
+    order not to OOM. We need to ensure this happens"):
+
+        still-needed = {resolved model of every LOCAL judge in
+                        ``remaining_roster``}
+                       ∪ ({study model} if a later stage of this run or
+                          pipeline GENERATES)
+
+    ``remaining_roster`` is ``roster[i:]`` at the boundary before judge
+    ``i`` — so the judge about to load is itself in the set, which is what
+    keeps two consecutive same-model columns warm instead of
+    releasing-and-reloading the very weights the next column needs.
+    External judges (claude/openrouter) hold no device memory and
+    contribute nothing. A local judge with an empty model resolves to the
+    study model by the cross-engine rule, so a study-model judge keeps the
+    study model resident without any special case.
+
+    ``study_model_generates_later`` is the conservative half: evaluate is
+    terminal for generation on its own (analyze/rescore are CPU-side), but
+    a caller that cannot PROVE the study model is finished passes True and
+    the model is kept — the capacity gate then speaks, as before.
+    """
+    from . import sweep_selection
+    needed = {
+        sweep_selection.resolve_local_judge_model(ref.model, study_model)
+        for ref in remaining_roster if ref.kind == "local"}
+    if study_model_generates_later:
+        needed.add(study_model)
+    return needed
+
+
+def _release_models_for_judge(model_release, roster, index: int, *,
+                              study_model: str,
+                              study_model_generates_later: bool,
+                              _log) -> None:
+    """The model-slot release seam: free every container the remainder of
+    this run will not use, BEFORE judge ``index``'s model loads.
+
+    The guarantee this buys: a run whose models are needed SEQUENTIALLY
+    never fails for co-residency. Peak device memory becomes the MAX of any
+    one still-needed model instead of the SUM of the panel's weights — the
+    two-judge calibration on 2026-08-28 refused at ~22.7 GiB needed against
+    23.3 GiB free on an 80 GiB A100 purely because the FINISHED judge's
+    container was still resident and nothing in the run would ever use it
+    again.
+
+    Candidates are this run's OWN models — the study model and every local
+    judge's resolved model — never an unrelated resident (a chat model, a
+    variant-generate model): the release is a run seam, not a new global
+    eviction heuristic, and the interactive cache policy is unchanged.
+    Whatever ``judge_models_still_needed`` names is subtracted, so the seam
+    is a no-op for a single-judge run and for a same-model column boundary.
+
+    Deliberate cross-engine divergence (documented so neither side reads as
+    an oversight): the Mac answers the same problem by REFUSING up front —
+    ``SweepObjectives.localJudgeSlotProblem`` declines a two-model sweep
+    before any work starts, which is right for MLX's memory model, where a
+    unified-memory container is not cheaply reclaimable mid-run. CUDA can
+    hand the weights back, so this engine releases BETWEEN columns instead
+    of refusing.
+
+    A failing release never fails the run: it is logged and the capacity
+    gate remains the backstop.
+    """
+    from . import sweep_selection
+    ref = roster[index]
+    keep = judge_models_still_needed(
+        roster[index:], study_model=study_model,
+        study_model_generates_later=study_model_generates_later)
+    candidates = {study_model} | {
+        sweep_selection.resolve_local_judge_model(r.model, study_model)
+        for r in roster if r.kind == "local"}
+    stale = sorted(candidates - keep)
+    next_model = (
+        sweep_selection.resolve_local_judge_model(ref.model, study_model)
+        if ref.kind == "local" else None)
+    need_text = (f"next judge '{ref.name}' needs '{next_model}'"
+                 if next_model else
+                 f"next judge '{ref.name}' needs no local model")
+    where = ("generation complete" if index == 0
+             else f"column '{roster[index - 1].name}' complete")
+    if model_release is not None and stale:
+        try:
+            released = model_release(stale) or []
+        except Exception as exc:  # noqa: BLE001 - never fail a run on cleanup
+            _log(f"WARNING: could not release model slot(s) "
+                 f"{', '.join(stale)} before judge '{ref.name}' ({exc}) — "
+                 "continuing; the load capacity gate remains the backstop")
+            return
+        for record in released:
+            size = record.get("bytes")
+            size_text = f" (~{size / (1 << 30):.1f} GiB)" if size else ""
+            _log(f"released '{record['modelID']}'{size_text} from "
+                 f"{record.get('device')} — {where}, {need_text}")
+        return
+    if model_release is None and index > 0:
+        # CLI/bundle path (the Slurm path): there is no registry, so the
+        # previous column's PRIVATE in-process copy is what has to go. Its
+        # last reference was dropped when that column's ExitStack closed
+        # (``_local_judge_generation`` registers the drop); the allocator
+        # still holds the blocks until they are collected and trimmed, and
+        # `cuda.mem_get_info` — what the capacity gate reads — counts them
+        # as used until then.
+        model_loader.free_device_memory()
+        _log(f"released the private model copy of {where} — {need_text}")
 
 
 def _judge_callable(ref: JudgeRef, model_provider, *, study_model: str,
@@ -8610,6 +8744,15 @@ def _local_judge_generation(ref: JudgeRef, model_provider, *,
             return
         if "slot" not in held:
             held["slot"] = stack.enter_context(provider(*args, **kwargs))
+            # Drop the column's reference when the stack closes, BEFORE the
+            # provider context exits (callbacks unwind LIFO). Without this
+            # the CLI/bundle path's private copy stayed pinned by this
+            # closure until the NEXT column's callable replaced it — which
+            # happens AFTER the next model has loaded, i.e. exactly the
+            # co-residency the column boundary exists to prevent
+            # (2026-08-28). The registry path is unaffected: there the
+            # container's owner is the slot, not this reference.
+            stack.callback(held.pop, "slot", None)
         yield held["slot"]
 
     def _gen(prompt: str) -> str:
@@ -9042,7 +9185,8 @@ def _evaluate_response_coding(name: str, manifest: Manifest, schema,
                               measurement_drift: str | None,
                               evaluation_source: str | None,
                               exclusion_stamp: dict | None,
-                              model_provider, _log) -> str:
+                              model_provider, _log, *, model_release=None,
+                              study_model_generates_later: bool = False) -> str:
     """The per-response coding instrument's evaluate body (2026-08-04;
     Swift twin: ``ExperimentTasks.runResponseCoding``).
 
@@ -9086,10 +9230,17 @@ def _evaluate_response_coding(name: str, manifest: Manifest, schema,
     codings_path = os.path.join(out, "codings.jsonl")
     try:
         with open(codings_path, "w", encoding="utf-8") as codings_handle:
-            for ref in roster:
+            for index, ref in enumerate(roster):
                 # One model load per judge COLUMN (same rule as paired
                 # evaluate): the stack closes at the end of each iteration,
-                # so two judge models are never resident at once.
+                # and the release seam below frees the finished column's
+                # container BEFORE this one loads, so two judge models are
+                # never resident at once.
+                _release_models_for_judge(
+                    model_release, roster, index,
+                    study_model=manifest.model_id,
+                    study_model_generates_later=study_model_generates_later,
+                    _log=_log)
                 with ExitStack() as judge_stack:
                     complete_fn, requested_model, holder = _coder_callable(
                         ref, model_provider, study_model=manifest.model_id,
@@ -9257,7 +9408,9 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
              log=None, allow_unverified_epoch: bool = False,
              max_loaded: int | None = None,
              defer_local_judges: bool = False,
-             resume_from: str | None = None) -> str:
+             resume_from: str | None = None,
+             model_release=None,
+             study_model_generates_later: bool = False) -> str:
     """Paired-judge evaluation over a prior run's generations (parallel to the
     Swift evaluate task). Judges with the manifest's PINNED rubric file (drafts
     may fall back to the inline prompt, loudly) and its pinned judge panel:
@@ -9274,6 +9427,16 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
     (the registry capacity, passed by the API path) < 2 refuses at evaluate
     start; None (the CLI/bundle path, private in-process copies) skips the
     capacity check, exactly like the sweep preflight.
+
+    Model residency across the panel (2026-08-28): judges are needed one
+    COLUMN at a time, so the peak is the MAX of any one still-needed model,
+    never the SUM. ``model_release`` (the API path passes the registry's
+    explicit release) is called at every judge boundary with the models the
+    remainder of the run no longer needs — see
+    ``_release_models_for_judge``. ``study_model_generates_later`` is the
+    conservative flag for the generation→judging seam: False (evaluate is
+    terminal for generation) lets the study model go when no judge uses it;
+    a pipeline stage that still generates passes True and it is kept.
 
     Epoch guard: the source run's stamped experiment hash must equal the live
     manifest's content hash; legacy unstamped runs need
@@ -9449,7 +9612,8 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
             name, manifest, coding_schema, run_dir, generations,
             rubric_hash, rubric_file, roster, root, epoch_unverified,
             measurement_drift, evaluation_source, exclusion_stamp,
-            model_provider, _log)
+            model_provider, _log, model_release=model_release,
+            study_model_generates_later=study_model_generates_later)
     # P0 guard (external review 2026-07-22): a pairedJudge evaluate always
     # has a judge panel configured, so zero surviving pairs must refuse HERE
     # — a "pairs: 0" judge-report looked like a successful evaluation while
@@ -9559,11 +9723,18 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
     judgments_path = os.path.join(out, "judgments.jsonl")
     try:
         with open(judgments_path, "w", encoding="utf-8") as judgments_handle:
-            for ref in roster:
+            for index, ref in enumerate(roster):
                 # One model load per judge COLUMN (external review round 3,
                 # finding 3c). The stack closes at the END of each
-                # iteration, so two judge models are never resident at
-                # once — the single-slot rule this path already relies on.
+                # iteration, and the release seam below drops the finished
+                # column's container BEFORE this one loads, so two judge
+                # models are never resident at once — the guarantee the
+                # single-slot rule used to buy by refusing instead.
+                _release_models_for_judge(
+                    model_release, roster, index,
+                    study_model=manifest.model_id,
+                    study_model_generates_later=study_model_generates_later,
+                    _log=_log)
                 with ExitStack() as judge_stack:
                     judge_fn, requested_model, holder = _judge_callable(
                         ref, model_provider, study_model=manifest.model_id,

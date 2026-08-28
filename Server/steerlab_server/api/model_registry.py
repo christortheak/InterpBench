@@ -148,6 +148,53 @@ class ModelRegistry:
                 self._evict(key)
             return len(keys)
 
+    def release_models(self, model_ids) -> list[dict]:
+        """Drop the resident container of every named model, reporting what
+        went (the explicit release the judged run seams call).
+
+        The maintainer's ruling, 2026-08-28: "any runs that require two
+        models will need to unload and load models in order not to OOM. We
+        need to ensure this happens." A run that needs its models
+        SEQUENTIALLY must not pay the SUM of their weights: the caller
+        computes which models the remainder of the run still needs and
+        names the rest here, BEFORE the next load.
+
+        This is not a new eviction heuristic and it does not touch the cache
+        POLICY — ``_make_room`` still declines to evict while slots are
+        free, which is what interactive serving wants. It is an explicit
+        call at a run seam, reusing ``_evict`` (the one eviction
+        implementation: drop the model reference, collect, trim the
+        allocator) so there is never a second way to free a container.
+
+        Busy slots are skipped exactly as ``unload``/``_make_room`` skip
+        them — a slot is locked for the duration of any in-flight
+        generation or load, and the pipeline's chain-held study model is
+        locked for the whole chain, so a still-working model is never
+        released out from under its worker. Each returned record carries
+        ``modelID``/``revision``/``device`` and the estimated ``bytes``
+        freed (the cached snapshot size, None when unknown) so the caller
+        can write the memory story into the run log.
+        """
+        wanted = {str(m) for m in (model_ids or ()) if m}
+        if not wanted:
+            return []
+        released: list[dict] = []
+        with self._lock:
+            victims = [
+                (key, slot) for key, slot in self._slots.items()
+                if not slot.loading and not slot.lock.locked()
+                and slot.model.model_id in wanted]
+            for key, slot in victims:
+                released.append({
+                    "modelID": slot.model.model_id,
+                    "revision": slot.model.revision,
+                    "device": slot.device,
+                    "bytes": model_loader.snapshot_size_bytes(
+                        slot.model.model_id, slot.model.revision),
+                })
+                self._evict(key)
+        return released
+
     def unload_all(self) -> int:
         with self._lock:
             keys = [key for key, slot in self._slots.items()
@@ -298,11 +345,6 @@ class ModelRegistry:
         # by a racing acquire() must read a clean None (→ retry), never raise
         # AttributeError on a deleted dataclass field.
         slot.model = None
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        if slot.device == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
-            try:
-                torch.mps.empty_cache()
-            except Exception:  # pragma: no cover - best-effort cache trim
-                pass
+        # The one reclamation implementation, shared with the CLI/bundle
+        # release seam (which has no registry to evict from).
+        model_loader.free_device_memory(slot.device)
