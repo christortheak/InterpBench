@@ -2684,10 +2684,16 @@ public final class ConceptBuilder {
                 positiveCount: positives.count,
                 negativeCount: negatives.count,
                 statsLayer: statsLayer,
+                // The stimulus TEXTS travel with the activations: both splits
+                // are drawn by content hash (audit F3), never by row order.
                 heldOut: ConceptStats.heldOutAccuracy(
-                    positive: posAtLayer, negative: negAtLayer, method: method),
+                    positive: posAtLayer, negative: negAtLayer,
+                    positiveTexts: positives, negativeTexts: negatives,
+                    method: method),
                 splitHalf: ConceptStats.splitHalfCosine(
-                    positive: posAtLayer, negative: negAtLayer, method: method),
+                    positive: posAtLayer, negative: negAtLayer,
+                    positiveTexts: positives, negativeTexts: negatives,
+                    method: method),
                 stability: stability,
                 normByLayer: normByLayer,
                 outliers: outliers,

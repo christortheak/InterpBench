@@ -797,6 +797,11 @@ public enum RepEReader {
         /// `"alternatedRows"` (decoded from a pre-2026-08-27 artifact's
         /// `pc1ExplainedVariance`, which measured the ± symmetrized copies).
         public var explainedVarianceBasis: String
+        /// Convergence health of the Gram power iteration that produced PC1
+        /// (2026-08-28 audit, F5). Absent on every artifact written before
+        /// 2026-08-28 — and absent is not "converged": it means the fit
+        /// predates the diagnostic and the question was never asked.
+        public var pc1PowerIteration: SteeringVectorMath.PowerIterationDiagnostic?
         public var trainAccuracy: Float
         public var heldOutAccuracy: Float?
         public var trainPairCount: Int
@@ -860,6 +865,7 @@ public enum RepEReader {
             case probe
             case pc1ExplainedVariance  // legacy key; decode-only
             case pc1ExplainedVarianceOfDifferences, pc1ExplainedVarianceBasis
+            case pc1PowerIteration
             case trainAccuracy, heldOutAccuracy
             case trainPairCount, heldOutPairCount
             case contrastMode, signConvention, signHeldOutAccuracy
@@ -876,6 +882,7 @@ public enum RepEReader {
             probe: SteeringVectorMath.ScalarProbe,
             differenceCloudExplainedVariance: Float?,
             explainedVarianceBasis: String? = nil,
+            pc1PowerIteration: SteeringVectorMath.PowerIterationDiagnostic? = nil,
             trainAccuracy: Float,
             heldOutAccuracy: Float?, trainPairCount: Int, heldOutPairCount: Int,
             contrastMode: ContrastMode = .supervisedContent,
@@ -903,6 +910,7 @@ public enum RepEReader {
                 explainedVarianceBasis
                 ?? (differenceCloudExplainedVariance == nil
                     ? "degenerateDifferenceCloud" : "differenceCloud")
+            self.pc1PowerIteration = pc1PowerIteration
             self.trainAccuracy = trainAccuracy
             self.heldOutAccuracy = heldOutAccuracy
             self.trainPairCount = trainPairCount
@@ -979,6 +987,9 @@ public enum RepEReader {
                         + "'pc1ExplainedVarianceBasis', nor the legacy "
                         + "'pc1ExplainedVariance' — one of them is required")
             }
+            pc1PowerIteration = try container.decodeIfPresent(
+                SteeringVectorMath.PowerIterationDiagnostic.self,
+                forKey: .pc1PowerIteration)
             trainAccuracy = try container.decode(Float.self, forKey: .trainAccuracy)
             heldOutAccuracy = try container.decodeIfPresent(
                 Float.self, forKey: .heldOutAccuracy)
@@ -1038,6 +1049,13 @@ public enum RepEReader {
                 differenceCloudExplainedVariance,
                 forKey: .pc1ExplainedVarianceOfDifferences)
             try container.encode(explainedVarianceBasis, forKey: .pc1ExplainedVarianceBasis)
+            // Convergence health of the iteration that produced PC1 (F5).
+            // Additive and OUTSIDE any identity: `RecipeIdentity` reads a
+            // closed list of sidecar keys and no reader field is in it, so this
+            // cannot move a recipeIdentityHash. It does change the bytes — and
+            // so the readerHash — of NEWLY fitted readers, which is correct:
+            // they carry information older ones do not.
+            try container.encodeIfPresent(pc1PowerIteration, forKey: .pc1PowerIteration)
             try container.encode(trainAccuracy, forKey: .trainAccuracy)
             try container.encodeIfPresent(heldOutAccuracy, forKey: .heldOutAccuracy)
             try container.encode(trainPairCount, forKey: .trainPairCount)
@@ -1100,6 +1118,10 @@ public enum RepEReader {
         var signConvention: SignConvention
         var signHeldOutAccuracy: Float?
         var signFallbackReason: String?
+        /// Convergence health of the Gram power iteration that produced PC1
+        /// (2026-08-28 audit, F5). nil only when the PCA path returned no
+        /// diagnostic at all, which no current path does.
+        var powerIteration: SteeringVectorMath.PowerIterationDiagnostic?
     }
 
     /// PC1 of the paired differences, signed by the HELD-OUT split when it can
@@ -1214,7 +1236,10 @@ public enum RepEReader {
         return FittedDirection(
             component: pc, differenceCloudExplainedVariance: explained,
             signConvention: convention, signHeldOutAccuracy: signHeldOutAccuracy,
-            signFallbackReason: fallbackReason)
+            signFallbackReason: fallbackReason,
+            // Sign-invariant by construction (‖G(−w) − λ(−w)‖ = ‖Gw − λw‖), so
+            // the flip above cannot move it.
+            powerIteration: result.diagnostics.first)
     }
 
     /// Why the held-out sign rule stood down — stamped into the artifact, so a
@@ -1351,6 +1376,7 @@ public enum RepEReader {
                     datasetHash: dataset.hash, probe: probe,
                     differenceCloudExplainedVariance:
                         fitted.differenceCloudExplainedVariance,
+                    pc1PowerIteration: fitted.powerIteration,
                     trainAccuracy: trainAccuracy ?? 0,
                     heldOutAccuracy: heldAccuracy,
                     trainPairCount: nTrain, heldOutPairCount: held.count,
@@ -1525,8 +1551,37 @@ public enum RepEReader {
     /// (inside the probe), and project. Not cosine-to-vector.
     ///
     /// A template-pair reader scores under its EXPERIMENTAL (T+) instruction:
-    /// the direction was fitted as H(T+) − H(T−), so the T+ rendering is the
-    /// one its probe's center and scale were calibrated on.
+    /// the direction was fitted as H(T+) − H(T−), so T+ is the rendering that
+    /// matches the direction's construction.
+    ///
+    /// **A TEMPLATE-PAIR SCORE IS RELATIVE, NOT A PRESENCE TEST** (2026-08-28
+    /// audit, F4). This paragraph replaces an earlier claim that T+ is "the
+    /// rendering the probe's center and scale were calibrated on", which was
+    /// affirmatively wrong: for `unsupervisedTemplatePair` the probe is fitted
+    /// by `SteeringVectorMath.scalarProbe` over BOTH renderings of the same
+    /// stimuli, so `projectionCenter` is the MIDPOINT of the T+ and T− train
+    /// projection means. Inference renders new text under T+ only. Every score
+    /// therefore carries a systematic positive offset of about
+    /// `|posMean − negMean| / (2·projectionScale)` — bounded by 1 by the scale
+    /// floor, but always positive — so:
+    ///
+    /// - **Comparisons are valid, thresholds are not.** Scores of the same
+    ///   reader across conditions, arms, or items differ by exactly the
+    ///   quantity of interest: the constant offset cancels in the difference.
+    ///   That is how the `repeReaderScore` outcome instrument uses them, and it
+    ///   is the only supported reading.
+    /// - **`score > 0` does NOT mean the concept is present.** Neutral text
+    ///   rendered under T+ scores positive systematically. Do not threshold a
+    ///   template-pair score at zero, and in particular do not reach for
+    ///   `ScalarProbe.classifiesPositive` on this path — the probe's own
+    ///   accuracy statistics (`trainAccuracy`/`heldOutAccuracy`) are fitted and
+    ///   evaluated over BOTH renderings, where the midpoint IS the right
+    ///   threshold, which is why they stay meaningful while a single-rendering
+    ///   label does not.
+    ///
+    /// Supervised-content readers are unaffected: their fit and their inference
+    /// render the same way, so their center is calibrated on the distribution
+    /// they score. Twin prose: `repe_reader.score_texts`.
     public static func scoreTexts(
         container: ModelContainer, modelID: String,
         reader: Artifact, texts: [String]

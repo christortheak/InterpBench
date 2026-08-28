@@ -13,6 +13,7 @@ validation-layers, choice-margins). These are the four that did not, including
 
 import json
 import os
+import warnings
 
 import pytest
 
@@ -287,6 +288,62 @@ def test_paired_difference_pca_fixture_is_not_stale():
             pytest.approx(case["pairedDifferencePCA"], abs=1e-6), \
             f"{case['label']}: {REGENERATE}"
 
+    # The convergence diagnostic block (2026-08-28 audit, F5). The residual
+    # itself is a float32 accumulation, so what is pinned is the verdict —
+    # which side of the threshold each committed cloud lands on — plus the
+    # constants and the twin warning literal.
+    block = fixture["powerIteration"]
+    assert block["residualWarnThreshold"] == \
+        vm.POWER_ITERATION_RESIDUAL_WARN_THRESHOLD, REGENERATE
+    assert block["maxIterations"] == vm.POWER_ITERATION_MAX_ITERATIONS, REGENERATE
+    assert block["deltaTolerance"] == vm.POWER_ITERATION_DELTA_TOLERANCE, REGENERATE
+    example = block["warningExample"]
+    assert vm.power_iteration_warning(vm.PowerIterationDiagnostic(
+        relative_residual=example["relativeResidual"],
+        iterations=example["iterations"],
+        converged=example["converged"])) == example["message"], REGENERATE
+    for case in block["cases"]:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            component, diagnostic = vm.first_principal_component_with_diagnostic(
+                case["rows"])
+        assert diagnostic.converged == case["converged"], \
+            f"{case['label']}: {REGENERATE}"
+        assert diagnostic.ill_conditioned == case["illConditioned"], \
+            f"{case['label']}: {REGENERATE}"
+        assert diagnostic.relative_residual < case["relativeResidualUpperBound"], \
+            f"{case['label']}: {REGENERATE}"
+        # The diagnostic is additive: it never moves the component.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            assert vm.first_principal_component(case["rows"]) == component
+
+
+def test_concept_stats_split_fixture_is_not_stale():
+    """The screening-split membership, re-derived (2026-08-28 audit, F3).
+
+    Stale bytes here would let the Swift engine keep agreeing with a split
+    rule the server no longer uses — and the whole point of the change is that
+    the two engines select the same rows. The assertions themselves live in
+    ``test_concept_stats.test_split_rule_matches_the_committed_cross_engine_fixture``,
+    beside the code they describe; this one exists so the coverage roll-call
+    below can see the file.
+    """
+    from steerlab_server.experiment import concept_stats as cs
+
+    fixture = _load("concept-stats-splits.json")
+    assert fixture["minimumRowsPerClass"] == cs.MINIMUM_ROWS_PER_CLASS, REGENERATE
+    assert fixture["minimumRowsPerClassSplitHalf"] == \
+        cs.MINIMUM_ROWS_PER_CLASS_SPLIT_HALF, REGENERATE
+    for case in fixture["cases"]:
+        texts = case["texts"]
+        assert cs.content_hash_order(texts) == case["contentHashOrder"], \
+            f"{case['label']}: {REGENERATE}"
+        assert sorted(texts[i] for i in cs.held_out_indices(texts)) == \
+            case["heldOutTexts"], f"{case['label']}: {REGENERATE}"
+        assert sorted(texts[i] for i in cs.split_half_indices(texts)) == \
+            case["splitHalfSecondTexts"], f"{case['label']}: {REGENERATE}"
+
 
 def test_every_committed_fixture_has_a_staleness_test():
     """A new fixture with no staleness check is the gap this file closes, so
@@ -296,6 +353,7 @@ def test_every_committed_fixture_has_a_staleness_test():
         "auto-prompt-ids.json", "server-minted-agent.json",
         "extraction-rendering-and-positions.json",
         "paired-difference-pca.json",
+        "concept-stats-splits.json",
         "server-minted-adapter-agent.json",
         # Checked inline in their own suites.
         "scenario-diagnostics.json", "validation-layers.json",

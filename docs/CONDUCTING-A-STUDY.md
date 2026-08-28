@@ -125,6 +125,14 @@ Outcome instruments are **declared, never inferred**.
 | `ordinalScale` | a graded readout over an ordered option set | magnitude endpoints (`--ordinal-aggregation expectedValue\|argmax`) |
 | `repeReaderScore` | a fitted reader's score on the generation | reading-instrument studies (METHODS) |
 
+`repeReaderScore` is a **relative** endpoint: report it as a difference between
+conditions, not against an absolute threshold. A template-pair reader
+(`unsupervisedTemplatePair`) scores new text under its T+ instruction while its
+probe was centered between T+ and T−, so its scores carry a constant positive
+offset — one that cancels in a between-condition comparison and does not cancel
+in the claim "this score is above zero, so the concept is present"
+(`docs/REPE-IMPLEMENTATION-BRIEF.md` §1).
+
 ```bash
 steerlab-cli experiment set-instruments formality-pilot answerTokenLogprob
 ```

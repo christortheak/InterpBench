@@ -95,6 +95,34 @@ migration that rewrites frozen bytes.
 
 ### Changed
 
+- **Concept screening splits are drawn from the stimulus CONTENT, and the
+  reported numbers move.** *Read this before comparing a concept's held-out
+  accuracy or split-half cosine against a number recorded before this
+  release: they are not the same statistic.* The two screening diagnostics
+  used to be split positionally, and the two engines did not even split the
+  same way — the server held out the last ~20% of each class **in file order**
+  and halved on even/odd rows, while the Mac held out `index % 5 == 4`. So the
+  number depended on how the stimulus file happened to be ordered (a file
+  authored in topic runs handed its last topic block over whole as the
+  "held-out" set — pessimistic; a parity split put adjacent near-duplicates on
+  both sides of the halves — optimistic), it showed no variance because the
+  split was deterministic, and the same data scored differently on the two
+  engines. Both now sort each class's rows ascending by the lowercase SHA-256
+  hex of the row's UTF-8 text and take every 5th of that order as the test set
+  (halves on its parity) — the rule the reading-probe validation split has
+  used since 2026-07-13, extended to these. Content-derived means shuffling
+  the file changes nothing, both engines select the same rows byte for byte,
+  and no RNG is involved to diverge. Sorted-order rather than `hash % 5` keeps
+  the exact ~20% / 50% proportions the positional rules had, so `testCount`
+  does not wander between concepts. The floor is now one rule as well — six
+  stimuli per class for held-out, four for split-half — where the Mac
+  previously reported a held-out "accuracy" over a one-row test set. Scope is
+  screening only: `scenario_accuracy` over `validation.jsonl`, the actual
+  circularity firewall, is untouched, no promote gate reads these numbers, and
+  nothing frozen embeds them. Pinned by a committed cross-engine fixture whose
+  topic-blocked case appears twice, in two different row orders, selecting the
+  same rows both times (2026-08-28 audit, F3).
+
 - **A renamed duplicate can be measured against its source run.** The
   measurement-drift tolerance compared whole manifests minus the tolerated
   fields — and `name` is inside the content hash, so the sanctioned
@@ -122,6 +150,53 @@ migration that rewrites frozen bytes.
   requirement, which it would otherwise still be asserting.
 
 ### Fixed
+
+- **A template-pair reader's score is a relative endpoint, and the docstring
+  no longer claims otherwise.** `score_texts` / `scoreTexts` documented T+ as
+  "the rendering the probe's center and scale were calibrated on". For an
+  `unsupervisedTemplatePair` reader that is affirmatively wrong: the probe is
+  fitted over BOTH renderings of the same stimuli, so its `projectionCenter`
+  is the MIDPOINT of the T+ and T− train projections, while inference renders
+  new text under T+ alone. Every such score therefore carries a systematic
+  positive offset of about `|posMean − negMean| / (2·projectionScale)`, and
+  `score > 0` is not concept presence — neutral T+-rendered text scores
+  positive by construction. The prose now says so on both engines, at
+  `classifiesPositive` / `classifies_positive` (valid only where the scored
+  activation comes from the distribution the center was fitted on), in the
+  RepE brief §1, and in the instrument table in CONDUCTING-A-STUDY. **No
+  number changed**: the `repeReaderScore` instrument already reports a
+  continuous endpoint compared across conditions, where the constant offset
+  cancels, and the artifact's own train/held-out accuracies are computed over
+  both renderings where the midpoint IS the right threshold. Supervised-content
+  readers are unaffected in every respect. A new test pins the arithmetic — a
+  T+ class-mean activation scores at exactly the documented offset — so the
+  corrected prose cannot quietly drift back (2026-08-28 audit, F4).
+
+- **The PC1 power iteration stamps whether it converged.** ≤200 float32
+  iterations against a max-abs-delta tolerance, with no residual check and no
+  convergence flag, meant a near-degenerate spectrum returned a wrong PC1
+  silently: the audit reproduced |cos| = 0.148 against the TRUE second
+  eigenvector at an eigenvalue ratio of 0.9945, deterministically and with no
+  warning, and nothing in the artifact could say the direction was
+  ill-defined (the explained variance looks perfectly normal — a wrong
+  direction inside a near-tied 2-plane explains almost as much as the right
+  one). Both engines now compute the relative Rayleigh residual
+  ‖Gw − λw‖/λ after the iteration, return it beside the component, warn once
+  above 1e-4, and stamp it into the reader artifact as `pc1PowerIteration`
+  (`{converged, illConditioned, iterations, maxIterations, relativeResidual}`)
+  next to the `pc1ExplainedVariance*` fields. The threshold is calibrated
+  against the audit's own geometry and documented with its table at the
+  constant: a 5% sample eigengap sits at ~2e-6 and does not warn — even though
+  it legitimately uses all 200 iterations without meeting a 1e-7 float32 delta,
+  which is why the residual and not `converged` is what gets thresholded —
+  while the audit's failure sits at ~6e-3. **Warn and stamp, never refuse**:
+  the result is deterministic and mirrored across engines, so a near-tied
+  spectrum is a fact about the data to record, not malformed input to reject.
+  Additive throughout — **the component is bit-identical** (the committed
+  cross-engine PCA fixture passes unmodified), the stamp is absent on every
+  reader written earlier, and no `recipeIdentityHash` can move, since recipe
+  identity reads a closed list of sidecar keys and no reader field is in it
+  (2026-08-28 audit, F5).
 
 - **A materialized default is not manifest drift.** `experiment duplicate`
   decodes and re-encodes, so every non-optional defaulted field appears in

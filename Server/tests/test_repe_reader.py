@@ -1226,6 +1226,62 @@ def test_unsupervised_template_pair_fit_is_seeded_and_stamped(tmp_path):
     assert other.orientation_seed == 7
 
 
+def test_template_pair_scores_carry_the_documented_positive_offset(tmp_path):
+    """F4 (2026-08-28 audit): a template-pair reader's probe center is the
+    MIDPOINT of the T+ and T− train projections while inference renders T+
+    only, so a T+-rendered score is offset upward by exactly
+    ``|pos_mean − neg_mean| / (2·projectionScale)``.
+
+    The docstring of ``score_texts`` used to claim the opposite — that T+ is
+    "the rendering the probe's center and scale were calibrated on". This test
+    pins the real arithmetic, so the corrected prose cannot drift back: the
+    number is a RELATIVE endpoint, and ``score > 0`` is not concept presence.
+    """
+    path = os.path.join(str(tmp_path), "instructed-stance-pair-v1.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(STANCE_PAIR, handle)
+    template = repe_reader.load_template(path)
+    rows, captured = [], []
+    for index in range(5):
+        rows.append({"id": f"fear-row-{index}", "concept": "fear",
+                     "stimulus": f"s{index}", "templateID": template.id,
+                     "split": "train" if index < 3 else "test"})
+        magnitude = float(index + 1)
+        captured.append([[magnitude, 0.1 * magnitude]])   # T+
+        captured.append([[0.0, 0.1 * magnitude]])         # T-
+    dataset = repe_reader.load_pairs(
+        _write_pairs(str(tmp_path / "single.jsonl"), rows))
+    reader = repe_reader.fit_activations(
+        dataset, template, captured, model_id="org/m", revision="abc")[0]
+    assert reader.contrast_mode == repe_reader.UNSUPERVISED_TEMPLATE_PAIR
+
+    probe = reader.probe
+    # The center really is the midpoint of the two RENDERINGS' train means.
+    assert probe.projection_center == pytest.approx(
+        (probe.positive_mean + probe.negative_mean) / 2, abs=1e-6)
+
+    # An activation projecting exactly at the T+ class mean — the middle of the
+    # distribution inference actually draws from — scores at the offset, not 0.
+    offset = abs(probe.positive_mean - probe.negative_mean) / (
+        2 * probe.projection_scale)
+    assert offset > 0.4
+    center = probe.activation_center
+    direction = probe.direction
+    scale = sum(d * d for d in direction)
+    at_pos_mean = [c + direction[i] * (probe.positive_mean / scale)
+                   for i, c in enumerate(center)]
+    assert repe_reader.score_activation(reader, at_pos_mean) == pytest.approx(
+        probe.orientation * offset, abs=1e-4)
+
+    # ...and the T− rendering of the SAME stimuli — the neutral pole of the
+    # contrast — is the thing that lands at −offset, not at "negative because
+    # the concept is absent". Zero is nobody's boundary at inference time.
+    at_neg_mean = [c + direction[i] * (probe.negative_mean / scale)
+                   for i, c in enumerate(center)]
+    assert repe_reader.score_activation(reader, at_neg_mean) == pytest.approx(
+        -probe.orientation * offset, abs=1e-4)
+
+
 def test_orientation_signs_are_deterministic():
     a = repe_reader.orientation_signs(16, 231_001_405)
     assert a == repe_reader.orientation_signs(16, 231_001_405)

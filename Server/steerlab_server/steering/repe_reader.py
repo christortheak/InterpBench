@@ -544,7 +544,9 @@ class ReaderArtifact:
     ``contrastMode`` absent = ``supervisedContent``, ``signConvention`` absent
     = ``trainMajority``, ``extractionRendering`` absent = raw,
     ``pc1ExplainedVarianceOfDifferences`` absent = the legacy
-    ``pc1ExplainedVariance`` under basis ``alternatedRows``.
+    ``pc1ExplainedVariance`` under basis ``alternatedRows``,
+    ``pc1PowerIteration`` absent = fitted before the convergence diagnostic
+    existed (2026-08-28), NOT "converged".
     """
 
     model_id: str
@@ -575,6 +577,11 @@ class ReaderArtifact:
     #: from a pre-2026-08-27 artifact's ``pc1ExplainedVariance``, which
     #: measured the ± symmetrized copies).
     explained_variance_basis: str = "differenceCloud"
+    #: Convergence health of the Gram power iteration that produced PC1
+    #: (2026-08-28 audit, F5). Absent on every artifact written before
+    #: 2026-08-28 — and absent is not "converged": it means the fit predates
+    #: the diagnostic and the question was never asked.
+    pc1_power_iteration: vm.PowerIterationDiagnostic | None = None
     contrast_mode: str = SUPERVISED_CONTENT
     sign_convention: str = TRAIN_MAJORITY
     #: Held-out paired-discrimination accuracy of the CHOSEN sign, when the
@@ -641,6 +648,14 @@ class ReaderArtifact:
             # tells a decoder that a missing number is a degenerate cloud
             # rather than a truncated artifact.
             "pc1ExplainedVarianceBasis": self.explained_variance_basis,
+            # Convergence health of the iteration that produced PC1 (F5).
+            # Additive and OUTSIDE any identity: `recipe_identity` reads a
+            # closed list of sidecar keys and no reader field is in it, so this
+            # cannot move a recipeIdentityHash. It does change the bytes — and
+            # so the readerHash — of NEWLY fitted readers, which is correct:
+            # they carry information older ones do not.
+            "pc1PowerIteration": (None if self.pc1_power_iteration is None
+                                  else self.pc1_power_iteration.to_dict()),
             "trainAccuracy": self.train_accuracy,
             "heldOutAccuracy": self.held_out_accuracy,
             "trainPairCount": self.train_pair_count,
@@ -698,6 +713,9 @@ class ReaderArtifact:
             probe=ScalarProbe.from_dict(d["probe"]),
             difference_cloud_explained_variance=explained,
             explained_variance_basis=basis,
+            pc1_power_iteration=(
+                None if d.get("pc1PowerIteration") is None
+                else vm.PowerIterationDiagnostic.from_dict(d["pc1PowerIteration"])),
             train_accuracy=float(d["trainAccuracy"]),
             held_out_accuracy=(None if d.get("heldOutAccuracy") is None
                                else float(d["heldOutAccuracy"])),
@@ -760,6 +778,10 @@ class FittedDirection:
     sign_convention: str
     sign_held_out_accuracy: float | None
     sign_fallback_reason: str | None
+    #: Convergence health of the Gram power iteration that produced PC1
+    #: (2026-08-28 audit, F5). None only when the PCA path returned no
+    #: diagnostic at all, which no current path does.
+    power_iteration: vm.PowerIterationDiagnostic | None = None
 
 
 def held_out_sign_fallback_reason(*, held_out_pair_count: int, decided: int,
@@ -904,7 +926,10 @@ def fit_direction(pos_train: list[list[float]], neg_train: list[list[float]],
     return FittedDirection(
         component=pc, difference_cloud_explained_variance=explained,
         sign_convention=convention, sign_held_out_accuracy=sign_held_out_accuracy,
-        sign_fallback_reason=fallback_reason)
+        sign_fallback_reason=fallback_reason,
+        # Sign-invariant by construction (‖G(−w) − λ(−w)‖ = ‖Gw − λw‖), so the
+        # flip above cannot move it.
+        power_iteration=(result.diagnostics[0] if result.diagnostics else None))
 
 
 def _pair_accuracy(probe: ScalarProbe, positive: list[list[float]],
@@ -1063,6 +1088,7 @@ def fit_activations(dataset: ReaderDataset, template: TaskTemplate,
                 "differenceCloud"
                 if fitted.difference_cloud_explained_variance is not None
                 else "degenerateDifferenceCloud"),
+            pc1_power_iteration=fitted.power_iteration,
             train_accuracy=float(train_accuracy or 0.0),
             held_out_accuracy=held_accuracy,
             train_pair_count=n_train, held_out_pair_count=len(held),
@@ -1118,8 +1144,36 @@ def score_texts(model, reader: ReaderArtifact, texts: list[str]) -> list[float]:
     probe), and project. Not cosine-to-vector.
 
     A template-pair reader scores under its EXPERIMENTAL (T+) instruction: the
-    direction was fitted as H(T+) − H(T−), so the T+ rendering is the one its
-    probe's center and scale were calibrated on.
+    direction was fitted as H(T+) − H(T−), so T+ is the rendering that matches
+    the direction's construction.
+
+    **A TEMPLATE-PAIR SCORE IS RELATIVE, NOT A PRESENCE TEST** (2026-08-28
+    audit, F4). This paragraph replaces an earlier claim that T+ is "the
+    rendering the probe's center and scale were calibrated on", which was
+    affirmatively wrong: for ``unsupervisedTemplatePair`` the probe is fitted by
+    :func:`vector_math.scalar_probe` over BOTH renderings of the same stimuli,
+    so ``projectionCenter`` is the MIDPOINT of the T+ and T− train projection
+    means. Inference renders new text under T+ only. Every score therefore
+    carries a systematic positive offset of about
+    ``|pos_mean − neg_mean| / (2·projectionScale)`` — bounded by 1 by the scale
+    floor, but always positive — so:
+
+    - **Comparisons are valid, thresholds are not.** Scores of the same reader
+      across conditions, arms, or items differ by exactly the quantity of
+      interest: the constant offset cancels in the difference. That is how the
+      ``repeReaderScore`` outcome instrument uses them (``tasks.py``), and it is
+      the only supported reading.
+    - **``score > 0`` does NOT mean the concept is present.** Neutral text
+      rendered under T+ scores positive systematically. Do not threshold a
+      template-pair score at zero, and in particular do not reach for
+      ``ScalarProbe.classifies_positive`` on this path — the probe's own
+      accuracy statistics (``trainAccuracy``/``heldOutAccuracy``) are fitted and
+      evaluated over BOTH renderings, where the midpoint IS the right threshold,
+      which is why they stay meaningful while a single-rendering label does not.
+
+    Supervised-content readers are unaffected: their fit and their inference
+    render the same way, so their center is calibrated on the distribution they
+    score. Twin prose: ``RepEReader.scoreTexts``.
     """
     if reader.substrate != SUBSTRATE:
         raise RepeReaderError(

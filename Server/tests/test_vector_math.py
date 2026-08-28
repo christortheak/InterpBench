@@ -130,3 +130,97 @@ def test_a_request_within_the_rank_is_untouched_and_silent():
         _warnings.simplefilter("error")
         assert len(vm.principal_components(rows, 3)) == 3
         assert len(vm.principal_components(rows, 2)) == 2
+
+
+# --- F5: the power iteration stamps its own convergence health --------------
+
+def _near_degenerate_cloud(ratio: float, n: int = 40, d: int = 64,
+                           seed: int = 1) -> list[list[float]]:
+    """A cloud whose top two sample eigenvalues are separated by a controlled
+    gap — the audit's own repro geometry. ``ratio`` is λ2/λ1 as constructed;
+    the SAMPLE ratio comes out a little higher."""
+    rng = np.random.default_rng(seed)
+    basis, _ = np.linalg.qr(rng.standard_normal((d, d)))
+    a = rng.standard_normal(n)
+    b = rng.standard_normal(n)
+    a -= a.mean()
+    b -= b.mean()
+    a /= np.sqrt((a ** 2).sum())
+    b /= np.sqrt((b ** 2).sum())
+    rows = np.outer(a, basis[:, 0]) + np.sqrt(ratio) * np.outer(b, basis[:, 1])
+    return rows.astype(np.float32).tolist()
+
+
+def test_a_healthy_cloud_stamps_a_converged_diagnostic_and_says_nothing():
+    """The diagnostic is additive and quiet on ordinary data. Note the
+    5%-eigengap case: it uses ALL 200 iterations without meeting the 1e-7 delta
+    in float32 and is still accurate to six figures, which is exactly why the
+    warning thresholds the RESIDUAL and not `converged`."""
+    import warnings as _warnings
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error")
+        component, diagnostic = vm.first_principal_component_with_diagnostic(
+            [[3.0, 0.1], [2.9, -0.1], [-3.0, 0.05], [-2.8, -0.05]])
+        assert diagnostic.converged
+        assert diagnostic.relative_residual < vm.POWER_ITERATION_RESIDUAL_WARN_THRESHOLD
+        assert not diagnostic.ill_conditioned
+        assert 0 < diagnostic.iterations <= vm.POWER_ITERATION_MAX_ITERATIONS
+        assert component == vm.first_principal_component(
+            [[3.0, 0.1], [2.9, -0.1], [-3.0, 0.05], [-2.8, -0.05]])
+
+        five_percent = _near_degenerate_cloud(0.95)
+        _, healthy = vm.first_principal_component_with_diagnostic(five_percent)
+    assert not healthy.converged            # the cap, on perfectly good data
+    assert not healthy.ill_conditioned      # and no warning, correctly
+
+
+def test_a_near_degenerate_spectrum_warns_and_stamps_instead_of_refusing():
+    """2026-08-28 audit, F5. The audit reproduced a "PC1" at |cos| = 0.148
+    against the TRUE second eigenvector, returned deterministically with no
+    warning and no way to tell from the artifact. The direction is unchanged —
+    it is deterministic and cross-engine mirrored, so this is a fact about the
+    DATA, not malformed input — but it no longer arrives silent.
+
+    Swift twin: `SteeringVectorMath.firstPrincipalComponentWithDiagnostic`.
+    """
+    rows = _near_degenerate_cloud(0.9945)
+    quiet = vm.first_principal_component  # the component itself must not move
+    with pytest.warns(UserWarning, match="nearly tied"):
+        component, diagnostic = vm.first_principal_component_with_diagnostic(rows)
+    assert diagnostic.ill_conditioned
+    assert diagnostic.relative_residual > vm.POWER_ITERATION_RESIDUAL_WARN_THRESHOLD
+    assert diagnostic.iterations == vm.POWER_ITERATION_MAX_ITERATIONS
+    assert not diagnostic.converged
+    with pytest.warns(UserWarning):
+        assert quiet(rows) == component
+
+
+def test_the_diagnostic_round_trips_and_the_warning_is_a_twin_literal():
+    """The stamp shape and the message are cross-engine contracts (Swift
+    `PowerIterationDiagnostic` / `powerIterationWarning`); the literal is
+    written out here so a wording change is a deliberate two-engine edit."""
+    diagnostic = vm.PowerIterationDiagnostic(
+        relative_residual=0.006171, iterations=200, converged=False)
+    assert diagnostic.to_dict() == {
+        "converged": False,
+        "illConditioned": True,
+        "iterations": 200,
+        "maxIterations": 200,
+        "relativeResidual": 0.006171,
+    }
+    assert vm.PowerIterationDiagnostic.from_dict(diagnostic.to_dict()) == diagnostic
+    assert vm.power_iteration_warning(diagnostic) == (
+        "PC1 power iteration left a relative Rayleigh residual of 0.00617 after "
+        "200 iterations (warn above 0.0001): the top two eigenvalues of this "
+        "cloud are nearly tied, so PC1 is ill-determined and the returned "
+        "direction may be an arbitrary vector in the near-degenerate plane. The "
+        "result is deterministic and identical on both engines — it is the DATA "
+        "that does not single out a first component. Read the stamped diagnostic "
+        "before interpreting this direction.")
+
+
+def test_deflation_reports_one_diagnostic_per_component():
+    result = vm.principal_components_with_variance(
+        [[3.0, 0.0, 0.0], [0.0, 2.0, 0.0], [-3.0, 0.0, 0.1], [0.0, -2.0, 0.0]], 2)
+    assert len(result.diagnostics) == len(result.components) == 2
+    assert all(not d.ill_conditioned for d in result.diagnostics)

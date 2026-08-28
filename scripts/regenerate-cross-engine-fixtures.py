@@ -24,6 +24,7 @@ import os
 import shutil
 import sys
 import tempfile
+import warnings
 
 import numpy as np
 
@@ -913,6 +914,55 @@ def paired_difference_pca() -> None:
                 positive, negative, vm.ExtractionMethod.PAIRED_DIFFERENCE_PCA),
         })
 
+    # --- F5: convergence health of the same iteration -----------------------
+    # Committed ROWS, so both engines run the diagnostic over identical bytes.
+    # The near-degenerate case deliberately does NOT pin a component: an
+    # ill-determined PC1 is the one direction the two engines are not expected
+    # to agree on to fixture precision, which is exactly what the diagnostic
+    # exists to announce.
+    def spectrum(ratio: float, n: int, d: int, seed: int) -> list[list[float]]:
+        rng = np.random.default_rng(seed)
+        basis, _ = np.linalg.qr(rng.standard_normal((d, d)))
+        a = rng.standard_normal(n)
+        b = rng.standard_normal(n)
+        a -= a.mean()
+        b -= b.mean()
+        a /= np.sqrt((a ** 2).sum())
+        b /= np.sqrt((b ** 2).sum())
+        matrix = (np.outer(a, basis[:, 0])
+                  + np.sqrt(ratio) * np.outer(b, basis[:, 1]))
+        return [[round(float(x), 6) for x in row] for row in matrix]
+
+    iteration_cases = []
+    for label, matrix in (
+        ("well-separated", rows(11, 6, 8)),
+        # 5.2% sample eigengap: uses the whole iteration budget without meeting
+        # the float32 delta tolerance, and is STILL accurate to six figures
+        # (|cos| with the true PC1 = 1.000000, residual 3.1e-6). The case that
+        # rules out thresholding `converged` instead of the residual.
+        ("five-percent-eigengap", spectrum(0.95, 16, 12, 3)),
+        # 1.6% sample eigengap — the audit's failure regime, reproduced small:
+        # residual 5.2e-3, |cos| with the true PC1 down to 0.94 with 0.34
+        # leaked into the true SECOND eigenvector, returned deterministically
+        # and, before this diagnostic, with no warning at all.
+        ("near-degenerate", spectrum(0.9945, 16, 12, 3)),
+    ):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            _component, diagnostic = vm.first_principal_component_with_diagnostic(
+                matrix)
+        iteration_cases.append({
+            "label": label,
+            "rows": matrix,
+            "converged": diagnostic.converged,
+            "illConditioned": diagnostic.ill_conditioned,
+            # Order of magnitude only: the residual is a float32 accumulation
+            # and the two engines sum it in different orders. What must agree
+            # is which side of the threshold it lands on.
+            "relativeResidualUpperBound": float(
+                f"{diagnostic.relative_residual * 10:.1g}"),
+        })
+
     _write(os.path.join(FIXTURES, "paired-difference-pca.json"), {
         "note": "Produced by the Python engine; asserted by the Swift one. "
                 "A diff means one engine's PCA path changed — decide "
@@ -921,6 +971,78 @@ def paired_difference_pca() -> None:
             vm.DEGENERATE_START_RELATIVE_THRESHOLD,
         "principalComponents": pca_cases,
         "directions": direction_cases,
+        "powerIteration": {
+            "residualWarnThreshold": vm.POWER_ITERATION_RESIDUAL_WARN_THRESHOLD,
+            "maxIterations": vm.POWER_ITERATION_MAX_ITERATIONS,
+            "deltaTolerance": vm.POWER_ITERATION_DELTA_TOLERANCE,
+            "warningExample": {
+                "relativeResidual": 0.006171,
+                "iterations": 200,
+                "converged": False,
+                "message": vm.power_iteration_warning(
+                    vm.PowerIterationDiagnostic(
+                        relative_residual=0.006171, iterations=200,
+                        converged=False)),
+            },
+            "cases": iteration_cases,
+        },
+    })
+
+
+def concept_stats_splits() -> None:
+    """The screening diagnostics' SPLIT MEMBERSHIP, produced by the Python
+    engine and asserted by the Swift one (2026-08-28 audit, F3).
+
+    Before this fixture the two engines split differently and neither split was
+    pinned: Python held out the last ~20% of each class in FILE order and cut
+    even/odd halves; Swift held out ``index % 5 == 4``. Both numbers therefore
+    moved with how the stimulus file happened to be ordered, and the same data
+    scored differently on the two engines. The rule now is content-derived —
+    sort each class's rows ascending by the lowercase SHA-256 hex of the row's
+    UTF-8 text, hold out sorted position % 5 == 4, halve on sorted position
+    parity — so this fixture pins membership by TEXT, and the cases are chosen
+    to make order-independence falsifiable:
+
+    * ``topic-blocked`` is authored the way real stimulus files are, in topic
+      runs. Under the old rule the held-out set was the last topic block
+      entire; under this one it is spread across the blocks.
+    * ``topic-blocked-scrambled`` is the SAME texts in a different order. Its
+      expected membership is the same SET of texts, which is the property the
+      whole change exists to buy.
+    * ``duplicates`` pins the tie-break: two identical texts hash identically
+      and are ordered by the text itself, so which of them lands in the test
+      set cannot depend on file order either.
+    """
+    from steerlab_server.experiment import concept_stats as cs
+
+    topics = [f"{topic} sentence {i}" for topic in ("harbour", "kitchen", "ledger")
+              for i in range(5)]
+    scrambled = [topics[i] for i in (11, 3, 14, 0, 7, 2, 9, 13, 5, 1, 10, 4, 12, 8, 6)]
+
+    cases = []
+    for label, texts in (
+        ("topic-blocked", topics),
+        ("topic-blocked-scrambled", scrambled),
+        ("duplicates", ["same", "same", "b", "c", "d", "e", "f", "g"]),
+        ("unicode", ["café", "naïve", "日本語", "straße", "emoji 🌊", "plain",
+                     "tab\tinside", "newline\nInside"]),
+    ):
+        cases.append({
+            "label": label,
+            "texts": list(texts),
+            "contentHashOrder": cs.content_hash_order(texts),
+            "heldOutTexts": sorted(texts[i] for i in cs.held_out_indices(texts)),
+            "splitHalfSecondTexts":
+                sorted(texts[i] for i in cs.split_half_indices(texts)),
+        })
+
+    _write(os.path.join(FIXTURES, "concept-stats-splits.json"), {
+        "note": "Produced by the Python engine; asserted by the Swift one. "
+                "Membership is derived from the TEXTS alone — a diff means one "
+                "engine's screening-split rule changed.",
+        "minimumRowsPerClass": cs.MINIMUM_ROWS_PER_CLASS,
+        "minimumRowsPerClassSplitHalf": cs.MINIMUM_ROWS_PER_CLASS_SPLIT_HALF,
+        "cases": cases,
     })
 
 
@@ -928,6 +1050,7 @@ def main() -> int:
     os.makedirs(FIXTURES, exist_ok=True)
     promotion_keys()
     paired_difference_pca()
+    concept_stats_splits()
     extraction_rendering_and_positions()
     system_prompt_composition()
     server_minted_agent()

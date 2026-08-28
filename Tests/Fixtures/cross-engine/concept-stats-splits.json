@@ -1,0 +1,173 @@
+{
+  "cases": [
+    {
+      "contentHashOrder": [
+        9,
+        11,
+        7,
+        1,
+        14,
+        4,
+        8,
+        5,
+        10,
+        3,
+        13,
+        6,
+        12,
+        0,
+        2
+      ],
+      "heldOutTexts": [
+        "harbour sentence 2",
+        "harbour sentence 3",
+        "ledger sentence 4"
+      ],
+      "label": "topic-blocked",
+      "splitHalfSecondTexts": [
+        "harbour sentence 0",
+        "harbour sentence 1",
+        "harbour sentence 3",
+        "harbour sentence 4",
+        "kitchen sentence 0",
+        "kitchen sentence 1",
+        "ledger sentence 1"
+      ],
+      "texts": [
+        "harbour sentence 0",
+        "harbour sentence 1",
+        "harbour sentence 2",
+        "harbour sentence 3",
+        "harbour sentence 4",
+        "kitchen sentence 0",
+        "kitchen sentence 1",
+        "kitchen sentence 2",
+        "kitchen sentence 3",
+        "kitchen sentence 4",
+        "ledger sentence 0",
+        "ledger sentence 1",
+        "ledger sentence 2",
+        "ledger sentence 3",
+        "ledger sentence 4"
+      ]
+    },
+    {
+      "contentHashOrder": [
+        6,
+        0,
+        4,
+        9,
+        2,
+        11,
+        13,
+        8,
+        10,
+        1,
+        7,
+        14,
+        12,
+        3,
+        5
+      ],
+      "heldOutTexts": [
+        "harbour sentence 2",
+        "harbour sentence 3",
+        "ledger sentence 4"
+      ],
+      "label": "topic-blocked-scrambled",
+      "splitHalfSecondTexts": [
+        "harbour sentence 0",
+        "harbour sentence 1",
+        "harbour sentence 3",
+        "harbour sentence 4",
+        "kitchen sentence 0",
+        "kitchen sentence 1",
+        "ledger sentence 1"
+      ],
+      "texts": [
+        "ledger sentence 1",
+        "harbour sentence 3",
+        "ledger sentence 4",
+        "harbour sentence 0",
+        "kitchen sentence 2",
+        "harbour sentence 2",
+        "kitchen sentence 4",
+        "ledger sentence 3",
+        "kitchen sentence 0",
+        "harbour sentence 1",
+        "ledger sentence 0",
+        "harbour sentence 4",
+        "ledger sentence 2",
+        "kitchen sentence 3",
+        "kitchen sentence 1"
+      ]
+    },
+    {
+      "contentHashOrder": [
+        0,
+        1,
+        4,
+        6,
+        3,
+        2,
+        5,
+        7
+      ],
+      "heldOutTexts": [
+        "c"
+      ],
+      "label": "duplicates",
+      "splitHalfSecondTexts": [
+        "b",
+        "f",
+        "g",
+        "same"
+      ],
+      "texts": [
+        "same",
+        "same",
+        "b",
+        "c",
+        "d",
+        "e",
+        "f",
+        "g"
+      ]
+    },
+    {
+      "contentHashOrder": [
+        6,
+        2,
+        3,
+        4,
+        0,
+        5,
+        7,
+        1
+      ],
+      "heldOutTexts": [
+        "caf\u00e9"
+      ],
+      "label": "unicode",
+      "splitHalfSecondTexts": [
+        "emoji \ud83c\udf0a",
+        "na\u00efve",
+        "plain",
+        "\u65e5\u672c\u8a9e"
+      ],
+      "texts": [
+        "caf\u00e9",
+        "na\u00efve",
+        "\u65e5\u672c\u8a9e",
+        "stra\u00dfe",
+        "emoji \ud83c\udf0a",
+        "plain",
+        "tab\tinside",
+        "newline\nInside"
+      ]
+    }
+  ],
+  "minimumRowsPerClass": 6,
+  "minimumRowsPerClassSplitHalf": 4,
+  "note": "Produced by the Python engine; asserted by the Swift one. Membership is derived from the TEXTS alone \u2014 a diff means one engine's screening-split rule changed."
+}

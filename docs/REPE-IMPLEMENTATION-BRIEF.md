@@ -49,6 +49,26 @@ Inference (`scoreTexts` / `score_texts`) renders the *same* template under the
 stored probe — the paper's "normalize test activations with the training
 parameters", not a cosine-to-vector shortcut.
 
+**What a score means, by contrast mode** (2026-08-28 audit, F4). A
+`supervisedContent` reader fits and scores under the same rendering, so its
+`projectionCenter` — the midpoint of the two train class means — really is the
+decision boundary, and the sign of a score is a label. An
+`unsupervisedTemplatePair` reader is different: its probe is fitted over BOTH
+the T+ and T− renderings of the same stimuli, so the center sits between them,
+while inference renders new text under **T+ only**. Every template-pair score
+therefore carries a constant positive offset of roughly
+`|posMean − negMean| / (2·projectionScale)`.
+
+- Template-pair scores are for **relative** comparison — across conditions,
+  arms, or items — where that constant cancels. This is exactly how the
+  `repeReaderScore` outcome instrument reads them.
+- **`score > 0` is not concept presence.** Neutral text rendered under T+
+  scores positive systematically. Never threshold a template-pair score at
+  zero, and never reach for `classifiesPositive` / `classifies_positive` on
+  this path. The artifact's `trainAccuracy` and `heldOutAccuracy` remain
+  meaningful because they are computed over both renderings, where the midpoint
+  is the right threshold.
+
 Implementations: `Sources/SteeringKit/Extraction/RepEReader.swift` and
 `Server/steerlab_server/steering/repe_reader.py`. The Python module is the
 schema/math source of truth; the Swift one is its twin, and the two are held
@@ -162,6 +182,7 @@ same keys.
 | `probe` | The `ScalarProbe`: `direction`, `activationCenter`, `projectionCenter`, `projectionScale`, `orientation`, `positiveMean`, `negativeMean`. |
 | `pc1ExplainedVarianceOfDifferences` | PC1's share of the DIFFERENCE CLOUD's variance. **Absent** when the cloud has none to apportion. |
 | `pc1ExplainedVarianceBasis` | `"differenceCloud"`, `"degenerateDifferenceCloud"` (value absent), or `"alternatedRows"` (a schema-1 artifact's legacy number — §10). |
+| `pc1PowerIteration` | Convergence health of the Gram iteration that produced PC1: `{converged, illConditioned, iterations, maxIterations, relativeResidual}`. `relativeResidual` is ‖Gw − λw‖/λ; `illConditioned` is that residual above 1e-4, meaning the top two eigenvalues are nearly tied and PC1 is ill-determined. **Absent** on any reader fitted before 2026-08-28 — and absent is not "converged", it means the question was never asked. |
 | `trainAccuracy`, `heldOutAccuracy` | Probe classification accuracy on each split. |
 | `trainPairCount`, `heldOutPairCount` | Row counts. |
 | `contrastMode` | `"supervisedContent"` \| `"unsupervisedTemplatePair"` (§3). |

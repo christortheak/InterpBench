@@ -281,6 +281,21 @@ public enum SteeringVectorMath {
         public let components: [[Float]]
         /// Per-component share of the original centered variance.
         public let explainedVariance: [Float]
+        /// One `PowerIterationDiagnostic` per component, in the same order
+        /// (2026-08-28 audit, F5). Additive: nothing about the components
+        /// changed when this appeared, and callers that ignore it behave
+        /// exactly as before.
+        public let diagnostics: [PowerIterationDiagnostic]
+
+        public init(
+            components: [[Float]], explainedVariance: [Float],
+            diagnostics: [PowerIterationDiagnostic] = []
+        ) {
+            self.components = components
+            self.explainedVariance = explainedVariance
+            self.diagnostics = diagnostics
+        }
+
         public var totalExplainedVariance: Float {
             explainedVariance.reduce(0, +)
         }
@@ -340,6 +355,20 @@ public enum SteeringVectorMath {
                 / projectionScale
         }
 
+        /// Sign of `score` — i.e. "is this activation on the positive side of
+        /// the midpoint the probe was fitted with?".
+        ///
+        /// VALID ONLY WHERE THE ACTIVATION COMES FROM THE SAME DISTRIBUTION THE
+        /// CENTER WAS FITTED ON (2026-08-28 audit, F4). `projectionCenter` is
+        /// the midpoint of the two TRAIN class means, so this is a real label
+        /// for supervised-content probes (reading probes, concept validation,
+        /// `RepEReader.pairAccuracy`, which scores both classes) and NOT a real
+        /// label for an `unsupervisedTemplatePair` reader scoring new text,
+        /// whose center is the midpoint of the T+ and T− renderings while
+        /// inference renders T+ only: every such activation sits systematically
+        /// above the midpoint. See `RepEReader.scoreTexts` — template-pair
+        /// scores support relative comparisons, never a presence threshold at
+        /// zero.
         public func classifiesPositive(_ activation: [Float]) throws -> Bool {
             try score(activation) > 0
         }
@@ -632,10 +661,14 @@ public enum SteeringVectorMath {
         // neutral-bank path, and the fact that `neutralPCCount` is a
         // study-level knob applied to whatever neutral corpus each concept
         // has — over-asking is an honest declaration, not an error.
+        var diagnostics: [PowerIterationDiagnostic] = []
         let cap = min(count, max(0, rows.count - 1))
         for _ in 0 ..< cap {
-            guard let component = try? firstComponentOfCentered(centered) else { break }
+            guard let fitted = try? firstComponentOfCenteredWithDiagnostic(centered)
+            else { break }
+            let component = fitted.component
             components.append(component)
+            diagnostics.append(fitted.diagnostic)
             var captured: Float = 0
             for index in centered.indices {
                 let projection = dot(centered[index], component)
@@ -646,7 +679,9 @@ public enum SteeringVectorMath {
             }
             explained.append(captured / totalVariance)
         }
-        return PrincipalComponentsResult(components: components, explainedVariance: explained)
+        return PrincipalComponentsResult(
+            components: components, explainedVariance: explained,
+            diagnostics: diagnostics)
     }
 
     public static func principalComponents(
@@ -660,12 +695,16 @@ public enum SteeringVectorMath {
         guard totalVariance > 0 else { throw SteeringVectorError.degenerateData }
         var components: [[Float]] = []
         var explained: [Float] = []
+        var diagnostics: [PowerIterationDiagnostic] = []
         let cap = maximumCount ?? max(0, rows.count - 1)
         while components.count < cap,
             explained.reduce(0, +) < min(minimumExplainedVariance, 1)
         {
-            guard let component = try? firstComponentOfCentered(centered) else { break }
+            guard let fitted = try? firstComponentOfCenteredWithDiagnostic(centered)
+            else { break }
+            let component = fitted.component
             components.append(component)
+            diagnostics.append(fitted.diagnostic)
             var captured: Float = 0
             for index in centered.indices {
                 let projection = dot(centered[index], component)
@@ -676,7 +715,9 @@ public enum SteeringVectorMath {
             }
             explained.append(captured / totalVariance)
         }
-        return PrincipalComponentsResult(components: components, explainedVariance: explained)
+        return PrincipalComponentsResult(
+            components: components, explainedVariance: explained,
+            diagnostics: diagnostics)
     }
 
     /// Removes the given (unit) components from `v`: v − Σ (v·cᵢ)cᵢ.
@@ -734,7 +775,172 @@ public enum SteeringVectorMath {
     /// (`vector_math.DEGENERATE_START_RELATIVE_THRESHOLD`).
     public static let degenerateStartRelativeThreshold: Float = 1e-6
 
+    /// Relative Rayleigh-quotient residual ‖Gw − λw‖/λ above which PC1 is
+    /// reported as ill-determined (2026-08-28 audit, F5). Identical constant on
+    /// the server (`vector_math.POWER_ITERATION_RESIDUAL_WARN_THRESHOLD`).
+    ///
+    /// CALIBRATION, measured on engineered clouds whose top two sample
+    /// eigenvalues are separated by a controlled gap (the audit's own repro
+    /// geometry):
+    ///
+    /// | sample eigengap | relative residual | \|cos\| of PC1 with the TRUE PC1 |
+    /// |---|---|---|
+    /// | isotropic (typical) | ≤ 6e-6 | 1.000000 |
+    /// | 5.2 % | 2.1e-6 | 1.000000 |
+    /// | 4.2 % | 1.3e-5 | 1.000000 |
+    /// | 3.3 % | 8.1e-5 | 0.999997 |
+    /// | 2.4 % | 4.5e-4 | 0.999827 |
+    /// | 1.7 % | 2.5e-3 | 0.988485 |
+    /// | 1.4 % | 6.2e-3 | 0.872206 |
+    /// | 1.3 % | 6.7e-3 | 0.665022 |
+    ///
+    /// The audit's reproduced failure (eigenvalue ratio 0.9945, |cos| = 0.148
+    /// against the true SECOND eigenvector) sits at the bottom of that table;
+    /// the audit's calibration that "at a 5% eigengap the iteration IS
+    /// converged" sits at the top. 1e-4 is the order of magnitude between them:
+    /// about fifty times above the worst healthy residual, about twenty-five
+    /// times below the mildest genuinely-wrong one. It fires around a 3% gap,
+    /// while PC1 is still accurate to 1e-5 — early on purpose, because the
+    /// warning's job is to say the SPECTRUM is near-degenerate, not to wait
+    /// until the answer is already wrong.
+    ///
+    /// Not a refusal: the result is deterministic and mirrored across engines,
+    /// so a near-tied spectrum is a fact about the DATA that the artifact
+    /// should record, not a malformed input to reject.
+    public static let powerIterationResidualWarnThreshold: Float = 1e-4
+
+    /// Iteration cap and convergence tolerance, named so the diagnostic can
+    /// report what it was measured against. Twins of the server literals.
+    public static let powerIterationMaxIterations = 200
+    public static let powerIterationDeltaTolerance: Float = 1e-7
+
+    /// Convergence health of one Gram power-iteration (2026-08-28 audit, F5).
+    ///
+    /// Purely additive: it is computed AFTER the component is fixed and never
+    /// changes it, so every parity fixture that pins a component keeps passing.
+    ///
+    /// - `relativeResidual` — ‖Gw − λw‖/λ with λ = wᵀGw, the Rayleigh quotient.
+    ///   Dimensionless, so it is comparable across data of any scale. This is
+    ///   the number to read: an unconverged iteration on a near-degenerate
+    ///   spectrum returns a WRONG unit vector deterministically and silently,
+    ///   and the residual is what distinguishes it from a converged one (the
+    ///   explained variance does not — a wrong direction in a near-tied 2-plane
+    ///   explains almost exactly as much).
+    /// - `iterations` / `converged` — how many products the winning start used
+    ///   and whether the max-abs-delta tolerance was met before the cap.
+    ///   Reported for context, NOT thresholded: a healthy 5%-gap cloud
+    ///   routinely uses all 200 iterations without meeting a 1e-7 delta in
+    ///   float32 and is still accurate to six figures, so "hit the cap" on its
+    ///   own is not a defect.
+    /// - `illConditioned` — `relativeResidual` above
+    ///   `powerIterationResidualWarnThreshold`.
+    ///
+    /// Server twin: `vector_math.PowerIterationDiagnostic`.
+    public struct PowerIterationDiagnostic: Sendable, Equatable, Codable {
+        public let relativeResidual: Float
+        public let iterations: Int
+        public let converged: Bool
+        public let maxIterations: Int
+
+        public init(
+            relativeResidual: Float, iterations: Int, converged: Bool,
+            maxIterations: Int = SteeringVectorMath.powerIterationMaxIterations
+        ) {
+            self.relativeResidual = relativeResidual
+            self.iterations = iterations
+            self.converged = converged
+            self.maxIterations = maxIterations
+        }
+
+        public var illConditioned: Bool {
+            relativeResidual > SteeringVectorMath.powerIterationResidualWarnThreshold
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case relativeResidual, iterations, converged, maxIterations
+            case illConditioned
+        }
+
+        /// The stamp carries `illConditioned` as a derived convenience so a
+        /// reader of the JSON never has to know the threshold; decoding ignores
+        /// it and recomputes from the residual (server twin: `to_dict` writes
+        /// it, `from_dict` does not read it).
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(converged, forKey: .converged)
+            try container.encode(illConditioned, forKey: .illConditioned)
+            try container.encode(iterations, forKey: .iterations)
+            try container.encode(maxIterations, forKey: .maxIterations)
+            try container.encode(relativeResidual, forKey: .relativeResidual)
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            relativeResidual = try container.decode(Float.self, forKey: .relativeResidual)
+            iterations = try container.decode(Int.self, forKey: .iterations)
+            converged = try container.decode(Bool.self, forKey: .converged)
+            maxIterations = try container.decodeIfPresent(Int.self, forKey: .maxIterations)
+                ?? SteeringVectorMath.powerIterationMaxIterations
+        }
+    }
+
+    /// The warning text, so both engines say the same thing (server twin:
+    /// `vector_math.power_iteration_warning`).
+    public static func powerIterationWarning(_ diagnostic: PowerIterationDiagnostic)
+        -> String
+    {
+        "PC1 power iteration left a relative Rayleigh residual of "
+            + "\(formatResidual(diagnostic.relativeResidual)) after "
+            + "\(diagnostic.iterations) iterations (warn above "
+            + "\(formatResidual(powerIterationResidualWarnThreshold))): the top two "
+            + "eigenvalues of this cloud are nearly tied, so PC1 is ill-determined "
+            + "and the returned direction may be an arbitrary vector in the "
+            + "near-degenerate plane. The result is deterministic and identical on "
+            + "both engines — it is the DATA that does not single out a first "
+            + "component. Read the stamped diagnostic before interpreting this "
+            + "direction."
+    }
+
+    /// `%.3g` — the same C formatting Python's `%.3g` / `{:.3g}` produces,
+    /// including its two-digit exponent (`1.23e-07`), so the twin message is
+    /// character-identical on both engines. The Float is promoted to Double by
+    /// the varargs call, exactly as the server's float32 value widens before
+    /// formatting.
+    static func formatResidual(_ value: Float) -> String {
+        String(format: "%.3g", value)
+    }
+
+    /// Where a `firstComponentOfCentered` warning goes. The Swift engine has no
+    /// `warnings` module, so an ill-conditioned spectrum is reported through
+    /// this hook (the app and the CLI install their own) and, always, through
+    /// the DIAGNOSTIC the caller stamps — the warning is the courtesy, the
+    /// stamp is the record.
+    nonisolated(unsafe) public static var powerIterationWarningSink:
+        (@Sendable (String) -> Void)?
+
+    /// `firstPrincipalComponent(of:)` plus its convergence health.
+    public static func firstPrincipalComponentWithDiagnostic(
+        of rows: [[Float]]
+    ) throws -> (component: [Float], diagnostic: PowerIterationDiagnostic) {
+        guard rows.count >= 2, let dimension = rows.first?.count, dimension > 0 else {
+            throw SteeringVectorError.emptyInput
+        }
+        guard rows.allSatisfy({ $0.count == dimension }) else {
+            throw SteeringVectorError.dimensionMismatch(
+                expected: dimension, found: rows.first(where: { $0.count != dimension })!.count)
+        }
+        let center = try mean(rows)
+        let centered = rows.map { row in zip(row, center).map(-) }
+        return try firstComponentOfCenteredWithDiagnostic(centered)
+    }
+
     private static func firstComponentOfCentered(_ centered: [[Float]]) throws -> [Float] {
+        try firstComponentOfCenteredWithDiagnostic(centered).component
+    }
+
+    private static func firstComponentOfCenteredWithDiagnostic(
+        _ centered: [[Float]]
+    ) throws -> (component: [Float], diagnostic: PowerIterationDiagnostic) {
         guard centered.count >= 2, let dimension = centered.first?.count, dimension > 0
         else {
             throw SteeringVectorError.emptyInput
@@ -800,9 +1006,13 @@ public enum SteeringVectorMath {
             }(),
         ]
         var weights: [Float]?
+        var usedIterations = 0
+        var converged = false
         outer: for start in starts {
             var candidate = start
-            for iteration in 0 ..< 200 {
+            usedIterations = 0
+            converged = false
+            for iteration in 0 ..< powerIterationMaxIterations {
                 var next = (0 ..< n).map { i in dot(gram[i], candidate) }
                 let norm = l2Norm(next)
                 // Degenerate START detection, on the FIRST product only.
@@ -825,7 +1035,11 @@ public enum SteeringVectorMath {
                 next = next.map { $0 / norm }
                 let delta = zip(next, candidate).map { abs($0 - $1) }.max() ?? 0
                 candidate = next
-                if delta < 1e-7 { break }
+                usedIterations = iteration + 1
+                if delta < powerIterationDeltaTolerance {
+                    converged = true
+                    break
+                }
             }
             weights = candidate
             break
@@ -839,6 +1053,29 @@ public enum SteeringVectorMath {
         }
         let norm = l2Norm(component)
         guard norm > 0 else { throw SteeringVectorError.degenerateData }
-        return component.map { $0 / norm }
+
+        // --- convergence diagnostic (audit F5), strictly after the component --
+        // One extra Gram matvec. λ = wᵀGw is the Rayleigh quotient and
+        // ‖Gw − λw‖/λ is how far w is from being an eigenvector of G, measured
+        // relative to the spectrum's own scale. A near-tied top pair leaves this
+        // residual orders of magnitude above a healthy cloud's (see the
+        // constant's calibration table) while every other stamp — the explained
+        // variance especially — looks perfectly normal.
+        let product = (0 ..< n).map { i in dot(gram[i], weights) }
+        let eigenvalue = dot(weights, product)
+        let relativeResidual: Float
+        if eigenvalue > 0 {
+            let residual = l2Norm(zip(product, weights).map { $0 - eigenvalue * $1 })
+            relativeResidual = residual / eigenvalue
+        } else {
+            relativeResidual = .infinity
+        }
+        let diagnostic = PowerIterationDiagnostic(
+            relativeResidual: relativeResidual, iterations: usedIterations,
+            converged: converged)
+        if diagnostic.illConditioned {
+            powerIterationWarningSink?(powerIterationWarning(diagnostic))
+        }
+        return (component.map { $0 / norm }, diagnostic)
     }
 }

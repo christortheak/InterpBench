@@ -2736,7 +2736,10 @@ def build_router(state: ServiceState) -> APIRouter:
                 except (OSError, KeyError):
                     pass
         return concept_stats.compute(positive_by_layer=pos, negative_by_layer=neg,
-                                     method=method, control_vectors=controls)
+                                     method=method,
+                                     positive_texts=stimuli.positive,
+                                     negative_texts=stimuli.negative,
+                                     control_vectors=controls)
 
     # --- scalar reading probes ----------------------------------------------
 

@@ -15,7 +15,7 @@ re-validation, not an assumed equivalence (see the plan's risks).
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Sequence
 
@@ -389,6 +389,20 @@ class ScalarProbe:
                      / self.projection_scale)
 
     def classifies_positive(self, activation: Vector) -> bool:
+        """Sign of :meth:`score` — i.e. "is this activation on the positive side
+        of the midpoint the probe was fitted with?".
+
+        VALID ONLY WHERE THE ACTIVATION COMES FROM THE SAME DISTRIBUTION THE
+        CENTER WAS FITTED ON (2026-08-28 audit, F4). ``projection_center`` is
+        the midpoint of the two TRAIN class means, so this is a real label for
+        supervised-content probes (reading probes, concept validation, RepE
+        ``_pair_accuracy``, which scores both classes) and NOT a real label for
+        a ``unsupervisedTemplatePair`` reader scoring new text, whose center is
+        the midpoint of the T+ and T− renderings while inference renders T+
+        only: every such activation sits systematically above the midpoint. See
+        ``repe_reader.score_texts`` — template-pair scores support relative
+        comparisons, never a presence threshold at zero.
+        """
         return self.score(activation) > 0
 
     def to_dict(self) -> dict:
@@ -540,6 +554,11 @@ def first_principal_component(rows: Rows) -> list[float]:
 class PrincipalComponentsResult:
     components: list[list[float]]
     explained_variance: list[float]
+    #: One :class:`PowerIterationDiagnostic` per component, in the same order
+    #: (2026-08-28 audit, F5). Empty on the SVD path, which has no iteration to
+    #: diagnose. Additive: nothing about the components changed when this
+    #: appeared, and callers that ignore it behave exactly as before.
+    diagnostics: list["PowerIterationDiagnostic"] = field(default_factory=list)
 
     @property
     def total_explained_variance(self) -> float:
@@ -553,6 +572,7 @@ def _deflate(count: int | None, centered: np.ndarray, *,
         raise SteeringVectorError("degenerateData")
     components: list[list[float]] = []
     explained: list[float] = []
+    diagnostics: list[PowerIterationDiagnostic] = []
     if min_variance is None:
         # RANK CAP (2026-08-28 audit, F2). n centred rows span at most n−1
         # dimensions, so after n−1 deflations the residual is float32
@@ -588,16 +608,20 @@ def _deflate(count: int | None, centered: np.ndarray, *,
         if min_variance is not None and sum(explained) >= min(min_variance, 1.0):
             break
         try:
-            component = _first_component_of_centered(centered)
+            component, diagnostic = _first_component_of_centered_with_diagnostic(
+                centered)
         except SteeringVectorError:
             break
         comp = np.asarray(component, dtype=_F32)
         components.append(component)
+        diagnostics.append(diagnostic)
         projections = centered @ comp  # [n]
         captured = float(np.square(projections).sum(dtype=_F32))
         centered = (centered - np.outer(projections, comp)).astype(_F32)
         explained.append(captured / total_variance)
-    return PrincipalComponentsResult(components=components, explained_variance=explained)
+    return PrincipalComponentsResult(components=components,
+                                     explained_variance=explained,
+                                     diagnostics=diagnostics)
 
 
 def principal_components(rows: Rows, count: int) -> list[list[float]]:
@@ -684,14 +708,142 @@ def projecting_out(v: Vector, components: Rows) -> list[float]:
 #: ``SteeringVectorMath.degenerateStartRelativeThreshold``.
 DEGENERATE_START_RELATIVE_THRESHOLD = 1e-6
 
+#: Relative Rayleigh-quotient residual ‖Gw − λw‖/λ above which PC1 is reported
+#: as ill-determined (2026-08-28 audit, F5). Identical constant in Swift
+#: ``SteeringVectorMath.powerIterationResidualWarnThreshold``.
+#:
+#: CALIBRATION, measured on engineered clouds whose top two sample eigenvalues
+#: are separated by a controlled gap (the audit's own repro geometry):
+#:
+#: ===================  ==================  ==============================
+#: sample eigengap      relative residual   |cos| of PC1 with the TRUE PC1
+#: ===================  ==================  ==============================
+#: isotropic (typical)  ≤ 6e-6              1.000000
+#: 5.2 %                2.1e-6              1.000000
+#: 4.2 %                1.3e-5              1.000000
+#: 3.3 %                8.1e-5              0.999997
+#: 2.4 %                4.5e-4              0.999827
+#: 1.7 %                2.5e-3              0.988485
+#: 1.4 %                6.2e-3              0.872206
+#: 1.3 %                6.7e-3              0.665022
+#: ===================  ==================  ==============================
+#:
+#: The audit's reproduced failure (eigenvalue ratio 0.9945, |cos| = 0.148
+#: against the true SECOND eigenvector) sits at the bottom of that table; the
+#: audit's calibration that "at a 5% eigengap the iteration IS converged" sits
+#: at the top. 1e-4 is the order of magnitude between them: about fifty times
+#: above the worst healthy residual, about twenty-five times below the mildest
+#: genuinely-wrong one. It fires around a 3% gap, while PC1 is still accurate
+#: to 1e-5 — early on purpose, because the warning's job is to say the SPECTRUM
+#: is near-degenerate, not to wait until the answer is already wrong.
+#:
+#: Not a refusal: the result is deterministic and mirrored across engines, so a
+#: near-tied spectrum is a fact about the DATA that the artifact should record,
+#: not a malformed input to reject.
+POWER_ITERATION_RESIDUAL_WARN_THRESHOLD = 1e-4
+
+#: Iteration cap and convergence tolerance, named so the diagnostic can report
+#: what it was measured against. Twins of the Swift literals.
+POWER_ITERATION_MAX_ITERATIONS = 200
+POWER_ITERATION_DELTA_TOLERANCE = 1e-7
+
+
+@dataclass(frozen=True)
+class PowerIterationDiagnostic:
+    """Convergence health of one Gram power-iteration (2026-08-28 audit, F5).
+
+    Purely additive: it is computed AFTER the component is fixed and never
+    changes it, so every fixture that pins a component keeps passing.
+
+    - ``relative_residual`` — ‖Gw − λw‖/λ with λ = wᵀGw, the Rayleigh quotient.
+      Dimensionless, so it is comparable across data of any scale. This is the
+      number to read: an unconverged iteration on a near-degenerate spectrum
+      returns a WRONG unit vector deterministically and silently, and the
+      residual is what distinguishes it from a converged one (the explained
+      variance does not — a wrong direction in a near-tied 2-plane explains
+      almost exactly as much).
+    - ``iterations`` / ``converged`` — how many products the winning start used
+      and whether the max-abs-delta tolerance was met before the cap. Reported
+      for context, NOT thresholded: a healthy 5%-gap cloud routinely uses all
+      200 iterations without meeting a 1e-7 delta in float32 and is still
+      accurate to six figures, so "hit the cap" on its own is not a defect.
+    - ``ill_conditioned`` — ``relative_residual`` above
+      :data:`POWER_ITERATION_RESIDUAL_WARN_THRESHOLD`.
+    """
+
+    relative_residual: float
+    iterations: int
+    converged: bool
+    max_iterations: int = POWER_ITERATION_MAX_ITERATIONS
+    delta_tolerance: float = POWER_ITERATION_DELTA_TOLERANCE
+
+    @property
+    def ill_conditioned(self) -> bool:
+        return self.relative_residual > POWER_ITERATION_RESIDUAL_WARN_THRESHOLD
+
+    def to_dict(self) -> dict:
+        """The artifact stamp shape (twin: Swift ``PowerIterationDiagnostic``)."""
+        return {
+            "converged": self.converged,
+            "illConditioned": self.ill_conditioned,
+            "iterations": self.iterations,
+            "maxIterations": self.max_iterations,
+            "relativeResidual": self.relative_residual,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PowerIterationDiagnostic":
+        return cls(relative_residual=float(d["relativeResidual"]),
+                   iterations=int(d["iterations"]),
+                   converged=bool(d["converged"]),
+                   max_iterations=int(d.get("maxIterations",
+                                            POWER_ITERATION_MAX_ITERATIONS)))
+
+
+def power_iteration_warning(diagnostic: PowerIterationDiagnostic) -> str:
+    """The warning text, so both engines say the same thing (twin:
+    ``SteeringVectorMath.powerIterationWarning``)."""
+    return (
+        f"PC1 power iteration left a relative Rayleigh residual of "
+        f"{diagnostic.relative_residual:.3g} after {diagnostic.iterations} "
+        f"iterations (warn above "
+        f"{POWER_ITERATION_RESIDUAL_WARN_THRESHOLD:.3g}): "
+        "the top two eigenvalues of this cloud are nearly tied, so PC1 is "
+        "ill-determined and the returned direction may be an arbitrary vector "
+        "in the near-degenerate plane. The result is deterministic and "
+        "identical on both engines — it is the DATA that does not single out a "
+        "first component. Read the stamped diagnostic before interpreting this "
+        "direction.")
+
+
+def first_principal_component_with_diagnostic(
+        rows: Rows) -> tuple[list[float], PowerIterationDiagnostic]:
+    """:func:`first_principal_component` plus its convergence health."""
+    a = _arr(rows)
+    if a.shape[0] < 2 or a.shape[1] == 0:
+        raise SteeringVectorError("emptyInput")
+    center = a.mean(axis=0)
+    centered = (a - center).astype(_F32)
+    return _first_component_of_centered_with_diagnostic(centered)
+
 
 def _first_component_of_centered(centered: np.ndarray) -> list[float]:
-    """First unit eigenvector via the Gram-matrix power-iteration.
+    return _first_component_of_centered_with_diagnostic(centered)[0]
+
+
+def _first_component_of_centered_with_diagnostic(
+        centered: np.ndarray) -> tuple[list[float], PowerIterationDiagnostic]:
+    """First unit eigenvector via the Gram-matrix power-iteration, plus the
+    convergence diagnostic (2026-08-28 audit, F5).
 
     With n rows of dimension d (n ≪ d), power-iterate the n×n Gram matrix and
-    map the eigenvector back through the data. Deterministic — two fixed starts
-    (uniform, index-ramp), 200 iterations, 1e-7 convergence — exactly mirroring
-    the Swift implementation so LAT/PCA reproduce.
+    map the eigenvector back through the data. Deterministic — four fixed starts
+    (uniform, index-ramp, alternating ±, heaviest row), 200 iterations, 1e-7
+    convergence — exactly mirroring the Swift implementation so LAT/PCA
+    reproduce.
+
+    The COMPONENT is computed exactly as before; the diagnostic is one extra
+    Gram matvec afterwards and cannot move it.
     """
     centered = np.asarray(centered, dtype=_F32)
     n = centered.shape[0]
@@ -732,10 +884,14 @@ def _first_component_of_centered(centered: np.ndarray) -> list[float]:
     starts = [uniform, ramp, alternating, heaviest]
 
     weights: np.ndarray | None = None
+    used_iterations = 0
+    converged = False
     for start in starts:
         candidate = start.astype(_F32)
         diverged = False
-        for iteration in range(200):
+        used_iterations = 0
+        converged = False
+        for iteration in range(POWER_ITERATION_MAX_ITERATIONS):
             nxt = (gram @ candidate).astype(_F32)
             norm = _F32(l2_norm(nxt.tolist()))
             # Degenerate START detection, on the FIRST product only.
@@ -759,7 +915,9 @@ def _first_component_of_centered(centered: np.ndarray) -> list[float]:
             nxt = (nxt / norm).astype(_F32)
             delta = float(np.abs(nxt - candidate).max())
             candidate = nxt
-            if delta < 1e-7:
+            used_iterations = iteration + 1
+            if delta < POWER_ITERATION_DELTA_TOLERANCE:
+                converged = True
                 break
         if diverged:
             continue
@@ -772,4 +930,26 @@ def _first_component_of_centered(centered: np.ndarray) -> list[float]:
     norm = _F32(l2_norm(component.tolist()))
     if norm <= 0:
         raise SteeringVectorError("degenerateData")
-    return (component / norm).astype(_F32).tolist()
+
+    # --- convergence diagnostic (audit F5), strictly after the component ------
+    # One extra Gram matvec. λ = wᵀGw is the Rayleigh quotient and
+    # ‖Gw − λw‖/λ is how far w is from being an eigenvector of G, measured
+    # relative to the spectrum's own scale. A near-tied top pair leaves this
+    # residual orders of magnitude above a healthy cloud's (see the constant's
+    # calibration table) while every other stamp — the explained variance
+    # especially — looks perfectly normal.
+    product = (gram @ weights).astype(_F32)
+    eigenvalue = float(np.dot(weights, product))
+    if eigenvalue > 0:
+        residual = float(np.linalg.norm(
+            (product - _F32(eigenvalue) * weights).astype(_F32)))
+        relative_residual = residual / eigenvalue
+    else:
+        relative_residual = float("inf")
+    diagnostic = PowerIterationDiagnostic(
+        relative_residual=relative_residual, iterations=used_iterations,
+        converged=converged)
+    if diagnostic.ill_conditioned:
+        warnings.warn(power_iteration_warning(diagnostic), UserWarning,
+                      stacklevel=3)
+    return (component / norm).astype(_F32).tolist(), diagnostic
