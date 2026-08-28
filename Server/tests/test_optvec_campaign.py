@@ -242,6 +242,93 @@ def test_a_broken_base_config_refuses_at_plan_time(tmp_path):
     assert "anchorTrain" in str(exc.value)
 
 
+def _prior_artifact(tmp_path, *, layer, layer_count=41, name="prior"):
+    """A real OptVec-shaped prior on disk: nonzero ONLY at ``layer``, the
+    exact shape ``optvec_train._save_artifact`` writes."""
+    from steerlab_server.steering import vector_store
+    per_layer = [[0.0, 0.0, 0.0] for _ in range(layer_count)]
+    per_layer[layer] = [1.0, 2.0, 3.0]
+    vectors = vector_store.ConceptVectors(per_layer=per_layer)
+    sidecar = vector_store.SteeringVectorSidecar.make(
+        model_id="google/gemma-3-27b-it", concept="prior-concept",
+        stimulus_set_hash="cd" * 32, vectors=vectors)
+    vector_store.save(vectors, sidecar, str(tmp_path / "priors"), name)
+    return str(tmp_path / "priors" / name)
+
+
+def _s3_payload(tmp_path, prior_ref, layers=(30, 40)):
+    """A campaign whose S3 condition carries a FIXED prior list, crossed with
+    ``grid.layers`` — the shape that motivated the preflight."""
+    return _campaign_payload(tmp_path, grid={
+        "layers": list(layers),
+        "conditions": [
+            {"name": "S2", "overrides": {}},
+            {"name": "S3", "overrides": {"lambdaOrth": 0.5,
+                                         "priorVectorPaths": [prior_ref]}},
+        ],
+        "seeds": [0, 1],
+    })
+
+
+def test_a_layer_crossed_prior_refuses_at_plan_time(tmp_path):
+    """A prior trained at layer 30 is all zeros at layer 40 (OptVec artifacts
+    are nonzero only at their own layer), so the s3-L40 cells would refuse in
+    ``_load_prior_vectors`` — on the cluster, after queueing. When the bytes
+    are resolvable at the desk, plan() refuses instead, naming the cell."""
+    prior = _prior_artifact(tmp_path, layer=30)
+    with pytest.raises(CampaignConfigError) as exc:
+        optvec_campaign.plan(OptVecCampaignConfig.from_dict(
+            _s3_payload(tmp_path, prior)))
+    message = str(exc.value)
+    assert "s3-L40" in message and "all zeros at layer 40" in message
+
+    # The gate cannot over-refuse: at the prior's OWN layer the same
+    # campaign plans, and only the S3 cells carried the orthogonality arm.
+    cells = optvec_campaign.plan(OptVecCampaignConfig.from_dict(
+        _s3_payload(tmp_path, prior, layers=(30,))))
+    assert [c.cell_id for c in cells] == [
+        "s2-L30-s0", "s2-L30-s1", "s3-L30-s0", "s3-L30-s1"]
+
+    # A layer beyond the artifact entirely is the same desk-time refusal.
+    short = _prior_artifact(tmp_path, layer=30, layer_count=31, name="short")
+    with pytest.raises(CampaignConfigError) as exc:
+        optvec_campaign.plan(OptVecCampaignConfig.from_dict(
+            _s3_payload(tmp_path, short)))
+    assert "s3-L40" in str(exc.value) and "31 layers" in str(exc.value)
+
+
+def test_an_absent_prior_is_left_to_the_run_time_gate(tmp_path):
+    """Planning may happen on a machine that never holds the vector bytes
+    (the Mac authors, the cluster executes; bundles ship the vectors): a
+    reference that names nothing HERE must not refuse — the run-time loader
+    reads the authoritative bytes next to the job and decides there."""
+    missing = str(tmp_path / "priors" / "not-here")
+    cells = optvec_campaign.plan(OptVecCampaignConfig.from_dict(
+        _s3_payload(tmp_path, missing)))
+    assert len(cells) == 8
+    s3 = [cell for cell in cells if cell.condition == "s3"]
+    assert s3 and all(cell.config["priorVectorPaths"] == [missing]
+                      for cell in s3)
+
+
+def test_prior_preflight_loads_each_artifact_once(tmp_path, monkeypatch):
+    """One load per artifact, not per cell: the same reference crossed with
+    every (layer, seed) is read off disk exactly once."""
+    from steerlab_server.steering import vector_store
+    prior = _prior_artifact(tmp_path, layer=30)
+    calls = []
+    real_load = vector_store.load
+
+    def counting_load(directory, name):
+        calls.append((directory, name))
+        return real_load(directory, name)
+
+    monkeypatch.setattr(vector_store, "load", counting_load)
+    optvec_campaign.plan(OptVecCampaignConfig.from_dict(
+        _s3_payload(tmp_path, prior, layers=(30,))))
+    assert len(calls) == 1
+
+
 def test_seed_declaration_and_grid_refusals(tmp_path):
     both = _campaign_payload(tmp_path)
     both["grid"]["seedCount"] = 8

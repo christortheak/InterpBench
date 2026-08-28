@@ -582,6 +582,8 @@ def plan(config: OptVecCampaignConfig) -> list[Cell]:
     payload is that object's own ``to_dict``, so the bytes are canonical
     (every key explicit) rather than however the author happened to write
     them, and the hash identifies the CONFIGURATION, not the authoring style.
+    S3 priors that are resolvable on this machine are preflighted per cell
+    layer as well (:func:`_preflight_prior_rows`).
     """
     from .optvec_train import OptVecConfigError, OptVecTrainConfig  # lazy: torch
 
@@ -607,7 +609,60 @@ def plan(config: OptVecCampaignConfig) -> list[Cell]:
             seed=point.seed, config=canonical,
             config_hash=_hash_payload(canonical),
             item=point.item, item_slug=point.item_slug))
+    _preflight_prior_rows(cells)
     return cells
+
+
+def _preflight_prior_rows(cells: list[Cell]) -> None:
+    """Desk-time twin of the run-time zero-row gate in
+    ``optvec_train._load_prior_vectors``.
+
+    A campaign that crosses a fixed ``priorVectorPaths`` list with
+    ``grid.layers`` plans cells whose prior is all zeros at the cell's layer
+    (an OptVec artifact is nonzero only at its own optimization layer), and
+    the run-time loader refuses those — but only after the cell has queued
+    and started on the cluster. When the artifact bytes are HERE, that is
+    answerable at planning time, so refuse before anything is submitted.
+
+    When they are not here, stay silent: planning may happen on a machine
+    that never holds the vectors (the Mac authors, the cluster executes;
+    bundles ship them), so an artifact that cannot be resolved and loaded is
+    NOT a desk-time refusal. Only a successful load may refuse — any load
+    problem is left to the run-time gate, which reads the authoritative
+    bytes next to the job.
+    """
+    from ..steering import vector_store  # lazy, like optvec_train above
+
+    loaded: dict[str, Any] = {}
+    for cell in cells:
+        if not cell.config.get("lambdaOrth", 0) > 0:
+            continue
+        for reference in cell.config.get("priorVectorPaths", ()):
+            if reference not in loaded:
+                resolved = paths.resolve_artifact(reference)
+                try:
+                    vectors, _sidecar = vector_store.load(
+                        os.path.dirname(resolved), os.path.basename(resolved))
+                except Exception:
+                    vectors = None   # absent or unreadable: run time decides
+                loaded[reference] = vectors
+            vectors = loaded[reference]
+            if vectors is None:
+                continue
+            if cell.layer >= vectors.layer_count:
+                raise CampaignConfigError(
+                    f"cell {cell.cell_id} would not run: prior vector "
+                    f"'{reference}' has {vectors.layer_count} layers; the "
+                    f"cell's layer is {cell.layer}")
+            if not any(vectors.per_layer[cell.layer]):
+                raise CampaignConfigError(
+                    f"cell {cell.cell_id} would not run: prior vector "
+                    f"'{reference}' is all zeros at layer {cell.layer} — an "
+                    "OptVec artifact is nonzero only at its own optimization "
+                    "layer, so this prior would contribute exactly zero "
+                    "orthogonality pressure while lambdaOrth stamps the cell "
+                    "as S3. Use a prior trained at this cell's layer, or "
+                    "drop it from that condition's priorVectorPaths")
 
 
 # ------------------------------------------------------------- materialize
