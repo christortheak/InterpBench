@@ -377,6 +377,45 @@ import Testing
         }
     }
 
+    /// The window the occupancy preflight cannot cover (review round 9,
+    /// finding 7): it runs before the tensors are negated and both
+    /// temporaries are written, so a destination can appear before the
+    /// promotion reaches it.
+    ///
+    /// The server's promotion was `os.replace`, which destroyed what arrived
+    /// in that window; this engine's is `FileManager.moveItem`, which cannot
+    /// overwrite — verified here rather than assumed, because the whole
+    /// no-replace rule rests on it. What it lacked was the SENTENCE: a raw
+    /// Cocoa error for a collision that gets a typed refusal one moment
+    /// earlier. Both engines now answer the same event the same way.
+    @Test func theStagedPromotionCannotOverwriteAndSaysSoInTheHouseWords() throws {
+        try withTempDirectory { temp in
+            try FileManager.default.createDirectory(
+                at: temp, withIntermediateDirectories: true)
+            let staged = temp.appending(component: "staged")
+            let destination = temp.appending(component: "landed")
+            try Data("mine".utf8).write(to: staged)
+            try PoleMirror.commitNoReplace(from: staged, to: destination)
+            #expect(
+                try String(contentsOf: destination, encoding: .utf8) == "mine")
+            // A successful promotion consumes the staged name.
+            #expect(!FileManager.default.fileExists(atPath: staged.path))
+
+            try Data("second".utf8).write(to: staged)
+            let error = try refusal {
+                try PoleMirror.commitNoReplace(from: staged, to: destination)
+            }
+            #expect(error.kind == .destinationOccupied)
+            #expect(error.reason.contains("never replaces an artifact"))
+            #expect(error.reason.contains(destination.path))
+            // The bytes that were already there are untouched, and the staged
+            // file survives for the caller's cleanup.
+            #expect(
+                try String(contentsOf: destination, encoding: .utf8) == "mine")
+            #expect(FileManager.default.fileExists(atPath: staged.path))
+        }
+    }
+
     @Test func anOutputNameMustBeAFileNameComponent() throws {
         try withTempDirectory { temp in
             let source = try Self.writeArtifact(into: temp.appending(component: "src"))

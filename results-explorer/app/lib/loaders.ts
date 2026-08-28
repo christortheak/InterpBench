@@ -198,9 +198,15 @@ export const loadSweepRows = async (run: WorkspaceRun): Promise<SweepRow[]> => {
       concept: at(row, "concept"), layer, alpha, markerDensity, distinct2,
       batteryAccuracy: strictNumber(at(row, "batteryaccuracy")),
       objective: strictNumber(at(row, "objective")),
-      distinct2Ratio: strictNumber(at(row, "distinct2Ratio")),
+      // The header row is lowercased above, so the LOOKUPS are lowercase —
+      // the engines write these two columns camelCase (`distinct2Ratio`,
+      // `lengthInflated`), and asking for that spelling here found nothing:
+      // `indexOf` returned -1, `row[-1]` was undefined, and every sweep row
+      // in the browser reported a null ratio and an un-inflated length while
+      // the CSV beside it said otherwise (review round 9, finding 3).
+      distinct2Ratio: strictNumber(at(row, "distinct2ratio")),
       words: strictNumber(at(row, "words")),
-      lengthInflated: String(at(row, "lengthInflated") ?? "").toLowerCase() === "true",
+      lengthInflated: String(at(row, "lengthinflated") ?? "").toLowerCase() === "true",
     }];
   });
 };

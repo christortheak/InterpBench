@@ -42,6 +42,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import struct
 import uuid
 from dataclasses import dataclass
@@ -161,6 +162,60 @@ def _remove_quietly(path: str) -> None:
         os.remove(path)
     except OSError:
         pass
+
+
+def _commit_no_replace(staged: str, dest: str) -> None:
+    """Promote a staged file onto ``dest``, incapable of overwriting it.
+
+    ``os.link`` + ``os.remove``, not ``os.replace``. Replace clobbers, and the
+    ``destinationOccupied`` preflight above runs BEFORE the tensors are
+    negated and both temporaries are written — so between the check and the
+    promotion there is a window in which a second mirror of the same concept,
+    or the same call run twice, can create the file. ``link`` raises
+    ``FileExistsError`` in exactly that case, which turns the race into the
+    refusal the preflight already gives instead of a silent overwrite of
+    somebody's artifact (review round 9, finding 7; the same class as the
+    runner's round-5 commit fix). It also commits bytes already on the disk
+    rather than copying them a second time.
+
+    The O_EXCL reservation is the fallback for a filesystem without hardlinks,
+    where it is slower and just as unable to overwrite anything — with the
+    same stated residual as its twins: on that path the destination NAME is
+    visible, empty then partial, for as long as the copy takes. Nothing can
+    overwrite it, and a failed copy removes it again.
+
+    The TWIN of ``experiment.bundles._commit_no_replace`` and
+    ``client.runner._commit_no_replace`` — same primitive, same fallback, same
+    reasoning — mirrored a third time rather than shared, for the reason those
+    two are mirrored from each other: this module reaches nothing but the
+    standard library, and a change to any of them belongs in all of them.
+
+    Raises ``FileExistsError`` when ``dest`` exists; leaves ``staged`` in
+    place for the caller's cleanup when it does.
+    """
+    try:
+        os.link(staged, dest)
+    except FileExistsError:
+        raise
+    except OSError:
+        handle_fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        landed = False
+        try:
+            try:
+                landing = os.fdopen(handle_fd, "wb")
+            except BaseException:
+                os.close(handle_fd)
+                raise
+            with landing, open(staged, "rb") as source:
+                shutil.copyfileobj(source, landing)
+            landed = True
+        finally:
+            if not landed:
+                # A copy that died half way must not leave a short file
+                # wearing the destination's name — the reservation comes
+                # back out.
+                _remove_quietly(dest)
+    os.remove(staged)
 
 
 def _iso8601(moment: datetime) -> str:
@@ -426,14 +481,22 @@ def mirror_poles(vector_dir: str, name: str, *, concept: str,
     sidecar_text = json.dumps(sidecar, sort_keys=True, indent=2)
 
     # An artifact is a PAIR, so it is written as one. Both files land under
-    # temporary names in the destination directory and are promoted by rename
-    # only once both are on disk: a failure between the two writes — a full
-    # disk, a permission change, an interrupt — used to strand a tensor with no
+    # temporary names in the destination directory and are promoted only once
+    # both are on disk: a failure between the two writes — a full disk, a
+    # permission change, an interrupt — used to strand a tensor with no
     # sidecar, which the catalog reads as an unreadable artifact and which the
     # `destinationOccupied` rule then refuses to replace. The cleanup removes
     # exactly the two temporary names, on EVERY failure path (bare `except`,
     # re-raised): a cleanup that only ran for typed refusals would miss the
     # very failures this exists for. Swift twin: `PoleMirror.mirrorPoles`.
+    #
+    # The promotion is `_commit_no_replace`, not `os.replace` (review round 9,
+    # finding 7). The occupancy check above is a PREFLIGHT: it runs before the
+    # tensors are negated and both temporaries are written, and `os.replace`
+    # would have silently destroyed anything that arrived in that window — in
+    # the name of a rule that had just refused exactly that. A destination
+    # that appears now is the same `destinationOccupied` refusal it would have
+    # been a moment earlier, and everything THIS call created comes back out.
     token = uuid.uuid4().hex
     vectors_temp = f"{vectors_path}.{token}.partial"
     sidecar_temp = f"{sidecar_path}.{token}.partial"
@@ -442,12 +505,25 @@ def mirror_poles(vector_dir: str, name: str, *, concept: str,
             handle.write(mirrored_bytes)
         with open(sidecar_temp, "w", encoding="utf-8") as handle:
             handle.write(sidecar_text)
-        os.replace(vectors_temp, vectors_path)
         try:
-            os.replace(sidecar_temp, sidecar_path)
+            _commit_no_replace(vectors_temp, vectors_path)
+        except FileExistsError as exc:
+            raise PoleMirrorError(
+                "destinationOccupied",
+                destination_occupied_reason(vectors_path),
+                destination_occupied_repair()) from exc
+        try:
+            _commit_no_replace(sidecar_temp, sidecar_path)
+        except FileExistsError as exc:
+            # The tensor is already promoted; take it back out so a losing
+            # writer leaves nothing of its own behind. Removing a name THIS
+            # call created — the sidecar that beat us is untouched.
+            _remove_quietly(vectors_path)
+            raise PoleMirrorError(
+                "destinationOccupied",
+                destination_occupied_reason(sidecar_path),
+                destination_occupied_repair()) from exc
         except BaseException:
-            # The tensor is already promoted; take it back out so a failed
-            # mint never leaves half an artifact under the final names.
             _remove_quietly(vectors_path)
             raise
     except BaseException:

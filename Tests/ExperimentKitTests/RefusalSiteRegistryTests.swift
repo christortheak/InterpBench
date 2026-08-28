@@ -880,20 +880,24 @@ import Testing
 
             // `--control-apply-to winner` NARROWS explicitly: the width goes
             // with the targeting it described, because a winner-scoped
-            // control covers exactly one cell.
-            #expect(
-                await invoke(
-                    "experiment",
-                    [
-                        "set-sweep-selection", "ctl", "--objective",
-                        "markerDensity", "--control-apply-to", "winner",
-                    ]
-                ).exitCode == 0)
+            // control covers exactly one cell. It goes LOUDLY — the echo
+            // names the preregistered width this scope change discarded
+            // (review round 9, finding 2).
+            let narrowed = await invoke(
+                "experiment",
+                [
+                    "set-sweep-selection", "ctl", "--objective",
+                    "markerDensity", "--control-apply-to", "winner",
+                ])
+            #expect(narrowed.exitCode == 0)
             block = try #require(
                 try ExperimentStore.load(name: "ctl").sweep?.selection)
             #expect(block.controls?.matchedNormRandomMargin == 0.06)
             #expect(block.controls?.applyTo == nil)
             #expect(block.controls?.topK == nil)
+            #expect(
+                narrowed.envelope.message.contains(
+                    "narrowed the control from topK 5 to the winning cell"))
 
             // With no control declared at all, a targeting flag still refuses:
             // there is nothing to inherit a margin from.
@@ -913,6 +917,162 @@ import Testing
                 ])
             #expect(orphan.exitCode != 0)
             #expect(orphan.envelope.message.contains("--control-margin"))
+        }
+    }
+
+    /// Review round 9, finding 2: `--control-top-k K` on a WINNER-scoped
+    /// control was accepted, merged into a scope of `winner`, and then thrown
+    /// away by the constructor — a flag that exited 0 having done nothing to
+    /// a preregistered number. A declared width is a declared scope, so it
+    /// now selects topK and the echo says which reading it took; the
+    /// contradictory pairing (`winner` AND a width, both typed) is refused
+    /// rather than half-obeyed.
+    @Test func aWidthOnAWinnerScopedControlDeclaresTopKAndSaysSo() async throws {
+        try await withTempRoot { _ in
+            await invoke(
+                "experiment",
+                ["create", "width", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            await invoke("experiment", ["attach", "width", "french"])
+            // A winner-scoped control: margin only, no targeting.
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "width", "--objective",
+                        "markerDensity", "--control-margin", "0.05",
+                    ]
+                ).exitCode == 0)
+            var block = try #require(
+                try ExperimentStore.load(name: "width").sweep?.selection)
+            #expect(block.controls?.applyTo == nil)
+
+            // THE regression: the width lands, and it lands as topK scope.
+            let widened = await invoke(
+                "experiment",
+                [
+                    "set-sweep-selection", "width", "--objective",
+                    "markerDensity", "--control-top-k", "3",
+                ])
+            #expect(widened.exitCode == 0)
+            block = try #require(
+                try ExperimentStore.load(name: "width").sweep?.selection)
+            #expect(block.controls?.topK == 3)
+            #expect(block.controls?.applyTo == "topK")
+            #expect(block.controls?.matchedNormRandomMargin == 0.05)
+            // The echo tells the whole truth: the scope moved, and the caller
+            // did not type the scope.
+            #expect(
+                widened.envelope.message.contains(
+                    "widened the control to topK 3 — a declared width is a "
+                        + "declared scope, and the winner has none"))
+            guard case .string(let scope)? = widened.envelope
+                .result?["controlApplyTo"]
+            else {
+                Issue.record("no controlApplyTo in the result")
+                return
+            }
+            #expect(scope == "topK")
+
+            // The other direction, typed at once: two different controls, and
+            // guessing which was meant is how the width became a no-op.
+            let contradiction = await invoke(
+                "experiment",
+                [
+                    "set-sweep-selection", "width", "--objective",
+                    "markerDensity", "--control-apply-to", "winner",
+                    "--control-top-k", "4",
+                ])
+            #expect(contradiction.exitCode != 0)
+            #expect(
+                contradiction.envelope.message.contains(
+                    "--control-apply-to winner controls the winning cell "
+                        + "alone, so it carries no width"))
+            #expect(
+                contradiction.envelope.message.contains(
+                    "--control-top-k 4 declares one"))
+            // Refused means UNCHANGED: the declaration on disk still says
+            // what the previous call declared.
+            block = try #require(
+                try ExperimentStore.load(name: "width").sweep?.selection)
+            #expect(block.controls?.applyTo == "topK")
+            #expect(block.controls?.topK == 3)
+        }
+    }
+
+    /// Review round 9, finding 5: re-declaring the SAME choice-prompt file by
+    /// a different spelling dropped its pin. The comparison ran on raw
+    /// strings while the save path normalizes to workspace-relative, so an
+    /// absolute path read as a different file — the hash freeze checks
+    /// vanished, and the echo claimed a replacement that never happened.
+    @Test func reDeclaringOneChoiceFileByItsAbsolutePathKeepsThePin()
+        async throws
+    {
+        try await withTempRoot { root in
+            await invoke(
+                "experiment",
+                ["create", "spelling", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            await invoke("experiment", ["attach", "spelling", "french"])
+            let prompts = root.appending(components: "prompts", "choice.jsonl")
+            try FileManager.default.createDirectory(
+                at: prompts.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            try #"""
+                {"id": "r1", "prompt": "pick", "options": ["a", "b"], "target": "a"}
+                {"id": "r2", "prompt": "pick again", "options": ["a", "b"], "target": "b"}
+                """#.write(to: prompts, atomically: true, encoding: .utf8)
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "spelling", "--objective",
+                        "logprobShift", "--choice-prompts",
+                        "prompts/choice.jsonl",
+                    ]
+                ).exitCode == 0)
+            // Freeze pins from the bytes; here the declaration itself carries
+            // the hash forward, so plant it the way a freeze would.
+            var pinned = try ExperimentStore.load(name: "spelling")
+            let hash = ExperimentStore.sha256Hex(try Data(contentsOf: prompts))
+            pinned.sweep?.selection?.objective?.choicePromptsHash = hash
+            try ExperimentStore.save(pinned)
+
+            // THE regression: the same file, named absolutely.
+            let redeclared = await invoke(
+                "experiment",
+                [
+                    "set-sweep-selection", "spelling", "--objective",
+                    "logprobShift", "--choice-prompts", prompts.path,
+                ])
+            #expect(redeclared.exitCode == 0)
+            var block = try #require(
+                try ExperimentStore.load(name: "spelling").sweep?.selection)
+            #expect(block.objective?.choicePromptsFile == "prompts/choice.jsonl")
+            #expect(block.objective?.choicePromptsHash == hash)
+            #expect(redeclared.envelope.message.contains("the choice-prompt pin"))
+            #expect(
+                !redeclared.envelope.message.contains(
+                    "replaced the declared choice-prompt file"))
+
+            // A genuinely different file still drops the pin, loudly.
+            let other = root.appending(components: "prompts", "other.jsonl")
+            try #"""
+                {"id": "r1", "prompt": "pick", "options": ["a", "b"], "target": "b"}
+                {"id": "r2", "prompt": "pick again", "options": ["a", "b"], "target": "a"}
+                """#.write(to: other, atomically: true, encoding: .utf8)
+            let replaced = await invoke(
+                "experiment",
+                [
+                    "set-sweep-selection", "spelling", "--objective",
+                    "logprobShift", "--choice-prompts", other.path,
+                ])
+            #expect(replaced.exitCode == 0)
+            block = try #require(
+                try ExperimentStore.load(name: "spelling").sweep?.selection)
+            #expect(block.objective?.choicePromptsFile == "prompts/other.jsonl")
+            #expect(block.objective?.choicePromptsHash == nil)
+            #expect(
+                replaced.envelope.message.contains(
+                    "replaced the declared choice-prompt file"))
         }
     }
 

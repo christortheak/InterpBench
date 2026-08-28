@@ -5794,6 +5794,67 @@ public enum SweepSpecForm {
         return normalized
     }
 
+    /// The coherence rule as an EDITOR holds it: the ratio that decides the
+    /// form, and the one absolute number the editor's single field edits.
+    public struct EditorCoherenceForm: Equatable, Sendable {
+        /// Non-nil ⇒ the baseline-relative form. Carried through the editor
+        /// untouched so a save re-declares the form that was loaded.
+        public var ratio: Double?
+        /// The backstop under the relative rule, the floor under the legacy
+        /// one — whichever absolute number this criterion's rule uses.
+        public var floor: Double
+
+        public init(ratio: Double?, floor: Double) {
+            self.ratio = ratio
+            self.floor = floor
+        }
+    }
+
+    /// Read a declared criterion into the editor's two coherence values.
+    ///
+    /// The presence rule is the whole point (`SweepSelectionRule.resolve`,
+    /// both engines): EITHER relative field selects the relative form. A
+    /// criterion carrying only `coherenceAbsoluteBackstop` is therefore a
+    /// RELATIVE criterion whose ratio was left to the default — and the
+    /// editor used to load it with a nil ratio, which made the field say
+    /// "floor" and made a save write `coherenceFloor`, converting a declared
+    /// relative rule into the legacy absolute one that no baseline can move
+    /// (review round 9, finding 4). Resolving the default ratio HERE means a
+    /// load-then-save round-trips the declared FORM, and the number the
+    /// editor shows is the number the sweep would gate on either way.
+    public static func editorCoherenceForm(
+        _ constraints: ExperimentManifest.SweepSelection.Constraints?
+    ) -> EditorCoherenceForm {
+        let ratio = constraints?.coherenceRatioToBaseline
+        let backstop = constraints?.coherenceAbsoluteBackstop
+        guard ratio != nil || backstop != nil else {
+            return EditorCoherenceForm(
+                ratio: nil,
+                floor: constraints?.coherenceFloor
+                    ?? SweepSelectionRule.defaultCoherenceFloor)
+        }
+        return EditorCoherenceForm(
+            ratio: ratio ?? SweepSelectionRule.defaultCoherenceRatio,
+            floor: backstop ?? SweepSelectionRule.defaultCoherenceBackstop)
+    }
+
+    /// The editor's two coherence values back into a constraints block — the
+    /// exact inverse of `editorCoherenceForm`, so the pair is a round trip
+    /// and not two rules written twice.
+    public static func editorCoherenceConstraints(
+        capabilityTolerance: Double?, form: EditorCoherenceForm
+    ) -> ExperimentManifest.SweepSelection.Constraints {
+        guard let ratio = form.ratio else {
+            return .init(
+                capabilityTolerance: capabilityTolerance,
+                coherenceFloor: form.floor)
+        }
+        return .init(
+            capabilityTolerance: capabilityTolerance,
+            coherenceRatioToBaseline: ratio,
+            coherenceAbsoluteBackstop: form.floor)
+    }
+
     public enum SelectionValidation: Equatable, Sendable {
         case valid
         /// Legal manifest data whose instrument has not landed on this

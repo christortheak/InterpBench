@@ -622,4 +622,86 @@ extension ExperimentStoreTests {
             #expect(try ExperimentStore.load(name: "cond").conditions.isEmpty)
         }
     }
+
+    /// Review round 9, finding 4: the Mac editor converted a backstop-only
+    /// criterion into a legacy absolute floor.
+    ///
+    /// The presence rule says EITHER relative field selects the relative
+    /// form, so a criterion carrying only `coherenceAbsoluteBackstop` is a
+    /// relative criterion whose ratio was left to the default. The editor
+    /// loaded it with a nil ratio, and its save then wrote `coherenceFloor` —
+    /// a rule the baseline can no longer move, arrived at by opening a sheet
+    /// and pressing Save without touching a field.
+    ///
+    /// Tested at the seam the editor's initializer and its save both call,
+    /// then all the way through the panel and the store: the FORM has to
+    /// survive a load-then-save round trip.
+    @Test @MainActor func aBackstopOnlyCriterionSurvivesALoadThenSave() throws {
+        try withOptimizationsWorkspace { _ in
+            _ = try ExperimentStore.create(
+                name: "form-rt", description: "", modelID: "test/model")
+            var spec = ExperimentManifest.SweepSpec(
+                layerFractions: [0.4, 0.6], alphas: [0.2, 0.5],
+                devPromptsFile: "prompts/dev/dev-prompts.jsonl",
+                batteryFile: "prompts/batteries/basic.jsonl", maxTokens: 64)
+            // The declaration under test: a backstop, no ratio.
+            spec.selection = .init(
+                objective: .init(metric: "markerDensity"),
+                constraints: .init(
+                    capabilityTolerance: 0.2, coherenceAbsoluteBackstop: 0.55))
+            let panel = ExperimentPanel()
+            #expect(panel.setSweepSpec(spec, for: "form-rt"))
+
+            // The editor's READ: the resolved default ratio, and the backstop
+            // as the one absolute number its field edits.
+            let declared = try #require(
+                try ExperimentStore.load(name: "form-rt").sweep?.selection?
+                    .constraints)
+            let form = SweepSpecForm.editorCoherenceForm(declared)
+            #expect(form.ratio == SweepSelectionRule.defaultCoherenceRatio)
+            #expect(form.floor == 0.55)
+
+            // The editor's SAVE, with nothing touched.
+            var resaved = spec
+            resaved.selection?.constraints =
+                SweepSpecForm.editorCoherenceConstraints(
+                    capabilityTolerance: 0.2, form: form)
+            #expect(panel.setSweepSpec(resaved, for: "form-rt"))
+            let after = try #require(
+                try ExperimentStore.load(name: "form-rt").sweep?.selection?
+                    .constraints)
+            // THE regression: still relative, still gating against the
+            // baseline, and no legacy floor was minted.
+            #expect(after.coherenceRatioToBaseline == 0.85)
+            #expect(after.coherenceAbsoluteBackstop == 0.55)
+            #expect(after.coherenceFloor == nil)
+            // …and the resolver reads the same rule out of both.
+            #expect(
+                try SweepSelectionRule.resolve(
+                    ExperimentManifest.SweepSelection(constraints: after))
+                    .isBaselineRelativeCoherence)
+
+            // The legacy form is equally untouched: a criterion that declared
+            // an absolute floor round-trips as one.
+            var legacy = spec
+            legacy.selection?.constraints = .init(
+                capabilityTolerance: 0.2, coherenceFloor: 0.5)
+            #expect(panel.setSweepSpec(legacy, for: "form-rt"))
+            let legacyForm = SweepSpecForm.editorCoherenceForm(
+                try ExperimentStore.load(name: "form-rt").sweep?.selection?
+                    .constraints)
+            #expect(legacyForm.ratio == nil)
+            #expect(legacyForm.floor == 0.5)
+            legacy.selection?.constraints =
+                SweepSpecForm.editorCoherenceConstraints(
+                    capabilityTolerance: 0.2, form: legacyForm)
+            #expect(panel.setSweepSpec(legacy, for: "form-rt"))
+            let legacyAfter = try #require(
+                try ExperimentStore.load(name: "form-rt").sweep?.selection?
+                    .constraints)
+            #expect(legacyAfter.coherenceFloor == 0.5)
+            #expect(legacyAfter.coherenceRatioToBaseline == nil)
+            #expect(legacyAfter.coherenceAbsoluteBackstop == nil)
+        }
+    }
 }

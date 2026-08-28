@@ -6353,6 +6353,74 @@ public enum ExperimentTasks {
         var revision: String? = nil
     }
 
+    /// WHICH loaded weights a local judge judges through: the model id AND
+    /// the revision pinned beside it — never the id alone.
+    ///
+    /// The id alone was the key of the per-run judge cache, and a panel is
+    /// allowed to name the same model twice at two revisions (a stability
+    /// check across checkpoints is exactly that panel). The second judge then
+    /// found the FIRST judge's container under its model id, judged every
+    /// pair with revision A's weights, and the judgment rows stamped
+    /// `judgeRevision: B` — the evidence naming bytes that never ran. Silent
+    /// wrong-model execution with a provenance stamp on top, which is the
+    /// worst shape a bug in this codebase can take (review round 9,
+    /// finding 1).
+    ///
+    /// A nil revision is its OWN key, never a wildcard that matches a pinned
+    /// one: an unpinned judge loads through `SteeredContainerLoader.load`'s
+    /// own resolution (whatever `refs/main` points at in this cache) and
+    /// stamps nil, so it is a different declaration from a judge that named
+    /// that same commit — and the two get different containers, which is the
+    /// only reading under which the stamp and the weights agree.
+    ///
+    /// Python needs no twin of this type: `_local_judge_generation` builds
+    /// one `held` slot per judge closure, so a revision can never leak
+    /// sideways there.
+    struct LoadedModelKey: Hashable, Sendable {
+        let model: String
+        let revision: String?
+
+        init(model: String, revision: String?) {
+            self.model = model
+            self.revision = revision
+        }
+
+        init(_ judge: ResolvedJudge) {
+            self.init(model: judge.model, revision: judge.revision)
+        }
+    }
+
+    /// One loaded container per DISTINCT (model, revision) a local panel
+    /// names — the shared core of the paired-judging and response-coding
+    /// loops, which held two copies of this cache and the same hole twice.
+    ///
+    /// Generic over what a load returns so a test can count loads and
+    /// inspect the mapping without weights on the machine: the study path
+    /// instantiates it with `ModelContainer`, `JudgeContainerCacheTests`
+    /// with a marker string.
+    static func loadLocalJudgeContainers<Container>(
+        for judges: [ResolvedJudge],
+        load: (ResolvedJudge) async throws -> Container
+    ) async rethrows -> [LoadedModelKey: Container] {
+        var containers: [LoadedModelKey: Container] = [:]
+        for judge in judges where judge.kind == "local" {
+            let key = LoadedModelKey(judge)
+            if containers[key] == nil {
+                containers[key] = try await load(judge)
+            }
+        }
+        return containers
+    }
+
+    /// The load line, naming the revision when one is pinned — a log that
+    /// said only the model id could not distinguish the two loads the key
+    /// above now keeps apart.
+    static func localJudgeLoadLogLine(_ judge: ResolvedJudge) -> String {
+        let pin = (judge.revision?.trimmingCharacters(in: .whitespacesAndNewlines))
+            .flatMap { $0.isEmpty ? nil : " at revision \($0.prefix(12))…" }
+        return "loading local judge model \(judge.model)\(pin ?? "")"
+    }
+
     /// The judge panel an evaluation runs: `manifest.judges` when pinned
     /// (>=2 enforced at freeze), else a single legacy judge synthesized from
     /// the evaluation spec's judgeModel so pre-panel studies keep working.
@@ -6850,41 +6918,38 @@ public enum ExperimentTasks {
         // ran; a load failure for a genuinely-declared different model is
         // wrapped in plain language (never the raw hub/network dump) with
         // the underlying error kept in the run log.
-        var localContainers: [String: ModelContainer] = [:]
+        var localContainers: [LoadedModelKey: ModelContainer] = [:]
         if judgeOverrideForTesting == nil {
-            for judge in judges where judge.kind == "local" {
-                if localContainers[judge.model] == nil {
-                    // The guard asks about the EXACT revision the next line
-                    // loads (review round 8, finding 3) — a cache holding
-                    // revision A used to satisfy a judge pinned to B, and the
-                    // load then fetched B over the network, which is the one
-                    // thing this guard exists to prevent.
-                    guard
-                        SteeredContainerLoader.isCached(
-                            modelID: judge.model, revision: judge.revision)
-                    else {
-                        throw ExperimentError(
-                            reason: localJudgeNotInstalledMessage(
-                                judgeName: judge.name, model: judge.model,
-                                revision: judge.revision))
-                    }
-                    print("loading local judge model \(judge.model)")
-                    do {
-                        // The judge's own pinned revision wins
-                        // (JudgeRef.revision, 2026-07-23); a study-model
-                        // judge already carries the study pin from
-                        // resolution.
-                        localContainers[judge.model] =
-                            try await SteeredContainerLoader.load(
-                                modelID: judge.model,
-                                revision: judge.revision)
-                    } catch {
-                        guard judge.model != manifest.modelID else { throw error }
-                        print("judge model load failed: \(error)")
-                        throw ExperimentError(
-                            reason: localJudgeLoadFailureMessage(
-                                judgeName: judge.name, model: judge.model))
-                    }
+            localContainers = try await loadLocalJudgeContainers(for: judges) {
+                judge in
+                // The guard asks about the EXACT revision the next line
+                // loads (review round 8, finding 3) — a cache holding
+                // revision A used to satisfy a judge pinned to B, and the
+                // load then fetched B over the network, which is the one
+                // thing this guard exists to prevent.
+                guard
+                    SteeredContainerLoader.isCached(
+                        modelID: judge.model, revision: judge.revision)
+                else {
+                    throw ExperimentError(
+                        reason: localJudgeNotInstalledMessage(
+                            judgeName: judge.name, model: judge.model,
+                            revision: judge.revision))
+                }
+                print(localJudgeLoadLogLine(judge))
+                do {
+                    // The judge's own pinned revision wins
+                    // (JudgeRef.revision, 2026-07-23); a study-model
+                    // judge already carries the study pin from
+                    // resolution.
+                    return try await SteeredContainerLoader.load(
+                        modelID: judge.model, revision: judge.revision)
+                } catch {
+                    guard judge.model != manifest.modelID else { throw error }
+                    print("judge model load failed: \(error)")
+                    throw ExperimentError(
+                        reason: localJudgeLoadFailureMessage(
+                            judgeName: judge.name, model: judge.model))
                 }
             }
         }
@@ -6945,7 +7010,9 @@ public enum ExperimentTasks {
                     if let fake = judgeOverrideForTesting {
                         try await fake(
                             judge.name, generation.prompt, responseA, responseB)
-                    } else if let localJudgeContainer = localContainers[judge.model] {
+                    } else if let localJudgeContainer =
+                        localContainers[LoadedModelKey(judge)]
+                    {
                         try await LocalPairedJudge.judge(
                             container: localJudgeContainer,
                             modelID: judge.model,
@@ -7421,35 +7488,33 @@ public enum ExperimentTasks {
         // Local judge models load once each — same rules as the paired
         // loop (pinned revision wins; a study-model judge loads the
         // study's exact weights; load failures wrap in plain language).
-        var localContainers: [String: ModelContainer] = [:]
+        var localContainers: [LoadedModelKey: ModelContainer] = [:]
         if codingOverrideForTesting == nil {
-            for judge in judges where judge.kind == "local" {
-                if localContainers[judge.model] == nil {
-                    // Same exact-revision guard as the paired loop above.
-                    guard
-                        SteeredContainerLoader.isCached(
-                            modelID: judge.model, revision: judge.revision)
-                    else {
-                        throw ExperimentError(
-                            reason: localJudgeNotInstalledMessage(
-                                judgeName: judge.name, model: judge.model,
-                                revision: judge.revision))
+            localContainers = try await loadLocalJudgeContainers(for: judges) {
+                judge in
+                // Same exact-revision guard as the paired loop above, and the
+                // same (model, revision) cache identity.
+                guard
+                    SteeredContainerLoader.isCached(
+                        modelID: judge.model, revision: judge.revision)
+                else {
+                    throw ExperimentError(
+                        reason: localJudgeNotInstalledMessage(
+                            judgeName: judge.name, model: judge.model,
+                            revision: judge.revision))
+                }
+                print(localJudgeLoadLogLine(judge))
+                do {
+                    return try await SteeredContainerLoader.load(
+                        modelID: judge.model, revision: judge.revision)
+                } catch {
+                    guard judge.model != manifest.modelID else {
+                        throw error
                     }
-                    print("loading local judge model \(judge.model)")
-                    do {
-                        localContainers[judge.model] =
-                            try await SteeredContainerLoader.load(
-                                modelID: judge.model,
-                                revision: judge.revision)
-                    } catch {
-                        guard judge.model != manifest.modelID else {
-                            throw error
-                        }
-                        print("judge model load failed: \(error)")
-                        throw ExperimentError(
-                            reason: localJudgeLoadFailureMessage(
-                                judgeName: judge.name, model: judge.model))
-                    }
+                    print("judge model load failed: \(error)")
+                    throw ExperimentError(
+                        reason: localJudgeLoadFailureMessage(
+                            judgeName: judge.name, model: judge.model))
                 }
             }
         }
@@ -7498,7 +7563,9 @@ public enum ExperimentTasks {
                     ) { () async throws -> (text: String, provider: String?) in
                         if let fake = codingOverrideForTesting {
                             return (try await fake(judge.name, codingPrompt), nil)
-                        } else if let container = localContainers[judge.model] {
+                        } else if let container =
+                            localContainers[LoadedModelKey(judge)]
+                        {
                             return (
                                 try await generate(
                                     container, prompt: codingPrompt,
@@ -8268,6 +8335,7 @@ public enum ExperimentTasks {
             ) {
                 try sweepJudgePanel(
                     objective: objective, studyModelID: manifest.modelID,
+                    studyRevision: manifest.modelRevision,
                     container: container)
             }
         }
@@ -8487,8 +8555,14 @@ public enum ExperimentTasks {
                 var best = SweepSelectionRule.select(
                     cells: cells, baseline: baseline, criterion: criterion)
             else {
-                recommendations[ref.name] =
-                    "no cell passed the capability/coherence gates"
+                // WHICH of the two possible reasons (review round 9, finding
+                // 6; server twin since 2026-07-26): gates that refused
+                // everything, or an eligible grid that never beat the
+                // baseline. The old sentence always claimed the first, which
+                // sends a researcher to loosen a tolerance that was never
+                // binding.
+                recommendations[ref.name] = SweepSelectionRule.noSelectionReason(
+                    cells: cells, baseline: baseline, criterion: criterion)
                 continue
             }
 

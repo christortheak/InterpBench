@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadEffects, loadGenerations, loadSweepRecommendations, validationRows } from "../app/lib/loaders";
+import { loadEffects, loadGenerations, loadSweepRecommendations, loadSweepRows, validationRows } from "../app/lib/loaders";
 import type { LocalDirectoryHandle, LocalFileHandle, RunFile, WorkspaceRun } from "../app/lib/types";
 
 // In-memory stand-ins for the structural handle surface the loaders read
@@ -129,6 +129,62 @@ describe("loadSweepRecommendations", () => {
 
   it("returns nothing for unparseable JSON rather than inventing rows", async () => {
     expect(await loadSweepRecommendations(fakeRun({ "recommendations.json": "{not json" }))).toEqual([]);
+  });
+});
+
+describe("loadSweepRows", () => {
+  // The header both engines write, verbatim — camelCase, which is the whole
+  // point: the loader lowercases the header row and must therefore look the
+  // columns up in lowercase. It did not, so `distinct2Ratio` and
+  // `lengthInflated` were read at index -1 and every row in the browser
+  // reported a null ratio and an un-inflated length (review round 9,
+  // finding 3).
+  const header = "concept,layer,alpha,markerDensity,distinct2,distinct2Ratio,words,lengthInflated,batteryAccuracy";
+  const csv = [
+    header,
+    "fear,-1,0,0.01,0.989,1.0,100,false,0.9",
+    // The degenerate cell the relative floor exists to catch: distinct-2 well
+    // under the baseline's, output 65% longer.
+    "fear,20,0.4,0.2,0.535,0.541,165,true,0.9",
+    // A cell whose ratio was undefined writes an EMPTY field.
+    "fear,12,0.2,0.2,0.0,,80,false,0.9",
+  ].join("\n");
+
+  it("reads the ratio and the length flag the engines wrote", async () => {
+    const rows = await loadSweepRows(fakeRun({ "sweep.csv": csv }));
+    expect(rows).toHaveLength(3);
+    expect(rows[0].distinct2Ratio).toBe(1);
+    expect(rows[0].words).toBe(100);
+    expect(rows[0].lengthInflated).toBe(false);
+    expect(rows[1].distinct2Ratio).toBe(0.541);
+    expect(rows[1].words).toBe(165);
+    expect(rows[1].lengthInflated).toBe(true);
+    // Missing stays missing rather than becoming 0.
+    expect(rows[2].distinct2Ratio).toBeNull();
+    expect(rows[2].lengthInflated).toBe(false);
+  });
+
+  it("still reads the columns that were always lowercase", async () => {
+    const rows = await loadSweepRows(fakeRun({ "sweep.csv": csv }));
+    expect(rows[1]).toMatchObject({
+      concept: "fear", layer: 20, alpha: 0.4, markerDensity: 0.2,
+      distinct2: 0.535, batteryAccuracy: 0.9,
+    });
+  });
+
+  it("reads a legacy file that predates the two columns", async () => {
+    const legacy = [
+      "concept,layer,alpha,markerDensity,distinct2,batteryAccuracy",
+      "fear,20,0.4,0.2,0.535,0.9",
+    ].join("\n");
+    const rows = await loadSweepRows(fakeRun({ "sweep.csv": legacy }));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].distinct2Ratio).toBeNull();
+    expect(rows[0].lengthInflated).toBe(false);
+  });
+
+  it("returns nothing when the run has no sweep.csv", async () => {
+    expect(await loadSweepRows(fakeRun({}))).toEqual([]);
   });
 });
 

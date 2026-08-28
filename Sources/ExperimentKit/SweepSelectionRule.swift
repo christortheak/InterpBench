@@ -138,12 +138,17 @@ public enum SweepSelectionRule {
 
         /// The coherence rule in one clause, in the words both engines print.
         /// Server twin: `SelectionCriterion.coherence_summary`.
+        /// The numbers are rendered the way Python's `:g` renders them
+        /// (`SweepSelectionRule.g`), so a ratio of 1 reads "1×" on both
+        /// engines rather than "1×" on one and "1.0×" on the other.
         public var coherenceSummary: String {
             guard let ratio = coherenceRatioToBaseline else {
-                return "coherence floor \(coherenceFloor) (absolute distinct-2)"
+                return "coherence floor \(SweepSelectionRule.g(coherenceFloor)) "
+                    + "(absolute distinct-2)"
             }
-            return "coherence floor \(ratio)× the α=0 baseline's distinct-2, "
-                + "backstop \(coherenceFloor)"
+            return "coherence floor \(SweepSelectionRule.g(ratio))× the α=0 "
+                + "baseline's distinct-2, backstop "
+                + "\(SweepSelectionRule.g(coherenceFloor))"
         }
 
         /// The resolved criterion in the manifest's own JSON shape — embedded
@@ -663,7 +668,8 @@ public enum SweepSelectionRule {
             // model — an empty judge model already resolved to it — or the
             // sweep refuses here, before the model loads.
             if let problem = ExperimentTasks.localJudgeSlotProblem(
-                panel, studyModelID: manifest.modelID)
+                panel, studyModelID: manifest.modelID,
+                studyRevision: manifest.modelRevision)
             {
                 throw ExperimentError(reason: problem)
             }
@@ -756,6 +762,61 @@ public enum SweepSelectionRule {
             }
         }
         return best
+    }
+
+    /// WHY no cell was selected — the constraints, or the objective.
+    ///
+    /// This engine always said "no cell passed the capability/coherence
+    /// gates". That is one of two possible reasons and often the wrong one. A
+    /// grid whose cells are all perfectly eligible but none of which beats the
+    /// baseline objective is a completely different result: the constraints
+    /// were never the obstacle, the direction simply did not move the
+    /// objective the declared way. Reported as a gate failure, it sends the
+    /// researcher to loosen a tolerance that was never binding.
+    ///
+    /// Observed live on the server (2026-07-26): a practicalwisdom sweep
+    /// where all 36 cells sat inside both constraints and every objective
+    /// value was NEGATIVE — the vector moved the objective the opposite way —
+    /// yet the run recorded "no cell passed the capability/coherence gates".
+    /// The server learned the distinction then; this engine kept printing the
+    /// old sentence for the same grid until review round 9, finding 6.
+    ///
+    /// Server twin: `sweep_selection.no_selection_reason`, word for word.
+    public static func noSelectionReason(
+        cells: [Cell], baseline: Baseline, criterion: Resolved
+    ) -> String {
+        guard !cells.isEmpty else { return "the sweep measured no cells" }
+        let eligible = cells.filter {
+            $0.batteryAccuracy >= baseline.batteryAccuracy - criterion.capabilityTolerance
+                && coherencePasses(
+                    distinct2: $0.distinct2,
+                    baselineDistinct2: baseline.distinct2, criterion: criterion)
+        }
+        guard let best = eligible.map(\.metric).max() else {
+            return "no cell passed the capability/coherence gates "
+                + "(tolerance \(g(criterion.capabilityTolerance)), "
+                + "\(criterion.coherenceSummary))"
+        }
+        let blocked = cells.count - eligible.count
+        let detail =
+            blocked > 0
+            ? "; \(blocked) of \(cells.count) cells also failed the "
+                + "capability/coherence gates"
+            : "; all \(cells.count) cells were inside both constraints"
+        let direction =
+            best < baseline.metric
+            ? " — the objective moved the OPPOSITE way from the declared "
+                + "direction"
+            : ""
+        return "no eligible cell beat the baseline \(criterion.metric) "
+            + "(\(g(best)) vs baseline \(g(baseline.metric)))\(direction)"
+            + "\(detail)"
+    }
+
+    /// Python's `:g` for the numbers these cross-engine sentences carry, so
+    /// the twin texts are equal byte for byte and not merely in wording.
+    static func g(_ value: Double) -> String {
+        String(format: "%g", value)
     }
 
     /// The top `k` PROMOTABLE cells in objective order: eligible under the

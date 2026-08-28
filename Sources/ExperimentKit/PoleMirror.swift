@@ -484,15 +484,28 @@ public enum PoleMirror {
             component: "\(outName).safetensors.\(token).partial")
         let sidecarTemp = runDirectory.appending(
             component: "\(outName).json.\(token).partial")
+        //
+        // The occupancy check above is a PREFLIGHT — it runs before the
+        // tensors are negated and both temporaries are written — so a
+        // destination can appear in the window between it and the promotion.
+        // `FileManager.moveItem` cannot overwrite (it throws
+        // `NSFileWriteFileExists` and leaves both files exactly as they were,
+        // verified 2026-08-27), so unlike the server's `os.replace` this
+        // engine never destroyed a thing; what it did was answer the race
+        // with a raw Cocoa error instead of the refusal the same collision
+        // gets one moment earlier. Named here, so both engines say the same
+        // sentence to the same event (review round 9, finding 7).
         do {
             try mirroredBytes.write(to: vectorsTemp)
             try sidecarBytesOut.write(to: sidecarTemp)
-            try fm.moveItem(at: vectorsTemp, to: vectorsPath)
+            try commitNoReplace(from: vectorsTemp, to: vectorsPath)
             do {
-                try fm.moveItem(at: sidecarTemp, to: sidecarPath)
+                try commitNoReplace(from: sidecarTemp, to: sidecarPath)
             } catch {
                 // The tensor is already promoted; take it back out so a failed
                 // mint never leaves half an artifact under the final names.
+                // A name THIS call created — whatever beat us to the sidecar
+                // is untouched.
                 try? fm.removeItem(at: vectorsPath)
                 throw error
             }
@@ -569,6 +582,29 @@ public enum PoleMirror {
     public static func conceptRequiredRepair(program: String, base: String) -> String {
         "\(program) vectors mirror-poles \(base) --concept <a name for the "
             + "opposite pole>"
+    }
+
+    /// Promote one staged file, incapable of overwriting what stands at the
+    /// destination — and, when something does, answering with the same typed
+    /// refusal the preflight gives rather than a raw Cocoa error.
+    ///
+    /// `FileManager.moveItem` is already a no-replace primitive on this
+    /// platform: an occupied destination throws `NSFileWriteFileExists` (516)
+    /// and leaves both the destination and the staged file untouched. That is
+    /// what this engine has always relied on — it is the reason a mirror
+    /// could never destroy an artifact the way the server's `os.replace`
+    /// could — so the fix here is the SENTENCE, not the primitive. Server
+    /// twin: `pole_mirror._commit_no_replace`, where the primitive had to
+    /// change too.
+    static func commitNoReplace(from staged: URL, to destination: URL) throws {
+        do {
+            try FileManager.default.moveItem(at: staged, to: destination)
+        } catch let error as CocoaError where error.code == .fileWriteFileExists {
+            throw MirrorError(
+                kind: .destinationOccupied,
+                reason: destinationOccupiedReason(path: destination.path),
+                repairAction: destinationOccupiedRepair)
+        }
     }
 
     public static func destinationOccupiedReason(path: String) -> String {

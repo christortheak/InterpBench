@@ -508,6 +508,101 @@ def test_a_failure_between_the_two_writes_leaves_no_debris(tmp_path,
     assert seen
 
 
+# --- the preflight-to-promotion window (round 9, finding 7) --------------------
+
+def test_a_tensor_that_appears_mid_promote_is_refused_not_overwritten(
+        tmp_path, monkeypatch):
+    """The window the `destinationOccupied` preflight cannot cover.
+
+    The check runs BEFORE the tensors are negated and both temporaries are
+    written; `os.replace` then clobbered whatever arrived in between — in the
+    name of a rule that had just refused exactly that. The promotion cannot
+    overwrite now, so the appearance is the same refusal it would have been a
+    moment earlier, and nothing this call created is left behind."""
+    source = _write_artifact(str(tmp_path / "src"))
+    out = os.path.join(str(tmp_path), "mirrored")
+    intruder = b"another writer's tensors"
+    real_commit = pole_mirror._commit_no_replace
+
+    def _appear_then_commit(staged, dest):
+        if dest.endswith(".safetensors"):
+            # Exactly the window: preflight passed, bytes not yet promoted.
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as handle:
+                handle.write(intruder)
+        return real_commit(staged, dest)
+
+    monkeypatch.setattr(pole_mirror, "_commit_no_replace", _appear_then_commit)
+    with pytest.raises(pole_mirror.PoleMirrorError) as caught:
+        pole_mirror.mirror_poles(source, SOURCE_CONCEPT,
+                                 concept=MIRROR_CONCEPT, run_directory=out)
+    monkeypatch.undo()
+    assert caught.value.kind == "destinationOccupied"
+    assert "never replaces an artifact" in caught.value.reason
+    # The other writer's bytes are untouched…
+    with open(os.path.join(out, f"{MIRROR_CONCEPT}.safetensors"), "rb") as handle:
+        assert handle.read() == intruder
+    # …and the loser left nothing: no sidecar, no temporaries.
+    assert sorted(os.listdir(out)) == [f"{MIRROR_CONCEPT}.safetensors"], \
+        os.listdir(out)
+
+
+def test_a_sidecar_that_appears_mid_promote_takes_the_tensor_back_out(
+        tmp_path, monkeypatch):
+    """The same window, one file later. The tensor is already promoted when
+    the sidecar collides, so the refusal has to unwind a name this call
+    created — while leaving the sidecar that beat it exactly where it is. A
+    tensor with no sidecar is an unreadable artifact that the occupancy rule
+    would then refuse to replace, i.e. a poisoned name."""
+    source = _write_artifact(str(tmp_path / "src"))
+    out = os.path.join(str(tmp_path), "mirrored")
+    intruder = b'{"concept": "another writer\'s sidecar"}'
+    real_commit = pole_mirror._commit_no_replace
+
+    def _appear_then_commit(staged, dest):
+        if dest.endswith(".json"):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as handle:
+                handle.write(intruder)
+        return real_commit(staged, dest)
+
+    monkeypatch.setattr(pole_mirror, "_commit_no_replace", _appear_then_commit)
+    with pytest.raises(pole_mirror.PoleMirrorError) as caught:
+        pole_mirror.mirror_poles(source, SOURCE_CONCEPT,
+                                 concept=MIRROR_CONCEPT, run_directory=out)
+    monkeypatch.undo()
+    assert caught.value.kind == "destinationOccupied"
+    with open(os.path.join(out, f"{MIRROR_CONCEPT}.json"), "rb") as handle:
+        assert handle.read() == intruder
+    # The tensor this call promoted came back out; only the winner remains.
+    assert sorted(os.listdir(out)) == [f"{MIRROR_CONCEPT}.json"], \
+        os.listdir(out)
+
+
+def test_the_no_replace_primitive_cannot_overwrite(tmp_path):
+    """The primitive itself, on its own: link-or-reserve, never replace, and
+    the staged file survives a collision for the caller to clean up. Twin of
+    `bundles._commit_no_replace` / `client.runner._commit_no_replace`."""
+    staged = str(tmp_path / "staged")
+    dest = str(tmp_path / "dest")
+    with open(staged, "wb") as handle:
+        handle.write(b"mine")
+    pole_mirror._commit_no_replace(staged, dest)
+    with open(dest, "rb") as handle:
+        assert handle.read() == b"mine"
+    # The staged name is consumed by a successful promotion.
+    assert not os.path.exists(staged)
+
+    with open(staged, "wb") as handle:
+        handle.write(b"second")
+    with pytest.raises(FileExistsError):
+        pole_mirror._commit_no_replace(staged, dest)
+    with open(dest, "rb") as handle:
+        assert handle.read() == b"mine"
+    assert os.path.exists(staged), \
+        "a refused promotion leaves the staged file for the caller's cleanup"
+
+
 def test_a_non_numeric_layer_count_refuses_before_anything_is_written(tmp_path):
     """`layerCount` used to be converted AFTER both files had landed, so a
     sidecar carrying it as a string stranded a complete artifact pair and then

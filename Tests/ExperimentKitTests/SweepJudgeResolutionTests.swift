@@ -85,7 +85,7 @@ struct SweepJudgeResolutionTests {
             name: "or", kind: "openrouter", model: "google/gemma-3-27b-it",
             provider: "DeepInfra")
         let route = try ExperimentTasks.sweepJudgeRoute(
-            judge, studyModelID: "test/model")
+            judge, studyModelID: "test/model", studyRevision: nil)
         #expect(route == .openRouterAPI(
             model: "google/gemma-3-27b-it", provider: "DeepInfra"))
         // Belt-and-braces: a hand-built panel entry without a provider
@@ -93,7 +93,8 @@ struct SweepJudgeResolutionTests {
         let bare = ExperimentTasks.ResolvedJudge(
             name: "or", kind: "openrouter", model: "google/gemma-3-27b-it")
         #expect(throws: ExperimentError.self) {
-            _ = try ExperimentTasks.sweepJudgeRoute(bare, studyModelID: "test/model")
+            _ = try ExperimentTasks.sweepJudgeRoute(
+                bare, studyModelID: "test/model", studyRevision: nil)
         }
     }
 
@@ -110,15 +111,54 @@ struct SweepJudgeResolutionTests {
         // never trip the slot rule.
         #expect(
             ExperimentTasks.localJudgeSlotProblem(
-                [same, claude], studyModelID: "test/model") == nil)
+                [same, claude], studyModelID: "test/model",
+                studyRevision: nil) == nil)
         let problem = ExperimentTasks.localJudgeSlotProblem(
-            [same, other], studyModelID: "test/model")
+            [same, other], studyModelID: "test/model", studyRevision: nil)
         #expect(problem?.contains("local judge 'b' uses model 'other/model'") == true)
         #expect(problem?.contains("not the study model 'test/model'") == true)
         #expect(problem?.contains("holds one loaded model") == true)
         #expect(
             problem?.contains("use the study model as judge or a claude judge")
                 == true)
+    }
+
+    /// The slot the sweep holds is the STUDY's, loaded at the study's pin —
+    /// so a judge that pins a different commit of the same repo is refused
+    /// rather than quietly judged with weights it never declared (review
+    /// round 9, finding 1's audit).
+    @Test func slotProblemFiresOnADivergentRevisionOfTheStudyModel() {
+        let pinned = ExperimentTasks.ResolvedJudge(
+            name: "a", kind: "local", model: "test/model",
+            revision: String(repeating: "a", count: 40))
+        #expect(
+            ExperimentTasks.localJudgeSlotProblem(
+                [pinned], studyModelID: "test/model",
+                studyRevision: String(repeating: "a", count: 40)) == nil)
+        let problem = ExperimentTasks.localJudgeSlotProblem(
+            [pinned], studyModelID: "test/model",
+            studyRevision: String(repeating: "b", count: 40))
+        #expect(problem?.contains("local judge 'a' pins revision aaaaaaaaaaaa…") == true)
+        #expect(problem?.contains("which pins bbbbbbbbbbbb…") == true)
+        #expect(
+            problem?.contains("would judge with weights it did not declare")
+                == true)
+        // No pin on either side is not a divergence.
+        let bare = ExperimentTasks.ResolvedJudge(
+            name: "b", kind: "local", model: "test/model")
+        #expect(
+            ExperimentTasks.localJudgeSlotProblem(
+                [bare], studyModelID: "test/model", studyRevision: nil) == nil)
+        // …but a judge pinning where the study pins nothing still is: the
+        // held container is whatever the cache resolved, not that commit.
+        #expect(
+            ExperimentTasks.localJudgeSlotProblem(
+                [pinned], studyModelID: "test/model", studyRevision: nil)?
+                .contains("which pins no revision") == true)
+        #expect(throws: ExperimentError.self) {
+            _ = try ExperimentTasks.sweepJudgeRoute(
+                pinned, studyModelID: "test/model", studyRevision: nil)
+        }
     }
 
     @Test func judgeRoutesUseTheHeldContainerOrTheAPI() throws {
@@ -128,24 +168,25 @@ struct SweepJudgeResolutionTests {
         let defaulted = ExperimentTasks.ResolvedJudge(
             name: "d", kind: "local", model: "test/model", modelDefaulted: true)
         let defaultedRoute = try ExperimentTasks.sweepJudgeRoute(
-            defaulted, studyModelID: "test/model")
+            defaulted, studyModelID: "test/model", studyRevision: nil)
         #expect(defaultedRoute == .heldStudyContainer)
         let named = ExperimentTasks.ResolvedJudge(
             name: "n", kind: "local", model: "test/model")
         let namedRoute = try ExperimentTasks.sweepJudgeRoute(
-            named, studyModelID: "test/model")
+            named, studyModelID: "test/model", studyRevision: nil)
         #expect(namedRoute == .heldStudyContainer)
         let claude = ExperimentTasks.ResolvedJudge(
             name: "c", kind: "claude", model: "claude-x")
         let claudeRoute = try ExperimentTasks.sweepJudgeRoute(
-            claude, studyModelID: "test/model")
+            claude, studyModelID: "test/model", studyRevision: nil)
         #expect(claudeRoute == .claudeAPI(model: "claude-x"))
         // A different-model local judge throws the slot refusal instead of
         // routing anywhere.
         let other = ExperimentTasks.ResolvedJudge(
             name: "b", kind: "local", model: "other/model")
         #expect(throws: ExperimentError.self) {
-            _ = try ExperimentTasks.sweepJudgeRoute(other, studyModelID: "test/model")
+            _ = try ExperimentTasks.sweepJudgeRoute(
+                other, studyModelID: "test/model", studyRevision: nil)
         }
     }
 

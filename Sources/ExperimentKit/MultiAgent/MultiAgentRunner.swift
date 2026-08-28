@@ -224,7 +224,7 @@ public enum MultiAgentRunner {
         var agents = Dictionary(
             uniqueKeysWithValues: scenario.agents.map { ($0.id, RuntimeAgent(spec: $0)) })
         var outputsByLabel: [String: String] = [:]
-        var models: [String: RuntimeModel] = [:]
+        var models: [ExperimentTasks.LoadedModelKey: RuntimeModel] = [:]
         var results: [MultiAgentTurnResult] = []
         var warnings: [MultiAgentRunWarning] = []
         var emittedWarningKeys = Set<String>()
@@ -800,17 +800,29 @@ public enum MultiAgentRunner {
             injections, warnings, seat.stamp)
     }
 
+    /// The model this turn generates through, held per (id, revision) for the
+    /// rest of the run.
+    ///
+    /// The key carries the REVISION (review round 9, finding 1, the same
+    /// class as the judge cache): a panel whose variants pin two base
+    /// revisions of one checkpoint used to find the first-loaded container
+    /// under the bare model id, so every later turn generated with revision
+    /// A's weights while the variant declared B — and `modelRevision` on the
+    /// turn record stamped A, an honest stamp for a declaration that was
+    /// silently discarded.
     private static func model(
         for modelID: String,
         revision requestedRevision: String?,
-        models: inout [String: RuntimeModel]
+        models: inout [ExperimentTasks.LoadedModelKey: RuntimeModel]
     ) async throws -> RuntimeModel {
-        if let runtime = models[modelID] { return runtime }
+        let key = ExperimentTasks.LoadedModelKey(
+            model: modelID, revision: requestedRevision)
+        if let runtime = models[key] { return runtime }
         let container = try await SteeredContainerLoader.load(
             modelID: modelID, revision: requestedRevision)
         let revision = requestedRevision ?? SteeredContainerLoader.cachedRevision(for: modelID)
         let runtime = RuntimeModel(container: container, revision: revision)
-        models[modelID] = runtime
+        models[key] = runtime
         return runtime
     }
 

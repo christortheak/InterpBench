@@ -3748,7 +3748,11 @@ public struct ExperimentCLIRunner: Sendable {
     /// SHAPE: an unparseable number must not become a silently-dropped
     /// constraint. `--control-apply-to topK` without `--control-top-k` is
     /// refused here rather than resolved to a default, because how many cells
-    /// a control covers is a preregistration decision.
+    /// a control covers is a preregistration decision. The mirror reading —
+    /// `--control-top-k K` with no scope beside it, on a control the winner
+    /// scopes — SELECTS topK, because a width is meaningless under any other
+    /// scope and a flag that succeeds while doing nothing is worse than
+    /// either answer.
     /// Both coherence forms on one command line. Cross-engine literal; server
     /// twin: `cli._COHERENCE_FORMS_CONFLICT`.
     static let coherenceFormsConflictRefusal =
@@ -3759,6 +3763,18 @@ public struct ExperimentCLIRunner: Sendable {
         + "0.85× the α=0 baseline's distinct-2 and at least 0.6 absolutely); "
         + "pass --coherence-floor only when the study wants a fixed number "
         + "the baseline cannot move"
+
+    /// A width typed beside the one scope that cannot carry one. Refused
+    /// rather than resolved either way: `--control-apply-to winner` and
+    /// `--control-top-k K` are two different controls, and guessing which one
+    /// the caller meant is how a preregistered width becomes a silent
+    /// no-op (review round 9, finding 2).
+    static func controlWinnerScopeTakesNoWidth(_ width: Int) -> String {
+        "--control-apply-to winner controls the winning cell alone, so it "
+            + "carries no width — but --control-top-k \(width) declares one. "
+            + "Drop the width to control the winner, or ask for "
+            + "--control-apply-to topK to control \(width) cells"
+    }
 
     /// What a re-declare INHERITED rather than restated, in the words the
     /// verb prints and the envelope echoes. Empty when nothing was inherited.
@@ -3812,13 +3828,26 @@ public struct ExperimentCLIRunner: Sendable {
             // per-concept map (the two are mutually exclusive by validation) —
             // both said out loud, because a pin that disappears silently is
             // the drift refusal that never fires.
+            //
+            // "The same file" is decided AFTER workspace-relative
+            // normalization, through `ArtifactIdentity.workspaceRelative` —
+            // the same spelling the save path applies on its way to the
+            // manifest (review round 9, finding 5). Comparing the raw strings
+            // made `<workspace>/prompts/choice.jsonl` a different file from
+            // the `prompts/choice.jsonl` already on disk, so re-declaring one
+            // instrument by its absolute path dropped the pin that freeze
+            // checks and told the caller it had "replaced" a file with
+            // itself.
             let previous = existing?.objective
-            if previous?.choicePromptsFile == choicePrompts,
+            let declaredFile = ArtifactIdentity.workspaceRelative(choicePrompts)
+            let previousFile = previous?.choicePromptsFile.map(
+                ArtifactIdentity.workspaceRelative)
+            if previousFile == declaredFile,
                 let hash = previous?.choicePromptsHash
             {
                 block.choicePromptsHash = hash
                 inherited.append("the choice-prompt pin")
-            } else if let old = previous?.choicePromptsFile, old != choicePrompts {
+            } else if let old = previousFile, old != declaredFile {
                 inherited.append(
                     "replaced the declared choice-prompt file (its pin goes "
                         + "with it)")
@@ -3960,8 +3989,10 @@ public struct ExperimentCLIRunner: Sendable {
         // margin used to rebuild the block, dropping the topK targeting the
         // donor declared — a control that silently narrowed from three cells
         // to one. Naming any control flag now edits that field and inherits
-        // the rest; `--control-apply-to winner` still drops the width, because
-        // a winner-scoped control covers exactly one cell by definition.
+        // the rest; a scope CHANGE to winner still drops the width, because a
+        // winner-scoped control covers exactly one cell by definition — said
+        // out loud in the echo, and refused outright when both are typed at
+        // once (review round 9, finding 2).
         let previousControls = existing?.controls
         if controlMargin?.trimmingCharacters(in: .whitespaces) == "" ,
             controlMargin != nil
@@ -3999,9 +4030,47 @@ public struct ExperimentCLIRunner: Sendable {
                         + "matched-norm random control that is not declared — "
                         + "add --control-margin M")
             }
+            // The scope — and what a bare `--control-top-k K` means when the
+            // scope in force is the winner (review round 9, finding 2).
+            //
+            // A winner-scoped control covers exactly one cell, so it has no
+            // width to carry: the constructor below drops one, and the flag
+            // used to be ACCEPTED and then silently discarded — a flag that
+            // exits 0 having done nothing, which is the class this file
+            // refuses everywhere else. Declaring a width is declaring you
+            // want width, and topK is the only scope in which a width means
+            // anything, so `--control-top-k K` alone SELECTS topK. The
+            // number — which is the preregistration decision the sibling
+            // refusal below protects — was typed, not defaulted; only the
+            // scope is read off it, and the echo says so out loud.
+            //
+            // Naming both `--control-apply-to winner` and a width is the
+            // opposite case: not an inference to make but a contradiction to
+            // refuse, because either half could be the one the caller meant.
             let applyTo: String
             if let named = controlApplyTo {
+                if named == "winner", let width = topK {
+                    throw ExperimentError(
+                        reason: Self.controlWinnerScopeTakesNoWidth(width))
+                }
                 applyTo = named
+                if named == "winner", previousControls?.applyTo == "topK",
+                    let previous = previousControls?.topK
+                {
+                    // The width the scope change discards. It existed, it was
+                    // preregistered, and it goes — said out loud, never by
+                    // its absence from the next echo.
+                    inherited.append(
+                        "narrowed the control from topK \(previous) to the "
+                            + "winning cell (its width goes with the scope)")
+                }
+            } else if let width = topK,
+                (previousControls?.applyTo ?? "winner") == "winner"
+            {
+                applyTo = "topK"
+                inherited.append(
+                    "widened the control to topK \(width) — a declared width "
+                        + "is a declared scope, and the winner has none")
             } else if let previous = previousControls?.applyTo {
                 applyTo = previous
                 inherited.append("control scope \(previous)")

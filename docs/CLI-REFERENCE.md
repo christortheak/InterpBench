@@ -951,8 +951,8 @@ said yes.
 | `--coherence-backstop` | `0.6` | The absolute distinct-2 no cell may fall below whatever the baseline was — what stops a degenerate baseline licensing a degenerate winner. Range `[0, 1)`, and it must sit **under** the ratio. |
 | `--coherence-floor` | — | The **legacy absolute** rule: a fixed distinct-2 floor, `[0, 1]`. Declares a different form from the two flags above, so passing it alongside either is refused. |
 | `--control-margin` | none | The winner must beat a matched-norm random direction by this margin. Inherited when only the targeting flags are named; `""` removes a declared control. |
-| `--control-apply-to` | `winner` | `winner` \| `topK`. `winner` drops any declared width — a winner-scoped control covers one cell. |
-| `--control-top-k` | — | Required with `--control-apply-to topK`, unless the existing declaration already carries a width (which is then inherited, never defaulted). |
+| `--control-apply-to` | `winner` | `winner` \| `topK`. A change to `winner` drops any declared width — a winner-scoped control covers one cell — and the echo names the width it dropped. Typing `winner` **and** a width is refused: they are two different controls. |
+| `--control-top-k` | — | Required with `--control-apply-to topK`, unless the existing declaration already carries a width (which is then inherited, never defaulted). Named **alone** on a winner-scoped control it selects `topK` scope — a declared width is a declared scope — and the echo says so. |
 
 Which rule a criterion declares is decided by the **presence** of
 `coherenceRatioToBaseline` / `coherenceAbsoluteBackstop` in its constraints

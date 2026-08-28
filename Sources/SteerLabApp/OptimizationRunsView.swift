@@ -1540,17 +1540,15 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         // and is never silently converted: the ratio travels through the
         // editor untouched, and the one number the field edits is whichever
         // absolute value that rule uses — the backstop under the relative
-        // rule, the floor under the legacy one.
-        let ratio = initial.selection?.constraints?.coherenceRatioToBaseline
-        let backstop = initial.selection?.constraints?.coherenceAbsoluteBackstop
-        _coherenceRatio = State(initialValue: ratio)
-        let floor: Double
-        if ratio != nil || backstop != nil {
-            floor = backstop ?? SweepSelectionRule.defaultCoherenceBackstop
-        } else {
-            floor = initial.selection?.constraints?.coherenceFloor
-                ?? SweepSelectionRule.defaultCoherenceFloor
-        }
+        // rule, the floor under the legacy one. Read through the shared
+        // presence rule (`SweepSpecForm.editorCoherenceForm`), so a criterion
+        // that declared a backstop and left the ratio to the default arrives
+        // here as the RELATIVE criterion it is — before, it arrived with a
+        // nil ratio and saving converted it to a legacy absolute floor
+        // (review round 9, finding 4).
+        let form = SweepSpecForm.editorCoherenceForm(initial.selection?.constraints)
+        _coherenceRatio = State(initialValue: form.ratio)
+        let floor = form.floor
         _floorText = State(initialValue: "\(floor)")
         let margin = initial.selection?.controls?.matchedNormRandomMargin
         _marginText = State(initialValue: margin.map { "\($0)" } ?? "")
@@ -1988,12 +1986,11 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         }
         spec.selection = ExperimentManifest.SweepSelection(
             objective: objective,
-            constraints: coherenceRatio.map {
-                .init(
-                    capabilityTolerance: tolerance,
-                    coherenceRatioToBaseline: $0,
-                    coherenceAbsoluteBackstop: floor)
-            } ?? .init(capabilityTolerance: tolerance, coherenceFloor: floor),
+            // The exact inverse of the read above, so the form this editor
+            // loaded is the form it writes back.
+            constraints: SweepSpecForm.editorCoherenceConstraints(
+                capabilityTolerance: tolerance,
+                form: .init(ratio: coherenceRatio, floor: floor)),
             controls: controls)
         formError = nil
         // setSweepSpec refuses structural/criterion problems; since 2026-07-26

@@ -33,16 +33,46 @@ extension ExperimentTasks {
     /// resolved to it) or the sweep refuses AT START — never a second load
     /// mid-sweep. Returns the refusal message, or nil when every local judge
     /// uses the study model. Pure, so the rule is unit-testable.
+    ///
+    /// The REVISION is part of "uses the study model" (review round 9,
+    /// finding 1, audited from the judge-container cache): the held container
+    /// is the study's, loaded at the manifest's pin, and a judge that pinned a
+    /// different commit of the same repo would have judged with the study's
+    /// weights while `resolvedJudges` carried its own revision forward into
+    /// the provenance. One slot cannot honour two pins, so this is a refusal
+    /// at sweep start, not a silent substitution.
     static func localJudgeSlotProblem(
-        _ judges: [ResolvedJudge], studyModelID: String
+        _ judges: [ResolvedJudge], studyModelID: String,
+        studyRevision: String?
     ) -> String? {
-        for judge in judges where judge.kind == "local" && judge.model != studyModelID {
-            return "local judge '\(judge.name)' uses model '\(judge.model)', "
-                + "not the study model '\(studyModelID)' — the local sweep "
-                + "holds one loaded model; use the study model as judge or a "
-                + "claude judge"
+        for judge in judges where judge.kind == "local" {
+            if judge.model != studyModelID {
+                return "local judge '\(judge.name)' uses model "
+                    + "'\(judge.model)', not the study model "
+                    + "'\(studyModelID)' — the local sweep holds one loaded "
+                    + "model; use the study model as judge or a claude judge"
+            }
+            if judge.revision != studyRevision {
+                return "local judge '\(judge.name)' pins revision "
+                    + "\(revisionLabel(judge.revision)) of the study model "
+                    + "'\(studyModelID)', which pins "
+                    + "\(revisionLabel(studyRevision)) — the local sweep holds "
+                    + "one loaded model and it is the study's, so this judge "
+                    + "would judge with weights it did not declare; drop the "
+                    + "judge's revision to judge with the study's, or use a "
+                    + "claude judge"
+            }
         }
         return nil
+    }
+
+    /// A pinned revision as this engine's refusals name one, or the words for
+    /// no pin at all.
+    static func revisionLabel(_ revision: String?) -> String {
+        guard let revision = revision?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !revision.isEmpty
+        else { return "no revision" }
+        return String(revision.prefix(12)) + "…"
     }
 
     /// How one resolved judge executes in a judgeScore sweep — the pure
@@ -58,7 +88,7 @@ extension ExperimentTasks {
     }
 
     static func sweepJudgeRoute(
-        _ judge: ResolvedJudge, studyModelID: String
+        _ judge: ResolvedJudge, studyModelID: String, studyRevision: String?
     ) throws -> SweepJudgeRoute {
         if judge.kind == "openrouter" {
             // resolvedJudges refused an openrouter judge without a provider,
@@ -72,7 +102,9 @@ extension ExperimentTasks {
             return .openRouterAPI(model: judge.model, provider: provider)
         }
         guard judge.kind == "local" else { return .claudeAPI(model: judge.model) }
-        if let problem = localJudgeSlotProblem([judge], studyModelID: studyModelID) {
+        if let problem = localJudgeSlotProblem(
+            [judge], studyModelID: studyModelID, studyRevision: studyRevision)
+        {
             throw ExperimentError(reason: problem)
         }
         return .heldStudyContainer
@@ -88,12 +120,16 @@ extension ExperimentTasks {
     static func sweepJudgePanel(
         objective: SweepSelectionRule.ResolvedObjective,
         studyModelID: String,
+        studyRevision: String?,
         container: ModelContainer
     ) throws -> [SweepJudge] {
         let rubric = objective.judgeRubricText ?? ""
         var panel: [SweepJudge] = []
         for judge in objective.judgePanel {
-            switch try sweepJudgeRoute(judge, studyModelID: studyModelID) {
+            switch try sweepJudgeRoute(
+                judge, studyModelID: studyModelID,
+                studyRevision: studyRevision)
+            {
             case .heldStudyContainer:
                 let model = judge.model
                 panel.append(
