@@ -42,10 +42,13 @@ struct ServerPayloadPackagingTests {
         try stage("Server/scripts/bootstrap.sh", "#!/bin/sh\necho bootstrap\n")
         try stage("Server/tests/test_parity.py", "def test_parity(): pass\n")
         try stage("prompts/fixtures/golden.json", "{\"prompts\": []}\n")
-        // Never ships: local envs, caches, run outputs, everything else.
+        // Never ships: local envs, caches, run outputs, wheel-build debris,
+        // everything else.
         try stage("Server/.venv.nosync/lib/junk.txt", "junk\n")
         try stage("Server/steerlab_server/__pycache__/app.cpython-312.pyc", "junk\n")
         try stage("Server/steerlab.egg-info/PKG-INFO", "junk\n")
+        try stage("Server/build/lib/steerlab_server/app.py", "print('stale copy')\n")
+        try stage("Server/dist/steerlab_server-0.0-py3-none-any.whl", "junk\n")
         try stage("Server/runs/2026-01-01-run/report.json", "{}\n")
         try stage("prompts/concepts/secret/positive.jsonl", "{\"text\": \"secret\"}\n")
         try stage("runs/2026-01-01-run/report.json", "{}\n")
@@ -89,7 +92,8 @@ struct ServerPayloadPackagingTests {
         ]
         let excluded = [
             "Server/.venv.nosync", "Server/steerlab_server/__pycache__",
-            "Server/steerlab.egg-info", "Server/runs",
+            "Server/steerlab.egg-info", "Server/build", "Server/dist",
+            "Server/runs",
             "prompts/concepts", "runs", "docs", "Package.swift",
         ]
         for path in shipped {

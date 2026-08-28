@@ -2204,7 +2204,8 @@ public final class ClusterProvisioner {
 
     /// Ordered rsync filters for the cluster deployment bundle. Exclusions
     /// precede the broad `Server/***` include so local environments, run
-    /// outputs, and generated package/cache files never leave the Mac.
+    /// outputs, generated package/cache files, and wheel-build debris
+    /// (`Server/build/`, `Server/dist/`) never leave the Mac.
     ///
     /// The small prompt fixture tree is included for cross-engine parity tests;
     /// study inputs and workspace artifacts travel in their own bundles.
@@ -2223,6 +2224,8 @@ public final class ClusterProvisioner {
         "--exclude", "*.pyc",
         "--exclude", ".coverage*",
         "--exclude", ".DS_Store",
+        "--exclude", "/Server/build/",
+        "--exclude", "/Server/dist/",
         "--include", "/Server/",
         "--include", "/Server/***",
         "--include", "/prompts/",
