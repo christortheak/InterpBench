@@ -395,24 +395,66 @@ struct SweepSelectionRuleTests {
             layer: 3, alpha: 0.4, metric: 0.9, distinct2: 0.8, batteryAccuracy: 1.0)
         let judge = ExperimentTasks.sweepMetricsBlock(
             metric: "judgeScore", best: best, baselineMetric: 0.5,
-            baselineDensity: 0.02, baselineAccuracy: 0.95)
+            baselineDensity: 0.02, baselineDistinct2: 1.0, baselineWords: 25,
+            baselineAccuracy: 0.95)
         #expect(judge["judgeScore"] == 0.9)
         #expect(judge["baselineJudgeScore"] == 0.5)
         #expect(judge["markerDensity"] == nil)
         let shift = ExperimentTasks.sweepMetricsBlock(
             metric: "logprobShift", best: best, baselineMetric: 0,
-            baselineDensity: 0.02, baselineAccuracy: 0.95)
+            baselineDensity: 0.02, baselineDistinct2: 1.0, baselineWords: 25,
+            baselineAccuracy: 0.95)
         #expect(shift["logprobShift"] == 0.9)
         #expect(shift["baselineLogprobShift"] == 0)
         // markerDensity keeps its historical keys byte-for-byte.
         let marker = ExperimentTasks.sweepMetricsBlock(
             metric: "markerDensity", best: best, baselineMetric: 0.02,
-            baselineDensity: 0.02, baselineAccuracy: 0.95)
+            baselineDensity: 0.02, baselineDistinct2: 1.0, baselineWords: 25,
+            baselineAccuracy: 0.95)
         #expect(marker["markerDensity"] == 0.9)
         #expect(marker["baselineDensity"] == 0.02)
         #expect(marker["distinct2"] == 0.8)
         #expect(marker["batteryAccuracy"] == 1.0)
         #expect(marker["baselineBatteryAccuracy"] == 0.95)
+    }
+
+    @Test func metricsBlockCarriesTheCoherenceGatesOwnEvidence() {
+        // The report pair sweep.csv has always carried now rides IN the
+        // recommendation's metrics — the block every promotion certificate
+        // copies — so the coherence claim no longer has to be recovered by
+        // joining the CSV on (layer, alpha). The block is a Double map on
+        // both engines, so the flag is stamped 1/0, never a JSON bool.
+        let inflated = SweepSelectionRule.Cell(
+            layer: 20, alpha: 0.4, metric: 0.9, distinct2: 0.535,
+            batteryAccuracy: 1.0, words: 41)
+        let block = ExperimentTasks.sweepMetricsBlock(
+            metric: "logprobShift", best: inflated, baselineMetric: 0,
+            baselineDensity: 0.02, baselineDistinct2: 0.989, baselineWords: 25,
+            baselineAccuracy: 0.95)
+        #expect(block["distinct2Ratio"] == 0.535 / 0.989)
+        #expect(block["lengthInflated"] == 1)
+        let calm = SweepSelectionRule.Cell(
+            layer: 3, alpha: 0.2, metric: 0.5, distinct2: 0.95,
+            batteryAccuracy: 1.0, words: 26)
+        let calmBlock = ExperimentTasks.sweepMetricsBlock(
+            metric: "markerDensity", best: calm, baselineMetric: 0.02,
+            baselineDensity: 0.02, baselineDistinct2: 1.0, baselineWords: 25,
+            baselineAccuracy: 0.95)
+        #expect(calmBlock["distinct2Ratio"] == 0.95)
+        #expect(calmBlock["lengthInflated"] == 0)
+        // Undefined inputs leave the key ABSENT, never invented: a zero
+        // baseline distinct-2 has no ratio, and a cell rebuilt from a
+        // record that predates the words column has no flag — which is
+        // also how every legacy record decodes.
+        let legacy = SweepSelectionRule.Cell(
+            layer: 3, alpha: 0.2, metric: 0.5, distinct2: 0.95,
+            batteryAccuracy: 1.0)
+        let legacyBlock = ExperimentTasks.sweepMetricsBlock(
+            metric: "markerDensity", best: legacy, baselineMetric: 0.02,
+            baselineDensity: 0.02, baselineDistinct2: 0, baselineWords: 25,
+            baselineAccuracy: 0.95)
+        #expect(legacyBlock["distinct2Ratio"] == nil)
+        #expect(legacyBlock["lengthInflated"] == nil)
     }
 
     // MARK: schema round-trips and the hash-stability regression

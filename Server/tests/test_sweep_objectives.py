@@ -848,10 +848,53 @@ def test_deferred_sweep_emits_packets_and_completion_selects(
     assert block["judgmentRun"] == os.path.basename(judgment_dir)
     assert block["metrics"]["judgeScore"] == 1.0
     assert block["metrics"]["baselineJudgeScore"] == 0.5
+    # The completion stamps the same report pair the inline path does —
+    # the coherence gate's own evidence, in the metrics the promotion
+    # certificate copies (the flag is a number: the block is a Double map
+    # on the Swift twin).
+    assert block["metrics"]["distinct2Ratio"] == pytest.approx(1.0)
+    assert block["metrics"]["lengthInflated"] == 0.0
     assert block["control"]["metricValue"] == 0.0
     assert os.path.exists(os.path.join(judgment_dir, "judgments.jsonl"))
     # Completed: the awaiting listing is empty.
     assert tasks.list_awaiting_judgment("jsdef", root) == []
+
+
+def test_completion_tolerates_a_pre_words_deferred_context(
+        tmp_path, monkeypatch):
+    """Decodable-absent for legacy records, on the completion path: a
+    deferred selection context written before the per-cell ``words`` field
+    completes normally — the ratio still stamps (distinct-2 was always
+    recorded), and the length flag is simply ABSENT, never invented. The
+    context is hash-pinned, so the simulated legacy file re-stamps its pin
+    the way a genuine pre-words emission would have."""
+    root = str(tmp_path)
+    run_dir, _ = _deferred_sweep(root, "jsold", monkeypatch)
+    ctx_path = os.path.join(run_dir, "deferred-selection.json")
+    with open(ctx_path, encoding="utf-8") as handle:
+        ctx = json.load(handle)
+    for cinfo in ctx["concepts"].values():
+        for cell in cinfo["cells"]:
+            del cell["words"]
+    with open(ctx_path, "w", encoding="utf-8") as handle:
+        json.dump(ctx, handle, indent=2, sort_keys=True)
+    jm_path = os.path.join(run_dir, "judging-manifest.json")
+    with open(jm_path, encoding="utf-8") as handle:
+        jm = json.load(handle)
+    with open(ctx_path, "rb") as handle:
+        jm["selectionContextSha256"] = hashlib.sha256(
+            handle.read()).hexdigest()
+    with open(jm_path, "w", encoding="utf-8") as handle:
+        json.dump(jm, handle, indent=2, sort_keys=True)
+
+    tasks.complete_sweep_judgment(
+        "jsold", os.path.basename(run_dir), _judgments_from_map(run_dir),
+        root, log=lambda *_: None)
+    d = es.load_raw("jsold", root)
+    cond = next(c for c in d["conditions"] if c["name"] == "fear-recommended")
+    metrics = cond["selection"]["metrics"]
+    assert metrics["distinct2Ratio"] == pytest.approx(1.0)
+    assert "lengthInflated" not in metrics
 
 
 def test_sweep_completion_records_all_cells_and_full_verdicts(

@@ -8545,7 +8545,8 @@ public enum ExperimentTasks {
                         SweepSelectionRule.Cell(
                             layer: layer, alpha: alpha, metric: metricValue,
                             distinct2: Double(distinct),
-                            batteryAccuracy: Double(accuracy)))
+                            batteryAccuracy: Double(accuracy),
+                            words: Double(words)))
                 }
             }
             try await setInterventions(container, [])
@@ -8708,6 +8709,8 @@ public enum ExperimentTasks {
                     best: best,
                     baselineMetric: baselineMetric,
                     baselineDensity: Double(baselineDensity),
+                    baselineDistinct2: Double(baselineDistinct),
+                    baselineWords: Double(baselineWords),
                     baselineAccuracy: Double(baselineAccuracy)),
                 control: control)
             recommendations[ref.name] = try jsonObject(of: provenance)

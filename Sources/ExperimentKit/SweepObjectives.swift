@@ -318,6 +318,8 @@ extension ExperimentTasks {
         best: SweepSelectionRule.Cell,
         baselineMetric: Double,
         baselineDensity: Double,
+        baselineDistinct2: Double,
+        baselineWords: Double,
         baselineAccuracy: Double
     ) -> [String: Double] {
         var metrics: [String: Double]
@@ -334,6 +336,27 @@ extension ExperimentTasks {
         metrics["distinct2"] = best.distinct2
         metrics["batteryAccuracy"] = best.batteryAccuracy
         metrics["baselineBatteryAccuracy"] = baselineAccuracy
+        // The coherence gate's own evidence travels WITH the metrics it
+        // adjudicated (server twin: `selection_report_metrics`) — previously
+        // the ratio and the length flag lived only in sweep.csv, so a
+        // promotion certificate inheriting this block could not show what
+        // its own floor gated on. The block is a NUMBER map on both engines
+        // (this engine decodes server-written recommendations as
+        // `[String: Double]`), so the flag is stamped 1/0 — a JSON boolean
+        // would refuse to decode. Either key is simply ABSENT when its input
+        // is undefined — the ratio for a zero baseline distinct-2, the flag
+        // for a cell whose mean length was never recorded — which is also
+        // how every legacy record already decodes.
+        if let ratio = SweepSelectionRule.distinct2Ratio(
+            distinct2: best.distinct2, baselineDistinct2: baselineDistinct2)
+        {
+            metrics["distinct2Ratio"] = ratio
+        }
+        if let words = best.words {
+            metrics["lengthInflated"] =
+                SweepSelectionRule.lengthInflated(
+                    meanWords: words, baselineMeanWords: baselineWords) ? 1 : 0
+        }
         return metrics
     }
 }
