@@ -102,10 +102,22 @@ public enum RunEpoch {
     /// The manifest reduced to its generation-side surface — the comparison
     /// object for the measurement-drift tolerance. Server twin:
     /// `_without_measurement_fields`.
+    ///
+    /// `name` is BLANKED on both sides, not listed in `measurementFields`:
+    /// it is identity, not a measurement setting — but by the tolerance's
+    /// own rule (a field that cannot have affected a byte of the source
+    /// run's generations) a rename is tolerable on measurement verbs.
+    /// Without this, the sanctioned duplicate-never-edit path (duplicate a
+    /// study, pin a new rubric and panel, evaluate against the ORIGINAL
+    /// run) refused on the one field the duplication itself must change
+    /// (observed 2026-08-28, the calibration duplicate of a draft study).
+    /// `promote` still refuses a renamed manifest: only measurement verbs
+    /// pass `tolerateMeasurementDrift`.
     static func withoutMeasurementFields(
         _ manifest: ExperimentManifest
     ) -> ExperimentManifest {
         var copy = manifest
+        copy.name = ""
         copy.judges = nil
         copy.evaluation = nil
         copy.pipeline = nil

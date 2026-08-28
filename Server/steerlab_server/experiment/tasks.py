@@ -9160,10 +9160,18 @@ def _evaluate_response_coding(name: str, manifest: Manifest, schema,
         ],
         "codings": len(rows),
         "conditions": response_coding.aggregate_conditions(rows, schema),
-        "fieldAgreement": response_coding.field_agreement(
-            rows, schema, [ref.name for ref in roster]),
         "evaluationSource": evaluation_source,
     }
+    # Absent-with-reason rather than empty when ONE coder coded the run:
+    # there is no pair to compare, which is not the same fact as a pair that
+    # agreed about nothing. Swift twin: `CodingReport.fieldAgreement` is
+    # optional and omitted on the same rule.
+    if len(roster) >= 2:
+        report["fieldAgreement"] = response_coding.field_agreement(
+            rows, schema, [ref.name for ref in roster])
+    else:
+        report["fieldAgreementAbsentReason"] = \
+            response_coding.SINGLE_CODER_AGREEMENT_ABSENT_REASON
     noncompliant_total = sum(1 for r in rows if r.get("noncompliant"))
     if noncompliant_total:
         # Nonzero-only, like the paired judge's noncompliantJudgments: these

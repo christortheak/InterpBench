@@ -196,6 +196,8 @@ import Testing
                 ],
                 ["set-sampling", "sealed", "--temperature", "0.7"],
                 ["set-exclusions", "sealed", "unparseableEndpoint"],
+                ["set-parser", "sealed", ""],
+                ["set-instrument-scope", "sealed", "label"],
             ]
             for attempt in attempts {
                 let outcome = await invoke(attempt)

@@ -431,6 +431,18 @@ import Testing
             byField["mentionsLegalRule"]?["percentAgreement"] as? Double
                 == 0.5)
         #expect(byField["mentionsLegalRule"]?["n"] as? Int == 2)
+        // The confusion counts beside the statistic (cross-engine key
+        // "confusion"): computed over the same label pairs, so they sum to
+        // n, and the one disagreement sits off the diagonal.
+        let confusion = try #require(
+            byField["mentionsLegalRule"]?["confusion"]
+                as? [String: [String: Int]])
+        #expect(
+            confusion.values.map { $0.values.reduce(0, +) }.reduce(0, +) == 2)
+        let offDiagonal = confusion.flatMap { a, row in
+            row.filter { $0.key != a }.values
+        }.reduce(0, +)
+        #expect(offDiagonal == 1)
         // No paired artifacts anywhere on this path.
         #expect(
             !FileManager.default.fileExists(
@@ -448,6 +460,78 @@ import Testing
         #expect(status["status"] as? String == "completed")
         #expect(status["itemLabel"] as? String == "coding")
         #expect(status["itemsWritten"] as? Int == 4)
+    }
+
+    /// One judge is a legal design (maintainer ruling, 2026-08-28), so the
+    /// report must not carry an EMPTY `fieldAgreement` — that reads as
+    /// "agreement was measured and there was none", a different and false
+    /// claim. The block is absent and a reason says why. Server twin:
+    /// `test_a_single_coder_report_records_agreement_as_absent_with_a_reason`.
+    @Test func aSingleCoderReportRecordsAgreementAsAbsent() async throws {
+        ExperimentRootOverrideLock.acquire()
+        let temp = FileManager.default.temporaryDirectory
+            .appending(component: "coding-solo-\(UUID().uuidString)")
+        ExperimentStore.rootOverride = temp
+        ExperimentTasks.codingOverrideForTesting = { _, _ in
+            "{\"codes\": {\"mentionsLegalRule\": true, "
+                + "\"mentionsEquity\": false}, \"brief_reason\": \"r\"}"
+        }
+        defer {
+            ExperimentTasks.codingOverrideForTesting = nil
+            ExperimentStore.rootOverride = nil
+            try? FileManager.default.removeItem(at: temp)
+            ExperimentRootOverrideLock.release()
+        }
+
+        let study = "vg-solo-coding"
+        var manifest = try ExperimentStore.create(
+            name: study, description: "d", modelID: "test/model")
+        manifest.concepts.append(
+            .init(
+                name: "french",
+                stimulusSetHash: try StimulusSet(
+                    directory: VectorCatalog.conceptsDirectory
+                        .appending(component: "french")
+                ).hash,
+                options: .init()))
+        manifest.judges = [.init(name: "solo", kind: "local", model: nil)]
+        try ExperimentStore.save(manifest)
+        let source = ExperimentStore.runsDirectory.appending(
+            component: "20260804T000000000Z-exp-\(study)-run")
+        try FileManager.default.createDirectory(
+            at: source, withIntermediateDirectories: true)
+        try ExperimentStore.manifestHash(manifest).write(
+            to: source.appending(component: "experiment-hash.txt"),
+            atomically: true, encoding: .utf8)
+        try ("{\"experiment\":\"\(study)\",\"condition\":\"fear\","
+            + "\"seed\":2,\"promptID\":\"p0\",\"prompt\":\"q\","
+            + "\"output\":\"Fairness to the donor matters most here.\"}\n")
+            .write(
+                to: source.appending(component: "generations.jsonl"),
+                atomically: true, encoding: .utf8)
+
+        let out = try await ExperimentTasks.evaluatePairedJudge(
+            experimentName: study,
+            sourceRunDirectory: source,
+            evaluation: ExperimentManifest.EvaluationSpec(
+                kind: .pairedJudge, judgeModel: "",
+                judgePrompt: Self.codingRubric))
+        let report = try #require(
+            try JSONSerialization.jsonObject(
+                with: Data(
+                    contentsOf: out.appending(
+                        component: "coding-report.json")))
+                as? [String: Any])
+        #expect(report["judges"] as? [String] == ["solo"])
+        #expect(report["fieldAgreement"] == nil, "empty is not absent")
+        #expect(
+            report["fieldAgreementAbsentReason"] as? String
+                == ExperimentStore.singleCoderAgreementAbsentReason)
+        // The per-condition aggregates are untouched: a single coder still
+        // measures, it just cannot be compared with anyone.
+        let conditions = try #require(report["conditions"] as? [String: Any])
+        let fear = try #require(conditions["fear"] as? [String: Any])
+        #expect(fear["codings"] as? Int == 1)
     }
 }
 

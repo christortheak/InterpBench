@@ -1,0 +1,18 @@
+{
+  "changed" : true,
+  "engine" : "swift-mlx",
+  "message" : "scoped the outcome instruments on 'demo' to label rows — 1 item pinned at d0f631ca1ddb…",
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "result" : {
+    "experiment" : "demo",
+    "itemCount" : 1,
+    "itemIDsHash" : "d0f631ca1ddba8db3bcfcb9e057cdc98d0379f1bee00e75a545147a27dadd982",
+    "responseFormats" : [
+      "label"
+    ]
+  },
+  "schemaVersion" : 1,
+  "state" : "ready",
+  "verb" : "experiment set-instrument-scope",
+  "workspace" : "<workspace>"
+}

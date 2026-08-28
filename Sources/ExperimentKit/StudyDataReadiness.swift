@@ -450,7 +450,8 @@ public enum StudyDataReadiness {
                 manifest: manifest, resolve: resolve))
 
         // Judge protocol: declared by a paired-judge evaluation, a pinned
-        // rubric, or a judge panel — any of them implies rubric + ≥2 judges.
+        // rubric, or a judge panel — any of them implies a pinned rubric
+        // file and at least one judge.
         let judgeCount = manifest.judges?.count ?? 0
         let judgeProtocolDeclared =
             manifest.evaluation?.kind == .pairedJudge
@@ -502,10 +503,14 @@ public enum StudyDataReadiness {
             let pipelineProblem = ExperimentStore.localJudgePipelineProblem(manifest)
             let fanoutNote = ExperimentStore.localJudgeFanoutNote(manifest)
             let panelProblem = indistinct ?? pipelineProblem
+            // One judge is PRESENT, not partial: a single-coder design is a
+            // legal methodology and freeze accepts it (2026-08-28 ruling).
+            // What the row says is what that design cannot report — the same
+            // sentence the advisory and the freeze envelope carry.
             let panelStatus: DataRequirement.Status =
-                judgeCount >= 2
+                judgeCount >= 1
                 ? (panelProblem == nil ? .present : .invalid)
-                : (judgeCount == 1 ? .partial : .missing)
+                : .missing
             rows.append(
                 DataRequirement(
                     id: "judgePanel",
@@ -518,8 +523,12 @@ public enum StudyDataReadiness {
                             ?? "\(judgeCount) judges pinned — agreement statistics can "
                                 + "be computed"
                                 + (fanoutNote.map { "; \($0)" } ?? ""))
-                        : "\(judgeCount) of the ≥2 judges freeze requires are pinned — "
-                            + "agreement statistics need at least 2"))
+                        : judgeCount == 1
+                            ? (panelProblem
+                                ?? ExperimentStore.singleJudgePanelAdvisoryText
+                                    + (fanoutNote.map { "; \($0)" } ?? ""))
+                            : "no judge pinned — a judged instrument with no "
+                                + "judge codes nothing, and freeze refuses"))
         }
 
         // Pipeline evaluate-stage coherence (2026-07-22 incident): a chain

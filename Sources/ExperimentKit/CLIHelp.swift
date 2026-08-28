@@ -69,6 +69,7 @@ public enum CLIFlagVocabulary {
         "--home": "<dir>",
         "--job-class": "<class>",
         "--job-id": "<id>",
+        "--judge-pin": "<judge-name>=<revision>[:<dtype>]",
         "--judges": "<spec>",
         "--layer-fractions": "<f1,f2,…>",
         "--layers": "<L1,L2,…>",
@@ -82,6 +83,7 @@ public enum CLIFlagVocabulary {
         "--objective": "<metric>",
         "--ordinal-aggregation": "<name>",
         "--out": "<file>",
+        "--parallel": "<n>",
         "--path": "<server-path>",
         "--payload": "<path>",
         "--plan-hash": "<sha256>",
@@ -205,6 +207,10 @@ public enum CLIFlagVocabulary {
         "--job-class": "Narrow the preview to one scheduler job class.",
         "--job-id": "Name the scheduler job explicitly instead of the recorded one.",
         "--json": "Print exactly one machine-readable envelope on stdout.",
+        "--judge-pin":
+            "Pin one LOCAL judge's revision (and optionally dtype), keyed by "
+            + "judge name; repeat per judge. Freeze requires both of any "
+            + "local judge naming a model other than the study model.",
         "--judges": "Judge panel: <name>:<kind>[:<model>[:<provider>]], comma-separated.",
         "--layer-fractions":
             "The sweep's layer axis as depths in [0, 1], ascending — the "
@@ -230,6 +236,12 @@ public enum CLIFlagVocabulary {
         "--open-auth-terminal": "Authorize opening the authentication Terminal.",
         "--ordinal-aggregation": "How ordinal readouts are aggregated.",
         "--out": "Write the same document to this file.",
+        "--parallel":
+            "Fan a Slurm run out across N GPU jobs (sent only when N > 1, "
+            + "the executor is slurm, and the verb shards; the envelope "
+            + "echoes what was sent and why not). The fan-out can PARTIALLY "
+            + "fail while the submit still exits 0 — verify the shard jobs "
+            + "landed (`steerlab-cli remote jobs`, or squeue at the site).",
         "--path": "The server-side path, as an alternative to the positional.",
         "--payload": "Local directory pushed as the server payload.",
         "--plan-hash": "The reviewed plan this apply is allowed to run.",

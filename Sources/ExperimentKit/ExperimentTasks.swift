@@ -7400,6 +7400,14 @@ public enum ExperimentTasks {
         var percentAgreement: Double? = nil
         var kappa: Double? = nil
         var meanAbsoluteDifference: Double? = nil
+        /// The confusion counts beside the statistic they explain, from the
+        /// very label pairs kappa was computed over: `confusion[a]?[b]` is
+        /// how many shared cells judgeA coded `a` while judgeB coded `b`,
+        /// and the counts sum to `n`. Categorical fields only (cross-engine
+        /// key "confusion") — an analysis layer must never have to
+        /// re-derive the cell key, the intersection, or the label
+        /// normalization to see WHERE two coders part ways.
+        var confusion: [String: [String: Int]]? = nil
     }
 
     struct CodingJudgeDetail: Codable, Equatable {
@@ -7429,7 +7437,17 @@ public enum ExperimentTasks {
         let fields: [ResponseCoding.Field]
         let codings: Int
         let conditions: [String: CodingConditionReport]
-        let fieldAgreement: [CodingAgreementEntry]
+        /// Pairwise inter-rater agreement, one entry per (judge pair, field)
+        /// — OMITTED entirely for a single-coder run, where
+        /// `fieldAgreementAbsentReason` says why instead. An EMPTY list
+        /// reads as "agreement was measured and there was none", which is a
+        /// different and false claim; a one-judge design has no pair to
+        /// measure. (The gate stopped requiring two judges on 2026-08-28;
+        /// this is the report's half of that ruling.)
+        let fieldAgreement: [CodingAgreementEntry]?
+        /// Present exactly when `fieldAgreement` is absent. Twin literal:
+        /// `response_coding.SINGLE_CODER_AGREEMENT_ABSENT_REASON`.
+        let fieldAgreementAbsentReason: String?
         let evaluationSource: String?
         let epochUnverified: Bool?
         /// Tolerated measurement-side drift, verbatim (cross-engine key
@@ -7736,9 +7754,16 @@ public enum ExperimentTasks {
             codings: records.count + noncompliantCodings,
             conditions: codingConditionAggregates(
                 records: records, schema: schema),
-            fieldAgreement: codingFieldAgreement(
-                records: records, schema: schema,
-                judges: judges.map(\.name)),
+            // Absent-with-reason rather than empty when one coder coded the
+            // run: there is no pair to compare, which is not the same fact
+            // as a pair that agreed about nothing.
+            fieldAgreement: judges.count >= 2
+                ? codingFieldAgreement(
+                    records: records, schema: schema,
+                    judges: judges.map(\.name))
+                : nil,
+            fieldAgreementAbsentReason: judges.count >= 2
+                ? nil : ExperimentStore.singleCoderAgreementAbsentReason,
             evaluationSource: evaluationSource,
             epochUnverified: epoch.unverified ? true : nil,
             measurementDrift: epoch.measurementDrift,
@@ -7873,13 +7898,18 @@ public enum ExperimentTasks {
                     let kappa = StudyStatistics.cohensKappa(labelsA, labelsB)
                     let agreed = zip(labelsA, labelsB)
                         .filter { $0.0 == $0.1 }.count
+                    var confusion: [String: [String: Int]] = [:]
+                    for (a, b) in zip(labelsA, labelsB) {
+                        confusion[a, default: [:]][b, default: 0] += 1
+                    }
                     entries.append(
                         CodingAgreementEntry(
                             field: field.name, judgeA: judgeA,
                             judgeB: judgeB, n: shared.count,
                             percentAgreement: Double(agreed)
                                 / Double(shared.count),
-                            kappa: kappa.isNaN ? nil : kappa))
+                            kappa: kappa.isNaN ? nil : kappa,
+                            confusion: confusion))
                 }
             }
         }

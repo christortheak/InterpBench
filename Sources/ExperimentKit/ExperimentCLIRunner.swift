@@ -1949,9 +1949,9 @@ public struct ExperimentCLIRunner: Sendable {
         /// The five verbs that wrote raw, unversioned JSON to stdout. Human
         /// mode still gets exactly those bytes; JSON mode gets the same
         /// object inside `result.response`, under a versioned envelope.
-        func respond<T: Encodable>(_ value: T, message: String) throws
-            -> ExperimentCLIResult
-        {
+        func respond<T: Encodable>(
+            _ value: T, message: String, extra: [String: JSONValue] = [:]
+        ) throws -> ExperimentCLIResult {
             let text = String(
                 data: try encoder.encode(value), encoding: .utf8) ?? "{}"
             if !invocation.json { sink.out(text) }
@@ -1960,6 +1960,10 @@ public struct ExperimentCLIRunner: Sendable {
             if let decoded = Self.jsonValue(fromJSONText: text) {
                 payload["response"] = decoded
             }
+            // Facts about the REQUEST that the server's response cannot
+            // carry — what this client asked for, and what it actually put
+            // on the wire.
+            for (key, item) in extra { payload[key] = item }
             return ExperimentCLIResult(message: message, payload: payload)
         }
 
@@ -1974,7 +1978,41 @@ public struct ExperimentCLIRunner: Sendable {
                 message: "uploaded \(args[1])")
         case "submit-bundle":
             guard let path = flag("--bundle") ?? (args.count >= 2 ? args[1] : nil) else {
-                throw ExperimentError(reason: "usage: remote submit-bundle <server-bundle-path> [--verb verify] [--executor local|slurm] [--dry-run]")
+                throw ExperimentError(reason: "usage: remote submit-bundle <server-bundle-path> [--verb verify] [--executor local|slurm] [--dry-run] [--parallel <n>]")
+            }
+            let submitVerb = flag("--verb") ?? "run"
+            let submitExecutor = flag("--executor") ?? "local"
+            // Multi-GPU fan-out, headless. The machinery has been complete
+            // underneath since 2026-07-22 — `submitBundle` takes
+            // `parallelJobs`, the server route reads it and launches K shard
+            // jobs plus a merge — but only the app's stepper could reach it,
+            // so a headless submission was single-job by construction.
+            var parallelJobs = 1
+            if let raw = flag("--parallel") {
+                guard let value = Int(raw), value >= 1 else {
+                    throw ExperimentError.malformed(
+                        "--parallel must be a positive integer, not '\(raw)'",
+                        repair: "steerlab-cli remote submit-bundle \(path) "
+                            + "--verb run --executor slurm --parallel 4")
+                }
+                parallelJobs = value
+            }
+            // What the CLIENT will actually put on the wire, by the one rule
+            // (`encodedParallelJobs`) the app's stepper and this verb share:
+            // older servers and unshardable submissions never see the field.
+            let encodedParallel = ShardedSubmission.encodedParallelJobs(
+                requested: parallelJobs, executor: submitExecutor,
+                verb: submitVerb)
+            let parallelSuppression = ShardedSubmission.suppressionReason(
+                requested: parallelJobs, executor: submitExecutor,
+                verb: submitVerb)
+            // A `--parallel` the rule suppressed is said on stderr too: a
+            // request silently reduced to one job is the failure this echo
+            // exists to prevent.
+            if parallelJobs > 1, let parallelSuppression {
+                sink.err(
+                    "warning: --parallel \(parallelJobs) not sent — "
+                        + "\(parallelSuppression)\n")
             }
             // Engine-lag advisory (2026-08-27 incident): submitting server-side
             // work while the deployed engine trails this build must be LOUD —
@@ -1984,14 +2022,27 @@ public struct ExperimentCLIRunner: Sendable {
             }
             let submission = try await client.submitBundle(
                 path: path,
-                verb: flag("--verb") ?? "run",
-                executor: flag("--executor") ?? "local",
+                verb: submitVerb,
+                executor: submitExecutor,
                 dryRun: args.contains("--dry-run"),
                 resources: [
                     "gres": flag("--gres") ?? "",
                     "walltime": flag("--walltime") ?? "",
-                ].filter { !$0.value.isEmpty })
-            return try respond(submission, message: "submitted \(path)")
+                ].filter { !$0.value.isEmpty },
+                parallelJobs: parallelJobs)
+            return try respond(
+                submission, message: "submitted \(path)",
+                extra: [
+                    "parallelJobsRequested": .number(Double(parallelJobs)),
+                    // nil when the rule suppressed the field — the echo says
+                    // WHY rather than reporting the request as honored.
+                    "parallelJobsEncoded": encodedParallel.map {
+                        JSONValue.number(Double($0))
+                    } ?? .null,
+                    "parallelJobsSuppressedBecause": parallelSuppression.map {
+                        JSONValue.string($0)
+                    } ?? .null,
+                ])
         case "jobs":
             let jobs = try await client.jobs()
             return try respond(jobs, message: "\(jobs.count) job(s)")
@@ -2175,6 +2226,21 @@ public struct ExperimentCLIRunner: Sendable {
                 return nil
             }
             return args[index + 1]
+        }
+        /// Every occurrence of a repeatable value flag, in the order typed
+        /// (the `panel compile --seat` shape).
+        func repeatedFlag(_ name: String) -> [String] {
+            var values: [String] = []
+            var index = 0
+            while index < args.count {
+                if args[index] == name, index + 1 < args.count {
+                    values.append(args[index + 1])
+                    index += 2
+                } else {
+                    index += 1
+                }
+            }
+            return values
         }
 
         switch args.first {
@@ -2581,11 +2647,36 @@ public struct ExperimentCLIRunner: Sendable {
                 throw ExperimentError(
                     reason: "usage: experiment pin-rubric <name> "
                         + "<prompts/rubrics/file.md> "
-                        + "[--judges <name>:<kind>[:<model>[:<provider>]][,…]]  "
+                        + "[--judges <name>:<kind>[:<model>[:<provider>]][,…]] "
+                        + "[--judge-pin <judge-name>=<revision>[:<dtype>]]…  "
                         + "(kinds: \(ExperimentStore.knownJudgeKinds.joined(separator: " | ")); "
-                        + "\"\" clears the pin)")
+                        + "dtypes: "
+                        + ExperimentStore.judgeDtypeVocabulary
+                            .joined(separator: " | ")
+                        + "; \"\" clears the pin)")
             }
-            let judges = try flag("--judges").map(Self.parseJudges)
+            let declaredJudges = try flag("--judges").map(Self.parseJudges)
+            let judgePins = try repeatedFlag("--judge-pin")
+                .map(Self.parseJudgePin)
+            // The panel's PINS merge field by field even though the roster
+            // replaces — see `mergingJudgePins`. Read before the write, so
+            // "what the study already had" is the panel on disk.
+            let priorPanel =
+                (try? ExperimentStore.load(name: args[1]))?.judges ?? []
+            var judges = declaredJudges
+            var judgePinNotes: [String] = []
+            if declaredJudges != nil || !judgePins.isEmpty {
+                // With no `--judges`, the roster is the panel already
+                // declared: `--judge-pin` alone pins the judges that are
+                // there, which is the shape a panel authored in the app
+                // needs from a headless follow-up.
+                let (merged, notes) = try Self.mergingJudgePins(
+                    declared: declaredJudges ?? priorPanel,
+                    pins: judgePins, previous: priorPanel,
+                    experimentName: args[1])
+                judges = merged
+                judgePinNotes = notes
+            }
             let rubric = try ExperimentStore.setJudgeRubric(
                 file: args[2], judges: judges, experimentName: args[1])
             var rubricLines: [String] = []
@@ -2599,48 +2690,81 @@ public struct ExperimentCLIRunner: Sendable {
             if !panel.isEmpty {
                 rubricLines.append(
                     "judges: "
-                        + panel.map { "\($0.name) (\($0.kind))" }
-                            .joined(separator: ", "))
+                        + panel.map { judge in
+                            // The PINS are part of what a judge is — a
+                            // foreign local judge without them cannot
+                            // freeze — so the line that lists the panel
+                            // shows them.
+                            var described = "\(judge.name) (\(judge.kind))"
+                            if let revision = judge.revision {
+                                described += " @ \(revision.prefix(12))…"
+                            }
+                            if let dtype = judge.dtype {
+                                described += " \(dtype)"
+                            }
+                            return described
+                        }
+                        .joined(separator: ", ")
+                        + Self.inheritedSelectionNote(judgePinNotes))
             }
-            // Freeze wants ≥2 DISTINCT judges for agreement statistics; say
-            // so now rather than at the gate, as an advisory (never an exit
-            // code — a one-judge draft is a legal draft).
+            // A one-judge panel is a legal DESIGN, not a defect — freeze
+            // accepts it — so the advisory says what it costs rather than
+            // what the gate will do. One sentence, said here and again at
+            // freeze, so the researcher meets it at the moment of choosing.
             var rubricAdvisories: [SteerLabCLIEnvelope.Advisory] = []
-            if !panel.isEmpty, panel.count < 2 {
+            if panel.count == 1 {
                 rubricAdvisories.append(
                     .init(
                         code: CLIAdvisory.judgePanelTooSmall.rawValue,
-                        detail: "\(panel.count) judge pinned; freeze's "
-                            + "judgeValidity gate requires at least 2 so the "
-                            + "report can carry agreement statistics"))
+                        detail: ExperimentStore.singleJudgePanelAdvisoryText))
             }
             for line in rubricLines { sink.out(line) }
+            var rubricPayload: [String: JSONValue] = [:]
+            if !judgePinNotes.isEmpty {
+                // The same key the selection merge echoes under: what this
+                // re-declaration kept (or dropped) rather than restated.
+                rubricPayload["inheritedFromExistingDeclaration"] =
+                    .array(judgePinNotes.map(JSONValue.string))
+            }
+            rubricPayload["experiment"] = .string(rubric.name)
+            rubricPayload["judgeRubricFile"] = rubric.judgeRubricFile.map {
+                JSONValue.string($0)
+            } ?? .null
+            rubricPayload["judgeRubricHash"] = rubric.judgeRubricHash.map {
+                JSONValue.string($0)
+            } ?? .null
+            rubricPayload["judges"] = .array(
+                panel.map { judge in
+                    // Echoed AS STORED, omit-when-nil like `JudgeRef`'s own
+                    // encoding — including the two local-judge pins, which
+                    // the echo used to leave out entirely even when the
+                    // manifest carried them.
+                    var fields: [String: JSONValue] = [
+                        "name": .string(judge.name),
+                        "kind": .string(judge.kind),
+                    ]
+                    if let model = judge.model { fields["model"] = .string(model) }
+                    if let provider = judge.provider {
+                        fields["provider"] = .string(provider)
+                    }
+                    if let revision = judge.revision {
+                        fields["revision"] = .string(revision)
+                    }
+                    if let dtype = judge.dtype { fields["dtype"] = .string(dtype) }
+                    return .object(fields)
+                })
+            rubricPayload["evaluationKind"] = rubric.evaluation.map {
+                JSONValue.string($0.kind.rawValue)
+            } ?? .null
             return ExperimentCLIResult(
-                message: rubricLines[0], changed: true,
-                payload: [
-                    "experiment": .string(rubric.name),
-                    "judgeRubricFile": rubric.judgeRubricFile.map {
-                        JSONValue.string($0)
-                    } ?? .null,
-                    "judgeRubricHash": rubric.judgeRubricHash.map {
-                        JSONValue.string($0)
-                    } ?? .null,
-                    "judges": .array(
-                        panel.map { judge in
-                            var fields: [String: JSONValue] = [
-                                "name": .string(judge.name),
-                                "kind": .string(judge.kind),
-                            ]
-                            if let model = judge.model { fields["model"] = .string(model) }
-                            if let provider = judge.provider {
-                                fields["provider"] = .string(provider)
-                            }
-                            return .object(fields)
-                        }),
-                    "evaluationKind": rubric.evaluation.map {
-                        JSONValue.string($0.kind.rawValue)
-                    } ?? .null,
-                ],
+                // The merge note rides the HEADLINE as well as the judges
+                // line, because `message` is the one field a caller that
+                // reads nothing else still reads — and a merge is honest
+                // only when it is said where it will be seen.
+                message: rubricLines[0]
+                    + Self.inheritedSelectionNote(judgePinNotes),
+                changed: true,
+                payload: rubricPayload,
                 advisories: rubricAdvisories)
 
         case "declare-condition":
@@ -2872,6 +2996,13 @@ public struct ExperimentCLIRunner: Sendable {
             // loudly as the stamp does — advisories, never a changed exit
             // code (a `set -e` wrapper must not break on a deliberate force).
             var advisories: [SteerLabCLIEnvelope.Advisory] = []
+            // The single-coder consequence, stamped where the study becomes
+            // citable. The gate let this freeze through deliberately; the
+            // envelope must still say what the frozen design cannot report.
+            if let singleCoder = ExperimentStore.singleJudgePanelAdvisory(manifest) {
+                advisories.append(
+                    .init(CLIAdvisory.judgePanelTooSmall, singleCoder))
+            }
             if let skipped = manifest.forcedGatesSkipped, !skipped.isEmpty {
                 payload["forcedGatesSkipped"] = .array(skipped.map { .string($0) })
                 for gate in skipped {
@@ -3706,6 +3837,149 @@ public struct ExperimentCLIRunner: Sendable {
                         Double(exclusions.exclusionRules?.count ?? 0)),
                 ])
 
+        case "set-parser":
+            // HOW the numeric outcome is read: the workspace-declared parser
+            // grammar (`numericParser`) plus the registry pin
+            // (`parserRegistryHash`) that fixes WHICH VERSION of it the
+            // study preregistered. Both fields were writable only from the
+            // app's parser picker, so a replication whose endpoint is a
+            // declared grammar could not be authored headlessly — it fell
+            // back to the DEPRECATED implicit selection
+            // (`caseFamily: "sentencing"` → the built-in duration parser),
+            // which is exactly what declaring a parser exists to retire.
+            //
+            // Positional value, like `set-instruments`, `set-exclusions`
+            // and `set-style-taxonomy`: the primary declaration is the
+            // argument, and "" clears it. The registry HASH is never an
+            // argument — the registry file is the authority on the version,
+            // so it is derived at the write and only there.
+            guard args.count >= 3 else {
+                let defined = ParserRegistryUI.entries().map(\.name)
+                throw ExperimentError(
+                    reason: "usage: experiment set-parser <name> <parser>  "
+                        + "(defined in \(ParserRegistry.registryFile): "
+                        + (defined.isEmpty
+                            ? "none — start from the shipped template"
+                            : defined.joined(separator: " | "))
+                        + ")  (\"\" clears the declaration and its registry "
+                        + "pin; the registry hash is pinned from the file, "
+                        + "never passed in)")
+            }
+            let parserName = args[2].trimmingCharacters(in: .whitespaces)
+            let parsed = try ExperimentStore.setNumericParser(
+                parserName.isEmpty ? nil : parserName, experimentName: args[1])
+            // The kind is read back from the registry the write just pinned,
+            // so the echo says what the study will actually parse WITH, not
+            // merely which name it stored.
+            let parserKind = parsed.numericParser.flatMap { name in
+                ParserRegistryUI.entries().first { $0.name == name }?.kind
+            }
+            let parserLine: String
+            if let declared = parsed.numericParser {
+                parserLine =
+                    "declared numeric parser '\(declared)'"
+                    + (parserKind.map { " (\($0))" } ?? "")
+                    + " on '\(parsed.name)' — registry "
+                    + ParserRegistry.registryFile + " pinned at "
+                    + "\(parsed.parserRegistryHash?.prefix(12) ?? "?")…"
+            } else {
+                parserLine =
+                    "cleared the numeric-parser declaration on "
+                    + "'\(parsed.name)' — the registry pin went with it"
+            }
+            sink.out(parserLine)
+            // Clearing the declaration hands the endpoint back to the
+            // DEPRECATED implicit rule, when this study is one the rule
+            // fires for (`usesImplicitCaseFamilyEndpoint` is false whenever
+            // a parser IS declared, so this is silent on the declaring
+            // path). One helper, one sentence, every site.
+            let parserAdvisories = Self.implicitCaseFamilyAdvisories(
+                experimentNamed: parsed.name)
+            return ExperimentCLIResult(
+                message: parserLine, changed: true,
+                payload: [
+                    "experiment": .string(parsed.name),
+                    "numericParser": parsed.numericParser.map {
+                        JSONValue.string($0)
+                    } ?? .null,
+                    "parserKind": parserKind.map { JSONValue.string($0) }
+                        ?? .null,
+                    // Derived from the registry bytes at this write — the
+                    // provenance block's `registryHash`, echoed in full so a
+                    // caller can compare it against a later report.json.
+                    "parserRegistryHash": parsed.parserRegistryHash.map {
+                        JSONValue.string($0)
+                    } ?? .null,
+                    "registryFile": .string(ParserRegistry.registryFile),
+                ],
+                advisories: parserAdvisories)
+
+        case "set-instrument-scope":
+            // WHICH ROWS the option-consuming instruments read. The run-start
+            // responseFormat gate refuses a mixed json+label prompt file the
+            // moment a choice instrument is declared, and its repair names
+            // `set-instruments … sampledText` — which DROPS the instrument.
+            // The non-lossy path the refusal also names ("declare
+            // outcomeInstrumentScope to apply it to the label rows only")
+            // had no CLI writer at all: the only affordance was a SwiftUI
+            // button. A mixed-format study keeps `answerTokenLogprob` and
+            // `ordinalScale` on its label rows alongside `sampledText`
+            // everywhere by declaring the subset here.
+            //
+            // The pin (`itemCount` + `itemIDsHash`) is COMPUTED from the
+            // study's own pinned task prompts — the researcher picks
+            // formats, never hashes — so which rows were measured stays a
+            // checkable fact rather than one recomputed from whatever the
+            // file says later. Both value rules (an unknown format, a scope
+            // that selects zero rows) live in the store setter, so the
+            // panel's button and the template re-pin refuse identically.
+            guard args.count >= 3 else {
+                throw ExperimentError(
+                    reason: "usage: experiment set-instrument-scope <name> "
+                        + "<responseFormat>[,…]  (known: "
+                        + ExperimentStore.knownResponseFormats
+                            .joined(separator: " | ")
+                        + ")  (\"\" clears the declaration — the instruments "
+                        + "apply to every item again)")
+            }
+            let scopeFormats = args[2]
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            let scoped = try ExperimentStore.declareOutcomeInstrumentScope(
+                responseFormats: scopeFormats, experimentName: args[1])
+            let scopeLine: String
+            if let pin = scoped.outcomeInstrumentScope {
+                scopeLine =
+                    "scoped the outcome instruments on '\(scoped.name)' to "
+                    + pin.responseFormats.joined(separator: ", ")
+                    + " rows — \(pin.itemCount) item"
+                    + "\(pin.itemCount == 1 ? "" : "s") pinned at "
+                    + "\(pin.itemIDsHash.prefix(12))…"
+            } else {
+                scopeLine =
+                    "cleared the outcome-instrument scope on "
+                    + "'\(scoped.name)' — the instruments apply to every "
+                    + "item again"
+            }
+            sink.out(scopeLine)
+            return ExperimentCLIResult(
+                message: scopeLine, changed: true,
+                payload: [
+                    "experiment": .string(scoped.name),
+                    // The pin AS STORED — the three fields the drift rule
+                    // re-checks at run start, so the echo is the whole
+                    // declaration and not just the formats that were typed.
+                    "responseFormats": .array(
+                        (scoped.outcomeInstrumentScope?.responseFormats ?? [])
+                            .map { .string($0) }),
+                    "itemCount": .number(
+                        Double(scoped.outcomeInstrumentScope?.itemCount ?? 0)),
+                    "itemIDsHash": scoped.outcomeInstrumentScope.map {
+                        JSONValue.string($0.itemIDsHash)
+                    } ?? .null,
+                ])
+
         case "set-style-taxonomy":
             // Pin a reasoning-style taxonomy (prompts/taxonomies/<name>.json)
             // into a draft manifest: validates the file loads on this engine,
@@ -3910,6 +4184,7 @@ public struct ExperimentCLIRunner: Sendable {
                     + "| pin-rubric | declare-condition | set-sweep-selection "
                     + "| set-sweep-grid | set-instruments "
                     + "| set-sampling | set-exclusions "
+                    + "| set-parser | set-instrument-scope "
                     + "| set-style-taxonomy | verify "
                     + "| freeze | duplicate | extract | validate | sweep | run "
                     + "| analyze | rescore-style | evaluate | promote | confirm")
@@ -4451,6 +4726,205 @@ public struct ExperimentCLIRunner: Sendable {
             throw ExperimentError(reason: "--judges is empty — \(shape)")
         }
         return judges
+    }
+
+    /// One `--judge-pin <name>=<revision>[:<dtype>]` — the LOCAL-judge pins
+    /// (`judges[].revision`, `judges[].dtype`) that freeze's `judgeValidity`
+    /// gate requires of any local judge naming a model other than the study
+    /// model, and that no CLI could express.
+    ///
+    /// SPELLING, and why not a fifth colon field. `--judges` is positional
+    /// (`<name>:<kind>[:<model>[:<provider>]]`) and its fourth field is
+    /// OpenRouter's provider, so `:<revision>:<dtype>` would put two
+    /// LOCAL-only fields behind a field the same grammar refuses for local
+    /// judges — a local pin would have to be typed
+    /// `j:local:model::abc:bfloat16`, and position 4 would mean two things
+    /// depending on position 2. A separate repeated flag KEYED BY JUDGE NAME
+    /// is the shape this CLI already has for exactly that problem
+    /// (`panel compile --seat <seat>=<agent-artifact-path>`, repeated per
+    /// seat): `=` binds an identifier to its payload, and `:` structures the
+    /// payload, as it does in `--slots` and `--cell`.
+    struct JudgePin: Sendable, Equatable {
+        var name: String
+        var revision: String
+        var dtype: String?
+    }
+
+    static func parseJudgePin(_ raw: String) throws -> JudgePin {
+        let shape =
+            "each pin is <judge-name>=<revision>[:<dtype>] — dtypes: "
+            + ExperimentStore.judgeDtypeVocabulary.joined(separator: " | ")
+            + " (aliases bf16/fp16/fp32)"
+        // FIRST `=`, like `--seat`: the key cannot contain one, the value
+        // might.
+        guard let separator = raw.firstIndex(of: "="),
+            separator != raw.startIndex
+        else {
+            throw ExperimentError.malformed(
+                "bad judge pin '\(raw)' — \(shape)",
+                repair: "steerlab-cli experiment pin-rubric <name> <rubric> "
+                    + "--judge-pin <judge-name>=<revision>[:<dtype>]")
+        }
+        let name = String(raw[raw.startIndex..<separator])
+            .trimmingCharacters(in: .whitespaces)
+        let value = String(raw[raw.index(after: separator)...])
+        let parts = value.split(separator: ":", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        guard !name.isEmpty, parts.count <= 2, let revision = parts.first,
+            !revision.isEmpty
+        else {
+            throw ExperimentError.malformed(
+                "bad judge pin '\(raw)' — \(shape)",
+                repair: "steerlab-cli experiment pin-rubric <name> <rubric> "
+                    + "--judge-pin <judge-name>=<revision>[:<dtype>]")
+        }
+        // The revision rule freeze already applies, said at the DECLARATION:
+        // a branch or tag is re-pointed by definition, so it cannot identify
+        // the weights a run used, and a pin that is not a pin is worse than
+        // no pin because the manifest claims one.
+        guard ExperimentStore.isCommitLike(revision) else {
+            throw ExperimentError.malformed(
+                "judge pin '\(name)' names revision '\(revision)', which is "
+                    + "not a commit hash — a branch or tag is re-pointed by "
+                    + "definition, so it cannot identify the weights a run "
+                    + "used",
+                repair: "steerlab-cli experiment pin-rubric <name> <rubric> "
+                    + "--judge-pin \(name)=<commit-hash>[:<dtype>]")
+        }
+        var dtype: String?
+        if parts.count == 2, !parts[1].isEmpty {
+            // Aliases are accepted (the gate accepts them) and STORED
+            // canonically, so every manifest spells the same precision the
+            // same way — the app's picker writes canonical too.
+            guard let canonical = ExperimentStore.normalizeJudgeDtype(parts[1])
+            else {
+                throw ExperimentError.malformed(
+                    "unknown judge dtype '\(parts[1])' — the loader accepts "
+                        + "only "
+                        + ExperimentStore.judgeDtypeVocabulary
+                            .joined(separator: ", ")
+                        + " (aliases bf16/fp16/fp32). An unrecognized value "
+                        + "used to load float32 silently, so the pin would be "
+                        + "a false claim",
+                    repair: "steerlab-cli experiment pin-rubric <name> "
+                        + "<rubric> --judge-pin \(name)=<revision>:<"
+                        + ExperimentStore.judgeDtypeVocabulary
+                            .joined(separator: "|") + ">")
+            }
+            dtype = canonical
+        }
+        return JudgePin(name: name, revision: revision, dtype: dtype)
+    }
+
+    /// The judge panel `pin-rubric` writes, given what was typed and what
+    /// the study already had.
+    ///
+    /// `--judges` REPLACES the roster — the caller names the panel — but a
+    /// row's local-judge PINS are not part of the roster's identity, and a
+    /// re-declaration that dropped them was the silent-drop class the sweep
+    /// selection merge exists to kill (the merge goes field by field all the
+    /// way down). The app was the only surface that could write
+    /// `revision`/`dtype`, so `pin-rubric --judges` over a panel authored
+    /// there wiped exactly the two fields freeze's `judgeValidity` gate
+    /// requires, and the study then refused at freeze for want of pins it
+    /// used to have. So the merge goes one level below the roster:
+    ///
+    /// - `--judge-pin` declares the pins outright, in the same breath as the
+    ///   panel — which is what makes REPLACE honest rather than lossy.
+    /// - Otherwise a row whose NAME survives, whose kind is still `local`,
+    ///   and whose model is unchanged INHERITS the pins it had.
+    /// - A row whose model CHANGED drops them: the pins identify the OLD
+    ///   bytes, exactly as a re-declared choice-prompts file drops its hash.
+    ///
+    /// Every inheritance and every drop is NAMED in the echo, the rule the
+    /// selection merge set: a merge is honest when it is said out loud.
+    static func mergingJudgePins(
+        declared: [ExperimentManifest.JudgeRef],
+        pins: [JudgePin],
+        previous: [ExperimentManifest.JudgeRef],
+        experimentName: String
+    ) throws -> (panel: [ExperimentManifest.JudgeRef], notes: [String]) {
+        func resolvedModel(_ judge: ExperimentManifest.JudgeRef) -> String? {
+            let trimmed = judge.model?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        let roster = Set(declared.map(\.name))
+        // A pin aimed at no declared judge is a malformed invocation, never
+        // silently attached to nothing — the rule `set-exclusions` applies
+        // to a bound aimed at no rule that takes one.
+        for pin in pins where !roster.contains(pin.name) {
+            throw ExperimentError.malformed(
+                "--judge-pin '\(pin.name)' names no judge in the panel — "
+                    + "declared: "
+                    + (declared.isEmpty
+                        ? "none"
+                        : declared.map(\.name).joined(separator: ", ")),
+                repair: "steerlab-cli experiment pin-rubric \(experimentName) "
+                    + "<rubric> --judges \(pin.name):local:<model> "
+                    + "--judge-pin \(pin.name)=<revision>[:<dtype>]")
+        }
+        let pinsByName = Dictionary(
+            pins.map { ($0.name, $0) }, uniquingKeysWith: { _, last in last })
+        let previousByName = Dictionary(
+            previous.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        var notes: [String] = []
+        var panel: [ExperimentManifest.JudgeRef] = []
+        for judge in declared {
+            var row = judge
+            if let pin = pinsByName[judge.name] {
+                // `keepingKindOwnedFields` would drop a non-local judge's
+                // revision/dtype without a word — the same silent drop, so
+                // refuse instead of writing a pin that evaporates.
+                guard judge.kind == "local" else {
+                    throw ExperimentError.malformed(
+                        "judge '\(judge.name)' is \(judge.kind), which pins no "
+                            + "revision or dtype — those are local-judge pins "
+                            + "(a \(judge.kind) judge's identity is its model "
+                            + "slug"
+                            + (judge.kind == "openrouter"
+                                ? " and serving provider)" : ")"),
+                        repair: "steerlab-cli experiment pin-rubric "
+                            + "\(experimentName) <rubric> --judges "
+                            + "\(judge.name):local:<model> --judge-pin "
+                            + "\(judge.name)=<revision>[:<dtype>]")
+                }
+                row.revision = pin.revision
+                if let dtype = pin.dtype { row.dtype = dtype }
+            }
+            // Inheritance only fills what was NOT declared, field by field.
+            if let old = previousByName[judge.name], old.kind == "local",
+                row.kind == "local", resolvedModel(old) == resolvedModel(row)
+            {
+                if row.revision == nil, let inherited = old.revision,
+                    !inherited.isEmpty
+                {
+                    row.revision = inherited
+                    notes.append(
+                        "judge '\(judge.name)' revision \(inherited.prefix(12))…")
+                }
+                if row.dtype == nil, let inherited = old.dtype,
+                    !inherited.isEmpty
+                {
+                    row.dtype = inherited
+                    notes.append("judge '\(judge.name)' dtype \(inherited)")
+                }
+            } else if let old = previousByName[judge.name], old.kind == "local",
+                old.revision?.isEmpty == false || old.dtype?.isEmpty == false
+            {
+                // Said out loud rather than dropped: the pins described the
+                // model this row no longer names (or a kind that carries no
+                // pins at all).
+                notes.append(
+                    row.kind == "local"
+                        ? "dropped judge '\(judge.name)' revision/dtype pins — "
+                            + "it now names a different model"
+                        : "dropped judge '\(judge.name)' revision/dtype pins — "
+                            + "it is no longer a local judge")
+            }
+            panel.append(row)
+        }
+        return (panel, notes)
     }
 
     /// How many items the just-pinned prompt file holds — reported so the

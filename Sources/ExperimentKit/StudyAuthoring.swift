@@ -88,7 +88,9 @@ public enum StudyIntent: String, CaseIterable, Sendable, Identifiable {
             preregistered study — Holm-corrected, with the held-out pool \
             enforced at verify. You need: concept data (stimuli, \
             validation, markers), task prompts, and — for evidence-grade \
-            claims — a pinned judge rubric with ≥2 judges. Conditions are \
+            claims — a pinned judge rubric with a judge panel (two or more \
+            distinct judges buy inter-rater agreement; one is legal and \
+            reports none). Conditions are \
             named injection arms; controls (matched-norm random) prove an \
             effect is the DIRECTION, not the perturbation energy. The \
             whole funnel can run as one declared pipeline. Description, \
@@ -219,8 +221,9 @@ public enum StudyIntent: String, CaseIterable, Sendable, Identifiable {
                     required: true),
                 GuideItem(
                     "Judges + rubric",
-                    "≥2 pinned judges and a rubric file for evidence-grade "
-                        + "blinded A/B judging", required: false),
+                    "a pinned judge panel and a rubric file for evidence-grade "
+                        + "blinded A/B judging (two or more distinct judges "
+                        + "buy inter-rater agreement)", required: false),
                 GuideItem(
                     "Capability battery",
                     "held-out ability probes run through every condition",

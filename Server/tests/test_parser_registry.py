@@ -391,3 +391,39 @@ def test_run_refuses_on_drifted_registry_pin(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="drifted"):
         tasks.run("drift", prompts, root, model_provider=_fake_model,
                   log=lambda *_: None)
+
+
+def test_the_parser_declaration_is_mac_authority_not_a_protocol_field():
+    """`numericParser`/`parserRegistryHash` are declared by the Mac's
+    ``experiment set-parser``, and the redirect names that spelling.
+
+    They are deliberately NOT in ``PROTOCOL_FIELDS``: declaring a parser is
+    not a field assignment — the engine RESOLVES the name against the
+    registry and DERIVES the pin from the file's bytes — and the pin is a
+    preregistration fact (which parser version measured), the same reason
+    ``set-sweep-selection`` stays Mac-authority. A ``--set
+    parserRegistryHash=…`` would let a study claim provenance nothing
+    computed, so the closed-vocabulary refusal is the right answer.
+    Swift twin: ``MeasurementDeclarationVerbTests`` +
+    ``ParserRegistry+UI.setNumericParser``.
+    """
+    from steerlab_server import cli_envelope
+    redirect = cli_envelope.MAC_AUTHORITY_VERBS["experiment"]["set-parser"]
+    assert redirect == "steerlab-cli experiment set-parser <name> <parser>"
+    for field in ("numericParser", "parserRegistryHash"):
+        assert field not in es.PROTOCOL_FIELDS
+
+
+def test_set_protocol_refuses_the_parser_fields_naming_the_vocabulary(tmp_path):
+    """Refused at 64 with nothing written — never a silent drop reported as
+    success."""
+    root = str(tmp_path)
+    es.create("p", model_id="test/model", root=root)
+    for field, value in (("numericParser", "sentencing-months"),
+                         ("parserRegistryHash", "00" * 32)):
+        with pytest.raises(es.ExperimentStoreError) as caught:
+            es.set_protocol("p", {field: value}, root=root)
+        assert f"unknown protocol field(s) '{field}'" in str(caught.value)
+    document = es.load_raw("p", root)
+    assert "numericParser" not in document
+    assert "parserRegistryHash" not in document

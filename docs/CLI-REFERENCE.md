@@ -872,13 +872,15 @@ steerlab-cli experiment create <name> [--description <text>] --model <id> [--rev
 steerlab-cli experiment attach <name> <concept>… [--corpus <a,b,c>] [--extraction-rendering <json>] [--method <name>] [--pool-from <k>] [--project-neutral <k>] [--reading-position <label>] [--reference <concept>]
 steerlab-cli experiment detach <name> <concept>…
 steerlab-cli experiment pin-prompts <name> <prompts/…/file.jsonl>
-steerlab-cli experiment pin-rubric <name> <prompts/rubrics/file.md> [--judges <spec>]
+steerlab-cli experiment pin-rubric <name> <prompts/rubrics/file.md> [--judge-pin <judge-name>=<revision>[:<dtype>]] [--judges <spec>]
 steerlab-cli experiment declare-condition <name> <condition> [--alpha-units <norm|raw>] [--band-width <k>] [--baseline] [--control <name>] [--slots <spec>]
 steerlab-cli experiment set-sweep-selection <name> [--capability-tolerance <ratio>] [--choice-prompts <path>] [--coherence-backstop <ratio>] [--coherence-floor <ratio>] [--coherence-ratio <ratio>] [--control-apply-to <winner|topK>] [--control-margin <margin>] [--control-top-k <k>] [--objective <metric>]
 steerlab-cli experiment set-sweep-grid <name> [--alphas <a1,a2,…>] [--battery <path>] [--dev-prompts <path>] [--layer-fractions <f1,f2,…>] [--layers <L1,L2,…>] [--max-tokens <n>]
 steerlab-cli experiment set-instruments <name> <instrument>[,…] [--ordinal-aggregation <expectedValue|argmax>]
 steerlab-cli experiment set-sampling <name> [--max-tokens <n>] [--prompt-mode <chatAssistant|rawCompletion>] [--samples-per-item <n>] [--seed-policy <manifestSeeds|derivedSHA256>] [--temperature <t>]
 steerlab-cli experiment set-exclusions <name> <rule>[,…] [--endpoint <key>] [--max <x>] [--min <x>]
+steerlab-cli experiment set-parser <name> <parser>
+steerlab-cli experiment set-instrument-scope <name> <responseFormat>[,…]
 steerlab-cli experiment set-style-taxonomy <name> <prompts/taxonomies/file.json>
 steerlab-cli experiment verify <name>
 steerlab-cli experiment freeze <name> [--force] [--run-substrate <local|server>]
@@ -892,13 +894,15 @@ steerlab-cli experiment duplicate <name> <new-name>
 | `experiment attach` | Pin each named concept's stimulus hash and extraction options. |
 | `experiment detach` | Remove each named concept's pin from a draft — refused while a declaration still names one. |
 | `experiment pin-prompts` | Pin the measured task-prompt file and its hash ("" clears the pin). |
-| `experiment pin-rubric` | Pin the judging rubric, the judge panel, and the evaluation declaration they imply. |
+| `experiment pin-rubric` | Pin the judging rubric, the judge panel, and the evaluation declaration they imply; --judge-pin declares a local judge's revision and dtype (repeat per judge). |
 | `experiment declare-condition` | Declare one experimental arm, or the explicit baseline. |
 | `experiment set-sweep-selection` | Declare the sweep's selection criterion as manifest data. |
 | `experiment set-sweep-grid` | Declare the sweep's layer × alpha grid, its instrument files, and its per-cell token budget. |
 | `experiment set-instruments` | Declare which outcome instruments the run measures (sampledText, answerTokenLogprob, choiceProbability, repeReaderScore, ordinalScale; "" clears the declaration). |
 | `experiment set-sampling` | Declare the generation protocol: temperature, token budget, prompt mode (chatAssistant, rawCompletion), and the stochastic replication policy (samples per item × seed policy: manifestSeeds, derivedSHA256). |
 | `experiment set-exclusions` | Declare the record-exclusion rules analysis applies (failedAttentionCheck, unparseableEndpoint, outOfRange; "" clears the declaration). |
+| `experiment set-parser` | Declare the numeric-endpoint parser from prompts/parsers/parser-registry.json and pin that registry's hash ("" clears both). |
+| `experiment set-instrument-scope` | Declare which response formats the option-consuming outcome instruments apply to (label, json, freeText), pinning the row set they select; "" clears the declaration. |
 | `experiment set-style-taxonomy` | Pin the reasoning-style taxonomy and its hash. |
 | `experiment verify` | Re-check every pinned input against the file bytes on disk. |
 | `experiment freeze` | Freeze the manifest one-way, after the evidence gates pass. |
@@ -1024,8 +1028,10 @@ Judge fields are `<name>:<kind>[:<model>[:<provider>]]`; kinds are `claude`,
 `local`, `openrouter`. A blank model is *absent*, not empty — a local judge then
 resolves to the study model, a claude judge to the default judge model; the
 fourth field is OpenRouter's serving-provider pin and is refused on the other
-kinds. Fewer than 2 judges is a non-blocking advisory here and a freeze gate
-later.
+kinds. Declare any number of judges, including exactly one: a single-coder
+design freezes cleanly and carries a non-blocking advisory saying no
+inter-rater agreement will exist for its codings. Zero judges is what the
+`judgeValidity` freeze gate refuses.
 
 **`declare-condition`** — the arm. Without one, a concept study runs the
 implicit baseline alone and `analyze` reports zero effect sizes. Slots use the
@@ -1676,7 +1682,7 @@ workflow that works. The success message names the file to author:
 steerlab-cli remote capabilities [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote package <experiment> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote upload <bundle> [--site <id>] [--token <token>] [--url <server>]
-steerlab-cli remote submit-bundle <server-bundle-path> [--bundle <server-path>] [--dry-run] [--executor <local|slurm>] [--gres <spec>] [--site <id>] [--token <token>] [--url <server>] [--verb <verb>] [--walltime <hh:mm:ss>]
+steerlab-cli remote submit-bundle <server-bundle-path> [--bundle <server-path>] [--dry-run] [--executor <local|slurm>] [--gres <spec>] [--parallel <n>] [--site <id>] [--token <token>] [--url <server>] [--verb <verb>] [--walltime <hh:mm:ss>]
 steerlab-cli remote jobs [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote logs <job-id> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote cancel <job-id> [--site <id>] [--token <token>] [--url <server>]

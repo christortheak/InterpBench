@@ -333,6 +333,7 @@ public enum ExperimentCLIParser {
             booleanFlags: ["--dry-run"],
             valueFlags: remoteConnection.union([
                 "--bundle", "--verb", "--executor", "--gres", "--walltime",
+                "--parallel",
             ])),
         .init(
             namespace: "remote", verb: "jobs",
@@ -418,8 +419,9 @@ public enum ExperimentCLIParser {
             namespace: "experiment", verb: "pin-rubric",
             positional: "<name> <prompts/rubrics/file.md>",
             purpose: "Pin the judging rubric, the judge panel, and the "
-                + "evaluation declaration they imply.",
-            valueFlags: ["--judges"]),
+                + "evaluation declaration they imply; --judge-pin declares a "
+                + "local judge's revision and dtype (repeat per judge).",
+            valueFlags: ["--judges", "--judge-pin"]),
         .init(
             namespace: "experiment", verb: "declare-condition",
             positional: "<name> <condition>",
@@ -507,6 +509,30 @@ public enum ExperimentCLIParser {
                 + ExclusionEngine.ruleVocabulary.joined(separator: ", ")
                 + "; \"\" clears the declaration).",
             valueFlags: ["--endpoint", "--min", "--max"]),
+        // The numeric-endpoint grammar and its registry pin. The legal
+        // values are workspace DATA (the registry file), not a compiled
+        // vocabulary, so the purpose names the FILE and the refusal — which
+        // can read it — names the parsers defined there. There is
+        // deliberately no `--registry-hash`: the registry is the authority
+        // on which parser version a study preregistered, so the hash is
+        // derived at the write and can never be typed.
+        .init(
+            namespace: "experiment", verb: "set-parser",
+            positional: "<name> <parser>",
+            purpose: "Declare the numeric-endpoint parser from "
+                + ParserRegistry.registryFile
+                + " and pin that registry's hash (\"\" clears both)."),
+        // The applicability subset the option-consuming instruments read.
+        // Vocabulary from the type that owns the field, so `--help` and the
+        // refusal cannot name different formats.
+        .init(
+            namespace: "experiment", verb: "set-instrument-scope",
+            positional: "<name> <responseFormat>[,…]",
+            purpose: "Declare which response formats the option-consuming "
+                + "outcome instruments apply to ("
+                + ExperimentStore.knownResponseFormats.joined(separator: ", ")
+                + "), pinning the row set they select; \"\" clears the "
+                + "declaration."),
         .init(
             namespace: "experiment", verb: "set-style-taxonomy",
             positional: "<name> <prompts/taxonomies/file.json>",

@@ -32,6 +32,31 @@ public enum ShardedSubmission {
         return requested
     }
 
+    /// Why `encodedParallelJobs` omitted the field — the three clauses of
+    /// the rule above, said out loud — or nil exactly when it encoded one.
+    ///
+    /// A headless caller that types `--parallel 8` at a `local` executor
+    /// gets a perfectly ordinary single-job submission back; without this
+    /// the suppression is invisible and the request LOOKS honored. The
+    /// clause order is the guard's order, so the reason names the FIRST
+    /// thing that would have to change.
+    public static func suppressionReason(
+        requested: Int, executor: String, verb: String
+    ) -> String? {
+        guard encodedParallelJobs(
+            requested: requested, executor: executor, verb: verb) == nil
+        else { return nil }
+        if requested <= 1 {
+            return "one job requested — sharding starts at 2"
+        }
+        if executor != "slurm" {
+            return "executor '\(executor)' — only Slurm submissions shard "
+                + "across GPU jobs"
+        }
+        return "the '\(verb)' verb does not shard — only 'run' (and a "
+            + "run-first pipeline) has an independent per-record record set"
+    }
+
     /// The submission-transcript stamp, derived from the server's RESPONSE
     /// (the shard job ids it actually created) — never from the request
     /// (external review 2026-07-22, finding 5: the server shards only `run`

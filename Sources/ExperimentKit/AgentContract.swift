@@ -611,15 +611,47 @@ empty: a local judge then resolves to the study model at its pinned revision; a
 `claude` judge to the default judge model. The fourth field pins a serving
 provider and is only legal on `openrouter`.
 
-The judge **name is a label, never a model id.** Fewer than two judges is a
-non-blocking `judgePanelTooSmall` advisory here and a `judgeValidity` freeze
-gate later. Inline rubric text is draft-only and cannot freeze — pin a file.
+The judge **name is a label, never a model id.** Declare **any number of
+judges, including exactly one**: a single-coder design is a legal methodology
+and freezes cleanly. What it costs is said rather than forbidden — a
+`judgePanelTooSmall` advisory here and again at freeze, saying that no
+inter-rater agreement statistics will exist for the study's codings, and the
+coding report then records `fieldAgreement` as **absent with that reason**
+rather than as an empty list. Zero judges is the state `judgeValidity` refuses:
+a judged instrument with no judge codes nothing. Inline rubric text is
+draft-only and cannot freeze — pin a file.
 
-The two must also be **distinct**: identity resolves to (kind, model,
+A panel of two or more must be **distinct**: identity resolves to (kind, model,
 provider), so `--judges a:local,b:local` with both model fields blank resolves
 twice to the study model at temperature 0 — one judge agreeing with itself by
 construction — and refuses at freeze under `judgeValidity`. Vary the kind, the
 model, or the provider.
+
+A **local judge naming a model other than the study model** must pin the exact
+bytes that will judge — `judges[].revision` and `judges[].dtype` — or freeze
+refuses under `judgeValidity`. Declare them with `--judge-pin`, repeated per
+judge and keyed by judge name:
+
+```bash
+steerlab-cli experiment pin-rubric <name> prompts/rubrics/default-paired-v1.md \
+  --judges strict:local:google/gemma-3-27b-it,lenient:claude \
+  --judge-pin strict=<commit-hash>:bfloat16
+```
+
+Dtypes are `bfloat16`, `float16`, `float32` (aliases `bf16`/`fp16`/`fp32`,
+stored canonically). The revision must be a commit hash: a branch or tag is
+re-pointed by definition, so it cannot identify the weights a run used, and
+that is refused at the declaration rather than at freeze. A pin naming no
+declared judge, or a pin on a `claude`/`openrouter` judge (which carry no
+revision or dtype), is a malformed invocation — never silently dropped.
+
+`--judges` replaces the ROSTER, but the pins merge field by field beneath it: a
+judge whose name survives with the same kind and model **keeps** the revision
+and dtype it had, a judge whose model changed **drops** them (they identify the
+old bytes), and either way the echo says which — under
+`result.inheritedFromExistingDeclaration`, the same key the sweep-selection
+merge uses. Before this, `pin-rubric --judges` wiped pins the app had written
+and the study then refused at freeze for want of pins it used to have.
 
 ### 4.7 `declare-condition` — the arm
 
@@ -704,7 +736,7 @@ Two classes of check, and the difference matters:
 | `validateEvidence` | a `validate` run matching the exact pins on the run substrate, **and** that evidence is not vacuous (§4.4) | author the named `validation.jsonl` files, **re-attach** their concepts, then `experiment validate <name>` (§4.4; the refusal's own `repairAction` names this full sequence) |
 | `variantValidity` | attached variants carry hashed adapter weights and a pinnable dataset manifest | re-save the variant with hashed weights and re-attach it |
 | `batteryEvidence` | each variant condition has scope-matched capability-battery evidence | re-run `experiment validate <name>` (each variant condition runs the pinned battery) |
-| `judgeValidity` | a rubric **file** and ≥ 2 distinct judges the pipeline can actually run | `experiment pin-rubric <name> prompts/rubrics/default-paired-v1.md --judges a:local,b:claude` |
+| `judgeValidity` | a rubric **file** and at least one judge the pipeline can actually run (a panel of two or more must be distinct) | `experiment pin-rubric <name> prompts/rubrics/default-paired-v1.md --judges a:local[,b:claude]` |
 | `gitClean` | every pinned input is committed in the workspace git repo | commit the pinned inputs (freeze auto-commits in most workspaces; this gate speaks when it could not) |
 
 In `--json` mode a refusal gives you `error.gate` (the gate whose message is in
@@ -840,6 +872,25 @@ be declared one flag at a time.
 keep-window and `--endpoint` names the parsed-value key the endpoint rules
 read (default `parsedMonths`). Exclusions apply at analysis time only and
 are stamped honestly — records never leave `generations.jsonl`.
+
+**`set-parser <name> <parser>`** — declares the numeric-endpoint parser from
+the workspace registry (`prompts/parsers/parser-registry.json`) on a draft and
+pins that registry's SHA-256 as `parserRegistryHash`; `""` clears both. The
+hash is never an argument: the registry file is the authority on which parser
+VERSION the study preregistered, so re-declaring the same name is also the
+drift repair. Without a declaration a numeric study falls back to the
+DEPRECATED implicit selection (`caseFamily: "sentencing"` → the built-in
+duration parser), which every firing site now announces.
+
+**`set-instrument-scope <name> <responseFormat>[,…]`** — declares which
+response formats (`label`, `json`, `freeText`) the option-consuming
+instruments apply to on a draft, pinning the row set they select
+(`itemCount` + `itemIDsHash` computed from the study's own task prompts);
+`""` clears the declaration. This is the NON-LOSSY repair the run-start
+`responseFormat` refusal names: a mixed json+label file keeps
+`answerTokenLogprob`/`ordinalScale` on its label rows instead of dropping the
+instrument for `sampledText`. Declaring formats no pinned item carries is
+refused — a scope selecting zero rows would produce zero records.
 
 **`set-style-taxonomy <name> prompts/taxonomies/<file>.json`** — pins a
 reasoning-style taxonomy (path + hash) on a draft. No pin, no reasoning-style

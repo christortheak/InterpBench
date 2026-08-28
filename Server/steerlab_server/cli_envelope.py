@@ -510,8 +510,14 @@ MAC_AUTHORITY_VERBS: dict = {
                   "[--run-substrate server]",
         "pin-prompts": "steerlab-cli experiment pin-prompts <name> "
                        "prompts/tasks/<file>.jsonl",
+        # `--judge-pin` names the LOCAL-judge pins (``judges[].revision`` +
+        # ``judges[].dtype``) this engine's own `judgeValidity` gate refuses
+        # a cross-model local judge for. The redirect carries it because an
+        # agent that reaches the gate HERE needs the Mac spelling that
+        # repairs it — and until it existed there was none.
         "pin-rubric": "steerlab-cli experiment pin-rubric <name> "
-                      "prompts/rubrics/<file>.md --judges <name>:<kind>[,…]",
+                      "prompts/rubrics/<file>.md --judges <name>:<kind>[,…] "
+                      "[--judge-pin <judge-name>=<revision>[:<dtype>]]",
         "declare-condition": "steerlab-cli experiment declare-condition "
                              "<name> <condition> --slots "
                              "<concept>:<layer>:<alpha>",
@@ -529,6 +535,20 @@ MAC_AUTHORITY_VERBS: dict = {
         "set-exclusions": "steerlab-cli experiment set-exclusions <name> "
                           "<rule>[,…] [--endpoint <key>] [--min <x>] "
                           "[--max <x>]",
+        # The two measurement declarations that are NOT field assignments,
+        # so the `set_protocol` shape cannot carry them and this engine
+        # redirects rather than mirroring (PORTABILITY-CONTRACTS §7): each
+        # DERIVES its pin from a workspace file at the moment of declaration
+        # — the parser registry's SHA-256 for `set-parser`, the selected
+        # item ids for `set-instrument-scope` — and both pins are
+        # preregistration facts (which parser VERSION measured, which rows
+        # were measured), the same reason `set-sweep-selection` stays
+        # Mac-authority. Accepting either as a caller-supplied value would
+        # let a study claim provenance nothing computed.
+        "set-parser": "steerlab-cli experiment set-parser <name> <parser>",
+        "set-instrument-scope": "steerlab-cli experiment "
+                                "set-instrument-scope <name> "
+                                "<responseFormat>[,…]",
         "set-sweep-selection": "steerlab-cli experiment set-sweep-selection "
                                "<name> --objective <metric>",
         "set-sweep-grid": "steerlab-cli experiment set-sweep-grid <name> "

@@ -21,4 +21,5 @@ The scaffold copies this template to
 file's SHA-256 into the manifest (`judgeRubricFile` +
 `judgeRubricHash`), so later edits surface as drift until re-pinned.
 Freezing a judge-evaluated study requires a pinned rubric file and at
-least two judges.
+least one judge; two or more distinct judges are what make inter-judge
+agreement reportable.

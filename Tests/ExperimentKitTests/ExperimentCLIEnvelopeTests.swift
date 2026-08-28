@@ -305,6 +305,60 @@ import Testing
         }
     }
 
+    /// A one-entry registry with FIXED bytes, so the `parserRegistryHash` in
+    /// the golden is stable across checkouts (the shipped seed registry is
+    /// not a fixture of this suite and may legitimately gain entries).
+    static let parserRegistryJSON =
+        #"{"schemaVersion": 1, "parsers": {"months": {"kind": "durationMonths", "description": "Months.", "units": {"years": 12, "months": 1}}}}"#
+        + "\n"
+
+    /// The declaration AND its derived pin: the caller names a parser, the
+    /// registry's current bytes become `parserRegistryHash`, and the echo
+    /// carries the full hash plus the registry file — the provenance a later
+    /// report.json is compared against.
+    @Test func experimentSetParserEnvelope() async throws {
+        try await withTempRoot { root in
+            await invoke(
+                "experiment",
+                ["create", "demo", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            try write(
+                Self.parserRegistryJSON,
+                to: root.appending(path: ParserRegistry.registryFile))
+            let outcome = await invoke(
+                "experiment", ["set-parser", "demo", "months"])
+            #expect(outcome.envelope.state == .ready)
+            let hash = try #require(
+                try ExperimentStore.load(name: "demo").parserRegistryHash)
+            // FULL hash in the document — the human line elides it.
+            #expect(try outcome.envelope.jsonText().contains(hash))
+            try check(outcome, fixture: "experiment-set-parser", root: root)
+        }
+    }
+
+    /// The scope pin, echoed as stored: the formats the caller chose plus
+    /// the `itemCount`/`itemIDsHash` the engine computed from the study's
+    /// own items — the three fields the run-start drift rule re-checks.
+    @Test func experimentSetInstrumentScopeEnvelope() async throws {
+        try await withTempRoot { root in
+            await invoke(
+                "experiment",
+                ["create", "demo", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            try write(
+                #"{"id": "c1", "prompt": "Affirm or reverse?", "options": ["A", "B"], "target": "A", "responseFormat": "label"}"#
+                    + "\n"
+                    + #"{"id": "r1", "prompt": "Affirm or reverse, with reasons.", "options": ["A", "B"], "target": "A", "responseFormat": "json"}"#
+                    + "\n",
+                to: root.appending(components: "prompts", "cases", "mixed.jsonl"))
+            await invoke(
+                "experiment", ["pin-prompts", "demo", "prompts/cases/mixed.jsonl"])
+            let outcome = await invoke(
+                "experiment", ["set-instrument-scope", "demo", "label"])
+            #expect(outcome.envelope.state == .ready)
+            try check(
+                outcome, fixture: "experiment-set-instrument-scope", root: root)
+        }
+    }
+
     /// The refusal an agent meets on a ladder that doubles back — pinned as a
     /// golden because its `error.code`/`error.gate`/`repairAction` are the
     /// machine surface a caller acts on.
@@ -641,6 +695,15 @@ import Testing
             // so a stochastic replication arm could not be authored
             // headlessly and was cut from a study design.
             "experiment set-sampling", "experiment set-exclusions",
+            // The two remaining measurement declarations the app's pickers
+            // owned exclusively: HOW a numeric endpoint is read
+            // (`numericParser` + the `parserRegistryHash` pin) and WHICH
+            // rows the option-consuming instruments read
+            // (`outcomeInstrumentScope`). Without the first, a headless
+            // numeric study fell back to the DEPRECATED implicit selection;
+            // without the second, a mixed-format study could only follow the
+            // run-start gate's LOSSY repair and drop its instrument.
+            "experiment set-parser", "experiment set-instrument-scope",
             "experiment set-style-taxonomy", "experiment verify",
             "experiment freeze", "experiment duplicate", "experiment extract",
             "experiment validate", "experiment sweep", "experiment run",
@@ -683,10 +746,14 @@ import Testing
         // inherited by duplicating a study and its concepts with it — plus
         // `set-sampling` and `set-exclusions`, the writers for the six
         // protocol fields the panel owned exclusively (a stochastic
-        // replication arm could not be authored headlessly).
+        // replication arm could not be authored headlessly) — and finally
+        // `set-parser` and `set-instrument-scope`, the last two measurement
+        // declarations the app's pickers owned alone (the numeric-endpoint
+        // grammar with its registry pin, and the row subset the
+        // option-consuming instruments read).
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 25,
-            "the experiment lifecycle is twenty-five verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
+            declared.filter { $0.hasPrefix("experiment ") }.count == 27,
+            "the experiment lifecycle is twenty-seven verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
     }
 
     @Test func everySpecIsInARunnerOwnedNamespace() {

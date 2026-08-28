@@ -482,7 +482,8 @@ struct OptimizationComposerView: View {
                 .foregroundStyle(.orange)
         } else {
             Text("the judge panel is pinned into the manifest "
-                + "(freeze asks ≥2 judges for evidence)")
+                + "(freeze asks for at least one; two or more distinct judges "
+                + "buy inter-rater agreement)")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

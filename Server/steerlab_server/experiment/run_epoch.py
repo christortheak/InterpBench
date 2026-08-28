@@ -120,13 +120,26 @@ MEASUREMENT_FIELDS = ("judges", "evaluation", "pipeline",
 
 def _without_measurement_fields(manifest):
     """The manifest reduced to its generation-side surface (top-level
-    ``MEASUREMENT_FIELDS`` removed) — the comparison object for the
-    measurement-drift tolerance."""
+    ``MEASUREMENT_FIELDS`` removed, ``name`` blanked) — the comparison
+    object for the measurement-drift tolerance.
+
+    ``name`` is blanked on BOTH sides, not listed in ``MEASUREMENT_FIELDS``:
+    it is identity, not a measurement setting — but by the tolerance's own
+    rule (a field that cannot have affected a byte of the source run's
+    generations) a rename is tolerable on measurement verbs. Without this,
+    the sanctioned duplicate-never-edit path (duplicate a study, pin a new
+    rubric and panel, evaluate against the ORIGINAL run) refused on the one
+    field the duplication itself must change (observed 2026-08-28, the
+    calibration duplicate of a draft study). ``promote`` still refuses a
+    renamed manifest: the tolerance only applies where
+    ``tolerate_measurement_drift`` is passed. Swift twin:
+    ``RunEpoch.withoutMeasurementFields``."""
     if manifest is None:
         return None
     from .manifest import Manifest
     raw = {k: v for k, v in manifest.raw.items()
            if k not in MEASUREMENT_FIELDS}
+    raw["name"] = ""
     try:
         return Manifest.from_dict(raw)
     except Exception:  # noqa: BLE001 - fall back to the strict comparison

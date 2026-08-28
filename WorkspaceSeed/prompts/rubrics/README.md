@@ -57,9 +57,11 @@ share this directory and the same `judgeRubricFile`/`judgeRubricHash` pin:
 
   `kind` is `"claude"` (Anthropic API judge) or `"local"` (a locally served
   open-weight judge). A judge's `name` is a LABEL, never a model id. Judged
-  studies must pin **at least two judges** before freeze so inter-judge
-  agreement (percent agreement + Cohen's kappa) is reportable; each judgment
-  record is stamped with the judge's `name`.
+  studies must pin **at least one judge** before freeze; **two or more**
+  distinct judges are what make inter-judge agreement (percent agreement +
+  Cohen's kappa) reportable, and a single-coder design freezes with an
+  advisory saying none will exist. Each judgment record is stamped with the
+  judge's `name`.
 - Optional human anchor: `"humanValidation": {"path": …, "hash": …}` pins a
   labeled subset (same id-keyed row shape as judge outputs: `promptID`, `seed`,
   `condition`, `outcome` with `outcome` ∈ `baseline|variant|tie`); evaluation

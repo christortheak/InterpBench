@@ -36,6 +36,53 @@ struct ShardedJobsTests {
                 requested: 4, executor: "slurm", verb: "validate") == nil)
     }
 
+    /// The suppression reason is the encoding rule read backwards, so a
+    /// headless `--parallel` that never reached the wire says why instead of
+    /// looking honored. Nil EXACTLY when the field is encoded.
+    @Test func suppressionReasonNamesTheFirstClauseThatWouldHaveToChange() {
+        #expect(
+            ShardedSubmission.suppressionReason(
+                requested: 4, executor: "slurm", verb: "run") == nil)
+        #expect(
+            ShardedSubmission.suppressionReason(
+                requested: 2, executor: "slurm", verb: "pipeline") == nil)
+        #expect(
+            ShardedSubmission.suppressionReason(
+                requested: 1, executor: "slurm", verb: "run")
+                == "one job requested — sharding starts at 2")
+        #expect(
+            ShardedSubmission.suppressionReason(
+                requested: 4, executor: "local", verb: "run")
+                == "executor 'local' — only Slurm submissions shard across "
+                + "GPU jobs")
+        #expect(
+            ShardedSubmission.suppressionReason(
+                requested: 4, executor: "slurm", verb: "validate")
+                == "the 'validate' verb does not shard — only 'run' (and a "
+                + "run-first pipeline) has an independent per-record record "
+                + "set")
+        // The clause ORDER is the guard's order: a request of 1 at a local
+        // executor names the count, the first thing that must change.
+        #expect(
+            ShardedSubmission.suppressionReason(
+                requested: 1, executor: "local", verb: "validate")
+                == "one job requested — sharding starts at 2")
+        // The two rules cannot disagree about any combination.
+        for requested in [0, 1, 2, 8] {
+            for executor in ["local", "slurm"] {
+                for verb in ["run", "pipeline", "validate", "extract"] {
+                    let encoded = ShardedSubmission.encodedParallelJobs(
+                        requested: requested, executor: executor, verb: verb)
+                    let reason = ShardedSubmission.suppressionReason(
+                        requested: requested, executor: executor, verb: verb)
+                    #expect(
+                        (encoded == nil) == (reason != nil),
+                        "\(requested)/\(executor)/\(verb) disagree")
+                }
+            }
+        }
+    }
+
     @Test func transcriptStampDerivesFromTheServersShardResponse() {
         // Finding 5 (2026-07-22): the stamp names what the server actually
         // DID (returned shard ids), never what the request asked for.

@@ -731,3 +731,49 @@ def test_adequate_sweep_length_earns_no_advisory():
     assert sel.coherence_length_advisory(1024, 1024, declared=True) is None
     assert sel.coherence_length_advisory(2048, 1024, declared=True) is None
     assert sel.coherence_length_advisory(80, None, declared=False) is None
+
+
+def test_the_scope_declaration_is_mac_authority_not_a_protocol_field():
+    """``outcomeInstrumentScope`` is declared by the Mac's ``experiment
+    set-instrument-scope``, and the redirect names that spelling.
+
+    Deliberately NOT a ``set_protocol`` field: the declaration is a list of
+    FORMATS, and the engine computes the pin (``itemCount`` +
+    ``itemIDsHash``) from the study's own task prompts. A caller-supplied
+    pin would be a claim about which rows were measured that nothing
+    verified — and which rows were measured is the result-bearing fact the
+    pin exists to make checkable. Swift twin:
+    ``MeasurementDeclarationVerbTests`` +
+    ``ExperimentStore.declareOutcomeInstrumentScope``.
+    """
+    from steerlab_server import cli_envelope
+    from steerlab_server.experiment import experiment_store as es
+    redirect = cli_envelope.MAC_AUTHORITY_VERBS["experiment"][
+        "set-instrument-scope"]
+    assert redirect == ("steerlab-cli experiment set-instrument-scope <name> "
+                        "<responseFormat>[,…]")
+    assert "outcomeInstrumentScope" not in es.PROTOCOL_FIELDS
+
+
+def test_set_protocol_refuses_the_scope_key_naming_the_vocabulary(tmp_path):
+    from steerlab_server.experiment import experiment_store as es
+    root = str(tmp_path)
+    es.create("s", model_id="test/model", root=root)
+    with pytest.raises(es.ExperimentStoreError) as caught:
+        es.set_protocol("s", {"outcomeInstrumentScope": {
+            "responseFormats": ["label"], "itemCount": 3,
+            "itemIDsHash": "00" * 32}}, root=root)
+    assert "unknown protocol field(s) 'outcomeInstrumentScope'" in str(
+        caught.value)
+    assert "outcomeInstrumentScope" not in es.load_raw("s", root)
+
+
+def test_the_mac_pin_rubric_redirect_names_the_judge_pin_flag():
+    """A local judge naming a model other than the study model must pin
+    ``revision`` + ``dtype`` or THIS engine's ``judgeValidity`` gate refuses
+    — so the redirect an agent meets here has to name the Mac spelling that
+    declares them. Until ``--judge-pin`` existed there was none.
+    Swift twin: ``JudgePinDeclarationTests``."""
+    from steerlab_server import cli_envelope
+    redirect = cli_envelope.MAC_AUTHORITY_VERBS["experiment"]["pin-rubric"]
+    assert "--judge-pin <judge-name>=<revision>[:<dtype>]" in redirect

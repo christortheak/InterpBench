@@ -411,7 +411,10 @@ extension ExperimentStoreTests {
         }
     }
 
-    @Test func freezeRequiresPinnedRubricAndTwoJudgesForJudgeEvaluatedStudies() throws {
+    /// The panel-size rule after the 2026-08-28 ruling: ONE judge is a legal
+    /// design and freezes cleanly, ZERO is the invalid state the gate exists
+    /// to refuse, and two or more is byte-identical to before.
+    @Test func freezeRequiresPinnedRubricAndAtLeastOneJudge() throws {
         try withTempRoot {
             var manifest = try ExperimentStore.create(
                 name: "jg", description: "", modelID: "test/model",
@@ -433,19 +436,42 @@ extension ExperimentStoreTests {
                 #expect(error.reason.contains("prompts/rubrics"))
             }
 
-            // Pinned rubric but a single judge → no freeze.
+            // Pinned rubric, judged evaluation, and NO judge → the invalid
+            // state: a judged instrument with no judge codes nothing.
             let rubric = try plantRubric()
             manifest.judgeRubricFile = rubric.file
             manifest.judgeRubricHash = rubric.hash
-            manifest.judges = [.init(name: "solo", kind: "claude", model: nil)]
+            manifest.judges = nil
             try ExperimentStore.save(manifest)
             try fabricateValidationEvidence(for: manifest)
             do {
                 _ = try ExperimentStore.freeze(name: "jg")
-                Issue.record("expected freeze to require >=2 judges")
+                Issue.record("expected freeze to require at least one judge")
             } catch let error as ExperimentError {
-                #expect(error.reason.contains("at least 2"))
+                #expect(
+                    error.reason
+                        == "cannot freeze 'jg': "
+                        + ExperimentStore.noJudgeDeclaredReason(
+                            experimentName: "jg"))
             }
+
+            // A SINGLE judge freezes — a single-coder design is legal — and
+            // carries the advisory that says what it costs. Its own study,
+            // because freezing 'jg' would seal it before the two-judge arm.
+            var soloDraft = manifest
+            soloDraft.name = "jg-solo"
+            soloDraft.judges = [.init(name: "solo", kind: "claude", model: nil)]
+            try ExperimentStore.save(soloDraft, allowCreate: true)
+            try fabricateValidationEvidence(for: soloDraft)
+            let solo = try ExperimentStore.freeze(name: "jg-solo")
+            #expect(solo.status == .frozen)
+            #expect(solo.freezeForced != true, "a legal design must not be forced")
+            #expect(
+                ExperimentStore.singleJudgePanelAdvisory(solo)
+                    == ExperimentStore.singleJudgePanelAdvisoryText)
+            #expect(
+                ExperimentStore.freezeAdvisories(for: solo)
+                    .contains(ExperimentStore.singleJudgePanelAdvisoryText))
 
             // Rubric + two judges → freezes; --force also works from the
             // unpinned state (loud skip, never silent).

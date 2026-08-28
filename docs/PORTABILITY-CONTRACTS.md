@@ -434,6 +434,25 @@ because `--out` is lifted here before the family is chosen, so it is
 `--out-file`. Repairs name the binary the caller actually ran — the repair
 builders take a program, and both engines' spellings are pinned by test.
 
+Two Mac verbs are deliberately **neither**: `set-parser` (the manifest's
+`numericParser` + `parserRegistryHash`) and `set-instrument-scope` (its
+`outcomeInstrumentScope`) are redirected here rather than mirrored, and their
+fields are **not** in `PROTOCOL_FIELDS`. Neither is a field assignment — each
+DERIVES its pin from a workspace file at the moment of declaration, the
+parser registry's SHA-256 for the first and the selected item ids
+(`itemCount` + `itemIDsHash`) for the second — and both pins are
+preregistration facts of the same kind that keeps `set-sweep-selection`
+Mac-authority: *which parser version measured* and *which rows were
+measured*. A `--set numericParser=…` that wrote a name without a pin, or a
+`--set outcomeInstrumentScope='{…}'` that accepted a caller's `itemIDsHash`,
+would let a study claim provenance nothing computed — so the closed-vocabulary
+refusal (64, naming the key and the vocabulary, nothing written) is the right
+answer to both, and the redirect names the Mac spelling like its siblings.
+The engine's own reading of those fields is unchanged and fully mirrored:
+`parser_registry.py` and `response_format.py` carry the twin grammars,
+vocabularies (`KNOWN_KINDS`, `KNOWN_RESPONSE_FORMATS`) and refusal sentences,
+so a workspace authored on a Mac runs identically here.
+
 Since v0 the table has gained `detach` and `set-sweep-grid`. Both are verbs
 rather than protocol fields for the same reason: neither is a field assignment.
 `detach` audits the whole manifest for declarations that still name a concept

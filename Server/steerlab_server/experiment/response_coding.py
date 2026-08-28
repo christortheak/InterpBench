@@ -418,6 +418,16 @@ def aggregate_conditions(rows: list[dict], schema: CodingSchema) -> dict:
     return out
 
 
+#: Why a coding report carries no ``fieldAgreement`` block. Written into the
+#: report as ``fieldAgreementAbsentReason``; twin literal on both engines
+#: (Swift ``ExperimentStore.singleCoderAgreementAbsentReason``). An EMPTY
+#: list would read as "agreement was measured and there was none", which is a
+#: different and false claim — a one-judge design has no pair to measure.
+SINGLE_CODER_AGREEMENT_ABSENT_REASON = (
+    "single-coder design: 1 judge coded this run, so no inter-rater "
+    "agreement statistics exist")
+
+
 def field_agreement(rows: list[dict], schema: CodingSchema,
                     judges: list[str]) -> list[dict]:
     """Per-FIELD inter-judge agreement, every judge pair, over the
@@ -463,10 +473,26 @@ def field_agreement(rows: list[dict], schema: CodingSchema,
                 labels_b = [_categorical_label(cells_b[k].get(f.name))
                             for k in shared]
                 kappa = study_stats.cohens_kappa(labels_a, labels_b)
+                # The confusion counts BESIDE the statistic they explain,
+                # from the very label pairs kappa was computed over —
+                # ``confusion[a][b]`` is how many shared cells judgeA coded
+                # ``a`` while judgeB coded ``b``, and the counts sum to
+                # ``n``. Emitted here so an analysis layer never has to
+                # re-derive the cell key, the intersection, or the label
+                # normalization to see WHERE two coders part ways (a kappa
+                # of 0.55 from one systematically-confused label pair is a
+                # rubric-anchor finding; the same kappa spread evenly is a
+                # noisy-field finding). Swift twin:
+                # ``CodingAgreementEntry.confusion``.
+                confusion: dict[str, dict[str, int]] = {}
+                for a, b in zip(labels_a, labels_b):
+                    row = confusion.setdefault(a, {})
+                    row[b] = row.get(b, 0) + 1
                 entries.append({
                     "field": f.name, "judgeA": judge_a, "judgeB": judge_b,
                     "n": len(shared),
                     "percentAgreement": study_stats.percent_agreement(
                         labels_a, labels_b),
-                    "kappa": None if kappa != kappa else kappa})
+                    "kappa": None if kappa != kappa else kappa,
+                    "confusion": confusion})
     return entries

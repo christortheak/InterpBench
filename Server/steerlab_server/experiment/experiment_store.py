@@ -2576,6 +2576,11 @@ def freeze_advisories(d: dict, root: str | None = None) -> list[str]:
     validate evidence (WS7.1); legacy pre-measurement-pin concept attaches; and
     the non-citable marker on a forced freeze."""
     advisories: list[str] = []
+    # A one-judge panel freezes cleanly (the gate asks for a judge, not for
+    # two) — and says what it costs, at the moment of freezing.
+    single_coder = single_judge_panel_advisory(d)
+    if single_coder:
+        advisories.append(single_coder)
     if d.get("concepts") or d.get("conditions") or d.get("variantConditions"):
         try:
             scope = Manifest.from_dict(d).validation_scope_hash()
@@ -3103,7 +3108,7 @@ def _freeze_gate_repair(gate: str, name: str) -> str:
                            f"then {freeze_again}",
         "judgeValidity": f"steerlab-cli experiment pin-rubric {name} "
                          "prompts/rubrics/default-paired-v1.md --judges "
-                         f"a:local,b:claude on the Mac, then {freeze_again}",
+                         f"a:local[,b:claude] on the Mac, then {freeze_again}",
         "gitClean": "commit the pinned inputs in the workspace git repo, then "
                     f"{freeze_again}",
     }
@@ -3892,12 +3897,52 @@ def _pin_local_judge_revisions(d: dict) -> None:
             judge["revision"] = study_revision
 
 
+#: The single-coder advisory sentence — LOUD, never blocking. Swift twin:
+#: ``ExperimentStore.singleJudgePanelAdvisoryText``.
+SINGLE_JUDGE_PANEL_ADVISORY = (
+    "single-coder design: this study pins 1 judge, so no inter-rater "
+    "agreement statistics (percent agreement, Cohen's kappa) will exist for "
+    "its codings — the coding report records fieldAgreement as absent with "
+    "that reason rather than empty")
+
+
+def _no_judge_declared_reason(name: str) -> str:
+    """The ``judgeValidity`` refusal for a judged study with NO judge — the
+    state the panel-size rule actually protects against. Swift twin:
+    ``ExperimentStore.noJudgeDeclaredReason``; the sentence is the
+    contract."""
+    return ("judge-evaluated study pins no judge — a judged instrument with "
+            "no judge codes nothing; pin a panel: 'steerlab-cli experiment "
+            f"pin-rubric {name} <rubric> --judges <name>:<kind>[,…]'. Or "
+            "freeze --force")
+
+
+def single_judge_panel_advisory(d: dict) -> str | None:
+    """The consequence of a one-judge panel, stated rather than forbidden.
+
+    A one-judge panel used to be refused at freeze (``judgeValidity``
+    required >= 2 so the report could carry agreement statistics). The
+    maintainer's ruling is that a researcher may declare any number of
+    judges including exactly one, so freeze accepts it and this says what it
+    costs. None for a panel of two or more, and for a study that is not
+    judged at all. Swift twin:
+    ``ExperimentStore.singleJudgePanelAdvisory``."""
+    judges = [j for j in (d.get("judges") or [])
+              if isinstance(j, dict) and j.get("name")]
+    evaluation = d.get("evaluation") or {}
+    if evaluation.get("kind") != "pairedJudge" and not judges:
+        return None
+    return SINGLE_JUDGE_PANEL_ADVISORY if len(judges) == 1 else None
+
+
 def _check_judged_evaluation(name: str, d: dict) -> None:
     """Judged studies need a versioned criterion and a real panel (evidence
     tier): a pairedJudge evaluation must pin its rubric as a hashed FILE
-    (prompts/rubrics/) and declare >= 2 judges with DISTINCT resolved
-    identities, or inter-judge agreement — the check that the criterion
-    measures anything — is unreportable (or trivially perfect).
+    (prompts/rubrics/) and declare at least ONE judge; a panel of two or
+    more must have DISTINCT resolved identities, or inter-judge agreement —
+    the check that the criterion measures anything — is trivially perfect.
+    A one-judge panel freezes cleanly and carries
+    ``single_judge_panel_advisory`` instead (maintainer ruling, 2026-08-28).
     ``freeze --force`` skips this loudly, like the other evidence gates."""
     evaluation = d.get("evaluation") or {}
     # Judge-evaluated = a pairedJudge evaluation OR an explicit judges panel
@@ -3913,11 +3958,16 @@ def _check_judged_evaluation(name: str, d: dict) -> None:
             "(rubrics live in prompts/rubrics/), or freeze --force")
     judges = [j for j in (d.get("judges") or [])
               if isinstance(j, dict) and j.get("name")]
-    if len(judges) < 2:
+    # ONE judge is a legal design (maintainer ruling, 2026-08-28): a
+    # single-coder study is a real methodology, and the gate's job is to
+    # refuse the INVALID state — a judged instrument with no judge — not to
+    # legislate the panel size. What the >= 2 rule protected (inter-rater
+    # agreement) survives as the non-blocking
+    # ``single_judge_panel_advisory``. Swift twin:
+    # ``checkJudgeEvaluationValidity`` / ``noJudgeDeclaredReason``.
+    if not judges:
         raise ExperimentStoreError(
-            f"cannot freeze '{name}': evaluation uses pairedJudge with "
-            f"{len(judges)} pinned judge(s) — judged studies need at least 2 "
-            "judges for agreement statistics, or freeze --force")
+            f"cannot freeze '{name}': " + _no_judge_declared_reason(name))
     indistinct = judge_panel_indistinct_problem(d)
     if indistinct:
         raise ExperimentStoreError(f"cannot freeze '{name}': {indistinct}")

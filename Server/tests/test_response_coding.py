@@ -247,6 +247,43 @@ def test_noncompliant_rows_reach_neither_aggregate_nor_agreement():
     assert flag["n"] == 1                          # only the shared real cell
 
 
+def test_agreement_rows_carry_confusion_counts_that_sum_to_n():
+    """The confusion counts beside the statistic they explain (2026-08-28):
+    ``confusion[a][b]`` counts shared cells judgeA coded ``a`` while judgeB
+    coded ``b``, over the very label pairs kappa was computed over — so the
+    counts always sum to ``n``, and an analysis layer never re-derives the
+    cell key, the intersection, or the label normalization. Numeric fields
+    carry no confusion block (kappa is not computed for them either)."""
+    def row(judge, prompt_id, label, flag):
+        return {"condition": "baseline", "promptID": prompt_id,
+                "sampleIndex": 0, "judge": judge, "wordCount": 5,
+                "codes": {"flag": flag, "count": 1, "score": 1.0,
+                          "label": label, "note": "n"}}
+    rows = [
+        row("coder-1", "p0", "a", True), row("coder-2", "p0", "a", True),
+        row("coder-1", "p1", "a", True), row("coder-2", "p1", "b", False),
+        row("coder-1", "p2", "b", False), row("coder-2", "p2", "b", False),
+    ]
+    agreement = response_coding.field_agreement(
+        rows, SCHEMA, ["coder-1", "coder-2"])
+
+    label = next(e for e in agreement if e["field"] == "label")
+    assert label["confusion"] == {"a": {"a": 1, "b": 1}, "b": {"b": 1}}
+    assert sum(sum(r.values()) for r in label["confusion"].values()) \
+        == label["n"]
+
+    # Booleans go through the same label normalization kappa uses.
+    flag = next(e for e in agreement if e["field"] == "flag")
+    assert sum(sum(r.values()) for r in flag["confusion"].values()) \
+        == flag["n"]
+    off_diagonal = sum(n for a, row_ in flag["confusion"].items()
+                       for b, n in row_.items() if a != b)
+    assert off_diagonal == 1                       # the one p1 disagreement
+
+    score = next(e for e in agreement if e["field"] == "score")
+    assert "confusion" not in score
+
+
 def test_openrouter_provider_rides_on_the_result():
     result = response_coding.valid_codes(
         lambda prompt: (json.dumps(_codes()), "gmicloud"), SCHEMA,
@@ -532,3 +569,66 @@ def test_external_judges_without_credentials_refuse_inline_only(
     with pytest.raises(RuntimeError, match="inline only"):
         tasks.evaluate("cf", root=root, model_provider=_provider(),
                        max_loaded=1, log=lambda *p: None)
+
+
+def test_a_single_coder_report_records_agreement_as_absent_with_a_reason(
+        tmp_path, monkeypatch):
+    """One judge is a legal design (maintainer ruling, 2026-08-28), so the
+    report must not carry an EMPTY ``fieldAgreement`` — that reads as
+    "agreement was measured and there was none", a different and false claim.
+    The block is absent and a reason says why. Swift twin:
+    ``ResponseCodingTests.aSingleCoderReportRecordsAgreementAsAbsent``."""
+    root = _fixture(tmp_path, manifest_extra={
+        "judges": [{"name": "solo", "kind": "local"}]})
+    agree = ('{"codes": {"mentionsLegalRule": true, '
+             '"mentionsEquity": false}, "brief_reason": "rule cited"}')
+    _coding_generate(monkeypatch, [agree])
+
+    out = tasks.evaluate("cf", root=root, model_provider=_provider(),
+                         max_loaded=1, log=lambda *_: None)
+
+    report = json.load(open(os.path.join(out, "coding-report.json"),
+                            encoding="utf-8"))
+    assert report["judges"] == ["solo"]
+    assert "fieldAgreement" not in report
+    assert (report["fieldAgreementAbsentReason"]
+            == response_coding.SINGLE_CODER_AGREEMENT_ABSENT_REASON)
+    # …and the per-condition aggregates are untouched: a single coder still
+    # measures, it just cannot be compared with anyone.
+    assert report["conditions"]["fear"]["codings"] == 1
+
+
+def test_a_one_judge_panel_freezes_and_carries_the_single_coder_advisory(
+        tmp_path):
+    """The gate refuses ZERO judges (a judged instrument with no judge codes
+    nothing) and accepts ONE, which then carries the advisory. Swift twin:
+    ``EvidenceTierTests.freezeRequiresPinnedRubricAndAtLeastOneJudge``."""
+    from steerlab_server.experiment import experiment_store as es
+    rubric_hash = _write(
+        os.path.join(str(tmp_path), "prompts", "rubrics", "coding.md"),
+        CODING_RUBRIC)
+    base = {"name": "jg", "modelID": "org/m", "modelRevision": "abc123",
+            "status": "draft",
+            "judgeRubricFile": "prompts/rubrics/coding.md",
+            "judgeRubricHash": rubric_hash,
+            "evaluation": {"kind": "pairedJudge"}}
+
+    with pytest.raises(es.ExperimentStoreError) as caught:
+        es._check_judged_evaluation("jg", dict(base, judges=[]))
+    assert str(caught.value) == (
+        "cannot freeze 'jg': " + es._no_judge_declared_reason("jg"))
+    assert es.single_judge_panel_advisory(dict(base, judges=[])) is None
+
+    solo = dict(base, judges=[{"name": "solo", "kind": "claude"}])
+    es._check_judged_evaluation("jg", solo)          # does not raise
+    assert (es.single_judge_panel_advisory(solo)
+            == es.SINGLE_JUDGE_PANEL_ADVISORY)
+    assert es.SINGLE_JUDGE_PANEL_ADVISORY in es.freeze_advisories(solo)
+
+    pair = dict(base, judges=[{"name": "a", "kind": "claude"},
+                              {"name": "b", "kind": "local",
+                               "model": "other/j", "revision": "cafe01",
+                               "dtype": "bfloat16"}])
+    es._check_judged_evaluation("jg", pair)          # unchanged
+    assert es.single_judge_panel_advisory(pair) is None
+    assert es.SINGLE_JUDGE_PANEL_ADVISORY not in es.freeze_advisories(pair)

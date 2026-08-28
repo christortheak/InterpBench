@@ -364,9 +364,21 @@ struct StudyDataReadinessTests {
             let rubric = try #require(requirement("judgeRubric", in: rows))
             #expect(rubric.status == .missing)
 
+            // A one-judge panel is PRESENT — a single-coder design is legal
+            // (2026-08-28 ruling) — and the row says what it costs, in the
+            // sentence the advisory and freeze both carry.
             let panel = try #require(requirement("judgePanel", in: rows))
-            #expect(panel.status == .partial)
-            #expect(panel.detail.contains("1 of the ≥2 judges"))
+            #expect(panel.status == .present)
+            #expect(
+                panel.detail == ExperimentStore.singleJudgePanelAdvisoryText)
+
+            // No judge at all is the missing state the gate refuses.
+            m.judges = []
+            let bare = StudyDataReadiness.requirements(for: m, workspaceRoot: root)
+            let barePanel = try #require(requirement("judgePanel", in: bare))
+            #expect(barePanel.status == .missing)
+            #expect(barePanel.detail.contains("no judge pinned"))
+            m.judges = [ExperimentManifest.JudgeRef(name: "j1", kind: "claude")]
 
             // Two judges + an existing pinned rubric file → both present.
             m.judges?.append(ExperimentManifest.JudgeRef(name: "j2", kind: "local"))

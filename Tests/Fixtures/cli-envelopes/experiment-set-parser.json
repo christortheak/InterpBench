@@ -1,0 +1,17 @@
+{
+  "changed" : true,
+  "engine" : "swift-mlx",
+  "message" : "declared numeric parser 'months' (durationMonths) on 'demo' — registry prompts/parsers/parser-registry.json pinned at acdff22ebfad…",
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "result" : {
+    "experiment" : "demo",
+    "numericParser" : "months",
+    "parserKind" : "durationMonths",
+    "parserRegistryHash" : "acdff22ebfad4976c529fed84f106445bea29cf68de5383a2be610d1c95fb019",
+    "registryFile" : "prompts/parsers/parser-registry.json"
+  },
+  "schemaVersion" : 1,
+  "state" : "ready",
+  "verb" : "experiment set-parser",
+  "workspace" : "<workspace>"
+}

@@ -127,6 +127,44 @@ struct RunEpochMeasurementDriftTests {
         }
     }
 
+    /// The duplicate-never-edit path (2026-08-28): duplicate a study, pin a
+    /// new rubric and panel onto the DUPLICATE, evaluate against the
+    /// original's run. The duplicate's name necessarily differs — and a
+    /// name cannot have affected a byte of the source run's generations, so
+    /// the tolerance must not refuse on the one field duplication itself
+    /// changes. The rename is SAID in the stamp, and promote still refuses.
+    @Test func aRenamedDuplicateIsToleratedOnMeasurementVerbs() throws {
+        let snapshot = manifest()
+        var live = manifest(name: "s-calibration")
+        live.judgeRubricFile = "prompts/rubrics/coding.md"
+        live.judgeRubricHash = String(repeating: "e", count: 64)
+        try withRun(snapshot: snapshot) { directory in
+            let accepted = check(live: live, runDirectory: directory)
+            #expect(accepted.refusal == nil)
+            let drift = try #require(accepted.measurementDrift)
+            #expect(drift.contains("name"))
+
+            let strict = RunEpoch.refusal(
+                verb: "promote", experiment: live.name,
+                liveHash: ExperimentStore.manifestHash(live),
+                runDirectory: directory, liveManifest: live)
+            #expect(strict != nil)
+        }
+    }
+
+    /// Rename with NOTHING else changed: still the duplicate path (the new
+    /// rubric may be pinned in a later write), still tolerable.
+    @Test func aRenameAloneIsToleratedWithNoMeasurementEdit() throws {
+        let snapshot = manifest()
+        let live = manifest(name: "s2")
+        try withRun(snapshot: snapshot) { directory in
+            let accepted = check(live: live, runDirectory: directory)
+            #expect(accepted.refusal == nil)
+            let drift = try #require(accepted.measurementDrift)
+            #expect(drift.contains("name"))
+        }
+    }
+
     // MARK: - Generation-side drift is NOT tolerated
 
     @Test func generationSideDriftRefusesEvenForMeasurementVerbs() throws {

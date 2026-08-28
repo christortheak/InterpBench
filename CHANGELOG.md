@@ -14,6 +14,50 @@ migration that rewrites frozen bytes.
 
 ### Added
 
+- **The last two measurement declarations gained headless writers.** The
+  manifest's `numericParser` + `parserRegistryHash` and its
+  `outcomeInstrumentScope` were writable only from the app's pickers, which
+  blocked headless authoring of three replication studies. `experiment
+  set-parser <name> <parser>` resolves a name against
+  `prompts/parsers/parser-registry.json`, shape-checks the entry, and pins
+  the registry's current SHA-256; the hash is never an argument, because the
+  registry file is the authority on which parser VERSION a study
+  preregistered. Without a declaration a numeric study fell back to the
+  deprecated implicit selection (`caseFamily: "sentencing"` → the built-in
+  duration parser), and clearing the declaration now says so as a
+  `deprecatedImplicitSelection` advisory. `experiment set-instrument-scope
+  <name> <responseFormat>[,…]` declares which formats the option-consuming
+  instruments read and pins the row set they select — the NON-LOSSY repair
+  the run-start `responseFormat` refusal names, where the only other repair
+  (`set-instruments … sampledText`) drops the instrument. Both refuse an
+  out-of-vocabulary value at 64, and a scope selecting zero rows is refused
+  at the declaration rather than producing zero records at the run. Both are
+  Mac-authority and redirect on the Python client: neither is a field
+  assignment (each derives its pin from a workspace file), and both pins are
+  preregistration facts, the reason `set-sweep-selection` stays Mac-authority
+  too.
+
+- **`remote submit-bundle --parallel <n>`** surfaces the multi-GPU fan-out
+  the client and server have supported since 2026-07-22 and only the app's
+  stepper could reach. The value is encoded by the existing rule (sent only
+  when `n > 1`, the executor is `slurm`, and the verb shards), and the
+  envelope echoes `parallelJobsRequested`, `parallelJobsEncoded` and
+  `parallelJobsSuppressedBecause` so a request the rule suppressed never
+  looks honored. The flag's help carries the field caveat: a fan-out can
+  partially fail while the submit still exits 0, so verify the shard jobs
+  landed.
+
+- **A cross-substrate judge panel is authorable headlessly.** A local judge
+  naming a model other than the study model must pin `judges[].revision` and
+  `judges[].dtype` or freeze refuses under `judgeValidity` — and the
+  `--judges` grammar (`<name>:<kind>[:<model>[:<provider>]]`) had no room for
+  either, so the panel could only be built in the app. `pin-rubric
+  --judge-pin <judge-name>=<revision>[:<dtype>]` declares them, repeated per
+  judge and keyed by name (the `panel compile --seat` shape, chosen over a
+  fifth colon field because position 4 is OpenRouter's provider and the two
+  new fields are local-only). A symbolic revision and an out-of-vocabulary
+  dtype are refused at the declaration, in the loader's own words.
+
 - **The generation protocol and the exclusion rules gained headless
   writers, on both engines.** Six manifest protocol fields — `temperature`,
   `maxTokens`, `promptMode`, `samplesPerItem`, `seedPolicy`,
@@ -37,6 +81,60 @@ migration that rewrites frozen bytes.
   gates. **Behaviour break, deliberate:** a `set-protocol` call that used to
   write a malformed value for one of these six fields verbatim now refuses
   at `65` with nothing written.
+
+- **Agreement rows carry their confusion counts, on both engines.** Each
+  categorical `fieldAgreement` entry now emits `confusion` — `confusion[a][b]`
+  is how many shared cells judgeA coded `a` while judgeB coded `b`, computed
+  over the very label pairs Cohen's kappa was computed over, so the counts
+  always sum to the entry's `n`. An analysis layer no longer re-derives the
+  cell key, the intersection, or the label normalization to see WHERE two
+  coders part ways — a kappa of 0.55 from one systematically-confused label
+  pair is a rubric-anchor finding; the same kappa spread evenly is a
+  noisy-field finding, and until now the report could not tell them apart.
+  Numeric fields (which carry no kappa) carry no confusion block.
+
+### Changed
+
+- **A renamed duplicate can be measured against its source run.** The
+  measurement-drift tolerance compared whole manifests minus the tolerated
+  fields — and `name` is inside the content hash, so the sanctioned
+  duplicate-never-edit path (duplicate a study, pin a new rubric and panel
+  onto the duplicate, evaluate against the ORIGINAL run) refused on the one
+  field duplication itself must change, and the only working path was
+  mutating the source study in place. The epoch comparison now blanks `name`
+  on both sides, by the tolerance's own rule: a rename cannot have affected
+  a byte of the source run's generations. The rename is named in the
+  tolerated-drift stamp like any other tolerated field, and `promote` —
+  which never tolerates — still refuses a renamed manifest. Both engines.
+
+- **`judgeValidity` accepts a single-judge panel, on both engines.** The gate
+  required ≥ 2 distinct judges so the report could carry inter-rater
+  agreement; the maintainer's ruling is that a researcher may declare any
+  number of judges including exactly one. A single-coder design now freezes
+  cleanly and carries a `judgePanelTooSmall` advisory — loud, never blocking —
+  saying that no agreement statistics will exist for its codings, and the
+  coding report records `fieldAgreement` as **absent with that reason**
+  (`fieldAgreementAbsentReason`) rather than as an empty list, which would
+  read as "agreement was measured and there was none". Zero judges is the
+  state the gate now refuses: a judged instrument with no judge codes
+  nothing. Multi-judge behaviour, including the distinctness rule, is
+  unchanged. `pin-rubric`'s advisory was reworded off the old gate
+  requirement, which it would otherwise still be asserting.
+
+### Fixed
+
+- **`pin-rubric --judges` no longer wipes the judge pins it cannot see.**
+  Re-declaring the panel replaced every row with nil `revision`/`dtype`, so a
+  headless re-declaration silently destroyed pins written in the app and the
+  study then refused at freeze for want of pins it used to have — the
+  silent-drop class the sweep-selection merge exists to kill, one level down.
+  The roster still replaces, but the pins merge field by field beneath it: a
+  judge whose name, kind and model all survive keeps them, a judge whose
+  model changed drops them (they identify the old bytes), and either way the
+  echo says which under `result.inheritedFromExistingDeclaration` — the same
+  key the selection merge uses. A `--judge-pin` naming no declared judge, or
+  aimed at a judge kind that carries no pins, is refused at 64 rather than
+  written and silently normalized away.
 
 ## [0.9.3] — 2026-08-27
 

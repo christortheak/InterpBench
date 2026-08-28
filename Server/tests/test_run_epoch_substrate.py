@@ -170,6 +170,48 @@ def test_pipeline_block_removal_is_tolerated(tmp_path):
     assert drift is not None and "pipeline" in drift
 
 
+def test_a_renamed_duplicate_is_tolerated_on_measurement_verbs(tmp_path):
+    # The duplicate-never-edit path (2026-08-28): duplicate a study, pin a
+    # new rubric and panel onto the DUPLICATE, evaluate against the
+    # original's run. The duplicate's name necessarily differs — and a name
+    # cannot have affected a byte of the source run's generations, so the
+    # tolerance must not refuse on the one field duplication itself changes.
+    live = _judged("m", name="s-calibration",
+                   judgeRubricFile="prompts/rubrics/coding-cf-v1.md",
+                   judgeRubricHash="a" * 64)
+    directory = _run_with_snapshot(
+        tmp_path, _ENGINE,
+        _judged("m", judgeRubricFile="prompts/rubrics/paired-cf-v1.md",
+                judgeRubricHash="b" * 64))
+    refusal, unverified, drift = epoch_refusal(
+        "evaluate", "s-calibration", live.content_hash(), directory,
+        allow_unverified=False, live_manifest=live,
+        tolerate_measurement_drift=True)
+    assert refusal is None, refusal
+    assert unverified is False
+    # The rename is SAID in the tolerated-drift stamp, not slipped through.
+    assert drift is not None and "name" in drift
+    # promote still refuses a renamed manifest: identity is not tolerated
+    # where evidence meaning is at stake.
+    refusal, _, drift = epoch_refusal(
+        "promote", "s-calibration", live.content_hash(), directory,
+        allow_unverified=False, live_manifest=live)
+    assert refusal is not None and drift is None
+
+
+def test_a_rename_alone_is_tolerated_with_no_measurement_edit(tmp_path):
+    # Rename with NOTHING else changed: still the duplicate path (the new
+    # rubric may be pinned in a later write), still tolerable.
+    live = _manifest(name="s2")
+    directory = _run_with_snapshot(tmp_path, _ENGINE, _manifest())
+    refusal, _, drift = epoch_refusal(
+        "evaluate", "s2", live.content_hash(), directory,
+        allow_unverified=False, live_manifest=live,
+        tolerate_measurement_drift=True)
+    assert refusal is None, refusal
+    assert drift is not None and "name" in drift
+
+
 def test_generation_side_drift_still_refuses_despite_tolerance(tmp_path):
     # A judge swap RIDING ALONG with a generation-side edit must not slip
     # through: the tolerance is field-scoped, not a bypass.

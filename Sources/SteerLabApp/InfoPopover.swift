@@ -557,7 +557,9 @@ enum StudyInfo {
             git-versioned file, pinned by hash) and the judge panel. \
             Judges score blinded baseline-vs-condition pairs against the \
             rubric; freezing a judged study requires a pinned rubric \
-            file and at least 2 judges.
+            file and at least one judge — a single-coder design is legal \
+            and freezes with an advisory, because no inter-rater \
+            agreement will exist for its codings.
             """
         case .battery:
             """

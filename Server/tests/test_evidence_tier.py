@@ -229,7 +229,11 @@ def test_battery_hash_enters_variant_scope_only():
 
 # --- freeze gates --------------------------------------------------------------
 
-def test_freeze_requires_pinned_rubric_and_two_judges(tmp_path):
+def test_freeze_requires_pinned_rubric_and_at_least_one_judge(tmp_path):
+    """The panel-size rule after the 2026-08-28 ruling: ONE judge is a legal
+    design and freezes cleanly, ZERO is the invalid state the gate refuses,
+    and two or more is unchanged. Swift twin:
+    ``EvidenceTierTests.freezeRequiresPinnedRubricAndAtLeastOneJudge``."""
     root = str(tmp_path)
     name = _variant_study(root)
     d = es.load_raw(name, root)
@@ -239,21 +243,43 @@ def test_freeze_requires_pinned_rubric_and_two_judges(tmp_path):
     with pytest.raises(es.ExperimentStoreError, match="no judge rubric is pinned"):
         es.freeze(name, force=False, root=root)
 
+    # Pinned rubric, judged evaluation, and NO judge — a judged instrument
+    # with no judge codes nothing.
     rubric_hash = _write(os.path.join(root, "prompts", "rubrics", "r.md"), RUBRIC_TEXT)
     d = es.load_raw(name, root)
     d["judgeRubricFile"] = "prompts/rubrics/r.md"
     d["judgeRubricHash"] = rubric_hash
-    d["judges"] = [{"name": "opus", "kind": "claude", "model": "claude-opus-4-8"}]
+    d["judges"] = []
     es.save_raw(d, root)
-    with pytest.raises(es.ExperimentStoreError, match="1 pinned judge"):
+    with pytest.raises(es.ExperimentStoreError, match="pins no judge"):
         es.freeze(name, force=False, root=root)
 
+    # A SINGLE judge freezes — and carries the single-coder advisory.
     d = es.load_raw(name, root)
-    d["judges"].append({"name": "sonnet", "kind": "claude",
-                        "model": "claude-sonnet-4-6"})
+    d["judges"] = [{"name": "opus", "kind": "claude", "model": "claude-opus-4-8"}]
     es.save_raw(d, root)
     _validate_evidence(root, name, battery_results=_battery_rows("bb" * 32))
-    assert es.freeze(name, force=False, root=root)["status"] == "frozen"
+    solo = es.freeze(name, force=False, root=root)
+    assert solo["status"] == "frozen"
+    assert not solo.get("freezeForced"), "a legal design must not be forced"
+    assert es.SINGLE_JUDGE_PANEL_ADVISORY in es.freeze_advisories(solo)
+
+    # Two judges: unchanged, and the advisory falls silent.
+    pair_name = _variant_study(root, name="jg-pair")
+    d = es.load_raw(pair_name, root)
+    d["evaluation"] = {"kind": "pairedJudge", "judgeModel": "claude-opus-4-8",
+                       "judgePrompt": "inline"}
+    d["judgeRubricFile"] = "prompts/rubrics/r.md"
+    d["judgeRubricHash"] = rubric_hash
+    d["judges"] = [
+        {"name": "opus", "kind": "claude", "model": "claude-opus-4-8"},
+        {"name": "sonnet", "kind": "claude", "model": "claude-sonnet-4-6"},
+    ]
+    es.save_raw(d, root)
+    _validate_evidence(root, pair_name, battery_results=_battery_rows("bb" * 32))
+    pair = es.freeze(pair_name, force=False, root=root)
+    assert pair["status"] == "frozen"
+    assert es.SINGLE_JUDGE_PANEL_ADVISORY not in es.freeze_advisories(pair)
 
 
 def _judged_study(root, name, judges):

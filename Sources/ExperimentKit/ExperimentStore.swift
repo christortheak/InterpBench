@@ -2858,6 +2858,12 @@ public enum ExperimentStore {
         "sampledText", "answerTokenLogprob", "choiceProbability",
         "repeReaderScore", "ordinalScale",
     ]
+    /// The closed `responseFormat` vocabulary an `outcomeInstrumentScope`
+    /// may select over, derived from the type that owns it so `--help`, the
+    /// refusal, and the decoder cannot name different values (server twin:
+    /// `response_format.KNOWN_RESPONSE_FORMATS`).
+    public static let knownResponseFormats =
+        ResponseFormat.allCases.map(\.rawValue)
 
     /// The declared instruments no engine implements, in declaration order.
     ///
@@ -3876,11 +3882,34 @@ public enum ExperimentStore {
     /// outcomeInstrumentScope to apply it to the label rows only" — advice
     /// the app could not follow. This computes the pin from the study's own
     /// task prompts so the researcher picks formats, not hashes.
+    ///
+    /// REPLACE semantics, like `setOutcomeInstruments` and
+    /// `setExclusionRules`: the declaration is one pinned subset, and the
+    /// pin (`itemCount` + `itemIDsHash`) is recomputed from the whole
+    /// format list every time — a merge that appended a format would leave
+    /// a count and a hash that belong to neither list.
     @discardableResult
     public static func declareOutcomeInstrumentScope(
         responseFormats: [String], experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
+            // The vocabulary gate, ahead of the file read: `Scope.includes`
+            // compares raw strings, so an unrecognised format selects
+            // nothing and the pin silently becomes "zero items" — the same
+            // loss class `setOutcomeInstruments` refuses an unknown
+            // instrument for. Malformed (64), not a refusal: the caller
+            // typed a value the field cannot hold.
+            if let unknown = responseFormats.first(where: {
+                ResponseFormat(rawValue: $0) == nil
+            }) {
+                throw ExperimentError.malformed(
+                    "unknown responseFormat '\(unknown)' — known: "
+                        + knownResponseFormats.joined(separator: ", "),
+                    repair: "steerlab-cli experiment set-instrument-scope "
+                        + "\(experimentName) <"
+                        + knownResponseFormats.joined(separator: "|")
+                        + ">[,…]  (\"\" clears the declaration)")
+            }
             guard let file = manifest.taskPromptsFile, !file.isEmpty else {
                 throw ExperimentError(
                     reason: "declare the task prompts first ('steerlab-cli "
@@ -3895,8 +3924,28 @@ public enum ExperimentStore {
                 manifest.outcomeInstrumentScope = nil
                 return
             }
-            manifest.outcomeInstrumentScope = ResponseFormat.Scope.pin(
+            let pin = ResponseFormat.Scope.pin(
                 responseFormats: responseFormats, items: items)
+            // A scope that selects NOTHING is refused at the declaration,
+            // not left to the run. `ResponseFormat.refusal` already owns the
+            // sentence for what such a scope does — "the instrument would
+            // run on nothing and silently produce zero records" — and a
+            // declaration guaranteed to reach that refusal is the same shape
+            // as a `set-exclusions` bound aimed at no rule: malformed (64),
+            // never written and reported as success. Thrown INSIDE
+            // `updateDraft`, so nothing is saved.
+            guard pin.itemCount > 0 else {
+                throw ExperimentError.malformed(
+                    "the declared outcomeInstrumentScope selects zero task "
+                        + "items of '\(file)' — the instruments would run on "
+                        + "nothing and silently produce zero records",
+                    repair: "steerlab-cli experiment set-instrument-scope "
+                        + "\(experimentName) <"
+                        + knownResponseFormats.joined(separator: "|")
+                        + ">[,…]  (a format the pinned items actually "
+                        + "declare), or \"\" to clear the declaration")
+            }
+            manifest.outcomeInstrumentScope = pin
         }
     }
 
@@ -8095,6 +8144,11 @@ public enum ExperimentStore {
         runSubstrate: String = ExperimentStore.evidenceSubstrate
     ) -> [String] {
         var advisories: [String] = []
+        // A one-judge panel freezes cleanly (the gate asks for a judge, not
+        // for two) — and says what it costs, at the moment of freezing.
+        if let singleCoder = singleJudgePanelAdvisory(manifest) {
+            advisories.append(singleCoder)
+        }
         // OptVec-pinned concepts: name the evidence run that stands in for
         // validate (plan §6 — eval.json on the test split is the
         // validate-equivalent, advisory-first), or say that none is
@@ -9010,8 +9064,9 @@ public enum ExperimentStore {
                 .judgeValidity, name: name,
                 repairAction: "steerlab-cli experiment pin-rubric \(name) "
                     + "\(JudgeRubricStore.defaultRubricFile) --judges "
-                    + "<name>:<kind>,<name>:<kind> — a rubric FILE and at least "
-                    + "2 distinct judges the pipeline can actually run, or freeze --force"
+                    + "<name>:<kind>[,…] — a rubric FILE and at least one "
+                    + "judge the pipeline can actually run (a panel of two or "
+                    + "more must be DISTINCT), or freeze --force"
             ) { try checkJudgeEvaluationValidity($0) })
         if !autoCommit {
             table.append(freezeGitCleanGate(name: name))
@@ -9774,15 +9829,17 @@ public enum ExperimentStore {
                     + "pin-rubric \(name) \(JudgeRubricStore.defaultRubricFile)'; "
                     + "inline rubric text is draft-only. Or freeze --force")
         }
+        // ONE judge is a legal design (maintainer ruling, 2026-08-28): a
+        // single-coder study is a real methodology, and the gate's job is to
+        // refuse the INVALID state — a judged instrument with no judge —
+        // not to legislate the panel size. What the ≥2 rule was protecting
+        // (inter-rater agreement) survives as the non-blocking
+        // `singleJudgePanelAdvisory`, said at freeze and at declaration.
         let judgeCount = (manifest.judges ?? []).count
-        guard judgeCount >= 2 else {
+        guard judgeCount >= 1 else {
             throw ExperimentError(
-                reason: "cannot freeze '\(name)': judge-evaluated study pins "
-                    + "\(judgeCount) judge\(judgeCount == 1 ? "" : "s"); at least 2 are "
-                    + "required so the report carries agreement statistics "
-                    + "(percent agreement, Cohen's kappa) — pin a panel: "
-                    + "'steerlab-cli experiment pin-rubric \(name) <rubric> "
-                    + "--judges <name>:<kind>,<name>:<kind>'. Or freeze --force")
+                reason: "cannot freeze '\(name)': "
+                    + Self.noJudgeDeclaredReason(experimentName: name))
         }
         if let indistinct = judgePanelIndistinctProblem(manifest) {
             throw ExperimentError(reason: "cannot freeze '\(name)': \(indistinct)")
@@ -9797,6 +9854,56 @@ public enum ExperimentStore {
             throw ExperimentError(reason: "cannot freeze '\(name)': \(conflict)")
         }
     }
+
+    /// The `judgeValidity` refusal for a judged study with no judge at all —
+    /// the state the panel-size rule actually protects against. Cross-engine
+    /// twin: `experiment_store._no_judge_declared_reason`.
+    static func noJudgeDeclaredReason(experimentName name: String) -> String {
+        "judge-evaluated study pins no judge — a judged instrument with no "
+            + "judge codes nothing; pin a panel: 'steerlab-cli experiment "
+            + "pin-rubric \(name) <rubric> --judges <name>:<kind>[,…]'. Or "
+            + "freeze --force"
+    }
+
+    /// The single-coder advisory: LOUD, never blocking.
+    ///
+    /// A one-judge panel used to be refused at freeze (`judgeValidity`
+    /// required ≥ 2 so the report could carry agreement statistics). The
+    /// maintainer's ruling is that a researcher may declare any number of
+    /// judges including exactly one — a single-coder design is a real
+    /// methodology — so the consequence is stated instead of forbidden: no
+    /// inter-rater agreement will exist for this study's codings, and the
+    /// coding report records `fieldAgreement` as ABSENT with that reason
+    /// rather than as an empty list that reads like "we measured agreement
+    /// and found none".
+    ///
+    /// Nil for a panel of two or more, and for a study that is not judged at
+    /// all. Cross-engine twin: `experiment_store.single_judge_panel_advisory`
+    /// — the sentence is the contract.
+    public static func singleJudgePanelAdvisory(
+        _ manifest: ExperimentManifest
+    ) -> String? {
+        let judges = (manifest.judges ?? []).filter { !$0.name.isEmpty }
+        let judgeEvaluated =
+            manifest.evaluation?.kind == .pairedJudge || !judges.isEmpty
+        guard judgeEvaluated, judges.count == 1 else { return nil }
+        return singleJudgePanelAdvisoryText
+    }
+
+    /// The sentence itself, so declaration-time surfaces (which have a panel
+    /// but not yet a manifest to hand) say exactly what freeze says.
+    public static let singleJudgePanelAdvisoryText =
+        "single-coder design: this study pins 1 judge, so no inter-rater "
+        + "agreement statistics (percent agreement, Cohen's kappa) will exist "
+        + "for its codings — the coding report records fieldAgreement as "
+        + "absent with that reason rather than empty"
+
+    /// Why a coding report carries no `fieldAgreement` block. Written into
+    /// the report as `fieldAgreementAbsentReason`; twin literal on both
+    /// engines (`response_coding.SINGLE_CODER_AGREEMENT_ABSENT_REASON`).
+    public static let singleCoderAgreementAbsentReason =
+        "single-coder design: 1 judge coded this run, so no inter-rater "
+        + "agreement statistics exist"
 
     /// Local judges whose declared model differs from the study model,
     /// rendered `'name' (model 'id')` — the server's

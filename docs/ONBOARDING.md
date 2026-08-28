@@ -512,7 +512,7 @@ apply:
 | `validateEvidence` | a `validate` run matching the exact pins, on this engine, that is not vacuous |
 | `variantValidity` | attached variants carry hashed weights and a pinnable dataset manifest |
 | `batteryEvidence` | each variant condition has scope-matched capability-battery evidence |
-| `judgeValidity` | a rubric *file* and ≥ 2 genuinely distinct judges |
+| `judgeValidity` | a rubric *file* and at least one judge (a panel of two or more must be genuinely distinct) |
 | `gitClean` | every pinned input is committed in the workspace repository |
 
 A refusal is typed and names its repair — in `--json` mode, `error.code` is

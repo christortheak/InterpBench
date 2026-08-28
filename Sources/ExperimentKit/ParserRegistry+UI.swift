@@ -87,6 +87,20 @@ extension ExperimentStore {
     /// current bytes (the drift-repair affordance). Clearing the parser
     /// clears the pin too (an unused pin certifies nothing and is a verify
     /// finding).
+    ///
+    /// The hash is DERIVED here and nowhere else: the registry file is the
+    /// authority on which parser version a study preregistered, so no
+    /// caller — panel, CLI verb, or HTTP route — may hand one in. That is
+    /// why `set-parser` takes a name and has no `--registry-hash` flag.
+    ///
+    /// Both refusals are typed MALFORMED invocations (64) rather than plain
+    /// errors, the upgrade `setSamplingPolicy`/`setExclusionRules` took: the
+    /// caller named a parser the registry does not define, which is an
+    /// out-of-vocabulary value, not a gate declining a well-formed request.
+    /// The reasons stay byte-identical to what these sites have always
+    /// thrown (they are the cross-engine twins of
+    /// `parser_registry.parser_spec` / `load_registry`); only the
+    /// classification and the runnable repair are new.
     @discardableResult
     public static func setNumericParser(
         _ name: String?, experimentName: String
@@ -100,14 +114,35 @@ extension ExperimentStore {
             }
             // Validates existence and shape with ParserRegistry's own
             // plain-language refusals.
-            _ = try ParserRegistry.spec(named: value)
+            do {
+                _ = try ParserRegistry.spec(named: value)
+            } catch let error as ExperimentError {
+                throw ExperimentError.malformed(
+                    error.reason,
+                    repair: numericParserRepair(experimentName: experimentName))
+            }
             guard let hash = ParserRegistry.liveHash() else {
-                throw ExperimentError(
-                    reason: "no parser registry exists at "
-                        + ParserRegistry.registryFile)
+                throw ExperimentError.malformed(
+                    "no parser registry exists at "
+                        + ParserRegistry.registryFile,
+                    repair: numericParserRepair(experimentName: experimentName))
             }
             manifest.numericParser = value
             manifest.parserRegistryHash = hash
         }
+    }
+
+    /// The retype for a refused parser declaration: the verb, this study,
+    /// and the names the registry actually defines (or the file to create
+    /// when it defines none). Read from the registry so the repair and the
+    /// refusal cannot name different vocabularies.
+    static func numericParserRepair(experimentName: String) -> String {
+        let defined = ParserRegistryUI.entries().map(\.name)
+        let choices =
+            defined.isEmpty
+            ? "<a parser declared in " + ParserRegistry.registryFile + ">"
+            : "<" + defined.joined(separator: "|") + ">"
+        return "steerlab-cli experiment set-parser \(experimentName) \(choices)"
+            + "  (\"\" clears the declaration and its registry pin)"
     }
 }
