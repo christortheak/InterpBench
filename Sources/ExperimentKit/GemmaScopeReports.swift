@@ -42,6 +42,8 @@ public struct GemmaScopeReportArtifact: Identifiable, Sendable {
 public enum GemmaScopeReportImportError: Error, CustomStringConvertible {
     case missingDecoderValues(Int)
     case dimensionMismatch(feature: Int, expected: Int, actual: Int)
+    case layerOutOfRange(layer: Int, layerCount: Int)
+    case layerDisagreesWithSAE(layer: Int, saeLayer: Int, saeID: String)
 
     public var description: String {
         switch self {
@@ -49,6 +51,13 @@ public enum GemmaScopeReportImportError: Error, CustomStringConvertible {
             "feature \(feature) report predates decoder-vector export; rerun Gemma Scope analysis"
         case .dimensionMismatch(let feature, let expected, let actual):
             "feature \(feature) decoder has dimension \(actual), expected \(expected)"
+        case .layerOutOfRange(let layer, let layerCount):
+            "report layer \(layer) is outside the analyzed artifact (\(layerCount) layers)"
+        case .layerDisagreesWithSAE(let layer, let saeLayer, let saeID):
+            "report layer \(layer) disagrees with the SAE's own layer \(saeLayer) (\(saeID)) — "
+                + "an SAE's dictionary lives at exactly one layer, so this report would import "
+                + "the decoder row at a depth the SAE does not describe; re-run the Gemma Scope "
+                + "analysis at the SAE's layer, then import"
         }
     }
 }
@@ -105,6 +114,21 @@ public enum GemmaScopeReportCatalog {
             throw GemmaScopeReportImportError.dimensionMismatch(
                 feature: row.feature, expected: sidecar.hiddenSize, actual: values.count)
         }
+        // Refuse, never crash or misplace (math audit 2026-08-28, server twin
+        // `gemma_scope.import_feature`): the row is placed AT the report
+        // layer, so that layer must exist in the artifact and must be the
+        // layer the SAE's dictionary actually describes.
+        guard (0..<sidecar.layerCount).contains(report.vector.layer) else {
+            throw GemmaScopeReportImportError.layerOutOfRange(
+                layer: report.vector.layer, layerCount: sidecar.layerCount)
+        }
+        if let saeLayer = saeLayer(of: report.gemmaScope.recommendedSAEID),
+            saeLayer != report.vector.layer
+        {
+            throw GemmaScopeReportImportError.layerDisagreesWithSAE(
+                layer: report.vector.layer, saeLayer: saeLayer,
+                saeID: report.gemmaScope.recommendedSAEID)
+        }
         let rawDecoderNorm = sqrt(values.reduce(Float(0)) { $0 + $1 * $1 })
         let scaledValues = scale(values, toNorm: report.vector.norm)
 
@@ -160,6 +184,15 @@ public enum GemmaScopeReportCatalog {
             modelID: featureSidecar.modelID, revision: featureSidecar.revision)
         try SteeringVectorStore.save(vectors: vectors, sidecar: featureSidecar, to: directory, name: name)
         return VectorArtifact(directory: directory, name: name, sidecar: featureSidecar)
+    }
+
+    /// The layer named by the Gemma Scope id grammar (`layer_<n>_…`), or nil
+    /// for an id that does not follow it (the server twin is
+    /// `gemma_scope.parse_sae_id`).
+    static func saeLayer(of saeID: String) -> Int? {
+        guard let range = saeID.range(of: #"layer_(\d+)"#, options: .regularExpression)
+        else { return nil }
+        return Int(saeID[range].dropFirst("layer_".count))
     }
 
     /// The convention's transform, float32 math (the server mirrors this

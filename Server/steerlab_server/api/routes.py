@@ -4222,13 +4222,35 @@ def build_router(state: ServiceState) -> APIRouter:
         # separator in it would place the run outside runs/.
         _safe_name(str(nm))
         vp = state.resolver.require_dir(vp, allow_local_absolute=True)
+        try:
+            body_layer = int(body["layer"]) if body.get("layer") is not None else None
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="layer must be an integer")
         info = gemma_scope.scope_info(body.get("modelID", ""),
-                                      preferred_layer=body.get("layer"))
+                                      preferred_layer=body_layer)
         release = body.get("release") or info.get("release")
         sae_id = body.get("saeID") or info.get("saeID")
-        layer = int(body.get("layer", info.get("layer", 0)))
         if not release or not sae_id:
             raise HTTPException(status_code=400, detail="not a Gemma 3 model / no SAE available")
+        # An SAE's dictionary lives at exactly one layer, so a body that names
+        # both a saeID and a disagreeing layer is a mis-specified request:
+        # refuse here as a 400 (analyze re-checks, but that would be a job
+        # dying after the download). With no explicit layer, the saeID's own
+        # layer wins over the catalog recommendation.
+        sae_layer = gemma_scope.parse_sae_id(str(sae_id)).get("layer")
+        if (body_layer is not None and sae_layer is not None
+                and body_layer != sae_layer):
+            raise HTTPException(
+                status_code=400,
+                detail=(f"layer {body_layer} disagrees with saeID {sae_id!r} "
+                        f"(layer {sae_layer}) — an SAE's dictionary lives at "
+                        "exactly one layer; make them agree or drop one"))
+        if body_layer is not None:
+            layer = body_layer
+        elif sae_layer is not None:
+            layer = sae_layer
+        else:
+            layer = int(info.get("layer", 0))
 
         def work(job):
             gs_dir = paths.make_unique_run_directory(f"gemmascope-{nm}")

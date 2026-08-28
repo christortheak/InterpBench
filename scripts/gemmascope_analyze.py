@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 
@@ -36,6 +37,21 @@ def main() -> None:
     job = load_json(args.job)
     vector_export = load_json(job["vectorFile"])
     scope = job["gemmaScope"]
+
+    # An SAE's dictionary lives at exactly one layer, and the report's rows
+    # import AT the vector's layer — so a mismatched pairing must refuse here,
+    # before any download, not produce a report that imports a decoder row at
+    # a depth the SAE does not describe (math audit 2026-08-28; same guard as
+    # the server's gemma_scope.analyze).
+    sae_id = str(scope.get("recommendedSAEID", ""))
+    match = re.search(r"layer_(\d+)", sae_id)
+    if match and int(match.group(1)) != int(vector_export["layer"]):
+        raise SystemExit(
+            f"analysis layer {vector_export['layer']} disagrees with the SAE's "
+            f"own layer {match.group(1)} ({sae_id}) — an SAE's dictionary lives "
+            "at exactly one layer; analyze at the SAE's layer or pick an SAE "
+            "at this layer."
+        )
 
     try:
         import torch
