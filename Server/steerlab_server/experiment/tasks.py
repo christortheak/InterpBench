@@ -3382,6 +3382,79 @@ def _sweep_progress_path(run_directory: str) -> str:
     return os.path.join(run_directory, "sweep-progress.jsonl")
 
 
+#: The sweep's qualitative record: one JSON line per dev-prompt generation
+#: ({kind, concept, layer, alpha, promptIndex, text}), appended durably as
+#: each text is generated. Before this file existed the only prose evidence a
+#: sweep left behind was the 160-char log previews — an entire dose ladder's
+#: generations were unreadable after the fact. Swift twin:
+#: ``SweepRunCatalog.devGenerationsFile``.
+DEV_GENERATIONS_FILE = "dev-generations.jsonl"
+
+#: Per-record bound on the persisted text. Dev generations are short by
+#: construction (the sweep spec's maxTokens, default 80), so this is a
+#: safety rail against a decohered cell looping forever, not a working
+#: limit; a capped record carries ``truncated: true``.
+DEV_GENERATION_TEXT_LIMIT = 20_000
+
+
+def _dev_generations_path(run_directory: str) -> str:
+    return os.path.join(run_directory, DEV_GENERATIONS_FILE)
+
+
+def _dev_generation_key(record: dict) -> tuple:
+    return (record.get("kind"), record.get("concept"),
+            int(record["layer"]), float(record["alpha"]),
+            int(record["promptIndex"]))
+
+
+def _load_dev_generation_keys(run_directory: str) -> set:
+    """Keys already durable in ``dev-generations.jsonl`` — a resumed sweep
+    regenerates some texts it already recorded (a judgeScore resume even
+    regenerates the baseline), and the record must not duplicate them.
+    Malformed lines (a kill mid-write) are skipped, never fatal: this file
+    is a prose record, not a ledger anything resumes from."""
+    keys: set = set()
+    try:
+        with open(_dev_generations_path(run_directory),
+                  encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    keys.add(_dev_generation_key(entry))
+                except (json.JSONDecodeError, TypeError, ValueError, KeyError):
+                    continue
+    except OSError:
+        pass
+    return keys
+
+
+def _append_dev_generation(run_directory: str, *, kind: str, concept,
+                           layer: int, alpha: float, prompt_index: int,
+                           text: str, seen: set | None = None) -> None:
+    """Durably append one dev generation (flush + fsync, like the progress
+    journal): the texts ARE the sweep's qualitative evidence, and a walltime
+    kill must not reduce a dose ladder's prose record to log previews."""
+    record = {"kind": kind, "concept": concept, "layer": int(layer),
+              "alpha": float(alpha), "promptIndex": int(prompt_index),
+              "text": text}
+    if len(text) > DEV_GENERATION_TEXT_LIMIT:
+        record["text"] = text[:DEV_GENERATION_TEXT_LIMIT]
+        record["truncated"] = True
+    if seen is not None:
+        key = _dev_generation_key(record)
+        if key in seen:
+            return
+        seen.add(key)
+    with open(_dev_generations_path(run_directory), "a",
+              encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
 def _load_sweep_progress(run_directory: str) -> tuple[list[dict], dict]:
     """(completed grid rows, completed per-concept recommendation blocks)
     from a checkpointed sweep's durable progress log. Torn trailing lines
@@ -3614,6 +3687,9 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
         _persist_vectors(bundles, manifest, model, run_directory)
     if on_run_directory is not None:
         on_run_directory(run_directory)
+    # Dev generations already recorded (resume dedupe) — fresh runs start
+    # empty, a resumed directory seeds from its own durable record.
+    dev_generation_keys = _load_dev_generation_keys(run_directory)
 
     def _append_progress(entry: dict) -> None:
         """Durably append one progress line (flush + fsync): a checkpoint
@@ -3667,16 +3743,25 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                 correct += 1
         return correct / total
 
-    def _dev_texts(injections, label: str) -> list[str]:
+    def _dev_texts(injections, label: str, record=None) -> list[str]:
         """Dev-prompt generations under the given injections. A cancel is
-        observed between prompts (``TaskCancelled``), and every generation
-        logs a one-line preview so decoherence is visible live."""
+        observed between prompts (``TaskCancelled``), every generation logs
+        a one-line preview so decoherence is visible live, and ``record``
+        — ``(kind, concept, layer, alpha)`` — names the cell each text is
+        durably appended to ``dev-generations.jsonl`` under, AS GENERATED,
+        so the prose evidence survives a later kill."""
         texts: list[str] = []
         total = len(dev.texts)
         for i, prompt_text in enumerate(dev.texts, start=1):
             _cancel_checkpoint(should_cancel, _log, f"{label} dev {i}/{total}")
             text = _gen(prompt_text, injections, max_tokens)
             _log(f'{label} dev {i}/{total}: "{_preview_line(text)}"')
+            if record is not None:
+                kind, concept, layer, alpha = record
+                _append_dev_generation(
+                    run_directory, kind=kind, concept=concept, layer=layer,
+                    alpha=alpha, prompt_index=i - 1, text=text,
+                    seen=dev_generation_keys)
             texts.append(text)
         return texts
 
@@ -3780,8 +3865,10 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
         else:
             try:
                 if shared_baseline is None:
-                    shared_baseline = (_dev_texts([], "baseline"),
-                                       _battery_accuracy([], "baseline"))
+                    shared_baseline = (
+                        _dev_texts([], "baseline",
+                                   record=("baseline", None, -1, 0.0)),
+                        _battery_accuracy([], "baseline"))
             except TaskCancelled:
                 cancelled = True
                 break
@@ -3840,7 +3927,9 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                 raw_alpha = vm.norm_unit_scale(alpha, residual, vector_norm)
                 cell = [CellInjection(layer=layer, vector=vector, alpha=raw_alpha)]
                 try:
-                    texts = _dev_texts(cell, f"L{layer} α{alpha:g}")
+                    texts = _dev_texts(cell, f"L{layer} α{alpha:g}",
+                                       record=("cell", concept_name, layer,
+                                               alpha))
                     density, distinct, words = _text_stats(texts, rubric)
                     accuracy = _battery_accuracy(cell, f"L{layer} α{alpha:g}")
                     metric_value = _cell_objective(
@@ -3889,7 +3978,9 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                         try:
                             control_texts = _dev_texts(
                                 control_injections,
-                                f"control L{layer} α{alpha:g}")
+                                f"control L{layer} α{alpha:g}",
+                                record=("control", concept_name, layer,
+                                        alpha))
                         except TaskCancelled:
                             cancelled = True
                             break
@@ -3982,7 +4073,9 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                     else:
                         control_texts = _dev_texts(
                             control_injections,
-                            f"control L{candidate.layer} α{candidate.alpha:g}")
+                            f"control L{candidate.layer} α{candidate.alpha:g}",
+                            record=("control", concept_name, candidate.layer,
+                                    candidate.alpha))
                         control_density, _, _ = _text_stats(
                             control_texts, rubric)
                         control_metric = control_density
@@ -4201,6 +4294,11 @@ def _sweep_impl(name, manifest, model, root, layer_fractions, alphas, prompt,
                                 injections=[cell], prompt_mode=manifest.prompt_mode,
                                 system_prompt=manifest.system_prompt,
                                 qwen_thinking_enabled=manifest.qwen_thinking_enabled)
+                # Same qualitative-record rule as the spec'd sweep: the text
+                # this row was scored on is evidence, not disposable.
+                _append_dev_generation(
+                    run_directory, kind="cell", concept=concept_name,
+                    layer=layer, alpha=alpha, prompt_index=0, text=text)
                 rows.append({
                     "concept": concept_name, "layer": layer, "alpha": alpha,
                     "markerDensity": rubric.density(text) if rubric else "",

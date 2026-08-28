@@ -831,6 +831,7 @@ which is the good outcome, or as a silently different study, which is not.
 | `validation-evidence.json` | `validate` | the stamp `freeze` checks for; not vacuous |
 | validate `report.json` | `validate` | convergent accuracy ≫ chance, per concept |
 | `sweep.csv` | `sweep` | smooth dose-response, a clear coherence cliff, the recommended cell below it |
+| `dev-generations.jsonl` | `sweep` | the prose behind every cell — baseline, grid, and control dev texts, readable after the fact |
 | `recommendations.json` + `selection` | `sweep` | resolved criterion, dev-split hash, winning cell, controls evaluated |
 | `generations.jsonl` | `run` | one stamped record per output or instrument readout, full provenance |
 | `battery.jsonl` | `run` | per-condition capability records, separate from generations |
