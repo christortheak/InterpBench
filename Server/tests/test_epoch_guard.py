@@ -122,7 +122,12 @@ def test_analyze_refuses_epoch_mismatch_naming_run_and_hashes(tmp_path):
     assert os.path.basename(run_dir) in message
     assert stamped in message and live in message
     assert "re-run under the current manifest" in message.lower()
-    assert "allowUnverifiedEpoch for legacy unstamped runs" in message
+    # The stamped-mismatch refusal must NOT offer allowUnverifiedEpoch: the
+    # flag is consulted only in the unstamped branch, so offering it here
+    # sent an agent back to burn a queue slot learning it does nothing
+    # (2026-08-28). It names the real alternative instead.
+    assert "allowUnverifiedEpoch" not in message
+    assert "measurement verb" in message
     # The flag does NOT bypass a stamped mismatch — only unstamped legacy runs.
     with pytest.raises(RuntimeError, match="different manifest epoch"):
         tasks.analyze("study", root=root, allow_unverified_epoch=True)

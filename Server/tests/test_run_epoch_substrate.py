@@ -199,6 +199,43 @@ def test_a_renamed_duplicate_is_tolerated_on_measurement_verbs(tmp_path):
     assert refusal is not None and drift is None
 
 
+def test_a_materialized_default_is_not_drift(tmp_path):
+    # `experiment duplicate` on the Swift side decodes and re-encodes, so
+    # every non-optional defaulted field appears in the copy even when the
+    # donor's bytes never carried it — recordTokenIDs: false against an
+    # absent key is the observed case (2026-08-28). At the DEFAULT the two
+    # spellings are the same manifest; the comparison canonicalizes rather
+    # than refusing over a difference with no meaning.
+    live = _judged("m", name="s-calibration", recordTokenIDs=False,
+                   judgeRubricFile="prompts/rubrics/coding-cf-v1.md",
+                   judgeRubricHash="a" * 64)
+    directory = _run_with_snapshot(
+        tmp_path, _ENGINE,
+        _judged("m", judgeRubricFile="prompts/rubrics/paired-cf-v1.md",
+                judgeRubricHash="b" * 64))
+    refusal, unverified, drift = epoch_refusal(
+        "evaluate", "s-calibration", live.content_hash(), directory,
+        allow_unverified=False, live_manifest=live,
+        tolerate_measurement_drift=True)
+    assert refusal is None, refusal
+    assert unverified is False
+    assert drift is not None
+
+
+def test_a_non_default_value_against_an_absent_key_still_refuses(tmp_path):
+    # recordTokenIDs: TRUE is a real generation-side declaration — the run
+    # recorded different evidence — so absent vs true refuses as ever; the
+    # canonicalization covers exactly the default.
+    live = _judged("m", recordTokenIDs=True)
+    directory = _run_with_snapshot(tmp_path, _ENGINE, _judged("m"))
+    refusal, _, drift = epoch_refusal(
+        "evaluate", "s", live.content_hash(), directory,
+        allow_unverified=False, live_manifest=live,
+        tolerate_measurement_drift=True)
+    assert refusal is not None and "recordTokenIDs" in refusal
+    assert drift is None
+
+
 def test_a_rename_alone_is_tolerated_with_no_measurement_edit(tmp_path):
     # Rename with NOTHING else changed: still the duplicate path (the new
     # rubric may be pinned in a later write), still tolerable.

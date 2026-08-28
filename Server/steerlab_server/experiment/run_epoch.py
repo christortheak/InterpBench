@@ -117,6 +117,19 @@ MEASUREMENT_FIELDS = ("judges", "evaluation", "pipeline",
                       "judgeRubricFile", "judgeRubricHash",
                       "humanValidation")
 
+#: Keys a Swift struct round-trip materializes at their default even when the
+#: donor's bytes never carried them (`experiment duplicate` decodes and
+#: re-encodes, so every non-optional defaulted field appears). At the DEFAULT
+#: the two spellings are the same manifest — the run behaved identically —
+#: but ``content_hash`` is over raw JSON, where absent != false, so the
+#: comparison canonicalizes default -> absent on BOTH sides before hashing.
+#: Any other value is real generation-side drift and still refuses. The Swift
+#: engine needs no twin: its comparison decodes both sides through the same
+#: struct, materializing symmetrically. Observed 2026-08-28: a duplicate
+#: refused against its donor's run over ``recordTokenIDs: false`` vs an
+#: absent key — a difference with no meaning.
+DEFAULT_VALUED_KEYS = {"recordTokenIDs": False}
+
 
 def _without_measurement_fields(manifest):
     """The manifest reduced to its generation-side surface (top-level
@@ -140,6 +153,9 @@ def _without_measurement_fields(manifest):
     raw = {k: v for k, v in manifest.raw.items()
            if k not in MEASUREMENT_FIELDS}
     raw["name"] = ""
+    for key, default in DEFAULT_VALUED_KEYS.items():
+        if raw.get(key) is default:
+            del raw[key]
     try:
         return Manifest.from_dict(raw)
     except Exception:  # noqa: BLE001 - fall back to the strict comparison
@@ -382,12 +398,20 @@ def epoch_refusal(verb: str, name: str, live_hash: str, run_directory: str,
             drift = _measurement_drift(live_cmp, snap)
             if drift is not None:
                 return None, False, drift
+        # No allowUnverifiedEpoch offer here: that flag is consulted only in
+        # the unstamped branch above, and THIS run is stamped — offering it
+        # on a stamped mismatch sent an agent back to burn a queue slot
+        # learning it does nothing (observed 2026-08-28). The honest repairs
+        # are the two that exist: re-run, or a measurement verb whose drift
+        # is confined to the tolerated fields.
         return (
             f"{verb}: '{name}' has changed since source run '{run_name}' was "
             "produced" + manifest_diff.changed_fields(live_cmp, snap)
             + f" (run hash {stamped}, study now {live_hash}) — the run "
             "belongs to a different manifest epoch. Re-run under the current "
-            "manifest, or pass allowUnverifiedEpoch for legacy unstamped runs"
+            "manifest; a measurement verb (evaluate/analyze/rescore-style) "
+            "tolerates drift confined to measurement-side fields and stamps "
+            "what it tolerated"
         ), False, None
     return None, False, None
 
