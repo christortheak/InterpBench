@@ -387,10 +387,18 @@ public enum ExperimentTasks {
     }
 
     /// The per-condition `reasoningStyle` block of report.json (cross-engine
-    /// contract: {"taxonomy", "taxonomyHash", "features": {id: {mean, n}}}).
+    /// contract: {"taxonomy", "taxonomyHash", "taxonomyFile",
+    /// "diagnosticOnly", "features": {id: {mean, n}}}).
     struct ReasoningStyleConditionReport: Codable, Equatable {
         let taxonomy: String
         let taxonomyHash: String
+        /// The pinned taxonomy file, named beside its hash so the report is
+        /// self-describing. Optional only for decoding pre-stamp reports.
+        var taxonomyFile: String? = nil
+        /// Style features are a diagnostic/manipulation check reported
+        /// beside outcome endpoints, never an outcome endpoint itself
+        /// (docs/METHODS.md). Optional only for decoding pre-stamp reports.
+        var diagnosticOnly: Bool? = nil
         let features: [String: ReasoningStyleFeatureStat]
     }
 
@@ -6258,6 +6266,12 @@ public enum ExperimentTasks {
         let measurementDrift: String?
         let taxonomy: String
         let taxonomyHash: String
+        /// The pinned taxonomy file, named beside its hash so the report is
+        /// self-describing (same stamp as report.json's per-condition block).
+        let taxonomyFile: String
+        /// Style features are a diagnostic/manipulation check, never an
+        /// outcome endpoint (docs/METHODS.md).
+        let diagnosticOnly: Bool
         let conditions: [String: ConditionBlock]
     }
 
@@ -6360,6 +6374,8 @@ public enum ExperimentTasks {
             measurementDrift: epoch.measurementDrift,
             taxonomy: style.taxonomy.name,
             taxonomyHash: style.hash,
+            taxonomyFile: style.path,
+            diagnosticOnly: true,
             conditions: grouped.compactMapValues { conditionRows in
                 reasoningStyleReport(rows: conditionRows, style: style)
                     .map { RescoreStyleReport.ConditionBlock(features: $0.features) }
@@ -9153,6 +9169,7 @@ public enum ExperimentTasks {
             })
         return ReasoningStyleConditionReport(
             taxonomy: style.taxonomy.name, taxonomyHash: style.hash,
+            taxonomyFile: style.path, diagnosticOnly: true,
             features: features)
     }
 

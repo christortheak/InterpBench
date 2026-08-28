@@ -481,6 +481,11 @@ extension ExperimentStoreTests {
         let block = try #require(report.conditions["steered"]?.reasoningStyle)
         #expect(block.taxonomy == "test-style-v1")
         #expect(block.taxonomyHash == "abc123")
+        // Self-describing + status-stamped: the pinned file is named beside
+        // its hash, and the block declares itself a diagnostic/manipulation
+        // check so a report reader never cites it as an outcome endpoint.
+        #expect(block.taxonomyFile == "prompts/taxonomies/style.json")
+        #expect(block.diagnosticOnly == true)
         #expect(block.features["hedge"] == .init(mean: 400.0, n: 2))
         #expect(block.features["question"] == .init(mean: 0.75, n: 2))
 
@@ -590,6 +595,8 @@ extension ExperimentStoreTests {
             #expect(object["experiment"] as? String == "rescore-me")
             #expect(object["sourceRun"] as? String == source.lastPathComponent)
             #expect(object["taxonomy"] as? String == "test-style-v1")
+            #expect(object["taxonomyFile"] as? String != nil)
+            #expect(object["diagnosticOnly"] as? Bool == true)
             #expect(object["epochUnverified"] == nil)
             let conditions = try #require(object["conditions"] as? [String: Any])
             let steered = try #require(conditions["steered"] as? [String: Any])

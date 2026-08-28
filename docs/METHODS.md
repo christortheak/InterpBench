@@ -219,7 +219,10 @@ lookbehind, rejected at load; normalization `perSentence` | `per1kWords` |
 `reasoningStyleTaxonomyHash` — drift is a verify violation; no pin = no
 scoring). Scoring is deterministic text math at metrics/report time (no
 model, no judge): per-generation `rs_<featureID>` columns in metrics.csv,
-per-condition `reasoningStyle` means in report.json, and `rs_<featureID>`
+per-condition `reasoningStyle` means in report.json (the block names the
+pinned taxonomy file + hash and stamps `diagnosticOnly: true` — a
+manipulation check beside outcome endpoints, never an endpoint), and
+`rs_<featureID>`
 endpoints in the paired effect-size machinery on both engines — so "the
 decision moved without the style moving" is a measured contrast, not an
 impression. Post-hoc recompute: `experiment rescore-style` (both CLIs;

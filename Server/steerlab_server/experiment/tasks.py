@@ -11488,6 +11488,11 @@ def rescore_style(name: str, root: str | None = None, source_run: str | None = N
         "sourceRunExperimentHash": _stamped_experiment_hash(run_dir),
         "taxonomy": style.taxonomy.name,
         "taxonomyHash": style.hash,
+        "taxonomyFile": style.path,
+        # Same status stamp as report.json's per-condition block: style
+        # features are a diagnostic/manipulation check, never an outcome
+        # endpoint (docs/METHODS.md).
+        "diagnosticOnly": True,
         "conditions": {
             cond: {"features": _reasoning_style_block(items, style)["features"]}
             for cond, items in by_condition.items()
@@ -12096,15 +12101,24 @@ def _write_summaries_csv(records: list[dict], run_directory: str) -> None:
 
 def _reasoning_style_block(sampled: list[dict], style) -> dict | None:
     """Per-condition ``reasoningStyle`` report block (cross-engine contract:
-    {"taxonomy", "taxonomyHash", "features": {id: {"mean", "n"}}}): the mean
-    of each feature's per-generation values over this condition's sampled
-    outputs. None when no taxonomy is pinned or nothing was sampled."""
+    {"taxonomy", "taxonomyHash", "taxonomyFile", "diagnosticOnly",
+    "features": {id: {"mean", "n"}}}): the mean of each feature's
+    per-generation values over this condition's sampled outputs — the same
+    values, in each feature's own declared normalization units, as the
+    ``rs_<featureID>`` metrics.csv columns. ``taxonomyFile`` names the pinned
+    taxonomy file (beside its hash) so the report is self-describing, and
+    ``diagnosticOnly`` marks these as surface style features — a
+    diagnostic/manipulation check reported beside outcome endpoints, never an
+    outcome endpoint itself (docs/METHODS.md). None when no taxonomy is
+    pinned or nothing was sampled."""
     if style is None or not sampled:
         return None
     scored = [style.taxonomy.score(record.get("output", "")) for record in sampled]
     return {
         "taxonomy": style.taxonomy.name,
         "taxonomyHash": style.hash,
+        "taxonomyFile": style.path,
+        "diagnosticOnly": True,
         "features": {
             fid: {
                 "mean": sum(values.get(fid, 0.0) for values in scored) / len(scored),

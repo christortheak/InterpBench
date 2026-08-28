@@ -5,7 +5,8 @@ endpoints, and the epoch-guarded post-hoc ``rescore-style`` verb.
 
 Cross-engine contract keys: manifest ``reasoningStyleTaxonomyPath`` +
 ``reasoningStyleTaxonomyHash``; metrics columns ``rs_<id>``; report block
-``reasoningStyle: {taxonomy, taxonomyHash, features: {id: {mean, n}}}``.
+``reasoningStyle: {taxonomy, taxonomyHash, taxonomyFile, diagnosticOnly,
+features: {id: {mean, n}}}``.
 The scoring math itself is fixture-tested byte-identically with Swift
 (``tests/fixtures/reasoning-style/reasoning-style-parity.json``)."""
 
@@ -424,9 +425,19 @@ def test_report_gains_per_condition_reasoning_style_block(tmp_path):
     block = report["conditions"]["baseline"]["reasoningStyle"]
     assert block["taxonomy"] == "test-style-v1"
     assert block["taxonomyHash"] == "abc123"
+    # Self-describing + status-stamped: the pinned file is named beside its
+    # hash, and the block declares itself a diagnostic/manipulation check so
+    # a report reader never cites it as an outcome endpoint.
+    assert block["taxonomyFile"] == "prompts/taxonomies/style.json"
+    assert block["diagnosticOnly"] is True
     assert block["features"]["hedge"] == {
         "mean": pytest.approx(1000.0 / 5), "n": 1}
     assert block["features"]["question"] == {"mean": pytest.approx(0.5), "n": 1}
+    steered = report["conditions"]["steered"]["reasoningStyle"]
+    # "Perhaps. Perhaps not." — 2 hedges / 3 words; 0 '?' / 2 sentences.
+    assert steered["features"]["hedge"] == {
+        "mean": pytest.approx(2000.0 / 3), "n": 1}
+    assert steered["features"]["question"] == {"mean": pytest.approx(0.0), "n": 1}
     # No style pin → no block (legacy reports unchanged).
     tasks._write_report("s", manifest, _records(), root)
     report = json.load(open(os.path.join(root, "report.json")))
@@ -511,6 +522,8 @@ def test_rescore_style_writes_new_files_and_never_mutates_the_source(tmp_path):
     assert report["experiment"] == "s"
     assert report["sourceRun"] == os.path.basename(run_dir)
     assert report["taxonomy"] == "test-style-v1"
+    assert report["taxonomyFile"] == "prompts/taxonomies/style.json"
+    assert report["diagnosticOnly"] is True
     assert set(report["conditions"]) == {"baseline", "steered"}
     steered = report["conditions"]["steered"]["features"]
     assert steered["hedge"]["n"] == 2
