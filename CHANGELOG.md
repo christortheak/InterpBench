@@ -256,6 +256,21 @@ migration that rewrites frozen bytes.
 
 ### Fixed
 
+- **A judge-load failure names its real cause.** The local-judge load wrapper
+  replaced every loader error with "install the model on the server" — good
+  advice for the raw hub dump it was written against ("check your internet
+  connection" is misleading on an air-gapped node), and precisely wrong for
+  the engine's own capacity refusal, whose text already named the right
+  remedies. The observed cost: a co-residency refusal (another model
+  resident, headroom short) surfaced as an install instruction for a model
+  that was already installed. The loader's typed refusals now carry an
+  `advice_complete` marker and the wrapper carries their prose through
+  verbatim, adding only the judge's name; raw hub dumps stay summarized.
+  The Swift twin is deliberately unchanged: it decides on a presence check
+  before the loader is asked, so "not installed" is the one possible cause
+  there.
+
+
 - **PCA deflation stops at the data's EFFECTIVE rank, not its theoretical
   one.** The rank cap added earlier in this cycle bounded the component count
   by `rows − 1`, which is what the SHAPE could hold, not what the cloud

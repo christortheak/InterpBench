@@ -8635,11 +8635,27 @@ def _local_judge_generation(ref: JudgeRef, model_provider, *,
         except model_loader.ModelLoadError as exc:
             if judge_model == study_model:
                 raise
-            # Honest load error for a genuinely-declared judge model: the
-            # raw loader dump ("check your internet connection") is
-            # misleading on an air-gapped compute node. Name the judge, the
-            # model, and the remedies. Cross-engine wording (Swift twin:
-            # evaluatePairedJudge's local-judge container load).
+            # Name the judge — and when the loader's refusal already carries
+            # complete advice (its own typed sentences: device capacity,
+            # co-residency headroom, VRAM class), CARRY IT rather than
+            # replace it. The old static "install the model on the server"
+            # overwrote all of them, and when the real cause was
+            # co-residency it sent an agent to install a model that was
+            # already there (observed 2026-08-28, the two-judge
+            # calibration). Raw hub/network dumps stay summarized away —
+            # "check your internet connection" is misleading on an
+            # air-gapped compute node. The Swift twin
+            # (`localJudgeLoadFailureMessage`) legitimately keeps static
+            # install advice: it decides on a PRESENCE check before the
+            # loader is asked, so "not installed" is the one possible cause
+            # there.
+            if getattr(exc, "advice_complete", False):
+                raise model_loader.ModelLoadError(
+                    f"local judge '{ref.name}' declares model "
+                    f"'{judge_model}', which could not be loaded on this "
+                    f"server — {exc} (a local judge with an EMPTY model "
+                    "judges with the study model)",
+                    advice_complete=True) from exc
             raise model_loader.ModelLoadError(
                 f"local judge '{ref.name}' declares model '{judge_model}', "
                 "which could not be loaded on this server — install the "

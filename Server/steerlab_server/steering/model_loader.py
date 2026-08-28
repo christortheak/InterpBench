@@ -218,7 +218,21 @@ def training_dtype(device: str, model_id: str | None = None) -> str:
 
 
 class ModelLoadError(Exception):
-    """A user-actionable load failure (bad repo, MLX format, OOM hint)."""
+    """A user-actionable load failure (bad repo, MLX format, OOM hint).
+
+    ``advice_complete`` marks a refusal whose PROSE already names the right
+    remedy — this engine's own typed sentences (device capacity,
+    co-residency headroom, VRAM class). A wrapper adding caller context
+    (e.g. which judge asked for the load) must CARRY that prose rather than
+    replace it: the static "install the model" replacement sent an agent to
+    install a model that was already there when the true cause was another
+    model resident (observed 2026-08-28). False for raw hub/network dumps,
+    which wrappers may still summarize away — "check your internet
+    connection" is misleading on an air-gapped compute node."""
+
+    def __init__(self, message: str, *, advice_complete: bool = False):
+        super().__init__(message)
+        self.advice_complete = advice_complete
 
 
 def _is_mlx_repo(model_id: str) -> bool:
@@ -631,7 +645,8 @@ def _assert_gpu_capacity(dev: str, model_id: str, revision: str | None,
             f"{dev} ({name})'s {total / (1 << 30):.1f} GiB is free — "
             "another model is already resident. Two models fit only if the "
             "device has room for both: unload the other model, use the "
-            "study model as judge, or pin an external judge.")
+            "study model as judge, or pin an external judge.",
+            advice_complete=True)
 
 
 def _stage_model_locally(model_id: str, revision: str | None = None) -> str | None:

@@ -201,6 +201,43 @@ def test_declared_judge_model_load_failure_is_wrapped_honestly(
     assert "huggingface.co" in str(excinfo.value.__cause__)
 
 
+def test_judge_load_capacity_refusal_carries_the_loaders_own_advice(
+        tmp_path, monkeypatch):
+    # The loader's TYPED refusals (advice_complete) carry complete remedies —
+    # "unload the other model, use the study model as judge" — and the judge
+    # wrapper must not overwrite them with "install the model": the model IS
+    # installed, and the co-residency calibration failure (2026-08-28) sent
+    # an agent to reinstall it on that advice.
+    root = _fixture(tmp_path, judges=[
+        {"name": "judge-1", "kind": "local", "model": "org/other-judge"}])
+    _fake_generate(monkeypatch)
+
+    @contextmanager
+    def capacity_refusing(model_id, revision=None):
+        if model_id == "org/other-judge":
+            raise model_loader.ModelLoadError(
+                "'org/other-judge' needs ~22.7 GiB of weights but only "
+                "23.3 GiB of cuda (A100)'s 79.3 GiB is free — another model "
+                "is already resident. Two models fit only if the device has "
+                "room for both: unload the other model, use the study model "
+                "as judge, or pin an external judge.",
+                advice_complete=True)
+        yield SimpleNamespace(model_id=model_id)
+
+    with pytest.raises(model_loader.ModelLoadError) as excinfo:
+        tasks.evaluate("lj", root=root, model_provider=capacity_refusing,
+                       log=lambda *_: None)
+
+    message = str(excinfo.value)
+    assert "local judge 'judge-1'" in message
+    assert "another model is already resident" in message
+    assert "unload the other model" in message
+    assert "install the model" not in message
+    assert getattr(excinfo.value, "advice_complete", False)
+    # The chained cause is the capacity refusal itself here.
+    assert "another model is already resident" in str(excinfo.value.__cause__)
+
+
 def test_study_model_load_failure_is_not_wrapped(tmp_path, monkeypatch):
     # When the STUDY model itself fails to load there is no judge-declared
     # model to remedy — the loader error propagates unwrapped.
