@@ -50,6 +50,15 @@ public struct TaskPromptsDocument {
         /// True when the line carries a non-empty `transcript` array (a
         /// scripted-transcript item).
         var hasTranscript: Bool
+        /// True when that transcript's FIRST turn is the item's own `system`
+        /// turn — which REPLACES the study's `systemPrompt` for this item
+        /// (`ExperimentTasks.transcriptMessages`; server twin
+        /// `prompt_render.render_transcript`). The one path on which a
+        /// declared study frame does not reach the model, so
+        /// `set-system-prompt` counts these and says so. Defaults false:
+        /// every construction site other than `load` mints a transcript-less
+        /// item, where the field cannot matter.
+        var hasOwnSystemTurn: Bool = false
         /// The declared `responseFormat`, or nil when the key is absent or
         /// unrecognised. The EDITOR is deliberately lenient where the run
         /// loop refuses: this document exists to round-trip bytes without
@@ -111,6 +120,9 @@ public struct TaskPromptsDocument {
                     hasOptions: (options?.isEmpty == false),
                     hasTarget: ((object["target"] as? String)?.isEmpty == false),
                     hasTranscript: hasTranscript,
+                    hasOwnSystemTurn: hasTranscript
+                        && ((transcript?.first as? [String: Any])?["role"]
+                            as? String) == "system",
                     // Lenient by design (see the field's doc): an
                     // unrecognised value reads as nil here so the file can
                     // still be OPENED and corrected; the run loop refuses it.

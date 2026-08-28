@@ -3860,6 +3860,96 @@ public struct ExperimentCLIRunner: Sendable {
                         Double(exclusions.exclusionRules?.count ?? 0)),
                 ])
 
+        case "set-system-prompt":
+            // The study's SYSTEM PROMPT — the deployment frame every arm is
+            // read under. Writable from the Study Setup panel's "Baseline
+            // system prompt" field and nowhere else until now, so a
+            // replication study whose donor carries a judge-persona frame
+            // could not be authored headlessly at all; running it without the
+            // persona would be a different study, so the authoring agent
+            // correctly refused to improvise one.
+            //
+            // Positional TEXT, like `set-instruments`, `set-exclusions` and
+            // `set-parser`: the declaration IS the argument, and "" clears
+            // it. There is deliberately no `--file` and no hash flag — the
+            // manifest holds this frame as text with no path and no pin
+            // beside it, so a file spelling would read as provenance the
+            // study does not have, and a hash would be a value nothing
+            // derived. What a record's `systemPromptHash` stamps is the
+            // EFFECTIVE prompt (persona composed with this frame), computed
+            // at run time and never typed.
+            guard args.count >= 3 else {
+                throw ExperimentError(
+                    reason: "usage: experiment set-system-prompt <name> "
+                        + "\"<text>\"  (\"\" clears the declaration; the text "
+                        + "is inserted as a genuine system turn where the "
+                        + "model's chat template has a system role, and "
+                        + "prepended to the first user turn where it does "
+                        + "not, e.g. Gemma-family)")
+            }
+            let framed = try ExperimentStore.setSystemPrompt(
+                args[2], experimentName: args[1])
+            // The echo says WHAT THE MODEL WILL SEE, not merely that a field
+            // moved: the delivery route is family-dependent and is the thing
+            // a researcher arming a persona actually needs to know.
+            let systemPromptDelivery =
+                PromptRendering.hasSystemRole(framed.modelID)
+                ? "systemTurn" : "prependedToFirstUserTurn"
+            let framePromptLine: String
+            if let frame = framed.systemPrompt {
+                framePromptLine =
+                    "declared a system prompt on '\(framed.name)' — "
+                    + "\(frame.count) character(s), delivered as "
+                    + (systemPromptDelivery == "systemTurn"
+                        ? "a system turn"
+                        : "a prepend to the first user turn (this model "
+                            + "family has no system role)")
+            } else {
+                framePromptLine =
+                    "cleared the system prompt on '\(framed.name)' — arms "
+                    + "run under their own persona alone, or under none"
+            }
+            sink.out(framePromptLine)
+            // The ONE path on which a declared frame does not reach the
+            // model: a pinned item whose transcript opens with its own
+            // system turn replaces it for that item.
+            var framePromptAdvisories: [SteerLabCLIEnvelope.Advisory] = []
+            let transcriptCounts =
+                framed.systemPrompt == nil
+                ? (replaced: 0, total: 0)
+                : ExperimentStore.transcriptSystemTurnCount(in: framed)
+            let replacedItems = transcriptCounts.replaced
+            if replacedItems > 0, let promptsFile = framed.taskPromptsFile {
+                framePromptAdvisories.append(
+                    .init(
+                        CLIAdvisory.systemPromptNotApplied,
+                        ExperimentStore.systemPromptNotAppliedDetail(
+                            replacedItems: replacedItems,
+                            totalItems: transcriptCounts.total,
+                            promptsFile: promptsFile)))
+            }
+            return ExperimentCLIResult(
+                message: framePromptLine, changed: true,
+                payload: [
+                    "experiment": .string(framed.name),
+                    // The frame AS STORED (trimmed, absent-when-empty — the
+                    // panel's own rule), so the echo is the declaration.
+                    "systemPrompt": framed.systemPrompt.map {
+                        JSONValue.string($0)
+                    } ?? .null,
+                    // DERIVED here and never typed: the `composition.study`
+                    // hash every record of this study will stamp beside its
+                    // effective `systemPromptHash`. Named for the level, not
+                    // for the record's key, so the two are not confused.
+                    "studyFrameHash":
+                        SystemPromptComposition.hash(framed.systemPrompt)
+                        .map { JSONValue.string($0) } ?? .null,
+                    // How the family's chat template will carry it.
+                    "delivery": .string(systemPromptDelivery),
+                    "itemsWithOwnSystemTurn": .number(Double(replacedItems)),
+                ],
+                advisories: framePromptAdvisories)
+
         case "set-parser":
             // HOW the numeric outcome is read: the workspace-declared parser
             // grammar (`numericParser`) plus the registry pin
@@ -4207,6 +4297,7 @@ public struct ExperimentCLIRunner: Sendable {
                     + "| pin-rubric | declare-condition | set-sweep-selection "
                     + "| set-sweep-grid | set-instruments "
                     + "| set-sampling | set-exclusions "
+                    + "| set-system-prompt "
                     + "| set-parser | set-instrument-scope "
                     + "| set-style-taxonomy | verify "
                     + "| freeze | duplicate | extract | validate | sweep | run "

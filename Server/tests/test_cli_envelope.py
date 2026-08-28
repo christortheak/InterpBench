@@ -133,7 +133,7 @@ def test_advisory_codes_match_the_swift_literal():
         "sweepRecommendationsOnly", "sweepSelectionDefaulted",
         "choiceItemsWithoutInstrument", "revisionAdoption",
         "revisionAdoptionWarning", "siteQualifyWarning",
-        "deprecatedImplicitSelection",
+        "deprecatedImplicitSelection", "systemPromptNotApplied",
     ]
     assert list(cli_envelope.ADVISORY_CODES) == contract
 

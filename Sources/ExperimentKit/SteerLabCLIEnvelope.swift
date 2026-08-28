@@ -198,6 +198,24 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// while an agent's `switch` cares about exactly one thing here — the run
     /// was configured by inference rather than by declaration.
     case deprecatedImplicitSelection
+    /// A declared system prompt will NOT reach every item of the run,
+    /// because a more specific declaration replaces it for some of them.
+    ///
+    /// Today's one instance: pinned task items whose scripted `transcript`
+    /// opens with the item's own `system` turn. That turn replaces the
+    /// study's frame for that item — the transcript is the more specific
+    /// declaration, one rule on both engines — so a persona typed into the
+    /// study frame silently does not arm those items. Everywhere else the
+    /// frame DOES reach the model, by whichever route the family allows: a
+    /// genuine system turn where the chat template has a system role, the
+    /// first user turn where it does not.
+    ///
+    /// Named for the MECHANISM (a declaration that does not apply) rather
+    /// than for the transcript case, on the same reasoning as
+    /// `deprecatedImplicitSelection`: the vocabulary is closed and
+    /// cross-engine, and what an agent's `switch` cares about is that
+    /// something it wrote will not arm every arm of the run.
+    case systemPromptNotApplied
 
     public static let vocabulary: [String] = allCases.map(\.rawValue)
 }

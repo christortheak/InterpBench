@@ -540,6 +540,28 @@ public enum ExperimentCLIParser {
                 + ExclusionEngine.ruleVocabulary.joined(separator: ", ")
                 + "; \"\" clears the declaration).",
             valueFlags: ["--endpoint", "--min", "--max"]),
+        // The study's system prompt — the deployment frame every arm is read
+        // under. Field-discovered gap: writable from the Study Setup panel
+        // and nowhere else, so a replication study whose donor carries a
+        // judge-persona frame could not be authored headlessly at all.
+        //
+        // The purpose says what setting one PHYSICALLY DOES, because the
+        // delivery route is capability-dependent and a researcher arming a
+        // persona has to know which one they get: a family whose chat
+        // template has a system role gets a genuine system turn; a family
+        // without one (Gemma) gets the same text prepended to the first user
+        // turn. Positional text, no `--file`: the manifest holds the frame as
+        // text with no path and no pin beside it.
+        .init(
+            namespace: "experiment", verb: "set-system-prompt",
+            positional: "<name> <text>",
+            purpose: "Declare the study's system prompt — the deployment "
+                + "frame every arm is read under. Inserted as a genuine "
+                + "system turn where the model's chat template has a system "
+                + "role; prepended to the first user turn where it does not "
+                + "(e.g. Gemma-family); prepended to the prompt text under "
+                + "rawCompletion. An agent arm reads under its persona then "
+                + "this frame. \"\" clears the declaration."),
         // The numeric-endpoint grammar and its registry pin. The legal
         // values are workspace DATA (the registry file), not a compiled
         // vocabulary, so the purpose names the FILE and the refusal — which

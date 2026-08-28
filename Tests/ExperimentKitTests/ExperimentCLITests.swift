@@ -289,6 +289,7 @@ import Testing
                         + "| declare-condition | set-sweep-selection "
                         + "| set-sweep-grid | set-instruments "
                         + "| set-sampling | set-exclusions "
+                        + "| set-system-prompt "
                         + "| set-parser | set-instrument-scope "
                         + "| set-style-taxonomy | verify | freeze | duplicate "
                         + "| extract | validate | sweep | run | analyze "

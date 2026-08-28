@@ -120,6 +120,14 @@ ADVISORY_CODES: tuple[str, ...] = (
     # would force a second one at the next deprecation, and the only thing an
     # agent's switch cares about is that the run was configured by inference.
     "deprecatedImplicitSelection",
+    # A declared system prompt will NOT reach every item of the run, because a
+    # more specific declaration replaces it for some of them. Today's one
+    # instance: pinned task items whose scripted ``transcript`` opens with the
+    # item's own ``system`` turn, which replaces the study frame for that item
+    # (one rule on both engines). Named for the MECHANISM, not the transcript
+    # case: the vocabulary is closed and cross-engine, and what an agent's
+    # switch cares about is that something it wrote will not arm every arm.
+    "systemPromptNotApplied",
 )
 
 
@@ -535,6 +543,16 @@ MAC_AUTHORITY_VERBS: dict = {
         "set-exclusions": "steerlab-cli experiment set-exclusions <name> "
                           "<rule>[,…] [--endpoint <key>] [--min <x>] "
                           "[--max <x>]",
+        # The study's SYSTEM PROMPT. `systemPrompt` IS a `set_protocol` key
+        # here, so this could have been an exclusion like `set-sampling` —
+        # but the field-discovered gap was not "no route exists", it was "no
+        # agent could FIND the route": a replication whose donor carries a
+        # judge-persona frame stalled because there was no verb by that name
+        # on either surface, and running it without the persona would have
+        # been a different study. So it is a verb on both, and this redirect
+        # names both spellings like its siblings.
+        "set-system-prompt": "steerlab-cli experiment set-system-prompt "
+                             "<name> \"<text>\"",
         # The two measurement declarations that are NOT field assignments,
         # so the `set_protocol` shape cannot carry them and this engine
         # redirects rather than mirroring (PORTABILITY-CONTRACTS §7): each

@@ -40,6 +40,20 @@ def _is_qwen(model_id: str) -> bool:
     return "qwen" in model_id.lower()
 
 
+def has_system_role(model_id: str) -> bool:
+    """Whether this family's chat template has a SYSTEM ROLE.
+
+    The capability :func:`render` branches on, named so authoring surfaces can
+    ask it without re-deriving the family rule: True means a declared system
+    prompt is inserted as a genuine system turn, False means the SAME text is
+    prepended to the first user turn (``system + "\\n\\n" + user``) because the
+    template has nowhere else to put it. Either way it reaches the model —
+    which is the property ``set-system-prompt`` reports. Gemma 3 is today's
+    only False. Swift twin: ``PromptRendering.hasSystemRole``.
+    """
+    return not _is_gemma(model_id)
+
+
 # --- Conversation-structure constraints (per vendored family) -----------------
 
 @dataclass(frozen=True)
@@ -310,7 +324,7 @@ def render(tokenizer, prompt: str, *, model_id: str,
     user = prompt
     messages: list[dict] = []
     if has_system:
-        if _is_gemma(model_id):
+        if not has_system_role(model_id):
             user = system + "\n\n" + user  # Gemma has no system role
         else:
             messages.append({"role": "system", "content": system})

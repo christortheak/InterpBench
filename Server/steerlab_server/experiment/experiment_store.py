@@ -2233,6 +2233,113 @@ def scope_items(prompts_file: str, root: str | None = None) -> list:
     return response_format.items_of(prompts)
 
 
+# --- the study's system prompt ------------------------------------------------
+#
+# The manifest's ``systemPrompt`` is the DEPLOYMENT FRAME every arm of the study
+# is read under (:mod:`.system_prompt` composes it after an agent's persona). It
+# is plain inline TEXT — no path field, no hash field beside it — which is why
+# it is a ``PROTOCOL_FIELDS`` key here and stays one: ``set-protocol --set
+# systemPrompt=…`` keeps working exactly as it did.
+#
+# THE FIELD DISCOVERY (2026-08-28). It was nonetheless unreachable in practice:
+# the Mac had no verb for it at all (the Study Setup panel's TextField was the
+# only writer on that engine), so a replication study whose donor carries a
+# judge-persona frame could not be authored headlessly, and running it without
+# the persona would have been a different study. The Mac verb is
+# ``set-system-prompt``; this is its client twin, spelled and behaving
+# identically so an agent that learned one knows the other. It is a NAMED verb
+# rather than only a protocol key because the echo has to say what the model
+# will actually receive — which is family-dependent — and ``set-protocol``'s
+# echo can only say that a key moved.
+#
+# Swift twin: ``ExperimentStore.setSystemPrompt``
+# (``Sources/ExperimentKit/ExperimentStore.swift``).
+
+
+def set_system_prompt(name: str, text: str | None,
+                      root: str | None = None) -> dict:
+    """Declare (or clear) the study's system prompt.
+
+    TRIMMED, then empty-clears — byte-identical to the Mac panel's save path
+    (``ExperimentPanel.saveProtocol`` → ``nilIfEmpty``) and to the Swift verb,
+    because two spellings of one field that stored different bytes for the same
+    typing would stamp two different ``systemPromptHash`` values for one study.
+
+    WHAT THE MODEL SEES is decided at render time by :mod:`.prompt_render`, not
+    here: a family whose chat template has a system role gets a genuine system
+    turn; Gemma 3, which has none, gets the SAME text prepended to the first
+    user turn (``system + "\\n\\n" + user``); ``rawCompletion`` prepends it to
+    the prompt text. Every route delivers it, which is why there is no
+    prompt-mode gate on this setter.
+
+    Draft-only like every setter — ``save_raw`` refuses a frozen manifest with
+    the ``statusImmutable`` sentence.
+    """
+    d = load_raw(name, root)
+    trimmed = (text or "").strip()
+    if trimmed:
+        d["systemPrompt"] = trimmed
+    else:
+        d.pop("systemPrompt", None)
+    save_raw(d, root)
+    return d
+
+
+def transcript_system_turn_count(d: dict, root: str | None = None) -> tuple:
+    """``(items whose transcript opens with their OWN system turn, total)``.
+
+    Such an item's system turn REPLACES the study frame for that item — the
+    transcript is the more specific declaration
+    (:func:`prompt_render.render_transcript`; Swift twin
+    ``ExperimentTasks.transcriptMessages``). It is the one path on which a
+    declared frame does not reach the model, and until now nothing said so at
+    the moment the frame was declared.
+
+    ``(0, 0)`` when there is no pin or the pinned file cannot be read: this is
+    an advisory input, never a gate, so an unreadable pin is ``verify()``'s
+    business and not this counter's. Torch-free, like :func:`scope_items` —
+    the authoring lifecycle never imports the run path. Swift twin:
+    ``ExperimentStore.transcriptSystemTurnCount``.
+    """
+    prompts_file = d.get("taskPromptsFile")
+    if not isinstance(prompts_file, str) or not prompts_file:
+        return (0, 0)
+    base = paths.project_root() if root is None else root
+    path = (prompts_file if os.path.isabs(prompts_file)
+            else os.path.join(base, prompts_file))
+    if not os.path.isfile(path):
+        return (0, 0)
+    replaced = total = 0
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line:
+                    continue
+                obj = json.loads(line)
+                total += 1
+                turns = obj.get("transcript")
+                if isinstance(turns, list) and turns \
+                        and isinstance(turns[0], dict) \
+                        and turns[0].get("role") == "system":
+                    replaced += 1
+    except (OSError, ValueError):
+        return (0, 0)
+    return (replaced, total)
+
+
+def system_prompt_not_applied_detail(replaced: int, total: int,
+                                     prompts_file: str) -> str:
+    """The one sentence both engines say when a declared frame will not reach
+    every item. Swift twin: ``ExperimentStore.systemPromptNotAppliedDetail``."""
+    return (f"{replaced} of {total} pinned item(s) in {prompts_file} carry "
+            "their own leading system turn, which REPLACES this study's "
+            "system prompt for those items — the frame declared here reaches "
+            f"the other {max(0, total - replaced)} only. Remove the "
+            "transcripts' system turns to put every item under one frame, or "
+            "keep them and say in METHODS that the frame is per-item.")
+
+
 #: The repair for a NEW condition declaration that names no ``alphaInNormUnits``
 #: — in BOTH spellings a caller can write it in, because the two authoring
 #: surfaces are the manifest document (this API, and the ``/api/authoring/

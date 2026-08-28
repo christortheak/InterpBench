@@ -3548,6 +3548,93 @@ public enum ExperimentStore {
         manifest.seedPolicy = trimmed.isEmpty ? nil : trimmed
     }
 
+    /// The study's SYSTEM PROMPT — the deployment frame every arm of the
+    /// study is read under, headlessly.
+    ///
+    /// Field-discovered gap (2026-08-28): the manifest's `systemPrompt` was
+    /// writable from the Study Setup panel's "Baseline system prompt" field
+    /// and nowhere else on this engine, so a replication study whose donor
+    /// carries a judge-persona frame could not be authored headlessly at
+    /// all — and running it without the persona would have been a different
+    /// study, so the authoring agent correctly stopped.
+    ///
+    /// **Inline text, no file, no pin.** The manifest holds the frame as
+    /// TEXT (`ExperimentManifest.systemPrompt`) — there is no path field and
+    /// no hash field beside it, unlike `pin-prompts`/`pin-rubric` — so this
+    /// verb takes the text and stores it, exactly as the panel's TextField
+    /// does. A `--file` spelling was deliberately NOT added: it would read a
+    /// workspace file the manifest then does not pin, which reads as
+    /// provenance the study does not actually have.
+    ///
+    /// **Trimmed, then empty-clears** — byte-identical to the panel's save
+    /// path (`ExperimentPanel.saveProtocol` → `nilIfEmpty`), which is the
+    /// writer this one has to agree with: two spellings of the same field
+    /// that stored different bytes for the same typing would give two
+    /// different `systemPromptHash` stamps for one study.
+    ///
+    /// **What the model actually sees** is capability-dependent and is
+    /// decided at render time by `PromptRendering` (server twin:
+    /// `prompt_render.render`), never here: a family whose chat template has
+    /// a system role gets a genuine system turn; Gemma 3, which has none,
+    /// gets the SAME text prepended to the first user turn
+    /// (`system + "\n\n" + user`); `rawCompletion` prepends it to the prompt
+    /// text. Every route delivers it — which is why this setter has no
+    /// promptMode gate.
+    ///
+    /// The frame is the SECOND level of `SystemPromptComposition`: an arm
+    /// carrying an agent persona runs under `persona + "\n\n" + frame`, so
+    /// declaring one here does not displace an agent's identity.
+    @discardableResult
+    public static func setSystemPrompt(
+        _ text: String?, experimentName: String
+    ) throws -> ExperimentManifest {
+        try updateDraft(name: experimentName) { manifest in
+            let trimmed = (text ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            manifest.systemPrompt = trimmed.isEmpty ? nil : trimmed
+        }
+    }
+
+    /// How many of a study's PINNED task items carry a scripted transcript
+    /// whose first turn is the item's own `system` turn.
+    ///
+    /// Such an item's system turn REPLACES the study frame for that item —
+    /// the transcript is the more specific declaration (`render_transcript`
+    /// / `ExperimentTasks.transcriptMessages`, one rule on both engines). It
+    /// is the one path on which a declared frame does not reach the model,
+    /// and until now nothing said so at the moment the frame was declared.
+    /// Returns 0 when there is no pin, or the pinned file cannot be read:
+    /// this is an advisory input, never a gate, so an unreadable pin is
+    /// `verify`'s business and not this counter's.
+    ///
+    /// Server twin: `experiment_store.transcript_system_turn_count`.
+    public static func transcriptSystemTurnCount(
+        in manifest: ExperimentManifest
+    ) -> (replaced: Int, total: Int) {
+        guard let file = manifest.taskPromptsFile, !file.isEmpty,
+            let data = try? Data(contentsOf: resolveProjectPath(file)),
+            let document = try? TaskPromptsDocument.load(data)
+        else { return (0, 0) }
+        return (
+            document.items.count(where: \.hasOwnSystemTurn),
+            document.items.count)
+    }
+
+    /// The one sentence both engines say when a declared frame will not
+    /// reach every item, built from the counts so it names the real numbers.
+    /// Server twin: `experiment_store.system_prompt_not_applied_detail`.
+    public static func systemPromptNotAppliedDetail(
+        replacedItems: Int, totalItems: Int, promptsFile: String
+    ) -> String {
+        "\(replacedItems) of \(totalItems) pinned item(s) in \(promptsFile) "
+            + "carry their own leading system turn, which REPLACES this "
+            + "study's system prompt for those items — the frame declared "
+            + "here reaches the other "
+            + "\(max(0, totalItems - replacedItems)) only. Remove the "
+            + "transcripts' system turns to put every item under one frame, "
+            + "or keep them and say in METHODS that the frame is per-item."
+    }
+
     /// The study's generation/sampling protocol, headlessly — the writer the
     /// `set-sampling` verb dispatches to, with MERGE semantics like
     /// `setSweepGrid`: every nil parameter leaves the manifest's value as it

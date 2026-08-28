@@ -153,7 +153,8 @@ Everything above speaks `--json` and answers in the **same envelope** the two
 engines share (§7.7's vocabulary, §4 of the contracts document) — same states,
 same exit codes, same `error.code` / `error.repairAction`. Verb families:
 `experiment` (create, attach, detach, declare-condition, remove-condition,
-set-sweep-grid, set-protocol, set-parser, set-instrument-scope, pin-revision,
+set-sweep-grid, set-protocol, set-system-prompt, set-parser,
+set-instrument-scope, pin-revision,
 set-style-taxonomy, pin-sae-candidates, duplicate,
 verify, freeze, list), `concept import`, `bundle` (package, inspect, import),
 `authoring prompt <kind>` (§3.12's emitter, identical bytes to the Mac's —
@@ -889,6 +890,7 @@ steerlab-cli experiment set-sweep-grid <name> [--alphas <a1,a2,…>] [--battery 
 steerlab-cli experiment set-instruments <name> <instrument>[,…] [--ordinal-aggregation <expectedValue|argmax>]
 steerlab-cli experiment set-sampling <name> [--max-tokens <n>] [--prompt-mode <chatAssistant|rawCompletion>] [--samples-per-item <n>] [--seed-policy <manifestSeeds|derivedSHA256>] [--temperature <t>]
 steerlab-cli experiment set-exclusions <name> <rule>[,…] [--endpoint <key>] [--max <x>] [--min <x>]
+steerlab-cli experiment set-system-prompt <name> <text>
 steerlab-cli experiment set-parser <name> <parser>
 steerlab-cli experiment set-instrument-scope <name> <responseFormat>[,…]
 steerlab-cli experiment set-style-taxonomy <name> <prompts/taxonomies/file.json>
@@ -911,6 +913,7 @@ steerlab-cli experiment duplicate <name> <new-name>
 | `experiment set-instruments` | Declare which outcome instruments the run measures (sampledText, answerTokenLogprob, choiceProbability, repeReaderScore, ordinalScale; "" clears the declaration). |
 | `experiment set-sampling` | Declare the generation protocol: temperature, token budget, prompt mode (chatAssistant, rawCompletion), and the stochastic replication policy (samples per item × seed policy: manifestSeeds, derivedSHA256). |
 | `experiment set-exclusions` | Declare the record-exclusion rules analysis applies (failedAttentionCheck, unparseableEndpoint, outOfRange; "" clears the declaration). |
+| `experiment set-system-prompt` | Declare the study's system prompt — the deployment frame every arm is read under. Inserted as a genuine system turn where the model's chat template has a system role; prepended to the first user turn where it does not (e.g. Gemma-family); prepended to the prompt text under rawCompletion. An agent arm reads under its persona then this frame. "" clears the declaration. |
 | `experiment set-parser` | Declare the numeric-endpoint parser from prompts/parsers/parser-registry.json and pin that registry's hash ("" clears both). |
 | `experiment set-instrument-scope` | Declare which response formats the option-consuming outcome instruments apply to (label, json, freeText), pinning the row set they select; "" clears the declaration. |
 | `experiment set-style-taxonomy` | Pin the reasoning-style taxonomy and its hash. |
@@ -1161,6 +1164,39 @@ endpoint rules read (default `parsedMonths`). Refusals are the exclusion
 engine's own violation sentences. Exclusions apply **at analysis time only**
 and are stamped honestly — no record ever leaves `generations.jsonl`.
 
+**`set-system-prompt <name> "<text>"`** — the manifest's `systemPrompt`: the
+**deployment frame** every arm of the study is read under. `""` clears it.
+Draft-only. Field-discovered 2026-08-28, and the discovery is the shape of the
+gap: a persona-carrying replication study could not be authored headlessly at
+all on this engine — the Study Setup panel's field was the only writer — and
+running it without the persona would have been a *different study*, so the
+authoring agent correctly stopped rather than improvising one.
+
+Inline **text**, deliberately: the manifest stores this frame with no path
+field and no hash beside it, so there is no `--file` (a file the manifest does
+not pin would read as provenance the study does not have) and no hash flag
+(what a record stamps as `systemPromptHash` is the *effective* prompt,
+computed at run time). The value is trimmed and empty-clears — byte-identical
+to the panel's own save path, so the two writers can never disagree about the
+bytes a study was armed with.
+
+**What the model receives is capability-dependent, and the verb says which
+route it took.** A family whose chat template has a system role gets a
+**genuine system turn**; a family without one — Gemma — gets the *same text*
+prepended to the first user turn (`system + "\n\n" + user`); `rawCompletion`
+prepends it to the prompt text. Every route delivers it, which is why there is
+no prompt-mode gate; `result.delivery` echoes `systemTurn` or
+`prependedToFirstUserTurn` and the human line spells it out. Composition is
+unchanged: an arm carrying an agent persona reads under *persona*, blank line,
+*this frame*, so declaring one never displaces an identity.
+
+The one place a declared frame does **not** apply is a pinned item whose
+scripted `transcript` opens with its own `system` turn, which replaces it for
+that item (the transcript is the more specific declaration — one rule on both
+engines). The verb counts those items and emits the non-blocking
+`systemPromptNotApplied` advisory naming the numbers, rather than letting the
+substitution be silent.
+
 **`set-parser <name> <parser>`** — the manifest's `numericParser`, resolved by
 name against the workspace registry (`prompts/parsers/parser-registry.json`),
 shape-checked, and pinned together with that registry's current SHA-256 as
@@ -1185,14 +1221,18 @@ drops the instrument entirely. A scope selecting **zero** rows is refused at
 the declaration rather than producing zero records at the run, and an
 out-of-vocabulary format exits `64`.
 
-Both of the last two are also **client verbs** — `steerlab experiment
-set-parser` / `set-instrument-scope` (§1.4) — spelled identically and refusing
-identically. Neither is a field assignment, so neither key is reachable through
-`set-protocol`: each *derives* its pin from a workspace file at the moment of
-declaration, and no surface on either engine accepts a `parserRegistryHash` or
-an `itemIDsHash` as input. The *engine* (`steerlab-server`) still redirects
-both, because it executes rather than authors, and its redirect names the
-client's spelling alongside the Mac's.
+All three of `set-system-prompt`, `set-parser` and `set-instrument-scope` are
+also **client verbs** (§1.4) — spelled identically, refusing identically, and
+echoing the same flat `result` keys. The last two are not field assignments,
+so neither key is reachable through `set-protocol`: each *derives* its pin from
+a workspace file at the moment of declaration, and no surface on either engine
+accepts a `parserRegistryHash` or an `itemIDsHash` as input. `systemPrompt` is
+a plain field and therefore *stays* a `set-protocol` key as well; the named
+verb exists beside it because a verb is what an authoring agent looks for, and
+because only a verb's echo can say which delivery route the model gives the
+frame. The *engine* (`steerlab-server`) redirects all three, because it
+executes rather than authors, and its redirect names the client's spelling
+alongside the Mac's.
 `docs/PORTABILITY-CONTRACTS.md` §7 carries the reasoning.
 
 **`set-style-taxonomy`** validates that the taxonomy file loads on this engine,

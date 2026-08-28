@@ -14,6 +14,58 @@ migration that rewrites frozen bytes.
 
 ### Added
 
+- **The study's system prompt gained a headless writer on both surfaces:
+  `experiment set-system-prompt <name> "<text>"`.** Field-discovered
+  2026-08-28, and the discovery is the shape of the gap: a persona-carrying
+  replication study — one whose donor manifest arms every arm with a
+  judge-persona frame — could not be authored headlessly. On the Mac there was
+  no writer at all; the Study Setup panel's "Baseline system prompt" field was
+  the only one. On the cross-platform client the field *was* reachable as a
+  `set-protocol` key, but nothing on either surface **named** it, so an
+  authoring agent looking for the verb found none. Running the study without
+  the persona would have been a different study, so it correctly stopped
+  rather than improvising one. Reachability is not authorability.
+
+  Both spellings now exist and behave identically — `steerlab-cli experiment
+  set-system-prompt` and `steerlab experiment set-system-prompt`, over
+  `ExperimentStore.setSystemPrompt` and `experiment_store.set_system_prompt` —
+  and the engine redirects the verb naming both, as its siblings do. Inline
+  **text**, because that is what the manifest stores: no path field and no
+  hash beside it, so there is deliberately no `--file` (a file the manifest
+  does not pin would read as provenance the study does not have) and no hash
+  flag (a record's `systemPromptHash` stamps the *effective* prompt, computed
+  at run time). The value is trimmed and `""` clears — byte-identical to the
+  panel's own save path, so the two writers cannot disagree about the bytes a
+  study was armed with. Draft-only through the standard gate. `systemPrompt`
+  **stays** a `set-protocol` key: it is a plain field assignment, unlike the
+  two derived-pin declarations beside it.
+
+  **What is written reaches the model, and the verb says by which route.** The
+  maintainer's condition on this writer was that the text be *either prepended
+  to the initial prompt or inserted as a genuine system prompt depending on
+  model capability* — which is what the renderer already does, and is now
+  asserted end to end rather than assumed: a family whose chat template has a
+  system role gets a genuine system turn, Gemma (which has none) gets the same
+  text prepended to the first user turn, and `rawCompletion` prepends it to the
+  prompt text. Every route delivers it, so there is no prompt-mode gate. The
+  capability itself is now named on both engines
+  (`PromptRendering.hasSystemRole` ↔ `prompt_render.has_system_role`) instead
+  of being re-derived from the family at each branch, `result.delivery` echoes
+  `systemTurn` or `prependedToFirstUserTurn`, and the help text states the rule
+  so a researcher arming a persona knows what the model sees before running
+  anything. Composition is unchanged: an agent arm reads under *persona*, blank
+  line, *this frame*.
+
+  **The one path a declared frame does not reach is no longer silent.** A
+  pinned task item whose scripted `transcript` opens with its own `system` turn
+  replaces the study frame for that item — the transcript is the more specific
+  declaration, one rule on both engines — so a persona typed into the frame
+  simply does not arm those items. That is now the closed-vocabulary advisory
+  `systemPromptNotApplied` (non-blocking, exit code unchanged), raised at the
+  moment the frame is declared and naming the real counts: *N of M pinned items
+  … the frame declared here reaches the other K only.* Its detail sentence is a
+  twin literal like every other cross-engine sentence.
+
 - **A judged run releases each finished judge's model before the next one
   loads, so a panel needed sequentially costs the MAX of its models, not the
   SUM.** The maintainer's ruling, verbatim: *any runs that require two models

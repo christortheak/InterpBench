@@ -292,6 +292,22 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
              purpose="Set declared protocol fields on a draft study.",
              value_flags=frozenset({"--set"}),
              required_flags=frozenset({"--set"})),
+    # The study's SYSTEM PROMPT — the deployment frame every arm is read
+    # under. `systemPrompt` is (and stays) a `set-protocol` key, because it IS
+    # a plain field assignment; this verb exists beside it for the two things
+    # `--set` cannot do: it is DISCOVERABLE by name — the field-discovered gap
+    # was an authoring agent that could not find a writer for a donor's judge
+    # persona and correctly refused to improvise one — and its echo says what
+    # the model will actually RECEIVE, which is family-dependent, where
+    # `set-protocol` can only report that a key moved.
+    VerbSpec("experiment", "set-system-prompt", positional="<name> <text>",
+             purpose="Declare the study's system prompt — the deployment "
+                     "frame every arm is read under. Inserted as a genuine "
+                     "system turn where the model's chat template has a "
+                     "system role; prepended to the first user turn where it "
+                     "does not (e.g. Gemma-family); prepended to the prompt "
+                     "text under rawCompletion. An agent arm reads under its "
+                     "persona then this frame. \"\" clears the declaration."),
     # The two MEASUREMENT DECLARATIONS. Verbs rather than `set-protocol`
     # fields, and the reason is the same one that keeps their keys out of
     # `PROTOCOL_FIELDS`: neither is a field assignment. Each takes a NAME (a
@@ -1490,6 +1506,67 @@ def _experiment(invocation: Invocation) -> CLIResult:
         return CLIResult(
             message=line, changed=bool(applied),
             payload={"experiment": name, "applied": applied})
+
+    if verb == "set-system-prompt":
+        # One value positional, and `""` is the CLEAR — so the arity check is
+        # `2` and not "at least one non-empty argument", exactly as the two
+        # measurement declarations below.
+        _require(args, 2, spec)
+        document = store.set_system_prompt(name, args[1])
+        frame = document.get("systemPrompt")
+        # WHAT THE MODEL WILL SEE, not merely that a field moved: the delivery
+        # route is family-dependent and is the thing a researcher arming a
+        # persona actually needs to know. Read from the renderer's own family
+        # predicate (`prompt_render._is_gemma`), so the echo and the run
+        # cannot name different routes. Swift twin: the same branch on
+        # `PromptRendering.isGemma`.
+        from .experiment import prompt_render
+        delivery = ("systemTurn"
+                    if prompt_render.has_system_role(
+                        document.get("modelID") or "")
+                    else "prependedToFirstUserTurn")
+        if frame:
+            line = (f"declared a system prompt on {name!r} — {len(frame)} "
+                    "character(s), delivered as "
+                    + ("a system turn" if delivery == "systemTurn"
+                       else "a prepend to the first user turn (this model "
+                            "family has no system role)"))
+        else:
+            line = (f"cleared the system prompt on {name!r} — arms run under "
+                    "their own persona alone, or under none")
+        print(line)
+        # The ONE path on which a declared frame does not reach the model: a
+        # pinned item whose transcript opens with its own system turn replaces
+        # it for that item. Said HERE, at the moment the frame is declared,
+        # rather than left for a reader of the records to notice.
+        advisories = []
+        replaced, total = ((0, 0) if not frame
+                           else store.transcript_system_turn_count(document))
+        if replaced > 0:
+            detail = store.system_prompt_not_applied_detail(
+                replaced, total, document.get("taskPromptsFile") or "")
+            sys.stderr.write(f"ADVISORY: {detail}\n")
+            from .cli_envelope import advisory as _advisory
+            advisories.append(_advisory("systemPromptNotApplied", detail))
+        from .experiment import system_prompt as system_prompt_mod
+        # FLAT echo keys matching the Swift verb's result shape exactly, so an
+        # agent reads the same fields after either spelling.
+        return CLIResult(
+            message=line, changed=True,
+            state="okWithAdvisories" if advisories else "ready",
+            advisories=advisories,
+            payload={
+                "experiment": name,
+                # The frame AS STORED (trimmed, absent-when-empty).
+                "systemPrompt": frame,
+                # DERIVED here and never typed: the `composition.study` hash
+                # every record of this study will stamp beside its effective
+                # `systemPromptHash`. Named for the LEVEL, not for the
+                # record's key, so the two are not confused.
+                "studyFrameHash": system_prompt_mod.text_hash(frame),
+                "delivery": delivery,
+                "itemsWithOwnSystemTurn": replaced,
+            })
 
     if verb in ("set-parser", "set-instrument-scope"):
         # Both take exactly one value positional, and both accept `""` as the

@@ -305,6 +305,23 @@ import Testing
         }
     }
 
+    /// The study's deployment FRAME, echoed flat: the text as stored, the
+    /// DERIVED hash of it, and the delivery route this model family gives it
+    /// — the fact a researcher arming a persona actually needs.
+    @Test func experimentSetSystemPromptEnvelope() async throws {
+        try await withTempRoot { root in
+            await invoke(
+                "experiment",
+                ["create", "demo", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            let outcome = await invoke(
+                "experiment",
+                ["set-system-prompt", "demo", "You are a strict grader."])
+            #expect(outcome.envelope.state == .ready)
+            try check(
+                outcome, fixture: "experiment-set-system-prompt", root: root)
+        }
+    }
+
     /// A one-entry registry with FIXED bytes, so the `parserRegistryHash` in
     /// the golden is stable across checkouts (the shipped seed registry is
     /// not a fixture of this suite and may legitimately gain entries).
@@ -695,6 +712,13 @@ import Testing
             // so a stochastic replication arm could not be authored
             // headlessly and was cut from a study design.
             "experiment set-sampling", "experiment set-exclusions",
+            // The study's SYSTEM PROMPT — the deployment frame every arm is
+            // read under. Writable from the Study Setup panel and nowhere
+            // else, so a replication study whose donor carries a
+            // judge-persona frame could not be authored headlessly at all,
+            // and running it without the persona would have been a different
+            // study.
+            "experiment set-system-prompt",
             // The two remaining measurement declarations the app's pickers
             // owned exclusively: HOW a numeric endpoint is read
             // (`numericParser` + the `parserRegistryHash` pin) and WHICH
@@ -750,10 +774,14 @@ import Testing
         // `set-parser` and `set-instrument-scope`, the last two measurement
         // declarations the app's pickers owned alone (the numeric-endpoint
         // grammar with its registry pin, and the row subset the
-        // option-consuming instruments read).
+        // option-consuming instruments read) — and `set-system-prompt`, the
+        // study's deployment FRAME, the last panel-only authoring field: a
+        // replication whose donor carries a judge persona could not be
+        // authored headlessly at all, and running it without the persona
+        // would have been a different study.
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 27,
-            "the experiment lifecycle is twenty-seven verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
+            declared.filter { $0.hasPrefix("experiment ") }.count == 28,
+            "the experiment lifecycle is twenty-eight verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
     }
 
     @Test func everySpecIsInARunnerOwnedNamespace() {

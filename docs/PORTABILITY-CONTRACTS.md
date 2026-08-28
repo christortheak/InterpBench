@@ -385,7 +385,7 @@ verb added without a test is still covered. Submitting to a remote runner is
 
 | family | verbs |
 |---|---|
-| `experiment` | `create`, `attach`, `declare-condition`, `remove-condition`, `set-protocol`, `pin-revision`, `set-style-taxonomy`, `pin-sae-candidates`, `duplicate`, `verify`, `freeze`, `list` (since v0: `detach`, `set-sweep-grid`, `set-parser`, `set-instrument-scope`) |
+| `experiment` | `create`, `attach`, `declare-condition`, `remove-condition`, `set-protocol`, `pin-revision`, `set-style-taxonomy`, `pin-sae-candidates`, `duplicate`, `verify`, `freeze`, `list` (since v0: `detach`, `set-sweep-grid`, `set-parser`, `set-instrument-scope`, `set-system-prompt`) |
 | `concept` | `import` |
 | `bundle` | `package`, `inspect`, `import` |
 
@@ -490,6 +490,31 @@ caller actually ran, like every other repair builder here, and rendered with
 the Mac's program they are the Swift literals byte for byte
 (`test_measurement_declarations.py`; Swift side,
 `MeasurementDeclarationVerbTests`).
+
+**The study's system prompt is a client verb for a different reason: the
+field was reachable and the writer was not findable.** `set-system-prompt`
+(the manifest's `systemPrompt` — the deployment frame every arm is read under)
+joined both surfaces on 2026-08-28. It is not a derived pin and not a
+Mac-authority verb: it is a plain field assignment, `systemPrompt` **stays** in
+`PROTOCOL_FIELDS`, and `set-protocol --set systemPrompt=…` keeps working
+exactly as it did. What the field discovery showed is that reachability is not
+the same as authorability — a persona-carrying replication stalled because
+nothing on either surface *named* the thing being written, and running the
+study without the persona would have been a different study. So both engines
+grew the verb, spelled identically, echoing the same flat `result` keys
+(`systemPrompt`, the derived `studyFrameHash`, `delivery`,
+`itemsWithOwnSystemTurn`), and the engine's redirect names both spellings like
+its siblings'.
+
+The echo carries `delivery` because **what the model receives is
+capability-dependent and identical on the two engines**:
+`PromptRendering.hasSystemRole` ↔ `prompt_render.has_system_role` decide it,
+a genuine system turn where the family's chat template has a system role and
+the same text prepended to the first user turn where it does not. The one path
+on which a declared frame does not reach the model — a pinned item whose
+transcript opens with its own `system` turn, which replaces it for that item —
+raises the `systemPromptNotApplied` advisory, whose detail sentence is a twin
+literal like every other cross-engine sentence here.
 
 The scope's pin needs the study's task prompts, and the loader of record
 (`tasks._load_prompts`) imports torch. `experiment_store.scope_items` is the

@@ -123,7 +123,7 @@ import Testing
             "sweepRecommendationsOnly", "sweepSelectionDefaulted",
             "choiceItemsWithoutInstrument", "revisionAdoption",
             "revisionAdoptionWarning", "siteQualifyWarning",
-            "deprecatedImplicitSelection",
+            "deprecatedImplicitSelection", "systemPromptNotApplied",
         ]
         #expect(CLIAdvisory.vocabulary == serverLiteral)
     }

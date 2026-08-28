@@ -561,6 +561,21 @@ keep-window and `--endpoint` names the parsed-value key the endpoint rules
 read (default `parsedMonths`). Exclusions apply at analysis time only and
 are stamped honestly — records never leave `generations.jsonl`.
 
+**`set-system-prompt <name> "<text>"`** — declares the study's system prompt
+on a draft: the deployment frame every arm is read under. `""` clears it. The
+text is stored inline (there is no file and no hash beside it), and what the
+model receives is capability-dependent, decided by the renderer: a family
+whose chat template has a system role gets a **genuine system turn**; a family
+without one — Gemma — gets the **same text prepended to the first user turn**
+(`system + "\n\n" + user`); `rawCompletion` prepends it to the prompt text.
+Every route delivers it, so there is no prompt-mode gate. An arm carrying an
+agent persona reads under *persona*, blank line, *this frame* — declaring one
+never displaces an agent's identity. The one place a declared frame does not
+apply is a pinned item whose scripted transcript opens with its own `system`
+turn, which replaces it for that item; the verb counts those and says so
+through the `systemPromptNotApplied` advisory rather than letting the
+substitution be silent.
+
 **`set-parser <name> <parser>`** — declares the numeric-endpoint parser from
 the workspace registry (`prompts/parsers/parser-registry.json`) on a draft and
 pins that registry's SHA-256 as `parserRegistryHash`; `""` clears both. The

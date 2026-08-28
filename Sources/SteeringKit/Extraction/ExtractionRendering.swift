@@ -602,6 +602,20 @@ public enum PromptRendering {
         modelID.lowercased().contains("qwen")
     }
 
+    /// Whether this family's chat template has a SYSTEM ROLE.
+    ///
+    /// The capability `chatMessages` branches on, named so authoring
+    /// surfaces can ask it without re-deriving the family rule: true means a
+    /// declared system prompt is inserted as a genuine system turn, false
+    /// means the SAME text is prepended to the first user turn
+    /// (`system + "\n\n" + user`) because the template has nowhere else to
+    /// put it. Either way it reaches the model — which is the property
+    /// `experiment set-system-prompt` reports. Gemma 3 is today's only
+    /// false. Server twin: `prompt_render.has_system_role`.
+    public static func hasSystemRole(_ modelID: String) -> Bool {
+        !isGemma(modelID)
+    }
+
     /// The chat turns for a single-prompt render.
     ///
     /// **Gemma 3 has no system role**: system text is prepended to the user
@@ -612,7 +626,7 @@ public enum PromptRendering {
     ) -> [Chat.Message] {
         let system = systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let system, !system.isEmpty else { return [.user(prompt)] }
-        if isGemma(modelID) {
+        if !hasSystemRole(modelID) {
             return [.user(system + "\n\n" + prompt)]
         }
         return [.system(system), .user(prompt)]
