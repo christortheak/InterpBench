@@ -532,6 +532,41 @@ struct SweepSelectionRuleTests {
             ModelVariantArtifact.self, from: Data(legacy.utf8))
         #expect(old.promotion == nil)
     }
+
+    @Test func poleProvenanceRoundTripsAndStaysAbsentOtherwise() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        // A certificate without the record encodes WITHOUT the key — legacy
+        // and non-mirrored certificate bytes (and their hashes) untouched.
+        var promotion = ModelVariantArtifact.Promotion(
+            experiment: "e", experimentHash: "h",
+            promotedAt: "2026-08-27T00:00:00Z", promotedBy: "criterion",
+            substrate: "swift-mlx", appVersion: "test")
+        let plainJSON = String(
+            decoding: try encoder.encode(promotion), as: UTF8.self)
+        #expect(!plainJSON.contains("poleProvenance"))
+
+        // Round trip, field for field.
+        promotion.poleProvenance = .init(
+            polesSwappedFromSource: true, sourceConcept: "courage",
+            sourceStimulusSetHash: String(repeating: "p", count: 64),
+            sourceTensorHash: String(repeating: "t", count: 64))
+        let decoded = try JSONDecoder().decode(
+            ModelVariantArtifact.Promotion.self,
+            from: JSONEncoder().encode(promotion))
+        #expect(decoded == promotion)
+        #expect(decoded.poleProvenance?.sourceConcept == "courage")
+
+        // A legacy certificate (no key) decodes with the record absent.
+        let legacy = """
+            {"experiment": "e", "experimentHash": "h", \
+            "promotedAt": "2026-07-07T00:00:00Z", "promotedBy": "criterion", \
+            "substrate": "swift-mlx", "appVersion": "old"}
+            """
+        let old = try JSONDecoder().decode(
+            ModelVariantArtifact.Promotion.self, from: Data(legacy.utf8))
+        #expect(old.poleProvenance == nil)
+    }
 }
 
 /// Store-backed promote tests — extends the serialized `ExperimentStoreTests`
@@ -702,9 +737,141 @@ extension ExperimentStoreTests {
             let ref = try #require(manifest.concepts.first)
             let required = try RecipeIdentity.required(manifest: manifest, ref: ref)
             #expect(promotion.recipeIdentityHash == RecipeIdentity.hash(required))
+            // Decodable-absent: an ordinary promotion never gains the
+            // mirrored-pole record.
+            #expect(promotion.poleProvenance == nil)
             // The minted artifact is discoverable in the variant library.
             #expect(
                 ModelVariantStore.scan().contains { $0.artifact.name == "pr-fear-agent" })
+        }
+    }
+
+    // MARK: mirrored-pole inheritance (promotion.poleProvenance)
+
+    private static let parentStimulusHash = String(repeating: "p", count: 64)
+    private static let sourceTensorHash = String(repeating: "t", count: 64)
+
+    private static var negatedFrom: [String: Any] {
+        [
+            "path": "runs/20260707T000000100-extract/courage",
+            "sha256TensorHash": sourceTensorHash,
+            "sha256SidecarHash": String(repeating: "s", count: 64),
+            "concept": "courage",
+            "date": "2026-08-27T00:00:00Z",
+        ]
+    }
+
+    @Test func promoteInheritsPoleProvenanceFromMirroredSidecar() throws {
+        // The matched artifact's own sidecar declares the swap (a minted
+        // mirror, `PoleMirror`): the certificate inherits the source pole —
+        // concept and tensor hash from `negatedFrom`, the qualified parent
+        // stimulus hash the sidecar carries verbatim — and the promote log
+        // announces the negation.
+        try withTempWorkspace { root in
+            _ = try promotableExperiment(name: "mp")
+            _ = try plantVectorArtifact(
+                in: root,
+                extras: [
+                    "polesSwappedFromSource": true,
+                    "negatedFrom": Self.negatedFrom,
+                ])
+            var messages: [String] = []
+            let record = try AgentPromotion.promote(
+                experimentName: "mp", concept: "fear",
+                log: { messages.append($0) })
+            let pole = try #require(record.artifact.promotion?.poleProvenance)
+            #expect(pole.polesSwappedFromSource)
+            #expect(pole.sourceConcept == "courage")
+            // The mirror carries the SOURCE concept's hash verbatim,
+            // qualified — so that is the source hash the certificate states.
+            #expect(pole.sourceStimulusSetHash == Self.fearHash)
+            #expect(pole.sourceTensorHash == Self.sourceTensorHash)
+            #expect(messages.contains {
+                $0.contains("MIRRORED POLE") && $0.contains("'courage'")
+            })
+        }
+    }
+
+    /// An artifact-pinned mirrored concept, promotable: the manifest pin
+    /// carries the mirror linkage, the PINNED original sidecar (with its
+    /// `negatedFrom`) sits at the pin's path, and the matched artifact is a
+    /// materialized-copy-shaped sidecar satisfying the pinned recipe
+    /// identity. `sidecarHashPin` overrides the pin's `sha256SidecarHash` to
+    /// simulate a drifted/unverifiable pinned sidecar.
+    private func mirrorPinnedExperiment(
+        name: String, in root: URL, sidecarHashPin: String? = nil
+    ) throws {
+        _ = try promotableExperiment(name: name)
+        let pinnedRun = "20260707T000000500-mirror"
+        let pinnedDirectory = root.appending(components: "runs", pinnedRun)
+        try FileManager.default.createDirectory(
+            at: pinnedDirectory, withIntermediateDirectories: true)
+        // A real minted mirror copies the source's FULL sidecar, so the
+        // fixture carries the decoder's required fields too — the verified
+        // read decodes it as a `SteeringVectorSidecar`, not loose JSON.
+        let pinnedSidecar: [String: Any] = [
+            "modelID": "test/model", "concept": "fear",
+            "stimulusSetHash": Self.parentStimulusHash,
+            "layerCount": 4, "hiddenSize": 2,
+            "normsPerLayer": [1.0, 1.0, 1.0, 1.0],
+            "extractionDate": "2026-08-27T00:00:00Z",
+            "polesSwappedFromSource": true,
+            "negatedFrom": Self.negatedFrom,
+        ]
+        let raw = try JSONSerialization.data(withJSONObject: pinnedSidecar)
+        try raw.write(to: pinnedDirectory.appending(component: "fear.json"))
+        var manifest = try ExperimentStore.load(name: name)
+        manifest.concepts[0].options.method = .pinnedArtifact
+        manifest.concepts[0].vectorArtifact = .init(
+            path: "runs/\(pinnedRun)/fear",
+            sha256TensorHash: String(repeating: "a", count: 64),
+            sha256SidecarHash: sidecarHashPin ?? ExperimentStore.sha256Hex(raw),
+            sourceMethod: "meanDifference",
+            sourceConcept: "fear",
+            residualNormSource: "extraction-stimuli",
+            polesSwappedFromSource: true,
+            sourceStimulusSetHash: Self.parentStimulusHash)
+        try ExperimentStore.save(manifest)
+        // The matched artifact: what a run materializes for a pinned concept.
+        _ = try plantVectorArtifact(in: root, method: "pinnedArtifact")
+    }
+
+    @Test func promoteInheritsPoleProvenanceFromArtifactPin() throws {
+        // The manifest's artifact pin declares the swap: the pin's facts
+        // inherit directly, and the source concept/tensor hash are read from
+        // the PINNED sidecar only after its bytes re-verify against the pin.
+        try withTempWorkspace { root in
+            try mirrorPinnedExperiment(name: "pinmp", in: root)
+            let record = try AgentPromotion.promote(
+                experimentName: "pinmp", concept: "fear", log: { _ in })
+            let pole = try #require(record.artifact.promotion?.poleProvenance)
+            #expect(pole.polesSwappedFromSource)
+            #expect(pole.sourceConcept == "courage")
+            #expect(pole.sourceStimulusSetHash == Self.parentStimulusHash)
+            #expect(pole.sourceTensorHash == Self.sourceTensorHash)
+        }
+    }
+
+    @Test func poleProvenancePinWithDriftedSidecarKeepsPinFactsOnly() throws {
+        // An unverifiable pinned sidecar (drifted bytes) must not lend the
+        // certificate its claims: the record keeps the manifest pin's own
+        // facts, and the downgrade is loud.
+        try withTempWorkspace { root in
+            try mirrorPinnedExperiment(
+                name: "pindrift", in: root,
+                sidecarHashPin: String(repeating: "0", count: 64))
+            var messages: [String] = []
+            let record = try AgentPromotion.promote(
+                experimentName: "pindrift", concept: "fear",
+                log: { messages.append($0) })
+            let pole = try #require(record.artifact.promotion?.poleProvenance)
+            #expect(pole.polesSwappedFromSource)
+            #expect(pole.sourceConcept == nil)
+            #expect(pole.sourceStimulusSetHash == Self.parentStimulusHash)
+            #expect(pole.sourceTensorHash == nil)
+            #expect(messages.contains {
+                $0.contains("carries the manifest pin's facts only")
+            })
         }
     }
 

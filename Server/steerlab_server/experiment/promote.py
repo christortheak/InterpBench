@@ -137,6 +137,92 @@ def _artifact_content_hash(artifact) -> str | None:
         return None
 
 
+def _pole_provenance(ref, artifact, root: str | None, log) -> dict | None:
+    """The certificate's MIRRORED-POLE inheritance (cross-engine contract key
+    ``promotion.poleProvenance``; Swift twin:
+    ``AgentPromotion.poleProvenance``). ``None`` unless the promotion's
+    evidence carries a machine-readable swap claim, from one of two provable
+    places, in order:
+
+    1. The MATCHED artifact's own sidecar declares ``polesSwappedFromSource``
+       — the injected bytes are a minted mirror (:mod:`pole_mirror`), and the
+       same sidecar the rest of the certificate already trusts names the
+       source pole in ``negatedFrom``.
+    2. The manifest's artifact pin declares it (``attach_artifact``'s mirror
+       linkage): the pin's own facts (``polesSwappedFromSource``,
+       ``sourceStimulusSetHash``) are the study's hash-checked claim and
+       inherit directly; the source CONCEPT and TENSOR hash live in the
+       pinned artifact's sidecar, which is read here only after its bytes
+       re-verify against the pin's ``sha256SidecarHash`` — a missing or
+       drifted sidecar downgrades to the pin's facts, loudly, rather than
+       inheriting unverifiable claims or refusing a promotion the pin itself
+       supports.
+
+    Deliberately NOT inherited: a fresh extraction over role-swapped stimulus
+    files. It is tensor-identical to a minted mirror, but the swap is
+    recorded nowhere the pins can prove (PROVENANCE.md is prose, and names
+    are not evidence), so the honest certificate stays silent — mint the
+    mirror (``vectors mirror-poles``) or attach the minted artifact to make
+    the claim provable.
+
+    The record's fields, each present only when provable:
+    ``{"polesSwappedFromSource": true, "sourceConcept": …,
+    "sourceStimulusSetHash": …, "sourceTensorHash": …}``.
+    """
+    def _from_negated(record: dict, negated) -> dict:
+        if isinstance(negated, dict):
+            if negated.get("concept"):
+                record["sourceConcept"] = str(negated["concept"])
+            if negated.get("sha256TensorHash"):
+                record["sourceTensorHash"] = str(negated["sha256TensorHash"])
+        return record
+
+    try:
+        with open(os.path.join(artifact.runDirectory,
+                               f"{artifact.name}.json"),
+                  encoding="utf-8") as handle:
+            sidecar = json.load(handle)
+    except (OSError, ValueError):
+        sidecar = {}
+    if isinstance(sidecar, dict) and sidecar.get("polesSwappedFromSource"):
+        record: dict = {"polesSwappedFromSource": True}
+        # The qualified hash the mirror carries VERBATIM — the SOURCE
+        # concept's order-sensitive stimulus hash.
+        if sidecar.get("stimulusSetHash"):
+            record["sourceStimulusSetHash"] = str(sidecar["stimulusSetHash"])
+        return _from_negated(record, sidecar.get("negatedFrom"))
+
+    pin = getattr(ref, "vector_artifact", None) or {}
+    if not pin.get("polesSwappedFromSource"):
+        return None
+    record = {"polesSwappedFromSource": True}
+    if pin.get("sourceStimulusSetHash"):
+        record["sourceStimulusSetHash"] = str(pin["sourceStimulusSetHash"])
+    pinned_sidecar = None
+    sidecar_path = paths.resolve(str(pin.get("path") or ""), root) + ".json"
+    try:
+        with open(sidecar_path, "rb") as handle:
+            raw = handle.read()
+        if hashlib.sha256(raw).hexdigest() == pin.get("sha256SidecarHash"):
+            decoded = json.loads(raw.decode("utf-8"))
+            if isinstance(decoded, dict):
+                pinned_sidecar = decoded
+    except (OSError, ValueError):
+        pinned_sidecar = None
+    if pinned_sidecar is None:
+        log(f"⚠︎ promote '{ref.name}': the pinned mirrored artifact's "
+            f"sidecar at {pin.get('path')}.json is missing or no longer "
+            f"hashes {str(pin.get('sha256SidecarHash') or '')[:12]}… — the "
+            "certificate carries the manifest pin's facts only")
+        return record
+    _from_negated(record, pinned_sidecar.get("negatedFrom"))
+    if "sourceStimulusSetHash" not in record \
+            and pinned_sidecar.get("stimulusSetHash"):
+        record["sourceStimulusSetHash"] = \
+            str(pinned_sidecar["stimulusSetHash"])
+    return record
+
+
 def _existing_promotion(key: str, root: str | None) -> dict | None:
     """An already-minted agent carrying this promotion key, or None.
 
@@ -650,6 +736,20 @@ def _mint(manifest, ref, name: str, concept: str, *, layer: int,
     # WHICH bytes were injected, not merely which recipe they claim.
     if artifact_hash is not None:
         promotion["vectorArtifactHash"] = artifact_hash
+
+    # MIRRORED-POLE inheritance: when the evidence proves the injected
+    # direction is another concept's negation, the certificate says so.
+    # Deliberately OUTSIDE the promotion key below, for the qualification
+    # block's reason: the key is the cross-engine identity of the promotion
+    # REQUEST, and this record is additional evidence about an
+    # already-identified promotion, not a different promotion.
+    pole_provenance = _pole_provenance(ref, artifact, root, log)
+    if pole_provenance is not None:
+        promotion["poleProvenance"] = pole_provenance
+        source = pole_provenance.get("sourceConcept")
+        label = f"'{source}'" if source else "its source concept"
+        log(f"promote '{concept}': the injected direction is a MIRRORED "
+            f"POLE — the negation of {label} — stamped poleProvenance")
 
     root_dir = paths.project_root() if root is None else root
     variant_name = agent_name or f"{name}-{concept}-agent"

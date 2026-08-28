@@ -216,6 +216,57 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
     /// but permanently distinguishable from an agent whose settings were
     /// selected on dev data by a predeclared rule.
     public struct Promotion: Codable, Sendable, Equatable {
+        /// MIRRORED-POLE inheritance (cross-engine contract key
+        /// `promotion.poleProvenance`; server twin:
+        /// `promote._pole_provenance`): the injected direction is the
+        /// NEGATION of another concept's — a mirrored pole (`PoleMirror`),
+        /// whose stimuli are the source concept's two files with their
+        /// positive/negative roles exchanged.
+        ///
+        /// Without this record an agent promoted from a mirrored direction
+        /// never announced it injects a negated direction: the sidecar's
+        /// `polesSwappedFromSource`/`negatedFrom` stamps and the manifest
+        /// pin's mirror linkage all stopped one step short of the birth
+        /// certificate, and the certificate is the one artifact an agent
+        /// carries everywhere. Every field is inherited from PROVABLE
+        /// evidence only — the matched artifact's own sidecar, the manifest's
+        /// hash-checked artifact pin, or the pinned sidecar's bytes after
+        /// re-verifying them against the pin — never inferred from names.
+        /// Absent = the promotion's evidence carries no machine-readable
+        /// swap claim (including a fresh extraction over role-swapped files,
+        /// where the swap lives only in PROVENANCE.md prose: minting the
+        /// mirror, or attaching the minted artifact, is what makes the claim
+        /// provable).
+        public struct PoleProvenance: Codable, Sendable, Equatable {
+            /// Always `true` when the record exists — the same never-false
+            /// idiom as the sidecar stamp it inherits.
+            public var polesSwappedFromSource: Bool
+            /// The SOURCE pole's concept name, from the (verified) mirror
+            /// sidecar's `negatedFrom.concept`. Absent when only the
+            /// manifest pin's facts were provable.
+            public var sourceConcept: String?
+            /// The SOURCE concept's order-sensitive stimulus hash
+            /// (`sha256(positive ‖ negative)` of the parent's files) — the
+            /// qualified hash the mirror sidecar carries verbatim and the
+            /// manifest pin records as `sourceStimulusSetHash`.
+            public var sourceStimulusSetHash: String?
+            /// SHA-256 of the SOURCE artifact's tensor bytes (the direction
+            /// this agent's injection negates), from `negatedFrom`.
+            public var sourceTensorHash: String?
+
+            public init(
+                polesSwappedFromSource: Bool,
+                sourceConcept: String? = nil,
+                sourceStimulusSetHash: String? = nil,
+                sourceTensorHash: String? = nil
+            ) {
+                self.polesSwappedFromSource = polesSwappedFromSource
+                self.sourceConcept = sourceConcept
+                self.sourceStimulusSetHash = sourceStimulusSetHash
+                self.sourceTensorHash = sourceTensorHash
+            }
+        }
+
         public var experiment: String
         /// Manifest content hash at promote time.
         public var experimentHash: String
@@ -274,6 +325,14 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
         /// evidence destruction, not a lost label — hence opaque JSON, so the
         /// server can extend the citation without this engine learning keys.
         public var qualification: JSONValue?
+        /// See `PoleProvenance`. Deliberately OUTSIDE `promotionKey` (the
+        /// `qualification` reasoning): the key is the cross-engine identity
+        /// of the promotion REQUEST, and this record is additional evidence
+        /// about an already-identified promotion, not a different promotion.
+        /// Absent on every certificate minted before the record existed and
+        /// on every non-mirrored promotion — decodable-absent, and never
+        /// encoded when nil, so legacy certificate bytes are untouched.
+        public var poleProvenance: PoleProvenance?
         public var substrate: String
         public var appVersion: String
 
@@ -295,7 +354,8 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
             appVersion: String,
             vectorArtifactHash: String? = nil,
             promotionKey: String? = nil,
-            qualification: JSONValue? = nil
+            qualification: JSONValue? = nil,
+            poleProvenance: PoleProvenance? = nil
         ) {
             self.experiment = experiment
             self.experimentHash = experimentHash
@@ -315,6 +375,7 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
             self.vectorArtifactHash = vectorArtifactHash
             self.promotionKey = promotionKey
             self.qualification = qualification
+            self.poleProvenance = poleProvenance
         }
     }
 
