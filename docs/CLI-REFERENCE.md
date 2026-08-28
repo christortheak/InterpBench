@@ -1633,6 +1633,17 @@ source-order hash from those same files. Validation pins the **mirrored**
 concept's own `validation.jsonl` under the ordinary source-concept rules — the
 inverted rows the success message tells you to author.
 
+**Downstream, the inherited hash is the identity.** Every run's materialized
+copy of the pinned bytes stamps what the artifact stamps — the parent's
+`stimulusSetHash`, still qualified by `polesSwappedFromSource` and
+`negatedFrom`, which travel through materialization — and the recipe identity
+a mirrored pin demands (`recipeIdentityHash`, what `promote` matches
+artifacts on) is therefore the pin's `sourceStimulusSetHash`, not the
+concept's own directory hash. The own hash remains the live pin `verify`
+recomputes; the inherited hash is what the bytes claim. Both engines derive
+the identity the same way, so a mirrored concept promotes exactly like any
+other pinned concept.
+
 The proof that the swapped files are the right evidence rather than a
 bookkeeping convention: CAA's mean difference is antisymmetric under a file
 swap, so extracting freshly from the mirrored concept's directory reproduces the

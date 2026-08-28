@@ -85,6 +85,21 @@ import SteeringKit
 /// Substrate is deliberately OUTSIDE this identity: it remains a separate
 /// match criterion (a CUDA artifact must never satisfy an MLX recipe
 /// silently), exactly as before.
+///
+/// ARTIFACT-PINNED concepts (manifest method `pinnedArtifact`) travel through
+/// the same canonical form with `extractionMethod` = `"pinnedArtifact"`: the
+/// identity then says "these exact pinned bytes, materialized for this model
+/// at this revision and read at this position", which is the only recipe
+/// there is when the direction was derived post-hoc. Their
+/// `residualNormSource` / `normCorpusHash` come from the PIN BLOCK (copied
+/// from the artifact's sidecar at attach), not from the study's neutral
+/// corpus — the norms are the artifact's, so the denominator provenance must
+/// be too. A MIRRORED pole (pin `polesSwappedFromSource`) takes its
+/// `stimulusSetHash` from the pin's `sourceStimulusSetHash` for the same
+/// reason: the artifact — and every faithful materialization of it — records
+/// the SOURCE concept's hash, qualified by the swap stamp, while the ref's
+/// own hash is the mirrored directory's LIVE pin that verify recomputes; the
+/// identity must demand what the artifact stamps.
 public enum RecipeIdentity {
 
     public static let schema = 1
@@ -378,8 +393,54 @@ public enum RecipeIdentity {
         // A pinned neutral corpus is the norm denominator on both engines
         // (extract / extractGrandMean use it whenever present); without one,
         // norms come from the extraction stimuli themselves.
-        let source = manifest.neutralCorpusHash != nil
+        var source = manifest.neutralCorpusHash != nil
             ? "neutral-corpus" : "extraction-stimuli"
+        var stimulusSetHash = ref.stimulusSetHash
+        var normCorpusHash = source == "neutral-corpus"
+            ? manifest.neutralCorpusHash : nil
+        if ref.options.method == .pinnedArtifact, let pin = ref.vectorArtifact {
+            // An artifact-pinned concept CARRIES its denominator: the norms
+            // come from the pinned artifact, not from anything this study
+            // measures, so the identity must demand the artifact's provenance
+            // rather than the study's neutral corpus. Both values were copied
+            // from the sidecar at attach (and re-checked at verify), so this
+            // is still pins-only. Server twin: the pinned-artifact branch in
+            // `recipe_identity.required_identity`.
+            if !pin.residualNormSource.isEmpty {
+                source = pin.residualNormSource
+            }
+            if source == "neutral-corpus" {
+                if let pinned = pin.normCorpusHash, !pinned.isEmpty {
+                    normCorpusHash = pinned
+                } else {
+                    normCorpusHash = manifest.neutralCorpusHash
+                }
+            } else {
+                normCorpusHash = nil
+            }
+            if pin.polesSwappedFromSource == true {
+                // A MIRRORED pole carries its stimulus identity the same way
+                // it carries its denominator: the sidecar records the SOURCE
+                // concept's hash (qualified `polesSwappedFromSource`), every
+                // faithful materialization stamps exactly that, and the pin's
+                // `sourceStimulusSetHash` is where attach parked it. The
+                // ref's own `stimulusSetHash` is the mirrored directory's
+                // hash — the LIVE pin verify recomputes — which no artifact
+                // ever stamps, so demanding it would refuse every mirrored
+                // artifact at promote.
+                guard let inherited = pin.sourceStimulusSetHash,
+                    !inherited.isEmpty
+                else {
+                    throw ExperimentError(
+                        reason: "mirrored-pole concept '\(ref.name)' pins "
+                            + "polesSwappedFromSource with no "
+                            + "sourceStimulusSetHash — the inherited hash is "
+                            + "the identity its artifact stamps; re-attach "
+                            + "the artifact")
+                }
+                stimulusSetHash = inherited
+            }
+        }
         var designatedReference: Member?
         if ref.options.method == .designatedReference {
             guard let pin = ref.designatedReference else {
@@ -411,7 +472,7 @@ public enum RecipeIdentity {
             modelID: manifest.modelID,
             revision: manifest.modelRevision,
             extractionMethod: ref.options.method.rawValue,
-            stimulusSetHash: ref.stimulusSetHash,
+            stimulusSetHash: stimulusSetHash,
             readingPositionMode: readingMode,
             readingPositionParameter: readingParameter,
             projectionMode: pcCount > 0 ? "legacyPooled" : "none",
@@ -419,7 +480,7 @@ public enum RecipeIdentity {
             projectionExplainedVariance: nil,
             projectionBasisHash: nil,
             residualNormSource: source,
-            normCorpusHash: source == "neutral-corpus" ? manifest.neutralCorpusHash : nil,
+            normCorpusHash: normCorpusHash,
             grandMeanPopulation: population,
             designatedReference: designatedReference,
             extractionRendering: ref.options.extractionRendering)

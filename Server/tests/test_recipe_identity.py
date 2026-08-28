@@ -291,6 +291,45 @@ def test_required_identity_for_grand_mean_demands_the_pinned_population():
         ri.required_identity(_manifest(grand_mean_corpus=holey), ref)
 
 
+def _pinned_ref(pin_extras=None):
+    return ConceptRef(
+        name="dimness", stimulus_set_hash="0" * 64,
+        options=ExtractionOptions.from_json(
+            {"method": "pinnedArtifact", "readingPosition": "last token"}),
+        vector_artifact={
+            "path": "runs/mirrored/dimness",
+            "sha256TensorHash": "1" * 64, "sha256SidecarHash": "2" * 64,
+            "sourceMethod": "meanDifference", "sourceConcept": "dimness",
+            "residualNormSource": "neutral-corpus",
+            "normCorpusHash": "c" * 64, **(pin_extras or {})})
+
+
+def test_required_identity_for_a_mirrored_pin_demands_the_inherited_hash():
+    """A mirrored pole's artifact — and every faithful materialization of it —
+    stamps the SOURCE concept's stimulus hash (qualified
+    ``polesSwappedFromSource``), while the ref's own hash is the mirrored
+    directory's LIVE pin. Demanding the ref's hash refused every mirrored
+    artifact ever materialized; the identity must demand what the artifact
+    stamps: the pin's ``sourceStimulusSetHash``."""
+    ordinary = ri.required_identity(_manifest(), _pinned_ref())
+    # An UN-mirrored pin keeps demanding the ref's own hash, unchanged.
+    assert ordinary["stimulusSetHash"] == "0" * 64
+    # …and the pin block's denominator provenance, not the study's.
+    assert ordinary["residualNormSource"] == "neutral-corpus"
+    assert ordinary["normCorpusHash"] == "c" * 64
+
+    mirrored = ri.required_identity(_manifest(), _pinned_ref(
+        {"polesSwappedFromSource": True, "sourceStimulusSetHash": "e" * 64}))
+    assert mirrored["stimulusSetHash"] == "e" * 64
+    assert ri.identity_hash(mirrored) != ri.identity_hash(ordinary)
+
+    # A mirror pin with no inherited hash refuses instead of guessing —
+    # the same manifest verify() flags as a violation.
+    with pytest.raises(ValueError, match="no sourceStimulusSetHash"):
+        ri.required_identity(_manifest(), _pinned_ref(
+            {"polesSwappedFromSource": True}))
+
+
 # --- the identity a sidecar can prove --------------------------------------------
 
 def _sidecar(**overrides):
