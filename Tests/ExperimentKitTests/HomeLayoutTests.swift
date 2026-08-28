@@ -184,10 +184,27 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: home.path))
     }
 
+    /// `--home` with no value. This used to reach the verb, which answered
+    /// with its own `usage: init` prose; since review round 10, finding 5, the
+    /// shared preprocessor refuses a declared VALUE flag that arrived without
+    /// one — for every verb at once, because the verbs that read flags through
+    /// the tolerant helper silently DEFAULTED instead of refusing. Still 64,
+    /// still nothing created; the usage line moved from the reason to the
+    /// repair, where a runnable answer belongs.
     @Test func homeWithNoValueIsAUsageError() async throws {
         let outcome = await runInit(["--home"])
-        #expect(outcome.exitCode != 0)
-        #expect(outcome.envelope.error?.reason.contains("usage: init") == true)
+        #expect(outcome.exitCode == 64)
+        #expect(outcome.envelope.error?.code == "missingFlagValue")
+        #expect(
+            outcome.envelope.error?.reason
+                .contains("flag --home expects a value (") == true)
+        #expect(
+            outcome.envelope.error?.reason.hasSuffix("and none followed")
+                == true)
+        #expect(
+            outcome.envelope.error?.repairAction.contains("init") == true)
+        #expect(
+            outcome.envelope.error?.repairAction.contains("--home") == true)
     }
 
     // MARK: `--help` runs nothing

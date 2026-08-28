@@ -579,14 +579,15 @@ public struct ExperimentCLIRunner: Sendable {
             namespace: namespace, verb: verb, exitCode: 0, envelope: envelope)
     }
 
-    /// An undeclared flag: 64 in BOTH modes, and nothing was run.
+    /// An undeclared flag, or a declared value flag with no value: 64 in BOTH
+    /// modes, and nothing was run.
     private func usageOutcome(
         namespace: String, args: [String], error: ExperimentCLIUsageError
     ) -> ExperimentCLIOutcome {
         outcome(
             namespace: namespace, verb: error.verb, state: .blocked, exitCode: 64,
             failure: .init(reason: error.reason, repairAction: error.repairAction),
-            code: ExperimentCLIUsageError.code, repairAction: error.repairAction)
+            code: error.code, repairAction: error.repairAction)
     }
 
     // MARK: - init
@@ -1884,14 +1885,19 @@ public struct ExperimentCLIRunner: Sendable {
     /// build. Nil for a `--url` invocation (no site, no intent record) and
     /// whenever either identity is unknowable — the advisory is computed from
     /// local records only, never by probing the cluster mid-submit.
+    ///
+    /// The `git` probe the dev-checkout fallback makes is the only reason this
+    /// is async; it is local and runs against the payload root, never the site.
     static func engineLagWarning(
         forSite siteID: String?,
         runtime: ClusterSiteRuntimeStore = ClusterSiteRuntimeStore(),
-        bundlePayloadRoot: String = ClusterProvisioner.defaultLocalRepoPath()
-    ) -> String? {
+        bundlePayloadRoot: String = ClusterProvisioner.defaultLocalRepoPath(),
+        shell: any ClusterShellRunner = ProvisionShellRunner()
+    ) async -> String? {
         guard let siteID else { return nil }
         let state = runtime.state(forSite: siteID)
-        return ClusterProvisioningOperations.engineLagAdvisory(
+        let operations = ClusterProvisioningOperations(shell: shell)
+        return await operations.engineLagAdvisory(
             intent: .init(
                 payloadRevision: state.pushedPayloadRevision,
                 buildStamp: state.pushedBuildStamp),
@@ -2027,7 +2033,7 @@ public struct ExperimentCLIRunner: Sendable {
             // Engine-lag advisory (2026-08-27 incident): submitting server-side
             // work while the deployed engine trails this build must be LOUD —
             // stderr once, never a refusal, and never a rollback offer.
-            if let warning = Self.engineLagWarning(forSite: siteID) {
+            if let warning = await Self.engineLagWarning(forSite: siteID) {
                 sink.err("warning: \(warning)\n")
             }
             let submission = try await client.submitBundle(
@@ -4371,6 +4377,25 @@ public struct ExperimentCLIRunner: Sendable {
             + "--control-apply-to topK to control \(width) cells"
     }
 
+    /// Clearing the matched-norm control and describing it in one breath
+    /// (review round 10, finding 6).
+    ///
+    /// `--control-margin ""` REMOVES the control block; `--control-apply-to` /
+    /// `--control-top-k` describe one. Typed together, the clear used to win
+    /// unconditionally and the description was discarded without a word — a
+    /// flag that exits 0 having done nothing, the class the sibling refusal
+    /// above exists to close. Neither half can be assumed to be the one meant,
+    /// so both are named and neither is applied.
+    static func controlClearTakesNoDescription(_ siblings: [String]) -> String {
+        "--control-margin \"\" REMOVES the matched-norm random control, but "
+            + siblings.joined(separator: " and ")
+            + " describe\(siblings.count == 1 ? "s" : "") one — a control "
+            + "cannot be cleared and described in the same breath. Drop "
+            + siblings.joined(separator: "/")
+            + " to remove the control, or give --control-margin a margin to "
+            + "keep it"
+    }
+
     /// What a re-declare INHERITED rather than restated, in the words the
     /// verb prints and the envelope echoes. Empty when nothing was inherited.
     static func inheritedSelectionNote(_ inherited: [String]) -> String {
@@ -4592,6 +4617,17 @@ public struct ExperimentCLIRunner: Sendable {
         if controlMargin?.trimmingCharacters(in: .whitespaces) == "" ,
             controlMargin != nil
         {
+            // The clear is refused when a SIBLING control flag was also typed
+            // (review round 10, finding 6): `--control-margin "" --control-top-k 3`
+            // used to clear the block and drop the width silently. Checked
+            // BEFORE the clear, so a refusal writes nothing.
+            var siblings: [String] = []
+            if controlApplyTo != nil { siblings.append("--control-apply-to") }
+            if controlTopK != nil { siblings.append("--control-top-k") }
+            guard siblings.isEmpty else {
+                throw ExperimentError(
+                    reason: Self.controlClearTakesNoDescription(siblings))
+            }
             selection.controls = nil
         } else if controlMargin == nil, controlApplyTo == nil, controlTopK == nil,
             let previous = previousControls

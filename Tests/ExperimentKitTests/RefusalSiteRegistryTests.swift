@@ -920,6 +920,71 @@ import Testing
         }
     }
 
+    /// Review round 10, finding 6: `--control-margin ""` CLEARS the control,
+    /// and the clear used to fire before anything else was looked at — so
+    /// `--control-margin "" --control-top-k 3` removed the control and threw
+    /// the width away without a word. Clearing and describing in one breath is
+    /// a contradiction to refuse, exactly like the winner-plus-width pairing
+    /// below, and for the same reason: either half could be the one meant.
+    @Test func clearingTheControlRefusesWhenSiblingFlagsDescribeIt() async throws {
+        try await withTempRoot { _ in
+            await invoke(
+                "experiment",
+                ["create", "clr", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            await invoke("experiment", ["attach", "clr", "french"])
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "clr", "--objective",
+                        "markerDensity", "--control-margin", "0.05",
+                        "--control-apply-to", "topK", "--control-top-k", "3",
+                    ]
+                ).exitCode == 0)
+
+            // Both orders, both refused, and the sibling is named.
+            for tail in [
+                ["--control-margin", "", "--control-top-k", "4"],
+                ["--control-top-k", "4", "--control-margin", ""],
+                ["--control-margin", "", "--control-apply-to", "winner"],
+            ] {
+                let refused = await invoke(
+                    "experiment",
+                    ["set-sweep-selection", "clr", "--objective",
+                     "markerDensity"] + tail)
+                #expect(refused.exitCode != 0)
+                #expect(
+                    refused.envelope.message.contains(
+                        "--control-margin \"\" REMOVES the matched-norm random "
+                            + "control"))
+                #expect(
+                    refused.envelope.message.contains(
+                        "a control cannot be cleared and described in the same "
+                            + "breath"))
+                // Refused means UNCHANGED: the control the first call
+                // declared is still standing, width and all.
+                let block = try #require(
+                    try ExperimentStore.load(name: "clr").sweep?.selection)
+                #expect(block.controls?.matchedNormRandomMargin == 0.05)
+                #expect(block.controls?.applyTo == "topK")
+                #expect(block.controls?.topK == 3)
+            }
+
+            // A clear ALONE still clears — the affordance is intact.
+            #expect(
+                await invoke(
+                    "experiment",
+                    [
+                        "set-sweep-selection", "clr", "--objective",
+                        "markerDensity", "--control-margin", "",
+                    ]
+                ).exitCode == 0)
+            #expect(
+                try ExperimentStore.load(name: "clr").sweep?.selection?
+                    .controls == nil)
+        }
+    }
+
     /// Review round 9, finding 2: `--control-top-k K` on a WINNER-scoped
     /// control was accepted, merged into a scope of `winner`, and then thrown
     /// away by the constructor — a flag that exited 0 having done nothing to

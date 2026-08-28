@@ -1792,7 +1792,8 @@ def set_protocol(name: str, fields: dict, root: str | None = None) -> dict:
     # the manifest — `Manifest.from_dict` raises on the next load, so every
     # later verb (verify included, the one that would have named the
     # problem) fails before it can. A JSON null clears like an absent key on
-    # decode, so None passes every gate.
+    # decode, so None passes every gate — and the persistence loop below
+    # makes that claim true by POPPING the key rather than writing the null.
     if fields.get("temperature") is not None:
         value = fields["temperature"]
         if (isinstance(value, bool) or not isinstance(value, (int, float))
@@ -1851,7 +1852,20 @@ def set_protocol(name: str, fields: dict, root: str | None = None) -> dict:
                        "or re-run with a --set exclusionRules=<json> the "
                        "sentences above accept")
     for key, value in fields.items():
-        d[key] = value
+        if value is None:
+            # An explicit JSON null CLEARS the field — it does not persist as
+            # a null. This is what makes the gates above sound: every gate
+            # spells `fields.get(k) is not None`, so a null reaches here
+            # ungated, and writing it would brick the manifest
+            # (`Manifest.from_dict` raises TypeError on a null temperature,
+            # and every later verb — verify included — dies before it can
+            # name the problem). Popping is also the symmetric affordance:
+            # the Swift writers clear with `""`, the client clears with
+            # `--set temperature=null`, and both land on a key that is
+            # simply absent.
+            d.pop(key, None)
+        else:
+            d[key] = value
     save_raw(d, root)
     return d
 

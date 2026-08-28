@@ -617,6 +617,129 @@ def test_a_non_numeric_layer_count_refuses_before_anything_is_written(tmp_path):
     assert not os.path.isdir(out) or os.listdir(out) == []
 
 
+def test_layer_count_must_be_a_whole_positive_number(tmp_path):
+    """Review round 10, finding 9: a NUMBER is not yet a layer count.
+
+    ``2.5`` truncated and stamped a mirror claiming a depth its source never
+    had; ``0`` and ``-3`` stamped an impossible one; ``nan``/``inf`` reached
+    ``int()`` and raised a bare ValueError/OverflowError past every typed
+    refusal (the Swift twin TRAPS there). Both engines now check finiteness
+    and integrality BEFORE converting, and refuse with the value named. Swift
+    twin: ``PoleMirrorTests.layerCountMustBeAWholePositiveNumber``."""
+    for index, (value, spelled) in enumerate([
+            (2.5, "2.5"), (0, "0"), (-3, "-3"), (0.0, "0"),
+            (float("nan"), "NaN"), (float("inf"), "Infinity"),
+            (float("-inf"), "-Infinity")]):
+        source = _write_artifact(str(tmp_path / f"src{index}"),
+                                 extras={"layerCount": value})
+        out = os.path.join(str(tmp_path), f"mirrored{index}")
+        with pytest.raises(pole_mirror.PoleMirrorError) as caught:
+            pole_mirror.mirror_poles(source, SOURCE_CONCEPT,
+                                     concept=MIRROR_CONCEPT,
+                                     run_directory=out)
+        assert caught.value.kind == "unreadableArtifact"
+        assert f"records layerCount {spelled}" in caught.value.reason, value
+        assert ("a steering-vector artifact's layer count is a whole number "
+                "of layers, 1 or more") in caught.value.reason
+        assert caught.value.repair_action
+        # A refusal writes nothing.
+        assert not os.path.isdir(out) or os.listdir(out) == []
+
+    # A VALID artifact still mirrors — the gate is not refusing everything.
+    source = _write_artifact(str(tmp_path / "good"))
+    result = pole_mirror.mirror_poles(
+        source, SOURCE_CONCEPT, concept=MIRROR_CONCEPT,
+        run_directory=os.path.join(str(tmp_path), "good-out"))
+    assert result.layer_count == 2
+    # …and an integral FLOAT is a whole number of layers, so it passes.
+    source = _write_artifact(str(tmp_path / "float2"),
+                             extras={"layerCount": 2.0})
+    result = pole_mirror.mirror_poles(
+        source, SOURCE_CONCEPT, concept=MIRROR_CONCEPT,
+        run_directory=os.path.join(str(tmp_path), "float2-out"))
+    assert result.layer_count == 2
+
+
+def test_a_commit_that_cannot_drop_its_staging_name_takes_the_destination_back(
+        tmp_path, monkeypatch):
+    """Review round 10, finding 8, on all three mirrors of this primitive.
+
+    ``_commit_no_replace`` lands ``dest`` and THEN drops the staging name. A
+    failure in that last step propagated with ``dest`` in place — and the
+    caller's cleanup owns the TEMPORARIES, not the destination, so a
+    half-final artifact was left wearing the final name: exactly the state
+    ``destinationOccupied`` then refuses to repair. ``dest`` is this call's
+    reservation; a commit that cannot finish must not leave it."""
+    staged = str(tmp_path / "staged")
+    dest = str(tmp_path / "dest")
+    with open(staged, "wb") as handle:
+        handle.write(b"bytes")
+
+    real_remove = os.remove
+
+    def failing_remove(path, *args, **kwargs):
+        if path == staged:
+            raise OSError("staging directory went read-only")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(pole_mirror.os, "remove", failing_remove)
+    with pytest.raises(OSError):
+        pole_mirror._commit_no_replace(staged, dest)
+    assert not os.path.exists(dest), \
+        "a commit that could not finish left its destination standing"
+
+    # BOTH-OR-NEITHER at the CALLER too: the vectors file lands, the SIDECAR
+    # commit then fails, and the vectors file it already landed comes back
+    # out. A tensor with no sidecar is what the catalog reads as an
+    # unreadable artifact and what `destinationOccupied` then refuses to
+    # replace, so half a promotion is worse than none.
+    monkeypatch.undo()
+    source = _write_artifact(str(tmp_path / "src"))
+    out = os.path.join(str(tmp_path), "mirrored")
+    calls = {"n": 0}
+    real_commit = pole_mirror._commit_no_replace
+
+    def sidecar_commit_fails(staged_path, dest_path):
+        calls["n"] += 1
+        if calls["n"] == 2:  # the sidecar, after the vectors landed
+            assert os.path.exists(os.path.join(out, f"{MIRROR_CONCEPT}"
+                                               ".safetensors"))
+            raise OSError("the disk filled between the two commits")
+        return real_commit(staged_path, dest_path)
+
+    monkeypatch.setattr(pole_mirror, "_commit_no_replace", sidecar_commit_fails)
+    with pytest.raises(OSError):
+        pole_mirror.mirror_poles(source, SOURCE_CONCEPT,
+                                 concept=MIRROR_CONCEPT, run_directory=out)
+    monkeypatch.undo()
+    # Neither final name, and neither temporary: nothing of this promotion
+    # survives it.
+    assert not os.path.isdir(out) or os.listdir(out) == [], \
+        f"a half-landed promotion left {os.listdir(out)}"
+
+    # …and the two fixes COMPOSE: the sidecar's own staged-removal failing is
+    # the primitive's problem, and the caller still ends up with neither name.
+    source = _write_artifact(str(tmp_path / "src2"))
+    out2 = os.path.join(str(tmp_path), "mirrored2")
+    sidecar_temp_failed = {"seen": False}
+
+    def remove_failing_on_sidecar_temp(path, *args, **kwargs):
+        if path.endswith(".partial") and ".json." in os.path.basename(path):
+            sidecar_temp_failed["seen"] = True
+            raise OSError("staging directory went read-only")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(pole_mirror.os, "remove",
+                        remove_failing_on_sidecar_temp)
+    with pytest.raises(OSError):
+        pole_mirror.mirror_poles(source, SOURCE_CONCEPT,
+                                 concept=MIRROR_CONCEPT, run_directory=out2)
+    monkeypatch.undo()
+    assert sidecar_temp_failed["seen"]
+    assert not os.path.exists(os.path.join(out2, f"{MIRROR_CONCEPT}.json")), \
+        "the sidecar the primitive could not finish committing was left behind"
+
+
 # --- only the paired, source-concept-bearing family (round 8, finding 2) -------
 
 def test_only_the_paired_source_concept_bearing_family_is_mirrorable():

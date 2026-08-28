@@ -1082,11 +1082,16 @@ struct ClusterProvisioningOperationsTests {
 
     /// The submit-time twin: computed from the deploy-intent record and the
     /// bundle payload's manifest alone — no SSH — and never invented.
-    @Test func theSubmitTimeLagAdvisoryComparesIntentAgainstTheBundle() throws {
+    @Test func theSubmitTimeLagAdvisoryComparesIntentAgainstTheBundle() async throws {
         let payload = try generatedPayload(revision: "818bab84")
         defer { try? FileManager.default.removeItem(at: payload) }
+        // A manifest-bearing payload never reaches the git probe, so the shell
+        // is never called — and an empty RecordingShell fails every call,
+        // which proves it.
+        let operations = ClusterProvisioningOperations(
+            shell: RecordingShell(), secrets: RecordingSecretStore())
 
-        let lagging = ClusterProvisioningOperations.engineLagAdvisory(
+        let lagging = await operations.engineLagAdvisory(
             intent: .init(payloadRevision: "64786651"),
             bundlePayloadRoot: payload.path)
         #expect(lagging?.contains("64786651") == true)
@@ -1097,22 +1102,73 @@ struct ClusterProvisioningOperationsTests {
         // stay silent — plain inequality between two KNOWN identities is the
         // only thing the advisory claims.
         #expect(
-            ClusterProvisioningOperations.engineLagAdvisory(
+            await operations.engineLagAdvisory(
                 intent: .init(payloadRevision: "818bab84"),
                 bundlePayloadRoot: payload.path) == nil)
         #expect(
-            ClusterProvisioningOperations.engineLagAdvisory(
+            await operations.engineLagAdvisory(
                 intent: .init(), bundlePayloadRoot: payload.path) == nil)
         #expect(
-            ClusterProvisioningOperations.engineLagAdvisory(
+            await operations.engineLagAdvisory(
                 intent: .init(payloadRevision: "64786651"),
                 bundlePayloadRoot: "/nonexistent-payload") == nil)
+    }
+
+    /// Review round 10, finding 4 — the class of the 2026-08-27 stale-engine
+    /// incident. `defaultLocalRepoPath()` resolves to the CHECKOUT in
+    /// developer mode, a checkout carries no deployment manifest, and the
+    /// advisory's identity lookup read only the manifest — so on the payload
+    /// shape the incident actually had, the advisory was structurally silent.
+    /// It now falls back to the same git stamp the STATUS path uses.
+    @Test func theSubmitTimeLagAdvisorySeesADevCheckout() async throws {
+        // A checkout-shaped payload root: a python package, no manifest.
+        let payload = FileManager.default.temporaryDirectory
+            .appending(component: "steerlab-checkout-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: payload.appending(path: "Server/steerlab_server"),
+            withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: payload) }
+
+        // `devPayloadStamp` = rev-parse, then a scoped status for dirtiness.
+        func stampingShell(_ sha: String) -> RecordingShell {
+            RecordingShell([
+                ClusterShellResult(exitCode: 0, lines: [sha]),
+                ClusterShellResult(exitCode: 0, lines: []),
+            ])
+        }
+
+        // MISMATCH: the stamp this checkout would push is not what was pushed.
+        let lagging = await ClusterProvisioningOperations(
+            shell: stampingShell("818bab84"), secrets: RecordingSecretStore()
+        ).engineLagAdvisory(
+            intent: .init(buildStamp: "64786651"),
+            bundlePayloadRoot: payload.path)
+        #expect(lagging?.contains("64786651") == true)
+        #expect(lagging?.contains("818bab84") == true)
+        #expect(lagging?.contains("NOT running") == true)
+
+        // MATCH: the deployed stamp IS this checkout's — silent.
+        #expect(
+            await ClusterProvisioningOperations(
+                shell: stampingShell("64786651"), secrets: RecordingSecretStore()
+            ).engineLagAdvisory(
+                intent: .init(buildStamp: "64786651"),
+                bundlePayloadRoot: payload.path) == nil)
+
+        // NEITHER a manifest NOR a git stamp: unknown stays nil. An advisory
+        // is never invented — the empty shell fails the rev-parse.
+        #expect(
+            await ClusterProvisioningOperations(
+                shell: RecordingShell(), secrets: RecordingSecretStore()
+            ).engineLagAdvisory(
+                intent: .init(buildStamp: "64786651"),
+                bundlePayloadRoot: payload.path) == nil)
     }
 
     /// The CLI wiring: `remote submit-bundle --site` reads the per-machine
     /// runtime record for that site; no site (a `--url` invocation) and a
     /// site this machine never pushed to are silent.
-    @Test func theSubmitVerbLagWarningReadsTheSiteRuntimeRecord() throws {
+    @Test func theSubmitVerbLagWarningReadsTheSiteRuntimeRecord() async throws {
         let payload = try generatedPayload(revision: "818bab84")
         defer { try? FileManager.default.removeItem(at: payload) }
         let storeFile = FileManager.default.temporaryDirectory
@@ -1122,18 +1178,21 @@ struct ClusterProvisioningOperationsTests {
         try runtime.recordPush(
             siteID: "lab", payloadRevision: "64786651", buildStamp: "64786651")
 
-        let warning = ExperimentCLIRunner.engineLagWarning(
-            forSite: "lab", runtime: runtime, bundlePayloadRoot: payload.path)
+        let warning = await ExperimentCLIRunner.engineLagWarning(
+            forSite: "lab", runtime: runtime, bundlePayloadRoot: payload.path,
+            shell: RecordingShell())
         #expect(warning?.contains("64786651") == true)
         #expect(warning?.contains("NOT running") == true)
         #expect(
-            ExperimentCLIRunner.engineLagWarning(
+            await ExperimentCLIRunner.engineLagWarning(
                 forSite: nil, runtime: runtime,
-                bundlePayloadRoot: payload.path) == nil)
+                bundlePayloadRoot: payload.path,
+                shell: RecordingShell()) == nil)
         #expect(
-            ExperimentCLIRunner.engineLagWarning(
+            await ExperimentCLIRunner.engineLagWarning(
                 forSite: "never-pushed", runtime: runtime,
-                bundlePayloadRoot: payload.path) == nil)
+                bundlePayloadRoot: payload.path,
+                shell: RecordingShell()) == nil)
     }
 
     // MARK: Controller reconciliation (the doctrine, at the operation level)

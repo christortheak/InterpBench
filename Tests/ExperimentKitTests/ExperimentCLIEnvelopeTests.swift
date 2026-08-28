@@ -818,6 +818,115 @@ import Testing
         }
     }
 
+    /// Review round 10, finding 5. A DECLARED value flag with no value used to
+    /// be kept and handed on, "because the verb refuses" — and the verbs that
+    /// read flags through the tolerant helper do not: `experiment set-sampling
+    /// demo --temperature` WROTE the protocol at defaults and reported success.
+    /// Both shapes of missing value now refuse at 64, at the one shared
+    /// preprocessor, before any verb runs.
+    @Test func aValueFlagWithNoValueIsAMalformedInvocation() {
+        // (a) end of args, across several verbs.
+        for (namespace, args, flag) in [
+            ("experiment", ["set-sampling", "demo", "--temperature"], "--temperature"),
+            ("experiment", ["set-exclusions", "demo", "--min"], "--min"),
+            ("remote", ["submit-bundle", "b.tar", "--parallel"], "--parallel"),
+        ] {
+            do {
+                _ = try ExperimentCLIParser.parse(namespace: namespace, args)
+                Issue.record("\(flag) with no value must not parse")
+            } catch let error as ExperimentCLIUsageError {
+                #expect(error.flag == flag)
+                #expect(error.code == "missingFlagValue")
+                #expect(error.reason.contains("flag \(flag) expects a value ("))
+                #expect(error.reason.hasSuffix("and none followed"))
+                // The repair is the verb's own usage line, not its flag list:
+                // the flag was right, its value was absent.
+                #expect(error.repairAction.contains(error.verb))
+                #expect(error.repairAction.contains("steerlab-cli"))
+            } catch {
+                Issue.record("wrong error type for \(flag)")
+            }
+        }
+
+        // (b) the swallowed-flag variant: `--temperature --json` read `--json`
+        // as the temperature and left the caller with neither.
+        do {
+            _ = try ExperimentCLIParser.parse(
+                namespace: "experiment",
+                ["set-sampling", "demo", "--temperature", "--json"])
+            Issue.record("--temperature --json must not parse")
+        } catch let error as ExperimentCLIUsageError {
+            #expect(error.flag == "--temperature")
+            #expect(error.followedBy == "--json")
+            #expect(
+                error.reason.contains(
+                    "the next token --json is another experiment set-sampling "
+                        + "flag, not a value"))
+        } catch {
+            Issue.record("wrong error type")
+        }
+    }
+
+    /// The three things that must KEEP parsing, or the refusal above has
+    /// broken more than it fixed.
+    @Test func onlyAGenuinelyMissingValueRefuses() throws {
+        // (a) An explicit EMPTY token is a value, and several verbs use it as
+        // their clear affordance. It must reach them untouched.
+        let cleared = try ExperimentCLIParser.parse(
+            namespace: "experiment",
+            ["set-sweep-selection", "demo", "--control-margin", ""])
+        #expect(cleared.args == ["set-sweep-selection", "demo", "--control-margin", ""])
+
+        // (b) A BOOLEAN flag following a valued flag's value is ordinary
+        // adjacency, not a swallowed value.
+        let dry = try ExperimentCLIParser.parse(
+            namespace: "remote",
+            ["submit-bundle", "b.tar", "--parallel", "4", "--dry-run"])
+        #expect(dry.args == ["submit-bundle", "b.tar", "--parallel", "4", "--dry-run"])
+
+        // (c) A flag-SHAPED token that is not one of this verb's flags is the
+        // value the caller typed. Reinterpreting it as a flag would be this
+        // parser inventing an intent.
+        let negative = try ExperimentCLIParser.parse(
+            namespace: "experiment",
+            ["set-sampling", "demo", "--temperature", "--0.5"])
+        #expect(negative.args == ["set-sampling", "demo", "--temperature", "--0.5"])
+    }
+
+    /// `--out` is a declared value flag and answers the same event with the
+    /// same sentence — it kept a bespoke one until the shared mechanism
+    /// existed. Its CONDITION stays stricter: the envelope's destination is a
+    /// path this parser writes to, so any flag-shaped token there is refused
+    /// rather than taken at its word.
+    @Test func theSharedOutFlagUsesTheSameMissingValueRefusal() {
+        for tail in [["freeze", "demo", "--out"],
+                     ["freeze", "demo", "--out", "--json"],
+                     ["freeze", "demo", "--out", "--not-a-flag"]] {
+            do {
+                _ = try ExperimentCLIParser.parse(
+                    namespace: "experiment", tail)
+                Issue.record("\(tail) must not parse")
+            } catch let error as ExperimentCLIUsageError {
+                #expect(error.flag == "--out")
+                #expect(error.code == "missingFlagValue")
+                #expect(error.reason.contains("flag --out expects a value ("))
+                #expect(error.repairAction.contains("experiment freeze"))
+            } catch {
+                Issue.record("wrong error type for \(tail)")
+            }
+        }
+        // A flag-shaped token that is not this verb's flag is named honestly
+        // — it is not "another freeze flag".
+        do {
+            _ = try ExperimentCLIParser.parse(
+                namespace: "experiment", ["freeze", "demo", "--out", "--nope"])
+        } catch let error as ExperimentCLIUsageError {
+            #expect(error.reason.contains("--nope is flag-shaped, not a value"))
+        } catch {
+            Issue.record("wrong error type")
+        }
+    }
+
     @Test func anUnknownSUBverbIsNotAFlagError() throws {
         // Telling someone their flag is wrong on a verb that does not exist
         // is the less useful of the two messages; the dispatch's verb list

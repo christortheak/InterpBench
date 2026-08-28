@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -155,6 +156,23 @@ def _sha256_hex(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _layer_count_reason(base: str, value: float) -> str:
+    """A sidecar ``layerCount`` that is a number but not a layer count. The
+    value is NAMED — a refusal about a field has to say what it read. Swift
+    twin: ``PoleMirror.layerCountReason``, byte-for-byte, including how the
+    offending number is spelled."""
+    if isinstance(value, float) and math.isnan(value):
+        spelled = "NaN"
+    elif isinstance(value, float) and math.isinf(value):
+        spelled = "-Infinity" if value < 0 else "Infinity"
+    elif float(value) == int(float(value)) and abs(float(value)) < 1e15:
+        spelled = str(int(value))
+    else:
+        spelled = str(float(value))
+    return (f"'{base}' records layerCount {spelled} — a steering-vector "
+            "artifact's layer count is a whole number of layers, 1 or more")
+
+
 def _remove_quietly(path: str) -> None:
     """Delete a path we own, swallowing "it was never there". Used only on
     failure paths, where a second exception would replace the real one."""
@@ -192,6 +210,16 @@ def _commit_no_replace(staged: str, dest: str) -> None:
 
     Raises ``FileExistsError`` when ``dest`` exists; leaves ``staged`` in
     place for the caller's cleanup when it does.
+
+    BOTH-OR-NEITHER (review round 10, finding 8): ``dest`` is this call's
+    reservation, and a commit that cannot FINISH must not leave it standing.
+    Dropping the staging name is the last step, and it can fail on its own
+    (a read-only staging directory, an interrupt) — after ``dest`` has
+    landed. The caller's cleanup owns the TEMPORARIES, not the destination,
+    so the propagating error used to leave a half-final artifact under the
+    final name: the exact state ``destinationOccupied`` then refuses to
+    repair. The removal is therefore wrapped, and a failure takes ``dest``
+    back out before it propagates.
     """
     try:
         os.link(staged, dest)
@@ -215,7 +243,11 @@ def _commit_no_replace(staged: str, dest: str) -> None:
                 # wearing the destination's name — the reservation comes
                 # back out.
                 _remove_quietly(dest)
-    os.remove(staged)
+    try:
+        os.remove(staged)
+    except BaseException:
+        _remove_quietly(dest)
+        raise
 
 
 def _iso8601(moment: datetime) -> str:
@@ -416,6 +448,21 @@ def mirror_poles(vector_dir: str, name: str, *, concept: str,
         raise PoleMirrorError(
             "unreadableArtifact",
             f"{base!r} is not a steering-vector artifact",
+            "pass the base path of a vector artifact — <runDir>/<name> with "
+            "no extension")
+    # A NUMBER is not yet a layer count (review round 10, finding 9). `2.5`
+    # truncated to 2 and stamped a mirror claiming a depth its source never
+    # had; `0` and `-3` stamped an impossible one; `nan`/`inf` reach `int()`
+    # and raise a bare ValueError/OverflowError past every typed refusal
+    # (the Swift twin TRAPS there, which is why both engines check finiteness
+    # and integrality BEFORE converting). No upper bound is invented: no other
+    # sidecar reader on either engine bounds this key above.
+    if (not math.isfinite(layer_count_value)
+            or float(layer_count_value) != int(float(layer_count_value))
+            or layer_count_value < 1):
+        raise PoleMirrorError(
+            "unreadableArtifact",
+            _layer_count_reason(base, layer_count_value),
             "pass the base path of a vector artifact — <runDir>/<name> with "
             "no extension")
     layer_count = int(layer_count_value)

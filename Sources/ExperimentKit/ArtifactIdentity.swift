@@ -94,15 +94,31 @@ public enum ArtifactIdentity {
     /// (`runs/<run>/<leaf>`) — the shape the Python engine serializes
     /// (`os.path.relpath(artifact.id, root_dir)`, `promote.py`) and the only
     /// shape that survives moving the artifact to another machine. A
-    /// reference outside the workspace (or already relative) passes through
-    /// untouched: it names something this rule cannot make portable, and
-    /// rewriting it would only hide that.
+    /// reference outside the workspace passes through untouched: it names
+    /// something this rule cannot make portable, and rewriting it would only
+    /// hide that.
+    ///
+    /// An ALREADY-relative reference is normalized LEXICALLY (review round 10,
+    /// finding 7) rather than passed through: `prompts/x`, `./prompts/x` and
+    /// `prompts/a/../x` name one file and used to compare as three, so a
+    /// re-declaration that spelled the path the other way read as a different
+    /// file and could drop the hash pin already standing beside it. The
+    /// normalization strips `./`, collapses empty segments, and resolves `..`
+    /// against the components to its left — no filesystem is touched, because
+    /// a relative reference has no root to resolve against here and a lexical
+    /// answer must not depend on what happens to exist. A reference that
+    /// ESCAPES the root (`../outside`, or `a/../../outside`) is returned
+    /// verbatim: `..` past the top cannot be resolved lexically without
+    /// inventing a root, and the same reasoning that leaves an outside-the-
+    /// workspace absolute path alone applies.
     ///
     /// Symlinks are handled the same way `canonical` handles them (macOS
     /// `/var` → `/private/var`): the verbatim prefix is tried first, then
     /// both sides with their containing directories symlink-resolved.
     public static func workspaceRelative(_ reference: String) -> String {
-        guard reference.hasPrefix("/") else { return reference }
+        guard reference.hasPrefix("/") else {
+            return lexicallyNormalizedRelative(reference)
+        }
         func tail(of path: String, under root: String) -> String? {
             let prefix = root.hasSuffix("/") ? root : root + "/"
             guard path.hasPrefix(prefix), path.count > prefix.count
@@ -127,6 +143,37 @@ public enum ArtifactIdentity {
             return relative
         }
         return reference
+    }
+
+    /// One relative reference reduced to its canonical spelling, purely by
+    /// walking components — never by asking the filesystem.
+    ///
+    /// Returns the input verbatim when it is empty, when it resolves to
+    /// nothing at all (`.`, `a/..`), or when a `..` walks off the top: those
+    /// are not spellings of a path under the root, and inventing one would be
+    /// the silent redirect this whole file refuses.
+    static func lexicallyNormalizedRelative(_ reference: String) -> String {
+        guard !reference.isEmpty else { return reference }
+        var stack: [String] = []
+        for segment in reference.split(separator: "/", omittingEmptySubsequences: true) {
+            switch segment {
+            case ".":
+                continue
+            case "..":
+                // A `..` with nowhere to go escapes the root: leave the whole
+                // reference exactly as written.
+                guard let last = stack.last, last != ".." else { return reference }
+                stack.removeLast()
+            default:
+                stack.append(String(segment))
+            }
+        }
+        guard !stack.isEmpty else { return reference }
+        // A trailing separator is preserved: it is how a directory reference
+        // (`adapterDirectory`) is spelled, and this rule normalizes spelling,
+        // not shape.
+        return stack.joined(separator: "/")
+            + (reference.hasSuffix("/") ? "/" : "")
     }
 
     /// The comparison key for "are these the same artifact?" — resolved, so

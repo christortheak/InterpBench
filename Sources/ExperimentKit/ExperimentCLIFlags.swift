@@ -134,23 +134,54 @@ public struct ExperimentCLIUsageError: Error, CustomStringConvertible, Equatable
     /// The verb that DOES own this flag, when the table declares one
     /// (`ExperimentCLIVerbSpec.redirectedFlags`). nil for an ordinary typo.
     public let ownedBy: String?
+    /// A DECLARED value flag that arrived with no value: the metavar it wanted
+    /// (`CLIFlagVocabulary.metavar`). nil for an ordinary undeclared-flag
+    /// error, which is what every other field describes.
+    public let expectedValue: String?
+    /// The token standing where the value should have been — another of this
+    /// verb's own declared flags, which cannot be a value. nil when the flag
+    /// simply ended the argument list.
+    public let followedBy: String?
+    /// The verb's one-line synopsis, the runnable repair for a missing value
+    /// (the flag list alone would answer a question nobody asked: the flag was
+    /// right, its value was absent).
+    public let usage: String?
 
     public init(
         flag: String, verb: String, declaredFlags: [String],
-        ownedBy: String? = nil
+        ownedBy: String? = nil, expectedValue: String? = nil,
+        followedBy: String? = nil, usage: String? = nil
     ) {
         self.flag = flag
         self.verb = verb
         self.declaredFlags = declaredFlags
         self.ownedBy = ownedBy
+        self.expectedValue = expectedValue
+        self.followedBy = followedBy
+        self.usage = usage
     }
 
     public var reason: String {
+        if let expectedValue {
+            let head = "flag \(flag) expects a value (\(expectedValue))"
+            guard let followedBy else { return head + " and none followed" }
+            return head + " and none followed — the next token \(followedBy) "
+                + (declaredFlags.contains(followedBy)
+                    ? "is another \(verb) flag, not a value"
+                    : "is flag-shaped, not a value")
+        }
         guard let ownedBy else { return "\(verb) does not accept \(flag)" }
         return "\(flag) is \(ownedBy)'s flag, not \(verb)'s"
     }
 
+    /// The envelope's failure code. A declared flag missing its value is not
+    /// an unknown flag — the caller spelled it right — so it says so.
+    public var code: String {
+        expectedValue == nil ? Self.code : "missingFlagValue"
+    }
+
     public var repairAction: String {
+        if let usage, expectedValue != nil { return usage }
         if let ownedBy {
             // The owner FIRST: the caller's intent was right and only aimed
             // one verb over, so the runnable answer is the other command, not
@@ -738,11 +769,17 @@ public enum ExperimentCLIParser {
             }
 
             if token == outFlag, !spec.ownsOutFlag {
+                // `--out` is a declared value flag like any other, so it
+                // refuses through the SAME missing-value mechanism (review
+                // round 10, finding 5) rather than a bespoke sentence. It
+                // kept its own before that mechanism existed. Its CONDITION is
+                // deliberately stricter than the general one: the envelope's
+                // destination is a file path this parser writes to, so any
+                // flag-shaped token there is refused rather than taken at its
+                // word.
                 guard let next, !next.hasPrefix("--") else {
-                    throw ExperimentCLIUsageError(
-                        flag: "\(outFlag) (needs a file path)",
-                        verb: spec.label,
-                        declaredFlags: spec.declaredFlags)
+                    throw missingValueError(
+                        flag: token, next: next, spec: spec)
                 }
                 outPath = next
                 index += 2
@@ -756,16 +793,37 @@ public enum ExperimentCLIParser {
             }
 
             if spec.valueFlags.contains(token) {
-                kept.append(token)
-                // A value flag with nothing after it stays the verb's own
-                // problem (it already answers with `usage:`), so the token is
-                // kept and the loop ends naturally.
-                if let next {
-                    kept.append(next)
-                    index += 2
-                } else {
-                    index += 1
+                // A declared value flag with NO value is a malformed
+                // invocation, refused here (review round 10, finding 5).
+                //
+                // This used to be left to the verb "which already answers with
+                // `usage:`" — and the verbs that read their flags through the
+                // strict reader do. The verbs that read through the tolerant
+                // `flag()` helper see nil instead and fall back to a DEFAULT:
+                // `experiment set-sampling <name> --temperature` wrote the
+                // sampling protocol at defaults and reported success, which is
+                // the flag-that-exits-0-having-done-nothing class this parser
+                // exists to close. Refusing at the shared preprocessor fixes it
+                // for every verb at once and cannot be forgotten by a new one.
+                //
+                // TWO shapes are missing values, and only two:
+                //   * end of args — `--temperature` was the last token;
+                //   * the next token is another DECLARED flag of this verb —
+                //     `--temperature --json` ate `--json` as the temperature.
+                // Everything else parses, deliberately: an explicit empty
+                // token (`--description ""`) is a VALUE, and several verbs
+                // accept it as their clear affordance, so it must reach them.
+                // A next token that merely looks flag-shaped but is NOT this
+                // verb's flag also parses — it is a value the verb will judge
+                // (and an undeclared flag typed in a value slot is the value
+                // the caller typed, not a flag we may reinterpret).
+                guard let next, !isDeclaredFlag(next, spec: spec) else {
+                    throw missingValueError(
+                        flag: token, next: next, spec: spec)
                 }
+                kept.append(token)
+                kept.append(next)
+                index += 2
                 continue
             }
 
@@ -778,5 +836,31 @@ public enum ExperimentCLIParser {
         return ExperimentCLIInvocation(
             namespace: namespace, verb: spec.verb.isEmpty ? nil : spec.verb,
             args: kept, json: json, outPath: outPath, deprecations: deprecations)
+    }
+
+    /// Whether a token is one of THIS verb's flags — the vocabulary the
+    /// missing-value check consults so it can tell `--temperature --json`
+    /// (a swallowed flag) from `--temperature --2` (an odd but genuine value).
+    ///
+    /// `declaredFlags` is the whole surface: the verb's own boolean and value
+    /// flags plus the shared `--help`/`--json`/`--out`, which is exactly the
+    /// set this loop would otherwise have consumed as flags one token later.
+    static func isDeclaredFlag(
+        _ token: String, spec: ExperimentCLIVerbSpec
+    ) -> Bool {
+        token.hasPrefix("--") && spec.declaredFlags.contains(token)
+    }
+
+    /// THE missing-value refusal, so `--out` and every other declared value
+    /// flag answer the same event with the same sentence. `next` is the token
+    /// that stood where the value should have been, or nil at end-of-args.
+    static func missingValueError(
+        flag: String, next: String?, spec: ExperimentCLIVerbSpec
+    ) -> ExperimentCLIUsageError {
+        ExperimentCLIUsageError(
+            flag: flag, verb: spec.label, declaredFlags: spec.declaredFlags,
+            expectedValue: CLIFlagVocabulary.metavar(flag, verb: spec.label),
+            followedBy: next,
+            usage: ExperimentCLIHelp.synopsis(spec))
     }
 }

@@ -191,6 +191,50 @@ public final class SteerLabWebServer: Sendable {
         return object.keys.filter { !protocolBodyKeys.contains($0) }.sorted()
     }
 
+    /// The protocol route's VALUE gates, as one decision — the sentence to
+    /// answer with, or nil when every declared value is one the manifest can
+    /// hold. Factored out beside `unknownProtocolBodyKeys` for the same
+    /// reason: the decision is testable without a live ChatService.
+    ///
+    /// These run BEFORE anything is applied, because `saveProtocol` reports
+    /// its own refusals as panel notes and this route cannot see them — so a
+    /// bad value passed through would answer ok while writing nothing, the
+    /// silent loss the key check refuses. Every sentence is the STORE
+    /// setter's own (`ExperimentStore.setSamplingProtocol`), so the route and
+    /// the verb say the same thing to the same body.
+    ///
+    /// `temperature` and `maxTokens` used to be assigned unchecked while
+    /// their two neighbours were gated (review round 10, finding 3): a
+    /// negative temperature or a zero maxTokens reached the panel fields, and
+    /// the note the store would have raised went nowhere.
+    static func protocolBodyValueProblem(
+        temperature: Double? = nil, maxTokens: Int? = nil,
+        samplesPerItem: Int? = nil, seedPolicy: String? = nil,
+        exclusionRules: [ExclusionRule]? = nil
+    ) -> String? {
+        if let temperature, !(temperature.isFinite && temperature >= 0) {
+            return "temperature must be a non-negative number — got "
+                + "\(temperature)"
+        }
+        if let maxTokens, maxTokens < 1 {
+            return "maxTokens must be a positive integer — got \(maxTokens)"
+        }
+        if let samplesPerItem, samplesPerItem < 1 {
+            return "samplesPerItem must be ≥ 1 — got \(samplesPerItem)"
+        }
+        if let seedPolicy, !seedPolicy.isEmpty,
+            !ExperimentStore.knownSeedPolicies.contains(seedPolicy)
+        {
+            return "unknown seedPolicy '\(seedPolicy)' — known: "
+                + ExperimentStore.knownSeedPolicies.joined(separator: ", ")
+        }
+        if let exclusionRules {
+            let problems = ExclusionEngine.violations(exclusionRules)
+            if !problems.isEmpty { return problems.joined(separator: "; ") }
+        }
+        return nil
+    }
+
     private static func queryValue(_ name: String, in path: String) -> String? {
         guard let components = URLComponents(string: "http://localhost\(path)") else { return nil }
         return components.queryItems?.first { $0.name == name }?.value
@@ -757,27 +801,15 @@ public final class SteerLabWebServer: Sendable {
                         + "; nothing was written")
             }
             guard let request = decode(Body.self, from: body) else { return .error("bad body") }
-            // Value gates BEFORE anything is applied: `saveProtocol` reports
-            // its refusals as panel notes, which this route cannot see, so
-            // an out-of-vocabulary value passed through would answer ok
-            // while writing nothing — the same silent loss the key check
-            // above refuses. Sentences are the store setters' own.
-            if let samples = request.samplesPerItem, samples < 1 {
-                return .error("samplesPerItem must be ≥ 1 — got \(samples)")
-            }
-            if let policy = request.seedPolicy, !policy.isEmpty,
-                !ExperimentStore.knownSeedPolicies.contains(policy)
+            // Value gates BEFORE anything is applied (see
+            // `protocolBodyValueProblem`).
+            if let problem = protocolBodyValueProblem(
+                temperature: request.temperature, maxTokens: request.maxTokens,
+                samplesPerItem: request.samplesPerItem,
+                seedPolicy: request.seedPolicy,
+                exclusionRules: request.exclusionRules)
             {
-                return .error(
-                    "unknown seedPolicy '\(policy)' — known: "
-                        + ExperimentStore.knownSeedPolicies
-                            .joined(separator: ", "))
-            }
-            if let rules = request.exclusionRules {
-                let problems = ExclusionEngine.violations(rules)
-                guard problems.isEmpty else {
-                    return .error(problems.joined(separator: "; "))
-                }
+                return .error(problem)
             }
             if let description = request.description {
                 service.experiments.protocolDescription = description

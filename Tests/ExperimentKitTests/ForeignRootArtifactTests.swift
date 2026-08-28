@@ -121,13 +121,65 @@ struct ForeignRootArtifactTests {
 
     /// Outside the workspace there is nothing to relativize against — the
     /// reference passes through untouched rather than being disguised as
-    /// portable. Already-relative references are untouched by construction.
+    /// portable.
     @Test func pathsOutsideTheWorkspacePassThroughUnchanged() throws {
         try withWorkspace { _ in
             let foreign = "/scratch/u/other-workspace/runs/r/fear"
             #expect(ArtifactIdentity.workspaceRelative(foreign) == foreign)
             #expect(ArtifactIdentity.workspaceRelative("runs/r/fear")
                     == "runs/r/fear")
+        }
+    }
+
+    /// Review round 10, finding 7: an already-relative reference is NORMALIZED
+    /// rather than passed through. `prompts/x`, `./prompts/x` and
+    /// `prompts/a/../x` name one file and used to compare as three, so a
+    /// re-declaration spelling the path the other way read as a different file
+    /// and could drop the hash pin standing beside it.
+    @Test func relativeReferencesAreLexicallyNormalized() throws {
+        try withWorkspace { workspace in
+            let canonical = "prompts/tasks/x.jsonl"
+            for spelling in [
+                "prompts/tasks/x.jsonl",
+                "./prompts/tasks/x.jsonl",
+                "prompts/tasks/./x.jsonl",
+                "prompts//tasks/x.jsonl",
+                "prompts/tasks/a/../x.jsonl",
+                "prompts/other/../tasks/x.jsonl",
+                "./prompts/./tasks/a/b/../../x.jsonl",
+            ] {
+                #expect(
+                    ArtifactIdentity.workspaceRelative(spelling) == canonical,
+                    "\(spelling) must normalize to \(canonical)")
+            }
+
+            // A `..` that walks off the TOP escapes the root: it cannot be
+            // resolved lexically without inventing one, so — like an absolute
+            // path outside the workspace — it is returned verbatim.
+            for escaping in [
+                "../outside/x", "a/../../outside/x", "../../x", "..",
+            ] {
+                #expect(ArtifactIdentity.workspaceRelative(escaping) == escaping)
+            }
+
+            // References that reduce to nothing, and the empty string, are
+            // returned as written for the same reason.
+            #expect(ArtifactIdentity.workspaceRelative(".") == ".")
+            #expect(ArtifactIdentity.workspaceRelative("a/..") == "a/..")
+            #expect(ArtifactIdentity.workspaceRelative("") == "")
+
+            // A trailing separator is SHAPE, not spelling: a directory
+            // reference (`adapterDirectory`) keeps it.
+            #expect(
+                ArtifactIdentity.workspaceRelative("./runs/r/adapter/")
+                    == "runs/r/adapter/")
+
+            // And the normalization agrees with `canonical`: three spellings,
+            // one resolved file.
+            plantVector(workspace, run: "r", leaf: "fear")
+            let resolved = ArtifactIdentity.canonical("runs/r/fear")
+            #expect(ArtifactIdentity.canonical("./runs/r/fear") == resolved)
+            #expect(ArtifactIdentity.canonical("runs/x/../r/fear") == resolved)
         }
     }
 }

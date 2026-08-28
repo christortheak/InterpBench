@@ -146,4 +146,47 @@ import Testing
         #expect(SteerLabWebServer.unknownProtocolBodyKeys(in: Data("[1]".utf8)).isEmpty)
         #expect(SteerLabWebServer.unknownProtocolBodyKeys(in: Data("nope".utf8)).isEmpty)
     }
+
+    /// Review round 10, finding 3: the route gated `samplesPerItem` and
+    /// `seedPolicy` and assigned `temperature`/`maxTokens` unchecked, so a
+    /// negative temperature or a zero maxTokens landed in the panel fields and
+    /// the store's note went nowhere. All four are gated, in the STORE
+    /// setter's own sentences.
+    @Test func temperatureAndMaxTokensAreGatedLikeTheirNeighbours() {
+        #expect(
+            SteerLabWebServer.protocolBodyValueProblem(temperature: -0.5)
+                == "temperature must be a non-negative number — got -0.5")
+        #expect(
+            SteerLabWebServer.protocolBodyValueProblem(
+                temperature: Double.nan) != nil)
+        #expect(
+            SteerLabWebServer.protocolBodyValueProblem(
+                temperature: Double.infinity) != nil)
+        #expect(
+            SteerLabWebServer.protocolBodyValueProblem(maxTokens: 0)
+                == "maxTokens must be a positive integer — got 0")
+        #expect(
+            SteerLabWebServer.protocolBodyValueProblem(maxTokens: -8)
+                == "maxTokens must be a positive integer — got -8")
+        // The neighbours still say what they always said.
+        #expect(
+            SteerLabWebServer.protocolBodyValueProblem(samplesPerItem: 0)
+                == "samplesPerItem must be ≥ 1 — got 0")
+        #expect(
+            SteerLabWebServer.protocolBodyValueProblem(seedPolicy: "diceRoll")?
+                .hasPrefix("unknown seedPolicy 'diceRoll' — known: ") == true)
+
+        // Valid values — including the boundaries — still write.
+        #expect(
+            SteerLabWebServer.protocolBodyValueProblem(
+                temperature: 0, maxTokens: 1, samplesPerItem: 1,
+                seedPolicy: "derivedSHA256") == nil)
+        #expect(
+            SteerLabWebServer.protocolBodyValueProblem(
+                temperature: 0.7, maxTokens: 512, samplesPerItem: 25) == nil)
+        // An absent field is not a bad one: nothing declared, nothing refused.
+        #expect(SteerLabWebServer.protocolBodyValueProblem() == nil)
+        #expect(SteerLabWebServer.protocolBodyValueProblem(seedPolicy: "") == nil)
+    }
+
 }

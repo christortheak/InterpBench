@@ -1000,6 +1000,14 @@ def _commit_no_replace(staged: str, dest: str) -> None:
 
     Raises ``FileExistsError`` when ``dest`` exists; leaves ``staged`` in place
     for the caller (here, ``_rollback`` plus the staging teardown) when it does.
+
+    BOTH-OR-NEITHER (review round 10, finding 8): ``dest`` is this call's
+    reservation, and a commit that cannot FINISH must not leave it standing.
+    Dropping the staging name is the last step, and it can fail on its own
+    (a read-only staging directory, an interrupt) — after ``dest`` has landed
+    and BEFORE ``_commit_one`` returns, so the member never reaches ``landed``
+    and ``_rollback`` never knew to undo it. The removal is therefore wrapped,
+    and a failure takes ``dest`` back out before it propagates.
     """
     try:
         os.link(staged, dest)
@@ -1025,7 +1033,14 @@ def _commit_no_replace(staged: str, dest: str) -> None:
                     os.remove(dest)
                 except OSError:
                     pass
-    os.remove(staged)
+    try:
+        os.remove(staged)
+    except BaseException:
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        raise
 
 
 def _rollback(landed: list[_Landed], created_dirs: list[str]) -> None:

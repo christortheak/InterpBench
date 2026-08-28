@@ -70,6 +70,25 @@ import Testing
             from: Data(contentsOf: base.appendingPathExtension("json")))
     }
 
+    /// The sidecar text with `layerCount`'s value replaced, whatever the
+    /// encoder's spacing, and nil when the key is not there. Text surgery
+    /// because the values under test (`NaN`, `Infinity`) cannot round-trip
+    /// through `JSONEncoder` — which is exactly why a sidecar can carry one
+    /// and the reader has to be ready for it.
+    static func replacingLayerCount(
+        in text: String, with literal: String
+    ) -> String? {
+        guard let key = text.range(of: "\"layerCount\"") else { return nil }
+        guard let colon = text[key.upperBound...].firstIndex(of: ":") else {
+            return nil
+        }
+        let valueStart = text.index(after: colon)
+        let terminator = text[valueStart...].firstIndex { $0 == "," || $0 == "}" }
+        guard let terminator else { return nil }
+        return text.replacingCharacters(
+            in: valueStart ..< terminator, with: literal)
+    }
+
     static func tensorBytes(at base: URL) throws -> Data {
         try Data(contentsOf: base.appendingPathExtension("safetensors"))
     }
@@ -317,6 +336,91 @@ import Testing
             }
             #expect(error.kind == .sourceNotFound)
             #expect(error.reason.contains(".safetensors PLUS its"))
+        }
+    }
+
+    /// Review round 10, finding 9: a NUMBER is not yet a layer count. `2.5`
+    /// truncated and stamped a mirror claiming a depth its source never had,
+    /// `0`/`-3` stamped an impossible one, and `NaN`/`inf` reached `Int(_:)`
+    /// — which TRAPS on this engine. Finiteness and integrality are checked
+    /// before the conversion, so nothing here can crash, and every case is a
+    /// typed refusal naming the value it read. Python twin:
+    /// `test_pole_mirror.py::test_layer_count_must_be_a_whole_positive_number`.
+    @Test func layerCountMustBeAWholePositiveNumber() throws {
+        // The non-finite values FIRST, against the pure predicate. `Int(_:)`
+        // traps on them, so the guard must decide before converting — and
+        // Foundation's `JSONDecoder` refuses the `NaN`/`Infinity` literals
+        // outright, so this branch is unreachable through a file on this
+        // engine and testable only here. (The Python twin's decoder accepts
+        // them, which is where the branch earns its keep; see
+        // `test_layer_count_must_be_a_whole_positive_number`.)
+        for (value, spelled) in [
+            (Double.nan, "NaN"), (Double.infinity, "Infinity"),
+            (-Double.infinity, "-Infinity"),
+        ] {
+            let problem = try #require(
+                PoleMirror.layerCountProblem(value, path: "runs/r/x"))
+            #expect(problem.contains("records layerCount \(spelled)"))
+            #expect(
+                problem.contains(
+                    "a steering-vector artifact's layer count is a whole "
+                        + "number of layers, 1 or more"))
+        }
+        #expect(PoleMirror.layerCountProblem(2, path: "runs/r/x") == nil)
+        #expect(PoleMirror.layerCountProblem(1, path: "runs/r/x") == nil)
+
+        // Every offending FINITE value, end to end through a real sidecar,
+        // and how the refusal spells it back.
+        let cases: [(String, String)] = [
+            ("2.5", "2.5"), ("0", "0"), ("-3", "-3"), ("-0.5", "-0.5"),
+        ]
+        for (literal, spelled) in cases {
+            try withTempDirectory { temp in
+                let source = try Self.writeArtifact(
+                    into: temp.appending(component: "src"))
+                // Rewrite just `layerCount`, in the TEXT: `NaN` and the
+                // infinities are not encodable by `JSONEncoder`, yet a
+                // hand-edited or foreign-engine sidecar can genuinely carry
+                // them, and Foundation's decoder reads them back as Double.
+                // (The store writes pretty-printed JSON, so the separator is
+                // matched rather than assumed.)
+                let sidecarURL = source.appendingPathExtension("json")
+                let text = try String(contentsOf: sidecarURL, encoding: .utf8)
+                let patched = try #require(
+                    Self.replacingLayerCount(in: text, with: literal),
+                    "no layerCount in the fixture sidecar")
+                try patched.write(
+                    to: sidecarURL, atomically: true, encoding: .utf8)
+
+                let error = try refusal {
+                    try PoleMirror.mirrorPoles(
+                        artifact: source, concept: Self.mirrorConcept,
+                        into: temp.appending(component: "out"))
+                }
+                #expect(error.kind == .unreadableArtifact)
+                #expect(
+                    error.reason.contains("records layerCount \(spelled)"),
+                    "\(literal): \(error.reason)")
+                #expect(
+                    error.reason.contains(
+                        "a steering-vector artifact's layer count is a whole "
+                            + "number of layers, 1 or more"))
+                // A refusal writes nothing.
+                #expect(
+                    !FileManager.default.fileExists(
+                        atPath: temp.appending(component: "out").path))
+            }
+        }
+
+        // …and a VALID artifact still mirrors, so the gate is not simply
+        // refusing everything.
+        try withTempDirectory { temp in
+            let source = try Self.writeArtifact(
+                into: temp.appending(component: "src"))
+            let out = temp.appending(component: "out")
+            let result = try PoleMirror.mirrorPoles(
+                artifact: source, concept: Self.mirrorConcept, into: out)
+            #expect(result.layerCount == 2)
         }
     }
 

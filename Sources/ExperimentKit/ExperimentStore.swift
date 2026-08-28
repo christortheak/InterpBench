@@ -3910,6 +3910,22 @@ public enum ExperimentStore {
                         + knownResponseFormats.joined(separator: "|")
                         + ">[,…]  (\"\" clears the declaration)")
             }
+            // CLEARING comes first, before the prompts-file guard and the
+            // read (review round 10, finding 10). Clearing derives nothing
+            // from the prompts — it removes a declaration — and requiring the
+            // pin to be present, resolvable, and loadable made `""` refuse in
+            // exactly the states that make clearing necessary: a stale scope
+            // left behind when the pin was dropped, a pin whose file has
+            // moved, a pin that drifted. The instrument's own scope was then
+            // unremovable except by hand-editing the manifest, which is the
+            // one repair this store exists to make unnecessary. DECLARING
+            // (non-empty) still requires the pin and still reads it: a scope
+            // is a selection over those rows and cannot be checked without
+            // them.
+            guard !responseFormats.isEmpty else {
+                manifest.outcomeInstrumentScope = nil
+                return
+            }
             guard let file = manifest.taskPromptsFile, !file.isEmpty else {
                 throw ExperimentError(
                     reason: "declare the task prompts first ('steerlab-cli "
@@ -3920,10 +3936,6 @@ public enum ExperimentStore {
             let data = try Data(contentsOf: resolveProjectPath(file))
             let document = try TaskPromptsDocument.load(data)
             let items = document.responseFormatItems
-            guard !responseFormats.isEmpty else {
-                manifest.outcomeInstrumentScope = nil
-                return
-            }
             let pin = ResponseFormat.Scope.pin(
                 responseFormats: responseFormats, items: items)
             // A scope that selects NOTHING is refused at the declaration,

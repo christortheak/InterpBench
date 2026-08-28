@@ -669,7 +669,8 @@ public enum SweepSelectionRule {
             // sweep refuses here, before the model loads.
             if let problem = ExperimentTasks.localJudgeSlotProblem(
                 panel, studyModelID: manifest.modelID,
-                studyRevision: manifest.modelRevision)
+                studyRevision: manifest.modelRevision,
+                studyDtype: manifest.dtype)
             {
                 throw ExperimentError(reason: problem)
             }

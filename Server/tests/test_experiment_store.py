@@ -114,6 +114,7 @@ def test_set_protocol_gates_the_sampling_protocol_fields(tmp_path):
     assert d["samplesPerItem"] == 25  # the earlier declaration survives
     # A JSON null clears like an absent key on decode, so None passes.
     es.set_protocol("s", {"seedPolicy": None}, root=root)
+    assert "seedPolicy" not in es.load_raw("s", root)
     # Valid exclusion rules land verbatim; an unknown rule id refuses with
     # the engine's own wording and the Mac verb named in the repair.
     d = es.set_protocol(
@@ -127,6 +128,51 @@ def test_set_protocol_gates_the_sampling_protocol_fields(tmp_path):
                         root=root)
     assert "not recognized" in str(exc.value)
     assert "set-exclusions" in exc.value.repair_action
+
+
+def test_an_explicit_json_null_clears_a_protocol_field(tmp_path):
+    """Review round 10, finding 1. Every value gate reads
+    ``fields.get(k) is not None``, so a null passes them all ungated — and the
+    persistence loop used to WRITE it. ``Manifest.from_dict`` then raised
+    ``TypeError`` on the next load and every later verb died before it could
+    name the problem, verify included: a client verb that BRICKS the manifest.
+
+    The site's own comment claimed "a JSON null clears like an absent key on
+    decode"; the loop now makes that claim true by popping the key, which is
+    also the symmetric affordance to the Swift writers' ``""`` clears."""
+    from steerlab_server.experiment.manifest import Manifest
+
+    root = str(tmp_path)
+    es.create("s", model_id="org/m", root=root)
+    written = {"temperature": 0.7, "maxTokens": 1024, "samplesPerItem": 25,
+               "seedPolicy": "derivedSHA256", "promptMode": "chatAssistant",
+               "exclusionRules": [{"rule": "unparseableEndpoint"}],
+               "outcomeInstruments": ["sampledText"]}
+    es.set_protocol("s", dict(written), root=root)
+    for key in written:
+        # Write a value, null it, and the key is GONE — not present as null.
+        assert key in es.load_raw("s", root), key
+        d = es.set_protocol("s", {key: None}, root=root)
+        assert key not in d, key
+        assert key not in es.load_raw("s", root), key
+        # …and the manifest still loads, which is the whole point: the
+        # bricked state can no longer be produced.
+        Manifest.from_dict(es.load_raw("s", root))
+
+    # Nulling every field at once, on a fresh draft, is the same story.
+    es.create("t", model_id="org/m", root=root)
+    es.set_protocol("t", dict(written), root=root)
+    d = es.set_protocol("t", {key: None for key in written}, root=root)
+    assert not (set(written) & set(d))
+    manifest = Manifest.from_dict(es.load_raw("t", root))
+    assert manifest.temperature is None or manifest.temperature is not False
+    # Nulling a key that was never there is a no-op, not a KeyError.
+    es.set_protocol("t", {"temperature": None}, root=root)
+    assert "temperature" not in es.load_raw("t", root)
+    # An unknown key is still refused BEFORE any of this — a null does not
+    # buy a way past the vocabulary.
+    with pytest.raises(es.ExperimentStoreError):
+        es.set_protocol("t", {"notAField": None}, root=root)
 
 
 def test_freeze_requires_revision_without_force(tmp_path):

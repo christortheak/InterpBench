@@ -1647,6 +1647,56 @@ def test_the_linkless_commit_leaves_no_short_file_behind(adapter, service,
         assert got.read() == want.read()
 
 
+def test_a_commit_that_cannot_drop_its_staging_name_takes_the_destination_back(
+        adapter, service, monkeypatch):
+    """Review round 10, finding 8 — the invariant held in all three mirrors of
+    ``_commit_no_replace`` (``steering.pole_mirror``,
+    ``experiment.bundles``, here).
+
+    THIS mirror was already safe, and deliberately so: its last step goes
+    through ``_unlink_if_reserved``, which reports a stranger on the staging
+    name by RETURNING False rather than raising. The guard is written anyway
+    so all three read alike, and this test pins the OUTCOME the other two now
+    share — a commit that cannot finish does not leave its destination
+    standing.
+    """
+    _job_id, meta = _evidence_bearing_job(service)
+    destination = os.path.join(str(service["tmp"]), "home", "guarded.tar.gz")
+
+    real_unlink = runner_api._unlink_if_reserved
+    fired = {"guard": False, "interrupt": False}
+
+    def failing_on_the_staging_drop(path, reserved):
+        # The staging drop is the call made while the DESTINATION is already
+        # landed. Anything before it is an ordinary cleanup and must work.
+        if path != destination and os.path.exists(destination):
+            fired["interrupt"] = True
+            raise KeyboardInterrupt("interrupted between commit and cleanup")
+        if path == destination and fired["interrupt"]:
+            fired["guard"] = True
+        return real_unlink(path, reserved)
+
+    monkeypatch.setattr(runner_api, "_unlink_if_reserved",
+                        failing_on_the_staging_drop)
+    with pytest.raises(KeyboardInterrupt):
+        adapter.download_bundle(remote_path=meta["bundlePath"],
+                                expected_sha256=meta["bundleSha256"],
+                                destination=destination)
+    monkeypatch.undo()
+    assert fired["interrupt"], "the staging drop was never reached"
+    assert fired["guard"], \
+        "the both-or-neither guard never ran on the landed destination"
+    assert not os.path.exists(destination), \
+        "a commit that could not finish left its destination standing"
+
+    # …and the ordinary path still publishes.
+    adapter.download_bundle(remote_path=meta["bundlePath"],
+                            expected_sha256=meta["bundleSha256"],
+                            destination=destination)
+    with open(destination, "rb") as got, open(meta["bundlePath"], "rb") as want:
+        assert got.read() == want.read()
+
+
 # =============================================================================
 # 10. The runner URL is NORMALIZED at the boundary
 # =============================================================================

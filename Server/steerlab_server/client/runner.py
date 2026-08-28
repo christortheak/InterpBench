@@ -1378,10 +1378,27 @@ def _commit_no_replace(staged, temp_path: str, destination: str) -> None:
     ``staged`` itself, so there the published bytes are the verified inode's
     by construction.
 
+    BOTH-OR-NEITHER (review round 10, finding 8, applied to all three mirrors
+    of this primitive): ``destination`` is this call's reservation, and a
+    commit that cannot FINISH must not leave it standing. Dropping the staging
+    name is the last step; here it goes through ``_unlink_if_reserved``, which
+    already reports a stranger on the name by RETURNING False rather than
+    raising — deliberately, per the note at the call — so this mirror was
+    never able to strand a landed destination the way its twins could. The
+    guard is written anyway, and takes the destination back out if that last
+    step raises at all (an interrupt is the only way left): three mirrors of
+    one primitive hold one invariant, visibly, or the next reader has to
+    re-derive which of them is the safe one.
+
     Raises ``FileExistsError`` when ``destination`` exists; leaves
     ``temp_path`` in place for the caller to clean up when it does.
     """
     reserved = os.fstat(staged.fileno())
+    # The inode this call PUBLISHED under the destination name — the staged
+    # one on the hardlink path, the freshly reserved one on the copy path.
+    # The both-or-neither guard at the end removes the destination only while
+    # it still names this, never a stranger that arrived afterwards.
+    published_id = reserved
     try:
         os.link(temp_path, destination)
     except FileExistsError:
@@ -1394,6 +1411,7 @@ def _commit_no_replace(staged, temp_path: str, destination: str) -> None:
         # something that arrived on the name afterwards
         # (:func:`_unlink_if_reserved`).
         landing_id = os.fstat(handle_fd)
+        published_id = landing_id
         # From here the destination NAME exists, so every exit from this block
         # is accounted for in a `finally`: a copy that died half way (or an
         # `os.fdopen` that never handed the descriptor over) must not leave a
@@ -1447,4 +1465,11 @@ def _commit_no_replace(staged, temp_path: str, destination: str) -> None:
     # deleted here on an otherwise SUCCESSFUL download. One helper, both
     # branches. A stranger is left in place: a leftover partial is
     # recoverable, somebody else's deleted file is not.
-    _unlink_if_reserved(temp_path, reserved)
+    try:
+        _unlink_if_reserved(temp_path, reserved)
+    except BaseException:
+        # The destination is this call's reservation and the commit did not
+        # finish: it comes back out (only while it still names the inode this
+        # call published) before the failure propagates.
+        _unlink_if_reserved(destination, published_id)
+        raise

@@ -222,6 +222,120 @@ migration that rewrites frozen bytes.
 
 ### Fixed
 
+- **An explicit JSON null CLEARS a protocol field instead of bricking the
+  manifest.** The client's `set-protocol` gates every sampling field with
+  `is not None`, so a null passed them all ungated — and the persistence loop
+  then WROTE it. `Manifest.from_dict` raises `TypeError` on a null
+  `temperature`, so every later verb died before it could name the problem,
+  `verify` included: one client call left a draft that no verb could read.
+  The loop now pops the key, which is what the site's own comment always
+  claimed ("a JSON null clears like an absent key on decode") and what makes
+  the gates above it sound. It is also the symmetric affordance — the Swift
+  writers clear with `""`, the client clears with `--set temperature=null`,
+  and both land on a key that is simply absent (review round 10, F1).
+
+- **A local sweep judge cannot pin a dtype the study never loads.** `--judge-pin
+  <name>=<revision>[:<dtype>]` made a judge's precision declarable, but the
+  one-model-slot rule compared only model and revision. A same-model judge
+  pinned to a different dtype judged through the container the sweep already
+  held — at the STUDY's precision — while `resolvedJudges` carried its own
+  dtype into the provenance: the stamp-says-what-never-ran shape the revision
+  check was added to close, one field over. The rule now refuses at sweep
+  start, names both dtypes, and offers the two repairs (drop the judge's dtype,
+  or use a claude judge). Comparison is canonical, so `bf16` and `bfloat16` are
+  one dtype; a judge that declares NO dtype inherits the study's and never
+  trips it (review round 10, F2).
+
+- **The Mac's HTTP protocol route gates `temperature` and `maxTokens`.** The
+  route checked `samplesPerItem` and `seedPolicy` and assigned their two
+  neighbours unchecked, so a negative temperature or a zero `maxTokens`
+  reached the panel fields while the note `saveProtocol` would have raised
+  went nowhere — the route answering ok over a declaration the store refuses.
+  All four now share one decision, in the store setter's own sentences, so the
+  route and `experiment set-sampling` say the same thing to the same body
+  (review round 10, F3).
+
+- **The submit-time engine-lag advisory can see a development checkout.** The
+  advisory read the payload's identity from `deployment-manifest.json` alone
+  — and in developer mode the payload root IS the checkout, which has no
+  manifest. The identity came back nil and the advisory never fired: it was
+  structurally silent for exactly the payload shape of the 2026-08-27
+  stale-engine incident it was written for. It now falls back to the dev
+  checkout's git stamp through the same `devPayloadStamp` the status path
+  uses — no second mechanism — and unknown still stays nil, because an
+  advisory is never invented (review round 10, F4).
+
+- **A value flag with no value is a malformed invocation, not a silent
+  default.** The shared preprocessor kept a declared value flag that arrived
+  without one, on the assumption that the verb would refuse it. The verbs
+  that read flags through the strict reader do; the ones that read through
+  the tolerant helper see nil and fall back to a DEFAULT — `experiment
+  set-sampling <name> --temperature` wrote the sampling protocol at defaults
+  and reported success. Both shapes now refuse at 64 before any verb runs:
+  a value flag at end-of-args, and one whose next token is another of this
+  verb's declared flags (`--temperature --json`, which ate the `--json`). The
+  refusal names the metavar and carries the verb's synopsis as the repair.
+  An explicit empty token is still a VALUE and still reaches the verb, because
+  several verbs use `""` as their clear affordance; so is a flag-shaped token
+  that is not one of this verb's flags (review round 10, F5).
+
+- **Clearing the matched-norm control and describing it in one breath is
+  refused.** `--control-margin ""` REMOVES the control block, and the clear
+  fired before anything else was looked at — so `--control-margin ""
+  --control-top-k 3` removed the control and discarded the width without a
+  word, the flag-that-exits-0-having-done-nothing class this verb refuses
+  everywhere else. Naming a sibling control flag alongside the clear now
+  refuses, in the style of the winner-scope-plus-width contradiction beside
+  it, and for the same reason: either half could be the one meant. A clear
+  alone still clears (review round 10, F6).
+
+- **Already-relative artifact references are normalized instead of passed
+  through.** `workspaceRelative` relativized absolute paths and returned
+  anything else verbatim, so `prompts/x`, `./prompts/x` and `prompts/a/../x`
+  named one file and compared as three — and a re-declaration that spelled the
+  path the other way read as a different file, which can drop the hash pin
+  standing beside it. Relative references are now normalized LEXICALLY:
+  leading `./` stripped, empty segments collapsed, `..` resolved against the
+  components to its left, and no filesystem touched. A reference that escapes
+  the root (`../outside`) is returned verbatim, for the same reason an
+  outside-the-workspace absolute path is (review round 10, F7).
+
+- **A commit that cannot finish takes its destination back out.**
+  `_commit_no_replace` lands the destination and THEN drops the staging name;
+  a failure in that last step propagated with the destination in place, and
+  the callers' cleanup owns the temporaries, not the destination — a
+  half-final artifact wearing the final name, which is the state
+  `destinationOccupied` then refuses to repair. In `experiment.bundles` it was
+  sharper still: the failure happens inside `_commit_one`, before the member
+  reaches `landed`, so `_rollback` never knew the file was there. The
+  staged-removal is now guarded in all three mirrors of the primitive
+  (`steering.pole_mirror`, `experiment.bundles`, `client.runner` — the
+  docstrings' own rule that a change to any belongs in all), and the pole
+  mirror's caller keeps its both-or-neither: a promotion whose sidecar commit
+  fails takes back the vectors file it already landed. The Swift twin commits
+  with `moveItem`, an atomic rename with no separate cleanup step, so it has
+  no such window (review round 10, F8).
+
+- **A sidecar's `layerCount` must be a whole number of layers.** Both engines
+  checked that the value was a NUMBER and then converted it: `2.5` truncated
+  and stamped a mirror claiming a depth its source never had, `0` and `-3`
+  stamped an impossible one, and a non-finite value reached the conversion —
+  a bare `ValueError`/`OverflowError` past every typed refusal on the server,
+  and a TRAP on the Mac. Finiteness, integrality and `≥ 1` are now checked
+  before any conversion, on both engines, with the offending value named in
+  the refusal. No upper bound was invented: no other sidecar reader on either
+  engine bounds this key above (review round 10, F9).
+
+- **`set-instrument-scope ""` clears a stale scope even when the prompts pin
+  is broken.** The task-prompts guard and the file read ran before the
+  empty-formats branch, so clearing refused in exactly the states that make
+  clearing necessary: no pin at all, a pin whose file has moved, a pin that
+  drifted. A stale scope was then unremovable except by hand-editing the
+  manifest — the one repair this store exists to make unnecessary. Clearing
+  derives nothing from the prompts and now runs first; DECLARING a non-empty
+  scope still requires the pin and still reads it, because a scope is a
+  selection over those rows (review round 10, F10).
+
 - **A template-pair reader's score is a relative endpoint, and the docstring
   no longer claims otherwise.** `score_texts` / `scoreTexts` documented T+ as
   "the rendering the probe's center and scale were calibrated on". For an

@@ -327,6 +327,79 @@ import Testing
         }
     }
 
+    /// Clearing needs no prompts pin — it derives nothing (review round 10,
+    /// finding 10).
+    ///
+    /// The prompts-file guard and the file read used to precede the empty
+    /// branch, so `""` refused in exactly the three states that make clearing
+    /// necessary: no pin at all, a pin whose file is gone, and a pin that
+    /// drifted. A stale scope was then unremovable except by hand-editing the
+    /// manifest. DECLARING still requires the pin, which the last case here
+    /// holds still.
+    @Test func theEmptyStringClearsEvenWhenThePromptsPinIsBroken() async throws {
+        try await withTempRoot { _ in
+            // (a) No prompts pin at all — nothing to clear yet, but the verb
+            // must not refuse the request to clear.
+            try draft("nopin")
+            let unpinned = await invoke(["set-instrument-scope", "nopin", ""])
+            #expect(unpinned.envelope.state == .ready)
+            #expect(unpinned.envelope.exitCode == 0)
+            #expect(
+                try ExperimentStore.load(name: "nopin")
+                    .outcomeInstrumentScope == nil)
+
+            // (b) A scope declared against a real file, then the FILE goes
+            // missing. This is the state the fix exists for: a pinned path
+            // that no longer resolves, and a scope still standing.
+            try draft("missing")
+            let file = try plantMixedPrompts("prompts/tasks/gone.jsonl")
+            #expect(await invoke(["pin-prompts", "missing", file]).exitCode == 0)
+            #expect(
+                await invoke(["set-instrument-scope", "missing", "label"])
+                    .exitCode == 0)
+            #expect(
+                try ExperimentStore.load(name: "missing")
+                    .outcomeInstrumentScope != nil)
+            try FileManager.default.removeItem(
+                at: ExperimentStore.resolveProjectPath(file))
+            let cleared = await invoke(["set-instrument-scope", "missing", ""])
+            #expect(cleared.envelope.state == .ready)
+            #expect(cleared.envelope.exitCode == 0)
+            #expect(
+                try ExperimentStore.load(name: "missing")
+                    .outcomeInstrumentScope == nil)
+
+            // (c) DRIFT — the pinned file's bytes changed under the scope. The
+            // clear still lands.
+            try draft("drifted")
+            let drifting = try plantMixedPrompts("prompts/tasks/drift.jsonl")
+            #expect(
+                await invoke(["pin-prompts", "drifted", drifting]).exitCode == 0)
+            #expect(
+                await invoke(["set-instrument-scope", "drifted", "label"])
+                    .exitCode == 0)
+            try #"{"id":"only","text":"?","options":["A","B"],"target":"A","responseFormat":"json"}"#
+                .appending("\n")
+                .write(
+                    to: ExperimentStore.resolveProjectPath(drifting),
+                    atomically: true, encoding: .utf8)
+            let afterDrift = await invoke(["set-instrument-scope", "drifted", ""])
+            #expect(afterDrift.envelope.exitCode == 0)
+            #expect(
+                try ExperimentStore.load(name: "drifted")
+                    .outcomeInstrumentScope == nil)
+
+            // …and DECLARING (non-empty) still requires the pin: the guard
+            // moved, it did not go.
+            let declaring = await invoke(
+                ["set-instrument-scope", "nopin", "label"])
+            #expect(declaring.envelope.exitCode != 0)
+            #expect(
+                declaring.envelope.message
+                    .contains("declare the task prompts first"))
+        }
+    }
+
     /// An unrecognised format would select nothing and pin "zero items" —
     /// `Scope.includes` is a raw string comparison. Refused at 64 with the
     /// vocabulary named, and nothing written.

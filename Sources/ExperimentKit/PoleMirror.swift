@@ -394,6 +394,23 @@ public enum PoleMirror {
                 reason: "'\(artifact.path)' is not a steering-vector artifact",
                 repairAction: basePathRepair)
         }
+        // A NUMBER is not yet a layer count (review round 10, finding 9).
+        // `Int(2.5)` truncated to 2 and stamped a mirror claiming a depth its
+        // source never had; `Int(0)`/`Int(-3)` stamped an impossible one; and
+        // `Int(Double.nan)` / `Int(.infinity)` TRAP — a crash, not a refusal,
+        // on a hostile or corrupt sidecar. Finiteness and integer-exactness
+        // are therefore checked BEFORE the conversion, and nothing here can
+        // trap. No upper bound is invented: no other sidecar reader on either
+        // engine bounds this key above, and a gate this file makes up alone
+        // would refuse artifacts every other reader accepts. Server twin: the
+        // same three conditions in `pole_mirror.mirror_poles`.
+        if let problem = layerCountProblem(
+            layerCountNumber, path: artifact.path)
+        {
+            throw MirrorError(
+                kind: .unreadableArtifact, reason: problem,
+                repairAction: basePathRepair)
+        }
         let layerCount = Int(layerCountNumber)
         // Which methods HAVE an opposite pole (see `mirrorableMethods`). This
         // gate is the reason the success message's validation-authoring note
@@ -605,6 +622,47 @@ public enum PoleMirror {
                 reason: destinationOccupiedReason(path: destination.path),
                 repairAction: destinationOccupiedRepair)
         }
+    }
+
+    /// Whether a sidecar's numeric `layerCount` is a layer count, as the
+    /// refusal sentence or nil.
+    ///
+    /// Pure, and separated from the read for two reasons: `Int(_:)` TRAPS on
+    /// a non-finite Double, so nothing may convert before this runs; and
+    /// Foundation's `JSONDecoder` refuses the `NaN`/`Infinity` literals
+    /// outright (that sidecar is "unreadable" one gate earlier), which makes
+    /// the non-finite branch unreachable through a JSON file on this engine
+    /// and testable only here. The Python twin's decoder DOES accept them, so
+    /// the branch is load-bearing there — one rule, both engines, whichever
+    /// gate happens to see it first.
+    ///
+    /// No upper bound beyond what `Int` can hold is invented: no other
+    /// sidecar reader on either engine bounds this key above.
+    static func layerCountProblem(_ value: Double, path: String) -> String? {
+        guard value.isFinite, value == value.rounded(.towardZero), value >= 1,
+            value <= Double(Int.max)
+        else { return layerCountReason(path: path, value: value) }
+        return nil
+    }
+
+    /// A sidecar `layerCount` that is a number but not a layer count. The
+    /// value is NAMED — a refusal about a field has to say what it read.
+    /// Server twin: `pole_mirror._layer_count_reason`.
+    public static func layerCountReason(path: String, value: Double) -> String {
+        let spelled: String
+        if value.isNaN {
+            spelled = "NaN"
+        } else if value.isInfinite {
+            spelled = value < 0 ? "-Infinity" : "Infinity"
+        } else if value == value.rounded(.towardZero),
+            abs(value) < 1e15
+        {
+            spelled = String(Int(value))
+        } else {
+            spelled = String(value)
+        }
+        return "'\(path)' records layerCount \(spelled) — a steering-vector "
+            + "artifact's layer count is a whole number of layers, 1 or more"
     }
 
     public static func destinationOccupiedReason(path: String) -> String {

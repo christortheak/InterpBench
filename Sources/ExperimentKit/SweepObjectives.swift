@@ -41,9 +41,19 @@ extension ExperimentTasks {
     /// weights while `resolvedJudges` carried its own revision forward into
     /// the provenance. One slot cannot honour two pins, so this is a refusal
     /// at sweep start, not a silent substitution.
+    ///
+    /// The DTYPE is part of the same identity (review round 10, finding 2):
+    /// `--judge-pin <name>=<revision>[:<dtype>]` makes a judge's load dtype
+    /// declarable, and the held container was loaded at the STUDY's dtype. A
+    /// judge pinning a different one would have judged in the study's
+    /// precision while `resolvedJudges` carried its own dtype into the
+    /// provenance — the same stamp-says-what-never-ran shape as the revision
+    /// case, one field over. A judge that declares NO dtype inherits the
+    /// study's (`resolvedJudges` fills it in), so it never trips this.
+    /// Comparison is CANONICAL: `bf16` and `bfloat16` are one dtype.
     static func localJudgeSlotProblem(
         _ judges: [ResolvedJudge], studyModelID: String,
-        studyRevision: String?
+        studyRevision: String?, studyDtype: String? = nil
     ) -> String? {
         for judge in judges where judge.kind == "local" {
             if judge.model != studyModelID {
@@ -62,8 +72,54 @@ extension ExperimentTasks {
                     + "judge's revision to judge with the study's, or use a "
                     + "claude judge"
             }
+            if !dtypesAgree(judge.dtype, studyDtype) {
+                return "local judge '\(judge.name)' pins dtype "
+                    + "\(dtypeLabel(judge.dtype)) of the study model "
+                    + "'\(studyModelID)', which pins \(dtypeLabel(studyDtype)) "
+                    + "— the local sweep holds one loaded model and it is the "
+                    + "study's, so this judge would judge at a precision it "
+                    + "did not declare; drop the judge's dtype to judge with "
+                    + "the study's, or use a claude judge"
+            }
         }
         return nil
+    }
+
+    /// Whether a judge's declared dtype and the study's name the same load.
+    ///
+    /// A judge that declared NOTHING always agrees — that is the whole
+    /// meaning of "inherits the study's", and it is where this rule parts
+    /// company with the revision one above. An unpinned REVISION is a real
+    /// divergence (the container loads through the cache's own resolution,
+    /// which need not be the study's commit); an undeclared DTYPE is not,
+    /// because the container is loaded once, at the study's dtype, and a
+    /// judge with no dtype of its own has claimed nothing else.
+    ///
+    /// Comparison is canonical, so `bf16` and `bfloat16` agree. An
+    /// unrecognized spelling compares by its trimmed lowercase text rather
+    /// than collapsing to nil — an unloadable dtype is
+    /// `unknownJudgeDtypeProblem`'s refusal to make, not this one's, but it
+    /// must not read here as "no dtype".
+    private static func dtypesAgree(_ judge: String?, _ study: String?) -> Bool {
+        func key(_ value: String?) -> String? {
+            let trimmed = (value ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return ExperimentStore.normalizeJudgeDtype(trimmed)
+                ?? trimmed.lowercased()
+        }
+        guard let declared = key(judge) else { return true }
+        return declared == key(study)
+    }
+
+    /// A pinned dtype as this engine's refusals name one, or the words for no
+    /// pin at all (matching `studyModelJudgePinConflict`'s "the device
+    /// decides").
+    static func dtypeLabel(_ dtype: String?) -> String {
+        let trimmed = (dtype ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "no dtype (the device decides)" }
+        return "'\(trimmed)'"
     }
 
     /// A pinned revision as this engine's refusals name one, or the words for
@@ -88,7 +144,8 @@ extension ExperimentTasks {
     }
 
     static func sweepJudgeRoute(
-        _ judge: ResolvedJudge, studyModelID: String, studyRevision: String?
+        _ judge: ResolvedJudge, studyModelID: String, studyRevision: String?,
+        studyDtype: String? = nil
     ) throws -> SweepJudgeRoute {
         if judge.kind == "openrouter" {
             // resolvedJudges refused an openrouter judge without a provider,
@@ -103,7 +160,8 @@ extension ExperimentTasks {
         }
         guard judge.kind == "local" else { return .claudeAPI(model: judge.model) }
         if let problem = localJudgeSlotProblem(
-            [judge], studyModelID: studyModelID, studyRevision: studyRevision)
+            [judge], studyModelID: studyModelID, studyRevision: studyRevision,
+            studyDtype: studyDtype)
         {
             throw ExperimentError(reason: problem)
         }
@@ -121,6 +179,7 @@ extension ExperimentTasks {
         objective: SweepSelectionRule.ResolvedObjective,
         studyModelID: String,
         studyRevision: String?,
+        studyDtype: String? = nil,
         container: ModelContainer
     ) throws -> [SweepJudge] {
         let rubric = objective.judgeRubricText ?? ""
@@ -128,7 +187,7 @@ extension ExperimentTasks {
         for judge in objective.judgePanel {
             switch try sweepJudgeRoute(
                 judge, studyModelID: studyModelID,
-                studyRevision: studyRevision)
+                studyRevision: studyRevision, studyDtype: studyDtype)
             {
             case .heldStudyContainer:
                 let model = judge.model

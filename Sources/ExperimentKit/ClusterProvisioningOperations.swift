@@ -854,20 +854,33 @@ public struct ClusterProvisioningOperations: Sendable {
     /// The submit-time twin of the status detail's warning, computed WITHOUT
     /// touching the cluster (a submit verb must not grow an SSH probe): the
     /// recorded deploy intent — what this Mac last pushed, the same record the
-    /// currency gate trusts — against the bundle payload's own manifest
-    /// revision. Nil when either identity is unknowable, or when they agree:
-    /// an advisory is never invented.
-    public static func engineLagAdvisory(
+    /// currency gate trusts — against the local payload's own identity. Nil
+    /// when either identity is unknowable, or when they agree: an advisory is
+    /// never invented.
+    ///
+    /// The local identity is read the way the STATUS path reads it (review
+    /// round 10, finding 4): the deployment manifest's `sourceRevision` first,
+    /// and — when there is no manifest — the dev checkout's git stamp, via the
+    /// very `devPayloadStamp` `observeDevPayload` calls. There is no second
+    /// mechanism here. Without the fallback this advisory was structurally
+    /// silent in developer mode, where `defaultLocalRepoPath()` resolves to
+    /// the checkout itself and a checkout carries no manifest — that is, it
+    /// was silent for exactly the payload shape of the 2026-08-27 stale-engine
+    /// incident. Only the shell probe forces this to be async; a payload root
+    /// that is neither a manifest nor a checkout still yields nil.
+    public func engineLagAdvisory(
         intent: ClusterDeployIntent, bundlePayloadRoot: String
-    ) -> String? {
+    ) async -> String? {
         let pushed = [intent.payloadRevision, intent.buildStamp]
             .compactMap { $0 }.first { !$0.isEmpty }
         guard let pushed else { return nil }
-        guard let bundle = localPayloadRevision(payloadRoot: bundlePayloadRoot),
-            bundle != pushed
-        else { return nil }
+        var local = Self.localPayloadRevision(payloadRoot: bundlePayloadRoot)
+        if local == nil {
+            local = await devPayloadStamp(payloadRoot: bundlePayloadRoot)
+        }
+        guard let local, local != pushed else { return nil }
         return "the engine this Mac last pushed (\(pushed)) is not this "
-            + "build's payload (\(bundle)) — " + engineLagConsequence
+            + "build's payload (\(local)) — " + Self.engineLagConsequence
     }
 
     /// Dev-checkout payload comparison: local git stamp vs the deployed

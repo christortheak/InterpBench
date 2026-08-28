@@ -1447,6 +1447,47 @@ def test_the_no_replace_commit_falls_back_when_hardlinks_are_unavailable(
     _no_leftovers(target2)
 
 
+def test_a_commit_that_cannot_drop_its_staging_name_takes_the_destination_back(
+        tmp_path, monkeypatch):
+    """Review round 10, finding 8 — the same fix in all three mirrors of this
+    primitive (``steering.pole_mirror``, ``client.runner``, here).
+
+    ``_commit_no_replace`` lands ``dest`` and THEN drops the staging name. A
+    failure in that last step propagated with ``dest`` in place, and — worse
+    here than in the other two — it happens INSIDE ``_commit_one``, before the
+    member is appended to ``landed``, so ``_rollback`` never knew the file was
+    there to undo. ``dest`` is the call's reservation: a commit that cannot
+    finish must not leave it."""
+    staged = str(tmp_path / "staged")
+    dest = str(tmp_path / "dest")
+    with open(staged, "wb") as handle:
+        handle.write(b"bytes")
+
+    real_remove = os.remove
+
+    def failing_remove(path, *args, **kwargs):
+        if path == staged:
+            raise OSError(errno.EROFS, "staging directory went read-only")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(bundles.os, "remove", failing_remove)
+    with pytest.raises(OSError):
+        bundles._commit_no_replace(staged, dest)
+    assert not os.path.exists(dest), \
+        "a commit that could not finish left its destination standing"
+
+    # The same on the O_EXCL fallback: no hardlinks, and the guard still
+    # holds — the two branches share the one final step.
+    monkeypatch.setattr(
+        bundles.os, "link",
+        lambda *a, **k: (_ for _ in ()).throw(
+            OSError(errno.EPERM, "hardlinks unsupported here")))
+    dest2 = str(tmp_path / "dest2")
+    with pytest.raises(OSError):
+        bundles._commit_no_replace(staged, dest2)
+    assert not os.path.exists(dest2)
+
+
 # ==========================================================================
 # The AGGREGATE expansion bounds (external review, 2026-08-24)
 # ==========================================================================

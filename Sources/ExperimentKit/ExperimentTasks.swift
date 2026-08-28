@@ -6394,6 +6394,13 @@ public enum ExperimentTasks {
         /// 2026-07-23); a study-model judge falls back to the study pin at
         /// load time when nil.
         var revision: String? = nil
+        /// Local judges: the pinned load dtype (`JudgeRef.dtype`, declarable
+        /// through `--judge-pin <name>=<revision>[:<dtype>]`); a study-model
+        /// judge that declares none INHERITS the study's, so nil here means
+        /// "whatever the study loads at" and never diverges. Declaration
+        /// only — this engine's loader takes no dtype, which is precisely
+        /// why a divergent one has to be refused rather than honoured.
+        var dtype: String? = nil
     }
 
     /// WHICH loaded weights a local judge judges through: the model id AND
@@ -6565,13 +6572,17 @@ public enum ExperimentTasks {
                         return ResolvedJudge(
                             name: judge.name, kind: "local",
                             model: manifest.modelID, modelDefaulted: true,
-                            revision: judge.revision ?? manifest.modelRevision)
+                            revision: judge.revision ?? manifest.modelRevision,
+                            dtype: judge.dtype ?? manifest.dtype)
                     }
                     return ResolvedJudge(
                         name: judge.name, kind: "local", model: model,
                         revision: judge.revision
                             ?? (model == manifest.modelID
-                                ? manifest.modelRevision : nil))
+                                ? manifest.modelRevision : nil),
+                        dtype: judge.dtype
+                            ?? (model == manifest.modelID
+                                ? manifest.dtype : nil))
                 default:
                     throw ExperimentError(
                         reason: "judge '\(judge.name)' has unknown kind "
@@ -8409,6 +8420,7 @@ public enum ExperimentTasks {
                 try sweepJudgePanel(
                     objective: objective, studyModelID: manifest.modelID,
                     studyRevision: manifest.modelRevision,
+                    studyDtype: manifest.dtype,
                     container: container)
             }
         }

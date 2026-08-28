@@ -161,6 +161,104 @@ struct SweepJudgeResolutionTests {
         }
     }
 
+    /// The held slot has a DTYPE as well as a revision, and it is the study's
+    /// (review round 10, finding 10 — sorry, finding 2). `--judge-pin
+    /// <name>=<revision>:<dtype>` makes a judge's precision declarable, so a
+    /// same-model judge could pin one the container was never loaded at and
+    /// have the provenance say so.
+    @Test func slotProblemFiresOnADivergentDtypeOfTheStudyModel() {
+        let pinned = ExperimentTasks.ResolvedJudge(
+            name: "a", kind: "local", model: "test/model", dtype: "float16")
+        // Agreement is silent, and it is CANONICAL agreement: `bf16` and
+        // `bfloat16` are one dtype, not two.
+        #expect(
+            ExperimentTasks.localJudgeSlotProblem(
+                [pinned], studyModelID: "test/model", studyRevision: nil,
+                studyDtype: "float16") == nil)
+        #expect(
+            ExperimentTasks.localJudgeSlotProblem(
+                [ExperimentTasks.ResolvedJudge(
+                    name: "a", kind: "local", model: "test/model",
+                    dtype: "bf16")],
+                studyModelID: "test/model", studyRevision: nil,
+                studyDtype: "bfloat16") == nil)
+        // A judge with NO dtype inherits the study's, whatever that is.
+        #expect(
+            ExperimentTasks.localJudgeSlotProblem(
+                [ExperimentTasks.ResolvedJudge(
+                    name: "b", kind: "local", model: "test/model")],
+                studyModelID: "test/model", studyRevision: nil,
+                studyDtype: "bfloat16") == nil)
+
+        let problem = ExperimentTasks.localJudgeSlotProblem(
+            [pinned], studyModelID: "test/model", studyRevision: nil,
+            studyDtype: "bfloat16")
+        // Both dtypes named, and the repair spelled out.
+        #expect(problem?.contains("local judge 'a' pins dtype 'float16'") == true)
+        #expect(problem?.contains("which pins 'bfloat16'") == true)
+        #expect(
+            problem?.contains("would judge at a precision it did not declare")
+                == true)
+        #expect(
+            problem?.contains(
+                "drop the judge's dtype to judge with the study's, or use a "
+                    + "claude judge") == true)
+
+        // A judge pinning where the study pins NOTHING is a divergence too —
+        // the container loads at whatever the device decides, not at float16.
+        #expect(
+            ExperimentTasks.localJudgeSlotProblem(
+                [pinned], studyModelID: "test/model", studyRevision: nil)?
+                .contains("which pins no dtype (the device decides)") == true)
+        #expect(throws: ExperimentError.self) {
+            _ = try ExperimentTasks.sweepJudgeRoute(
+                pinned, studyModelID: "test/model", studyRevision: nil,
+                studyDtype: "bfloat16")
+        }
+        // Claude judges are untouched by the slot rule, dtype and all.
+        #expect(
+            ExperimentTasks.localJudgeSlotProblem(
+                [ExperimentTasks.ResolvedJudge(
+                    name: "c", kind: "claude", model: "other/model",
+                    dtype: "float32")],
+                studyModelID: "test/model", studyRevision: nil,
+                studyDtype: "bfloat16") == nil)
+    }
+
+    /// Resolution is where the inheritance happens: a study-model judge that
+    /// declares no dtype comes out carrying the STUDY's, which is what makes
+    /// "no declaration never refuses" true at the sweep's callsite rather than
+    /// only in the pure rule.
+    @Test func resolutionInheritsTheStudyDtypeForStudyModelJudges() throws {
+        var manifest = ExperimentManifest(
+            name: "s", description: "", modelID: "test/model")
+        manifest.dtype = "bfloat16"
+        manifest.judges = [
+            .init(name: "blank", kind: "local"),
+            .init(name: "named", kind: "local", model: "test/model"),
+            .init(name: "pinned", kind: "local", model: "test/model",
+                  dtype: "float16"),
+        ]
+        let panel = try ExperimentTasks.resolvedJudges(
+            manifest: manifest, evaluation: nil)
+        #expect(panel.first { $0.name == "blank" }?.dtype == "bfloat16")
+        #expect(panel.first { $0.name == "named" }?.dtype == "bfloat16")
+        #expect(panel.first { $0.name == "pinned" }?.dtype == "float16")
+        // The first two are silent; the third is the refusal.
+        #expect(
+            ExperimentTasks.localJudgeSlotProblem(
+                panel.filter { $0.name != "pinned" },
+                studyModelID: manifest.modelID,
+                studyRevision: manifest.modelRevision,
+                studyDtype: manifest.dtype) == nil)
+        #expect(
+            ExperimentTasks.localJudgeSlotProblem(
+                panel, studyModelID: manifest.modelID,
+                studyRevision: manifest.modelRevision,
+                studyDtype: manifest.dtype)?
+                .contains("local judge 'pinned' pins dtype 'float16'") == true)
+    }
+
     @Test func judgeRoutesUseTheHeldContainerOrTheAPI() throws {
         // A judge that DEFAULTED to the study model and one that names it
         // explicitly both route through the held study container — the
