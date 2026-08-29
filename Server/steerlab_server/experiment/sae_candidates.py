@@ -552,7 +552,8 @@ def pin_violations(block: object, root: str | None = None) -> list[str]:
     if os.path.isabs(rel):
         return [f"SAE candidate manifest path '{rel}' is absolute — pinned "
                 "inputs are WORKSPACE-RELATIVE so the study resolves on any "
-                "machine (the Mac workspace is the source of truth)"]
+                "machine (the authoring client's workspace is the source of "
+                "truth)"]
     path = os.path.join(base, rel)
     if not os.path.exists(path):
         return [f"SAE candidate manifest '{rel}': file missing at {rel} — the "

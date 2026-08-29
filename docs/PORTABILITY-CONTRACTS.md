@@ -365,9 +365,16 @@ client's spelling as well as the Mac's (a Linux caller cannot run
 everything else.** That is the ruling this section was rewritten under (review
 round 11): an engine on compute hardware never authors — its workspace is a
 cache — but a client authoring a *local* workspace is as legitimate on Linux
-or Windows as on a Mac. `macAuthorityVerb` keeps its name for compatibility
-(it is a stable machine code, and agents switch on it); what it means is "this
-engine executes, it does not author", not "author on a Mac".
+as on a Mac. Stated positively, and this is the project's principle wherever
+authority comes up: **the authoring client's workspace is the source of
+truth; the engine on compute hardware never authors, and its workspace is a
+cache.** Where older text says "the Mac workspace is the source of truth", read
+"the client's" — that phrasing was a shorthand for *client, not cluster*, and
+the maintainer has corrected it (2026-08-29).
+
+`macAuthorityVerb` keeps its name for compatibility (it is a stable machine
+code, and agents switch on it) — **the name is historical**; what it means is
+"this engine executes, it does not author", never "author on a Mac".
 
 The workspace comes from `--root <dir>` or `$STEERLAB_WORKSPACE`, and there is
 **no default**. The engine's `paths.project_root()` falls back to the current
@@ -385,7 +392,7 @@ verb added without a test is still covered. Submitting to a remote runner is
 
 | family | verbs |
 |---|---|
-| `experiment` | `create`, `attach`, `declare-condition`, `remove-condition`, `set-protocol`, `pin-revision`, `set-style-taxonomy`, `pin-sae-candidates`, `duplicate`, `verify`, `freeze`, `list` (since v0: `detach`, `set-sweep-grid`, `set-parser`, `set-instrument-scope`, `set-system-prompt`) |
+| `experiment` | `create`, `attach`, `declare-condition`, `remove-condition`, `set-protocol`, `pin-revision`, `set-style-taxonomy`, `pin-sae-candidates`, `duplicate`, `verify`, `freeze`, `list` (since v0: `detach`, `set-sweep-grid`, `set-parser`, `set-instrument-scope`, `set-system-prompt`, `set-evaluation-sampling`) |
 | `concept` | `import` |
 | `bundle` | `package`, `inspect`, `import` |
 
@@ -495,7 +502,7 @@ the Mac's program they are the Swift literals byte for byte
 field was reachable and the writer was not findable.** `set-system-prompt`
 (the manifest's `systemPrompt` — the deployment frame every arm is read under)
 joined both surfaces on 2026-08-28. It is not a derived pin and not a
-Mac-authority verb: it is a plain field assignment, `systemPrompt` **stays** in
+Mac-only verb: it is a plain field assignment, `systemPrompt` **stays** in
 `PROTOCOL_FIELDS`, and `set-protocol --set systemPrompt=…` keeps working
 exactly as it did. What the field discovery showed is that reachability is not
 the same as authorability — a persona-carrying replication stalled because
@@ -515,6 +522,50 @@ on which a declared frame does not reach the model — a pinned item whose
 transcript opens with its own `system` turn, which replaces it for that item —
 raises the `systemPromptNotApplied` advisory, whose detail sentence is a twin
 literal like every other cross-engine sentence here.
+
+**The evaluation sampling design is the third declaration of that shape, and
+the one that exists to move a claim into the artifact chain.**
+`set-evaluation-sampling <name> <n> <seed>` writes the manifest's
+`evaluationSampling` block — `{samplePerCondition, sampleSeed, rule}` — on
+both authoring surfaces, spelled identically and refusing identically, with
+`<name> ""` clearing. It joined on 2026-08-29 (review round 12, finding 4).
+
+The seeded evaluate subsample had shipped as CLI flags plus run stamps. A stamp
+records what HAPPENED; "preregistered" is a claim about what was decided
+BEFORE anything ran, and a claim like that has to live in the artifact chain or
+it is not evidence. The reviewer's remedy was a frozen, hashed design document;
+that does not fit this house's flow, because judged re-measurement deliberately
+runs on **never-frozen duplicates**. The adapted remedy keeps the substance:
+the design is a DRAFT MANIFEST DECLARATION, and every run stamps the manifest
+snapshot into its own `experiment.json`. *A plan document is
+pre-registration; the snapshot is provenance.*
+
+`rule` is derived from the draw module's canonical `stratifiedByPromptID/vN`
+constant at the write, exactly as `parserRegistryHash` is derived from the
+registry's bytes — **no surface accepts a `rule` as input**, on either engine,
+and there will not be one.
+
+Reading it is the other half. With a design declared, `evaluate` samples by it
+with no flags. `--sample-per-condition` / `--sample-seed` may still be given
+and become a **cross-check**: any inequality refuses at 64 naming both values,
+and never overrides, because a flag that won would code one design while the
+snapshot recorded another. The reconciliation lives in the evaluate TASK on
+both engines rather than at a CLI edge — that is the first point holding the
+manifest, so the local CLI, `bundle execute`, a submitted argv and any library
+caller all get the same cross-check on the same bytes. Submit-time paths run
+the same check early, against the BUNDLE'S own manifest, so a contradiction
+does not cost a queue wait. Undeclared studies keep the flags-only path
+unchanged; the declared path's stamps additionally carry `declared: true`.
+
+*Validation splits where knowledge does.* Declare time checks what a desk can
+check — a whole `n` of at least 1, a seed that parses as 64-bit unsigned — and
+`verify()` re-checks those plus that the stored `rule` is the one this build
+derives. The POPULATION check cannot run at either: at declaration and at
+verify the source run this design will be drawn from need not exist, and
+usually does not, since declaring before running is the entire point. It stays
+at `evaluate`, where the records are, and still refuses rather than clamping.
+Inventing a desk-time obligation a draft cannot meet would make the
+declaration unusable in the order a study is actually authored.
 
 The scope's pin needs the study's task prompts, and the loader of record
 (`tasks._load_prompts`) imports torch. `experiment_store.scope_items` is the
@@ -538,8 +589,11 @@ before it removes a pin, and `set-sweep-grid` resolves absolute layers against
 the pinned model's depth and refuses a grid no engine could sweep — rules that
 live in `experiment_store` and answer identically on the Mac verb, this client,
 and the HTTP route (`POST /api/authoring/{name}/sweep-grid`). The sweep block's
-*other* half, `sweep.selection`, stays Mac-authority: the criterion is a
-preregistration decision and `set-sweep-selection` is where it is made.
+*other* half, `sweep.selection`, stays a Mac verb: the criterion is a
+preregistration decision and `set-sweep-selection` is where it is made. That is
+a surface gap, not an authority claim — the boundary above is client versus
+running hardware, and nothing about a selection criterion makes it
+Mac-shaped.
 
 **Sharding is execution, so it splits the other way.** Nothing about the
 multi-GPU fan-out is authoring — `parallelJobs` never enters the manifest or
@@ -856,13 +910,21 @@ every packager for the rest of the project's life.
 | Linux / BSD | `$XDG_DATA_HOME/steerlab/local-runner` (default `~/.local/share/steerlab/local-runner`) |
 | Windows | `%LOCALAPPDATA%\SteerLab\local-runner` |
 
-**Platform ruling: Windows is client-only.** Authoring, freezing, packaging,
-remote submission and evidence import are supported there; **local execution is
-not**, and `runner serve` refuses on Windows rather than starting an engine on
-an unsupported execution path. The Windows row above is therefore what
-`default_runner_root` computes, not a supported configuration — a Windows
-author points `--runner <url>` at a runner on macOS, Linux, or a cluster, and
-every hash-pinned hop in this document is unchanged.
+**Platform ruling: Windows is out of scope** (maintainer, 2026-08-29). It is
+not tested here and nothing about it is promised — there is no way to test it
+in this project, and effort spent in that direction is effort not spent on the
+two platforms that are. Local execution is refused outright: `runner serve`
+declines on Windows by name rather than starting an engine on an unsupported
+execution path, and that refusal is behaviour that stays. The Windows row above
+is therefore only what `default_runner_root` computes, never a supported
+configuration.
+
+What can honestly be said is smaller than what this section used to claim: the
+client is pure Python and imports nothing platform-specific on its authoring
+path, so authoring, freezing, packaging and remote submission are the half one
+would *expect* to work there — an expectation, not a supported configuration,
+and no CI proves it. A downstream user who wants Windows is welcome to pursue
+it on their own clone; this project will not.
 
 `--runner-root <dir>` overrides it. What is deliberately **not** in that table:
 the current directory, `$STEERLAB_WORKSPACE`, and `$STEERLAB_ROOT` — the value
@@ -1359,6 +1421,33 @@ still" is now spent.
   the ones `runner submit` already exposes; the composite invented none.
 - **No second envelope.** `run` writes exactly one document, like every client
   verb except `runner serve` (§9.4) — the stage lines are diagnostics.
+
+#### A recorded gap: the client cannot parameterize a MEASUREMENT verb
+
+Named by external review (round 12) and recorded here rather than closed.
+**`steerlab runner submit` and the composite `steerlab run` do not
+parameterize measurement verbs at all** — there is no `--sample-per-condition`
+/ `--sample-seed` pair on either, and no `--source` either, so a client cannot
+submit a subsampled coding of a named source run the way `steerlab-cli remote
+submit-bundle` and `steerlab-server study submit` can. It is **one flag-pair
+away**: the runner protocol already carries `samplePerCondition` /
+`sampleSeed` and `sourcePath` as body fields, the engine already validates and
+cross-checks them at submit and at execute, and the client would be passing
+through exactly as it passes `--parallel`.
+
+Two things reduce the sting, and neither closes the gap. A study that DECLARES
+its sampling design (§7) needs no wire fields on any surface, because the
+engine reads the design off the bundle's own manifest — so the commonest
+version of this need is already met, on every route, by authoring rather than
+by argv. And the whole flag family stays available through the Mac and engine
+spellings. What is genuinely missing is the *unnamed-source* case: a client
+that wants a specific prior run coded, or an ad-hoc draw with no declaration,
+still has to reach for another surface.
+
+Recording rather than building is deliberate: the gap was found by reading, not
+by a stalled study, and the phase's own rule is that this client invents no
+surface the runner protocol does not already expose. When a field discovery
+names it, the pass-through is the change, not a design.
 
 ---
 

@@ -127,10 +127,15 @@ answers the other's verbs.
 **Cross-platform `steerlab` client (any machine):**
 
 - Python 3.10 or newer, and nothing else — no GPU, no torch, no Xcode.
-  macOS, Linux, and Windows all author, freeze, package, and submit.
+  macOS and Linux author, freeze, package, and submit.
 - Executing locally (`steerlab runner serve`, the `[runner]` extra) needs
-  macOS or Linux. **Windows is client-only** and the serve verb refuses there;
-  submit to a runner elsewhere instead.
+  macOS or Linux.
+- **Windows is out of scope.** Nothing here is tested on it and nothing is
+  promised for it. The client is pure Python, so in principle its authoring
+  half is the part that could work there (`runner serve` refuses on Windows by
+  name), but that is an expectation, not a supported configuration — a
+  downstream user who wants Windows is welcome to pursue it on their own
+  clone.
 
 No model weights ship here. You download the models you want, and their
 licenses are your own to read — see NOTICE.
@@ -159,8 +164,9 @@ Then take either seat, or both:
   authors, freezes, and drives studies against any runner
   (`steerlab run <experiment> --runner <url>`); add `[runner]` to execute
   locally through `steerlab runner serve`, on macOS and Linux. Windows is
-  **client-only**: authoring and remote submission work, `runner serve`
-  refuses. A correct install answers `steerlab --version` with
+  **out of scope** — untested and unsupported, though the client is pure
+  Python and a downstream user is free to try. A correct install answers
+  `steerlab --version` with
   `steerlab <ver> (client)` — it is a different product from `steerlab-cli`
   and does not report resource families. The contract is
   [docs/PORTABILITY-CONTRACTS.md](docs/PORTABILITY-CONTRACTS.md).

@@ -970,6 +970,27 @@ instruments apply to on a draft, pinning the row set they select
 instrument for `sampledText`. Declaring formats no pinned item carries is
 refused — a scope selecting zero rows would produce zero records.
 
+**`set-evaluation-sampling <name> <n> <seed>`** — declares the study's
+EVALUATION SAMPLING DESIGN on a draft: how many records per condition the
+judged coding preregistered, and the seed that draws them
+(`evaluationSampling`); `<name> ""` clears it. Both halves or neither. The
+draw RULE is the third field and is derived from the engine at the write —
+never an argument, for the same reason `parserRegistryHash` is not one.
+
+Declare it rather than typing the flags. A stamp records what HAPPENED;
+"preregistered" is a claim about what was decided BEFORE anything ran, and
+only the declaration puts that claim in the artifact chain — every run writes
+the manifest snapshot into its own `experiment.json`, so the design travels
+with the evidence. `evaluate` then draws it with no flags at all;
+`--sample-per-condition`/`--sample-seed` may still be typed and become a
+CROSS-CHECK, refusing on any inequality rather than overriding. Declaring is
+measurement-side, so it never invalidates the run being coded — which is what
+lets you duplicate a frozen study, declare the coding design on the duplicate,
+and evaluate against the original's run. What the desk checks is a whole `n`
+of at least 1, a seed that parses, and a rule this build derives; the
+POPULATION check stays at `evaluate`, because at declaration time the source
+run need not exist yet.
+
 **`set-style-taxonomy <name> prompts/taxonomies/<file>.json`** — pins a
 reasoning-style taxonomy (path + hash) on a draft. No pin, no reasoning-style
 scoring; drift after pinning is a verify violation like any other.
@@ -1286,8 +1307,10 @@ identical across engines, which is what makes cross-engine comparison possible
 at all. `freeze --run-substrate` and the evidence gates enforce this: evidence
 from the other engine will not satisfy them.
 
-**Authoring is Mac-authority by design.** The workspace on the Mac is the
-source of truth; the server is a runner and cache. `create`, `attach`, the
+**Authoring is CLIENT-authority by design.** The authoring client's
+workspace is the source of truth; the engine on compute hardware never
+authors, and its workspace is a cache. The boundary is client versus running
+hardware — not macOS versus everything else. `create`, `attach`, the
 `pin-*`/`declare-*`/`set-*` verbs, `panel compile`, and `freeze` run on the
 local CLI;
 execution and analysis (`run`, `evaluate`, `analyze`, `sweep`) answer
@@ -1297,8 +1320,10 @@ repair is an authoring act names the local verb on purpose — go author
 there, then submit. Some verbs exist on one engine only; asking the server
 for one of them is refused with `error.code: "macAuthorityVerb"` (no
 `error.gate` — it describes the engine, not the study) and an
-`error.repairAction` spelling the local command. Do not emulate the verb;
-run the repair where it belongs.
+`error.repairAction` spelling the local command. **That code's name is
+historical**: it is a stable machine code agents switch on, and it means
+"this engine executes, it does not author", never "author on a Mac". Do not
+emulate the verb; run the repair where it belongs.
 
 ---
 

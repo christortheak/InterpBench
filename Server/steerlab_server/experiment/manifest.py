@@ -1066,6 +1066,19 @@ class Manifest:
         if model_output:
             from . import parser_registry
             violations += parser_registry.parser_pin_violations(self.raw, root)
+        # The declared EVALUATION SAMPLING DESIGN (review round 12): a
+        # preregistration fact, so what a desk can check is checked at the
+        # desk — a whole positive per-condition size, a seed that parses, and
+        # a `rule` this build actually derives. The POPULATION check is
+        # deliberately absent: at verify time the source run this design will
+        # be drawn from need not exist, and it usually does not, since
+        # declaring before running is the point. That check lives in
+        # `evaluate_subsample.select`, where the records are. ABSENT key = no
+        # declaration = no violations (Swift twin: ExperimentStore.verify →
+        # EvaluateSubsample.declarationViolations).
+        from . import evaluate_subsample as _evaluate_subsample
+        violations += _evaluate_subsample.declaration_violations(
+            self.raw.get(_evaluate_subsample.DECLARATION_KEY))
         # Sweep-input pins (firewall closure, 2026-07-20 — cross-engine
         # contract keys "sweep.devPromptsHash" + "sweep.batteryHash"): the
         # sweep's dev prompts and capability battery decide which cell WINS,

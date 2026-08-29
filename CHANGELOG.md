@@ -303,6 +303,122 @@ migration that rewrites frozen bytes.
 
 ### Changed
 
+- **The evaluate subsample's flags-only spelling is superseded by a
+  declaration: `experiment set-evaluation-sampling <name> <n> <seed>`, on both
+  authoring surfaces.** External review round 12, finding 4, maintainer-ruled.
+  The seeded subsample shipped hours earlier as CLI flags plus run stamps, and
+  the review's point is accepted: **a stamp records what HAPPENED, and
+  "preregistered" is a claim about what was decided BEFORE anything ran.** A
+  claim like that has to be substantiated in the artifact chain or it is not
+  evidence — a `sampling` block that appears only because someone typed two
+  flags proves the draw was seeded, not that it was planned.
+
+  The reviewer's remedy was a frozen, hashed design document. That does not fit
+  this house's flow, because judged re-measurement deliberately runs on
+  **never-frozen duplicates**. The adapted remedy gets the substance instead:
+  the sampling design becomes a DRAFT MANIFEST DECLARATION —
+  `evaluationSampling: {samplePerCondition, sampleSeed, rule}` — and every run
+  stamps the manifest snapshot into its own `experiment.json`. **A plan
+  document is pre-registration; the snapshot is provenance.** The design now
+  travels with the evidence rather than with the command line that produced it,
+  and a reader holding the run holds the design.
+
+  **The rule is derived, never typed.** The block's third field is
+  `EvaluateSubsample.rule` / `evaluate_subsample.RULE` verbatim, taken at the
+  write — the same guarantee `parserRegistryHash` carries, for the same reason:
+  a caller-supplied rule would let a study claim a derivation nothing
+  performed. There is no `--rule` on any surface and there will not be one.
+  Both-or-neither applies inside the declaration exactly as at the flags
+  (`n` with no seed, a seed with no `n`: 64, nothing written), and `<name> ""`
+  clears it. The writer exists on **both** authoring surfaces per the
+  authoring-client doctrine (`docs/PORTABILITY-CONTRACTS.md` §7) — twin store
+  setters, twin refusal sentences, the same flat `result` keys — and the engine
+  redirects it like its two siblings, because it executes and does not author.
+
+  **The flags become a cross-check, never an override.** With a design
+  declared, `evaluate` draws it with no flags at all. `--sample-per-condition`
+  / `--sample-seed` may still be given, and any inequality with the declaration
+  refuses at 64 naming both values; the repair is to drop the flag or to
+  declare the design you actually want, never to force. A flag that won would
+  code one design while the run's snapshot recorded another — the exact silent
+  substitution the refusal vocabulary exists to prevent. Reconciliation lives
+  in the evaluate TASK on both engines, the first point that holds the
+  manifest, so the local CLI, `bundle execute`, a submitted argv and any
+  library caller are all checked against the same bytes; submit-time paths run
+  the check early against the bundle's own manifest, so a contradiction never
+  costs a queue wait, and the walltime preflight prices a declared design with
+  no wire fields at all.
+
+  **Undeclared studies are untouched.** The flags-only path behaves exactly as
+  it did and its stamps still say SUBSAMPLE on every line — the ad-hoc route
+  stays honest, it simply cannot claim the declared route's provenance. The
+  declared route's stamps carry one additional key, `declared: true`; its
+  absence is the older spelling, not a finding.
+
+  **Validation splits where knowledge does**, and the split is documented
+  (§7 of the contracts, §3.5 of the reference). Declare time and `verify()`
+  check what a desk can check — a whole `n` of at least 1, a seed that parses
+  as 64-bit unsigned, and a `rule` this build actually derives (an older rule
+  version would not redraw the same records, which is what the version marker
+  is for). The POPULATION check cannot run at either: the source run the design
+  will be drawn from need not exist yet, and usually does not, since declaring
+  before running is the point. It stays at `evaluate`, and still refuses rather
+  than clamping. `evaluationSampling` also joins the epoch guard's
+  `MEASUREMENT_FIELDS` on both engines — it chooses which of a completed run's
+  records get judged, so it cannot have moved a byte of that run's
+  generations, and the duplicate-and-declare flow depends on that.
+
+  Recorded, not built (`docs/PORTABILITY-CONTRACTS.md` §10.9): the client's
+  `runner submit` and composite `run` still do not parameterize measurement
+  verbs at all — no sample flags and no `--source` — so an *undeclared*,
+  unnamed-source subsample still needs another surface. The reviewer's
+  observation stands; it is one flag-pair away, and the phase's rule is that
+  the client invents no surface the runner protocol does not already expose.
+
+- **"Mac-authority" is retired as a principle: the rule is CLIENT-authority.**
+  External review round 12, finding 8, maintainer-ruled verbatim —
+  *"Mac-source-of-truth was always my sloppy way of saying client (not
+  cluster) is the source of truth."* The principle, stated once and now
+  reflected wherever the topic appears: **the authoring client's workspace is
+  the source of truth; the engine on compute hardware never authors, and its
+  workspace is a cache.** The boundary is the client versus the running
+  hardware — never macOS versus everything else. Round 11 had already moved
+  the *behaviour* (the cross-platform client authors, and the engine's
+  redirects name its spelling); this closes the gap between that behaviour and
+  the words around it.
+
+  Swept: the workspace contract (`AgentContract.swift` and its byte-identical
+  mirror `docs/AGENTS-WORKSPACE-DRAFT.md`), `README.md`,
+  `docs/CLI-REFERENCE.md`, `docs/PORTABILITY-CONTRACTS.md`,
+  `docs/CONDUCTING-A-STUDY.md`, the engine's own principle docstrings
+  (`cli_envelope.py`, `client_cli.py`), and the four twinned refusal/comment
+  sentences that said "the Mac workspace is the source of truth" where they
+  meant the client's.
+
+  **`macAuthorityVerb` keeps its name and its meaning, as a legacy MACHINE
+  CODE only.** It is a stable identifier agents and the Swift CLI already
+  switch on, so it does not move; every place it is documented now carries a
+  one-line note that **the name is historical** and that what it reports is
+  "this engine executes, it does not author", never "author on a Mac". No
+  behaviour, exit code, or envelope field changed.
+
+- **Windows is stated as out of scope rather than promised as supported.**
+  The maintainer's ruling, verbatim: *"I am not interested in supporting
+  windows - as I have no way to test it. Maybe someone else who clones the
+  codebase could add it on their own. But we shouldn't expend efforts in that
+  direction and shouldn't promise it."* `AGENTS.md` path 4 had said Windows
+  is "client-only: authoring, freezing, packaging and remote submission all
+  work there" — a promise nothing in this project tests. Every mention
+  (`AGENTS.md`, `README.md`, `docs/CLI-REFERENCE.md` §1.4 and §1.5,
+  `docs/ONBOARDING.md`, `docs/PORTABILITY-CONTRACTS.md` §9.2) now says the
+  same smaller true thing: **untested, unsupported, out of scope**, with the
+  honest remainder kept — the client is pure Python and imports nothing
+  platform-specific on its authoring path, so authoring is the half one would
+  *expect* to work, and a downstream user who wants Windows is welcome to
+  pursue it on their own clone. Documentation only: **`runner serve`'s typed
+  Windows refusal (`runnerPlatformUnsupported`) is unchanged**, because
+  promises change and behaviour does not.
+
 - **The loader's co-residency refusal says who can still reach it.** With the
   judge-column release seam in place, a sequential panel never arrives at
   `_assert_gpu_capacity`'s "another model is already resident" refusal, so

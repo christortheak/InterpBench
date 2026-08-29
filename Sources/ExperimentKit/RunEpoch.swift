@@ -94,9 +94,17 @@ public enum RunEpoch {
     /// Identical list to the server's `run_epoch.MEASUREMENT_FIELDS`; the
     /// names are the manifest's JSON keys, and
     /// `withoutMeasurementFields` clears exactly these properties.
+    ///
+    /// `evaluationSampling` joined on 2026-08-29 (review round 12) and is the
+    /// clearest member of the list: it chooses WHICH of a completed run's
+    /// records get judged, so it cannot have moved a byte of that run's
+    /// generations. It has to be here for the house's own flow to work —
+    /// judged re-measurement runs on a never-frozen DUPLICATE, and a
+    /// duplicate that declares the coding design differs from the original
+    /// run's snapshot by exactly this key.
     public static let measurementFields = [
         "judges", "evaluation", "pipeline", "judgeRubricFile",
-        "judgeRubricHash", "humanValidation",
+        "judgeRubricHash", "humanValidation", "evaluationSampling",
     ]
 
     /// The manifest reduced to its generation-side surface — the comparison
@@ -124,6 +132,7 @@ public enum RunEpoch {
         copy.judgeRubricFile = nil
         copy.judgeRubricHash = nil
         copy.humanValidation = nil
+        copy.evaluationSampling = nil
         return copy
     }
 

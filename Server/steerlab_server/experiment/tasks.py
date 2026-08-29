@@ -9630,7 +9630,16 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
     stratified subsample of the source run instead of coding all of it. Both
     or neither: the pair is validated HERE as well as at the CLI edge, so a
     library caller cannot reach the draw with half a request. Per-response
-    coding only — see ``evaluate_subsample.paired_refusal``."""
+    coding only — see ``evaluate_subsample.paired_refusal``.
+
+    The study's own ``evaluationSampling`` DECLARATION (2026-08-29, review
+    round 12) outranks both: when the manifest declares a design, the draw
+    follows it with no arguments at all, and arguments that disagree with it
+    refuse rather than override (``evaluate_subsample.reconcile``). The
+    reconciliation happens HERE rather than at a CLI edge deliberately — this
+    is the first point that holds the manifest, so the CLI, the bundle-execute
+    path and the submitted argv all get the same cross-check on the same
+    bytes."""
     from . import evaluate_subsample, paired_judge
     _log = log or print
     # First thing, before the manifest is even read: a malformed sample ask
@@ -9638,6 +9647,20 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
     subsample = evaluate_subsample.resolve_request(
         sample_per_condition, sample_seed, program="steerlab-server")
     manifest = Manifest.load(name, root)
+    # …then the DECLARATION, which the wire fields and the flags are both
+    # checked against. `program` is the CLIENT's: this engine executes a
+    # design, it never authors one, so a repair that named `steerlab-server
+    # experiment set-evaluation-sampling` would be a command nobody can run.
+    subsample = evaluate_subsample.reconcile(
+        subsample,
+        evaluate_subsample.declared_request(
+            manifest.raw.get(evaluate_subsample.DECLARATION_KEY),
+            experiment=name, program="steerlab"),
+        program="steerlab")
+    if subsample is not None and subsample.declared:
+        _log(f"evaluate: the study declares a sampling design — "
+             f"{subsample.sample_per_condition} record(s) per condition at "
+             f"seed {subsample.seed_text} (evaluationSampling)")
     # Effective evaluation (2026-07-22 incident): an explicit block wins;
     # with none, pinned judges + a pinned rubric file ARE the paired-judge
     # declaration and the spec is synthesized from those pins (the app's

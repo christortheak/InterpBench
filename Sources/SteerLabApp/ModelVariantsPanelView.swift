@@ -1188,8 +1188,9 @@ struct ModelVariantsPanelView: View {
         // Server workspace: before writing the definition, LOCALIZE every
         // picked server vector — fetch the sidecar + safetensors pair into
         // the local workspace and store the workspace-relative reference.
-        // The Mac workspace is the source of truth; a `/scratch/…` absolute
-        // ref exists on one substrate only and dies at bundle packaging
+        // The authoring client's workspace is the source of truth; a
+        // `/scratch/…` absolute ref exists on one substrate only and dies at
+        // bundle packaging
         // ("pinned input missing", field incident 2026-08-05). Refs the
         // picker didn't offer (foreign definitions) round-trip verbatim,
         // and an older server without relative ids keeps the historical

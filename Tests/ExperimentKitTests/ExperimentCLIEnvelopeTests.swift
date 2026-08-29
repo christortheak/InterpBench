@@ -728,6 +728,10 @@ import Testing
             // without the second, a mixed-format study could only follow the
             // run-start gate's LOSSY repair and drop its instrument.
             "experiment set-parser", "experiment set-instrument-scope",
+            // The third declaration of that shape: the evaluate subsample's
+            // DESIGN (`evaluationSampling`), whose draw rule is derived from
+            // the engine and can no more be typed than a registry hash can.
+            "experiment set-evaluation-sampling",
             "experiment set-style-taxonomy", "experiment verify",
             "experiment freeze", "experiment duplicate", "experiment extract",
             "experiment validate", "experiment sweep", "experiment run",
@@ -778,10 +782,14 @@ import Testing
         // study's deployment FRAME, the last panel-only authoring field: a
         // replication whose donor carries a judge persona could not be
         // authored headlessly at all, and running it without the persona
-        // would have been a different study.
+        // would have been a different study — and `set-evaluation-sampling`,
+        // the third declaration of that derived-pin shape (review round 12): a
+        // preregistered coding subsample could be TYPED but not DECLARED, so
+        // the design lived in a command line rather than in the artifact
+        // chain the evidence travels in.
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 28,
-            "the experiment lifecycle is twenty-eight verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
+            declared.filter { $0.hasPrefix("experiment ") }.count == 29,
+            "the experiment lifecycle is twenty-nine verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
     }
 
     @Test func everySpecIsInARunnerOwnedNamespace() {

@@ -2162,6 +2162,52 @@ def declare_outcome_instrument_scope(name: str, response_formats: list,
     return d
 
 
+def declare_evaluation_sampling(name: str, sample_per_condition,
+                                sample_seed, root: str | None = None,
+                                *, program: str = CLIENT_PROGRAM) -> dict:
+    """Declare (or clear) the study's EVALUATION SAMPLING DESIGN.
+
+    THE RULING (review round 12, finding 4). The seeded evaluate subsample
+    landed as flags and run stamps only. A stamp records what HAPPENED, and
+    "preregistered" is a claim about what was decided BEFORE anything ran — a
+    claim that has to live in the artifact chain to be evidence. The reviewer
+    asked for a frozen, hashed design document; that does not fit the house
+    flow, because judged re-measurement deliberately runs on never-frozen
+    duplicates. The adapted remedy keeps the substance: the design becomes a
+    DRAFT MANIFEST DECLARATION, and every run stamps the manifest snapshot
+    into its own ``experiment.json``. The snapshot is the provenance. A plan
+    document is pre-registration; the snapshot is what proves the plan is what
+    ran.
+
+    Both halves or neither, INSIDE the declaration exactly as at the flags:
+    ``n`` with no seed is a design nobody can redraw, a seed with no ``n`` is a
+    stamp on a design it did not shape. Passing neither CLEARS, the affordance
+    every declaration verb here carries.
+
+    ``rule`` is DERIVED from ``evaluate_subsample.RULE`` and never accepted as
+    an argument — the same guarantee as ``parserRegistryHash``, for the same
+    reason. Swift twin: ``ExperimentStore.declareEvaluationSampling``.
+    """
+    from . import evaluate_subsample
+    d = load_raw(name, root)
+    try:
+        block = evaluate_subsample.resolve_declaration(
+            sample_per_condition, sample_seed,
+            experiment=name, program=program)
+    except evaluate_subsample.SubsampleRefusal as exc:
+        # MALFORMED (64), like the other two declarations: the caller named a
+        # value the field cannot hold, not a gate declining a healthy study.
+        raise MeasurementDeclarationError(
+            exc.reason, repair=exc.repair_action) from exc
+    if block is None:
+        d.pop(evaluate_subsample.DECLARATION_KEY, None)
+        save_raw(d, root)
+        return d
+    d[evaluate_subsample.DECLARATION_KEY] = block
+    save_raw(d, root)
+    return d
+
+
 def scope_items(prompts_file: str, root: str | None = None) -> list:
     """The ``response_format.items_of`` view of a task-prompts file, read
     without the run path's model stack.

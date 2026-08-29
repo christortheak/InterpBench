@@ -293,6 +293,7 @@ public enum RefusalSiteRegistry {
                 "experiment set-sampling", "experiment set-exclusions",
                 "experiment set-system-prompt",
                 "experiment set-parser", "experiment set-instrument-scope",
+                "experiment set-evaluation-sampling",
                 "experiment set-style-taxonomy", "experiment confirm",
                 // `panel compile` writes a FILE before it writes the manifest,
                 // so it checks the status itself and refuses before compiling

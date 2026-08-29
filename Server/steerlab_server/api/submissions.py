@@ -237,7 +237,8 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
                                     flag="--source")
     _require_readable_run_directory(resume_directory, target_for_paths,
                                     flag="--resume")
-    _require_sample_pair(sample_per_condition, sample_seed, verb=verb)
+    _require_sample_pair(sample_per_condition, sample_seed, verb=verb,
+                         manifest=manifest)
     if dependency is not None:
         # Shape-validated here so a typo refuses on the terminal rather than
         # at sbatch, where it costs a round trip and a confusing message — and
@@ -442,12 +443,21 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     # source into a durable sbatch too, and the app reaches it.
     _require_readable_run_directory(source_path, target_root or profile.root,
                                     flag="sourcePath")
+    # The BUNDLE'S OWN manifest, read before the subsample check rather than
+    # after the submission directory (2026-08-29): the check now compares the
+    # wire fields against the study's declared `evaluationSampling`, and the
+    # only honest thing to compare them against is the manifest THIS bundle
+    # carries — not the server's copy of a study by the same name.
+    manifest = _manifest_from_bundle(bundle_path, experiment)
     # The seeded-subsample ask is validated HERE, before a submission
     # directory exists: same reason the source path is. A half-stated sample
     # (a size with no seed, a seed with no size) baked into a durable sbatch
     # would spend a queue slot to discover on a compute node what this line
-    # can see now, and would leave a submission directory behind for it.
-    _require_sample_pair(sample_per_condition, sample_seed, verb=verb)
+    # can see now, and would leave a submission directory behind for it. A
+    # wire field that CONTRADICTS the bundle's declared design refuses here
+    # too, for the same reason and at the same cost.
+    _require_sample_pair(sample_per_condition, sample_seed, verb=verb,
+                         manifest=manifest)
 
     submission_dir = paths.make_unique_run_directory(f"submit-bundle-{experiment}-{verb}")
     records_dir = os.path.join(submission_dir, "records")
@@ -468,7 +478,6 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     base_result = {"runBundle": meta, "command": command,
                    "recordsDirectory": records_dir,
                    "submissionDirectory": submission_dir}
-    manifest = _manifest_from_bundle(bundle_path, experiment)
     stages = _pipeline_stages(manifest)
     fanout_note = _check_local_judge_deliverability(
         manifest, verb, fanout_capable=(executor == "slurm"),
@@ -980,14 +989,21 @@ def _require_readable_run_directory(path: str | None, target_root: str, *,
 
 
 def _require_sample_pair(sample_per_condition, sample_seed, *,
-                         verb: str) -> None:
-    """Refuse a half-stated or misplaced evaluate subsample at SUBMIT time.
+                         verb: str, manifest=None) -> None:
+    """Refuse a half-stated, misplaced, or DECLARATION-CONTRADICTING evaluate
+    subsample at SUBMIT time.
 
     Same argument as ``_require_readable_run_directory``: the flags are baked
     into a durable sbatch script and then wait in the queue, so a refusal the
     submitting process could have made now would otherwise arrive on a
     compute node against an allocation the mistake has already been charged
-    for. Nothing here needs the node — the pair is well-formed or it is not.
+    for. Nothing here needs the node — the pair is well-formed or it is not,
+    and it agrees with the study's declared design or it does not.
+
+    The execute-time cross-check in ``tasks.evaluate`` is the one that
+    GUARANTEES the rule (it holds the bundle's own manifest bytes, so every
+    route reaches it); this one is the same check made early, so the queue
+    wait is not spent on a submission already known to refuse.
     """
     from ..experiment import evaluate_subsample
     if (sample_per_condition is not None or sample_seed is not None) \
@@ -1001,11 +1017,32 @@ def _require_sample_pair(sample_per_condition, sample_seed, *,
             repair_action=("re-submit with verb 'evaluate', or drop both "
                            "sample fields"))
     try:
-        evaluate_subsample.resolve_request(sample_per_condition, sample_seed,
-                                           program="steerlab-server")
+        wire = evaluate_subsample.resolve_request(
+            sample_per_condition, sample_seed, program="steerlab-server")
+        evaluate_subsample.reconcile(
+            wire, declared_evaluation_sampling(manifest), program="steerlab")
     except evaluate_subsample.SubsampleRefusal as exc:
         raise SubmissionRefusal(exc.reason, code=exc.code,
                                 repair_action=exc.repair_action) from None
+
+
+def declared_evaluation_sampling(manifest):
+    """The study's declared sampling design as a request, or ``None``.
+
+    One reader for every submit-side caller, so the walltime estimate and the
+    cross-check cannot disagree about whether a study declares a design. A
+    manifest whose stored block is malformed raises the declaration's own
+    refusal — the same sentence the verb would have given — rather than
+    silently pricing and coding the full corpus.
+    """
+    from ..experiment import evaluate_subsample
+    raw = getattr(manifest, "raw", None)
+    if not isinstance(raw, dict):
+        return None
+    return evaluate_subsample.declared_request(
+        raw.get(evaluate_subsample.DECLARATION_KEY),
+        experiment=str(getattr(manifest, "name", "") or "<study>"),
+        program="steerlab")
 
 
 def _bundle_execute_command(bundle_path: str, *, verb: str, target_root: str,
@@ -1360,9 +1397,18 @@ def _planned_records(manifest: Manifest | None,
     never above it: the sampled count is a ceiling the draw itself enforces
     (an over-ask refuses in ``evaluate_subsample.select``), and taking the
     minimum keeps a nonsensical request from inflating the estimate.
+
+    A DECLARED design prices the same way with no fields on the wire (review
+    round 12): the declaration is what the run will draw by, so pricing the
+    full corpus because nobody re-typed it would reintroduce exactly the
+    overcharge the paragraph above removed.
     """
     if manifest is None or prompts_text is None:
         return None
+    if verb == "evaluate" and not sample_per_condition:
+        declared = declared_evaluation_sampling(manifest)
+        if declared is not None:
+            sample_per_condition = declared.sample_per_condition
     if verb == "evaluate" and sample_per_condition:
         full = _planned_records(manifest, prompts_text)
         sampled = _sampled_evaluate_records(manifest, sample_per_condition)

@@ -114,22 +114,26 @@ owns the spelling.
 
 | | macOS | Linux | Windows |
 |---|---|---|---|
-| authoring (`experiment`, `concept`, `bundle package`/`inspect`/`import`) | yes | yes | yes |
-| driving a remote runner (`runner …` except `serve`, and `run`) | yes | yes | yes |
+| authoring (`experiment`, `concept`, `bundle package`/`inspect`/`import`) | yes | yes | untested |
+| driving a remote runner (`runner …` except `serve`, and `run`) | yes | yes | untested |
 | **executing locally** (`runner serve`, the `[runner]` extra) | yes | yes | **no — refused** |
 | the Mac lifecycle (`steerlab-cli`: extract/validate/sweep/run/analyze, `cluster …`) | Apple silicon only | — | — |
 
-**Windows is client-only.** Authoring, freezing, packaging, submission and
-evidence import are supported there; `runner serve` refuses by name
+**Windows is out of scope.** It is not tested, not supported, and no part of it
+is promised. The client is pure Python and imports nothing platform-specific on
+its authoring path, so in principle authoring, freezing, packaging and remote
+submission are the half that could work there — but "in principle" is the whole
+claim, and no CI proves it. `runner serve` refuses on Windows by name
 (`runnerPlatformUnsupported`) rather than starting an engine whose local
-execution path is not supported on that platform. A Windows author points `--runner <url>` at a runner on macOS, Linux,
-or a cluster, and the round trip is otherwise identical.
+execution path is not supported on that platform; that refusal is behaviour and
+stays. A downstream user who wants Windows support is welcome to add it on
+their own clone; this project spends no effort in that direction.
 
 What it is, in one table:
 
 | | `steerlab` (client) | `steerlab-server` (engine) |
 |---|---|---|
-| authors a workspace | **yes**, the local one | no — Mac-authority refusals, unchanged |
+| authors a workspace | **yes**, the local one | no — it redirects every authoring verb (`macAuthorityVerb`, a historical machine code: the rule is client-authority, not Mac-authority) |
 | loads a model / executes verbs | no | yes |
 | talks to a runner | **yes** (`runner …`, Phase 2) | it *is* the runner |
 | starts a local runner | **yes** (`runner serve`, Phase 3 — it launches the engine) | — |
@@ -154,7 +158,7 @@ engines share (§7.7's vocabulary, §4 of the contracts document) — same state
 same exit codes, same `error.code` / `error.repairAction`. Verb families:
 `experiment` (create, attach, detach, declare-condition, remove-condition,
 set-sweep-grid, set-protocol, set-system-prompt, set-parser,
-set-instrument-scope, pin-revision,
+set-instrument-scope, set-evaluation-sampling, pin-revision,
 set-style-taxonomy, pin-sae-candidates, duplicate,
 verify, freeze, list), `concept import`, `bundle` (package, inspect, import),
 `authoring prompt <kind>` (§3.12's emitter, identical bytes to the Mac's —
@@ -269,7 +273,7 @@ the platforms are the two that can serve:
 |---|---|
 | macOS | `~/Library/Application Support/SteerLab/local-runner` |
 | Linux / BSD | `$XDG_DATA_HOME/steerlab/local-runner` (default `~/.local/share/steerlab/local-runner`) |
-| Windows | — `runner serve` is refused there; Windows is client-only (see the platform table above) |
+| Windows | — `runner serve` is refused there; Windows is out of scope (see the platform table above) |
 
 It holds `runner.token`, the artifact tree (`prompts/`, `experiments/`,
 `runs/`) and `.steerlab/` (the job database). All of it is a **cache**: delete
@@ -893,6 +897,7 @@ steerlab-cli experiment set-exclusions <name> <rule>[,…] [--endpoint <key>] [-
 steerlab-cli experiment set-system-prompt <name> <text>
 steerlab-cli experiment set-parser <name> <parser>
 steerlab-cli experiment set-instrument-scope <name> <responseFormat>[,…]
+steerlab-cli experiment set-evaluation-sampling <name> <n> <seed>
 steerlab-cli experiment set-style-taxonomy <name> <prompts/taxonomies/file.json>
 steerlab-cli experiment verify <name>
 steerlab-cli experiment freeze <name> [--force] [--run-substrate <local|server>]
@@ -916,6 +921,7 @@ steerlab-cli experiment duplicate <name> <new-name>
 | `experiment set-system-prompt` | Declare the study's system prompt — the deployment frame every arm is read under. Inserted as a genuine system turn where the model's chat template has a system role; prepended to the first user turn where it does not (e.g. Gemma-family); prepended to the prompt text under rawCompletion. An agent arm reads under its persona then this frame. "" clears the declaration. |
 | `experiment set-parser` | Declare the numeric-endpoint parser from prompts/parsers/parser-registry.json and pin that registry's hash ("" clears both). |
 | `experiment set-instrument-scope` | Declare which response formats the option-consuming outcome instruments apply to (label, json, freeText), pinning the row set they select; "" clears the declaration. |
+| `experiment set-evaluation-sampling` | Declare the evaluate subsample this study preregistered — n records per condition and the seed that draws them — so the design travels in the manifest and lands in every run's snapshot. evaluate then needs no flags, and a flag that disagrees with the declaration refuses. "" clears the declaration. |
 | `experiment set-style-taxonomy` | Pin the reasoning-style taxonomy and its hash. |
 | `experiment verify` | Re-check every pinned input against the file bytes on disk. |
 | `experiment freeze` | Freeze the manifest one-way, after the evidence gates pass. |
@@ -1223,16 +1229,51 @@ drops the instrument entirely. A scope selecting **zero** rows is refused at
 the declaration rather than producing zero records at the run, and an
 out-of-vocabulary format exits `64`.
 
-All three of `set-system-prompt`, `set-parser` and `set-instrument-scope` are
+**`set-evaluation-sampling <name> <n> <seed>`** — the study's **evaluation
+sampling design**: how many records per condition the judged coding
+preregistered, and the seed that draws them, stored as the manifest's
+`evaluationSampling` block; `<name> ""` clears it. **The draw rule is never an
+argument** — the block's third field is derived verbatim from the engine's
+canonical `stratifiedByPromptID/vN` constant at the moment of declaration, for
+the same reason `parserRegistryHash` is derived: a typed rule would let a study
+claim a derivation nothing performed.
+
+Both halves or neither, *inside* the declaration exactly as at the flags: `n`
+with no seed is a design nobody can redraw, a seed with no `n` is a stamp on a
+design it did not shape, and either half alone exits `64`. Declaring one is
+what makes "preregistered" a fact in the artifact chain rather than a claim in
+a run stamp: every run writes the manifest snapshot into its own
+`experiment.json`, so the design travels with the evidence. A plan document is
+pre-registration; the snapshot is the provenance.
+
+With a design declared, `experiment evaluate` draws it with **no flags at
+all**. `--sample-per-condition` / `--sample-seed` may still be typed and then
+become a **cross-check**: a value that differs from the declaration exits `64`
+naming both, and is never an override — a flag that won would code one design
+while the snapshot recorded another. A study that declares nothing keeps the
+flags-only path exactly as it was (§3.10).
+
+*Declare-time vs run-time.* Validation splits where knowledge does. At the desk
+the verb checks a whole `n` of at least 1 and a seed that parses, and `verify`
+re-checks those plus that the stored `rule` is the one this build derives (a
+declaration written under an older rule version would not redraw the same
+records). The **population** check — `n` against each condition's codeable
+record count — cannot run at the desk, because the source run the design will
+be drawn from need not exist yet and usually does not; it stays at `evaluate`,
+where an over-ask refuses rather than clamping.
+
+All four of `set-system-prompt`, `set-parser`, `set-instrument-scope` and
+`set-evaluation-sampling` are
 also **client verbs** (§1.4) — spelled identically, refusing identically, and
-echoing the same flat `result` keys. The last two are not field assignments,
-so neither key is reachable through `set-protocol`: each *derives* its pin from
-a workspace file at the moment of declaration, and no surface on either engine
-accepts a `parserRegistryHash` or an `itemIDsHash` as input. `systemPrompt` is
+echoing the same flat `result` keys. The last three are not field assignments,
+so none of their keys is reachable through `set-protocol`: each *derives* part
+of what it stores at the moment of declaration, and no surface on either engine
+accepts a `parserRegistryHash`, an `itemIDsHash` or a sampling `rule` as input.
+`systemPrompt` is
 a plain field and therefore *stays* a `set-protocol` key as well; the named
 verb exists beside it because a verb is what an authoring agent looks for, and
 because only a verb's echo can say which delivery route the model gives the
-frame. The *engine* (`steerlab-server`) redirects all three, because it
+frame. The *engine* (`steerlab-server`) redirects all four, because it
 executes rather than authors, and its redirect names the client's spelling
 alongside the Mac's.
 `docs/PORTABILITY-CONTRACTS.md` §7 carries the reasoning.
@@ -1352,7 +1393,21 @@ telling you to run first or pass `--run`.
 `reasoning-style.json` into a **fresh** run directory and never mutates the
 source run.
 
-**Seeded subsample coding** (2026-08-29). `evaluate` takes
+**Seeded subsample coding** (2026-08-29). The design belongs in the manifest:
+declare it with `experiment set-evaluation-sampling <name> <n> <seed>` (§3.5)
+and `evaluate` draws it with **no flags at all**, with the design travelling
+into every run's `experiment.json` snapshot. That is the preferred spelling,
+because it is the only one that makes "preregistered" a fact in the artifact
+chain rather than a claim in a run stamp.
+
+The flags below remain, and on a study that declares a design they are a
+**cross-check**: a value differing from the declaration exits `64` naming both,
+never overriding it. On a study that declares nothing they behave exactly as
+described here, and their stamps still say SUBSAMPLE on every line — the
+ad-hoc path stays honest, it simply cannot claim the declared path's
+provenance (its `sampling` block carries no `declared: true`).
+
+`evaluate` takes
 `--sample-per-condition <n>` together with `--sample-seed <hex-or-int>` to
 code a stratified DRAW from the source run rather than all of it — the shape a
 power computation produces, and previously an operation with no honest
@@ -1394,11 +1449,21 @@ pairs; a paired rubric refuses rather than half-executing the command line.
 64-bit integer) and `rule` is the derivation verbatim. Every human line reads
 `coded N of M (seeded subsample)`, and the envelope's success message says so
 too. **The block's ABSENCE means the full corpus was coded** — which is what
-every report written before this existed means, byte for byte.
+every report written before this existed means, byte for byte. A draw that came
+from the manifest's declaration carries one additional key, `declared: true`;
+its absence is the ad-hoc path, not a finding.
 
 *Walltime preflight.* A submitted sampled evaluate is priced at the SAMPLED
 record count (`n` × conditions), not the full matrix, so the estimate prices
-what actually runs.
+what actually runs — and a study that DECLARES its design is priced the same
+way with no wire fields at all.
+
+*Declaring is measurement-side drift.* `evaluationSampling` is in the
+epoch guard's `MEASUREMENT_FIELDS` on both engines: it chooses which of a
+completed run's records get judged, so it cannot have moved a byte of that
+run's generations. That is what lets the house flow work — judged
+re-measurement runs on a never-frozen duplicate, and a duplicate that declares
+the coding design differs from the original run's snapshot by exactly this key.
 
 `analyze` recomputes paired-to-baseline effect sizes (bootstrap CI + Wilcoxon,
 plus the phase's multiple-comparison correction — BH-FDR for screens, Holm for

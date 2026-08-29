@@ -591,6 +591,21 @@ public enum ExperimentCLIParser {
                 + ExperimentStore.knownResponseFormats.joined(separator: ", ")
                 + "), pinning the row set they select; \"\" clears the "
                 + "declaration."),
+        // The EVALUATION SAMPLING DESIGN (review round 12, finding 4). A verb
+        // for the same reason as the two above: not a field assignment. It
+        // takes the design a power computation produced — a per-condition
+        // size and the seed that draws it — and DERIVES the draw rule from
+        // `EvaluateSubsample.rule`, so `rule` can no more be typed here than
+        // a registry hash can.
+        .init(
+            namespace: "experiment", verb: "set-evaluation-sampling",
+            positional: "<name> <n> <seed>",
+            purpose: "Declare the evaluate subsample this study "
+                + "preregistered — n records per condition and the seed that "
+                + "draws them — so the design travels in the manifest and "
+                + "lands in every run's snapshot. evaluate then needs no "
+                + "flags, and a flag that disagrees with the declaration "
+                + "refuses. \"\" clears the declaration."),
         .init(
             namespace: "experiment", verb: "set-style-taxonomy",
             positional: "<name> <prompts/taxonomies/file.json>",

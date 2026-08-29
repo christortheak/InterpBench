@@ -79,9 +79,10 @@ class VectorArtifact:
     # cannot honestly seed an optimization.
     designatedReference: dict[str, str] | None = None
     # Workspace-relative form of ``id`` ("runs/<run>/<name>") — the reference
-    # a CLIENT should store. The Mac workspace is the source of truth and the
-    # server a substitutable runner, so refs written into workspace data
-    # (variants, manifests) must resolve on both substrates; this engine's
+    # a CLIENT should store. The authoring client's workspace is the source
+    # of truth and the server a substitutable runner, so refs written into
+    # workspace data (variants, manifests) must resolve on both substrates;
+    # this engine's
     # resolver joins relative refs under its root, and the app localizes the
     # artifact bytes on selection. ``id`` stays the absolute catalog form for
     # compatibility (chat sends, existing refs). None only in synthetic/test

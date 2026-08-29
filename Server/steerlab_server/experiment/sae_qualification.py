@@ -294,7 +294,8 @@ def _relative_path(value: str, label: str, key: str) -> str:
         raise QualificationError(
             f"{label}: '{key}' must be WORKSPACE-RELATIVE — an absolute path "
             "names one machine's filesystem and resolves to nothing on the "
-            "cluster (the Mac workspace is the source of truth)")
+            "cluster (the authoring client's workspace is the source of "
+            "truth)")
     return value
 
 

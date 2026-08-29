@@ -291,6 +291,7 @@ import Testing
                         + "| set-sampling | set-exclusions "
                         + "| set-system-prompt "
                         + "| set-parser | set-instrument-scope "
+                        + "| set-evaluation-sampling "
                         + "| set-style-taxonomy | verify | freeze | duplicate "
                         + "| extract | validate | sweep | run | analyze "
                         + "| rescore-style | evaluate | promote | confirm\n")

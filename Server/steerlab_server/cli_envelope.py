@@ -26,9 +26,11 @@ What is deliberately NOT byte-identical across engines, and why:
   parses the document, it does not diff it. (``vectors compare``'s bare report
   is the one artifact where a cross-engine ``diff`` IS the point, and it keeps
   its own Python-shaped formatter on both engines.)
-* **Verb sets.** Authoring is Mac-authority (§3.2): ``create``/``attach``/
-  ``freeze``/``duplicate`` and the pin/declare/set verbs exist on the Swift CLI
-  and the HTTP API, not here. ``study submit`` is the server's own idiom and
+* **Verb sets.** Authoring belongs to an authoring CLIENT (§3.2):
+  ``create``/``attach``/``freeze``/``duplicate`` and the pin/declare/set verbs
+  exist on the Swift CLI, the cross-platform ``steerlab`` client and the HTTP
+  API, not here — this process executes, and its workspace is a cache.
+  ``study submit`` is the server's own idiom and
   has no Swift twin verb. Lockstep means the envelope and the gate ids are
   identical wherever the operation exists on both surfaces — not that the verb
   lists match.
@@ -512,10 +514,17 @@ VERB_SPECS: tuple[VerbSpec, ...] = (
 
 _SPECS_BY_LABEL = {spec.label: spec for spec in VERB_SPECS}
 
-#: Verbs that exist on the MAC CLI only, per family, mapped to the Mac spelling
-#: that answers them. Authoring is Mac-authority BY POLICY (audit §10.x): the
-#: Mac workspace is the source of truth and this engine is a runner and a
-#: cache, so none of these will ever be added here.
+#: Verbs that do not exist on THIS engine, per family, mapped to the Mac
+#: spelling that answers them (``cli._client_spelling`` appends the
+#: cross-platform client's, for a caller with no ``steerlab-cli``).
+#:
+#: The policy is CLIENT-authority (audit §10.x, corrected by the maintainer
+#: 2026-08-29): the authoring client's workspace is the source of truth, and
+#: this engine is a runner and a cache, so none of these will ever be added
+#: here. The boundary is the client versus the running hardware — never macOS
+#: versus everything else. The constant's name, and ``MAC_AUTHORITY_CODE``
+#: below, are HISTORICAL: they are stable identifiers agents switch on, kept
+#: for compatibility rather than because they describe the rule.
 #:
 #: Declared HERE rather than in ``cli`` because :func:`parse` has to know them:
 #: an unrecognised verb suppresses ``--json`` (the dispatch below has to print
@@ -580,6 +589,15 @@ MAC_AUTHORITY_VERBS: dict = {
         "set-instrument-scope": "steerlab-cli experiment "
                                 "set-instrument-scope <name> "
                                 "<responseFormat>[,…]",
+        # The EVALUATION SAMPLING DESIGN, the third declaration of that shape
+        # (review round 12, finding 4): the `rule` is DERIVED from the draw
+        # module's canonical constant at the moment of declaration, so it is
+        # no more a caller-supplied value than a registry hash is. The engine
+        # still executes the design — `experiment evaluate` reads it off the
+        # bundled manifest — it just never authors one.
+        "set-evaluation-sampling": "steerlab-cli experiment "
+                                   "set-evaluation-sampling <name> <n> "
+                                   "<seed>",
         "set-sweep-selection": "steerlab-cli experiment set-sweep-selection "
                                "<name> --objective <metric>",
         "set-sweep-grid": "steerlab-cli experiment set-sweep-grid <name> "
@@ -603,6 +621,11 @@ MAC_AUTHORITY_VERBS: dict = {
 #: this verb" describes the ENGINE. It rides in ``error.code`` beside the other
 #: non-gate codes (``notFound``, ``usage``, ``unknownFlag``), and
 #: ``error.gate`` is absent, which is what tells an agent not to switch on it.
+#:
+#: THE NAME IS HISTORICAL. The rule it reports is client-authority, not
+#: Mac-authority: this engine executes and does not author, wherever the
+#: authoring happens. The spelling is kept because it is a stable machine code
+#: that agents and the Swift CLI already switch on.
 MAC_AUTHORITY_CODE = "macAuthorityVerb"
 
 #: The families whose verbs may answer in the envelope. A family not listed

@@ -155,10 +155,12 @@ carries options and no direct-scoring instrument is declared — the run will
 then record prose and nothing else. Thinking modes must be off for
 log-probability arms, and a manifest asking for both is refused.
 
-**Two declarations that scope what an instrument reads.** Both are draft-only
-Mac verbs, and both *derive* their pin from a workspace file rather than
-taking it as an argument — which is what makes them preregistration facts
-rather than settings.
+**Two declarations that scope what an instrument reads.** Both are draft-only,
+both exist on the cross-platform client under the same spelling, and both
+*derive* their pin from a workspace file rather than taking it as an argument —
+which is what makes them preregistration facts rather than settings. (A third
+declaration of the same shape, `set-evaluation-sampling`, declares *how many*
+records the judged coding reads; §4.7.)
 
 ```bash
 steerlab-cli experiment set-parser formality-pilot <registry-entry-name>
@@ -665,31 +667,54 @@ smaller than the corpus. Coding a 7,200-record run when the design called for
 2,400 is not a conservative choice — it is a different design, judged at three
 times the cost — and hand-building a run directory holding the chosen records
 is worse: `runs/` is immutable, and a directory nothing generated is a break
-in the evidence chain. The honest spelling is two flags on `evaluate`:
+in the evidence chain. **Declare the design on the study**, and the rest
+follows:
 
 ```bash
+steerlab-cli experiment set-evaluation-sampling formality-pilot-recoded \
+    800 0x5eed0a5e5eed0a5e
 steerlab-cli experiment evaluate formality-pilot-recoded \
-    --run runs/<the-original-run-directory> \
-    --sample-per-condition 800 --sample-seed 0x5eed0a5e5eed0a5e
+    --run runs/<the-original-run-directory>
 ```
 
-Both flags or neither. **Choose the seed before you look at anything and write
-it into the preregistration** — that is what makes the subsample a design
-rather than a selection, and the same seed always draws the same records. The
-draw is stratified across promptIDs within each condition and is identical on
-both engines, so a corpus coded on the cluster and re-checked on the Mac is
+**Choose the seed before you look at anything and declare it** — that is what
+makes the subsample a design rather than a selection, and the same seed always
+draws the same records. Declaring is what makes "preregistered" a *fact* rather
+than a claim: the design lands in the manifest, every run stamps the manifest
+snapshot into its own `experiment.json`, and a reader holding the run holds the
+design. A plan document is pre-registration; the snapshot is provenance. Both
+halves or neither, and the draw rule is derived by the engine rather than
+typed. `set-evaluation-sampling <name> ""` clears the declaration.
+
+Declaring a coding design is measurement-side, so it does not invalidate the
+run being coded — which is exactly the house flow: duplicate the frozen study,
+declare the coding design on the duplicate, and evaluate against the original's
+run.
+
+The two flags still exist (`--sample-per-condition` / `--sample-seed`, both or
+neither) for an undeclared study. On a study that DOES declare a design they
+become a cross-check: a value differing from the declaration refuses, naming
+both, and never overrides. Prefer the declaration — it is the spelling that
+travels with the evidence.
+
+The draw is stratified across promptIDs within each condition and is identical
+on both engines, so a corpus coded on the cluster and re-checked on the Mac is
 one subsample rather than two of the same size. An `n` larger than a
-condition's population refuses instead of quietly shrinking to fit; per-response
+condition's population refuses instead of quietly shrinking to fit — checked
+at `evaluate`, where the records are, not at the declaration, where no run
+exists yet; per-response
 coding only, because the paired judge's unit is a pair rather than a record.
 
 Everything the reader needs is stamped: a `sampling` block in
 `coding-report.json` and the run's `config.json` carrying the size, the seed,
-the counts and the derivation rule, and every line reading `coded N of M
+the counts and the derivation rule (plus `declared: true` when the draw came
+from the declaration), and every line reading `coded N of M
 (seeded subsample)`. When you report the result, report it as a subsample —
 and when a report has **no** `sampling` block, it covered the whole corpus.
 
-Remotely, the same two flags ride the submission, and the walltime estimate
-prices the sampled count rather than the full matrix:
+Remotely, a declared design needs nothing on the submission at all, and the
+walltime estimate prices the sampled count rather than the full matrix. On an
+undeclared study the two flags ride the submission instead:
 
 ```bash
 steerlab-cli remote submit-bundle <bundle> --site <id> --verb evaluate \

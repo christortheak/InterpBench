@@ -198,7 +198,8 @@ report resource families, and it does not answer the Mac lifecycle verbs this
 document types — no `workspace init`, no `extract`, no `sweep` — so a command
 from §5 or §6 typed under `steerlab` exits `64`, correctly. Add the `[runner]`
 extra to execute locally through `steerlab runner serve` (macOS and Linux;
-Windows is client-only and refuses that verb). The verb-by-verb reference is
+Windows is out of scope — untested and unsupported, and `runner serve` refuses
+that verb there). The verb-by-verb reference is
 [CLI-REFERENCE.md](CLI-REFERENCE.md) §1.4, and the contracts behind it are
 [PORTABILITY-CONTRACTS.md](PORTABILITY-CONTRACTS.md) §7–§10.
 

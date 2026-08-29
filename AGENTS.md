@@ -81,16 +81,20 @@ Pick the first path that applies:
 3. **Neither, on a Mac**: ask the person whether to download SteerLab.app
    from the repository's Releases page — that is the no-Xcode path.
 
-4. **Not a Mac** (Linux/Windows): use the cross-platform Python client.
+4. **Not a Mac** (Linux): use the cross-platform Python client.
    From this checkout, `pip install -e "Server"` installs `steerlab` — a
    ~30 MB, no-GPU client that authors, verifies, freezes, packages, and
    drives a runner (`steerlab run <exp> --runner <url>` is the whole
    round trip; evidence comes home verified). Add the `[runner]` extra to
    also EXECUTE locally via `steerlab runner serve` (a managed loopback
    runner with its own root — never the workspace) — **macOS and Linux
-   only. Windows is client-only**: authoring, freezing, packaging and
-   remote submission all work there, and `runner serve` refuses, so point
-   a Windows machine at a runner elsewhere. The client has no
+   only.** **Windows is out of scope: untested, unsupported, and not on
+   the roadmap.** The client is pure Python and in principle nothing but
+   authoring would be expected to work there — `runner serve` refuses on
+   Windows by name — but nothing in this project is tested on it, so make
+   no promise about it to the person you are helping; someone who clones
+   this codebase and wants Windows is welcome to pursue it themselves.
+   The client has no
    `workspace init` and none of the Mac lifecycle verbs (extract, validate,
    sweep, promote, analyze); bring a Mac-created or shared workspace, or
    author into a plain directory. The full contract is

@@ -40,6 +40,34 @@ Unicode canonical-equivalence-aware and Python's ``sorted`` is code-point
 order; the two agree on ASCII and are not guaranteed to agree beyond it. The
 draw's stratum order is load-bearing for WHICH records are chosen, so both
 engines sort promptIDs (and conditions) by their UTF-8 byte sequences.
+
+**The design is DECLARED, not merely typed (review round 12, finding 4).** The
+flags above record what HAPPENED; the word "preregistered" is a claim about
+what was decided BEFORE anything ran, and a claim like that has to live in the
+artifact chain or it is not evidence. So the sampling design is a manifest
+declaration — ``evaluationSampling`` — written by ``experiment
+set-evaluation-sampling`` on both authoring surfaces, and every run stamps the
+manifest snapshot into its own ``experiment.json``. That snapshot is the
+provenance: a plan document is pre-registration, and the snapshot is what
+proves the plan is the thing that ran.
+
+When a study declares one, ``evaluate`` samples by it with no flags at all.
+The flags may still be typed, and then they are a CROSS-CHECK: any inequality
+with the declaration refuses at 64 naming both values (:func:`reconcile`).
+They are never an override — a flag that won would put the coding and the
+snapshot in disagreement, which is precisely the loss the declaration exists
+to prevent. A study that declares nothing keeps the flags-only path exactly as
+it was.
+
+**Declare-time vs run-time validation.** What can be known at the desk is
+checked at the desk: a whole ``samplePerCondition`` of at least 1, a
+``sampleSeed`` that parses as a 64-bit unsigned number, and a ``rule`` derived
+here rather than typed. What CANNOT be known at the desk is the population: at
+declaration time there is no source run, and the same design is legitimately
+declared before the run that will satisfy it exists. So the over-ask refusal
+stays where the records are — :func:`select`, at evaluate — and
+:func:`declaration_violations` is the verify-surface check that never invents
+an obligation a draft cannot meet.
 """
 
 from __future__ import annotations
@@ -71,6 +99,14 @@ RULE = (
     "their source-run order."
 )
 
+#: The manifest key the sampling DESIGN is declared under (cross-engine
+#: contract key; Swift twin ``EvaluateSubsample.declarationKey``). The block
+#: holds exactly three fields — ``samplePerCondition``, ``sampleSeed`` and
+#: ``rule`` — and ``rule`` is always :data:`RULE`, derived at the write and
+#: never accepted from a caller, for the same reason ``parserRegistryHash`` is:
+#: a typed rule would let a study claim a derivation nothing performed.
+DECLARATION_KEY = "evaluationSampling"
+
 
 class SubsampleRefusal(ValueError):
     """A typed refusal carrying its machine code and a runnable repair.
@@ -98,6 +134,13 @@ class SubsampleRequest:
 
     sample_per_condition: int
     seed: int
+    #: True when this draw came from the study's ``evaluationSampling``
+    #: declaration rather than from flags alone. It rides on the REQUEST so
+    #: nothing downstream has to thread a second argument, and it reaches the
+    #: stamp as the additive ``declared: true`` key — the one difference
+    #: between a declared coding's stamp and an ad-hoc one's. Defaulted False
+    #: so every existing construction and comparison is unchanged.
+    declared: bool = False
 
     @property
     def seed_text(self) -> str:
@@ -126,24 +169,8 @@ def parse_seed(text: str, *, program: str) -> int:
             "that lets anyone redraw it, so it cannot be blank",
             code="sampleSeedMalformed",
             repair=_seed_repair(program))
-    body = raw
-    base = 10
-    if len(body) > 2 and body[:2].lower() == "0x":
-        body, base = body[2:], 16
-    elif not body.isdigit():
-        base = 16
-    # ONE sentence for every way a seed can be unusable — not a number, a
-    # negative, or too wide to represent. Swift's `UInt64(_:radix:)` cannot
-    # tell those apart, and a refusal a researcher reads on one engine but
-    # not the other is worse than a coarser taxonomy: twin sentences beat a
-    # finer classification only one engine can make.
-    value: int | None = None
-    if body:
-        try:
-            value = int(body, base)
-        except ValueError:
-            value = None
-    if value is None or value < 0 or value > _U64:
+    value = seed_value(raw)
+    if value is None:
         raise SubsampleRefusal(
             f"--sample-seed '{raw}' is not a 64-bit unsigned number — a seed "
             "is a decimal integer, or hexadecimal with or without a '0x' "
@@ -152,6 +179,60 @@ def parse_seed(text: str, *, program: str) -> int:
             code="sampleSeedMalformed",
             repair=_seed_repair(program))
     return value
+
+
+def seed_value(text: str) -> int | None:
+    """The seed GRAMMAR, without a sentence: the 64-bit unsigned value, or
+    ``None`` when the text does not name one.
+
+    ONE grammar for every surface that reads a seed — the flag, the manifest
+    declaration, and verify — so the three cannot drift into accepting
+    different sets of strings while all three call the result "the seed".
+
+    ONE failure answer for every way a seed can be unusable — not a number, a
+    negative, or too wide to represent. Swift's ``UInt64(_:radix:)`` cannot
+    tell those apart, and a refusal a researcher reads on one engine but not
+    the other is worse than a coarser taxonomy: twin sentences beat a finer
+    classification only one engine can make.
+    """
+    body = (text or "").strip()
+    if not body:
+        return None
+    base = 10
+    if len(body) > 2 and body[:2].lower() == "0x":
+        body, base = body[2:], 16
+    elif not body.isdigit():
+        base = 16
+    if not body:
+        return None
+    try:
+        value = int(body, base)
+    except ValueError:
+        return None
+    if value < 0 or value > _U64:
+        return None
+    return value
+
+
+def whole_count(value) -> int | None:
+    """``samplePerCondition`` as a whole number, or ``None``. Rejects a float
+    (``2400.5`` is not a count, and ``2400.0`` typed as a float is a caller
+    who does not know what the field holds) and a bool, which Python would
+    otherwise happily read as 1."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value if value is not None else "").strip()
+    # The grammar Swift's `Int(_:)` accepts, deliberately: an optional sign
+    # then digits, and nothing else. A float spelling ("2400.0") is rejected on
+    # BOTH engines rather than truncated on one.
+    sign = ""
+    if text[:1] in ("+", "-"):
+        sign, text = text[0], text[1:]
+    if not text.isdigit():
+        return None
+    return int(sign + text)
 
 
 def _seed_repair(program: str) -> str:
@@ -209,6 +290,209 @@ def _refuse_seed_without_size(seeds: str, program: str):
         repair=(f"add --sample-per-condition <n> to draw a subsample, or "
                 f"drop --sample-seed and run {program} experiment evaluate "
                 "<name> to code the full corpus"))
+
+
+# =============================================================================
+# The DECLARATION — `evaluationSampling`, and the flags' demotion to a
+# cross-check. Swift twins: `EvaluateSubsample.resolveDeclaration`,
+# `.declaredRequest`, `.reconcile`, `.declarationViolations`.
+# =============================================================================
+
+
+def declaration_repair(experiment: str, program: str) -> str:
+    """The retype for a refused sampling declaration. Names the verb, this
+    study, and BOTH halves, because both-or-neither is the rule the refusals
+    above are almost always enforcing."""
+    return (f"{program} experiment set-evaluation-sampling {experiment} 2400 "
+            "0x5eed0a5e5eed0a5e  (a per-condition size and the seed that "
+            'draws it — both, always; "" clears the declaration)')
+
+
+def _declaration_parts(sample_per_condition, sample_seed, *,
+                       experiment: str, program: str):
+    """``(n, seed)`` for a well-formed declaration, ``None`` for the CLEAR.
+
+    The single grammar behind both the writer (:func:`resolve_declaration`)
+    and the reader (:func:`declared_request`), so a block this engine wrote
+    can never fail to read back, and a hand-edited one refuses with the
+    sentence its author would have got at the verb.
+    """
+    sizes = ("" if sample_per_condition is None
+             else str(sample_per_condition).strip())
+    seeds = "" if sample_seed is None else str(sample_seed).strip()
+    if not sizes and not seeds:
+        return None
+    if sizes and not seeds:
+        raise SubsampleRefusal(
+            f"the sampling design named {sizes} record(s) per condition with "
+            "no seed — a subsample nobody can redraw is not a "
+            "preregistration, so the declaration refuses rather than "
+            "choosing a seed for you",
+            code="evaluationSamplingSeedMissing",
+            repair=declaration_repair(experiment, program))
+    if seeds and not sizes:
+        raise SubsampleRefusal(
+            f"the sampling design named seed {seeds} with no per-condition "
+            "size — with no size the full corpus is coded, and the seed "
+            "would be stamped on a design it did not shape",
+            code="evaluationSamplingSizeMissing",
+            repair=declaration_repair(experiment, program))
+    count = whole_count(sizes)
+    if count is None or count < 1:
+        raise SubsampleRefusal(
+            "the sampling design's samplePerCondition must be a whole number "
+            f"of records of at least 1, not '{sizes}' — a subsample of zero "
+            "records is a design nobody can report",
+            code="evaluationSamplingSizeMalformed",
+            repair=declaration_repair(experiment, program))
+    seed = seed_value(seeds)
+    if seed is None:
+        raise SubsampleRefusal(
+            f"the sampling design's sampleSeed '{seeds}' is not a 64-bit "
+            "unsigned number — a seed is a decimal integer, or hexadecimal "
+            "with or without a '0x' prefix, of at most 16 hex digits (the "
+            "leading 16 of a digest are a fine seed, written down as such)",
+            code="evaluationSamplingSeedMalformed",
+            repair=declaration_repair(experiment, program))
+    return count, seed
+
+
+def resolve_declaration(sample_per_condition, sample_seed, *,
+                        experiment: str, program: str) -> dict | None:
+    """The ``evaluationSampling`` block for a declaration, or ``None`` when
+    both halves are empty — which is the CLEAR, the affordance every other
+    declaration verb carries.
+
+    Only the DESK-KNOWABLE rules run here: a whole ``n`` of at least 1 and a
+    seed that parses. The population check cannot run — the source run this
+    design will be drawn from need not exist yet, and usually does not, since
+    declaring the design before running is the entire point — so it stays in
+    :func:`select`. The split is documented in this module's header and in
+    ``docs/PORTABILITY-CONTRACTS.md`` §7.
+    """
+    parts = _declaration_parts(sample_per_condition, sample_seed,
+                               experiment=experiment, program=program)
+    if parts is None:
+        return None
+    count, seed = parts
+    # `rule` is DERIVED, never typed: the same argument as the parser
+    # registry's hash. Stamped verbatim so a reader of the run's manifest
+    # snapshot can recompute the membership without this build.
+    return {"rule": RULE, "samplePerCondition": count,
+            "sampleSeed": format_seed(seed)}
+
+
+def declared_request(block, *, experiment: str,
+                     program: str) -> SubsampleRequest | None:
+    """A stored declaration read back as a request, or ``None`` when the study
+    declares nothing. ``declared`` is True on whatever comes back, which is
+    what puts ``declared: true`` in the coding stamp."""
+    if not isinstance(block, dict):
+        return None
+    parts = _declaration_parts(block.get("samplePerCondition"),
+                               block.get("sampleSeed"),
+                               experiment=experiment, program=program)
+    if parts is None:
+        return None
+    return SubsampleRequest(parts[0], parts[1], declared=True)
+
+
+def reconcile(flags: SubsampleRequest | None,
+              declaration: SubsampleRequest | None, *,
+              program: str) -> SubsampleRequest | None:
+    """The effective draw, given what the flags asked for and what the study
+    declared. ``program`` names the AUTHORING binary the repair points at —
+    the engine names the client's, because the engine executes and does not
+    author.
+
+    * No declaration → the flags, unchanged. The ad-hoc path is untouched and
+      stays loud: its stamps still say SUBSAMPLE on every line.
+    * Declaration, no flags → the declaration. This is the point of the
+      feature: a declared study needs no flags at all.
+    * Both, and equal → the declaration (so ``declared: true`` is stamped).
+    * Both, and unequal → REFUSED at 64, naming both values.
+
+    The flags are a cross-check, never an override. A flag that won would code
+    one design while the run's ``experiment.json`` snapshot — the artifact a
+    reader trusts — recorded another, which is exactly the silent substitution
+    the whole refusal vocabulary exists to prevent. The repair is therefore
+    never "pass --force": it is to drop the flag, or to re-declare the design
+    on a draft.
+    """
+    if declaration is None:
+        return flags
+    if flags is None:
+        return declaration
+    if flags.sample_per_condition != declaration.sample_per_condition:
+        raise SubsampleRefusal(
+            f"--sample-per-condition {flags.sample_per_condition} contradicts "
+            "this study's declared sampling design, which preregistered "
+            f"{declaration.sample_per_condition} record(s) per condition. On "
+            "a study that declares its design the flag is a CROSS-CHECK, "
+            "never an override: the declaration is what the run's "
+            "experiment.json snapshot carries, so a flag that won would code "
+            "one design and record another",
+            code="evaluationSamplingConflict",
+            repair=(f"drop --sample-per-condition (the declaration already "
+                    f"supplies {declaration.sample_per_condition}), or "
+                    "declare the design you actually want on a draft: "
+                    f"{program} experiment set-evaluation-sampling <name> "
+                    f"{flags.sample_per_condition} <seed>"))
+    if flags.seed != declaration.seed:
+        raise SubsampleRefusal(
+            f"--sample-seed {flags.seed_text} contradicts this study's "
+            "declared sampling design, which preregistered seed "
+            f"{declaration.seed_text}. On a study that declares its design "
+            "the flag is a CROSS-CHECK, never an override: the declaration "
+            "is what the run's experiment.json snapshot carries, so a flag "
+            "that won would draw one subsample and record another",
+            code="evaluationSamplingConflict",
+            repair=(f"drop --sample-seed (the declaration already supplies "
+                    f"{declaration.seed_text}), or declare the design you "
+                    f"actually want on a draft: {program} experiment "
+                    f"set-evaluation-sampling <name> "
+                    f"{declaration.sample_per_condition} {flags.seed_text}"))
+    return declaration
+
+
+def declaration_violations(block) -> list[str]:
+    """The verify() surface for a stored ``evaluationSampling`` block.
+
+    ABSENT = no declaration = no violations, so every manifest written before
+    this existed verifies exactly as it did. What is checked is what a desk
+    can check: shape, a whole positive ``n``, a parseable seed, and that the
+    ``rule`` is the one THIS build derives — a declaration carrying an older
+    ``stratifiedByPromptID`` version would not redraw the same records, and
+    the version marker exists so that is visible rather than silent.
+
+    What is NOT checked here is the population: no run exists yet at verify
+    time, and inventing an obligation a draft cannot meet would make the
+    declaration unusable in the order a study is actually authored. That
+    check lives in :func:`select`, where the records are.
+    """
+    if block is None:
+        return []
+    if not isinstance(block, dict):
+        return [f"{DECLARATION_KEY} must be an object holding "
+                "samplePerCondition, sampleSeed and rule"]
+    problems: list[str] = []
+    count = whole_count(block.get("samplePerCondition"))
+    if count is None or count < 1:
+        problems.append(
+            f"{DECLARATION_KEY}.samplePerCondition must be a whole number of "
+            "records of at least 1 (declared: "
+            f"{block.get('samplePerCondition')!r})")
+    if seed_value(str(block.get("sampleSeed") or "")) is None:
+        problems.append(
+            f"{DECLARATION_KEY}.sampleSeed "
+            f"{block.get('sampleSeed')!r} is not a 64-bit unsigned number")
+    if block.get("rule") != RULE:
+        problems.append(
+            f"{DECLARATION_KEY}.rule is not the draw rule this build derives "
+            "— the declaration was written under a different version of "
+            "stratifiedByPromptID and would not redraw the same records; "
+            "re-declare the design to derive the current rule")
+    return problems
 
 
 def stream_seed(seed: int, *parts: str) -> int:
@@ -371,14 +655,26 @@ def stamp(request: SubsampleRequest, *, sampled: int, source: int) -> dict:
     """The ``sampling`` block. Additive by construction: its ABSENCE is what
     a full-corpus coding looks like, so every report written before this
     existed reads back byte-identically and no reader has to interpret a
-    missing block as anything but "all of it"."""
-    return {
+    missing block as anything but "all of it".
+
+    ``declared: true`` is additive inside it, for the same reason and one
+    level down: present when the draw came from the study's
+    ``evaluationSampling`` declaration, ABSENT when the flags alone asked for
+    it. Both stamps say SUBSAMPLE on every line — the ad-hoc path is not
+    quieter, it simply cannot claim the provenance the declared one has, and a
+    key that were always present would make "declared: false" look like a
+    finding rather than the older, still-honest spelling.
+    """
+    block = {
         "rule": RULE,
         "samplePerCondition": request.sample_per_condition,
         "sampleSeed": request.seed_text,
         "sampledRecords": int(sampled),
         "sourceRecords": int(source),
     }
+    if request.declared:
+        block["declared"] = True
+    return block
 
 
 def coded_phrase(stamp_block: dict | None, total: int) -> str:

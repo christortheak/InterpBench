@@ -6836,6 +6836,24 @@ public enum ExperimentTasks {
         onInvalidVerdict: (@Sendable ([String: String]) async -> Void)? = nil
     ) async throws -> URL {
         let manifest = try loadVerified(experimentName)
+        // The study's DECLARED sampling design outranks the flags, and the
+        // flags are checked against it (review round 12). Reconciled HERE
+        // rather than at the CLI edge deliberately: this is the first point
+        // that holds the manifest, so the CLI, the panel and any later
+        // caller all get the same cross-check on the same bytes.
+        let subsample = try EvaluateSubsample.reconcile(
+            flags: subsample,
+            declaration: try EvaluateSubsample.declaredRequest(
+                manifest.evaluationSampling, experiment: experimentName,
+                program: "steerlab-cli"),
+            program: "steerlab-cli")
+        if let subsample, subsample.declared {
+            print(
+                "evaluate: the study declares a sampling design — "
+                    + "\(subsample.samplePerCondition) record(s) per "
+                    + "condition at seed \(subsample.seedText) "
+                    + "(evaluationSampling)")
+        }
         let cancel = CancelPoller(shouldCancel)
         // Epoch guard: the source run must have been produced under THIS
         // manifest (name matching alone let a pre-edit draft run be judged

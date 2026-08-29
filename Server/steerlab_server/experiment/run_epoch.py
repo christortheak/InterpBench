@@ -113,9 +113,15 @@ def _without_self_projected(manifest, run_name: str):
 #: re-pinning a study from the withdrawn paired K&Z rubric to the
 #: perResponseCoding rubric must not demand a GPU re-run of a healthy
 #: source run.
+#: ``evaluationSampling`` joined on 2026-08-29 (review round 12) and is the
+#: clearest member of the list: it chooses WHICH of a completed run's records
+#: get judged, so it cannot have moved a byte of that run's generations. It has
+#: to be here for the house's own flow to work — judged re-measurement runs on
+#: a never-frozen DUPLICATE, and a duplicate that declares the coding design
+#: differs from the original run's snapshot by exactly this key.
 MEASUREMENT_FIELDS = ("judges", "evaluation", "pipeline",
                       "judgeRubricFile", "judgeRubricHash",
-                      "humanValidation")
+                      "humanValidation", "evaluationSampling")
 
 #: Keys a Swift struct round-trip materializes at their default even when the
 #: donor's bytes never carried them (`experiment duplicate` decodes and

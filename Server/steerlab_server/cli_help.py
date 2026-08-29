@@ -116,7 +116,9 @@ FLAG_PURPOSES: dict = {
     "--resume-from": "Continue judging from this run directory.",
     "--sample-per-condition":
         "Code a seeded, stratified subsample of this many records per "
-        "condition instead of the whole source run; requires --sample-seed.",
+        "condition instead of the whole source run; requires --sample-seed. "
+        "On a study that declares its sampling design the flag is a "
+        "cross-check, not an override: a differing value refuses.",
     "--sample-seed":
         "The seed the subsample is drawn with, so anyone can redraw exactly "
         "these records; requires --sample-per-condition.",

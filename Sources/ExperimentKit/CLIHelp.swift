@@ -277,7 +277,10 @@ public enum CLIFlagVocabulary {
             + "n a power computation produces. Requires --sample-seed (a "
             + "subsample nobody can redraw is not evidence); per-response "
             + "coding only; an n above a condition's population refuses "
-            + "rather than clamping.",
+            + "rather than clamping. On a study that DECLARES its design "
+            + "(experiment set-evaluation-sampling) this flag is a "
+            + "cross-check, not an override: a value that differs from the "
+            + "declaration refuses.",
         "--sample-seed":
             "The 64-bit seed the subsample is drawn with (decimal, or hex "
             + "with or without 0x), so anyone holding the seed and the source "

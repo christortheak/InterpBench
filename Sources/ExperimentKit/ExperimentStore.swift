@@ -54,6 +54,7 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         case caseFamily
         case outcomeInstruments
         case outcomeInstrumentScope
+        case evaluationSampling
         case validationControls
         case validationLayer
         case validationLayerFraction
@@ -1404,6 +1405,26 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
     /// unchanged and keep their content hash.
     public var outcomeInstrumentScope: ResponseFormat.Scope?
 
+    /// The study's declared EVALUATION SAMPLING DESIGN (cross-engine contract
+    /// key "evaluationSampling"): how many records per condition the judged
+    /// coding preregistered, and the seed that draws them.
+    ///
+    /// The seeded evaluate subsample shipped as CLI flags and run stamps
+    /// (2026-08-29). A stamp records what HAPPENED; "preregistered" is a
+    /// claim about what was decided BEFORE anything ran, and a claim like
+    /// that has to live in the artifact chain to be evidence. Declaring it
+    /// here is what puts it there: every run writes the manifest snapshot
+    /// into its own `experiment.json`, so the design travels with the
+    /// evidence instead of only with the command line that produced it.
+    ///
+    /// `evaluate` then needs no flags at all, and a flag that DISAGREES with
+    /// this refuses (`EvaluateSubsample.reconcile`) — the flags become a
+    /// cross-check on a declared study, never an override. ABSENT = no
+    /// declared design, which is the flags-only path exactly as it was, and
+    /// is what every manifest written before this holds. Optional so those
+    /// manifests decode unchanged and keep their content hash.
+    public var evaluationSampling: EvaluateSubsample.Declaration?
+
     /// A discriminant-validity CONTROL concept: a direction the study's own
     /// concepts must NOT collapse into.
     ///
@@ -1655,6 +1676,7 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         self.caseFamily = nil
         self.outcomeInstruments = nil
         self.outcomeInstrumentScope = nil
+        self.evaluationSampling = nil
         self.validationControls = nil
         self.validationLayer = nil
         self.validationLayerFraction = nil
@@ -1769,6 +1791,8 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
             [String].self, forKey: .outcomeInstruments)
         outcomeInstrumentScope = try container.decodeIfPresent(
             ResponseFormat.Scope.self, forKey: .outcomeInstrumentScope)
+        evaluationSampling = try container.decodeIfPresent(
+            EvaluateSubsample.Declaration.self, forKey: .evaluationSampling)
         validationControls = try container.decodeIfPresent(
             [ValidationControl].self, forKey: .validationControls)
         validationLayer = try container.decodeIfPresent(
@@ -2303,7 +2327,8 @@ public enum ExperimentStore {
             return [
                 "SAE candidate manifest path '\(path)' is absolute — pinned "
                     + "inputs are WORKSPACE-RELATIVE so the study resolves on any "
-                    + "machine (the Mac workspace is the source of truth)"
+                    + "machine (the authoring client's workspace is the source "
+                    + "of truth)"
             ]
         }
         guard let data = try? Data(contentsOf: resolveProjectPath(path)) else {
@@ -4045,6 +4070,45 @@ public enum ExperimentStore {
                         + "declare), or \"\" to clear the declaration")
             }
             manifest.outcomeInstrumentScope = pin
+        }
+    }
+
+    /// Declare (or clear) the study's EVALUATION SAMPLING DESIGN.
+    ///
+    /// THE RULING (review round 12, finding 4). The seeded evaluate subsample
+    /// landed as flags and run stamps only. A stamp records what HAPPENED,
+    /// and "preregistered" is a claim about what was decided BEFORE anything
+    /// ran — a claim that has to live in the artifact chain to be evidence.
+    /// The reviewer asked for a frozen, hashed design document; that does not
+    /// fit the house flow, because judged re-measurement deliberately runs on
+    /// never-frozen duplicates. The adapted remedy keeps the substance: the
+    /// design becomes a DRAFT MANIFEST DECLARATION, and every run stamps the
+    /// manifest snapshot into its own `experiment.json`. The snapshot is the
+    /// provenance. A plan document is pre-registration; the snapshot is what
+    /// proves the plan is what ran.
+    ///
+    /// Both halves or neither, INSIDE the declaration exactly as at the
+    /// flags: `n` with no seed is a design nobody can redraw, a seed with no
+    /// `n` is a stamp on a design it did not shape. Passing neither CLEARS,
+    /// the affordance every declaration verb here carries.
+    ///
+    /// `rule` is DERIVED from `EvaluateSubsample.rule` and never accepted as
+    /// an argument — the same guarantee as `parserRegistryHash`, for the same
+    /// reason. Server twin:
+    /// `experiment_store.declare_evaluation_sampling`.
+    @discardableResult
+    public static func declareEvaluationSampling(
+        samplePerCondition: String?, sampleSeed: String?,
+        experimentName: String
+    ) throws -> ExperimentManifest {
+        try updateDraft(name: experimentName) { manifest in
+            // Thrown INSIDE `updateDraft`, so a refused declaration saves
+            // nothing — the same posture as the two declarations above.
+            manifest.evaluationSampling =
+                try EvaluateSubsample.resolveDeclaration(
+                    samplePerCondition: samplePerCondition,
+                    sampleSeed: sampleSeed,
+                    experiment: experimentName, program: "steerlab-cli")
         }
     }
 
@@ -6952,6 +7016,19 @@ public enum ExperimentStore {
         // rules = nothing to check (server twin: Manifest.verify →
         // exclusions.rule_violations).
         violations.append(contentsOf: ExclusionEngine.violations(manifest.exclusionRules))
+        // The declared EVALUATION SAMPLING DESIGN (review round 12): a
+        // preregistration fact, so what a desk can check is checked at the
+        // desk — a whole positive per-condition size, a seed that parses, and
+        // a `rule` this build actually derives. The POPULATION check is
+        // deliberately absent: at verify time the source run this design will
+        // be drawn from need not exist, and it usually does not, since
+        // declaring before running is the point. That check lives in
+        // `EvaluateSubsample.selectedPositions`, where the records are.
+        // ABSENT key = no declaration = no violations (server twin:
+        // Manifest.verify → evaluate_subsample.declaration_violations).
+        violations.append(
+            contentsOf: EvaluateSubsample.declarationViolations(
+                manifest.evaluationSampling))
         return violations
     }
 

@@ -41,6 +41,34 @@ import SteeringKit
 /// order; the two agree on ASCII and are not guaranteed to agree beyond it.
 /// The stratum order decides WHICH records are chosen, so both engines sort
 /// promptIDs (and conditions) by their UTF-8 byte sequences.
+///
+/// **The design is DECLARED, not merely typed (review round 12, finding 4).**
+/// The flags above record what HAPPENED; the word "preregistered" is a claim
+/// about what was decided BEFORE anything ran, and a claim like that has to
+/// live in the artifact chain or it is not evidence. So the sampling design is
+/// a manifest declaration — `evaluationSampling` — written by `experiment
+/// set-evaluation-sampling` on both authoring surfaces, and every run stamps
+/// the manifest snapshot into its own `experiment.json`. That snapshot is the
+/// provenance: a plan document is pre-registration, and the snapshot is what
+/// proves the plan is the thing that ran.
+///
+/// When a study declares one, `evaluate` samples by it with no flags at all.
+/// The flags may still be typed, and then they are a CROSS-CHECK: any
+/// inequality with the declaration refuses at 64 naming both values
+/// (`reconcile`). They are never an override — a flag that won would put the
+/// coding and the snapshot in disagreement, which is precisely the loss the
+/// declaration exists to prevent. A study that declares nothing keeps the
+/// flags-only path exactly as it was.
+///
+/// **Declare-time vs run-time validation.** What can be known at the desk is
+/// checked at the desk: a whole `samplePerCondition` of at least 1, a
+/// `sampleSeed` that parses as a 64-bit unsigned number, and a `rule` derived
+/// here rather than typed. What CANNOT be known at the desk is the
+/// population: at declaration time there is no source run, and the same
+/// design is legitimately declared before the run that will satisfy it
+/// exists. So the over-ask refusal stays where the records are —
+/// `selectedPositions`, at evaluate — and `declarationViolations` is the
+/// verify-surface check that never invents an obligation a draft cannot meet.
 public enum EvaluateSubsample {
 
     /// The derivation, stated once and stamped VERBATIM into every sampled
@@ -63,6 +91,10 @@ public enum EvaluateSubsample {
         ordered by UTF-8 bytes. Kept records stay in their source-run order.
         """
 
+    /// The manifest key the sampling DESIGN is declared under (cross-engine
+    /// contract key; server twin `evaluate_subsample.DECLARATION_KEY`).
+    public static let declarationKey = "evaluationSampling"
+
     // MARK: - The request
 
     /// A validated `(n, seed)` ask. `seedText` is the canonical
@@ -72,13 +104,45 @@ public enum EvaluateSubsample {
     public struct Request: Sendable, Equatable {
         public let samplePerCondition: Int
         public let seed: UInt64
+        /// True when this draw came from the study's `evaluationSampling`
+        /// declaration rather than from flags alone. It rides on the REQUEST
+        /// so nothing downstream has to thread a second argument, and it
+        /// reaches the stamp as the additive `declared: true` key — the one
+        /// difference between a declared coding's stamp and an ad-hoc one's.
+        /// Defaulted false so every existing construction is unchanged.
+        public let declared: Bool
 
-        public init(samplePerCondition: Int, seed: UInt64) {
+        public init(
+            samplePerCondition: Int, seed: UInt64, declared: Bool = false
+        ) {
             self.samplePerCondition = samplePerCondition
             self.seed = seed
+            self.declared = declared
         }
 
         public var seedText: String { EvaluateSubsample.format(seed: seed) }
+    }
+
+    /// The study's DECLARED sampling design, as it sits in the manifest.
+    ///
+    /// `rule` is DERIVED at the write from `EvaluateSubsample.rule` and never
+    /// accepted from a caller — the same guarantee as `parserRegistryHash`,
+    /// for the same reason: a typed rule would let a study claim a derivation
+    /// nothing performed. Decoding keeps whatever the file holds, so a
+    /// hand-edited or older-version rule survives to be REPORTED by
+    /// `declarationViolations` rather than silently corrected.
+    public struct Declaration: Codable, Sendable, Equatable {
+        public var rule: String
+        public var samplePerCondition: Int
+        public var sampleSeed: String
+
+        public init(
+            rule: String, samplePerCondition: Int, sampleSeed: String
+        ) {
+            self.rule = rule
+            self.samplePerCondition = samplePerCondition
+            self.sampleSeed = sampleSeed
+        }
     }
 
     /// The `sampling` block. Additive by construction: its ABSENCE is what a
@@ -91,18 +155,39 @@ public enum EvaluateSubsample {
         public let sampleSeed: String
         public let sampledRecords: Int
         public let sourceRecords: Int
+        /// Present (and true) when the draw came from the study's
+        /// `evaluationSampling` declaration; ABSENT when the flags alone
+        /// asked for it. Additive for the same reason `sampling` itself is:
+        /// a key that were always present would make `declared: false` read
+        /// as a finding rather than as the older, still-honest spelling.
+        public let declared: Bool?
 
-        /// The same five keys as a `[String: Any]`, for `RunMetadata`'s
+        public init(
+            rule: String, samplePerCondition: Int, sampleSeed: String,
+            sampledRecords: Int, sourceRecords: Int, declared: Bool? = nil
+        ) {
+            self.rule = rule
+            self.samplePerCondition = samplePerCondition
+            self.sampleSeed = sampleSeed
+            self.sampledRecords = sampledRecords
+            self.sourceRecords = sourceRecords
+            self.declared = declared
+        }
+
+        /// The same keys as a `[String: Any]`, for `RunMetadata`'s
         /// JSONSerialization payload — which takes a plain object rather
-        /// than an `Encodable`.
+        /// than an `Encodable`. `declared` is omitted when nil, exactly as
+        /// the encoder omits it.
         public var jsonObject: [String: Any] {
-            [
+            var object: [String: Any] = [
                 "rule": rule,
                 "samplePerCondition": samplePerCondition,
                 "sampleSeed": sampleSeed,
                 "sampledRecords": sampledRecords,
                 "sourceRecords": sourceRecords,
             ]
+            if let declared { object["declared"] = declared }
+            return object
         }
     }
 
@@ -126,15 +211,7 @@ public enum EvaluateSubsample {
                     + "thing that lets anyone redraw it, so it cannot be blank",
                 repair: seedRepair(program: program))
         }
-        var body = raw
-        var radix = 10
-        if body.count > 2, body.prefix(2).lowercased() == "0x" {
-            body = String(body.dropFirst(2))
-            radix = 16
-        } else if !body.allSatisfy({ $0.isNumber }) {
-            radix = 16
-        }
-        guard !body.isEmpty, let value = UInt64(body, radix: radix) else {
+        guard let value = seedValue(raw) else {
             // `UInt64(_:radix:)` fails identically for a non-number and for a
             // value too large to represent, so the message names both: the
             // repair is the same sentence either way.
@@ -147,6 +224,27 @@ public enum EvaluateSubsample {
                 repair: seedRepair(program: program))
         }
         return value
+    }
+
+    /// The seed GRAMMAR, without a sentence: the 64-bit unsigned value, or
+    /// nil when the text does not name one.
+    ///
+    /// ONE grammar for every surface that reads a seed — the flag, the
+    /// manifest declaration, and verify — so the three cannot drift into
+    /// accepting different sets of strings while all three call the result
+    /// "the seed". Server twin: `evaluate_subsample.seed_value`.
+    public static func seedValue(_ text: String) -> UInt64? {
+        var body = text.trimmingCharacters(in: .whitespaces)
+        guard !body.isEmpty else { return nil }
+        var radix = 10
+        if body.count > 2, body.prefix(2).lowercased() == "0x" {
+            body = String(body.dropFirst(2))
+            radix = 16
+        } else if !body.allSatisfy({ $0.isNumber }) {
+            radix = 16
+        }
+        guard !body.isEmpty else { return nil }
+        return UInt64(body, radix: radix)
     }
 
     static func seedRepair(program: String) -> String {
@@ -200,6 +298,217 @@ public enum EvaluateSubsample {
         return Request(
             samplePerCondition: count,
             seed: try parseSeed(seedText ?? "", program: program))
+    }
+
+    // MARK: - The DECLARATION
+
+    // `evaluationSampling`, and the flags' demotion to a cross-check. Server
+    // twins: `evaluate_subsample.resolve_declaration`, `.declared_request`,
+    // `.reconcile`, `.declaration_violations`.
+
+    /// The retype for a refused sampling declaration. Names the verb, this
+    /// study, and BOTH halves, because both-or-neither is the rule the
+    /// refusals below are almost always enforcing.
+    public static func declarationRepair(
+        experiment: String, program: String
+    ) -> String {
+        "\(program) experiment set-evaluation-sampling \(experiment) 2400 "
+            + "0x5eed0a5e5eed0a5e  (a per-condition size and the seed that "
+            + "draws it — both, always; \"\" clears the declaration)"
+    }
+
+    /// `(n, seed)` for a well-formed declaration, nil for the CLEAR.
+    ///
+    /// The single grammar behind both the writer (`resolveDeclaration`) and
+    /// the reader (`declaredRequest`), so a block this engine wrote can never
+    /// fail to read back, and a hand-edited one refuses with the sentence its
+    /// author would have got at the verb.
+    static func declarationParts(
+        samplePerCondition: String?, sampleSeed: String?,
+        experiment: String, program: String
+    ) throws -> (count: Int, seed: UInt64)? {
+        let sizes = (samplePerCondition ?? "")
+            .trimmingCharacters(in: .whitespaces)
+        let seeds = (sampleSeed ?? "").trimmingCharacters(in: .whitespaces)
+        if sizes.isEmpty, seeds.isEmpty { return nil }
+        if !sizes.isEmpty, seeds.isEmpty {
+            throw ExperimentError.malformed(
+                "the sampling design named \(sizes) record(s) per condition "
+                    + "with no seed — a subsample nobody can redraw is not a "
+                    + "preregistration, so the declaration refuses rather "
+                    + "than choosing a seed for you",
+                repair: declarationRepair(
+                    experiment: experiment, program: program))
+        }
+        if !seeds.isEmpty, sizes.isEmpty {
+            throw ExperimentError.malformed(
+                "the sampling design named seed \(seeds) with no "
+                    + "per-condition size — with no size the full corpus is "
+                    + "coded, and the seed would be stamped on a design it "
+                    + "did not shape",
+                repair: declarationRepair(
+                    experiment: experiment, program: program))
+        }
+        guard let count = Int(sizes), count >= 1 else {
+            throw ExperimentError.malformed(
+                "the sampling design's samplePerCondition must be a whole "
+                    + "number of records of at least 1, not '\(sizes)' — a "
+                    + "subsample of zero records is a design nobody can "
+                    + "report",
+                repair: declarationRepair(
+                    experiment: experiment, program: program))
+        }
+        guard let seed = seedValue(seeds) else {
+            throw ExperimentError.malformed(
+                "the sampling design's sampleSeed '\(seeds)' is not a 64-bit "
+                    + "unsigned number — a seed is a decimal integer, or "
+                    + "hexadecimal with or without a '0x' prefix, of at most "
+                    + "16 hex digits (the leading 16 of a digest are a fine "
+                    + "seed, written down as such)",
+                repair: declarationRepair(
+                    experiment: experiment, program: program))
+        }
+        return (count, seed)
+    }
+
+    /// The `evaluationSampling` block for a declaration, or nil when both
+    /// halves are empty — which is the CLEAR, the affordance every other
+    /// declaration verb carries.
+    ///
+    /// Only the DESK-KNOWABLE rules run here: a whole `n` of at least 1 and a
+    /// seed that parses. The population check cannot run — the source run
+    /// this design will be drawn from need not exist yet, and usually does
+    /// not, since declaring the design before running is the entire point —
+    /// so it stays in `selectedPositions`.
+    public static func resolveDeclaration(
+        samplePerCondition: String?, sampleSeed: String?,
+        experiment: String, program: String
+    ) throws -> Declaration? {
+        guard
+            let parts = try declarationParts(
+                samplePerCondition: samplePerCondition, sampleSeed: sampleSeed,
+                experiment: experiment, program: program)
+        else { return nil }
+        // `rule` is DERIVED, never typed: the same argument as the parser
+        // registry's hash. Stamped verbatim so a reader of the run's manifest
+        // snapshot can recompute the membership without this build.
+        return Declaration(
+            rule: rule, samplePerCondition: parts.count,
+            sampleSeed: format(seed: parts.seed))
+    }
+
+    /// A stored declaration read back as a request, or nil when the study
+    /// declares nothing. `declared` is true on whatever comes back, which is
+    /// what puts `declared: true` in the coding stamp.
+    public static func declaredRequest(
+        _ declaration: Declaration?, experiment: String, program: String
+    ) throws -> Request? {
+        guard let declaration else { return nil }
+        guard
+            let parts = try declarationParts(
+                samplePerCondition: String(declaration.samplePerCondition),
+                sampleSeed: declaration.sampleSeed,
+                experiment: experiment, program: program)
+        else { return nil }
+        return Request(
+            samplePerCondition: parts.count, seed: parts.seed, declared: true)
+    }
+
+    /// The effective draw, given what the flags asked for and what the study
+    /// declared. `program` names the AUTHORING binary the repair points at.
+    ///
+    /// * No declaration → the flags, unchanged. The ad-hoc path is untouched
+    ///   and stays loud: its stamps still say SUBSAMPLE on every line.
+    /// * Declaration, no flags → the declaration. This is the point of the
+    ///   feature: a declared study needs no flags at all.
+    /// * Both, and equal → the declaration (so `declared: true` is stamped).
+    /// * Both, and unequal → REFUSED at 64, naming both values.
+    ///
+    /// The flags are a cross-check, never an override. A flag that won would
+    /// code one design while the run's `experiment.json` snapshot — the
+    /// artifact a reader trusts — recorded another, which is exactly the
+    /// silent substitution the whole refusal vocabulary exists to prevent.
+    /// The repair is therefore never "pass --force": it is to drop the flag,
+    /// or to declare the design you actually want on a draft.
+    public static func reconcile(
+        flags: Request?, declaration: Request?, program: String
+    ) throws -> Request? {
+        guard let declaration else { return flags }
+        guard let flags else { return declaration }
+        if flags.samplePerCondition != declaration.samplePerCondition {
+            throw ExperimentError.malformed(
+                "--sample-per-condition \(flags.samplePerCondition) "
+                    + "contradicts this study's declared sampling design, "
+                    + "which preregistered \(declaration.samplePerCondition) "
+                    + "record(s) per condition. On a study that declares its "
+                    + "design the flag is a CROSS-CHECK, never an override: "
+                    + "the declaration is what the run's experiment.json "
+                    + "snapshot carries, so a flag that won would code one "
+                    + "design and record another",
+                repair: "drop --sample-per-condition (the declaration "
+                    + "already supplies \(declaration.samplePerCondition)), "
+                    + "or declare the design you actually want on a draft: "
+                    + "\(program) experiment set-evaluation-sampling <name> "
+                    + "\(flags.samplePerCondition) <seed>")
+        }
+        if flags.seed != declaration.seed {
+            throw ExperimentError.malformed(
+                "--sample-seed \(flags.seedText) contradicts this study's "
+                    + "declared sampling design, which preregistered seed "
+                    + "\(declaration.seedText). On a study that declares its "
+                    + "design the flag is a CROSS-CHECK, never an override: "
+                    + "the declaration is what the run's experiment.json "
+                    + "snapshot carries, so a flag that won would draw one "
+                    + "subsample and record another",
+                repair: "drop --sample-seed (the declaration already "
+                    + "supplies \(declaration.seedText)), or declare the "
+                    + "design you actually want on a draft: \(program) "
+                    + "experiment set-evaluation-sampling <name> "
+                    + "\(declaration.samplePerCondition) \(flags.seedText)")
+        }
+        return declaration
+    }
+
+    /// The verify() surface for a stored `evaluationSampling` block.
+    ///
+    /// ABSENT = no declaration = no violations, so every manifest written
+    /// before this existed verifies exactly as it did. What is checked is
+    /// what a desk can check: a whole positive `n`, a parseable seed, and
+    /// that the `rule` is the one THIS build derives — a declaration carrying
+    /// an older `stratifiedByPromptID` version would not redraw the same
+    /// records, and the version marker exists so that is visible rather than
+    /// silent.
+    ///
+    /// What is NOT checked here is the population: no run exists yet at
+    /// verify time, and inventing an obligation a draft cannot meet would
+    /// make the declaration unusable in the order a study is actually
+    /// authored. That check lives in `selectedPositions`, where the records
+    /// are. Server twin: `evaluate_subsample.declaration_violations`.
+    public static func declarationViolations(
+        _ declaration: Declaration?
+    ) -> [String] {
+        guard let declaration else { return [] }
+        var problems: [String] = []
+        if declaration.samplePerCondition < 1 {
+            problems.append(
+                "\(declarationKey).samplePerCondition must be a whole number "
+                    + "of records of at least 1 (declared: "
+                    + "\(declaration.samplePerCondition))")
+        }
+        if seedValue(declaration.sampleSeed) == nil {
+            problems.append(
+                "\(declarationKey).sampleSeed '\(declaration.sampleSeed)' is "
+                    + "not a 64-bit unsigned number")
+        }
+        if declaration.rule != rule {
+            problems.append(
+                "\(declarationKey).rule is not the draw rule this build "
+                    + "derives — the declaration was written under a "
+                    + "different version of stratifiedByPromptID and would "
+                    + "not redraw the same records; re-declare the design to "
+                    + "derive the current rule")
+        }
+        return problems
     }
 
     // MARK: - The draw
@@ -372,13 +681,21 @@ public enum EvaluateSubsample {
     }
 
     /// The stamp for a completed draw.
+    ///
+    /// `declared: true` is additive inside the block, for the same reason the
+    /// block itself is and one level down: present when the draw came from
+    /// the study's `evaluationSampling` declaration, ABSENT when the flags
+    /// alone asked for it. Both stamps say SUBSAMPLE on every line — the
+    /// ad-hoc path is not quieter, it simply cannot claim the provenance the
+    /// declared one has.
     public static func stamp(
         _ request: Request, sampled: Int, source: Int
     ) -> Stamp {
         Stamp(
             rule: rule, samplePerCondition: request.samplePerCondition,
             sampleSeed: request.seedText, sampledRecords: sampled,
-            sourceRecords: source)
+            sourceRecords: source,
+            declared: request.declared ? true : nil)
     }
 
     /// The human count every line says: `"7200 record(s)"` for a full corpus,

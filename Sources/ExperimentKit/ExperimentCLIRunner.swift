@@ -4269,6 +4269,61 @@ public struct ExperimentCLIRunner: Sendable {
             return ExperimentCLIResult(
                 message: message, changed: true, payload: payload)
 
+        case "set-evaluation-sampling":
+            // The study's EVALUATION SAMPLING DESIGN. `<name> <n> <seed>`
+            // declares; `<name> ""` clears. The arity is 3 (name + one
+            // value), not 4, for the same reason `set-parser`'s is 2: the
+            // empty string is a legal value here and the clear is the
+            // affordance a superseded design is removed with.
+            //
+            // Both halves or neither INSIDE the declaration, the same rule
+            // the flags carry and for the same reasons — and the store owns
+            // both sentences, so this verb, the client's spelling and any
+            // later surface refuse identically.
+            guard args.count >= 3 else {
+                throw ExperimentError(
+                    reason: "usage: experiment set-evaluation-sampling <name> "
+                        + "<n> <seed>  (the preregistered per-condition "
+                        + "record count and the seed that draws it — both, "
+                        + "always)  (\"\" clears the declaration; the draw "
+                        + "RULE is derived from the engine, never passed in)")
+            }
+            let declared = try ExperimentStore.declareEvaluationSampling(
+                samplePerCondition: args[2],
+                sampleSeed: args.count >= 4 ? args[3] : "",
+                experimentName: args[1])
+            let samplingLine: String
+            if let design = declared.evaluationSampling {
+                samplingLine =
+                    "declared the evaluation sampling design on "
+                    + "'\(declared.name)': \(design.samplePerCondition) "
+                    + "record(s) per condition at seed \(design.sampleSeed)"
+            } else {
+                samplingLine =
+                    "cleared the evaluation sampling design on "
+                    + "'\(declared.name)' — evaluate codes the full corpus "
+                    + "again unless the sample flags ask otherwise"
+            }
+            sink.out(samplingLine)
+            return ExperimentCLIResult(
+                message: samplingLine, changed: true,
+                payload: [
+                    "experiment": .string(declared.name),
+                    "samplePerCondition":
+                        declared.evaluationSampling.map {
+                            JSONValue.number(Double($0.samplePerCondition))
+                        } ?? .null,
+                    "sampleSeed": declared.evaluationSampling.map {
+                        JSONValue.string($0.sampleSeed)
+                    } ?? .null,
+                    // Echoed in FULL: it is the derivation a reader
+                    // recomputes the membership from, and a truncated one
+                    // certifies nothing.
+                    "rule": declared.evaluationSampling.map {
+                        JSONValue.string($0.rule)
+                    } ?? .null,
+                ])
+
         case "promote":
             // Headless Promote: mint an agent (variant artifact) from the sweep-
             // selected cell. --cell L:ALPHA is the loud manual override. Pure
@@ -4383,6 +4438,7 @@ public struct ExperimentCLIRunner: Sendable {
                     + "| set-sampling | set-exclusions "
                     + "| set-system-prompt "
                     + "| set-parser | set-instrument-scope "
+                    + "| set-evaluation-sampling "
                     + "| set-style-taxonomy | verify "
                     + "| freeze | duplicate | extract | validate | sweep | run "
                     + "| analyze | rescore-style | evaluate | promote | confirm")

@@ -7,8 +7,10 @@ A different entry point with a different responsibility from
 * ``steerlab-server`` is the **engine's** command line. It executes — extract,
   validate, sweep, run, evaluate, analyze — and it REFUSES to author
   (``cli_envelope.MAC_AUTHORITY_VERBS``), because on a cluster node the
-  workspace is a cache and the Mac is the source of truth. Nothing here
-  changes that: those refusals stay exactly as they are.
+  workspace is a cache and the AUTHORING CLIENT's workspace is the source of
+  truth. The boundary is client versus running hardware, not macOS versus
+  everything else; the table's name is historical. Nothing here changes those
+  refusals: they stay exactly as they are.
 * ``steerlab`` is the **client's** command line. It authors the LOCAL
   workspace it is pointed at — create, attach, declare an arm, freeze — on any
   platform, with no model, no torch and no GPU. The AUTHORING verbs take no
@@ -330,6 +332,23 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
              positional="<name> <responseFormat>[,…]",
              purpose="Declare which response formats the option-consuming "
                      "instruments apply to, pinning the rows they select."),
+    # The EVALUATION SAMPLING DESIGN (review round 12, finding 4). A verb for
+    # the same reason as the two above: not a field assignment. It takes the
+    # design a power computation produced — a per-condition size and the seed
+    # that draws it — and DERIVES the draw rule from
+    # `evaluate_subsample.RULE`, so `rule` can no more be typed here than a
+    # registry hash can. Declaring it is what makes "preregistered" a fact in
+    # the artifact chain rather than a claim in a run stamp: every run writes
+    # the manifest snapshot into its own experiment.json, and that snapshot is
+    # the provenance.
+    VerbSpec("experiment", "set-evaluation-sampling",
+             positional="<name> <n> <seed>",
+             purpose="Declare the evaluate subsample this study "
+                     "preregistered — n records per condition and the seed "
+                     "that draws them — so the design travels in the "
+                     "manifest and lands in every run's snapshot. evaluate "
+                     "then needs no flags, and a flag that disagrees with "
+                     "the declaration refuses. \"\" clears the declaration."),
     VerbSpec("experiment", "pin-revision", positional="<name> <revision>",
              purpose="Pin the model revision a draft study resolves to."),
     VerbSpec("experiment", "set-style-taxonomy", positional="<name> <path>",
@@ -1656,6 +1675,43 @@ def _experiment(invocation: Invocation) -> CLIResult:
                 "responseFormats": (scope or {}).get("responseFormats") or [],
                 "itemCount": (scope or {}).get("itemCount") or 0,
                 "itemIDsHash": (scope or {}).get("itemIDsHash"),
+            })
+
+    if verb == "set-evaluation-sampling":
+        # `<name> <n> <seed>` declares; `<name> ""` clears. The arity is 2,
+        # not 3, for the same reason the two verbs above check 2 and not "one
+        # non-empty argument": the empty string is a legal value here and the
+        # clear is the affordance a superseded design is removed with. Both
+        # halves or neither still applies INSIDE the declaration, and the
+        # store's refusal owns that sentence.
+        _require(args, 2, spec)
+        size = args[1]
+        seed = args[2] if len(args) > 2 else ""
+        try:
+            document = store.declare_evaluation_sampling(
+                name, size, seed, program=PROGRAM)
+        except store.MeasurementDeclarationError as exc:
+            raise ClientRefusal(
+                code=USAGE_CODE, state="blocked", reason=str(exc),
+                repair_action=exc.repair_action) from exc
+        from .experiment import evaluate_subsample
+        design = document.get(evaluate_subsample.DECLARATION_KEY)
+        line = (f"declared the evaluation sampling design on {name!r}: "
+                f"{design['samplePerCondition']} record(s) per condition at "
+                f"seed {design['sampleSeed']}" if design
+                else f"cleared the evaluation sampling design on {name!r}")
+        print(line)
+        # FLAT echo keys matching the Swift verb's result shape exactly, so an
+        # agent reads the same fields after either spelling. `rule` is echoed
+        # in FULL: it is the derivation a reader recomputes the membership
+        # from, and a truncated one certifies nothing.
+        return CLIResult(
+            message=line, changed=True,
+            payload={
+                "experiment": name,
+                "samplePerCondition": (design or {}).get("samplePerCondition"),
+                "sampleSeed": (design or {}).get("sampleSeed"),
+                "rule": (design or {}).get("rule"),
             })
 
     if verb == "pin-revision":

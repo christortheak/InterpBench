@@ -95,6 +95,16 @@ struct RunEpochMeasurementDriftTests {
             live.humanValidation = .init(
                 path: "prompts/human/labels.csv",
                 hash: String(repeating: "f", count: 64))
+        case "evaluationSampling":
+            // The clearest member of the list (2026-08-29): declaring how many
+            // of a completed run's records get JUDGED cannot have moved a byte
+            // of that run's generations. The house flow depends on the
+            // tolerance — judged re-measurement runs on a never-frozen
+            // duplicate, which differs from the original run's snapshot by
+            // exactly this key.
+            live.evaluationSampling = .init(
+                rule: EvaluateSubsample.rule, samplePerCondition: 2400,
+                sampleSeed: "0x000000000000002a")
         default:
             Issue.record("unhandled measurement field '\(field)'")
             return

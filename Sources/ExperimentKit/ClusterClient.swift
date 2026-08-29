@@ -1340,9 +1340,9 @@ public struct RemoteVectorRecord: Codable, Sendable, Identifiable {
     public var grandMeanPopulation: [String: String]? = nil
 
     /// Workspace-relative form of `id` ("runs/<run>/<name>") — the reference
-    /// a client should STORE. The Mac workspace is the source of truth and
-    /// the server a substitutable runner, so refs written into workspace
-    /// data (variants, manifests) must resolve on both substrates; the
+    /// a client should STORE. The authoring client's workspace is the source
+    /// of truth and the server a substitutable runner, so refs written into
+    /// workspace data (variants, manifests) must resolve on both substrates; the
     /// composer localizes the artifact bytes on save
     /// (`RemoteVectorLocalization`) and stores this. Older servers omit it;
     /// nil decodes fine and the composer keeps the verbatim server id (the
