@@ -120,7 +120,10 @@ def test_dry_run_includes_preflight_and_all_checks_pass(study_site, tmp_path):
     walltime = _check(report, "walltime")
     assert walltime["status"] == "ok"
     assert walltime["data"]["plannedRecords"] == 6   # (baseline+1 cond) × 3 × 1
-    assert walltime["data"]["estimatedHours"] == 0.9  # 6 ÷ 10/h × 1.5
+    # 6 ÷ 10/h × 1.5 = 0.9 h of generating, + the fixed 15 min startup every
+    # job pays before its first record (external review round 12, finding 7).
+    assert walltime["data"]["estimatedHours"] == 1.15
+    assert walltime["data"]["startupHours"] == 0.25
     assert _check(report, "maintenanceWindow")["status"] == "ok"
     assert _check(report, "quotaHeadroom")["status"] in {"ok", "warn"}
     assert report["verdict"] in {"ok", "warn"}
@@ -260,9 +263,68 @@ def test_walltime_fail_when_estimate_exceeds_request(study_site, tmp_path):
 def test_walltime_warn_above_80_percent(study_site, tmp_path):
     _seed_throughput(study_site["meta"])
     walltime = _check(_submit(tmp_path, resources={
-        "gres": "gpu:L4:1", "walltime": "01:00:00",
+        "gres": "gpu:L4:1", "walltime": "01:20:00",
         "gpuVram": {"L4": 24}}).preflight, "walltime")
-    assert walltime["status"] == "warn"     # 0.9 h of 1.0 h = 90%
+    assert walltime["status"] == "warn"     # 1.15 h of 1.33 h = 86%
+
+
+# --- the per-shard estimate (external review round 12, finding 7) ------------
+
+def _walltime_of(study_site, *, planned_records=6, shard_count=1,
+                 walltime="10:00:00"):
+    """The production check, called directly — the fan-out K and the record
+    count are what this finding is about, and both are arguments to it."""
+    manifest = Manifest.load("pf-study", str(study_site["root"]))
+    resources = sub._resources_from_dict(
+        {"gres": "gpu:L4:1", "walltime": walltime, "gpuVram": {"L4": 24}},
+        "pf-study", "run")
+    return sub._check_walltime(manifest, resources, planned_records,
+                               ServerProfile.from_env(), "run",
+                               shard_count=shard_count)
+
+
+def test_a_shard_is_priced_by_the_largest_slice_plus_its_own_startup(
+        study_site):
+    """Exact division under-priced twice over: the LARGEST shard runs
+    ceil(records ÷ K), and every child pays the model load in full.
+    """
+    _seed_throughput(study_site["meta"])
+    # 6 records over 4 shards: the largest runs ceil(6 ÷ 4) = 2, not 1.5.
+    walltime = _walltime_of(study_site, shard_count=4)
+
+    assert walltime["data"]["shardCount"] == 4
+    assert walltime["data"]["plannedRecords"] == 6
+    assert walltime["data"]["recordsPerShard"] == 2      # ceil, not floor
+    assert walltime["data"]["estimateIsPerShard"] is True
+    # 2 ÷ 10/h × 1.5 = 0.3 h, + 0.25 h startup. The old answer (an exact
+    # 1.5 records and no startup) was 0.225 h.
+    assert walltime["data"]["estimatedHours"] == 0.55
+    assert "ceil(6 ÷ 4 shard jobs) = 2 records" in walltime["message"]
+    assert "15 min fixed job startup" in walltime["message"]
+    assert "PER-SHARD estimate" in walltime["message"]
+
+
+def test_a_degenerate_shard_still_prices_the_model_load(study_site):
+    """The case exact division made free: one record spread over four shards.
+    A shard that runs a single record is a model load with one record after
+    it, so the estimate can never fall below the startup term.
+    """
+    _seed_throughput(study_site["meta"])
+    walltime = _walltime_of(study_site, planned_records=1, shard_count=4)
+    assert walltime["data"]["recordsPerShard"] == 1
+    assert walltime["data"]["estimatedHours"] >= sub.PREFLIGHT_JOB_STARTUP_HOURS
+
+
+def test_an_unsharded_job_pays_the_startup_too_and_says_no_shard_words(
+        study_site):
+    """One job is still a job: it loads the model before its first record.
+    The per-shard label stays off when there is nothing to shard."""
+    _seed_throughput(study_site["meta"])
+    walltime = _walltime_of(study_site)
+    assert walltime["data"]["estimatedHours"] == 1.15   # 0.9 + 0.25
+    assert "shardCount" not in walltime["data"]
+    assert "PER-SHARD" not in walltime["message"]
+    assert "6 records ÷ 10/h" in walltime["message"]
 
 
 # --- quotaHeadroom (fabricated df so CI disks don't decide the outcome) --------------

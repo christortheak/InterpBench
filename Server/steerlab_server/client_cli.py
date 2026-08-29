@@ -1520,15 +1520,30 @@ def _experiment(invocation: Invocation) -> CLIResult:
         # predicate (`prompt_render._is_gemma`), so the echo and the run
         # cannot name different routes. Swift twin: the same branch on
         # `PromptRendering.isGemma`.
+        #
+        # promptMode comes FIRST (external review round 12, finding 5): a
+        # rawCompletion study renders no chat template at all, so there is no
+        # system TURN to be had on any family — `render()` prepends the frame
+        # to the raw prompt (`system + "\n\n" + prompt`). The echo used to
+        # derive delivery from the family alone and reported `systemTurn` for
+        # a Qwen rawCompletion study, which named a route the run never took.
+        # Execution was always right; only this sentence lied. Swift twin:
+        # the same three-way branch in `ExperimentCLIRunner`.
         from .experiment import prompt_render
-        delivery = ("systemTurn"
+        raw_completion = (document.get("promptMode")
+                          == prompt_render.RAW_COMPLETION)
+        delivery = ("promptPrepend" if raw_completion
+                    else "systemTurn"
                     if prompt_render.has_system_role(
                         document.get("modelID") or "")
                     else "prependedToFirstUserTurn")
         if frame:
             line = (f"declared a system prompt on {name!r} — {len(frame)} "
                     "character(s), delivered as "
-                    + ("a system turn" if delivery == "systemTurn"
+                    + ("a prepend to the raw prompt (this study renders "
+                       "rawCompletion — no chat template, so no system turn "
+                       "on any family)" if delivery == "promptPrepend"
+                       else "a system turn" if delivery == "systemTurn"
                        else "a prepend to the first user turn (this model "
                             "family has no system role)"))
         else:

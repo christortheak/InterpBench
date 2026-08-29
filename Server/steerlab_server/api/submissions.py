@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import functools
 import json
+import math
 import os
 import sys
 import tarfile
@@ -92,6 +93,26 @@ PREFLIGHT_PACKET_RENDER_RECORDS_PER_HOUR = 200_000.0
 #: unpack, manifest + source-run read, evidence packaging. Ten minutes against
 #: the same evidence (the whole stage inside ~5 s).
 PREFLIGHT_PARKED_JUDGMENT_FIXED_HOURS = 1.0 / 6.0
+
+# --- fixed job startup (external review round 12, finding 7) -------------------
+#: What a GENERATING job pays before its first record: interpreter start,
+#: bundle unpack, and above all the MODEL LOAD. A records ÷ rate estimate
+#: prices only the generating; a job that generates one record still loads
+#: the whole model first, and under ``--parallel K`` every child pays this in
+#: full — which is precisely what a per-shard division of the record term
+#: alone leaves out.
+#:
+#: Derived, not invented, from this repository's own recorded cold-load
+#: observations: ``routes.load_stream`` records a live 10+ minute cold load
+#: off ``/work`` (engineer review 2026-07-17) — the reason that route became
+#: an SSE stream at all — and ``model_loader._stage_model_locally`` records
+#: the measurement behind it (~12 MB/s at mmap-fault granularity against
+#: shared storage, 2026-07-17). Fifteen minutes rounds that observation up
+#: rather than down: the preflight's job is to refuse an over-tight wall, so
+#: a startup term that under-states is worse than one that does not. A warm
+#: node-local cache loads far faster and simply comes in under the estimate,
+#: which is the direction this check is allowed to be wrong in.
+PREFLIGHT_JOB_STARTUP_HOURS = 0.25
 
 
 @dataclass
@@ -1534,13 +1555,25 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
 
     ``shard_count`` is the RESOLVED fan-out (parallelJobs after
     ``_resolve_parallel_jobs``): the requested walltime is what each shard
-    job gets, and a shard runs 1/K of the record matrix, so the record-based
-    estimate is divided by K and labelled per-shard. Pricing the full matrix
-    against a per-shard walltime refused a --parallel 4 submission unless it
-    asked for ~4× the time no single job would ever use — exactly the
-    over-ask this check warns against (field-observed 2026-08-28). The merge
-    parent holds no allocation of its own (the reconciler merges server-side),
-    so per-shard is the only wall any clock here has to fit.
+    job gets, so the estimate is per-shard and labelled as such. Pricing the
+    full matrix against a per-shard walltime refused a --parallel 4
+    submission unless it asked for ~4× the time no single job would ever use
+    — exactly the over-ask this check warns against (field-observed
+    2026-08-28). The merge parent holds no allocation of its own (the
+    reconciler merges server-side), so per-shard is the only wall any clock
+    here has to fit.
+
+    Per shard, exactly (external review round 12, finding 7):
+
+        ceil(records ÷ K) ÷ rate × margin  +  fixed job startup
+
+    Both corrections to the plain ÷ K matter. The LARGEST shard runs
+    ceil(records ÷ K) — an uneven split hands someone the extra record and
+    the wall has to fit that job — and every child pays
+    :data:`PREFLIGHT_JOB_STARTUP_HOURS` in full whatever slice it draws,
+    because a model load does not shrink with the record count. Exact
+    division priced a 1-record shard of a --parallel 4 submission at
+    essentially nothing; it is a model load with one record after it.
 
     Every verdict that carries an estimate names the rate it used.
     """
@@ -1592,8 +1625,17 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
                       "be estimated (history accrues as jobs complete)",
                       {"plannedRecords": planned_records, "gpuType": gpu_type,
                        **family_data})
+    # What the LARGEST shard actually runs (external review round 12, finding
+    # 7). An exact ÷ K under-prices an uneven split — someone draws the extra
+    # record, and the wall has to fit THAT job — so the record term is
+    # ceil(records ÷ K).
+    shard_records = (math.ceil(planned_records / shard_count)
+                     if shard_count > 1 else planned_records)
+    records_note = (f"ceil({planned_records} ÷ {shard_count} shard jobs) = "
+                    f"{shard_records} records"
+                    if shard_count > 1 else f"{planned_records} records")
     if rate_source == "family":
-        basis = (f"{planned_records} records ÷ {rate:.0f}/h × "
+        basis = (f"{records_note} ÷ {rate:.0f}/h × "
                  f"{PREFLIGHT_WALLTIME_MARGIN}, at the "
                  f"{family.label} family's own observed rate over "
                  f"{entry.get('samples')} job(s)")
@@ -1602,12 +1644,12 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
                   f"{gpu_type or 'an unspecified GPU'} yet"
                   if family is not None
                   else "the instrument family could not be classified")
-        basis = (f"{planned_records} records ÷ {rate:.0f}/h × "
+        basis = (f"{records_note} ÷ {rate:.0f}/h × "
                  f"{PREFLIGHT_WALLTIME_MARGIN}, FALLBACK to the global rate "
                  f"across all instrument families — {unseen}, and the global "
                  "figure mixes fast scored readouts with slow sampled "
                  "generation")
-    estimated_hours = planned_records / rate * PREFLIGHT_WALLTIME_MARGIN
+    estimated_hours = shard_records / rate * PREFLIGHT_WALLTIME_MARGIN
     data = {"plannedRecords": planned_records,
             "recordsPerHour": rate,
             "throughputSamples": entry.get("samples") if entry else None,
@@ -1634,14 +1676,23 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
             basis += (", where the rate history carries no token basis — the "
                       "estimate assumes it was measured at this submission's "
                       f"own maxTokens ({planned_tokens})")
+    # The fixed startup term, added AFTER the token scaling: a model load does
+    # not take longer because the study asked for more output tokens. It is
+    # the term that makes a small job honest — a one-record shard is not a
+    # free job, it is a model load with one record after it — and every shard
+    # pays it in full, which an exact ÷ K silently divided away.
+    estimated_hours += PREFLIGHT_JOB_STARTUP_HOURS
+    basis += (f", + {PREFLIGHT_JOB_STARTUP_HOURS * 60:.0f} min fixed job "
+              "startup (interpreter, bundle unpack, model load) — paid in "
+              "full by every job whatever share of the matrix it draws")
+    data["startupHours"] = PREFLIGHT_JOB_STARTUP_HOURS
     if shard_count > 1:
-        # The requested walltime is per shard JOB, and each shard runs 1/K of
-        # the matrix — so the number compared against it must be per shard too.
-        estimated_hours /= shard_count
-        basis += (f", ÷ {shard_count} shard jobs — PER-SHARD estimate: each "
-                  "shard job runs its own slice of the record matrix within "
-                  "the requested walltime")
+        # The requested walltime is what each shard JOB gets, so the number
+        # compared against it is the largest shard's, not the matrix's.
+        basis += ("; PER-SHARD estimate — each shard job runs its own slice "
+                  "of the record matrix within the requested walltime")
         data["shardCount"] = shard_count
+        data["recordsPerShard"] = shard_records
         data["estimateIsPerShard"] = True
     return _walltime_verdict(estimated_hours, resources, basis, data)
 

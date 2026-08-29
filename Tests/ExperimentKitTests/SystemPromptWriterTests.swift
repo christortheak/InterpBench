@@ -236,6 +236,46 @@ import Testing
         }
     }
 
+    /// External review round 12, finding 5: a `rawCompletion` study renders
+    /// NO chat template, so no family has a system turn to offer — the frame
+    /// is prepended to the raw prompt. The echo derived delivery from the
+    /// family alone and told a Qwen rawCompletion study `systemTurn`, naming
+    /// a route the run never takes. Execution was always right; the echo was
+    /// not.
+    ///
+    /// Server twin: `test_the_echo_names_the_raw_completion_route`.
+    @Test func theEchoNamesTheRawCompletionRoute() async throws {
+        try await withTempRoot { _ in
+            for (name, model) in [("qwen", "Qwen/Qwen3-14B"),
+                                  ("gemma", "google/gemma-3-27b-it")] {
+                await createStudy(name, model: model)
+                await invoke(
+                    ["set-sampling", name, "--prompt-mode", "rawCompletion"])
+                let echoed = await invoke(
+                    ["set-system-prompt", name, "Context."])
+                // promptMode wins over the family: BOTH report the raw route.
+                #expect(
+                    echoed.envelope.result?["delivery"]
+                        == .string("promptPrepend"))
+                // And the human line says the same thing in words.
+                #expect(
+                    echoed.envelope.message.contains(
+                        "delivered as a prepend to the raw prompt (this "
+                        + "study renders rawCompletion — no chat template, "
+                        + "so no system turn on any family)"))
+            }
+
+            // Clearing the mode puts the family rule back in charge.
+            await invoke(
+                ["set-sampling", "qwen", "--prompt-mode", "chatAssistant"])
+            let backOnChat = await invoke(
+                ["set-system-prompt", "qwen", "Context."])
+            #expect(
+                backOnChat.envelope.result?["delivery"]
+                    == .string("systemTurn"))
+        }
+    }
+
     /// An agent arm is not displaced: composition puts the persona first and
     /// this frame second, so declaring one adds a frame rather than replacing
     /// an identity.

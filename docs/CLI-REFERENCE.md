@@ -1183,10 +1183,12 @@ bytes a study was armed with.
 **What the model receives is capability-dependent, and the verb says which
 route it took.** A family whose chat template has a system role gets a
 **genuine system turn**; a family without one — Gemma — gets the *same text*
-prepended to the first user turn (`system + "\n\n" + user`); `rawCompletion`
-prepends it to the prompt text. Every route delivers it, which is why there is
-no prompt-mode gate; `result.delivery` echoes `systemTurn` or
-`prependedToFirstUserTurn` and the human line spells it out. Composition is
+prepended to the first user turn (`system + "\n\n" + user`); and a
+`rawCompletion` study — which renders no chat template at all, so no family
+has a system turn to offer — gets it prepended to the raw prompt. Every route
+delivers it, which is why there is no prompt-mode gate; `result.delivery`
+echoes `promptPrepend` (rawCompletion, whatever the family), else `systemTurn`
+or `prependedToFirstUserTurn`, and the human line spells it out. Composition is
 unchanged: an arm carrying an agent persona reads under *persona*, blank line,
 *this frame*, so declaring one never displaces an identity.
 

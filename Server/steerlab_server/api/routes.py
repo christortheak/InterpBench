@@ -132,6 +132,13 @@ class ServiceState:
         self.model: model_loader.SteeredModel | None = None
         self.profile = ServerProfile.from_env()
         self.registry = ModelRegistry()
+        # The service is a second OWNER of whatever `/api/load` loaded, and
+        # ownership has to be given back the moment the registry evicts
+        # (external review round 12, finding 2b): `_evict` nulls its own
+        # `slot.model`, but the weights stay alive as long as `state.model`
+        # points at them, so the "released" GiB never came back and the
+        # judge-column seam could not do its job on the interactive path.
+        self.registry.on_evict = self._forget_evicted
         # Coarse serializer for GPU work that does NOT go through the registry
         # (LoRA training loads its own model via peft). Registry-managed forward
         # passes use per-slot locks instead, so multi-GPU serving is preserved.
@@ -231,13 +238,28 @@ class ServiceState:
             model_id, revision=revision, dtype=dtype or self.default_dtype,
             device=self.default_device)
 
-    def release_models(self, model_ids) -> list[dict]:
+    def _forget_evicted(self, key, container) -> None:
+        """Drop the service's own reference to a just-evicted container.
+
+        Explicit clearing, matching how the registry hands its own reference
+        back (``slot.model = None``) — deliberately not a weakref: this
+        codebase's idiom for "the container is gone" is an assignment, and a
+        stale `state.model` must read as a clean None so ``require_model``
+        answers "load a model first" rather than serving weights nothing
+        else believes are resident. Identity comparison, not model id: only
+        the exact object the registry just released is forgotten, so an
+        unrelated eviction never blanks the active model."""
+        if self.model is not None and self.model is container:
+            self.model = None
+
+    def release_models(self, identities) -> list[dict]:
         """The explicit model-slot release a judged run's column seam calls
-        (2026-08-28). Named models only, busy slots skipped — see
-        ``ModelRegistry.release_models``. Passed to the experiment tasks as
-        ``model_release`` beside ``model_provider`` so a run that needs its
-        models SEQUENTIALLY pays the MAX of their weights, not the sum."""
-        return self.registry.release_models(model_ids)
+        (2026-08-28). Named ``(modelID, revision, dtype)`` identities only,
+        busy slots skipped — see ``ModelRegistry.release_models``. Passed to
+        the experiment tasks as ``model_release`` beside ``model_provider``
+        so a run that needs its models SEQUENTIALLY pays the MAX of their
+        weights, not the sum."""
+        return self.registry.release_models(identities)
 
 
 def _max_upload_bytes() -> int:

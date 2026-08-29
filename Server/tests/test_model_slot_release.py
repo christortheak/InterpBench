@@ -56,17 +56,23 @@ def _claude(name):
     return JudgeRef(name=name, kind="claude", model="claude-opus-4-8")
 
 
+#: Identities, as the still-needed rule and the release both speak them.
+STUDY_ID = (STUDY, None, None)
+OTHER_ID = (OTHER, None, None)
+THIRD_ID = ("org/third", None, None)
+
+
 def test_still_needed_is_the_remaining_local_judges_models():
     roster = [_local("a", OTHER), _local("b", "org/third"), _claude("c")]
 
     # At the boundary before judge a: everything the panel still needs.
     assert tasks.judge_models_still_needed(
         roster, study_model=STUDY,
-        study_model_generates_later=False) == {OTHER, "org/third"}
+        study_model_generates_later=False) == {OTHER_ID, THIRD_ID}
     # After a's column: a's model is no longer needed by anyone.
     assert tasks.judge_models_still_needed(
         roster[1:], study_model=STUDY,
-        study_model_generates_later=False) == {"org/third"}
+        study_model_generates_later=False) == {THIRD_ID}
     # External judges hold no device memory and contribute nothing.
     assert tasks.judge_models_still_needed(
         roster[2:], study_model=STUDY,
@@ -78,11 +84,11 @@ def test_still_needed_keeps_the_study_model_when_a_later_stage_generates():
     # Nothing later generates: the study model is releasable.
     assert tasks.judge_models_still_needed(
         roster, study_model=STUDY,
-        study_model_generates_later=False) == {OTHER}
+        study_model_generates_later=False) == {OTHER_ID}
     # A later generating stage keeps it — the conservative half of the rule.
     assert tasks.judge_models_still_needed(
         roster, study_model=STUDY,
-        study_model_generates_later=True) == {OTHER, STUDY}
+        study_model_generates_later=True) == {OTHER_ID, STUDY_ID}
 
 
 def test_a_study_model_judge_keeps_the_study_model_with_no_special_case():
@@ -90,24 +96,92 @@ def test_a_study_model_judge_keeps_the_study_model_with_no_special_case():
     # so the still-needed set names it without the caller saying anything.
     assert tasks.judge_models_still_needed(
         [_local("a")], study_model=STUDY,
-        study_model_generates_later=False) == {STUDY}
+        study_model_generates_later=False) == {STUDY_ID}
+
+
+# --- identities, not slugs (external review round 12, finding 3) -------------
+
+
+def test_still_needed_tells_two_revisions_of_one_slug_apart():
+    # `--judge-pin` makes this panel expressible: one slug, two commits.
+    # A still-needed set that spoke slugs read them as one model and left
+    # the finished OLD-revision container resident as dead weight.
+    old = JudgeRef(name="a", kind="local", model=OTHER, revision="r1")
+    new = JudgeRef(name="b", kind="local", model=OTHER, revision="r2")
+
+    assert tasks.judge_models_still_needed(
+        [old, new], study_model=STUDY,
+        study_model_generates_later=False) == {(OTHER, "r1", None),
+                                               (OTHER, "r2", None)}
+    # After a's column r1 is nobody's; r2 is about to load.
+    assert tasks.judge_models_still_needed(
+        [new], study_model=STUDY,
+        study_model_generates_later=False) == {(OTHER, "r2", None)}
+
+
+def test_identity_canonicalizes_dtype_and_takes_the_study_pins():
+    # A dtype ALIAS is the same container as its canonical spelling.
+    assert tasks.judge_model_identity(
+        JudgeRef(name="a", kind="local", model=OTHER, dtype="bf16"),
+        study_model=STUDY) == (OTHER, None, "bfloat16")
+    # A study-model judge IS the study model: the study's pins, not its own
+    # (it reuses the held weights; the loader is never asked for a copy).
+    assert tasks.judge_model_identity(
+        JudgeRef(name="a", kind="local"),
+        study_model=STUDY, study_revision="abc123",
+        study_dtype="auto") == (STUDY, "abc123", None)
+
+
+# --- how many slots the panel actually needs ---------------------------------
+
+
+def test_sequential_columns_cost_one_slot_however_long_the_panel():
+    roster = [_local("a", OTHER), _local("b", "org/third"),
+              _local("c", "org/fourth"), _claude("d")]
+    assert tasks.judge_slots_required(
+        roster, study_model=STUDY, sequential=True) == 1
+    # Without a release seam nothing can be dropped between columns.
+    assert tasks.judge_slots_required(
+        roster, study_model=STUDY, sequential=False) == 3
+
+
+def test_a_returning_model_costs_the_moment_it_overlaps():
+    # A, B, A: A survives B's column because the third judge wants it back,
+    # so ONE moment genuinely holds two containers.
+    roster = [_local("a", OTHER), _local("b", "org/third"),
+              _local("c", OTHER)]
+    assert tasks.judge_slots_required(
+        roster, study_model=STUDY, sequential=True) == 2
+
+
+def test_a_generating_later_stage_costs_the_study_slot_beside_the_column():
+    roster = [_local("a", OTHER)]
+    assert tasks.judge_slots_required(
+        roster, study_model=STUDY, sequential=True,
+        study_model_generates_later=True) == 2
+    assert tasks.judge_slots_required(
+        roster, study_model=STUDY, sequential=True,
+        study_model_generates_later=False) == 1
 
 
 # --- the seam, over a fake release -------------------------------------------
 
 
-def _seam(roster, index, *, study_model=STUDY, generates_later=False):
+def _seam(roster, index, *, study_model=STUDY, study_revision=None,
+          generates_later=False):
     """Run the seam against a recording release; return (released, logs)."""
     asked: list = []
     logs: list = []
 
-    def release(model_ids):
-        asked.append(sorted(model_ids))
-        return [{"modelID": m, "revision": None, "device": "cuda:0",
-                 "bytes": 55 << 30} for m in sorted(model_ids)]
+    def release(identities):
+        asked.append(sorted(identities))
+        return [{"modelID": m, "revision": rev, "dtype": dt,
+                 "device": "cuda:0", "bytes": 55 << 30}
+                for m, rev, dt in sorted(identities)]
 
     tasks._release_models_for_judge(
         release, roster, index, study_model=study_model,
+        study_revision=study_revision,
         study_model_generates_later=generates_later,
         _log=lambda *p: logs.append(" ".join(str(x) for x in p)))
     return asked, logs
@@ -119,10 +193,26 @@ def test_the_seam_releases_the_finished_column_and_logs_the_memory_story():
 
     # a's model AND the study model (no judge uses it, nothing generates
     # later) — never b's, which is about to run.
-    assert asked == [[OTHER, STUDY]]
+    assert asked == [[OTHER_ID, STUDY_ID]]
     assert any("released 'org/other-judge' (~55.0 GiB) from cuda:0 — "
                "column 'a' complete, next judge 'b' needs 'org/third'" in line
                for line in logs)
+
+
+def test_the_seam_releases_one_revision_and_keeps_the_other(monkeypatch):
+    # The finding, end to end at the seam: a same-slug two-revision panel
+    # releases the FINISHED commit and leaves the one about to load alone —
+    # and the log line says which commit went.
+    roster = [JudgeRef(name="a", kind="local", model=OTHER,
+                       revision="1111111111112222"),
+              JudgeRef(name="b", kind="local", model=OTHER,
+                       revision="3333333333334444")]
+    asked, logs = _seam(roster, 1)
+
+    assert asked == [[(OTHER, "1111111111112222", None), STUDY_ID]]
+    assert any("released 'org/other-judge'@111111111111… (~55.0 GiB)" in line
+               and "next judge 'b' needs 'org/other-judge'@333333333333…"
+               in line for line in logs)
 
 
 def test_a_same_model_consecutive_column_releases_nothing_of_its_own():
@@ -130,7 +220,7 @@ def test_a_same_model_consecutive_column_releases_nothing_of_its_own():
     # release-and-reload the very weights it is about to use.
     roster = [_local("a", OTHER), _local("b", OTHER)]
     asked, _logs = _seam(roster, 1)
-    assert asked == [[STUDY]]  # the study model only — never OTHER
+    assert asked == [[STUDY_ID]]  # the study model only — never OTHER
 
 
 def test_a_single_judge_run_releases_nothing():
@@ -216,10 +306,11 @@ def test_release_models_drops_the_container_and_reclaims_the_device(
     slot_a = reg.get_or_load("model/a")
     reg.get_or_load("model/b")
 
-    released = reg.release_models(["model/a"])
+    released = reg.release_models([("model/a", None, None)])
 
     assert released == [{"modelID": "model/a", "revision": "cached:model/a",
-                         "device": "cuda:0", "bytes": 24 << 30}]
+                         "dtype": None, "device": "cuda:0",
+                         "bytes": 24 << 30}]
     # The container reference is gone (a racing acquire reads a clean None
     # and retries) and the device was actually reclaimed.
     assert slot_a.model is None
@@ -234,7 +325,7 @@ def test_release_models_skips_a_busy_slot(monkeypatch):
     reg = _registry(monkeypatch, freed=freed)
     reg.get_or_load("model/a")
     with reg.acquire("model/a"):
-        assert reg.release_models(["model/a"]) == []
+        assert reg.release_models([("model/a", None, None)]) == []
     assert [s["modelID"] for s in reg.snapshots()] == ["model/a"]
 
 
@@ -246,8 +337,84 @@ def test_release_models_ignores_models_it_was_not_asked_about(monkeypatch):
     reg = _registry(monkeypatch, freed=freed)
     reg.get_or_load("model/a")
     assert reg.release_models([]) == []
-    assert reg.release_models(["model/nowhere"]) == []
+    assert reg.release_models([("model/nowhere", None, None)]) == []
     assert [s["modelID"] for s in reg.snapshots()] == ["model/a"]
+
+
+def test_release_models_releases_one_revision_and_not_the_other(monkeypatch):
+    # The container key's granularity, asserted against the registry itself
+    # (external review round 12, finding 3): one slug at two revisions is
+    # two slots, and naming one identity releases exactly one of them.
+    freed: list = []
+    reg = _registry(monkeypatch, freed=freed)
+    reg.get_or_load("model/a", "r1")
+    reg.get_or_load("model/a", "r2")
+
+    released = reg.release_models([("model/a", "r1", None)])
+
+    assert [(r["modelID"], r["revision"]) for r in released] == [
+        ("model/a", "r1")]
+    assert [(s["modelID"], s["revision"]) for s in reg.snapshots()] == [
+        ("model/a", "r2")]
+
+
+def test_release_models_refuses_a_bare_slug(monkeypatch):
+    # A slug cannot tell two pinned revisions apart, so it is refused rather
+    # than silently widened into "every revision of this model".
+    reg = _registry(monkeypatch, freed=[])
+    reg.get_or_load("model/a")
+    with pytest.raises(TypeError) as excinfo:
+        reg.release_models(["model/a"])
+    assert "identities, not the bare slug" in str(excinfo.value)
+    assert [s["modelID"] for s in reg.snapshots()] == ["model/a"]
+
+
+def test_release_models_distinguishes_dtypes(monkeypatch):
+    # bf16 and fp16 are different containers, and the registry keys them
+    # separately — so the identity carries the canonical dtype too.
+    reg = _registry(monkeypatch, freed=[])
+    reg.get_or_load("model/a", dtype="bfloat16")
+    reg.get_or_load("model/a", dtype="float16")
+
+    released = reg.release_models([("model/a", None, "bf16")])
+
+    assert [r["dtype"] for r in released] == ["bfloat16"]
+    assert [s["dtype"] for s in reg.snapshots()] == ["float16"]
+
+
+# --- the service's own reference (external review round 12, finding 2b) ------
+
+
+def test_eviction_clears_the_services_reference_before_the_trim(monkeypatch):
+    # The registry can drop its own reference, but the weights live as long
+    # as ANY owner holds them — and `/api/load` makes the service an owner.
+    # An eviction that only nulled `slot.model` trimmed an allocator that
+    # could free nothing.
+    from steerlab_server.api import routes
+
+    freed: list = []
+    reg = _registry(monkeypatch, freed=freed)
+    state = SimpleNamespace(model=None)
+    seen: list = []
+
+    def forget(key, container):
+        seen.append((key, container, freed[:]))
+        routes.ServiceState._forget_evicted(state, key, container)
+    reg.on_evict = forget
+
+    state.model = reg.get_or_load("model/a").model
+    other = reg.get_or_load("model/b").model
+
+    # An unrelated eviction never blanks the active model.
+    reg.release_models([("model/b", None, None)])
+    assert state.model is not None and state.model is not other
+
+    reg.release_models([("model/a", None, None)])
+    assert state.model is None
+    # The clearing happened BEFORE the trim: at callback time the device had
+    # not yet been asked to give this model's memory back.
+    assert len(seen[-1][2]) == 1          # only model/b's earlier trim
+    assert len(freed) == 2
 
 
 # --- the integration shape: two local judges, one device ---------------------
@@ -292,34 +459,49 @@ def _two_judge_fixture(tmp_path, *, rubric, judges):
 class _Residency:
     """A fake provider + release pair over a tiny resident-container cache
     with the registry's own no-evict-while-slots-are-free policy. Records
-    the load/release ORDER and the maximum co-residency ever reached."""
+    the load/release ORDER and the maximum co-residency ever reached.
+
+    Containers are keyed by IDENTITY, exactly as the registry keys slots —
+    a same-slug two-revision panel is two containers here too, or the fake
+    could not witness the finding it exists to test."""
 
     def __init__(self, max_loaded=2):
         self.max_loaded = max_loaded
-        self.resident: list[str] = []
+        self.resident: list[tuple] = []
         self.order: list[str] = []
         self.peak = 0
 
+    @staticmethod
+    def _label(identity):
+        model_id, revision, _dtype = identity
+        return model_id + (f"@{revision}" if revision else "")
+
     @contextmanager
     def provider(self, model_id, revision=None, dtype=None):
-        if model_id not in self.resident:
+        from steerlab_server.steering import model_loader
+        identity = (model_id, revision or None,
+                    model_loader.normalize_dtype(dtype))
+        if identity not in self.resident:
             if len(self.resident) >= self.max_loaded:
                 raise AssertionError(
-                    f"loading '{model_id}' beside {self.resident} exceeds "
+                    f"loading '{self._label(identity)}' beside "
+                    f"{[self._label(i) for i in self.resident]} exceeds "
                     f"{self.max_loaded} resident model(s)")
-            self.resident.append(model_id)
+            self.resident.append(identity)
             self.peak = max(self.peak, len(self.resident))
-            self.order.append(f"load {model_id}")
-        yield SimpleNamespace(model_id=model_id, dtype="bfloat16")
+            self.order.append(f"load {self._label(identity)}")
+        yield SimpleNamespace(model_id=model_id, revision=revision,
+                              dtype="bfloat16")
 
-    def release(self, model_ids):
+    def release(self, identities):
         out = []
-        for model_id in sorted(model_ids):
-            if model_id in self.resident:
-                self.resident.remove(model_id)
-                self.order.append(f"release {model_id}")
-                out.append({"modelID": model_id, "revision": None,
-                            "device": "cuda:0", "bytes": 55 << 30})
+        for identity in sorted(identities):
+            if identity in self.resident:
+                self.resident.remove(identity)
+                self.order.append(f"release {self._label(identity)}")
+                out.append({"modelID": identity[0], "revision": identity[1],
+                            "dtype": identity[2], "device": "cuda:0",
+                            "bytes": 55 << 30})
         return out
 
 
@@ -358,15 +540,20 @@ def test_two_local_judges_code_one_column_at_a_time_on_one_device(
     _coding_generate(monkeypatch, residency, [CODES, CODES, CODES, disagree])
     logs: list = []
 
+    # ONE capacity number, driving the REAL production guard (external
+    # review round 12, finding 2a): the fake's residency and the
+    # `max_loaded` evaluate is told are the same one slot. Passing 2 here
+    # while the fake held 1 is what hid the guard that refused this panel
+    # before the release seam could run.
     out = tasks.evaluate(
         "tj", root=root, model_provider=residency.provider,
-        model_release=residency.release, max_loaded=2,
+        model_release=residency.release, max_loaded=residency.max_loaded,
         log=lambda *p: logs.append(" ".join(str(x) for x in p)))
 
     assert residency.order == [
-        f"load {STUDY}",
+        f"load {STUDY}@abc123",
         f"code {STUDY}", f"code {STUDY}",
-        f"release {STUDY}",
+        f"release {STUDY}@abc123",
         f"load {OTHER}",
         f"code {OTHER}", f"code {OTHER}",
     ]
@@ -382,8 +569,9 @@ def test_two_local_judges_code_one_column_at_a_time_on_one_device(
     assert entry["n"] == 2 and entry["percentAgreement"] == 0.5
     # The confusion block beside the statistic it explains.
     assert entry["confusion"] == {"true": {"true": 1, "false": 1}}
-    # And the memory story is legible from the job log alone.
-    assert any(f"released '{STUDY}' (~55.0 GiB) from cuda:0 — column "
+    # And the memory story is legible from the job log alone — with the
+    # revision prefix that says WHICH container went.
+    assert any(f"released '{STUDY}'@abc123… (~55.0 GiB) from cuda:0 — column "
                f"'judge-a' complete, next judge 'judge-b' needs '{OTHER}'"
                in line for line in logs)
 
@@ -408,11 +596,12 @@ def test_two_local_judges_pair_one_column_at_a_time_on_one_device(
 
     out = tasks.evaluate(
         "tj", root=root, model_provider=residency.provider,
-        model_release=residency.release, max_loaded=2, log=lambda *_: None)
+        model_release=residency.release, max_loaded=residency.max_loaded,
+        log=lambda *_: None)
 
     assert residency.order == [
-        f"load {STUDY}", f"judge {STUDY}",
-        f"release {STUDY}",
+        f"load {STUDY}@abc123", f"judge {STUDY}",
+        f"release {STUDY}@abc123",
         f"load {OTHER}", f"judge {OTHER}",
     ]
     assert residency.peak == 1
@@ -429,12 +618,12 @@ def test_a_single_judge_evaluate_releases_nothing(tmp_path, monkeypatch):
     _coding_generate(monkeypatch, residency, [CODES])
 
     tasks.evaluate("tj", root=root, model_provider=residency.provider,
-                   model_release=residency.release, max_loaded=2,
-                   log=lambda *_: None)
+                   model_release=residency.release,
+                   max_loaded=residency.max_loaded, log=lambda *_: None)
 
-    assert residency.order == [f"load {STUDY}", f"code {STUDY}",
+    assert residency.order == [f"load {STUDY}@abc123", f"code {STUDY}",
                                f"code {STUDY}"]
-    assert residency.resident == [STUDY]
+    assert residency.resident == [(STUDY, "abc123", None)]
 
 
 def test_same_model_columns_stay_warm(tmp_path, monkeypatch):
@@ -449,9 +638,44 @@ def test_same_model_columns_stay_warm(tmp_path, monkeypatch):
     _coding_generate(monkeypatch, residency, [CODES])
 
     tasks.evaluate("tj", root=root, model_provider=residency.provider,
-                   model_release=residency.release, max_loaded=2,
-                   log=lambda *_: None)
+                   model_release=residency.release,
+                   max_loaded=residency.max_loaded, log=lambda *_: None)
 
-    assert residency.order.count(f"load {STUDY}") == 1
+    assert residency.order.count(f"load {STUDY}@abc123") == 1
     assert not [line for line in residency.order
                 if line.startswith("release")]
+
+
+def test_two_revisions_of_one_slug_run_sequentially_on_one_slot(
+        tmp_path, monkeypatch):
+    """External review round 12, finding 3, end to end: a panel that pins ONE
+    slug at TWO revisions is two containers, and the first is released before
+    the second loads.
+
+    A release that spoke bare slugs read the two as one model: judge-a's
+    finished container matched judge-b's still-needed name, nothing was
+    released, and the OLD revision survived as dead weight beside the new
+    one — the co-residency OOM the seam exists to prevent, reintroduced by
+    the vocabulary.
+    """
+    root = _two_judge_fixture(
+        tmp_path, rubric=CODING_RUBRIC,
+        judges=[{"name": "judge-a", "kind": "local", "model": OTHER,
+                 "revision": "1111111111112222"},
+                {"name": "judge-b", "kind": "local", "model": OTHER,
+                 "revision": "3333333333334444"}])
+    residency = _Residency(max_loaded=1)
+    _coding_generate(monkeypatch, residency, [CODES])
+
+    tasks.evaluate("tj", root=root, model_provider=residency.provider,
+                   model_release=residency.release,
+                   max_loaded=residency.max_loaded, log=lambda *_: None)
+
+    assert residency.order == [
+        f"load {OTHER}@1111111111112222",
+        f"code {OTHER}", f"code {OTHER}",
+        f"release {OTHER}@1111111111112222",
+        f"load {OTHER}@3333333333334444",
+        f"code {OTHER}", f"code {OTHER}",
+    ]
+    assert residency.peak == 1

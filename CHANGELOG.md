@@ -443,6 +443,111 @@ migration that rewrites frozen bytes.
 
 ### Fixed
 
+- **The MPS cache trim could kill the process — a crash, not a warning.**
+  `free_device_memory` guarded its `torch.mps.empty_cache()` on the MODULE
+  existing (`hasattr(torch, "mps")`) and wrapped the call in a `try`. Neither
+  guard is the right question. On a torch build whose `torch.mps` module is
+  present while `torch.backends.mps.is_available()` is False, the call reaches
+  a backend that was never initialized and takes the whole process down with
+  SIGSEGV (exit 139) — there is no Python exception, so the `except` never
+  runs and every model release, every registry eviction, and every judge
+  column boundary is a place the server can simply die. Reproduced by an
+  external reviewer on a Mac sandbox with MPS unavailable; this project's own
+  suites never saw it because the machines they run on have MPS available.
+  Availability is now asked FIRST (itself `hasattr`-guarded for a torch old
+  enough to predate the backend) and gates the call, so on an unavailable
+  backend the trim does not HAPPEN rather than being caught. The CUDA trim and
+  the `gc.collect()` are unchanged.
+
+- **A judged evaluate on a one-slot server can finally judge sequentially.**
+  The column release seam landed so a panel needing its models one at a time
+  would pay the MAX of their weights instead of the sum — but `evaluate`'s
+  capacity guard still refused any foreign local judge whenever
+  `STEERLAB_MAX_LOADED_MODELS < 2`, decided per judge inside the resolution
+  loop, BEFORE the seam it was supposed to make room for could ever run. The
+  capability was unreachable on exactly the registry it was built for, and the
+  integration test missed it by passing `max_loaded=2` into `evaluate` while
+  its fake residency held one slot. The guard now runs ONCE over the whole
+  panel and asks `judge_slots_required` for the run's largest single moment —
+  columns loaded so far intersected with columns still needed, plus the study
+  model when a later stage still generates — so a five-judge panel of five
+  distinct models runs in one slot, while a panel that genuinely wants a model
+  back after a second one has loaded still refuses, saying which moment costs
+  two. A caller with no release seam is priced at the whole panel and the
+  refusal says so. The sweep's rule is deliberately untouched:
+  `_judge_preflight` requires SIMULTANEOUS residency because a judgeScore
+  sweep interleaves judging with selection and holds every judge's model for
+  the whole grid. Two instruments, two honest arithmetics. The integration
+  tests now drive the production guard with one capacity number.
+
+- **An evicted model is released by every owner, not just the registry.**
+  `ModelRegistry._evict` dropped the slot's reference and trimmed the
+  allocator, but `ServiceState.model` — the model `/api/load` put there —
+  still pointed at the same container, so the weights stayed alive and the
+  trim reclaimed nothing. A release that reports GiB freed and frees none is
+  worse than no release. The registry now carries an eviction listener called
+  after the slot is unregistered and BEFORE the trim; the service clears its
+  own reference by identity, so only the exact container that was released is
+  forgotten and an unrelated eviction never blanks the active model. Explicit
+  clearing, matching how the registry hands its own reference back — not a
+  weakref.
+
+- **Model release speaks identities, not slugs.** `judge_models_still_needed`
+  and `ModelRegistry.release_models` named bare `modelID`s while judges pin
+  `(model, revision, dtype)` — and `--judge-pin` makes a same-slug,
+  two-revision panel expressible. Slug vocabulary read those two containers as
+  one model: the finished OLD-revision container matched the next column's
+  still-needed name, nothing was released, and it survived as dead weight
+  beside the one that had just loaded — recreating the co-residency OOM the
+  seam exists to prevent. `(modelID, revision, canonical dtype)` triples now
+  flow through the still-needed computation, the release call, and the release
+  log line, which prints the revision prefix it released. The registry keys
+  containers by `(modelID, revision, requested dtype, device)`, so dtype is
+  genuinely part of the container key and belongs in the identity; `device` is
+  the registry's own choice, not something a judge pins, and rides only in the
+  release record. A bare slug is refused rather than silently widened into
+  "every revision of this model".
+
+- **`set-system-prompt` stops naming a delivery route the run does not
+  take.** Both engines derived the echoed `delivery` from the model family
+  alone, so a `rawCompletion` study on a system-role family reported
+  `systemTurn` — while the renderer, correctly, prepends the frame to the raw
+  prompt, because rawCompletion renders no chat template and no family has a
+  system turn to offer there. Execution was always right; only the echo lied.
+  `promptMode` is now asked first and a rawCompletion study reports the third
+  honest value, `promptPrepend`, spelled identically on both engines, with the
+  human line and `docs/CLI-REFERENCE.md`'s enumeration saying the same thing.
+  `chatAssistant` keeps the family split unchanged.
+
+- **A Gemma Scope report row must NAME the feature it is matched against.**
+  The requested feature id got the exact-integer predicate in the previous
+  round, but the row side of the match still ran through `int()` — so a report
+  row whose `feature` is `7.5` truncated to 7 and satisfied a request for
+  feature 7, and `true` became 1. The decoder values of a different dictionary
+  entry would then have been imported under the requested feature's name.
+  A row whose feature fails the same predicate is no longer a match; it is
+  skipped, and when no valid row matches, the existing not-found refusal fires
+  and nothing is written. `7.0` still names seven — the predicate refuses
+  fractions and booleans, not JSON's habit of writing whole numbers as floats.
+
+- **A sharded submission's walltime prices the largest shard AND its startup.**
+  `_check_walltime` divided the record estimate by K exactly and stopped
+  there. Two things were missing, both under-prices. The largest shard runs
+  `ceil(records ÷ K)` — an uneven split hands someone the extra record and the
+  wall has to fit THAT job — and every child pays a fixed startup, the model
+  load above all, whatever slice of the matrix it draws: exact division priced
+  a 1-record shard of a `--parallel 4` submission at essentially nothing, when
+  it is a model load with one record after it. The per-shard estimate is now
+  `ceil(records ÷ K) ÷ rate × margin + PREFLIGHT_JOB_STARTUP_HOURS`, and the
+  basis string shows both terms. The startup constant is 15 minutes, rounded
+  UP from this repository's own recorded cold-load observations (the live 10+
+  minute load off `/work` that made `/api/load/stream` an SSE route, and the
+  ~12 MB/s mmap-fault measurement behind node-local staging, both 2026-07-17)
+  — a preflight that under-states startup approves a wall the job cannot
+  finish in, and a warm cache simply comes in under the estimate. Unsharded
+  jobs pay it too: one job is still a job, and it loads the model before its
+  first record.
+
 - **A judge-load failure names its real cause.** The local-judge load wrapper
   replaced every loader error with "install the model on the server" — good
   advice for the raw hub dump it was written against ("check your internet

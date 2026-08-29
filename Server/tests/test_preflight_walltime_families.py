@@ -139,7 +139,9 @@ def test_a_local_judge_evaluate_keeps_generation_pricing(meta):
     assert check["status"] == "fail"
     assert check["data"]["instrumentFamily"] == fam.JUDGED_EVALUATE
     assert check["data"]["judgingCustody"] == "local"
-    assert check["data"]["estimatedHours"] == pytest.approx(11.35, abs=0.05)
+    # 1664 ÷ 220/h × 1.5 = 11.35 h of generating, + the 15 min every job
+    # pays to reach its first record.
+    assert check["data"]["estimatedHours"] == pytest.approx(11.60, abs=0.05)
     assert "raise the walltime or split the matrix" in check["message"]
 
 
@@ -192,7 +194,7 @@ def test_a_family_rate_is_used_when_history_exists(meta):
     assert check["status"] == "ok"
     assert check["data"]["rateSource"] == "family"
     assert check["data"]["recordsPerHour"] == 2000.0
-    assert check["data"]["estimatedHours"] == pytest.approx(1.25, abs=0.01)
+    assert check["data"]["estimatedHours"] == pytest.approx(1.50, abs=0.01)
     assert "deterministic-logprob family's own observed rate over 5 job(s)" \
         in check["message"]
     # The same records under the global rate would have been refused.
@@ -240,15 +242,20 @@ def test_eight_times_the_max_tokens_is_eight_times_the_estimate(meta):
     """The 2026-08-29 field case: two arms, identical record counts, one at
     maxTokens 256 and one at 2048, received the SAME estimate. Against a
     history that knows its token basis, the 8× budget now prices 8× the
-    hours (the estimator models no fixed overhead — pure linear scaling)."""
+    hours. The GENERATING term models no fixed overhead — pure linear
+    scaling; the fixed job startup sits outside it, because a model load does
+    not take longer because the study asked for more output tokens."""
     _seed(meta, [_entry(220.0),
                  dict(_entry(600.0, family=fam.LONG_FORM_TEXT, samples=4),
                       tokensBasis=256)])
     small = _walltime(_manifest(maxTokens=256), 1000)
     large = _walltime(_manifest(maxTokens=2048), 1000)
-    assert small["data"]["estimatedHours"] == pytest.approx(2.5, abs=0.01)
-    assert large["data"]["estimatedHours"] == \
-        pytest.approx(small["data"]["estimatedHours"] * 8, abs=0.01)
+    startup = sub.PREFLIGHT_JOB_STARTUP_HOURS
+    assert small["data"]["estimatedHours"] == pytest.approx(2.5 + startup,
+                                                            abs=0.01)
+    assert large["data"]["estimatedHours"] - startup == \
+        pytest.approx((small["data"]["estimatedHours"] - startup) * 8,
+                      abs=0.01)
     assert large["data"]["tokensBasis"] == 256
     assert large["data"]["maxTokens"] == 2048
 
@@ -296,43 +303,75 @@ def test_non_generating_families_never_token_scale(meta):
     assert "maxTokens" not in check["data"]
     assert "tokensBasis" not in check["data"]
     assert "token basis" not in check["message"]
-    assert check["data"]["estimatedHours"] == pytest.approx(0.75, abs=0.01)
+    assert check["data"]["estimatedHours"] == pytest.approx(1.00, abs=0.01)
 
 
 def test_the_token_scale_composes_with_the_per_shard_division(meta):
-    """Both corrections are multiplicative and both stay visible in the
-    basis line: ×8 for the token budget, ÷4 for the fan-out."""
+    """Both corrections stay visible in the basis line: ×8 for the token
+    budget, ceil(÷4) for the fan-out — and both act on the GENERATING term,
+    with the fixed startup added once, outside either."""
     _seed(meta, [dict(_entry(600.0, family=fam.LONG_FORM_TEXT, samples=4),
                       tokensBasis=256)])
     whole = _walltime(_manifest(maxTokens=2048), 1000)
     sharded = _walltime(_manifest(maxTokens=2048), 1000, shard_count=4)
-    assert sharded["data"]["estimatedHours"] == \
-        pytest.approx(whole["data"]["estimatedHours"] / 4, abs=0.01)
+    startup = sub.PREFLIGHT_JOB_STARTUP_HOURS
+    assert sharded["data"]["estimatedHours"] - startup == \
+        pytest.approx((whole["data"]["estimatedHours"] - startup) / 4,
+                      abs=0.01)
     assert "scaled ×8 from the rate's 256-token basis" in sharded["message"]
-    assert "÷ 4 shard jobs" in sharded["message"]
+    assert "ceil(1000 ÷ 4 shard jobs) = 250 records" in sharded["message"]
 
 
 # --- sharded fan-out prices the shard, not the matrix ---------------------------
 
 
-def test_an_unsharded_estimate_is_unchanged_and_carries_no_shard_keys(meta):
-    """shard_count=1 is the historical path, byte for byte: same estimate,
-    same message, and none of the sharding vocabulary in the data."""
+def test_an_unsharded_estimate_carries_no_shard_keys(meta):
+    """shard_count=1 names no shard: the whole matrix is the slice, and none
+    of the sharding vocabulary appears. It still pays the startup — one job
+    is a job, and it loads the model before its first record."""
     _seed(meta, [_entry(220.0)])
     check = _walltime(_manifest(), 1664)
-    assert check["data"]["estimatedHours"] == pytest.approx(11.35, abs=0.05)
+    assert check["data"]["estimatedHours"] == pytest.approx(11.60, abs=0.05)
+    assert check["data"]["startupHours"] == sub.PREFLIGHT_JOB_STARTUP_HOURS
+    assert "1664 records ÷ 220/h" in check["message"]
+    assert "recordsPerShard" not in check["data"]
     assert "shardCount" not in check["data"]
     assert "estimateIsPerShard" not in check["data"]
     assert "PER-SHARD" not in check["message"]
 
 
-def test_a_sharded_estimate_is_the_unsharded_one_divided_by_k(meta):
+def test_a_sharded_estimate_prices_one_shards_slice_plus_its_own_startup(meta):
     _seed(meta, [_entry(220.0)])
+    startup = sub.PREFLIGHT_JOB_STARTUP_HOURS
     whole = _walltime(_manifest(), 1664)["data"]["estimatedHours"]
     check = _walltime(_manifest(), 1664, shard_count=4)
-    assert check["data"]["estimatedHours"] == pytest.approx(whole / 4, abs=0.01)
+    # 1664 divides evenly, so only the startup separates this from whole ÷ 4
+    # — and the startup is exactly what an exact division dropped.
+    assert check["data"]["estimatedHours"] - startup == \
+        pytest.approx((whole - startup) / 4, abs=0.01)
     assert check["data"]["shardCount"] == 4
+    assert check["data"]["recordsPerShard"] == 416
     assert check["data"]["estimateIsPerShard"] is True
+
+
+def test_an_uneven_split_prices_the_LARGEST_shard(meta):
+    """External review round 12, finding 7: someone draws the extra record,
+    and the requested wall has to fit THAT job — so the record term is
+    ceil(records ÷ K), never the exact quotient."""
+    _seed(meta, [_entry(220.0)])
+    check = _walltime(_manifest(), 1665, shard_count=4)
+    assert check["data"]["recordsPerShard"] == 417       # not 416.25
+    assert "ceil(1665 ÷ 4 shard jobs) = 417 records" in check["message"]
+
+
+def test_a_degenerate_shard_is_priced_at_its_model_load(meta):
+    """One record over four shards: exact division made this free. A shard
+    that runs one record is a model load with one record after it."""
+    _seed(meta, [_entry(220.0)])
+    check = _walltime(_manifest(), 1, shard_count=4)
+    assert check["data"]["recordsPerShard"] == 1
+    assert check["data"]["estimatedHours"] >= sub.PREFLIGHT_JOB_STARTUP_HOURS
+    assert "15 min fixed job startup" in check["message"]
 
 
 def test_the_sharded_estimate_line_says_it_is_per_shard(meta):
@@ -351,8 +390,8 @@ def test_the_refusal_threshold_follows_the_per_shard_estimate(meta):
     refused = _walltime(_manifest(), 7488, walltime="13:00:00")
     assert refused["status"] == "fail"          # ≈38.6 h against 13 h
     sharded = _walltime(_manifest(), 7488, walltime="13:00:00", shard_count=4)
-    assert sharded["status"] == "ok"            # ≈9.65 h per shard
-    assert sharded["data"]["estimatedHours"] == pytest.approx(9.65, abs=0.05)
+    assert sharded["status"] == "ok"            # ≈9.9 h per shard
+    assert sharded["data"]["estimatedHours"] == pytest.approx(9.90, abs=0.05)
 
 
 # --- the fold learns per family ------------------------------------------------
@@ -500,7 +539,10 @@ def test_the_stamp_round_trips_from_preflight_through_fold_to_estimate(
     hk.fold_throughput(JobManager(store, sweep_orphans=False))
     same = _walltime(_manifest(maxTokens=512), 1000)
     scaled = _walltime(_manifest(maxTokens=4096), 1000)
-    assert same["data"]["estimatedHours"] == pytest.approx(2.5, abs=0.01)
-    assert scaled["data"]["estimatedHours"] == pytest.approx(20.0, abs=0.05)
+    startup = sub.PREFLIGHT_JOB_STARTUP_HOURS
+    assert same["data"]["estimatedHours"] == pytest.approx(2.5 + startup,
+                                                           abs=0.01)
+    assert scaled["data"]["estimatedHours"] == pytest.approx(20.0 + startup,
+                                                             abs=0.05)
     assert scaled["data"]["tokensBasis"] == 512
     assert "scaled ×8 from the rate's 512-token basis" in scaled["message"]

@@ -439,7 +439,20 @@ def import_feature(report_path: str, feature: int, *, model_id: str,
     values = None
     for bucket in ("topAbsolute", "topPositive", "topNegative"):
         for row in report.get(bucket, []):
-            if int(row["feature"]) == int(feature) and row.get("decoderValues"):
+            # BOTH sides of the match, not just the request (external review
+            # round 12, finding 6): the requested id got the exact-integer
+            # predicate above, but the row side still ran through ``int()``,
+            # so a report row whose feature is ``7.5`` truncated to 7 and
+            # matched a request for feature 7, and ``true`` became 1. A row
+            # that cannot NAME a dictionary entry is not that entry's row —
+            # it is skipped, and if nothing else matches the not-found
+            # refusal below fires, which is the honest answer.
+            try:
+                row_feature = coerce_layer(row.get("feature"),
+                                           label="report row feature")
+            except ValueError:
+                continue
+            if row_feature == feature and row.get("decoderValues"):
                 values = row["decoderValues"]
                 break
         if values:

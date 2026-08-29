@@ -149,11 +149,62 @@ def test_different_model_local_judge_refuses_on_a_single_slot_server(
             max_loaded=1, log=lambda *_: None)
 
     message = str(excinfo.value)
-    assert "local judge 'judge-1'" in message
-    assert "org/other-judge" in message
-    assert "needs a second resident model" in message
+    assert "'judge-1' (org/other-judge)" in message
+    assert "evaluate needs 2 model(s) resident AT ONCE" in message
+    assert "STEERLAB_MAX_LOADED_MODELS=1" in message
+    # This caller passes no release seam, so the refusal says WHY the panel
+    # cannot be sequenced instead of implying the seam failed.
+    assert ("this caller supplies no model-release seam, so there is no "
+            "sequential custody") in message
     assert "leave the judge's model empty" in message
     # Refused at evaluate start — no model was ever requested.
+    assert requested == []
+
+
+def test_a_one_slot_server_admits_a_sequential_panel(tmp_path, monkeypatch):
+    # The capability the release seam bought, at the guard (external review
+    # round 12, finding 2a). The SAME panel that refuses above runs when the
+    # caller supplies the column release seam: the judges are needed one
+    # column at a time, so the peak is one slot, not two. The old guard
+    # refused on `max_loaded < 2` before the seam could ever run.
+    root = _fixture(tmp_path, judges=[
+        {"name": "judge-1", "kind": "local", "model": "org/other-judge"},
+        {"name": "judge-2", "kind": "local"}])
+    _fake_generate(monkeypatch)
+    requested: list = []
+    released: list = []
+
+    tasks.evaluate(
+        "lj", root=root, model_provider=_recording_provider(requested),
+        model_release=lambda identities: released.append(sorted(identities)),
+        max_loaded=1, log=lambda *_: None)
+
+    assert set(requested) == {("org/other-judge", None),
+                              ("org/study-model", "abc123")}
+    # judge-1's container goes before judge-2's model is asked for.
+    assert ("org/other-judge", None, None) in released[-1]
+
+
+def test_a_returning_model_still_refuses_on_one_slot(tmp_path, monkeypatch):
+    # Sequential-aware is not permissive: a panel whose FIRST model is
+    # wanted again after a second one has loaded genuinely holds two
+    # containers at one moment, and one slot cannot serve it.
+    root = _fixture(tmp_path, judges=[
+        {"name": "judge-1", "kind": "local", "model": "org/other-judge"},
+        {"name": "judge-2", "kind": "local"},
+        {"name": "judge-3", "kind": "local", "model": "org/other-judge"}])
+    _fake_generate(monkeypatch)
+    requested: list = []
+
+    with pytest.raises(RuntimeError) as excinfo:
+        tasks.evaluate(
+            "lj", root=root, model_provider=_recording_provider(requested),
+            model_release=lambda identities: None,
+            max_loaded=1, log=lambda *_: None)
+
+    message = str(excinfo.value)
+    assert "evaluate needs 2 model(s) resident AT ONCE" in message
+    assert "judges run as SEQUENTIAL columns here" in message
     assert requested == []
 
 

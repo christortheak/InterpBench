@@ -686,12 +686,36 @@ def free_device_memory(device: str | None = None) -> None:
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    if (device is None or device == "mps") and hasattr(torch, "mps") \
-            and hasattr(torch.mps, "empty_cache"):
+    if (device is None or device == "mps") and _mps_trim_is_safe():
         try:
             torch.mps.empty_cache()
         except Exception:  # pragma: no cover - best-effort cache trim
             pass
+
+
+def _mps_trim_is_safe() -> bool:
+    """True only when ``torch.mps.empty_cache()`` may actually be CALLED.
+
+    The module existing is NOT the same question as the backend being usable,
+    and the difference is not catchable: on a torch build whose ``torch.mps``
+    is present while ``torch.backends.mps.is_available()`` is False, the trim
+    reaches a backend that was never initialized and takes the process down
+    with SIGSEGV (exit 139) — no ``except`` runs, because there is no Python
+    exception. So availability is asked FIRST, and the answer gates the call.
+    ``torch.backends.mps`` itself is hasattr-guarded for a torch old enough to
+    predate the backend.
+    """
+    backends = getattr(torch, "backends", None)
+    mps_backend = getattr(backends, "mps", None) if backends is not None else None
+    is_available = getattr(mps_backend, "is_available", None)
+    if not callable(is_available):
+        return False
+    try:
+        if not is_available():
+            return False
+    except Exception:  # pragma: no cover - a probe that throws is a no
+        return False
+    return hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache")
 
 
 def _stage_model_locally(model_id: str, revision: str | None = None) -> str | None:

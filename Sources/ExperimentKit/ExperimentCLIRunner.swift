@@ -3920,24 +3920,44 @@ public struct ExperimentCLIRunner: Sendable {
                     reason: "usage: experiment set-system-prompt <name> "
                         + "\"<text>\"  (\"\" clears the declaration; the text "
                         + "is inserted as a genuine system turn where the "
-                        + "model's chat template has a system role, and "
+                        + "model's chat template has a system role, "
                         + "prepended to the first user turn where it does "
-                        + "not, e.g. Gemma-family)")
+                        + "not, e.g. Gemma-family, and prepended to the raw "
+                        + "prompt under rawCompletion)")
             }
             let framed = try ExperimentStore.setSystemPrompt(
                 args[2], experimentName: args[1])
             // The echo says WHAT THE MODEL WILL SEE, not merely that a field
             // moved: the delivery route is family-dependent and is the thing
             // a researcher arming a persona actually needs to know.
-            let systemPromptDelivery =
-                PromptRendering.hasSystemRole(framed.modelID)
-                ? "systemTurn" : "prependedToFirstUserTurn"
+            //
+            // promptMode comes FIRST (external review round 12, finding 5):
+            // a rawCompletion study renders no chat template at all, so
+            // there is no system TURN to be had on any family —
+            // `PromptRendering.rawCompletionText` prepends the frame to the
+            // raw prompt. The echo used to derive delivery from the family
+            // alone and reported `systemTurn` for a Qwen rawCompletion
+            // study, naming a route the run never took. Execution was always
+            // right; only this sentence lied. Server twin: the same
+            // three-way branch in `client_cli.set-system-prompt`.
+            let systemPromptDelivery: String
+            if framed.promptMode == .rawCompletion {
+                systemPromptDelivery = "promptPrepend"
+            } else {
+                systemPromptDelivery =
+                    PromptRendering.hasSystemRole(framed.modelID)
+                    ? "systemTurn" : "prependedToFirstUserTurn"
+            }
             let framePromptLine: String
             if let frame = framed.systemPrompt {
                 framePromptLine =
                     "declared a system prompt on '\(framed.name)' — "
                     + "\(frame.count) character(s), delivered as "
-                    + (systemPromptDelivery == "systemTurn"
+                    + (systemPromptDelivery == "promptPrepend"
+                        ? "a prepend to the raw prompt (this study renders "
+                            + "rawCompletion — no chat template, so no "
+                            + "system turn on any family)"
+                        : systemPromptDelivery == "systemTurn"
                         ? "a system turn"
                         : "a prepend to the first user turn (this model "
                             + "family has no system role)")

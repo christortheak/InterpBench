@@ -240,3 +240,76 @@ def test_load_refuses_gpu_older_than_torch_arch_floor(monkeypatch):
         torch.cuda, "get_arch_list",
         lambda: (_ for _ in ()).throw(RuntimeError("no cuda")))
     model_loader._assert_cuda_kernels_for_device("cuda")
+
+
+# --- the MPS trim is guarded by AVAILABILITY, not by the module existing -----
+
+
+def _mps_probe(monkeypatch, *, available, calls):
+    """A torch whose ``torch.mps`` module EXISTS while the backend's
+    availability answers ``available``. The empty_cache stand-in records the
+    call and then raises — standing in for the real thing's SIGSEGV, which no
+    `except` could have caught."""
+    def empty_cache():
+        calls.append("empty_cache")
+        raise RuntimeError("stand-in for the segfault a real call would take")
+
+    monkeypatch.setattr(model_loader.torch, "mps",
+                        SimpleNamespace(empty_cache=empty_cache),
+                        raising=False)
+    monkeypatch.setattr(model_loader.torch.backends, "mps",
+                        SimpleNamespace(is_available=lambda: available),
+                        raising=False)
+    monkeypatch.setattr(model_loader.torch.cuda, "is_available", lambda: False)
+
+
+def test_the_mps_trim_is_never_called_when_the_backend_is_unavailable(
+        monkeypatch):
+    # External review round 12, finding 1 (P0, a process kill). On a torch
+    # build whose `torch.mps` module is present while
+    # `torch.backends.mps.is_available()` is False, `torch.mps.empty_cache()`
+    # reaches a backend that was never initialized and takes the process down
+    # with SIGSEGV (exit 139). There is no Python exception, so the `try`
+    # around it catches nothing: the call must not HAPPEN.
+    calls: list = []
+    _mps_probe(monkeypatch, available=False, calls=calls)
+
+    model_loader.free_device_memory()
+    model_loader.free_device_memory("mps")
+    model_loader.free_device_memory("cuda:0")
+
+    assert calls == []
+    assert model_loader._mps_trim_is_safe() is False
+
+
+def test_the_mps_trim_still_runs_when_the_backend_is_available(monkeypatch):
+    calls: list = []
+    _mps_probe(monkeypatch, available=True, calls=calls)
+
+    # And the surviving try/except still absorbs a trim that merely raises.
+    model_loader.free_device_memory("mps")
+    assert calls == ["empty_cache"]
+    assert model_loader._mps_trim_is_safe() is True
+
+    # A CUDA caller never asks MPS for anything, available or not.
+    model_loader.free_device_memory("cuda:1")
+    assert calls == ["empty_cache"]
+
+
+def test_an_availability_probe_that_is_missing_or_throws_is_a_no(monkeypatch):
+    # Ancient torch (no `torch.backends.mps` at all) and a probe that raises
+    # both answer the same way: do not touch the backend.
+    calls: list = []
+    _mps_probe(monkeypatch, available=True, calls=calls)
+    monkeypatch.setattr(model_loader.torch.backends, "mps", SimpleNamespace(),
+                        raising=False)
+    assert model_loader._mps_trim_is_safe() is False
+
+    monkeypatch.setattr(
+        model_loader.torch.backends, "mps",
+        SimpleNamespace(is_available=lambda: (_ for _ in ()).throw(
+            RuntimeError("probe exploded"))), raising=False)
+    assert model_loader._mps_trim_is_safe() is False
+
+    model_loader.free_device_memory()
+    assert calls == []

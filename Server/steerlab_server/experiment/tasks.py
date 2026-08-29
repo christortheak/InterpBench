@@ -8520,44 +8520,156 @@ def _judge_roster(manifest: Manifest, spec) -> list[JudgeRef]:
     return [JudgeRef(name=model, kind=kind, model=model)]
 
 
+#: One resident model container, as the registry keys it minus the device it
+#: happened to land on: ``(modelID, revision or None, canonical dtype or
+#: None)``. The same triple ``_judge_preflight`` counts.
+ModelIdentity = tuple[str, "str | None", "str | None"]
+
+
+def study_model_identity(study_model: str, study_revision: str | None = None,
+                         study_dtype: str | None = None) -> ModelIdentity:
+    """The study model's own container identity, spelled ONCE so the
+    still-needed set, the release candidates, and the slot arithmetic can
+    never disagree about which container the study model is."""
+    return (study_model,
+            (study_revision or "").strip() or None,
+            model_loader.normalize_dtype(study_dtype))
+
+
+def judge_model_identity(ref, *, study_model: str,
+                         study_revision: str | None = None,
+                         study_dtype: str | None = None) -> ModelIdentity:
+    """The ``(modelID, revision, canonical dtype)`` identity of the container
+    ONE local judge needs.
+
+    Why an identity and not a bare slug (external review round 12, finding
+    3): ``--judge-pin`` makes a same-slug-DIFFERENT-revision panel
+    expressible, and a still-needed set that speaks slugs cannot tell the
+    finished judge's container from the one about to load. It reads the two
+    as one model, keeps the finished one resident as dead weight, and
+    recreates the very co-residency OOM the column seam exists to prevent.
+
+    A judge that resolves to the STUDY model IS the study model: it reuses
+    the held weights and the loader is never asked for a second copy, so
+    its identity is the STUDY's pins, not the judge's own. (A study-model
+    judge that pins something divergent is refused where that lie is
+    detectable — ``_assert_study_model_judge_matches_held`` and the sweep
+    preflight — never silently re-keyed here.)
+
+    Callers pass a non-local ``ref`` at their own risk: external judges hold
+    no device memory and have no identity worth releasing.
+    """
+    from . import sweep_selection
+    resolved = sweep_selection.resolve_local_judge_model(ref.model, study_model)
+    if resolved == study_model:
+        return study_model_identity(study_model, study_revision, study_dtype)
+    return (resolved,
+            (getattr(ref, "revision", None) or "").strip() or None,
+            model_loader.normalize_dtype(getattr(ref, "dtype", None)))
+
+
 def judge_models_still_needed(remaining_roster, *, study_model: str,
-                              study_model_generates_later: bool) -> set[str]:
-    """The models the REMAINDER of a judged run still needs.
+                              study_revision: str | None = None,
+                              study_dtype: str | None = None,
+                              study_model_generates_later: bool
+                              ) -> set[ModelIdentity]:
+    """The model IDENTITIES the REMAINDER of a judged run still needs.
 
     The still-needed rule, exactly (maintainer's ruling, 2026-08-28: "any
     runs that require two models will need to unload and load models in
     order not to OOM. We need to ensure this happens"):
 
-        still-needed = {resolved model of every LOCAL judge in
+        still-needed = {identity of every LOCAL judge in
                         ``remaining_roster``}
-                       ∪ ({study model} if a later stage of this run or
+                       ∪ ({study identity} if a later stage of this run or
                           pipeline GENERATES)
 
     ``remaining_roster`` is ``roster[i:]`` at the boundary before judge
     ``i`` — so the judge about to load is itself in the set, which is what
-    keeps two consecutive same-model columns warm instead of
+    keeps two consecutive same-identity columns warm instead of
     releasing-and-reloading the very weights the next column needs.
     External judges (claude/openrouter) hold no device memory and
     contribute nothing. A local judge with an empty model resolves to the
     study model by the cross-engine rule, so a study-model judge keeps the
     study model resident without any special case.
 
+    Identities, not slugs (external review round 12, finding 3): see
+    ``judge_model_identity``. Two judges on one slug at two revisions are
+    two containers, and only the one nobody needs again is released.
+
     ``study_model_generates_later`` is the conservative half: evaluate is
     terminal for generation on its own (analyze/rescore are CPU-side), but
     a caller that cannot PROVE the study model is finished passes True and
     the model is kept — the capacity gate then speaks, as before.
     """
-    from . import sweep_selection
     needed = {
-        sweep_selection.resolve_local_judge_model(ref.model, study_model)
+        judge_model_identity(ref, study_model=study_model,
+                             study_revision=study_revision,
+                             study_dtype=study_dtype)
         for ref in remaining_roster if ref.kind == "local"}
     if study_model_generates_later:
-        needed.add(study_model)
+        needed.add(study_model_identity(study_model, study_revision,
+                                        study_dtype))
     return needed
+
+
+def judge_slots_required(roster, *, study_model: str,
+                         study_revision: str | None = None,
+                         study_dtype: str | None = None,
+                         study_model_generates_later: bool = False,
+                         sequential: bool = True) -> int:
+    """How many resident model SLOTS a judge panel actually needs at once.
+
+    The arithmetic the evaluate capacity guard asks (external review round
+    12, finding 2a). Judges are needed one COLUMN at a time and the release
+    seam drops each finished column's container before the next loads, so
+    the ask is the largest SINGLE MOMENT of the run, not the panel's size:
+    a five-judge panel of five distinct models runs in ONE slot, while a
+    one-slot server is only refused when some single moment genuinely needs
+    two.
+
+    Per column ``i`` the resident set is what has been LOADED by then
+    (``columns[:i+1]``) intersected with what is still NEEDED from then on
+    (``columns[i:]``), plus the study identity when a later stage still
+    generates. A panel A, B, A therefore costs 2 — A survives B's column
+    because the third judge will want it back — while A, B, C costs 1.
+
+    ``sequential=False`` is the honest fallback for a caller that supplies
+    no release seam (``model_release is None``): nothing can be dropped
+    between columns, so every distinct identity must be resident together
+    and the count is the whole panel's.
+    """
+    columns = [
+        judge_model_identity(ref, study_model=study_model,
+                             study_revision=study_revision,
+                             study_dtype=study_dtype)
+        for ref in roster if ref.kind == "local"]
+    held: set[ModelIdentity] = set()
+    if study_model_generates_later:
+        held.add(study_model_identity(study_model, study_revision,
+                                      study_dtype))
+    if not columns:
+        return len(held)
+    if not sequential:
+        return len(held | set(columns))
+    return max(len(held | (set(columns[:index + 1]) & set(columns[index:])))
+               for index in range(len(columns)))
+
+
+def _identity_text(identity: ModelIdentity, *, quoted: bool = True) -> str:
+    """``'org/model'@abc123456789…`` — how a released container is named in a
+    run log. The revision prefix is the point (external review round 12,
+    finding 3): a same-slug panel at two revisions is two containers, and a
+    log line that printed only the slug could not say WHICH one went."""
+    model_id, revision, _dtype = identity
+    name = f"'{model_id}'" if quoted else str(model_id)
+    return name + (f"@{revision[:12]}…" if revision else "")
 
 
 def _release_models_for_judge(model_release, roster, index: int, *,
                               study_model: str,
+                              study_revision: str | None = None,
+                              study_dtype: str | None = None,
                               study_model_generates_later: bool,
                               _log) -> None:
     """The model-slot release seam: free every container the remainder of
@@ -8576,7 +8688,13 @@ def _release_models_for_judge(model_release, roster, index: int, *,
     variant-generate model): the release is a run seam, not a new global
     eviction heuristic, and the interactive cache policy is unchanged.
     Whatever ``judge_models_still_needed`` names is subtracted, so the seam
-    is a no-op for a single-judge run and for a same-model column boundary.
+    is a no-op for a single-judge run and for a same-identity column
+    boundary.
+
+    Everything here speaks ``(modelID, revision, canonical dtype)``
+    IDENTITIES, never bare slugs (external review round 12, finding 3): a
+    panel that pins one slug at two revisions is two containers, and the
+    finished one has to go while the one about to load stays.
 
     Deliberate cross-engine divergence (documented so neither side reads as
     an oversight): the Mac answers the same problem by REFUSING up front —
@@ -8589,20 +8707,23 @@ def _release_models_for_judge(model_release, roster, index: int, *,
     A failing release never fails the run: it is logged and the capacity
     gate remains the backstop.
     """
-    from . import sweep_selection
     ref = roster[index]
+    def identity_of(judge_ref) -> ModelIdentity:
+        return judge_model_identity(
+            judge_ref, study_model=study_model,
+            study_revision=study_revision, study_dtype=study_dtype)
     keep = judge_models_still_needed(
         roster[index:], study_model=study_model,
+        study_revision=study_revision, study_dtype=study_dtype,
         study_model_generates_later=study_model_generates_later)
-    candidates = {study_model} | {
-        sweep_selection.resolve_local_judge_model(r.model, study_model)
-        for r in roster if r.kind == "local"}
+    candidates = {study_model_identity(study_model, study_revision,
+                                       study_dtype)} | {
+        identity_of(r) for r in roster if r.kind == "local"}
     stale = sorted(candidates - keep)
-    next_model = (
-        sweep_selection.resolve_local_judge_model(ref.model, study_model)
-        if ref.kind == "local" else None)
-    need_text = (f"next judge '{ref.name}' needs '{next_model}'"
-                 if next_model else
+    next_identity = identity_of(ref) if ref.kind == "local" else None
+    need_text = (f"next judge '{ref.name}' needs "
+                 f"{_identity_text(next_identity)}"
+                 if next_identity else
                  f"next judge '{ref.name}' needs no local model")
     where = ("generation complete" if index == 0
              else f"column '{roster[index - 1].name}' complete")
@@ -8611,14 +8732,18 @@ def _release_models_for_judge(model_release, roster, index: int, *,
             released = model_release(stale) or []
         except Exception as exc:  # noqa: BLE001 - never fail a run on cleanup
             _log(f"WARNING: could not release model slot(s) "
-                 f"{', '.join(stale)} before judge '{ref.name}' ({exc}) — "
-                 "continuing; the load capacity gate remains the backstop")
+                 f"{', '.join(_identity_text(i) for i in stale)} before "
+                 f"judge '{ref.name}' ({exc}) — continuing; the load "
+                 "capacity gate remains the backstop")
             return
         for record in released:
             size = record.get("bytes")
             size_text = f" (~{size / (1 << 30):.1f} GiB)" if size else ""
-            _log(f"released '{record['modelID']}'{size_text} from "
-                 f"{record.get('device')} — {where}, {need_text}")
+            _log("released "
+                 + _identity_text((record["modelID"], record.get("revision"),
+                                   record.get("dtype")))
+                 + f"{size_text} from {record.get('device')} — {where}, "
+                 + need_text)
         return
     if model_release is None and index > 0:
         # CLI/bundle path (the Slurm path): there is no registry, so the
@@ -9280,6 +9405,8 @@ def _evaluate_response_coding(name: str, manifest: Manifest, schema,
                 _release_models_for_judge(
                     model_release, roster, index,
                     study_model=manifest.model_id,
+                    study_revision=manifest.model_revision,
+                    study_dtype=manifest.dtype,
                     study_model_generates_later=study_model_generates_later,
                     _log=_log)
                 with ExitStack() as judge_stack:
@@ -9477,10 +9604,12 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
 
     Local judges resolve by the sweep's cross-engine rule (unified
     2026-07-22): an empty/absent ``model`` means the STUDY model at its
-    pinned revision — never the judge's name as a model id. A local judge
-    naming a DIFFERENT model needs a second resident slot: ``max_loaded``
-    (the registry capacity, passed by the API path) < 2 refuses at evaluate
-    start; None (the CLI/bundle path, private in-process copies) skips the
+    pinned revision — never the judge's name as a model id. The capacity
+    guard then asks ``judge_slots_required`` for the panel's PEAK residency
+    — the largest single moment under the column release seam, not the
+    panel's size — and refuses at evaluate start when ``max_loaded`` (the
+    registry capacity, passed by the API path) is smaller. ``max_loaded``
+    None (the CLI/bundle path, private in-process copies) skips the
     capacity check, exactly like the sweep preflight.
 
     Model residency across the panel (2026-08-28): judges are needed one
@@ -9606,7 +9735,7 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
     # Local-judge resolution, logged at evaluate START (cross-engine rule,
     # unified with the sweep 2026-07-22 — the judge's NAME is a label, never
     # a model id): empty/absent model → the study model; a different-model
-    # local judge refuses here when a second resident model is impossible,
+    # local judge refuses here when the panel's PEAK residency is impossible,
     # never mid-panel — UNLESS the caller declared the judge fan-out
     # (``defer_local_judges``, 2026-07-23): the panel's judging then becomes
     # blinded packets for per-judge-model worker jobs instead of an inline
@@ -9624,14 +9753,51 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
             continue
         _log(f"local judge '{ref.name}' judges with local model '{resolved}'")
         foreign_local.append(ref)
-        if not defer_local_judges and max_loaded is not None and max_loaded < 2:
+    # The capacity guard, run ONCE over the whole panel and aware of the
+    # custody the run actually has (external review round 12, finding 2a).
+    # It used to refuse any foreign local judge on a one-slot server — a
+    # per-judge `max_loaded < 2` inside the loop above, decided BEFORE the
+    # judge-column release seam ever ran, so the seam that made sequential
+    # judging possible could never be reached on the one-slot registry it
+    # was built for. The ask is now the run's largest SINGLE MOMENT.
+    #
+    # Deliberately NOT the sweep's rule: ``_judge_preflight`` requires
+    # SIMULTANEOUS residency because a judgeScore sweep interleaves judging
+    # with selection and holds every judge's model for the whole grid. An
+    # evaluate judges column-outer, so its peak is smaller. Two instruments,
+    # two honest arithmetics.
+    sequential_custody = model_release is not None
+    if not defer_local_judges and max_loaded is not None and foreign_local:
+        required = judge_slots_required(
+            roster, study_model=manifest.model_id,
+            study_revision=manifest.model_revision,
+            study_dtype=manifest.dtype,
+            study_model_generates_later=study_model_generates_later,
+            sequential=sequential_custody)
+        if required > max_loaded:
+            named = ", ".join(
+                f"'{ref.name}' ("
+                + _identity_text(judge_model_identity(
+                    ref, study_model=manifest.model_id,
+                    study_revision=manifest.model_revision,
+                    study_dtype=manifest.dtype), quoted=False)
+                + ")" for ref in foreign_local)
+            custody = (
+                "judges run as SEQUENTIAL columns here — each finished "
+                "judge's model is released before the next one loads — so "
+                "the ask is the run's largest single moment, not the "
+                f"panel's {len(foreign_local)} foreign local judge(s)"
+                if sequential_custody else
+                "this caller supplies no model-release seam, so there is no "
+                "sequential custody: every local judge's model must be "
+                "resident at once")
             raise RuntimeError(
-                f"evaluate with local judge '{ref.name}' (model "
-                f"'{resolved}') needs a second resident model alongside "
-                f"the study model '{manifest.model_id}' — this server "
-                f"keeps STEERLAB_MAX_LOADED_MODELS={max_loaded}; use the "
-                "study model as judge (leave the judge's model empty), a "
-                "claude judge, or raise the limit")
+                f"evaluate needs {required} model(s) resident AT ONCE, but "
+                f"this server keeps STEERLAB_MAX_LOADED_MODELS={max_loaded} "
+                f"— {custody}. The foreign local judge(s): {named}. Set "
+                f"STEERLAB_MAX_LOADED_MODELS to at least {required} on this "
+                "server, use the study model as judge (leave the judge's "
+                "model empty), or pin claude/openrouter judges")
     # Where judging will happen, announced BEFORE it happens (2026-07-24):
     # the inline/deferred fork used to be discoverable only from the
     # artifacts afterwards, and a mixed panel deferring despite a pushed key
@@ -9804,6 +9970,8 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
                 _release_models_for_judge(
                     model_release, roster, index,
                     study_model=manifest.model_id,
+                    study_revision=manifest.model_revision,
+                    study_dtype=manifest.dtype,
                     study_model_generates_later=study_model_generates_later,
                     _log=_log)
                 with ExitStack() as judge_stack:

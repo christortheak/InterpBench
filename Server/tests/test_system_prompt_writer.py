@@ -208,6 +208,41 @@ def test_the_echo_names_the_delivery_route(workspace, capsys):
     assert on_qwen["studyFrameHash"] == system_prompt_mod.text_hash("F.")
 
 
+def test_the_echo_names_the_raw_completion_route(workspace, capsys):
+    """External review round 12, finding 5: a rawCompletion study renders NO
+    chat template, so no family has a system turn to offer — the frame is
+    prepended to the raw prompt. The echo derived delivery from the family
+    alone and told a Qwen rawCompletion study `systemTurn`, naming a route
+    the run never takes. Execution was always right; the echo was not.
+
+    Swift twin: ``theEchoNamesTheRawCompletionRoute``.
+    """
+    for name, model in (("qwen", "Qwen/Qwen3-14B"),
+                        ("gemma", "google/gemma-3-27b-it")):
+        _create(workspace, name, model=model)
+        store.set_protocol(name, {"promptMode": prompt_render.RAW_COMPLETION},
+                           workspace)
+        assert _run(workspace, ["experiment", "set-system-prompt", name,
+                                "Context.", "--json"]) == 0
+        echoed = _document(capsys)["result"]
+        # promptMode wins over the family: BOTH report the raw route.
+        assert echoed["delivery"] == "promptPrepend"
+
+    # And the human line says the same thing in words.
+    assert _run(workspace, ["experiment", "set-system-prompt", "qwen",
+                            "Context."]) == 0
+    assert ("delivered as a prepend to the raw prompt (this study renders "
+            "rawCompletion — no chat template, so no system turn on any "
+            "family)") in capsys.readouterr().out
+
+    # Clearing the mode puts the family rule back in charge.
+    store.set_protocol("qwen", {"promptMode": prompt_render.CHAT_ASSISTANT},
+                       workspace)
+    assert _run(workspace, ["experiment", "set-system-prompt", "qwen",
+                            "Context.", "--json"]) == 0
+    assert _document(capsys)["result"]["delivery"] == "systemTurn"
+
+
 def test_the_frame_composes_after_an_agent_persona(workspace):
     """An agent arm is not displaced: composition puts the persona first and
     this frame second, so declaring one ADDS a frame rather than replacing an

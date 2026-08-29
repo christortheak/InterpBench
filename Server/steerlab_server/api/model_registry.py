@@ -27,11 +27,31 @@ import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Iterator
+from typing import Callable, Iterator
 
 import torch
 
 from ..steering import model_loader
+
+
+def _identity(item) -> tuple[str, str | None, str | None]:
+    """Coerce one release request into a ``(modelID, revision, canonical
+    dtype)`` triple.
+
+    A bare slug is REFUSED rather than silently widened (external review
+    round 12, finding 3): "release org/model" cannot say WHICH of two
+    pinned revisions it means, and guessing either way is a wrong answer —
+    drop the container the next column needs, or leave the finished one
+    resident. Callers name the identity.
+    """
+    if isinstance(item, str):
+        raise TypeError(
+            "release_models takes (modelID, revision, dtype) identities, not "
+            f"the bare slug {item!r} — a slug cannot tell two pinned "
+            "revisions of one model apart, and the release has to")
+    model_id, revision, dtype = (tuple(item) + (None, None))[:3]
+    return (str(model_id), revision or None,
+            model_loader.normalize_dtype(dtype))
 
 
 @dataclass
@@ -108,6 +128,17 @@ class ModelRegistry:
         cuda_devices = [d for d in self._devices if d.startswith("cuda")]
         default_max = len(cuda_devices) if cuda_devices else 1
         self.max_loaded = max(1, int(os.environ.get("STEERLAB_MAX_LOADED_MODELS", default_max)))
+        # Eviction listener (external review round 12, finding 2b). The
+        # registry can drop its OWN reference to a container, but it cannot
+        # reclaim weights a caller outside it still holds — ``ServiceState``
+        # keeps the ``/api/load``-ed model in ``state.model``, and an
+        # eviction that only nulled ``slot.model`` left the real owner
+        # untouched: the trim ran, freed nothing, and the "released" GiB
+        # never came back. Set by the owner; called with
+        # ``(key, container)`` after the slot is unregistered and BEFORE the
+        # allocator trim, so every strong reference is gone by the time the
+        # device is asked to give the memory back. It must not raise.
+        self.on_evict: Callable[[tuple, object], None] | None = None
 
     @property
     def devices(self) -> list[str]:
@@ -148,9 +179,22 @@ class ModelRegistry:
                 self._evict(key)
             return len(keys)
 
-    def release_models(self, model_ids) -> list[dict]:
-        """Drop the resident container of every named model, reporting what
+    def release_models(self, identities) -> list[dict]:
+        """Drop the resident container of every named IDENTITY, reporting what
         went (the explicit release the judged run seams call).
+
+        ``identities`` are ``(modelID, revision | None, canonical dtype |
+        None)`` triples — never bare slugs (external review round 12,
+        finding 3). A judge panel can pin one slug at two revisions, and a
+        release that spoke slugs would either drop the container the next
+        column is about to use or, matching by slug alone, leave the
+        finished OLD-revision container resident as dead weight — the
+        co-residency OOM the seam exists to prevent. The triple mirrors the
+        container key ``_matching_slot`` reuses by: revision None means "the
+        revisionless slot", not "any revision", and dtype is compared
+        canonically so ``auto``/unset and a resolved pin agree. ``device``
+        is not part of the identity — it is the registry's choice, not
+        something a judge pins — and rides only in the returned record.
 
         The maintainer's ruling, 2026-08-28: "any runs that require two
         models will need to unload and load models in order not to OOM. We
@@ -171,11 +215,11 @@ class ModelRegistry:
         generation or load, and the pipeline's chain-held study model is
         locked for the whole chain, so a still-working model is never
         released out from under its worker. Each returned record carries
-        ``modelID``/``revision``/``device`` and the estimated ``bytes``
-        freed (the cached snapshot size, None when unknown) so the caller
-        can write the memory story into the run log.
+        ``modelID``/``revision``/``dtype``/``device`` and the estimated
+        ``bytes`` freed (the cached snapshot size, None when unknown) so the
+        caller can write the memory story into the run log.
         """
-        wanted = {str(m) for m in (model_ids or ()) if m}
+        wanted = [_identity(item) for item in (identities or ()) if item]
         if not wanted:
             return []
         released: list[dict] = []
@@ -183,17 +227,40 @@ class ModelRegistry:
             victims = [
                 (key, slot) for key, slot in self._slots.items()
                 if not slot.loading and not slot.lock.locked()
-                and slot.model.model_id in wanted]
+                and any(self._slot_is(slot, ident) for ident in wanted)]
             for key, slot in victims:
                 released.append({
                     "modelID": slot.model.model_id,
                     "revision": slot.model.revision,
+                    "dtype": model_loader.normalize_dtype(slot.dtype),
                     "device": slot.device,
                     "bytes": model_loader.snapshot_size_bytes(
                         slot.model.model_id, slot.model.revision),
                 })
                 self._evict(key)
         return released
+
+    @staticmethod
+    def _slot_is(slot: ModelSlot, identity: tuple) -> bool:
+        """Does this READY slot hold exactly the named identity?
+
+        The same three comparisons ``_matching_slot`` reuses a slot by, so a
+        release can never name a container a load would not have matched:
+        the slug; the revision (a pinned one against the revision the load
+        RESOLVED to, an unpinned one only against a slot that was itself
+        requested revisionless); and the dtype, canonically — ``auto`` and
+        an unset pin are the same "let the device decide", and bf16 and fp16
+        are different containers.
+        """
+        model_id, revision, dtype = identity
+        if slot.model.model_id != model_id:
+            return False
+        if revision is not None:
+            if slot.model.revision != revision and slot.key[1] != revision:
+                return False
+        elif slot.key[1] is not None:
+            return False
+        return model_loader.normalize_dtype(slot.dtype) == dtype
 
     def unload_all(self) -> int:
         with self._lock:
@@ -341,10 +408,16 @@ class ModelRegistry:
         slot = self._slots.pop(key, None)
         if slot is None:
             return
+        container = slot.model
         # Drop the reference by ASSIGNMENT, not `del`: stale slot handles held
         # by a racing acquire() must read a clean None (→ retry), never raise
         # AttributeError on a deleted dataclass field.
         slot.model = None
+        # Every OTHER owner drops it too, before the trim — a service that
+        # still holds this container keeps its weights alive and the trim
+        # below would reclaim nothing.
+        if container is not None and self.on_evict is not None:
+            self.on_evict(key, container)
         # The one reclamation implementation, shared with the CLI/bundle
         # release seam (which has no registry to evict from).
         model_loader.free_device_memory(slot.device)

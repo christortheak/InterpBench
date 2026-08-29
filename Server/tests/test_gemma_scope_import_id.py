@@ -396,6 +396,75 @@ def test_report_import_does_not_read_the_requested_bucket(tmp_path):
                                    run_directory=run_dir)
 
 
+# --- the ROW side of the feature match ---------------------------------------
+
+
+@pytest.mark.parametrize("bad_feature", [7.5, True, "7", float("nan")])
+def test_a_row_whose_feature_is_not_an_integer_never_matches(
+        tmp_path, bad_feature):
+    """External review round 12, finding 6: the REQUEST got the exact-integer
+    predicate, but the row side still ran through ``int()`` — so a report row
+    whose feature is 7.5 truncated to 7 and satisfied a request for feature 7,
+    and ``true`` became 1. A row that cannot name a dictionary entry is not
+    that entry's row, and importing its decoder values would place a different
+    feature's direction under the requested feature's name.
+    """
+    report = _legacy_report()
+    report["topAbsolute"] = [{"feature": bad_feature, "cosine": 0.9,
+                              "decoderValues": [3.0, 0.0, 4.0]}]
+    report_path = str(tmp_path / "report.json")
+    with open(report_path, "w", encoding="utf-8") as handle:
+        json.dump(report, handle)
+    run_dir = str(tmp_path / "out")
+    os.makedirs(run_dir)
+
+    # No valid row matches, so the existing not-found refusal fires — and
+    # nothing was written.
+    requested = 1 if bad_feature is True else 7
+    with pytest.raises(ValueError, match="not found in report"):
+        gemma_scope.import_feature(report_path, requested, model_id="m",
+                                   run_directory=run_dir)
+    assert os.listdir(run_dir) == []
+
+
+def test_a_valid_row_further_down_the_bucket_is_still_found(tmp_path):
+    """Skipping a malformed row is a SKIP, not an abort: a real row for the
+    requested feature behind it still imports."""
+    report = _legacy_report()
+    report["topAbsolute"] = [
+        {"feature": 7.5, "cosine": 0.99, "decoderValues": [1.0, 0.0, 0.0]},
+        {"feature": 7, "cosine": 0.9, "decoderValues": [3.0, 0.0, 4.0]}]
+    report_path = str(tmp_path / "report.json")
+    with open(report_path, "w", encoding="utf-8") as handle:
+        json.dump(report, handle)
+    run_dir = str(tmp_path / "out")
+    os.makedirs(run_dir)
+
+    gemma_scope.import_feature(report_path, 7, model_id="m",
+                               run_directory=run_dir)
+    vectors, _sidecar = vector_store.load(run_dir, "sae-feature-7")
+    # The 7 row's values (rescaled x2), never the 7.5 row's.
+    assert vectors.per_layer[2] == pytest.approx([6.0, 0.0, 8.0])
+
+
+def test_an_integral_float_row_still_names_its_feature(tmp_path):
+    """``7.0`` IS seven — the predicate refuses fractions and booleans, not
+    JSON's habit of writing whole numbers as floats."""
+    report = _legacy_report()
+    report["topAbsolute"] = [{"feature": 7.0, "cosine": 0.9,
+                              "decoderValues": [3.0, 0.0, 4.0]}]
+    report_path = str(tmp_path / "report.json")
+    with open(report_path, "w", encoding="utf-8") as handle:
+        json.dump(report, handle)
+    run_dir = str(tmp_path / "out")
+    os.makedirs(run_dir)
+
+    gemma_scope.import_feature(report_path, 7, model_id="m",
+                               run_directory=run_dir)
+    vectors, _sidecar = vector_store.load(run_dir, "sae-feature-7")
+    assert vectors.per_layer[2] == pytest.approx([6.0, 0.0, 8.0])
+
+
 # --- requested-ID report rows -----------------------------------------------
 
 def test_resolve_requested_features_dedupes_and_preserves_order():
