@@ -172,6 +172,17 @@ public struct ClusterCapabilities: Codable, Sendable {
     /// nor races a client request timeout (2026-07-17).
     public var supportsStreamingLoad: Bool { chatFlag("loadStream") }
 
+    /// `POST /api/models/load/cancel` (`"chat.loadCancel"`): an in-flight
+    /// load is interruptible and frees its resident slot (2026-08-29: a
+    /// silent 55 GB download held the only slot with no way out short of
+    /// SIGTERMing the engine). Cancel-load controls gate on this.
+    public var supportsLoadCancel: Bool { chatFlag("loadCancel") }
+
+    /// `GET /api/models/preflight` (`"chat.loadPreflight"`): cached /
+    /// downloadBytes for a model BEFORE loading it, so a load that would
+    /// really be a multi-GB download is confirmed, never silent.
+    public var supportsLoadPreflight: Bool { chatFlag("loadPreflight") }
+
     /// Study-owned sampling for saved agents
     /// (`"remoteStudy.variantStudySampling"`, 2026-07-21): variant
     /// conditions execute under the study manifest's sampling policy,
@@ -318,6 +329,16 @@ public struct RemoteLoadedModel: Codable, Sendable, Identifiable {
     /// Layer count from the server's slot snapshot — the honest layer-slider
     /// bound when a seeded vector ref is not (yet) in the fetched catalog.
     public var numLayers: Int?
+    /// True while this slot is a load in flight (weights not yet published).
+    /// Absent on older servers.
+    public var loading: Bool?
+    /// What that load is doing right now — download progress, weight copy —
+    /// the same phase text the SSE heartbeats carry, for clients that missed
+    /// the stream. Only present on loading slots.
+    public var loadPhase: String?
+    /// A cancel has been requested for this loading slot and the load will
+    /// stop at its next checkpoint.
+    public var cancelRequested: Bool?
     public var id: String { [modelID, revision ?? "", device ?? ""].joined(separator: "|") }
 }
 
@@ -2152,6 +2173,91 @@ public struct ClusterClient: Sendable {
         }
         // Same contract as the chat streams: no `done`, no completion.
         throw ClientError.interruptedStream
+    }
+
+    /// `GET /api/models/preflight` — what loading this model would do right
+    /// now, BEFORE the resident slot is committed to it. `cached: false`
+    /// means the load downloads first; `downloadBytes` is the hub-metadata
+    /// snapshot size when the server could learn it (best-effort — nil is
+    /// "unknown", never "small"). Capability `chat.loadPreflight`.
+    public struct ModelLoadPreflight: Codable, Sendable, Equatable {
+        public var modelID: String
+        public var revision: String?
+        public var cached: Bool
+        public var residency: String?
+        public var downloadBytes: Int64?
+
+        public init(
+            modelID: String, revision: String? = nil, cached: Bool,
+            residency: String? = nil, downloadBytes: Int64? = nil
+        ) {
+            self.modelID = modelID
+            self.revision = revision
+            self.cached = cached
+            self.residency = residency
+            self.downloadBytes = downloadBytes
+        }
+    }
+
+    public func modelLoadPreflight(
+        _ model: String, revision: String? = nil
+    ) async throws -> ModelLoadPreflight {
+        var query = [URLQueryItem(name: "model", value: model)]
+        if let revision {
+            query.append(URLQueryItem(name: "revision", value: revision))
+        }
+        let request = try makeRequest(
+            path: "/api/models/preflight", method: "GET", queryItems: query)
+        let (data, response) = try await session.data(for: request)
+        try validate(response: response, data: data)
+        return try decoder.decode(ModelLoadPreflight.self, from: data)
+    }
+
+    /// `POST /api/models/unload` response. `loading` + `hint` appear when an
+    /// in-flight load held its slot (unload cannot touch it — the hint names
+    /// the cancel verb that can).
+    public struct UnloadModelsResult: Codable, Sendable, Equatable {
+        public var ok: Bool?
+        public var unloaded: Int
+        public var loading: [String]?
+        public var hint: String?
+    }
+
+    /// Release resident model slot(s): the named model's, or every idle one
+    /// when `model` is nil. Busy slots (mid-generation, mid-load) are never
+    /// touched — the result says what was skipped and why.
+    public func unloadModels(_ model: String? = nil) async throws -> UnloadModelsResult {
+        struct Body: Encodable { var modelID: String? }
+        return try await post("/api/models/unload", body: Body(modelID: model))
+    }
+
+    /// One in-flight load the server was asked to stop.
+    public struct CancelledModelLoad: Codable, Sendable, Equatable {
+        public var modelID: String
+        public var revision: String?
+        public var device: String?
+    }
+
+    public struct CancelModelLoadResult: Codable, Sendable, Equatable {
+        public var ok: Bool?
+        public var cancelRequested: [CancelledModelLoad]
+        public var note: String?
+    }
+
+    /// `POST /api/models/load/cancel` (capability `chat.loadCancel`) —
+    /// interrupt in-flight model load(s) and free their slots. Cooperative
+    /// on the server: a download stops within seconds, a weight copy at its
+    /// next phase boundary. Idempotent when nothing is loading.
+    public func cancelModelLoad(
+        _ model: String? = nil, revision: String? = nil
+    ) async throws -> CancelModelLoadResult {
+        struct Body: Encodable {
+            var modelID: String?
+            var revision: String?
+        }
+        return try await post(
+            "/api/models/load/cancel",
+            body: Body(modelID: model, revision: revision))
     }
 
     public func jobs() async throws -> [RemoteJobRecord] {

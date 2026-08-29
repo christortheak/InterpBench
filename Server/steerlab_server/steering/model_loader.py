@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from typing import Callable
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -235,6 +236,21 @@ class ModelLoadError(Exception):
         self.advice_complete = advice_complete
 
 
+class LoadCancelled(ModelLoadError):
+    """An in-flight load interrupted by an explicit cancel request
+    (POST /api/models/load/cancel — field incident 2026-08-29: a silent
+    ~55 GB hub download held the only resident-model slot with no way to
+    free it short of SIGTERMing the engine). A subclass of
+    :class:`ModelLoadError` so every existing surface (400 conversion,
+    SSE in-band error events, registry cleanup) treats it as a failed
+    load; typed so callers that ASKED for the cancel can tell it from a
+    genuine failure. The prose is the whole remedy: nothing is broken.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, advice_complete=True)
+
+
 def _is_mlx_repo(model_id: str) -> bool:
     lid = model_id.lower()
     return "mlx" in lid or "-mlx-" in lid
@@ -366,6 +382,34 @@ def current_load_phase() -> str | None:
         return _CURRENT_PHASE
 
 
+# The in-flight load's cancel probe, installed by the registry around each
+# ``load`` call (one loader at a time — the registry's load lock — so a
+# single slot suffices, exactly like the phase slot above). A module-level
+# seam rather than a ``load`` parameter so the many existing callers and
+# test fakes keep their signatures.
+_CANCEL_CHECK_LOCK = threading.Lock()
+_CANCEL_CHECK: "Callable[[], bool] | None" = None
+
+
+def set_cancel_check(check: "Callable[[], bool] | None") -> None:
+    """Install (or clear, with None) the probe :func:`load` polls to learn
+    that its slot's cancel was requested. The registry owns this: it points
+    the probe at the loading slot's cancel event for the duration of the
+    load and always clears it after."""
+    global _CANCEL_CHECK
+    with _CANCEL_CHECK_LOCK:
+        _CANCEL_CHECK = check
+
+
+def load_cancel_requested() -> bool:
+    with _CANCEL_CHECK_LOCK:
+        check = _CANCEL_CHECK
+    try:
+        return bool(check()) if check is not None else False
+    except Exception:  # pragma: no cover - a probe must never break a load
+        return False
+
+
 def _log_line(text: str) -> None:
     print(f"model_loader: {text}", file=sys.stderr, flush=True)
 
@@ -446,6 +490,51 @@ def snapshot_size_bytes(model_id: str, revision: str | None = None) -> int | Non
             except OSError:
                 continue
     return total or None
+
+
+#: Written by the install child (model_install.CHILD_SOURCE) after
+#: ``snapshot_download`` returns — "this repo is fully downloaded".
+INSTALL_COMPLETE_MARKER = ".steerlab-install-complete"
+
+
+def hub_offline() -> bool:
+    """Is this process pinned offline (cluster hermeticity)? Matches the
+    rendered env file's spelling: ``HF_HUB_OFFLINE=1`` or omitted."""
+    return (os.environ.get("HF_HUB_OFFLINE") or "").strip() == "1"
+
+
+def needs_hub_download(model_id: str, revision: str | None = None) -> bool:
+    """Would loading this model reach for the network first?
+
+    The honesty seam behind the load stream's download warning and the
+    load path's cancellable-download routing (field incident 2026-08-29:
+    ``from_pretrained`` began a silent ~55 GB download inside the load,
+    uncancellable and unannounced). Three local signals, no network:
+
+    - no resolvable cached snapshot → a download is coming;
+    - the install-complete marker → the repo is fully here, no download;
+    - ``blobs/*.incomplete`` → an interrupted download would RESUME
+      inside the load, so it counts as a download.
+
+    A legacy cache (snapshot present, no marker — downloaded by
+    ``from_pretrained`` before the marker existed) answers False: almost
+    always right, and the price of a rare wrong False is only the old
+    inline behavior. Offline processes always answer False — nothing
+    downloads there, the load itself refuses if bytes are missing.
+    """
+    if hub_offline():
+        return False
+    if snapshot_size_bytes(model_id, revision) is None:
+        return True
+    repo_dir = os.path.join(hf_hub_dir(),
+                            "models--" + model_id.replace("/", "--"))
+    if os.path.exists(os.path.join(repo_dir, INSTALL_COMPLETE_MARKER)):
+        return False
+    try:
+        return any(name.endswith(".incomplete")
+                   for name in os.listdir(os.path.join(repo_dir, "blobs")))
+    except OSError:
+        return False
 
 
 _SIZES_CACHE: tuple[tuple, str, dict[str, int], float] | None = None
@@ -870,6 +959,44 @@ def _stage_model_locally(model_id: str, revision: str | None = None) -> str | No
         return None
 
 
+def _download_into_cache(model_id: str, revision: str | None, log) -> None:
+    """Fetch the snapshot through the install verb's cancellable child
+    process BEFORE ``from_pretrained`` can begin an inline, uncancellable
+    one (field incident 2026-08-29: that inline download held the only
+    resident-model slot for ~55 GB with no way to free it). The child's
+    progress lines feed both the stderr log and the load PHASE, so SSE
+    heartbeats carry live download progress. A failure with a usable local
+    snapshot falls back to the shared cache (same posture as staging); a
+    failure with no local bytes is the load's failure, spoken with the
+    install verb's actionable remedy. A cancel observed by the child
+    terminates its whole process group and surfaces as LoadCancelled."""
+    # model_install lives in the API layer but is deliberately
+    # self-contained (stdlib only) — one downloader implementation beats a
+    # clean layering diagram here. Imported lazily to keep pure-engine
+    # imports framework-free.
+    from ..api import model_install
+
+    def _progress(text: str) -> None:
+        log(text)
+        _set_phase(f"downloading '{model_id}' from the hub — {text}")
+
+    _set_phase(f"downloading '{model_id}' from the hub")
+    try:
+        model_install.run_install(model_id, revision, _progress,
+                                  cancelled=load_cancel_requested)
+    except RuntimeError as exc:
+        if load_cancel_requested():
+            _set_phase(None)
+            raise LoadCancelled(
+                f"load of '{model_id}' cancelled during its hub download — "
+                "partial blobs stay in the cache and a re-load resumes from "
+                "them; the resident slot is free again") from exc
+        if snapshot_size_bytes(model_id, revision) is not None:
+            log(f"hub download failed ({exc}); trying the cached snapshot")
+            return
+        raise ModelLoadError(str(exc), advice_complete=True) from exc
+
+
 def load(model_id: str, revision: str | None = None, *,
          dtype: str | None = None, device: str | None = None,
          device_map: str | None = None) -> SteeredModel:
@@ -949,12 +1076,33 @@ def load(model_id: str, revision: str | None = None, *,
     def _log(text: str) -> None:
         print(f"model_loader: {text}", file=sys.stderr, flush=True)
 
+    def _check_cancel() -> None:
+        # Polled at every phase boundary (and continuously through a hub
+        # download): a cancel request interrupts a download within seconds
+        # and a weight copy at the next boundary — never mid-tensor.
+        if load_cancel_requested():
+            _set_phase(None)
+            raise LoadCancelled(
+                f"load of '{model_id}' cancelled on request — the resident "
+                "slot is free again; load a model to continue")
+
     started = time.monotonic()
+    _check_cancel()
     try:
+        # Cold-cache downloads go through the SAME cancellable child
+        # process the install verb uses (field incident 2026-08-29: a
+        # ~55 GB download inside ``from_pretrained`` held the only
+        # resident-model slot with no cancel short of SIGTERMing the
+        # engine). The child's progress lines become the load PHASE, so
+        # SSE heartbeats carry live download progress to the client.
+        if needs_hub_download(model_id, revision):
+            _download_into_cache(model_id, revision, _log)
+            _check_cancel()
         # Node-local staging (when configured): one sequential copy to fast
         # local disk, then every read below hits NVMe instead of shared
         # storage. Falls back silently to the shared cache on any failure.
         staged_hub = _stage_model_locally(model_id, revision)
+        _check_cancel()
         cache_kwargs = {"cache_dir": staged_hub} if staged_hub else {}
         _set_phase(f"reading '{model_id}' checkpoint from the cache")
         tokenizer = AutoTokenizer.from_pretrained(
@@ -979,6 +1127,7 @@ def load(model_id: str, revision: str | None = None, *,
                 **attn_kwargs, **cache_kwargs)
             gib = sum(p.numel() * p.element_size()
                       for p in model.parameters()) / (1 << 30)
+            _check_cancel()
             _log(f"weights materialized ({gib:.1f} GiB) in "
                  f"{time.monotonic() - phase:.1f}s; moving to {dev} — this is "
                  "where cold-cache bytes actually stream off disk")
@@ -991,6 +1140,17 @@ def load(model_id: str, revision: str | None = None, *,
         _set_phase("finalizing (hooks + wrapper)")
     except ModelLoadError:
         _set_phase(None)
+        # A cancel observed AFTER weights materialized leaves a multi-GiB
+        # module tree bound in this frame — drop it before unwinding so the
+        # cancel actually returns the memory (same debris rationale as the
+        # generic handler below; no device sweep needed, the copy to the
+        # device has not started at any cancel checkpoint).
+        import gc
+        try:
+            del model  # noqa: F821 - bound only if from_pretrained returned
+        except NameError:
+            pass
+        gc.collect()
         raise
     except Exception as exc:  # noqa: BLE001 - convert to a user-actionable message
         _set_phase(None)

@@ -239,7 +239,8 @@ struct ClusterConnectionDot: View {
             HFTokenInstallSheet(cluster: cluster, tunnel: tunnel, entryID: target.id)
         }
         .sheet(isPresented: $showingEngineSetup) {
-            LocalEngineSetupSheet(engine: localEngine, service: service)
+            LocalEngineSetupSheet(
+                engine: localEngine, service: service, server: localServer)
         }
         .sheet(isPresented: $showingSetupWizard) {
             // WS5 wizard — a veneer over ClusterProvisioner (ExperimentKit).

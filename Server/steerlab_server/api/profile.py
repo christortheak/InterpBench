@@ -81,8 +81,9 @@ class ServerProfile:
 
     @classmethod
     def from_env(cls) -> "ServerProfile":
-        root = os.environ.get("STEERLAB_ROOT") or os.getcwd()
-        metadata = os.environ.get("STEERLAB_METADATA_ROOT") or os.path.join(root, ".steerlab")
+        root = _expanded_path(os.environ.get("STEERLAB_ROOT")) or os.getcwd()
+        metadata = (_expanded_path(os.environ.get("STEERLAB_METADATA_ROOT"))
+                    or os.path.join(root, ".steerlab"))
         max_loaded = os.environ.get("STEERLAB_MAX_LOADED_MODELS")
         return cls(
             profile=_choice("STEERLAB_SERVER_PROFILE", "local", _VALID_PROFILES),
@@ -93,10 +94,12 @@ class ServerProfile:
             max_loaded_models=(int(max_loaded) if max_loaded else None),
             root=root,
             metadata_root=metadata,
-            asset_root=os.environ.get("STEERLAB_ASSET_ROOT"),
-            run_root=os.environ.get("STEERLAB_RUN_ROOT"),
-            archive_root=os.environ.get("STEERLAB_ARCHIVE_ROOT"),
-            node_cache_root=os.environ.get("STEERLAB_NODE_CACHE_ROOT"),
+            asset_root=_expanded_path(os.environ.get("STEERLAB_ASSET_ROOT")),
+            run_root=_expanded_path(os.environ.get("STEERLAB_RUN_ROOT")),
+            archive_root=_expanded_path(
+                os.environ.get("STEERLAB_ARCHIVE_ROOT")),
+            node_cache_root=_expanded_path(
+                os.environ.get("STEERLAB_NODE_CACHE_ROOT")),
             transfer_method=os.environ.get("STEERLAB_TRANSFER_METHOD"),
             quota_command=os.environ.get("STEERLAB_QUOTA_COMMAND"),
             metadata_requires_local_filesystem=_flag(
@@ -124,6 +127,21 @@ class ServerProfile:
         if self.profile == "cluster" and not self.run_root:
             out.append("cluster profile should set STEERLAB_RUN_ROOT to a scratch-backed path")
         return out
+
+
+def _expanded_path(value: str | None) -> str | None:
+    """Expand ``~`` and ``$VAR`` in an env-supplied path. These arrive from
+    launchers that never ran a shell — the Mac app's managed engine passes
+    its environment verbatim, launchd/cron strip the login shell — so a
+    ``~/.steerlab`` or ``$HOME/.steerlab`` reaches this process literally,
+    and the profile check then probes (and the job store then creates) a
+    directory literally named ``~`` (2026-08-29: the Local Engine Details
+    pane reported a metadataRoot at the filesystem root). Applied at the
+    ONE place env paths become profile fields, so every consumer of the
+    profile sees the expanded spelling."""
+    if not value:
+        return None
+    return os.path.expanduser(os.path.expandvars(value))
 
 
 def _choice(name: str, default: str, allowed: set[str]) -> str:
@@ -330,6 +348,16 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             # a slow cold load neither freezes the client's caption nor
             # races its request timeout (2026-07-17).
             "loadStream": True,
+            # POST /api/models/load/cancel — an in-flight load is
+            # interruptible (a download within seconds, a weight copy at
+            # its next phase boundary) and the slot frees. Clients show
+            # their Cancel-load control only where this exists
+            # (2026-08-29: without it, a silent 55 GB download held the
+            # only slot until the engine was SIGTERMed).
+            "loadCancel": True,
+            # GET /api/models/preflight — cached/downloadBytes for a model
+            # BEFORE loading it, so pickers can confirm multi-GB downloads.
+            "loadPreflight": True,
         },
         "remoteStudy": {
             "bundleUpload": True,

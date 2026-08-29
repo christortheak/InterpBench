@@ -60,6 +60,20 @@ def _no_live_provider_preflight(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_hub_offline(monkeypatch):
+    """No test may reach the Hugging Face hub, either. The load path can
+    predownload an uncached model through the install child (2026-08-29
+    cancellable-load work), so a test that fakes ``from_pretrained`` but
+    leaves its model id uncached would otherwise spawn a REAL network
+    download child. Offline is also the honest default posture — it is the
+    cluster's hermetic serving env. Tests that exercise the online seams
+    (the download predicate, the size estimate) delenv/setenv their own (a
+    later monkeypatch wins), and the install child is unaffected because
+    ``install_env`` forces ``HF_HUB_OFFLINE=0`` onto its own copy."""
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+
+
+@pytest.fixture(autouse=True)
 def _declared_gpu_vocabulary(monkeypatch):
     """A test bench is a SITE, and since WP5 Step 8 a site declares its own GPU
     vocabulary — there is no built-in list any more (audit G4: the code

@@ -532,10 +532,14 @@ def _locked_sse(produce, done_extra=None, preamble=None):
                 if item is _SSE_DONE:
                     return
                 # Any substantive event (chunk/done/error) ends the wait;
-                # status-only events keep the heartbeat ticking through a
-                # long acquire + prefill, and later heartbeats repeat the
-                # LATEST status ("ready — generating"), not the stale one.
-                if isinstance(item, dict) and set(item.keys()) == {"status"}:
+                # status events keep the heartbeat ticking through a long
+                # acquire + prefill, and later heartbeats repeat the LATEST
+                # status ("ready — generating"), not the stale one. A status
+                # event may carry side metadata (the load stream's download
+                # preamble adds willDownload/downloadBytes) and still counts
+                # as a status.
+                if (isinstance(item, dict) and "status" in item
+                        and not {"chunk", "done", "error"} & set(item.keys())):
                     base_status = item["status"]
                 else:
                     heartbeats = False
@@ -910,13 +914,35 @@ def build_router(state: ServiceState) -> APIRouter:
         residency = state.registry.residency(
             body.model, body.revision,
             dtype=body.dtype or "auto", device=body.device)
-        preamble = {"status": (
-            f"model {body.model} is already resident — activating"
-            if residency == "ready" else
-            f"model {body.model} "
-            + ("is still loading — waiting for it"
-               if residency == "loading" else
-               "is not loaded yet — loading it now; cold loads can take minutes"))}
+        if residency == "ready":
+            preamble = {"status":
+                        f"model {body.model} is already resident — activating"}
+        elif residency == "loading":
+            preamble = {"status":
+                        f"model {body.model} is still loading — waiting for it"}
+        elif model_loader.needs_hub_download(body.model, body.revision):
+            # Say what the load is ABOUT to do before it holds the slot for
+            # a download (field incident 2026-08-29: a silent ~55 GB fetch).
+            # The first event carries the size when hub metadata answers, so
+            # a client can warn or confirm; the cancel route is named because
+            # it is the only way out mid-download.
+            from . import model_install
+            estimate = model_install.estimated_download_bytes(
+                body.model, body.revision)
+            size = (f"~{estimate / 1e9:.1f} GB" if estimate
+                    else "an unknown size")
+            preamble = {
+                "status": (
+                    f"model {body.model} is not in the local cache — "
+                    f"downloading {size} from the hub before loading; cancel "
+                    "with POST /api/models/load/cancel"),
+                "willDownload": True,
+                "downloadBytes": estimate,
+            }
+        else:
+            preamble = {"status": (
+                f"model {body.model} is not loaded yet — loading it now; "
+                "cold loads can take minutes")}
 
         def produce(stop):
             state.load(body.model, body.revision, body.dtype, body.device)
@@ -945,7 +971,64 @@ def build_router(state: ServiceState) -> APIRouter:
         else:
             removed = state.registry.unload_all()
             state.model = None
-        return {"ok": True, "unloaded": removed}
+        result = {"ok": True, "unloaded": removed}
+        # An in-flight load is not unloadable (the load thread would publish
+        # into a dangling slot) — but "unloaded: 0" alone sent a researcher
+        # hunting for a cancel that did not exist (field incident
+        # 2026-08-29). Name the slots unload cannot touch and the verb that
+        # can.
+        loading = [s["modelID"] for s in state.registry.snapshots()
+                   if s.get("loading")
+                   and (not model_id or s["modelID"] == model_id)]
+        if loading:
+            result["loading"] = loading
+            result["hint"] = (
+                "a model load in flight holds its slot and cannot be "
+                "unloaded — cancel it with POST /api/models/load/cancel")
+        return result
+
+    @router.post("/api/models/load/cancel")
+    def cancel_model_load(body: dict | None = None):
+        """Cancel in-flight model load(s) — the repair the busy-slot refusal
+        names. Cooperative: a hub download stops within seconds (its child
+        process group is terminated), a weight copy stops at its next phase
+        boundary; the slot then frees through the ordinary failed-load
+        path. Idempotent: cancelling when nothing is loading is a no-op
+        success, and the response says so."""
+        body = body or {}
+        cancelled = state.registry.cancel_load(
+            body.get("modelID") or body.get("model"), body.get("revision"))
+        result = {"ok": True, "cancelRequested": cancelled}
+        if not cancelled:
+            result["note"] = ("no model load is in flight" + (
+                " for that model" if body.get("modelID") or body.get("model")
+                else "") + " — nothing to cancel")
+        else:
+            result["note"] = (
+                "cancellation is cooperative: a download stops within "
+                "seconds, a weight copy at its next phase boundary; watch "
+                "GET /api/state for the loading slot to disappear")
+        return result
+
+    @router.get("/api/models/preflight")
+    def model_load_preflight(model: str, revision: str | None = None):
+        """What would loading this model do RIGHT NOW — before the client
+        commits the resident slot to it. ``cached`` False means the load
+        will download first; ``downloadBytes`` is the hub-metadata snapshot
+        size when it can be known (best-effort: None ≠ small), so a picker
+        can put a number in its confirmation. The 2026-08-29 field incident
+        was exactly this surprise: selecting an uncached 27B silently began
+        a ~55 GB download that held the only slot."""
+        from . import model_install
+        will_download = model_loader.needs_hub_download(model, revision)
+        return {
+            "modelID": model,
+            "revision": revision,
+            "cached": not will_download,
+            "residency": state.registry.residency(model, revision),
+            "downloadBytes": (model_install.estimated_download_bytes(
+                model, revision) if will_download else None),
+        }
 
     @router.post("/api/generate", response_model=dto.GenerateResponse)
     def generate_route(body: dto.GenerateRequest):

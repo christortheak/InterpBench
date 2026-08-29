@@ -3076,32 +3076,111 @@ public final class ChatService {
     public private(set) var isRemoteModelLoading = false
     private var remoteLoadTask: Task<Void, Never>?
 
-    /// Cancel the in-flight remote load. Client-side only: the server may
-    /// finish the load and keep the model resident — which is fine, the next
-    /// load of that model returns instantly.
+    /// Cancel the in-flight remote load. On an engine that announces
+    /// `chat.loadCancel` this ALSO asks the server to abort the load and
+    /// free its slot (field incident 2026-08-29: dropping the stream alone
+    /// left a 55 GB download holding the only resident-model slot). On
+    /// older servers it stays client-side: the server may finish the load
+    /// and keep the model resident — which is fine, the next load of that
+    /// model returns instantly.
     public func cancelRemoteLoad() {
         remoteLoadTask?.cancel()
+        if cluster.capabilities?.supportsLoadCancel == true,
+            let client = cluster.client
+        {
+            Task { _ = try? await client.cancelModelLoad() }
+        }
     }
 
-    public func loadRemoteModel() async {
+    /// A remote load that would really be a multi-GB download, parked until
+    /// the researcher answers for it. Same rule the LOCAL tier enforces with
+    /// its separate Download… verb ("a button named Load must not start a
+    /// multi-gigabyte download") — the server tier learned it the hard way
+    /// on 2026-08-29, when selecting an uncached 27B silently began a
+    /// ~55 GB hub download that held the engine's only resident-model slot.
+    public struct PendingRemoteDownload: Equatable, Sendable {
+        public var model: String
+        public var downloadBytes: Int64?
+
+        public init(model: String, downloadBytes: Int64? = nil) {
+            self.model = model
+            self.downloadBytes = downloadBytes
+        }
+
+        /// The dialog sentence — pure and tested. nil bytes is "unknown",
+        /// spoken as such, never rounded down to reassurance.
+        nonisolated public static func confirmationText(
+            model: String, bytes: Int64?
+        ) -> String {
+            let size = bytes.map { String(format: "~%.1f GB", Double($0) / 1e9) }
+                ?? "an unknown amount (the hub did not answer with a size)"
+            return "\(model) is not in the engine's local cache — loading it "
+                + "will first download \(size) from the model hub, and the "
+                + "download holds a resident-model slot until it finishes or "
+                + "is cancelled"
+        }
+
+        public var confirmationText: String {
+            Self.confirmationText(model: model, bytes: downloadBytes)
+        }
+    }
+
+    /// Set instead of loading when the preflight says the load would
+    /// download first; the Model section renders it as a confirmation.
+    public private(set) var pendingRemoteDownload: PendingRemoteDownload?
+
+    /// The dialog's confirm: clears the pending marker SYNCHRONOUSLY — the
+    /// dialog's dismissal callback runs right after the button action, and
+    /// must not read a still-set marker as a decline — then starts the
+    /// confirmed load.
+    public func beginConfirmedRemoteLoad() {
+        pendingRemoteDownload = nil
+        Task { await self.loadRemoteModel(confirmedDownload: true) }
+    }
+
+    public func dismissPendingRemoteDownload() {
+        guard pendingRemoteDownload != nil else { return }
+        pendingRemoteDownload = nil
+        cluster.activity = "load declined — nothing was downloaded"
+    }
+
+    public func loadRemoteModel(confirmedDownload: Bool = false) async {
         guard !isRemoteModelLoading else { return }
         isRemoteModelLoading = true
         defer {
             isRemoteModelLoading = false
             remoteLoadTask = nil
         }
-        let task = Task { await self.performRemoteLoad() }
+        let task = Task {
+            await self.performRemoteLoad(confirmedDownload: confirmedDownload)
+        }
         remoteLoadTask = task
         await task.value
     }
 
-    private func performRemoteLoad() async {
+    private func performRemoteLoad(confirmedDownload: Bool) async {
         guard let client = cluster.client else {
             cluster.activity = "invalid server URL"
             return
         }
         guard let model = selectedRemoteModelID, !model.isEmpty else {
             cluster.activity = "select a server model first"
+            return
+        }
+        // Say what the load is about to do BEFORE committing the slot to it:
+        // an uncached model means a download, and a download needs a yes.
+        // The preflight is advisory — a server without the route, or a
+        // preflight that errors, falls through to the load, whose own SSE
+        // preamble still announces the download.
+        if !confirmedDownload,
+            cluster.capabilities?.supportsLoadPreflight == true,
+            let preflight = try? await client.modelLoadPreflight(model),
+            !preflight.cached
+        {
+            pendingRemoteDownload = PendingRemoteDownload(
+                model: model, downloadBytes: preflight.downloadBytes)
+            cluster.activity = PendingRemoteDownload.confirmationText(
+                model: model, bytes: preflight.downloadBytes)
             return
         }
         do {
@@ -3131,8 +3210,11 @@ public final class ChatService {
             }
         } catch {
             if Self.isCancellation(error) {
-                cluster.activity = "load canceled — the server may still "
-                    + "finish and keep the model resident"
+                cluster.activity = cluster.capabilities?.supportsLoadCancel == true
+                    ? "load cancelled — the engine was asked to stop it and "
+                        + "free the resident slot"
+                    : "load canceled — the server may still finish and keep "
+                        + "the model resident"
                 return
             }
             cluster.activity = "remote load failed: \(error)"

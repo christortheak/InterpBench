@@ -24,8 +24,22 @@ import SwiftUI
 struct LocalEngineSetupSheet: View {
     @Bindable var engine: LocalEngineProvisioner
     let service: ChatService
+    /// The running server's lifecycle owner — Restart terminates through its
+    /// identity-gated stop, never a bare kill.
+    let server: LocalServerController
 
     @Environment(\.dismiss) private var dismiss
+
+    /// The engine's live model registry (`GET /api/state` on loopback),
+    /// polled while the sheet is open; nil while the engine is not
+    /// answering, which hides the controls section entirely.
+    @State private var engineState: RemoteState?
+    @State private var engineCapabilities: ClusterCapabilities?
+    /// Outcome sentence of the last engine control action.
+    @State private var engineControlNote: String?
+    @State private var engineActionInFlight = false
+    @State private var confirmingRestart = false
+    @State private var restarting = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -33,6 +47,7 @@ struct LocalEngineSetupSheet: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    if engineState != nil { engineControlsSection }
                     if !engine.downloadPreamble.isEmpty { downloadNotice }
                     stepList
                     if let report = engine.qualification {
@@ -52,6 +67,23 @@ struct LocalEngineSetupSheet: View {
         .padding(18)
         .frame(width: 620)
         .task { if engine.phase == .unknown { await engine.refreshPlan() } }
+        .task { await pollEngine() }
+        .confirmationDialog(
+            "Restart the local engine?",
+            isPresented: $confirmingRestart,
+            titleVisibility: .visible
+        ) {
+            Button("Stop and restart", role: .destructive) {
+                Task { await restartEngine() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "Terminates the engine process (unloading every resident "
+                    + "model and aborting any in-flight load or generation), "
+                    + "then provisions and starts it again. Nothing installed "
+                    + "is re-downloaded.")
+        }
     }
 
     // MARK: Header
@@ -83,6 +115,178 @@ struct LocalEngineSetupSheet: View {
         case .ready: return .green
         default: return .primary
         }
+    }
+
+    // MARK: Engine controls (field incident 2026-08-29)
+
+    // The pane used to be report-only: when a silent 55 GB download held
+    // the engine's only resident-model slot, nothing here could unload,
+    // cancel, or restart — the researcher SIGTERMed the process by hand.
+    // These controls are the pane-side repair; each speaks the engine's
+    // typed routes and reports the engine's own answer.
+
+    private var engineClient: ClusterClient? {
+        guard let url = URL(string: "http://127.0.0.1:\(engine.port)") else {
+            return nil
+        }
+        return ClusterClient(profile: ClusterConnectionProfile(baseURL: url))
+    }
+
+    private var engineControlsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Running engine — resident models")
+                .font(.subheadline.weight(.semibold))
+            let loaded = engineState?.loadedModels ?? []
+            if loaded.isEmpty {
+                Text("no models resident — the slot is free")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(loaded) { model in
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(model.modelID)
+                            .font(.caption.weight(.medium))
+                        Text(residencyLabel(model))
+                            .font(.caption2)
+                            .foregroundStyle(
+                                model.loading == true ? .orange : .secondary)
+                    }
+                    // The load's live phase — download progress included —
+                    // for the researcher who missed the load stream.
+                    if model.loading == true, let phase = model.loadPhase {
+                        Text(phase)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            HStack(spacing: 8) {
+                Button("Unload Models") { Task { await unloadModels() } }
+                    .disabled(
+                        engineActionInFlight
+                            || !loaded.contains { $0.loading != true })
+                    .help(
+                        "release every idle resident model slot "
+                            + "(POST /api/models/unload) — a model mid-"
+                            + "generation or mid-load is never touched")
+                if loaded.contains(where: { $0.loading == true }),
+                    engineCapabilities?.supportsLoadCancel == true
+                {
+                    Button("Cancel Load") { Task { await cancelEngineLoad() } }
+                        .disabled(engineActionInFlight)
+                        .help(
+                            "interrupt the load in flight and free its slot "
+                                + "(POST /api/models/load/cancel) — a download "
+                                + "stops within seconds, a weight copy at its "
+                                + "next phase boundary")
+                }
+                Button(restarting ? "Restarting…" : "Restart Engine…") {
+                    confirmingRestart = true
+                }
+                .disabled(restarting || engine.phase.isRunning)
+                .help(
+                    "terminate the engine process and provision + start it "
+                        + "again — the recovery of last resort when a slot "
+                        + "is wedged")
+                Spacer()
+            }
+            if let note = engineControlNote {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func residencyLabel(_ model: RemoteLoadedModel) -> String {
+        if model.loading == true {
+            return model.cancelRequested == true
+                ? "loading — cancel requested" : "loading…"
+        }
+        var parts: [String] = []
+        if let device = model.device { parts.append(device) }
+        if let dtype = model.dtype { parts.append(dtype) }
+        let where_ = parts.isEmpty ? "" : " (\(parts.joined(separator: ", ")))"
+        return (model.busy == true ? "busy" : "resident") + where_
+    }
+
+    private func pollEngine() async {
+        while !Task.isCancelled {
+            await refreshEngine()
+            try? await Task.sleep(for: .seconds(2))
+        }
+    }
+
+    private func refreshEngine() async {
+        guard let client = engineClient else { return }
+        if engineCapabilities == nil {
+            engineCapabilities = try? await client.capabilities()
+        }
+        engineState = try? await client.state()
+    }
+
+    private func unloadModels() async {
+        guard let client = engineClient else { return }
+        engineActionInFlight = true
+        defer { engineActionInFlight = false }
+        do {
+            let result = try await client.unloadModels()
+            // The engine's own hint wins: "unloaded: 0" alone is the dead
+            // end the incident hit — the hint names the cancel verb.
+            engineControlNote = result.hint
+                ?? "released \(result.unloaded) resident model "
+                + "slot\(result.unloaded == 1 ? "" : "s")"
+        } catch {
+            engineControlNote = "unload failed: \(error)"
+        }
+        await refreshEngine()
+    }
+
+    private func cancelEngineLoad() async {
+        guard let client = engineClient else { return }
+        engineActionInFlight = true
+        defer { engineActionInFlight = false }
+        do {
+            let result = try await client.cancelModelLoad()
+            engineControlNote = result.note
+                ?? "cancel requested for \(result.cancelRequested.count) load(s)"
+        } catch {
+            engineControlNote = "cancel failed: \(error)"
+        }
+        await refreshEngine()
+    }
+
+    private func restartEngine() async {
+        restarting = true
+        defer { restarting = false }
+        // The provisioner does not retain the server process; the
+        // controller's identity-gated stop is the one safe terminate. An
+        // engine started AFTER app launch is adopted from its pidfile first.
+        server.adoptIfRunning()
+        server.stop()
+        for _ in 0 ..< 240 {
+            if server.phase == .idle,
+                !LocalServerPidfile.endpointIsSteerLab(port: engine.port)
+            {
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        if LocalServerPidfile.endpointIsSteerLab(port: engine.port) {
+            engineControlNote = "the engine did not stop "
+                + "(\(server.statusLine)) — stop it from the terminal that "
+                + "started it, then Re-verify"
+            return
+        }
+        engineState = nil
+        engineControlNote = "engine stopped — starting it again"
+        engine.run(host: service)
     }
 
     // MARK: Downloads

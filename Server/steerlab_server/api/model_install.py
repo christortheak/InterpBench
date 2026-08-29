@@ -219,6 +219,27 @@ def friendly_failure(kind: str, detail: str, model_id: str,
     return f"{kind}: {detail}"
 
 
+def estimated_download_bytes(model_id: str, revision: str | None = None, *,
+                             timeout: float = 5.0) -> int | None:
+    """Total bytes of the repo's snapshot per hub metadata, or None when it
+    cannot be known (offline process, no egress, gated without token, bad
+    id). Best-effort by contract — the load-stream preamble and the model
+    picker's download confirmation use it to WARN before a multi-GB
+    download commits the disk and the resident slot (field incident
+    2026-08-29), and a warning that cannot be computed must never block
+    the load itself. Same figure the install child estimates with, minus
+    the child process."""
+    if (os.environ.get("HF_HUB_OFFLINE") or "").strip() == "1":
+        return None
+    try:
+        from huggingface_hub import HfApi
+        info = HfApi().model_info(model_id, revision=revision,
+                                  files_metadata=True, timeout=timeout)
+        return sum(f.size or 0 for f in (info.siblings or [])) or None
+    except Exception:  # noqa: BLE001 - an estimate, never a failure
+        return None
+
+
 def _terminate_group(proc: subprocess.Popen) -> None:
     """SIGTERM the child's whole process group (hub downloads spawn worker
     processes), escalating to SIGKILL if it lingers."""
