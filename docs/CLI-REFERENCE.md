@@ -1291,7 +1291,7 @@ Python engine.
 ```
 steerlab-cli experiment analyze <name> [--allow-unverified-epoch]
 steerlab-cli experiment rescore-style <name> [--allow-unverified-epoch] [--run <run-dir>]
-steerlab-cli experiment evaluate <name> [--allow-unverified-epoch] [--run <run-dir>]
+steerlab-cli experiment evaluate <name> [--allow-unverified-epoch] [--run <run-dir>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>]
 ```
 
 | Verb | Purpose |
@@ -1349,6 +1349,54 @@ telling you to run first or pass `--run`.
 `rescore-style` requires a pinned taxonomy; it writes `reasoning-style.csv` +
 `reasoning-style.json` into a **fresh** run directory and never mutates the
 source run.
+
+**Seeded subsample coding** (2026-08-29). `evaluate` takes
+`--sample-per-condition <n>` together with `--sample-seed <hex-or-int>` to
+code a stratified DRAW from the source run rather than all of it — the shape a
+power computation produces, and previously an operation with no honest
+spelling at all. Both flags or neither: a sample with no seed is one nobody
+can redraw, and a seed with no sample size would be stamped on a coding it did
+not shape; either half alone is a malformed invocation (exit 64). There is no
+fraction spelling — `n` is an absolute per-condition record count. The flags
+reach the same verb on every surface: `steerlab-server experiment evaluate`,
+`bundle execute --verb evaluate`, `study submit --verb evaluate`, and
+`steerlab-cli remote submit-bundle --verb evaluate` (wire fields
+`samplePerCondition` / `sampleSeed`, encoded only when given, echoed back at
+`result.samplePerConditionRequested` / `result.sampleSeedRequested`).
+
+*The draw.* Within each condition: `floor(n / P)` records per promptID over
+that condition's `P` promptIDs, the `n mod P` remainder handed out one at a
+time in seeded promptID order (a promptID already at its population is skipped
+and its quota passes on, so exactly `n` records are always drawn, even from a
+ragged source run); within each `(condition, promptID)` cell the records are
+drawn over `sampleIndex` ascending. Every draw is a partial Fisher–Yates over
+SplitMix64 seeded from SHA-256 of the seed and the stratum's names, so the
+same `(source run, n, seed)` selects **byte-identical records on both
+engines** — a corpus coded on the cluster and re-checked on the Mac is one
+subsample, not two of the same size. Both suites pin the draw with the same
+integer literals (`EvaluateSubsampleTests`, `test_evaluate_subsample.py`).
+
+*It never clamps.* An `n` above any condition's codeable population refuses,
+naming the binding condition and its count. Clamping would code a smaller
+design than the preregistered one while every stamp still said
+`samplePerCondition: n`.
+
+*Per-response coding only.* The paired judge's unit is a `(baseline, variant)`
+PAIR rather than a record, so "n records per condition" does not name a set of
+pairs; a paired rubric refuses rather than half-executing the command line.
+
+*It is stamped loudly.* `coding-report.json` and the evaluate run's
+`config.json` both gain a `sampling` block —
+`{samplePerCondition, sampleSeed, sampledRecords, sourceRecords, rule}`, where
+`sampleSeed` is the canonical `0x` + 16 hex digits (JSON has no unsigned
+64-bit integer) and `rule` is the derivation verbatim. Every human line reads
+`coded N of M (seeded subsample)`, and the envelope's success message says so
+too. **The block's ABSENCE means the full corpus was coded** — which is what
+every report written before this existed means, byte for byte.
+
+*Walltime preflight.* A submitted sampled evaluate is priced at the SAMPLED
+record count (`n` × conditions), not the full matrix, so the estimate prices
+what actually runs.
 
 `analyze` recomputes paired-to-baseline effect sizes (bootstrap CI + Wilcoxon,
 plus the phase's multiple-comparison correction — BH-FDR for screens, Holm for
@@ -1899,7 +1947,7 @@ workflow that works. The success message names the file to author:
 steerlab-cli remote capabilities [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote package <experiment> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote upload <bundle> [--site <id>] [--token <token>] [--url <server>]
-steerlab-cli remote submit-bundle <server-bundle-path> [--bundle <server-path>] [--dry-run] [--executor <local|slurm>] [--gres <spec>] [--parallel <n>] [--site <id>] [--source <run-dir>] [--token <token>] [--url <server>] [--verb <verb>] [--walltime <hh:mm:ss>]
+steerlab-cli remote submit-bundle <server-bundle-path> [--bundle <server-path>] [--dry-run] [--executor <local|slurm>] [--gres <spec>] [--parallel <n>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--site <id>] [--source <run-dir>] [--token <token>] [--url <server>] [--verb <verb>] [--walltime <hh:mm:ss>]
 steerlab-cli remote jobs [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote logs <job-id> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote cancel <job-id> [--site <id>] [--token <token>] [--url <server>]
@@ -1964,7 +2012,7 @@ id fails with the stable code `unknownSite`.
 | `capabilities` | Server capability snapshot. |
 | `package` | Builds a hash-pinned run bundle locally; prints its path. |
 | `upload` | Uploads a bundle. |
-| `submit-bundle` | **`--verb` defaults to `run`**; `--executor` defaults to `local`. Empty resource values are dropped. `--parallel <n>` fans a Slurm run out across N GPU jobs — see below. |
+| `submit-bundle` | **`--verb` defaults to `run`**; `--executor` defaults to `local`. Empty resource values are dropped. `--parallel <n>` fans a Slurm run out across N GPU jobs — see below. `--sample-per-condition <n> --sample-seed <s>` submit a seeded subsample coding (`--verb evaluate` only, both or neither; §3.5), echoed at `result.samplePerConditionRequested` / `result.sampleSeedRequested`. |
 | `jobs` | Job list as JSON. |
 | `logs` | Streams the job log. |
 | `cancel` | Prints `cancel requested`. |
@@ -2751,7 +2799,7 @@ steerlab-server experiment extract <name> [--device <device>] [--dtype <dtype>]
 steerlab-server experiment validate <name> [--device <device>] [--dtype <dtype>]
 steerlab-server experiment sweep <name> [--device <device>] [--dtype <dtype>]
 steerlab-server experiment run <name> [--device <device>] [--dtype <dtype>] [--prompts <path>] [--resume <run-dir>] [--shard <k/K>]
-steerlab-server experiment evaluate <name> [--allow-unverified-epoch] [--resume-from <run-dir>] [--source <run-dir>]
+steerlab-server experiment evaluate <name> [--allow-unverified-epoch] [--resume-from <run-dir>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--source <run-dir>]
 steerlab-server experiment analyze <name> [--adjudicated-endpoint <file>] [--allow-unverified-epoch] [--source <run-dir>]
 steerlab-server experiment promote <name> <concept> [--agent-name <name>] [--cell <layer>:<alpha>] [--expect-artifact <runDir/name>] [--expect-artifact-hash <sha256>] [--expect-cell <layer>:<alpha>] [--expect-epoch <sha256>] [--qualification <path>] [--reason <text>] [--sweep-run <run-dir>]
 steerlab-server experiment confirm <name> --agent <name-or-path> [--deltas <d1,d2>] [--no-control]
@@ -3009,7 +3057,7 @@ different and false claim.
 <!-- Generated from the declarative verb table — `steerlab-server docs cli-reference --write`. Edit the table, not this block. -->
 
 ```
-steerlab-server study submit <experiment> [--dependency <spec>] [--device <device>] [--dry-run] [--dtype <dtype>] [--executor <local|slurm>] [--force] [--gres <spec>] [--job-name <name>] [--mem <size>] [--no-evidence] [--parallel <n>] [--parallel-jobs <n>] [--partition <partition>] [--prompts <path>] [--resume <run-dir>] [--source <run-dir>] [--target <root>] [--verb <verb>] [--walltime <hh:mm:ss>]
+steerlab-server study submit <experiment> [--dependency <spec>] [--device <device>] [--dry-run] [--dtype <dtype>] [--executor <local|slurm>] [--force] [--gres <spec>] [--job-name <name>] [--mem <size>] [--no-evidence] [--parallel <n>] [--parallel-jobs <n>] [--partition <partition>] [--prompts <path>] [--resume <run-dir>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--source <run-dir>] [--target <root>] [--verb <verb>] [--walltime <hh:mm:ss>]
 ```
 
 | Verb | Purpose |
@@ -3229,7 +3277,10 @@ completed one idempotently.
 
 Asymmetry worth knowing: `bundle execute --verb evaluate|analyze` accepts
 `--source` but **not** `--allow-unverified-epoch`. Through the bundle path the
-epoch guard cannot be bypassed.
+epoch guard cannot be bypassed. `bundle execute --verb evaluate` also accepts
+`--sample-per-condition` / `--sample-seed` (§3.5); on any other verb they
+refuse at 64 rather than being dropped, the rule `--shard` and `--resume`
+already follow.
 
 **`create` / `submit`** render an sbatch bundle around an arbitrary command.
 The `--` separator is mandatory (`command separator '--' required`, exit 64)

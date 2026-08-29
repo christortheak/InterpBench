@@ -102,6 +102,8 @@ public enum CLIFlagVocabulary {
         "--root": "<dir>",
         "--run": "<run-dir>",
         "--run-substrate": "<local|server>",
+        "--sample-per-condition": "<n>",
+        "--sample-seed": "<hex-or-int>",
         "--samples-per-item": "<n>",
         "--seat": "<seat>=<agent-artifact-path>",
         "--seed-policy": "<policy>",
@@ -269,6 +271,19 @@ public enum CLIFlagVocabulary {
         "--root": "Act on this install root instead of the running binary's own.",
         "--run": "The source run directory; absent, the newest completed run.",
         "--run-substrate": "Which engine's validate and battery evidence the gates read.",
+        "--sample-per-condition":
+            "Code a seeded, stratified subsample of this many records per "
+            + "condition instead of the whole source run — the per-condition "
+            + "n a power computation produces. Requires --sample-seed (a "
+            + "subsample nobody can redraw is not evidence); per-response "
+            + "coding only; an n above a condition's population refuses "
+            + "rather than clamping.",
+        "--sample-seed":
+            "The 64-bit seed the subsample is drawn with (decimal, or hex "
+            + "with or without 0x), so anyone holding the seed and the source "
+            + "run can redraw exactly these records. Requires "
+            + "--sample-per-condition, and is stamped into the coding report "
+            + "and the run config beside the derivation rule.",
         "--samples-per-item":
             "Stochastic samples per (condition, prompt) — 1 clears to the "
             + "deterministic default.",

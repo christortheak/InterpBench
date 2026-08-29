@@ -409,3 +409,18 @@ def read_text(path: str) -> str:
             return handle.read().strip()
     except OSError:
         return ""
+
+
+def read_json(path: str):
+    """A run artifact read back for the envelope, or ``None``.
+
+    Tolerant on purpose, exactly like :func:`read_text`: an envelope field
+    lifted out of an artifact the verb has already written must never be the
+    thing that turns a completed verb into a failure. An absent or unreadable
+    file simply contributes nothing."""
+    import json as _json
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return _json.load(handle)
+    except (OSError, ValueError):
+        return None

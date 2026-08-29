@@ -55,6 +55,8 @@ METAVARS: dict = {
     "--reason": "<text>",
     "--resume": "<run-dir>",
     "--resume-from": "<run-dir>",
+    "--sample-per-condition": "<n>",
+    "--sample-seed": "<hex-or-int>",
     "--shard": "<k/K>",
     "--source": "<run-dir>",
     "--sweep-run": "<run-dir>",
@@ -112,6 +114,12 @@ FLAG_PURPOSES: dict = {
     "--skip-model-fixtures":
         "Skip the checks that need a tokenizer from the local model cache.",
     "--resume-from": "Continue judging from this run directory.",
+    "--sample-per-condition":
+        "Code a seeded, stratified subsample of this many records per "
+        "condition instead of the whole source run; requires --sample-seed.",
+    "--sample-seed":
+        "The seed the subsample is drawn with, so anyone can redraw exactly "
+        "these records; requires --sample-per-condition.",
     "--shard":
         "Generate only shard k of K of the run's records; resume a shard "
         "partial with the same k/K.",

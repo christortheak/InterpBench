@@ -429,7 +429,15 @@ VERB_SPECS: tuple[VerbSpec, ...] = (
     VerbSpec("experiment", "evaluate", positional="<name>",
              purpose="Judge a completed run with the pinned rubric and judges.",
              boolean_flags=frozenset({"--allow-unverified-epoch"}),
-             value_flags=frozenset({"--source", "--resume-from"})),
+             # `--sample-per-condition n` + `--sample-seed s` code a seeded,
+             # stratified SUBSAMPLE of the source run instead of all of it
+             # (2026-08-29) — the preregistered design a power computation
+             # produces. Both or neither: either half alone refuses at 64,
+             # because a subsample nobody can redraw is not evidence and a
+             # seed with no size stamps a coding it did not shape.
+             value_flags=frozenset({"--source", "--resume-from",
+                                    "--sample-per-condition",
+                                    "--sample-seed"})),
     VerbSpec("experiment", "analyze", positional="<name>",
              purpose="Compute paired effect sizes from a completed run into a "
                      "fresh run directory.",
@@ -489,6 +497,11 @@ VERB_SPECS: tuple[VerbSpec, ...] = (
                  "--verb", "--executor", "--parallel", "--parallel-jobs",
                  "--gres", "--partition", "--mem", "--walltime", "--job-name",
                  "--target", "--dtype", "--device", "--prompts", "--source",
+                 # The evaluate subsample, submitted rather than typed
+                 # locally: the cluster is where a 7,200-record judged
+                 # evaluate actually runs, so the flags have to reach it
+                 # through the same channel `--source` does.
+                 "--sample-per-condition", "--sample-seed",
                  # `--resume` and `--dependency` exist so the two reasons an
                  # operator writes a raw sbatch — continue a parked run, chain
                  # behind another job — go through the RENDERER, which is the

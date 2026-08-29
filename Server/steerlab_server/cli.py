@@ -1405,6 +1405,7 @@ def _bundle(args: list[str]) -> int:
         # Installed for the verbs with a checkpoint consumer — run, and
         # pipeline (whose run STAGE polls the same flag); the other verbs
         # have none, and a handler nothing polls would swallow SIGTERM.
+        from .experiment import evaluate_subsample
         from .experiment import resume as resume_mod
         flag = (resume_mod.CheckpointFlag().install()
                 if task_verb in ("run", "pipeline") else None)
@@ -1421,6 +1422,11 @@ def _bundle(args: list[str]) -> int:
                 # Slurm case is the one that matters most, since that is
                 # where a failed judged evaluate is expensive to redo.
                 resume_from=_flag(args, "--resume-from"),
+                # The evaluate subsample (2026-08-29), threaded exactly as
+                # `--source`: the cluster child is where a judged evaluate of
+                # a 7,200-record corpus actually runs.
+                sample_per_condition=_flag(args, "--sample-per-condition"),
+                sample_seed=_flag(args, "--sample-seed"),
                 # `--resume <run-dir>` continues a PARKED run/sweep/pipeline
                 # through the bundle path (2026-08-23). A relative directory
                 # is resolved against `--target`, so the flag behaves the same
@@ -1436,6 +1442,14 @@ def _bundle(args: list[str]) -> int:
         except resume_mod.CheckpointRequested as exc:
             sys.stderr.write(f"bundle execute checkpointed: {exc}\n")
             return resume_mod.CHECKPOINT_EXIT_CODE
+        except evaluate_subsample.SubsampleRefusal as exc:
+            # 64, not the generic 1: a malformed or impossible sample ask is
+            # a usage error the operator can repair from the message, and a
+            # Slurm reconciler that sees 1 reports an operational failure
+            # instead of the refusal this is.
+            sys.stderr.write(f"bundle execute: {exc.reason}\n"
+                             f"  {exc.repair_action}\n")
+            return 64
         except Exception as exc:  # noqa: BLE001 - CLI needs a useful process error
             sys.stderr.write(f"bundle execute failed: {type(exc).__name__}: {exc}\n")
             return 1
@@ -1481,6 +1495,9 @@ def _study(args: list[str]):
             "  [--target root] [--dtype D] [--device DEV] [--prompts P] "
             "[--source S] [--resume <run-dir>] [--dependency <spec>] "
             "[--no-evidence]\n"
+            "  [--sample-per-condition N --sample-seed S]  (--verb evaluate "
+            "only: code a seeded, stratified subsample instead of the whole "
+            "source run; both flags or neither)\n"
             "(--force overrides a failing preflight verdict — recorded loudly "
             "on the job)\n"
             "(--parallel N shards a Slurm 'run' across N GPU jobs, cap 64; the "
@@ -1552,7 +1569,13 @@ def _study(args: list[str]):
             resume_directory=_flag(args, "--resume"),
             dependency=_flag(args, "--dependency"),
             package_evidence=("--no-evidence" not in args), resources=resources,
-            force=("--force" in args), parallel_jobs=parallel)
+            force=("--force" in args), parallel_jobs=parallel,
+            # The evaluate subsample (2026-08-29). Submitting is where a
+            # judged evaluate of a large corpus actually happens, so the
+            # design has to be expressible here and not only in a local
+            # `experiment evaluate`.
+            sample_per_condition=_flag(args, "--sample-per-condition"),
+            sample_seed=_flag(args, "--sample-seed"))
     except SubmissionRefusal as exc:
         # A TYPED refusal, not a failure: the request is well formed and a
         # policy/precondition declined it, so `--json` carries the reason and
@@ -2410,18 +2433,50 @@ def _experiment(args: list[str]):
         # already produced (2026-07-24). Every pin of the partial run is
         # verified first; a differing rubric, epoch, source run, or judge
         # configuration refuses rather than merging two evaluations.
-        evaluation = tasks.evaluate(
-            name, root, _flag(rest, "--source"),
-            allow_unverified_epoch=("--allow-unverified-epoch" in rest),
-            resume_from=_flag(rest, "--resume-from"))
+        #
+        # --sample-per-condition / --sample-seed: code a seeded, stratified
+        # subsample instead of the whole source run (2026-08-29). Caught here
+        # rather than left to raise, so the typed refusal answers with its
+        # own exit code in BOTH output modes — the `vectors mirror-poles`
+        # shape.
+        from .experiment import evaluate_subsample
+        try:
+            evaluation = tasks.evaluate(
+                name, root, _flag(rest, "--source"),
+                allow_unverified_epoch=("--allow-unverified-epoch" in rest),
+                resume_from=_flag(rest, "--resume-from"),
+                sample_per_condition=_flag(rest, "--sample-per-condition"),
+                sample_seed=_flag(rest, "--sample-seed"))
+        except evaluate_subsample.SubsampleRefusal as exc:
+            sys.stderr.write(f"experiment evaluate: {exc.reason}\n")
+            return CLIResult(
+                # `usage`, matching the Swift twin and this engine's own
+                # `conceptRequired` precedent: a malformed invocation is one
+                # class, and the two engines must answer the same command line
+                # with the same envelope. The refusal's specific id
+                # (`sampleSeedMissing`, `samplePopulation`, …) rides
+                # `SubsampleRefusal.code` for the submit path, where `code` is
+                # the open non-gate vocabulary, and for the tests.
+                state="blocked", exit_code=64, code="usage",
+                message=exc.reason, repair_action=exc.repair_action,
+                payload={"experiment": name})
         payload = {"experiment": name, "evaluationDirectory": evaluation}
         source = cli_payloads.read_text(
             os.path.join(evaluation, "source-run.txt"))
         if source:
             payload["sourceRun"] = source
-        return CLIResult(
-            message=f"evaluated '{name}' → {os.path.basename(evaluation)}",
-            changed=True, payload=payload)
+        message = f"evaluated '{name}' → {os.path.basename(evaluation)}"
+        sampling = cli_payloads.read_json(
+            os.path.join(evaluation, "coding-report.json")) or {}
+        sampling = sampling.get("sampling") if isinstance(sampling, dict) else None
+        if sampling:
+            # The success line itself says it coded a subsample: a reader who
+            # sees only the message must not read it as full-corpus coding.
+            payload["sampling"] = sampling
+            message += (f" (coded {sampling['sampledRecords']} of "
+                        f"{sampling['sourceRecords']} record(s), seeded "
+                        f"subsample at {sampling['sampleSeed']})")
+        return CLIResult(message=message, changed=True, payload=payload)
     if verb == "judge-worker":
         # One judge-model worker of the post-generation judge fan-out
         # (2026-07-23): loads ITS judge model (pinned revision/dtype),

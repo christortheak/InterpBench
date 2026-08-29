@@ -440,10 +440,28 @@ failure. It means the source run had no non-baseline condition. Check for it.
 
 ### 4.12 `evaluate`, `sweep`, `promote`, `confirm`
 
-**`evaluate <name> [--run <dir>] [--allow-unverified-epoch]`** — paired-judge
+**`evaluate <name> [--run <dir>] [--allow-unverified-epoch]
+[--sample-per-condition <n> --sample-seed <hex-or-int>]`** — paired-judge
 evaluation of a completed run through the manifest's pinned rubric and judges,
 writing a new evaluation directory beside the source run, which is never
 mutated. Same epoch guard as `analyze`; defaults to the newest completed run.
+
+**To code a preregistered SUBSAMPLE rather than the whole run**, pass
+`--sample-per-condition <n>` together with `--sample-seed <hex-or-int>`. Both
+or neither: a sample with no seed is one nobody can redraw, a seed with no
+size is a stamp on a coding it did not shape, and either half alone refuses
+at 64. The draw is stratified — within each condition, `floor(n / P)` records
+per promptID with the remainder handed out in seeded order, and records inside
+each cell chosen over `sampleIndex` — and it is the same draw on both engines
+for the same seed. An `n` above a condition's population REFUSES; it never
+clamps, because a clamped design is a different design than the one that was
+preregistered. Per-response coding only: a paired rubric refuses, since a pair
+is not a record. The result is stamped loudly — a `sampling` block in
+`coding-report.json` and in the run's `config.json` carrying
+`samplePerCondition`, `sampleSeed`, `sampledRecords`, `sourceRecords` and the
+derivation `rule`, and every human line reading `coded N of M (seeded
+subsample)`. **No `sampling` block means the full corpus was coded**; never
+report a sampled coding as a census.
 
 Under a per-response coding rubric it writes `coding-report.json`. Read its
 `fieldAgreement` entries before the aggregates: each categorical entry carries

@@ -311,6 +311,54 @@ import Testing
             dryRun: false)
     }
 
+    /// The seeded evaluate subsample (2026-08-29), by the same rule
+    /// `sourcePath` follows: both fields ride the body exactly when given —
+    /// and never otherwise, so an older server sees the body it always saw
+    /// and codes the full corpus, which is what the absence means everywhere
+    /// else too. The seed travels as its canonical `0x` + 16-hex-digit
+    /// STRING: JSON has no unsigned 64-bit integer, and a decimal a parser
+    /// rounds is a seed that no longer redraws its own subsample.
+    @Test func submitBundleEncodesTheSubsampleOnlyWhenGiven() async throws {
+        let answer = Data(
+            """
+            {
+              "jobId": "job-4", "experiment": "study", "verb": "evaluate",
+              "executor": "slurm", "dryRun": false, "runBundle": {},
+              "command": [], "recordsDirectory": "/r",
+              "submissionDirectory": "/s"
+            }
+            """.utf8)
+        let sampled = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { request in
+                let body = try #require(Self.bodyData(from: request))
+                let object = try #require(
+                    JSONSerialization.jsonObject(with: body) as? [String: Any])
+                #expect(object["samplePerCondition"] as? Int == 2400)
+                #expect(
+                    object["sampleSeed"] as? String == "0x5eed0a5e5eed0a5e")
+                return (answer, 200)
+            })
+        _ = try await sampled.submitBundle(
+            path: "/b.tar.gz", verb: "evaluate", executor: "slurm",
+            dryRun: false, samplePerCondition: 2400,
+            sampleSeed: "0x5eed0a5e5eed0a5e")
+
+        let unsampled = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { request in
+                let body = try #require(Self.bodyData(from: request))
+                let object = try #require(
+                    JSONSerialization.jsonObject(with: body) as? [String: Any])
+                #expect(object["samplePerCondition"] == nil)
+                #expect(object["sampleSeed"] == nil)
+                return (answer, 200)
+            })
+        _ = try await unsampled.submitBundle(
+            path: "/b.tar.gz", verb: "evaluate", executor: "slurm",
+            dryRun: false)
+    }
+
     @Test func submitBundleEncodesResumePolicyAsRealJSONTypes() async throws {
         // 2026-07-22 incident fix: the resume policy must ride resources as
         // JSON bool/number — the server coerces with bool()/int(), and a

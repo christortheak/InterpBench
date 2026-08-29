@@ -462,6 +462,255 @@ import Testing
         #expect(status["itemsWritten"] as? Int == 4)
     }
 
+    /// The seeded subsample, end to end (2026-08-29). The synthetic run IS
+    /// `EvaluateSubsampleTests`'s cross-engine fixture — 2 conditions × 3
+    /// promptIDs × 4 sampleIndexes at `n = 7, seed = 0x2a` — so this asserts
+    /// the same 14 triples that suite pins and the server twin codes, now
+    /// reached through the whole evaluate path. Server twin:
+    /// `test_a_sampled_coding_codes_the_draw_and_stamps_it_everywhere`.
+    @Test func aSampledCodingCodesTheDrawAndStampsItEverywhere() async throws {
+        ExperimentRootOverrideLock.acquire()
+        let temp = FileManager.default.temporaryDirectory
+            .appending(component: "coding-sample-\(UUID().uuidString)")
+        ExperimentStore.rootOverride = temp
+        ExperimentTasks.codingOverrideForTesting = { _, _ in
+            "{\"codes\": {\"mentionsLegalRule\": true, "
+                + "\"mentionsEquity\": false}, \"brief_reason\": \"r\"}"
+        }
+        defer {
+            ExperimentTasks.codingOverrideForTesting = nil
+            ExperimentStore.rootOverride = nil
+            try? FileManager.default.removeItem(at: temp)
+            ExperimentRootOverrideLock.release()
+        }
+
+        let study = "vg-coding-sample"
+        var manifest = try ExperimentStore.create(
+            name: study, description: "d", modelID: "test/model")
+        manifest.concepts.append(
+            .init(
+                name: "french",
+                stimulusSetHash: try StimulusSet(
+                    directory: VectorCatalog.conceptsDirectory
+                        .appending(component: "french")
+                ).hash,
+                options: .init()))
+        manifest.judges = [.init(name: "judge-1", kind: "local", model: nil)]
+        try ExperimentStore.save(manifest)
+        let source = ExperimentStore.runsDirectory.appending(
+            component: "20260829T000000000Z-exp-\(study)-run")
+        try FileManager.default.createDirectory(
+            at: source, withIntermediateDirectories: true)
+        try ExperimentStore.manifestHash(manifest).write(
+            to: source.appending(component: "experiment-hash.txt"),
+            atomically: true, encoding: .utf8)
+        var rows: [String] = []
+        for condition in ["baseline", "injected"] {
+            for prompt in ["p01", "p02", "p03"] {
+                for index in 0..<4 {
+                    rows.append(
+                        "{\"experiment\":\"\(study)\","
+                            + "\"condition\":\"\(condition)\",\"seed\":\(index),"
+                            + "\"sampleIndex\":\(index),"
+                            + "\"promptID\":\"\(prompt)\",\"prompt\":\"q\","
+                            + "\"output\":\"\(condition) \(prompt) \(index)\"}")
+                }
+            }
+        }
+        try (rows.joined(separator: "\n") + "\n").write(
+            to: source.appending(component: "generations.jsonl"),
+            atomically: true, encoding: .utf8)
+
+        let out = try await ExperimentTasks.evaluatePairedJudge(
+            experimentName: study,
+            sourceRunDirectory: source,
+            evaluation: ExperimentManifest.EvaluationSpec(
+                kind: .pairedJudge, judgeModel: "",
+                judgePrompt: Self.codingRubric),
+            subsample: .init(samplePerCondition: 7, seed: 0x2A))
+
+        let lines = try String(
+            contentsOf: out.appending(component: "codings.jsonl"),
+            encoding: .utf8
+        ).split(separator: "\n")
+        #expect(lines.count == 14)
+        var coded: Set<String> = []
+        for line in lines {
+            let object = try #require(
+                try JSONSerialization.jsonObject(with: Data(line.utf8))
+                    as? [String: Any])
+            coded.insert(
+                "\(object["condition"] as? String ?? "")/"
+                    + "\(object["promptID"] as? String ?? "")"
+                    + "[\(object["sampleIndex"] as? Int ?? -1)]")
+        }
+        #expect(
+            coded == [
+                "baseline/p01[0]", "baseline/p01[1]", "baseline/p01[3]",
+                "baseline/p02[1]", "baseline/p02[3]",
+                "baseline/p03[0]", "baseline/p03[1]",
+                "injected/p01[0]", "injected/p01[1]",
+                "injected/p02[0]", "injected/p02[2]", "injected/p02[3]",
+                "injected/p03[0]", "injected/p03[2]",
+            ])
+
+        let report = try #require(
+            try JSONSerialization.jsonObject(
+                with: Data(
+                    contentsOf: out.appending(
+                        component: "coding-report.json")))
+                as? [String: Any])
+        let sampling = try #require(report["sampling"] as? [String: Any])
+        #expect(sampling["samplePerCondition"] as? Int == 7)
+        #expect(sampling["sampleSeed"] as? String == "0x000000000000002a")
+        #expect(sampling["sampledRecords"] as? Int == 14)
+        #expect(sampling["sourceRecords"] as? Int == 24)
+        #expect(sampling["rule"] as? String == EvaluateSubsample.rule)
+        // The run is self-describing from its own config.json too: an
+        // evaluate directory holding a third of a corpus's codings must say
+        // WHY without the command line that started it.
+        let config = try #require(
+            try JSONSerialization.jsonObject(
+                with: Data(
+                    contentsOf: out.appending(component: "config.json")))
+                as? [String: Any])
+        let notes = try #require(config["notes"] as? [String: Any])
+        let configSampling = try #require(notes["sampling"] as? [String: Any])
+        #expect(configSampling["sampledRecords"] as? Int == 14)
+        #expect(configSampling["rule"] as? String == EvaluateSubsample.rule)
+    }
+
+    /// Absence IS the full corpus: an unsampled coding report carries no
+    /// `sampling` key at all, so every report written before 2026-08-29 reads
+    /// back unchanged.
+    @Test func anUnsampledCodingCarriesNoSamplingBlock() async throws {
+        ExperimentRootOverrideLock.acquire()
+        let temp = FileManager.default.temporaryDirectory
+            .appending(component: "coding-unsampled-\(UUID().uuidString)")
+        ExperimentStore.rootOverride = temp
+        ExperimentTasks.codingOverrideForTesting = { _, _ in
+            "{\"codes\": {\"mentionsLegalRule\": true, "
+                + "\"mentionsEquity\": false}, \"brief_reason\": \"r\"}"
+        }
+        defer {
+            ExperimentTasks.codingOverrideForTesting = nil
+            ExperimentStore.rootOverride = nil
+            try? FileManager.default.removeItem(at: temp)
+            ExperimentRootOverrideLock.release()
+        }
+
+        let study = "vg-coding-unsampled"
+        var manifest = try ExperimentStore.create(
+            name: study, description: "d", modelID: "test/model")
+        manifest.concepts.append(
+            .init(
+                name: "french",
+                stimulusSetHash: try StimulusSet(
+                    directory: VectorCatalog.conceptsDirectory
+                        .appending(component: "french")
+                ).hash,
+                options: .init()))
+        manifest.judges = [.init(name: "judge-1", kind: "local", model: nil)]
+        try ExperimentStore.save(manifest)
+        let source = ExperimentStore.runsDirectory.appending(
+            component: "20260829T000000001Z-exp-\(study)-run")
+        try FileManager.default.createDirectory(
+            at: source, withIntermediateDirectories: true)
+        try ExperimentStore.manifestHash(manifest).write(
+            to: source.appending(component: "experiment-hash.txt"),
+            atomically: true, encoding: .utf8)
+        try ("{\"experiment\":\"\(study)\",\"condition\":\"baseline\","
+            + "\"seed\":1,\"promptID\":\"p0\",\"prompt\":\"q\","
+            + "\"output\":\"The rule controls.\"}\n").write(
+                to: source.appending(component: "generations.jsonl"),
+                atomically: true, encoding: .utf8)
+
+        let out = try await ExperimentTasks.evaluatePairedJudge(
+            experimentName: study,
+            sourceRunDirectory: source,
+            evaluation: ExperimentManifest.EvaluationSpec(
+                kind: .pairedJudge, judgeModel: "",
+                judgePrompt: Self.codingRubric))
+        let report = try #require(
+            try JSONSerialization.jsonObject(
+                with: Data(
+                    contentsOf: out.appending(
+                        component: "coding-report.json")))
+                as? [String: Any])
+        #expect(report["sampling"] == nil)
+        let config = try #require(
+            try JSONSerialization.jsonObject(
+                with: Data(
+                    contentsOf: out.appending(component: "config.json")))
+                as? [String: Any])
+        #expect((config["notes"] as? [String: Any])?["sampling"] == nil)
+    }
+
+    /// An over-ask refuses and writes NOTHING: the draw runs before the
+    /// evaluate directory is minted, so a power-computation error leaves
+    /// `runs/` exactly as it was.
+    @Test func anOverAskRefusesAndWritesNoRunDirectory() async throws {
+        ExperimentRootOverrideLock.acquire()
+        let temp = FileManager.default.temporaryDirectory
+            .appending(component: "coding-overask-\(UUID().uuidString)")
+        ExperimentStore.rootOverride = temp
+        defer {
+            ExperimentStore.rootOverride = nil
+            try? FileManager.default.removeItem(at: temp)
+            ExperimentRootOverrideLock.release()
+        }
+
+        let study = "vg-coding-overask"
+        var manifest = try ExperimentStore.create(
+            name: study, description: "d", modelID: "test/model")
+        manifest.concepts.append(
+            .init(
+                name: "french",
+                stimulusSetHash: try StimulusSet(
+                    directory: VectorCatalog.conceptsDirectory
+                        .appending(component: "french")
+                ).hash,
+                options: .init()))
+        manifest.judges = [.init(name: "judge-1", kind: "local", model: nil)]
+        try ExperimentStore.save(manifest)
+        let source = ExperimentStore.runsDirectory.appending(
+            component: "20260829T000000002Z-exp-\(study)-run")
+        try FileManager.default.createDirectory(
+            at: source, withIntermediateDirectories: true)
+        try ExperimentStore.manifestHash(manifest).write(
+            to: source.appending(component: "experiment-hash.txt"),
+            atomically: true, encoding: .utf8)
+        try ("{\"experiment\":\"\(study)\",\"condition\":\"baseline\","
+            + "\"seed\":1,\"promptID\":\"p0\",\"prompt\":\"q\","
+            + "\"output\":\"The rule controls.\"}\n").write(
+                to: source.appending(component: "generations.jsonl"),
+                atomically: true, encoding: .utf8)
+        let before = try FileManager.default.contentsOfDirectory(
+            atPath: ExperimentStore.runsDirectory.path
+        ).sorted()
+
+        do {
+            _ = try await ExperimentTasks.evaluatePairedJudge(
+                experimentName: study,
+                sourceRunDirectory: source,
+                evaluation: ExperimentManifest.EvaluationSpec(
+                    kind: .pairedJudge, judgeModel: "",
+                    judgePrompt: Self.codingRubric),
+                subsample: .init(samplePerCondition: 5, seed: 1))
+            Issue.record("expected the over-ask to refuse")
+        } catch let error as ExperimentError {
+            #expect(error.reason.contains("'baseline' has 1"))
+            #expect(error.reason.contains("clamping"))
+            #expect(
+                error.malformedInvocation?.repairAction
+                    .contains("--sample-per-condition 1 or less") == true)
+        }
+        #expect(
+            try FileManager.default.contentsOfDirectory(
+                atPath: ExperimentStore.runsDirectory.path
+            ).sorted() == before)
+    }
+
     /// One judge is a legal design (maintainer ruling, 2026-08-28), so the
     /// report must not carry an EMPTY `fieldAgreement` — that reads as
     /// "agreement was measured and there was none", a different and false

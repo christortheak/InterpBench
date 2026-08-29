@@ -1515,7 +1515,9 @@ def execute_run_bundle(bundle_path: str, *, verb: str, target_root: str | None =
                        checkpoint: "resume_mod.CheckpointFlag | None" = None,
                        shard: str | None = None,
                        resume_from: str | None = None,
-                       resume_directory: str | None = None) -> dict:
+                       resume_directory: str | None = None,
+                       sample_per_condition=None,
+                       sample_seed=None) -> dict:
     """Import a run bundle, execute one experiment verb, and package evidence.
 
     This is intended as the Slurm child-process entry point. It deliberately
@@ -1549,6 +1551,8 @@ def execute_run_bundle(bundle_path: str, *, verb: str, target_root: str | None =
             package_evidence_on_complete=package_evidence_on_complete,
             record_path=record_path, checkpoint=checkpoint, shard=shard,
             resume_from=resume_from, resume_directory=resume_directory,
+            sample_per_condition=sample_per_condition,
+            sample_seed=sample_seed,
             captured_logs=captured_lines)
     finally:
         sys.stdout = sys.stdout.wrapped  # type: ignore[union-attr]
@@ -1590,7 +1594,27 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
                               checkpoint: "resume_mod.CheckpointFlag | None",
                               shard: str | None, resume_from: str | None,
                               captured_logs: list[str],
-                              resume_directory: str | None = None) -> dict:
+                              resume_directory: str | None = None,
+                              sample_per_condition=None,
+                              sample_seed=None) -> dict:
+    # The seeded-subsample ask is checked FIRST, before the bundle is even
+    # opened (2026-08-29): it needs nothing from the bundle, and a malformed
+    # ask must leave the workspace untouched — on this path `import_bundle`
+    # writes into the target root well before the task is called.
+    if (sample_per_condition is not None or sample_seed is not None) \
+            and verb != "evaluate":
+        # A flag a verb cannot honour is REFUSED, never dropped — the rule
+        # `--shard` and `--resume` follow below. A `run` that silently ignored
+        # this would generate the full matrix while its command line said
+        # otherwise.
+        raise BundleError(
+            "--sample-per-condition/--sample-seed apply to the 'evaluate' "
+            f"verb only (got {verb!r}) — they choose which of a completed "
+            "run's records are coded, and no other verb reads a prior run's "
+            "records that way")
+    from . import evaluate_subsample
+    evaluate_subsample.resolve_request(sample_per_condition, sample_seed,
+                                       program="steerlab-server")
     meta = inspect_bundle(bundle_path)
     if meta.get("kind") != "runBundle":
         raise BundleError("bundle execute requires a runBundle")
@@ -1739,8 +1763,16 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
             # retry is reachable from the app and the cluster, not just the
             # CLI — the affordance that told a researcher a partial was
             # "retryable" previously had nothing behind it.
-            run_directory = tasks.evaluate(name, target, source_path,
-                                           resume_from=resume_from)
+            # `sample_per_condition`/`sample_seed` draw a seeded, stratified
+            # subsample of the source run's records instead of coding all of
+            # them (2026-08-29). Threaded here for the same reason
+            # `resume_from` is: the cluster is where a judged evaluate of a
+            # large corpus actually runs, so the design has to be expressible
+            # from the submission and not only from a Mac terminal.
+            run_directory = tasks.evaluate(
+                name, target, source_path, resume_from=resume_from,
+                sample_per_condition=sample_per_condition,
+                sample_seed=sample_seed)
         elif verb == "analyze":
             # Statistics-only pass over a prior run (no model load). The
             # epoch and measurement-drift guards live inside tasks.analyze

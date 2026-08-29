@@ -981,7 +981,8 @@ public enum ExperimentTasks {
     }
 
     static func makeRunDirectory(
-        experiment: ExperimentManifest, task: String
+        experiment: ExperimentManifest, task: String,
+        sampling: EvaluateSubsample.Stamp? = nil
     ) throws -> URL {
         let url = try VectorCatalog.makeUniqueRunDirectory(
             slug: "exp-\(experiment.name)-\(task)",
@@ -1018,7 +1019,14 @@ public enum ExperimentTasks {
             temperature: generates ? experiment.temperature : nil,
             samplesPerItem: generates ? (experiment.samplesPerItem ?? 1) : nil,
             seedPolicy: generates ? (experiment.seedPolicy ?? "manifestSeeds") : nil,
-            notes: inertNote.map { ["inertConceptMachinery": $0] } ?? [:])
+            notes: inertNote.map { ["inertConceptMachinery": $0] } ?? [:],
+            // The seeded evaluate subsample (2026-08-29), stamped so the run
+            // is self-describing from its own config.json: a reader who finds
+            // an evaluate directory holding a third of a corpus's codings
+            // must be able to see WHY from the run itself, not only from the
+            // command line that started it. Additive — absent means the full
+            // corpus, which is every run written before this existed.
+            structuredNotes: sampling.map { ["sampling": $0.jsonObject] } ?? [:])
         // WS7.1 loud, non-blocking study-run-start advisory: when this
         // experiment's scope-matched validate evidence came from the OTHER
         // engine, say so in the run log (stdout for headless runs) and
@@ -6705,6 +6713,11 @@ public enum ExperimentTasks {
         sourceRunDirectory: URL,
         evaluation override: ExperimentManifest.EvaluationSpec? = nil,
         allowUnverifiedEpoch: Bool = false,
+        /// A seeded, stratified per-condition draw over the source run's
+        /// records instead of coding all of them (2026-08-29). Per-response
+        /// coding only — a paired evaluate refuses, because a pair is not a
+        /// record (`EvaluateSubsample.pairedRefusal`).
+        subsample: EvaluateSubsample.Request? = nil,
         shouldCancel: (@Sendable () async -> Bool)? = nil,
         progress: StudyTaskProgressHandler? = nil
     ) async throws -> URL {
@@ -6750,6 +6763,7 @@ public enum ExperimentTasks {
                 sourceRunDirectory: sourceRunDirectory,
                 evaluation: override,
                 allowUnverifiedEpoch: allowUnverifiedEpoch,
+                subsample: subsample,
                 shouldCancel: shouldCancel, progress: tracked,
                 onInvalidVerdict: { await status.noteInvalidResponse($0) })
             await status.finish()
@@ -6765,6 +6779,7 @@ public enum ExperimentTasks {
         sourceRunDirectory: URL,
         evaluation override: ExperimentManifest.EvaluationSpec?,
         allowUnverifiedEpoch: Bool,
+        subsample: EvaluateSubsample.Request? = nil,
         shouldCancel: (@Sendable () async -> Bool)?,
         progress: StudyTaskProgressHandler?,
         onInvalidVerdict: (@Sendable ([String: String]) async -> Void)? = nil
@@ -6933,7 +6948,14 @@ public enum ExperimentTasks {
                 evaluationSource: evaluationSource,
                 cancel: cancel,
                 progress: progress,
+                subsample: subsample,
                 onInvalidVerdict: onInvalidVerdict)
+        }
+        if subsample != nil {
+            // Reached only on the paired path: the sample flags name a design
+            // the paired judge's unit of analysis cannot express. Refusing
+            // beats half-executing a correct-looking command line.
+            throw EvaluateSubsample.pairedRefusal(program: "steerlab-cli")
         }
         // Join rule (cross-engine, external review 2026-07-22): pairs join
         // on (promptID, sampleIndex) — never the seed, which under derived
@@ -7530,6 +7552,11 @@ public enum ExperimentTasks {
         /// `len(rows)`), so the two together say how much of the file is
         /// measurement.
         var noncompliantCodings: Int? = nil
+        /// The seeded, stratified subsample this report covers (2026-08-29,
+        /// cross-engine key `sampling`); nil ⇒ key omitted ⇒ the FULL source
+        /// corpus was coded, which is what every report written before this
+        /// existed means.
+        var sampling: EvaluateSubsample.Stamp? = nil
     }
 
     /// The per-response coding evaluate body (server twin:
@@ -7554,13 +7581,37 @@ public enum ExperimentTasks {
         evaluationSource: String?,
         cancel: CancelPoller,
         progress: StudyTaskProgressHandler?,
+        subsample: EvaluateSubsample.Request? = nil,
         onInvalidVerdict: (@Sendable ([String: String]) async -> Void)?
     ) async throws -> URL {
         guard !generations.isEmpty else {
             throw ExperimentError(reason: ResponseCoding.noCodeableMessage)
         }
+        // The seeded draw runs BEFORE the run directory is minted (2026-08-29,
+        // server twin: `tasks._evaluate_response_coding`), deliberately: an
+        // over-ask against a condition's population is a power-computation
+        // error the caller must see, and a refusal that leaves a run
+        // directory behind has already broken the rule that refusals never
+        // write.
+        let sourceTotal = generations.count
+        var generations = generations
+        var sampling: EvaluateSubsample.Stamp? = nil
+        if let subsample {
+            let kept = try EvaluateSubsample.selectedPositions(
+                generations.map {
+                    EvaluateSubsample.Coordinate(
+                        condition: $0.condition, promptID: $0.promptID,
+                        sampleIndex: $0.sampleIndex ?? 0)
+                },
+                request: subsample, program: "steerlab-cli")
+            generations = kept.map { generations[$0] }
+            sampling = EvaluateSubsample.stamp(
+                subsample, sampled: generations.count, source: sourceTotal)
+        }
+        let codedPhrase = EvaluateSubsample.codedPhrase(
+            sampling, total: sourceTotal)
         let runDirectory = try makeRunDirectory(
-            experiment: manifest, task: "evaluate")
+            experiment: manifest, task: "evaluate", sampling: sampling)
         if let exclusionStamp {
             let stampEncoder = JSONEncoder()
             stampEncoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -7570,9 +7621,15 @@ public enum ExperimentTasks {
         await progress?(.evaluationDirectory(runDirectory.path))
         let experimentHash = ExperimentStore.manifestHash(manifest)
         print(
-            "coding \(generations.count) record(s) × \(judges.count) "
+            "coding \(codedPhrase) × \(judges.count) "
                 + "judge(s) under perResponseCoding rubric "
                 + "'\(rubric.file ?? "(inline draft)")'")
+        if let sampling {
+            print(
+                "seeded subsample: \(sampling.samplePerCondition) record(s) "
+                    + "per condition at seed \(sampling.sampleSeed) — "
+                    + "\(sampling.rule)")
+        }
         // Local judge models load once each — same rules as the paired
         // loop (pinned revision wins; a study-model judge loads the
         // study's exact weights; load failures wrap in plain language).
@@ -7768,7 +7825,10 @@ public enum ExperimentTasks {
                         ? judgeNoncompliant : nil))
             print(
                 "judge '\(judge.name)' coded "
-                    + "\(judgeCodeable - judgeNoncompliant) record(s)"
+                    + (sampling != nil
+                        ? "\(judgeCodeable - judgeNoncompliant) of "
+                            + "\(sourceTotal) record(s) (seeded subsample)"
+                        : "\(judgeCodeable - judgeNoncompliant) record(s)")
                     + (judgeNoncompliant > 0
                         ? " (\(judgeNoncompliant) noncompliant, kept as rows "
                             + "for review)"
@@ -7837,9 +7897,19 @@ public enum ExperimentTasks {
             exclusions: exclusionStamp,
             // Nonzero-only: a clean coding report is unchanged.
             noncompliantCodings: noncompliantCodings > 0
-                ? noncompliantCodings : nil)
+                ? noncompliantCodings : nil,
+            // Additive and LOUD: absent means the full corpus was coded, so
+            // every report written before this existed reads back unchanged,
+            // and a report that CARRIES the block cannot be mistaken for a
+            // full-corpus coding by a reader who only looks at `codings`.
+            sampling: sampling)
         try encoder.encode(report).write(
             to: runDirectory.appending(component: "coding-report.json"))
+        if let sampling {
+            print(
+                "coded \(codedPhrase) at seed \(sampling.sampleSeed) — this "
+                    + "report covers a SUBSAMPLE, not the full corpus")
+        }
         print("coding evaluation artifacts: \(runDirectory.path)")
         return runDirectory
     }

@@ -14,6 +14,75 @@ migration that rewrites frozen bytes.
 
 ### Added
 
+- **`evaluate` gained a seeded, stratified subsample:
+  `--sample-per-condition <n>` with `--sample-seed <hex-or-int>`.**
+  Field-discovered 2026-08-29, and the discovery is the shape of the gap: a
+  7,200-record corpus needed judged classification, the preregistered design
+  was a stratified 2,400-record subsample, and the instrument had no honest
+  spelling for it. `evaluate` codes a whole source run on both engines, so the
+  only routes available were coding all 7,200 — a different design, judged at
+  three times the cost the power computation asked for — or hand-building a
+  run directory holding the chosen records, which the reviewing agent
+  correctly refused as evidence-chain corruption under immutable `runs/`. The
+  operation was legitimate and preregistered; nothing could say it.
+
+  **Both flags or neither.** A sample with no seed is a subsample nobody can
+  redraw; a seed with no sample size would be stamped on a coding it did not
+  shape. Either half alone refuses at 64, and there is deliberately no
+  fraction spelling — an absolute per-condition `n` is what a power
+  computation produces, and "40% of whatever happened to be there" is not a
+  design.
+
+  **The draw** (`EvaluateSubsample` / `evaluate_subsample.py`, twins): within
+  each condition, `floor(n / P)` records per promptID over that condition's
+  `P` promptIDs, the `n mod P` remainder handed out one at a time in seeded
+  promptID order — a promptID already at its population is skipped and its
+  quota passes on, so exactly `n` records are drawn even from a ragged source
+  run; within each `(condition, promptID)` cell the records are drawn over
+  `sampleIndex` ascending. Every choice is a partial Fisher–Yates over
+  SplitMix64 seeded from SHA-256 of the seed and the stratum's length-prefixed
+  names — the neutral token bank's primitive, adopted for its reason (2026-08-28
+  audit, convention note 9): a subsample whose membership can move under a
+  runtime upgrade while its seed stamp stays identical is not reproducible
+  evidence. promptIDs sort by UTF-8 bytes, because Swift's `String` ordering
+  normalizes and Python's does not. The same `(source run, n, seed)` therefore
+  selects **byte-identical records on both engines**, pinned by a shared
+  fixture of `(condition, promptID, sampleIndex)` triples and by the
+  derivation string's SHA-256 in both suites.
+
+  **It never clamps.** An `n` above any condition's codeable population
+  refuses, naming the binding condition and its count: clamping would code a
+  smaller design than the preregistered one while every stamp still said
+  `samplePerCondition: n`.
+
+  **Per-response coding only.** The paired judge's unit of analysis is a
+  `(baseline, variant)` PAIR rather than a record — "baseline" there is not a
+  sampled condition but the other half of every comparison — so a
+  per-condition record count does not name a set of pairs. A paired rubric
+  refuses rather than half-executing a correct-looking command line, the rule
+  `--shard` already follows; so does the flag on any non-`evaluate` verb.
+
+  **Loud stamping, non-negotiable.** `coding-report.json` and the evaluate
+  run's `config.json` both gain a `sampling` block —
+  `{samplePerCondition, sampleSeed, sampledRecords, sourceRecords, rule}`,
+  where `sampleSeed` is the canonical `0x` + 16 hex digits (JSON has no
+  unsigned 64-bit integer, and a decimal a parser rounds is a seed that no
+  longer redraws its own sample) and `rule` is the derivation verbatim. Every
+  human line reads `coded N of M (seeded subsample)`, and so does the
+  envelope's success message. The block is additive: its ABSENCE means the
+  full corpus, so every report written before this reads back byte-identically.
+
+  **Every surface.** `steerlab-cli experiment evaluate`, `steerlab-server
+  experiment evaluate`, `bundle execute --verb evaluate`, `study submit --verb
+  evaluate`, and `remote submit-bundle` (wire fields `samplePerCondition` /
+  `sampleSeed`, encoded only when given so older servers see the body they
+  always saw, echoed at `result.samplePerConditionRequested` /
+  `result.sampleSeedRequested`). Submit-time refusal, not compute-node
+  refusal, for the same reason `--source` gets one. The walltime preflight now
+  prices a sampled evaluate at the SAMPLED record count rather than the full
+  manifest matrix — an evaluate coding a third of a corpus was asking for
+  three times the walltime it needs.
+
 - **The study's system prompt gained a headless writer on both surfaces:
   `experiment set-system-prompt <name> "<text>"`.** Field-discovered
   2026-08-28, and the discovery is the shape of the gap: a persona-carrying

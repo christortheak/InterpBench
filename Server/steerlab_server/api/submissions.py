@@ -146,7 +146,9 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
                  resume_directory: str | None = None,
                  dependency: str | None = None,
                  registry=None,
-                 parallel_jobs: int = 1) -> StudySubmission:
+                 parallel_jobs: int = 1,
+                 sample_per_condition: int | None = None,
+                 sample_seed: str | None = None) -> StudySubmission:
     """Submit a SERVER-RESIDENT experiment (packaged here into a run bundle).
 
     ``parallel_jobs`` (default 1 = exactly the historical single-job path) is
@@ -214,6 +216,7 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
                                     flag="--source")
     _require_readable_run_directory(resume_directory, target_for_paths,
                                     flag="--resume")
+    _require_sample_pair(sample_per_condition, sample_seed, verb=verb)
     if dependency is not None:
         # Shape-validated here so a typo refuses on the terminal rather than
         # at sbatch, where it costs a round trip and a confusing message — and
@@ -248,7 +251,8 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
         run_bundle_path, verb=verb, target_root=target, dtype=dtype,
         device=device, prompts_path=prompts_path, source_path=source_path,
         package_evidence=package_evidence, record_path=record_path,
-        resume_from=resume_from, resume_directory=resume_directory)
+        resume_from=resume_from, resume_directory=resume_directory,
+        sample_per_condition=sample_per_condition, sample_seed=sample_seed)
 
     # The JUDGE fan-out (a pipeline whose evaluate stage pins foreign local
     # judges) still routes through bundle submission: `--parallel` wires the
@@ -311,7 +315,8 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
 
     slurm_resources = _resources_from_dict(resources or {}, experiment, verb)
     planned = _planned_records(
-        manifest, _prompts_text_for_study(manifest, prompts_path, root))
+        manifest, _prompts_text_for_study(manifest, prompts_path, root),
+        verb=verb, sample_per_condition=sample_per_condition)
     preflight = _preflight_report(manifest=manifest, resources=slurm_resources,
                                   profile=profile, planned_records=planned,
                                   verb=verb, shard_count=parallel)
@@ -384,7 +389,9 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
                       resources: dict | None = None,
                       env: dict | None = None,
                       force: bool = False,
-                      parallel_jobs: int = 1) -> StudySubmission:
+                      parallel_jobs: int = 1,
+                      sample_per_condition: int | None = None,
+                      sample_seed: str | None = None) -> StudySubmission:
     """Submit an already-staged run bundle.
 
     This is the remote-client path: the Mac/browser owns the study design,
@@ -414,6 +421,12 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     # source into a durable sbatch too, and the app reaches it.
     _require_readable_run_directory(source_path, target_root or profile.root,
                                     flag="sourcePath")
+    # The seeded-subsample ask is validated HERE, before a submission
+    # directory exists: same reason the source path is. A half-stated sample
+    # (a size with no seed, a seed with no size) baked into a durable sbatch
+    # would spend a queue slot to discover on a compute node what this line
+    # can see now, and would leave a submission directory behind for it.
+    _require_sample_pair(sample_per_condition, sample_seed, verb=verb)
 
     submission_dir = paths.make_unique_run_directory(f"submit-bundle-{experiment}-{verb}")
     records_dir = os.path.join(submission_dir, "records")
@@ -429,7 +442,8 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     command = _bundle_execute_command(
         bundle_path, verb=verb, target_root=target, dtype=dtype, device=device,
         prompts_path=prompts_path, source_path=source_path,
-        package_evidence=package_evidence, record_path=record_path)
+        package_evidence=package_evidence, record_path=record_path,
+        sample_per_condition=sample_per_condition, sample_seed=sample_seed)
     base_result = {"runBundle": meta, "command": command,
                    "recordsDirectory": records_dir,
                    "submissionDirectory": submission_dir}
@@ -481,7 +495,8 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
 
     slurm_resources = _resources_from_dict(resources or {}, experiment, verb)
     planned = _planned_records(
-        manifest, _prompts_text_for_bundle(bundle_path, manifest, prompts_path))
+        manifest, _prompts_text_for_bundle(bundle_path, manifest, prompts_path),
+        verb=verb, sample_per_condition=sample_per_condition)
     # ONE preflight per submission, sharded or not (the app shows one dialog,
     # not K): each shard needs the same weights+KV memory, and the walltime
     # estimate is sized to what one shard job actually runs — its 1/K slice
@@ -943,13 +958,44 @@ def _require_readable_run_directory(path: str | None, target_root: str, *,
             "to that root"))
 
 
+def _require_sample_pair(sample_per_condition, sample_seed, *,
+                         verb: str) -> None:
+    """Refuse a half-stated or misplaced evaluate subsample at SUBMIT time.
+
+    Same argument as ``_require_readable_run_directory``: the flags are baked
+    into a durable sbatch script and then wait in the queue, so a refusal the
+    submitting process could have made now would otherwise arrive on a
+    compute node against an allocation the mistake has already been charged
+    for. Nothing here needs the node — the pair is well-formed or it is not.
+    """
+    from ..experiment import evaluate_subsample
+    if (sample_per_condition is not None or sample_seed is not None) \
+            and verb != "evaluate":
+        raise SubmissionRefusal(
+            "samplePerCondition/sampleSeed apply to the 'evaluate' verb only "
+            f"(got {verb!r}) — they choose which of a completed run's records "
+            "are coded, and no other verb reads a prior run's records that "
+            "way",
+            code="sampleUnsupportedVerb",
+            repair_action=("re-submit with verb 'evaluate', or drop both "
+                           "sample fields"))
+    try:
+        evaluate_subsample.resolve_request(sample_per_condition, sample_seed,
+                                           program="steerlab-server")
+    except evaluate_subsample.SubsampleRefusal as exc:
+        raise SubmissionRefusal(exc.reason, code=exc.code,
+                                repair_action=exc.repair_action) from None
+
+
 def _bundle_execute_command(bundle_path: str, *, verb: str, target_root: str,
                             dtype: str, device: str | None,
                             prompts_path: str | None, source_path: str | None,
                             package_evidence: bool, record_path: str,
                             shard: str | None = None,
                             resume_from: str | None = None,
-                            resume_directory: str | None = None) -> list[str]:
+                            resume_directory: str | None = None,
+                            sample_per_condition: int | None = None,
+                            sample_seed: str | None = None) -> list[str]:
     python = os.environ.get("STEERLAB_PYTHON") or sys.executable or "python"
     command = [
         python, "-m", "steerlab_server.cli", "bundle", "execute", bundle_path,
@@ -975,6 +1021,13 @@ def _bundle_execute_command(bundle_path: str, *, verb: str, target_root: str,
         # continuation gets the site's node-scratch gres and the cleanup trap
         # instead of the hand-rolled sbatch an operator would otherwise write.
         command.extend(["--resume", resume_directory])
+    if sample_per_condition is not None:
+        # Encoded ONLY when asked for (2026-08-29), the `--source` rule: a
+        # submission that never mentions a subsample renders the same argv it
+        # always did, so nothing about an existing full-corpus evaluate moves.
+        command.extend(["--sample-per-condition", str(sample_per_condition)])
+    if sample_seed is not None:
+        command.extend(["--sample-seed", str(sample_seed)])
     return command
 
 
@@ -1237,15 +1290,64 @@ def _prompts_text_for_bundle(bundle_path: str, manifest: Manifest | None,
         return None
 
 
+def _condition_count(manifest: Manifest) -> int:
+    """How many conditions a run writes records for, counting the implicit
+    baseline. One definition, read by the planned-record math and by the
+    sampled-evaluate cap below it."""
+    if manifest.study_kind == "multiAgent":
+        return 2 if manifest.multi_agent_include_baseline else 1
+    if manifest.variant_conditions:
+        return 1 + len(manifest.variant_conditions)
+    names = [c.name for c in manifest.conditions]
+    return len(names) + (0 if "baseline" in names else 1)
+
+
+def _sampled_evaluate_records(manifest: Manifest,
+                              sample_per_condition: int) -> int | None:
+    """Records a seeded-subsample evaluate will actually code: the
+    per-condition ``n`` once per declared condition, baseline included.
+
+    Baseline is counted because the per-response coding instrument codes it
+    like any other condition — every sampled-text record goes to every judge
+    individually and blinded, so the baseline column is measured, not context.
+    """
+    try:
+        conditions = _condition_count(manifest)
+    except (AttributeError, TypeError):
+        return None
+    if conditions < 1:
+        return None
+    return conditions * int(sample_per_condition)
+
+
 def _planned_records(manifest: Manifest | None,
-                     prompts_text: str | None) -> int | None:
+                     prompts_text: str | None, *,
+                     verb: str | None = None,
+                     sample_per_condition: int | None = None) -> int | None:
     """Planned generations.jsonl records, mirroring ``tasks._run_impl``:
     conditions (with the implicit baseline) × prompts × per-item records
     (sampled samples plus one instrument readout per prompt when a choice
     instrument is declared — a slight overestimate when only some prompts
-    carry options, which is the conservative direction for sizing)."""
+    carry options, which is the conservative direction for sizing).
+
+    A SAMPLED evaluate prices what it will actually judge (2026-08-29). The
+    walltime estimate divides planned records by a measured rate, so an
+    evaluate that codes 2,400 of 7,200 records and was priced at 7,200 asks
+    for three times the walltime it needs — a request that is wrong in the
+    direction that wastes a queue slot, and that the researcher has no way to
+    reconcile against the number the run reports. Capped by the full matrix,
+    never above it: the sampled count is a ceiling the draw itself enforces
+    (an over-ask refuses in ``evaluate_subsample.select``), and taking the
+    minimum keeps a nonsensical request from inflating the estimate.
+    """
     if manifest is None or prompts_text is None:
         return None
+    if verb == "evaluate" and sample_per_condition:
+        full = _planned_records(manifest, prompts_text)
+        sampled = _sampled_evaluate_records(manifest, sample_per_condition)
+        if sampled is None:
+            return full
+        return sampled if full is None else min(full, sampled)
     if manifest.study_kind == "multiAgent":
         # A panel plans turns x conditions x replicates. Sizing used to return
         # None here, so preflight was blind for exactly the runs hardest to
@@ -1258,16 +1360,12 @@ def _planned_records(manifest: Manifest | None,
         turns = len(scenario.get("turns") or [])
         if not turns:
             return None
-        conditions = 2 if manifest.multi_agent_include_baseline else 1
-        return turns * conditions * max(1, manifest.samples_per_item)
+        return turns * _condition_count(manifest) * max(
+            1, manifest.samples_per_item)
     prompt_count = sum(1 for line in prompts_text.splitlines() if line.strip())
     if prompt_count == 0:
         return None
-    if manifest.variant_conditions:
-        condition_count = 1 + len(manifest.variant_conditions)
-    else:
-        names = [c.name for c in manifest.conditions]
-        condition_count = len(names) + (0 if "baseline" in names else 1)
+    condition_count = _condition_count(manifest)
     # The same two questions the family classifier asks (one definition, two
     # readers): does a prompt produce a scored readout, a sampled generation,
     # or both?

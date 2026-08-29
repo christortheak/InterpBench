@@ -658,6 +658,45 @@ steerlab-cli remote submit-bundle <bundle> --site <id> --verb evaluate \
 --source`, `study submit --source` — and the server refuses an unreadable
 directory at submit time, not on the allocation.)
 
+### Coding a preregistered subsample
+
+A power computation produces a per-condition record count, and it is routinely
+smaller than the corpus. Coding a 7,200-record run when the design called for
+2,400 is not a conservative choice — it is a different design, judged at three
+times the cost — and hand-building a run directory holding the chosen records
+is worse: `runs/` is immutable, and a directory nothing generated is a break
+in the evidence chain. The honest spelling is two flags on `evaluate`:
+
+```bash
+steerlab-cli experiment evaluate formality-pilot-recoded \
+    --run runs/<the-original-run-directory> \
+    --sample-per-condition 800 --sample-seed 0x5eed0a5e5eed0a5e
+```
+
+Both flags or neither. **Choose the seed before you look at anything and write
+it into the preregistration** — that is what makes the subsample a design
+rather than a selection, and the same seed always draws the same records. The
+draw is stratified across promptIDs within each condition and is identical on
+both engines, so a corpus coded on the cluster and re-checked on the Mac is
+one subsample rather than two of the same size. An `n` larger than a
+condition's population refuses instead of quietly shrinking to fit; per-response
+coding only, because the paired judge's unit is a pair rather than a record.
+
+Everything the reader needs is stamped: a `sampling` block in
+`coding-report.json` and the run's `config.json` carrying the size, the seed,
+the counts and the derivation rule, and every line reading `coded N of M
+(seeded subsample)`. When you report the result, report it as a subsample —
+and when a report has **no** `sampling` block, it covered the whole corpus.
+
+Remotely, the same two flags ride the submission, and the walltime estimate
+prices the sampled count rather than the full matrix:
+
+```bash
+steerlab-cli remote submit-bundle <bundle> --site <id> --verb evaluate \
+    --executor slurm --source runs/<the-original-run-directory> \
+    --sample-per-condition 800 --sample-seed 0x5eed0a5e5eed0a5e
+```
+
 Three things make this defensible rather than a loophole. The tolerance is
 **by field, not by intent**: change a generation-side pin — the model, a
 concept, the task prompts, the sampling protocol — and the guard refuses,

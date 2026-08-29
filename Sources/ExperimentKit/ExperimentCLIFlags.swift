@@ -365,6 +365,11 @@ public enum ExperimentCLIParser {
             valueFlags: remoteConnection.union([
                 "--bundle", "--verb", "--executor", "--gres", "--walltime",
                 "--parallel", "--source",
+                // The evaluate subsample, submitted rather than typed
+                // locally: the cluster is where a judged evaluate of a large
+                // corpus actually runs, so the flags have to reach it through
+                // the same channel `--source` does.
+                "--sample-per-condition", "--sample-seed",
             ])),
         .init(
             namespace: "remote", verb: "jobs",
@@ -632,7 +637,16 @@ public enum ExperimentCLIParser {
         .init(
             namespace: "experiment", verb: "evaluate", positional: "<name>",
             purpose: "Judge a completed run with the pinned rubric and judges.",
-            booleanFlags: ["--allow-unverified-epoch"], valueFlags: ["--run"]),
+            booleanFlags: ["--allow-unverified-epoch"],
+            // `--sample-per-condition n` + `--sample-seed s` code a seeded,
+            // stratified SUBSAMPLE of the source run instead of all of it
+            // (2026-08-29) — the preregistered design a power computation
+            // produces. Both or neither: either half alone refuses at 64,
+            // because a subsample nobody can redraw is not evidence and a
+            // seed with no size stamps a coding it did not shape.
+            valueFlags: [
+                "--run", "--sample-per-condition", "--sample-seed",
+            ]),
         .init(
             namespace: "experiment", verb: "promote",
             positional: "<name> <concept>",

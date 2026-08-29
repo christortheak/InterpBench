@@ -9186,7 +9186,8 @@ def _evaluate_response_coding(name: str, manifest: Manifest, schema,
                               evaluation_source: str | None,
                               exclusion_stamp: dict | None,
                               model_provider, _log, *, model_release=None,
-                              study_model_generates_later: bool = False) -> str:
+                              study_model_generates_later: bool = False,
+                              subsample=None) -> str:
     """The per-response coding instrument's evaluate body (2026-08-04;
     Swift twin: ``ExperimentTasks.runResponseCoding``).
 
@@ -9200,18 +9201,41 @@ def _evaluate_response_coding(name: str, manifest: Manifest, schema,
     per-field inter-judge agreement (percent + Cohen's kappa for
     categorical fields — the same statistic the K&Z paper used to validate
     its coders). There is no pairing and no winner anywhere on this path.
+
+    ``subsample`` (an ``evaluate_subsample.SubsampleRequest``, 2026-08-29)
+    codes a seeded, stratified DRAW from the source run instead of all of it
+    — the preregistered design the instrument previously had no spelling for.
+    The draw runs BEFORE the run directory is minted, so its refusals (an
+    over-ask against a condition's population) write nothing, and its stamp
+    rides in the run config and the coding report while every human line
+    says ``N of M (seeded subsample)``.
     """
-    from . import response_coding
+    from . import evaluate_subsample, response_coding
     codeable = [g for g in generations
                 if "instrument" not in g and "error" not in g
                 and "output" in g]
     if not codeable:
         raise RuntimeError(response_coding.NO_CODEABLE_MESSAGE)
+    sampling: dict | None = None
+    source_total = len(codeable)
+    if subsample is not None:
+        # Before `make_unique_run_directory`, deliberately: an over-ask is a
+        # power-computation error the caller must see, and a refusal that
+        # leaves a run directory behind has already broken the rule that
+        # refusals never write.
+        codeable, sampling = evaluate_subsample.select(
+            codeable, subsample, program="steerlab-server")
+    coded_phrase = evaluate_subsample.coded_phrase(sampling, source_total)
     out = paths.make_unique_run_directory(f"exp-{name}-evaluate", root)
+    notes: dict = {}
+    if epoch_unverified:
+        notes["epochUnverified"] = True
+    if sampling is not None:
+        notes["sampling"] = sampling
     write_run_config(out, "evaluate", model_id=manifest.model_id,
                      revision=manifest.model_revision, experiment=name,
                      experiment_hash=manifest.content_hash(),
-                     notes={"epochUnverified": True} if epoch_unverified else None)
+                     notes=notes or None)
     if exclusion_stamp is not None:
         with open(os.path.join(out, "exclusions.json"), "w",
                   encoding="utf-8") as handle:
@@ -9221,9 +9245,13 @@ def _evaluate_response_coding(name: str, manifest: Manifest, schema,
                        expected=[ref.name for ref in roster],
                        item_label="coding")
     status.write()
-    _log(f"coding {len(codeable)} record(s) × {len(roster)} judge(s) "
+    _log(f"coding {coded_phrase} × {len(roster)} judge(s) "
          f"under perResponseCoding rubric "
          f"'{rubric_file or '(inline draft)'}'")
+    if sampling is not None:
+        _log(f"seeded subsample: {sampling['samplePerCondition']} record(s) "
+             f"per condition at seed {sampling['sampleSeed']} — "
+             f"{sampling['rule']}")
 
     rows: list[dict] = []
     judge_details: list[dict] = []
@@ -9340,8 +9368,11 @@ def _evaluate_response_coding(name: str, manifest: Manifest, schema,
                         detail["noncompliantCodings"] = judge_noncompliant
                     judge_details.append(detail)
                     status.note_judge_complete(ref.name)
+                    coded_count = len(codeable) - judge_noncompliant
                     _log(f"judge '{ref.name}' coded "
-                         f"{len(codeable) - judge_noncompliant} record(s)"
+                         + (f"{coded_count} of {source_total} record(s) "
+                            "(seeded subsample)" if sampling
+                            else f"{coded_count} record(s)")
                          + (f" ({judge_noncompliant} noncompliant, kept as "
                             "rows for review)" if judge_noncompliant
                             else ""))
@@ -9395,10 +9426,19 @@ def _evaluate_response_coding(name: str, manifest: Manifest, schema,
         report["measurementDrift"] = measurement_drift
     if exclusion_stamp is not None:
         report["exclusions"] = exclusion_stamp
+    if sampling is not None:
+        # Additive and LOUD: absent means the full corpus was coded, so every
+        # report written before this existed reads back unchanged, and a
+        # report that carries the block cannot be mistaken for a full-corpus
+        # coding by a reader who only looks at `codings`.
+        report["sampling"] = sampling
     with open(os.path.join(out, "coding-report.json"), "w",
               encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, sort_keys=True)
     status.complete()
+    if sampling is not None:
+        _log(f"coded {coded_phrase} at seed {sampling['sampleSeed']} — this "
+             "report covers a SUBSAMPLE, not the full corpus")
     _log(f"coding evaluation artifacts: {out}")
     return out
 
@@ -9410,7 +9450,9 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
              defer_local_judges: bool = False,
              resume_from: str | None = None,
              model_release=None,
-             study_model_generates_later: bool = False) -> str:
+             study_model_generates_later: bool = False,
+             sample_per_condition=None,
+             sample_seed=None) -> str:
     """Paired-judge evaluation over a prior run's generations (parallel to the
     Swift evaluate task). Judges with the manifest's PINNED rubric file (drafts
     may fall back to the inline prompt, loudly) and its pinned judge panel:
@@ -9440,9 +9482,19 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
 
     Epoch guard: the source run's stamped experiment hash must equal the live
     manifest's content hash; legacy unstamped runs need
-    ``allow_unverified_epoch`` and are stamped ``epochUnverified: true``."""
-    from . import paired_judge
+    ``allow_unverified_epoch`` and are stamped ``epochUnverified: true``.
+
+    ``sample_per_condition`` + ``sample_seed`` (2026-08-29) draw a seeded,
+    stratified subsample of the source run instead of coding all of it. Both
+    or neither: the pair is validated HERE as well as at the CLI edge, so a
+    library caller cannot reach the draw with half a request. Per-response
+    coding only — see ``evaluate_subsample.paired_refusal``."""
+    from . import evaluate_subsample, paired_judge
     _log = log or print
+    # First thing, before the manifest is even read: a malformed sample ask
+    # must refuse without touching the workspace.
+    subsample = evaluate_subsample.resolve_request(
+        sample_per_condition, sample_seed, program="steerlab-server")
     manifest = Manifest.load(name, root)
     # Effective evaluation (2026-07-22 incident): an explicit block wins;
     # with none, pinned judges + a pinned rubric file ARE the paired-judge
@@ -9613,7 +9665,13 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
             rubric_hash, rubric_file, roster, root, epoch_unverified,
             measurement_drift, evaluation_source, exclusion_stamp,
             model_provider, _log, model_release=model_release,
-            study_model_generates_later=study_model_generates_later)
+            study_model_generates_later=study_model_generates_later,
+            subsample=subsample)
+    if subsample is not None:
+        # Reached only on the paired path: the sample flags name a design the
+        # paired judge's unit of analysis cannot express. Refusing beats
+        # half-executing a correct-looking command line (the `--shard` rule).
+        raise evaluate_subsample.paired_refusal("steerlab-server")
     # P0 guard (external review 2026-07-22): a pairedJudge evaluate always
     # has a judge panel configured, so zero surviving pairs must refuse HERE
     # — a "pairs: 0" judge-report looked like a successful evaluation while

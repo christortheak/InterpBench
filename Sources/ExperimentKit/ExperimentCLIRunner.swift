@@ -1998,6 +1998,29 @@ public struct ExperimentCLIRunner: Sendable {
             // help documents. The server refuses an unreadable directory at
             // submit time, so a typo costs a request, not a queue slot.
             let submitSourceRun = flag("--source")
+            // The evaluate subsample (2026-08-29), submitted rather than
+            // typed locally: the cluster is where a judged evaluate of a
+            // 7,200-record corpus actually runs, so the preregistered
+            // design has to be expressible from here. Validated as a PAIR
+            // before the request leaves this process — a half-stated sample
+            // baked into a durable sbatch would spend a queue slot to
+            // discover on a compute node what this line can see now.
+            let submitSubsample = try EvaluateSubsample.resolveRequest(
+                samplePerCondition: flag("--sample-per-condition"),
+                sampleSeed: flag("--sample-seed"),
+                program: "steerlab-cli")
+            if submitSubsample != nil, submitVerb != "evaluate" {
+                throw ExperimentError.malformed(
+                    "--sample-per-condition/--sample-seed apply to "
+                        + "'--verb evaluate' only (got '\(submitVerb)') — "
+                        + "they choose which of a completed run's records are "
+                        + "coded, and no other verb reads a prior run's "
+                        + "records that way",
+                    repair: "steerlab-cli remote submit-bundle \(path) "
+                        + "--verb evaluate --executor slurm "
+                        + "--sample-per-condition 2400 --sample-seed "
+                        + "0x5eed0a5e5eed0a5e")
+            }
             // Multi-GPU fan-out, headless. The machinery has been complete
             // underneath since 2026-07-22 — `submitBundle` takes
             // `parallelJobs`, the server route reads it and launches K shard
@@ -2046,7 +2069,9 @@ public struct ExperimentCLIRunner: Sendable {
                     "walltime": flag("--walltime") ?? "",
                 ].filter { !$0.value.isEmpty },
                 parallelJobs: parallelJobs,
-                sourceRun: submitSourceRun)
+                sourceRun: submitSourceRun,
+                samplePerCondition: submitSubsample?.samplePerCondition,
+                sampleSeed: submitSubsample?.seedText)
             return try respond(
                 submission, message: "submitted \(path)",
                 extra: [
@@ -2055,6 +2080,18 @@ public struct ExperimentCLIRunner: Sendable {
                     // the study's own name.
                     "sourceRunRequested": submitSourceRun.map {
                         JSONValue.string($0)
+                    } ?? .null,
+                    // The seeded subsample this client asked for. Explicit
+                    // `.null` when it asked for none — the key is always
+                    // there, so an agent reads "full corpus" off the echo
+                    // rather than off a missing field. The seed is echoed in
+                    // its CANONICAL 0x-16-hex spelling, which is what the
+                    // server stamps and what redraws the sample.
+                    "samplePerConditionRequested": submitSubsample.map {
+                        JSONValue.number(Double($0.samplePerCondition))
+                    } ?? .null,
+                    "sampleSeedRequested": submitSubsample.map {
+                        JSONValue.string($0.seedText)
                     } ?? .null,
                     "parallelJobsRequested": .number(Double(parallelJobs)),
                     // nil when the rule suppressed the field — the echo says
@@ -4153,6 +4190,17 @@ public struct ExperimentCLIRunner: Sendable {
                     reason: "usage: experiment evaluate <name> [--run <run-dir>] "
                         + "[--allow-unverified-epoch]")
             }
+            // The seeded, stratified subsample (2026-08-29): both flags or
+            // neither, validated FIRST — before the source run is even
+            // discovered. A malformed invocation must beat a missing
+            // prerequisite: nothing ran, and the fix is to retype the command
+            // rather than to repair the study. Per-response coding only — a
+            // paired rubric refuses inside the task, where the rubric is
+            // known.
+            let subsample = try EvaluateSubsample.resolveRequest(
+                samplePerCondition: flag("--sample-per-condition"),
+                sampleSeed: flag("--sample-seed"),
+                program: "steerlab-cli")
             let sourceRun: URL
             if let runFlag = flag("--run") {
                 sourceRun =
@@ -4174,16 +4222,32 @@ public struct ExperimentCLIRunner: Sendable {
             let evaluation = try await ExperimentTasks.evaluatePairedJudge(
                 experimentName: args[1],
                 sourceRunDirectory: sourceRun,
-                allowUnverifiedEpoch: args.contains("--allow-unverified-epoch"))
-            return ExperimentCLIResult(
-                message: "evaluated '\(args[1])' → "
-                    + evaluation.lastPathComponent,
-                changed: true,
-                payload: [
-                    "experiment": .string(args[1]),
-                    "sourceRun": .string(sourceRun.path),
-                    "evaluationDirectory": .string(evaluation.path),
+                allowUnverifiedEpoch: args.contains("--allow-unverified-epoch"),
+                subsample: subsample)
+            var payload: [String: JSONValue] = [
+                "experiment": .string(args[1]),
+                "sourceRun": .string(sourceRun.path),
+                "evaluationDirectory": .string(evaluation.path),
+            ]
+            var message = "evaluated '\(args[1])' → "
+                + evaluation.lastPathComponent
+            // The success line itself says it coded a subsample: a reader who
+            // sees only the message must not read it as full-corpus coding.
+            if let stamp = Self.samplingStamp(inCodingReportAt: evaluation) {
+                payload["sampling"] = .object([
+                    "rule": .string(stamp.rule),
+                    "samplePerCondition": .number(
+                        Double(stamp.samplePerCondition)),
+                    "sampleSeed": .string(stamp.sampleSeed),
+                    "sampledRecords": .number(Double(stamp.sampledRecords)),
+                    "sourceRecords": .number(Double(stamp.sourceRecords)),
                 ])
+                message += " (coded \(stamp.sampledRecords) of "
+                    + "\(stamp.sourceRecords) record(s), seeded subsample at "
+                    + "\(stamp.sampleSeed))"
+            }
+            return ExperimentCLIResult(
+                message: message, changed: true, payload: payload)
 
         case "promote":
             // Headless Promote: mint an agent (variant artifact) from the sweep-
@@ -5089,6 +5153,26 @@ public struct ExperimentCLIRunner: Sendable {
     /// here. nil when the text is not decodable — the payload simply omits it.
     static func jsonValue(fromJSONText text: String) -> JSONValue? {
         try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
+    }
+
+    /// The `sampling` block an evaluate run just wrote, read back off its own
+    /// `coding-report.json`.
+    ///
+    /// Read back rather than threaded down: the report IS the artifact that
+    /// records what was coded, so the envelope quoting it cannot drift from
+    /// it. Tolerant on purpose — an absent or unreadable report (a paired
+    /// evaluate writes `judge-report.json` instead) simply contributes
+    /// nothing, and must never turn a completed verb into a failure.
+    static func samplingStamp(
+        inCodingReportAt evaluation: URL
+    ) -> EvaluateSubsample.Stamp? {
+        struct Peek: Decodable { let sampling: EvaluateSubsample.Stamp? }
+        guard
+            let data = try? Data(
+                contentsOf: evaluation.appending(component: "coding-report.json")),
+            let peek = try? JSONDecoder().decode(Peek.self, from: data)
+        else { return nil }
+        return peek.sampling
     }
 
     /// The sweep's decision, machine-readable (punch list #1, P2).

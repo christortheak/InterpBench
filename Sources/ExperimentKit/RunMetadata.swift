@@ -139,8 +139,17 @@ public enum RunMetadata {
         seedPolicy: String? = nil,
         dtype: String? = nil,
         jobID: String? = environmentJobID,
-        notes: [String: String] = [:]
+        notes: [String: String] = [:],
+        /// Notes whose value is a JSON OBJECT rather than a string — merged
+        /// into the same `notes` block. `notes` stayed string-valued because
+        /// every note before 2026-08-29 was one sentence; the evaluate
+        /// subsample's stamp is five fields a reader has to be able to read
+        /// individually, and flattening it to prose would have made the run's
+        /// own record less machine-readable than the report beside it.
+        structuredNotes: [String: Any] = [:]
     ) -> [String: Any] {
+        var mergedNotes: [String: Any] = notes
+        for (key, value) in structuredNotes { mergedNotes[key] = value }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         formatter.timeZone = TimeZone(identifier: "UTC")
@@ -166,7 +175,7 @@ public enum RunMetadata {
             // applicable" rather than a missing key.
             "pythonEnvironment": NSNull(),
             "jobId": jobID ?? NSNull(),
-            "notes": notes,
+            "notes": mergedNotes,
         ]
     }
 
@@ -186,7 +195,8 @@ public enum RunMetadata {
         temperature: Double? = nil,
         samplesPerItem: Int? = nil,
         seedPolicy: String? = nil,
-        notes: [String: String] = [:]
+        notes: [String: String] = [:],
+        structuredNotes: [String: Any] = [:]
     ) throws -> URL {
         let url = runDirectory.appending(component: fileName)
         guard !FileManager.default.fileExists(atPath: url.path) else { return url }
@@ -197,7 +207,7 @@ public enum RunMetadata {
                 revision: revision, experiment: experiment,
                 experimentHash: experimentHash, temperature: temperature,
                 samplesPerItem: samplesPerItem, seedPolicy: seedPolicy,
-                notes: notes),
+                notes: notes, structuredNotes: structuredNotes),
             options: [.prettyPrinted, .sortedKeys])
         try data.write(to: url, options: .atomic)
         return url

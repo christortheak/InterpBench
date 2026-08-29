@@ -2543,7 +2543,9 @@ public struct ClusterClient: Sendable {
         targetRoot: String? = nil,
         force: Bool = false,
         parallelJobs: Int = 1,
-        sourceRun: String? = nil
+        sourceRun: String? = nil,
+        samplePerCondition: Int? = nil,
+        sampleSeed: String? = nil
     ) async throws -> RemoteStudySubmission {
         struct Body: Encodable {
             var bundlePath: String
@@ -2557,6 +2559,18 @@ public struct ClusterClient: Sendable {
             /// see it; the server refuses an unreadable directory at submit
             /// time rather than on the allocation.
             var sourcePath: String?
+            /// The evaluate subsample (2026-08-29): code a seeded, stratified
+            /// draw of this many records per condition instead of the whole
+            /// source run. Encoded only when given, for the same reason
+            /// `sourcePath` is — an older server must see the request it has
+            /// always seen. Both fields travel together or not at all; the
+            /// caller has already refused a half-stated pair.
+            var samplePerCondition: Int?
+            /// The seed the draw uses, in its canonical `0x` + 16-hex-digit
+            /// spelling — a string because JSON has no unsigned 64-bit
+            /// integer, and a decimal a parser rounds is a seed that no
+            /// longer redraws its own subsample.
+            var sampleSeed: String?
             /// WS4: resubmit past a preflight verdict of "fail" — loud and
             /// explicit, encoded only when true so older servers never see
             /// an unknown field.
@@ -2582,6 +2596,8 @@ public struct ClusterClient: Sendable {
                 bundlePath: path, verb: verb, executor: executor, dryRun: dryRun,
                 resources: merged, targetRoot: targetRoot,
                 sourcePath: sourceRun,
+                samplePerCondition: samplePerCondition,
+                sampleSeed: sampleSeed,
                 force: force ? true : nil,
                 parallelJobs: ShardedSubmission.encodedParallelJobs(
                     requested: parallelJobs, executor: executor, verb: verb)))

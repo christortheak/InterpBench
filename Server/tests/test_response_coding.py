@@ -21,6 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from steerlab_server.experiment import evaluate_subsample as subsample_module
 from steerlab_server.experiment import response_coding, tasks
 from steerlab_server.experiment.manifest import Manifest
 
@@ -520,6 +521,127 @@ def test_isolated_invalid_codes_complete_the_run_with_noncompliant_rows(
     assert detail["noncompliantCodings"] == 1
     # Aggregates count only real codings.
     assert report["conditions"]["baseline"]["codings"] == 9
+
+
+# --- the seeded subsample (2026-08-29) --------------------------------------
+
+def _sampling_fixture(tmp_path):
+    """A rectangular synthetic run: 2 conditions × 3 promptIDs × 4 samples."""
+    generations = [
+        {"promptID": prompt, "seed": index, "condition": condition,
+         "sampleIndex": index, "prompt": "Decide the appeal.",
+         "output": f"{condition} {prompt} sample {index}"}
+        # The condition names are "baseline"/"injected" on purpose: this run
+        # IS the cross-engine fixture of `test_evaluate_subsample`, so the
+        # triples below are that suite's literals verbatim rather than a
+        # second set nobody can cross-check.
+        for condition in ("baseline", "injected")
+        for prompt in ("p01", "p02", "p03")
+        for index in range(4)
+    ]
+    return _fixture(tmp_path, generations=generations)
+
+
+def test_a_sampled_coding_codes_the_draw_and_stamps_it_everywhere(
+        tmp_path, monkeypatch):
+    root = _sampling_fixture(tmp_path)
+    agree = ('{"codes": {"mentionsLegalRule": true, '
+             '"mentionsEquity": false}, "brief_reason": "rule cited"}')
+    _coding_generate(monkeypatch, [agree])
+    logs: list = []
+
+    out = tasks.evaluate("cf", root=root, model_provider=_provider(),
+                         max_loaded=1, sample_per_condition=7,
+                         sample_seed="0x2a",
+                         log=lambda *p: logs.append(" ".join(map(str, p))))
+
+    rows = [json.loads(line) for line in
+            open(os.path.join(out, "codings.jsonl"), encoding="utf-8")]
+    # 7 per condition × 2 conditions × 2 judges.
+    assert len(rows) == 28
+    coded = {(r["condition"], r["promptID"], r["sampleIndex"])
+             for r in rows}
+    # The cross-engine fixture, verbatim: the same 14 triples the standalone
+    # draw suite pins on both engines, now reached through the whole evaluate
+    # path rather than through the draw alone.
+    from tests.test_evaluate_subsample import LITERAL_FIXTURE_SELECTION
+    assert coded == set(LITERAL_FIXTURE_SELECTION)
+
+    report = json.load(open(os.path.join(out, "coding-report.json"),
+                            encoding="utf-8"))
+    assert report["sampling"] == {
+        "rule": subsample_module.RULE,
+        "samplePerCondition": 7,
+        "sampleSeed": "0x000000000000002a",
+        "sampledRecords": 14,
+        "sourceRecords": 24,
+    }
+    config = json.load(open(os.path.join(out, "config.json"),
+                            encoding="utf-8"))
+    assert config["notes"]["sampling"] == report["sampling"]
+
+    # Every human line says it. A reader must not be able to mistake this for
+    # a full-corpus coding from the log alone.
+    assert any("coding 14 of 24 record(s) (seeded subsample)" in line
+               for line in logs), logs
+    assert any("seeded subsample: 7 record(s) per condition at seed "
+               "0x000000000000002a" in line for line in logs), logs
+    assert any("coded 14 of 24 record(s) (seeded subsample) at seed" in line
+               and "SUBSAMPLE, not the full corpus" in line
+               for line in logs), logs
+    assert any("judge 'judge-1' coded 14 of 24 record(s) (seeded subsample)"
+               in line for line in logs), logs
+
+
+def test_an_unsampled_coding_carries_no_sampling_block(tmp_path, monkeypatch):
+    """Additive by construction: absence IS the full corpus, so the legacy
+    report and the legacy log lines are byte-identical."""
+    root = _sampling_fixture(tmp_path)
+    agree = ('{"codes": {"mentionsLegalRule": true, '
+             '"mentionsEquity": false}, "brief_reason": "rule cited"}')
+    _coding_generate(monkeypatch, [agree])
+    logs: list = []
+
+    out = tasks.evaluate("cf", root=root, model_provider=_provider(),
+                         max_loaded=1,
+                         log=lambda *p: logs.append(" ".join(map(str, p))))
+
+    report = json.load(open(os.path.join(out, "coding-report.json"),
+                            encoding="utf-8"))
+    assert "sampling" not in report
+    config = json.load(open(os.path.join(out, "config.json"),
+                            encoding="utf-8"))
+    assert "sampling" not in (config.get("notes") or {})
+    assert any("coding 24 record(s) × 2 judge(s)" in line for line in logs)
+    assert any("judge 'judge-1' coded 24 record(s)" in line for line in logs)
+    assert not any("subsample" in line for line in logs)
+
+
+def test_an_over_ask_refuses_and_writes_no_run_directory(tmp_path, monkeypatch):
+    """Refusals never write. The draw runs BEFORE the evaluate directory is
+    minted, so a power-computation error leaves runs/ exactly as it was."""
+    root = _sampling_fixture(tmp_path)
+    _coding_generate(monkeypatch, ["{}"])
+    before = sorted(os.listdir(os.path.join(root, "runs")))
+
+    with pytest.raises(subsample_module.SubsampleRefusal) as caught:
+        tasks.evaluate("cf", root=root, model_provider=_provider(),
+                       max_loaded=1, sample_per_condition=13,
+                       sample_seed="0x2a", log=lambda *p: None)
+    assert caught.value.code == "samplePopulation"
+    assert sorted(os.listdir(os.path.join(root, "runs"))) == before
+
+
+def test_half_a_sample_request_refuses_before_the_manifest_is_read(tmp_path):
+    root = _sampling_fixture(tmp_path)
+    with pytest.raises(subsample_module.SubsampleRefusal) as missing_seed:
+        tasks.evaluate("cf", root=root, sample_per_condition=3,
+                       log=lambda *p: None)
+    assert missing_seed.value.code == "sampleSeedMissing"
+    with pytest.raises(subsample_module.SubsampleRefusal) as missing_size:
+        tasks.evaluate("cf", root=root, sample_seed="0x2a",
+                       log=lambda *p: None)
+    assert missing_size.value.code == "sampleSizeMissing"
 
 
 def test_no_codeable_records_refuses(tmp_path, monkeypatch):

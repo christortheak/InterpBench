@@ -404,6 +404,39 @@ def test_planned_records_math():
     assert sub._planned_records(None, PROMPTS_3) is None
 
 
+def test_a_sampled_evaluate_is_priced_at_the_sampled_count():
+    """The walltime estimate divides planned records by a measured rate, so a
+    sampled evaluate priced at the full matrix asks for walltime it will not
+    use — and gives the researcher a number their own run's report
+    contradicts. Two conditions (baseline + one arm) × n."""
+    manifest = _manifest()
+    assert sub._planned_records(manifest, PROMPTS_3) == 6
+    assert sub._planned_records(
+        manifest, PROMPTS_3, verb="evaluate", sample_per_condition=1) == 2
+    # Other verbs are untouched: the flags refuse there anyway, and a `run`
+    # generates the whole matrix whatever an evaluate would later code.
+    assert sub._planned_records(
+        manifest, PROMPTS_3, verb="run", sample_per_condition=1) == 6
+    # Capped by the full matrix. A nonsensical over-ask refuses at execute
+    # time; it must never INFLATE the estimate on the way there.
+    assert sub._planned_records(
+        manifest, PROMPTS_3, verb="evaluate", sample_per_condition=999) == 6
+    # No sample = byte-identical to the historical answer.
+    assert sub._planned_records(
+        manifest, PROMPTS_3, verb="evaluate", sample_per_condition=None) == 6
+
+
+def test_the_sampled_count_counts_baseline_as_a_coded_condition():
+    """The per-response coding instrument codes baseline like any other
+    condition — every record is coded individually and blinded — so the
+    sampled count is n per DECLARED condition plus the implicit baseline."""
+    variants = [{"name": "v1", "artifactPath": "a", "artifactHash": "h"},
+                {"name": "v2", "artifactPath": "b", "artifactHash": "h"}]
+    assert sub._sampled_evaluate_records(
+        _manifest(variantConditions=variants), 100) == 300
+    assert sub._sampled_evaluate_records(_manifest(), 100) == 200
+
+
 # --- per-request site resources (WS1 generalization carried into the API) -------------
 
 def test_resources_from_dict_maps_site_fields(study_site, tmp_path):

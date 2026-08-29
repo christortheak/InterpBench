@@ -3573,6 +3573,13 @@ def build_router(state: ServiceState) -> APIRouter:
                 # the one where redoing a judged evaluate costs most.
                 resume_from=(str(body.get("resumeFrom")).strip() or None
                              if body.get("resumeFrom") else None),
+                # The evaluate subsample (2026-08-29, cross-engine body keys
+                # "samplePerCondition"/"sampleSeed"): passed through as typed,
+                # never coerced or defaulted here — the seed's spelling is
+                # part of what redraws the sample, and half a pair must reach
+                # the submit-time refusal rather than be quietly completed.
+                sample_per_condition=body.get("samplePerCondition"),
+                sample_seed=body.get("sampleSeed"),
                 registry=state.registry)
         except PreflightRejection as exc:
             raise HTTPException(
@@ -3612,7 +3619,12 @@ def build_router(state: ServiceState) -> APIRouter:
                 # Multi-GPU fan-out (default 1 = the historical single-job
                 # path, byte-identical): K sibling shard jobs + a merging
                 # parent. Execution logistics only — never in the manifest.
-                parallel_jobs=int(body.get("parallelJobs", 1) or 1))
+                parallel_jobs=int(body.get("parallelJobs", 1) or 1),
+                # The evaluate subsample (2026-08-29), the same passthrough
+                # `sourcePath` gets: absent from an older client's body, and
+                # then absent from the rendered command line too.
+                sample_per_condition=body.get("samplePerCondition"),
+                sample_seed=body.get("sampleSeed"))
         except PreflightRejection as exc:
             raise HTTPException(
                 status_code=400,
