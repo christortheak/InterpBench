@@ -9566,15 +9566,15 @@ public enum ExperimentStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(manifest).write(to: url)
-        // A9: export preregistration.md beside the frozen manifest —
-        // generated at the freeze instant from the frozen manifest so it
-        // cannot disagree with what was frozen (the server's
-        // `_write_preregistration` twin: same sections and facts;
-        // byte-identity across engines is a non-goal). Best-effort like the
-        // server's — a failed export never un-freezes a stamped manifest.
-        try? preregistrationMarkdown(manifest).write(
-            to: directory.appending(components: manifest.name, "preregistration.md"),
-            atomically: true, encoding: .utf8)
+        // A9: export the freeze-time settings summary beside the frozen
+        // manifest — generated at the freeze instant from the frozen
+        // manifest so it cannot disagree with what was frozen (the server's
+        // `_write_preregistration` twin: same sections, facts, and
+        // destination rule; byte-identity across engines is a non-goal).
+        // Best-effort like the server's — a failed export never un-freezes
+        // a stamped manifest.
+        exportPreregistration(
+            manifest, into: directory.appending(component: manifest.name))
         // The stamped manifest cannot be inside the commit it stamps (a
         // commit cannot contain its own hash), so a managed workspace gets a
         // follow-up stamp commit — freeze leaves the tree clean. The
@@ -9583,6 +9583,57 @@ public enum ExperimentStore {
             autoCommitWorkspace(freezing: "\(manifest.name) (stamp)")
         }
         return manifest
+    }
+
+    /// The generated preregistration's self-identification line — both
+    /// engines emit it verbatim (server twin:
+    /// `experiment_store.PREREG_GENERATED_MARKER`). Its presence is how
+    /// freeze recognizes ITS OWN prior output at preregistration.md, as
+    /// distinct from a researcher-authored preregistration.
+    public static let preregistrationGeneratedMarker =
+        "*Generated at freeze; do not edit."
+
+    /// Where the generated settings summary lands when preregistration.md is
+    /// researcher-authored (server twin:
+    /// `experiment_store.PREREG_FROZEN_SETTINGS_FILENAME`).
+    public static let preregistrationFrozenSettingsFilename =
+        "preregistration-frozen-settings.md"
+
+    /// Write the freeze-time settings summary into the experiment directory
+    /// (server twin: `_write_preregistration`, destination rule included).
+    ///
+    /// Destination rule (field incident 2026-08-29): the summary lands at
+    /// `preregistration.md` only when that path is free or holds a previous
+    /// freeze's own generated file (`preregistrationGeneratedMarker`). A
+    /// researcher-authored file at that path — analysis commitments written
+    /// before any data existed, the scientifically load-bearing kind of
+    /// preregistration — is preserved byte-for-byte, and the generated
+    /// summary lands beside it as `preregistrationFrozenSettingsFilename`
+    /// instead, announced loudly. An existing-but-unreadable file counts as
+    /// researcher-authored — when in doubt, preserve. Existing frozen
+    /// directories are never rewritten by this rule — it governs future
+    /// freezes only. Best-effort: a failed write never un-freezes a stamped
+    /// manifest.
+    static func exportPreregistration(
+        _ manifest: ExperimentManifest, into experimentDirectory: URL
+    ) {
+        let canonical = experimentDirectory.appending(
+            component: "preregistration.md")
+        var target = canonical
+        if FileManager.default.fileExists(atPath: canonical.path),
+            (try? String(contentsOf: canonical, encoding: .utf8))?
+                .contains(preregistrationGeneratedMarker) != true
+        {
+            print(
+                "⚠︎ freeze '\(manifest.name)': preregistration.md is "
+                    + "researcher-authored (no generated-at-freeze marker) — "
+                    + "preserving it untouched; the generated settings summary "
+                    + "lands as \(preregistrationFrozenSettingsFilename).")
+            target = experimentDirectory.appending(
+                component: preregistrationFrozenSettingsFilename)
+        }
+        try? preregistrationMarkdown(manifest).write(
+            to: target, atomically: true, encoding: .utf8)
     }
 
     /// The preregistration export's content — the study's settings-chosen-
@@ -9660,8 +9711,8 @@ public enum ExperimentStore {
             "- Multiple comparisons: BH-FDR across concepts at screen; Holm within "
                 + "the pre-registered family at confirm.",
             "",
-            "*Generated at freeze; do not edit. Duplicate the experiment to change "
-                + "anything.*",
+            preregistrationGeneratedMarker
+                + " Duplicate the experiment to change anything.*",
             "",
         ]
         return lines.joined(separator: "\n")

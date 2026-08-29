@@ -45,6 +45,85 @@ def test_frozen_is_read_only(tmp_path):
         es.set_protocol("s", {"temperature": 0.9}, root=root)
 
 
+def test_freeze_writes_generated_preregistration_when_path_is_free(tmp_path):
+    """The unchanged common case: nobody authored a preregistration, so the
+    freeze-time settings summary lands at its historical path, carrying the
+    marker line the destination rule keys on — and no displaced-summary file
+    appears."""
+    root = str(tmp_path)
+    _concept(root)
+    es.create("s", model_id="org/m", revision="abc", root=root)
+    es.attach("s", ["french"], root=root)
+    es.freeze("s", force=True, root=root)
+    exp_dir = os.path.join(root, "experiments", "s")
+    with open(os.path.join(exp_dir, "preregistration.md"), encoding="utf-8") as h:
+        text = h.read()
+    assert "# Preregistration: s" in text
+    assert es.PREREG_GENERATED_MARKER in text
+    assert not os.path.exists(
+        os.path.join(exp_dir, es.PREREG_FROZEN_SETTINGS_FILENAME))
+
+
+def test_freeze_preserves_hand_authored_preregistration(tmp_path):
+    """Field incident 2026-08-29: a researcher-authored ANALYSIS
+    preregistration at experiments/<name>/preregistration.md — commitments
+    written before any data existed — was silently destroyed by the first
+    freeze. It must survive byte-for-byte, with the generated settings
+    summary landing beside it under its own name."""
+    root = str(tmp_path)
+    _concept(root)
+    es.create("s", model_id="org/m", revision="abc", root=root)
+    es.attach("s", ["french"], root=root)
+    exp_dir = os.path.join(root, "experiments", "s")
+    authored = ("# Analysis preregistration\n\n"
+                "We commit to the paired-difference estimator before any "
+                "data exists.\n")
+    with open(os.path.join(exp_dir, "preregistration.md"), "w",
+              encoding="utf-8") as h:
+        h.write(authored)
+    es.freeze("s", force=True, root=root)
+    with open(os.path.join(exp_dir, "preregistration.md"), encoding="utf-8") as h:
+        assert h.read() == authored  # preserved untouched
+    with open(os.path.join(exp_dir, es.PREREG_FROZEN_SETTINGS_FILENAME),
+              encoding="utf-8") as h:
+        displaced = h.read()
+    assert "# Preregistration: s" in displaced
+    assert es.PREREG_GENERATED_MARKER in displaced
+
+
+def test_freeze_overwrites_stale_generated_preregistration(tmp_path):
+    """A file carrying the generated-at-freeze marker is the freeze's own
+    prior output (e.g. copied in by hand from another study): regenerating it
+    keeps it in sync with THIS freeze instead of displacing the summary."""
+    root = str(tmp_path)
+    _concept(root)
+    es.create("s", model_id="org/m", revision="abc", root=root)
+    es.attach("s", ["french"], root=root)
+    exp_dir = os.path.join(root, "experiments", "s")
+    with open(os.path.join(exp_dir, "preregistration.md"), "w",
+              encoding="utf-8") as h:
+        h.write("# Preregistration: other-study\n\nstale facts\n\n"
+                + es.PREREG_GENERATED_MARKER + " Duplicate the experiment to "
+                "change anything.*\n")
+    es.freeze("s", force=True, root=root)
+    with open(os.path.join(exp_dir, "preregistration.md"), encoding="utf-8") as h:
+        text = h.read()
+    assert "stale facts" not in text
+    assert "# Preregistration: s" in text
+    assert not os.path.exists(
+        os.path.join(exp_dir, es.PREREG_FROZEN_SETTINGS_FILENAME))
+
+
+def test_write_preregistration_noops_for_legacy_flat_manifest(tmp_path):
+    """A legacy flat-file manifest has no experiments/<name>/ directory: the
+    writer must not create one (guard unchanged by the destination rule)."""
+    root = str(tmp_path)
+    d = {"name": "flat", "status": "frozen", "modelID": "org/m",
+         "frozenAt": "2026-08-29T00:00:00Z"}
+    es._write_preregistration(d, root)
+    assert not os.path.exists(os.path.join(root, "experiments", "flat"))
+
+
 def test_set_protocol_refuses_unknown_keys_at_the_store(tmp_path):
     """The store itself refuses, not just the client CLI: the HTTP authoring
     route hands request bodies straight to ``set_protocol``, so a drop here

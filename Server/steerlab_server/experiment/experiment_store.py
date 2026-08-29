@@ -4667,10 +4667,45 @@ def _auto_commit_workspace(name: str, root: str | None,
         pass  # never block the freeze; the stamp falls back to prior HEAD
 
 
+#: The generated preregistration's self-identification line — both engines
+#: emit it verbatim (Swift twin: `ExperimentStore.preregistrationGeneratedMarker`).
+#: Its presence is how freeze recognizes ITS OWN prior output at
+#: preregistration.md, as distinct from a researcher-authored preregistration.
+PREREG_GENERATED_MARKER = "*Generated at freeze; do not edit."
+
+#: Where the generated settings summary lands when preregistration.md is
+#: researcher-authored (Swift twin:
+#: `ExperimentStore.preregistrationFrozenSettingsFilename`).
+PREREG_FROZEN_SETTINGS_FILENAME = "preregistration-frozen-settings.md"
+
+
+def _is_generated_preregistration(path: str) -> bool:
+    """True when the file at ``path`` is a previous freeze's own generated
+    output, recognized by :data:`PREREG_GENERATED_MARKER`. An unreadable or
+    non-UTF-8 file is treated as researcher-authored — when in doubt,
+    preserve."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return PREREG_GENERATED_MARKER in handle.read()
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
 def _write_preregistration(d: dict, root: str | None) -> None:
-    """Export preregistration.md beside the frozen manifest — the study's
-    settings-chosen-before-measurement statement, generated at the freeze
-    instant from the frozen dict so it cannot disagree with what was frozen."""
+    """Export the freeze-time settings summary beside the frozen manifest —
+    the study's settings-chosen-before-measurement statement, generated at the
+    freeze instant from the frozen dict so it cannot disagree with what was
+    frozen.
+
+    Destination rule (field incident 2026-08-29): the summary lands at
+    ``preregistration.md`` only when that path is free or holds a previous
+    freeze's own generated file (:data:`PREREG_GENERATED_MARKER`). A
+    researcher-authored file at that path — analysis commitments written
+    before any data existed, the scientifically load-bearing kind of
+    preregistration — is preserved byte-for-byte, and the generated summary
+    lands beside it as :data:`PREREG_FROZEN_SETTINGS_FILENAME` instead, with
+    the displacement announced on stderr. Existing frozen directories are
+    never rewritten by this rule — it governs future freezes only."""
     directory = _dir(d["name"], root)
     if not os.path.isdir(directory):
         return  # legacy flat-file manifest; no directory to write into
@@ -4731,12 +4766,18 @@ def _write_preregistration(d: dict, root: str | None) -> None:
         "- Multiple comparisons: BH-FDR across concepts at screen; Holm within "
         "the pre-registered family at confirm.",
         "",
-        "*Generated at freeze; do not edit. Duplicate the experiment to change "
-        "anything.*",
+        PREREG_GENERATED_MARKER
+        + " Duplicate the experiment to change anything.*",
         "",
     ]
-    with open(os.path.join(directory, "preregistration.md"), "w",
-              encoding="utf-8") as handle:
+    target = os.path.join(directory, "preregistration.md")
+    if os.path.exists(target) and not _is_generated_preregistration(target):
+        print(f"freeze '{d['name']}': preregistration.md is researcher-authored "
+              "(no generated-at-freeze marker) — preserving it untouched; the "
+              "generated settings summary lands as "
+              f"{PREREG_FROZEN_SETTINGS_FILENAME}.", file=sys.stderr)
+        target = os.path.join(directory, PREREG_FROZEN_SETTINGS_FILENAME)
+    with open(target, "w", encoding="utf-8") as handle:
         handle.write("\n".join(lines))
 
 

@@ -349,8 +349,11 @@ Freeze verifies every pin, stamps the manifest's content hash and the
 workspace git commit, snapshots every pinned input into
 `experiments/<name>/pinned/` — concept stimulus directories, task prompts,
 judge rubric, capability battery, reasoning-style taxonomy, human tables, and
-the neutral corpus that denominates norm-unit α — writes
-`experiments/<name>/preregistration.md` beside the manifest, and makes the
+the neutral corpus that denominates norm-unit α — writes the generated
+settings summary beside the manifest (`experiments/<name>/preregistration.md`
+when that path is free or holds a previous freeze's own generated file; a
+researcher-authored preregistration there is preserved untouched and the
+summary lands as `preregistration-frozen-settings.md` instead), and makes the
 manifest read-only. There is no unfreeze. **Iterate by `experiment duplicate
 <name> <new-name>`, never by editing.**
 

@@ -300,6 +300,92 @@ extension ExperimentStoreTests {
                     + "seedPolicy manifestSeeds"))
     }
 
+    @Test func localFreezePreservesHandAuthoredPreregistration() throws {
+        // Field incident 2026-08-29: a researcher-authored ANALYSIS
+        // preregistration at experiments/<name>/preregistration.md —
+        // commitments written before any data existed — was silently
+        // destroyed by the first freeze. It must survive byte-for-byte,
+        // with the generated settings summary landing beside it under its
+        // own name.
+        try withAttachTempRoot { root in
+            _ = try ExperimentStore.create(
+                name: "prereg-authored", description: "", modelID: "test/model")
+            try plantStories("calm", root: root)
+            _ = try ExperimentStore.attachConcept(
+                "calm", method: .emotionGrandMean,
+                experimentName: "prereg-authored")
+            let experimentDirectory = ExperimentStore.directory.appending(
+                component: "prereg-authored")
+            let authored = "# Analysis preregistration\n\n"
+                + "We commit to the paired-difference estimator before any "
+                + "data exists.\n"
+            try authored.write(
+                to: experimentDirectory.appending(component: "preregistration.md"),
+                atomically: true, encoding: .utf8)
+            _ = try ExperimentStore.freeze(name: "prereg-authored", force: true)
+            let preserved = try String(
+                contentsOf: experimentDirectory.appending(
+                    component: "preregistration.md"),
+                encoding: .utf8)
+            #expect(preserved == authored)  // preserved untouched
+            let displaced = try String(
+                contentsOf: experimentDirectory.appending(
+                    component: ExperimentStore.preregistrationFrozenSettingsFilename),
+                encoding: .utf8)
+            #expect(displaced.contains("# Preregistration: prereg-authored"))
+            #expect(displaced.contains(
+                ExperimentStore.preregistrationGeneratedMarker))
+        }
+    }
+
+    @Test func localFreezeRefreshesStaleGeneratedPreregistration() throws {
+        // A file carrying the generated-at-freeze marker is the freeze's own
+        // prior output (e.g. copied in by hand from another study):
+        // regenerating it keeps it in sync with THIS freeze instead of
+        // displacing the summary.
+        try withAttachTempRoot { root in
+            _ = try ExperimentStore.create(
+                name: "prereg-stale", description: "", modelID: "test/model")
+            try plantStories("calm", root: root)
+            _ = try ExperimentStore.attachConcept(
+                "calm", method: .emotionGrandMean, experimentName: "prereg-stale")
+            let experimentDirectory = ExperimentStore.directory.appending(
+                component: "prereg-stale")
+            try ("# Preregistration: other-study\n\nstale facts\n\n"
+                + ExperimentStore.preregistrationGeneratedMarker
+                + " Duplicate the experiment to change anything.*\n").write(
+                    to: experimentDirectory.appending(
+                        component: "preregistration.md"),
+                    atomically: true, encoding: .utf8)
+            _ = try ExperimentStore.freeze(name: "prereg-stale", force: true)
+            let text = try String(
+                contentsOf: experimentDirectory.appending(
+                    component: "preregistration.md"),
+                encoding: .utf8)
+            #expect(!text.contains("stale facts"))
+            #expect(text.contains("# Preregistration: prereg-stale"))
+            #expect(
+                !FileManager.default.fileExists(
+                    atPath: experimentDirectory.appending(
+                        component: ExperimentStore.preregistrationFrozenSettingsFilename
+                    ).path))
+        }
+    }
+
+    @Test func exportPreregistrationNoopsWithoutExperimentDirectory() throws {
+        // The server's legacy flat-file guard, twinned: no experiment
+        // directory means nothing is written and none is created.
+        try withAttachTempRoot { _ in
+            let missing = ExperimentStore.directory.appending(
+                component: "never-created")
+            var manifest = ExperimentManifest(
+                name: "never-created", description: "", modelID: "test/model")
+            manifest.status = .frozen
+            ExperimentStore.exportPreregistration(manifest, into: missing)
+            #expect(!FileManager.default.fileExists(atPath: missing.path))
+        }
+    }
+
     @Test func localFreezeWritesPreregistrationFile() throws {
         try withAttachTempRoot { root in
             _ = try ExperimentStore.create(
