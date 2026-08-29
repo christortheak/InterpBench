@@ -348,7 +348,8 @@ def _transcript_study(root, name):
 def _fake_generate(log):
     def generate(model, prompt, *, model_id=None, max_tokens=0, temperature=0.0,
                  injections=None, prompt_mode=None, system_prompt=None,
-                 qwen_thinking_enabled=False, transcript=None):
+                 qwen_thinking_enabled=False, transcript=None,
+                 token_ids_out=None):
         log.append({"kind": "generate", "prompt": prompt,
                     "transcript": transcript, "system": system_prompt})
         return "I confirm the refusal was mine."

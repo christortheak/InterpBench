@@ -9,9 +9,10 @@ import Foundation
 /// readers over whatever prose a study's items elicit:
 ///
 /// - **categorical choice**: the option a response settled on, read from a
-///   JSON object with a declared key, an exact whole-response match, or the
-///   earliest word-boundary mention. Derived endpoints over it are outcome
-///   rates and between-item contrasts.
+///   JSON object with a declared key, an exact whole-response match, or (over
+///   complete text only — a truncated output parses as a failure, never as
+///   its first-enumerated option) the earliest word-boundary mention. Derived
+///   endpoints over it are outcome rates and between-item contrasts.
 /// - **duration in months**: a numeric quantity stated in years and/or
 ///   months; endpoints are the mean shift, spread, anchor slope, and
 ///   proportionality; the parse-failure rate is itself a coherence signal.
@@ -30,11 +31,35 @@ public enum Judicial {
     ///
     /// Tries, in order: a JSON object carrying `jsonKey` (the usual
     /// answer-in-JSON schema), an exact normalized match of the whole
-    /// response, then the option whose earliest word-boundary mention appears
-    /// first in the text. Returns the matched option verbatim, or nil (a parse
-    /// failure — count it).
+    /// response, then — for text that finished saying its piece — the option
+    /// whose earliest word-boundary mention appears first in the text.
+    /// Returns the matched option verbatim, or nil (a parse failure — count
+    /// it).
+    ///
+    /// The first-mention fallback is legitimate only for a COMPLETE free-form
+    /// answer that names its choice in prose. Over an output that was cut off
+    /// before it decided, first-mention does not read a decision — it reads
+    /// the order the options were enumerated in, since a deliberation
+    /// restates every option long before it rules. A 1,200-record run
+    /// observed 2026-08-29 made that concrete: 19 outputs hit the token cap
+    /// mid-deliberation, every one was coerced to the first-enumerated
+    /// option, and the declared unparseableEndpoint exclusion excluded zero
+    /// records. (The duration parser's `numberWords` documents the same
+    /// non-random-attrition hazard; here it was worse — a WRONG VALUE instead
+    /// of a null.) Two truncation signals therefore force nil instead of the
+    /// fallback: `truncated: true` (the caller's honest signal that the
+    /// decode ended by exhausting its token budget — the run loop reads the
+    /// stream's own stop reason), and a JSON object the text opens but never
+    /// closes (detectable from the text alone, covering records parsed
+    /// without a stop reason). A complete embedded JSON answer or an exact
+    /// whole-response match is still honored on a truncated output:
+    /// answering and then running out of room while elaborating is a
+    /// decision, not a coerced one.
+    ///
+    /// Server twin: `judicial.parse_choice` — fixture-locked on both engines.
     public static func parseChoice(
-        _ text: String, options: [String], jsonKey: String = "answer"
+        _ text: String, options: [String], jsonKey: String = "answer",
+        truncated: Bool = false
     ) -> String? {
         guard !text.isEmpty, !options.isEmpty else { return nil }
         let normalized = Dictionary(
@@ -50,6 +75,8 @@ public enum Judicial {
         }
 
         if let match = normalized[normalize(text)] { return match }
+
+        if truncated || opensUnclosedJSON(text) { return nil }
 
         let haystack = normalizeSpaces(text)
         let haystackRange = NSRange(haystack.startIndex..., in: haystack)
@@ -100,6 +127,22 @@ public enum Judicial {
             searchIndex = text.index(after: start)
         }
         return objects
+    }
+
+    /// Does the text open a JSON object it never closes — the shape of an
+    /// answer-in-JSON response cut off mid-object? Complete objects are
+    /// skipped wholesale (braces inside their strings do not count), so only
+    /// a brace depth still open at end-of-text answers true. Server twin:
+    /// `judicial._opens_unclosed_json`.
+    static func opensUnclosedJSON(_ text: String) -> Bool {
+        var searchIndex = text.startIndex
+        while let start = text[searchIndex...].firstIndex(of: "{") {
+            guard let end = balancedObjectEnd(in: text, from: start) else {
+                return true
+            }
+            searchIndex = text.index(after: end)
+        }
+        return false
     }
 
     /// Index of the `}` closing the object opened at `start`, tracking JSON

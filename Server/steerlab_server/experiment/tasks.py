@@ -6875,14 +6875,19 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
             # actually emitted rather than to streamed text.
             recorder, token_ids = None, None
             # Threaded as kwargs ONLY when something needs them, exactly as
-            # transcript_kwargs is: the plain call signature stays byte-for-byte
-            # unchanged, so every monkeypatched test fake built against it keeps
-            # working. Passing observers=None still widens the call.
+            # transcript_kwargs is: for every other study the plain call
+            # signature stays byte-for-byte unchanged, so a monkeypatched test
+            # fake built against it keeps working. Passing observers=None
+            # still widens the call.
             #
-            # Two independent reasons to capture the sampled ids: the J-lens
+            # Three independent reasons to capture the sampled ids: the J-lens
             # recorder needs them to align its observations (it always has),
-            # and `recordTokenIDs` retains them on the record so a completed
-            # run stays exactly replayable (see Manifest.record_token_ids).
+            # `recordTokenIDs` retains them on the record so a completed
+            # run stays exactly replayable (see Manifest.record_token_ids),
+            # and an option-set item needs the honest token count to tell a
+            # capped generation from a finished one — a truncated output must
+            # parse as a choice FAILURE, never as its first-enumerated option
+            # (see judicial.parse_choice).
             readout_kwargs = {}
             if jlens_trace is not None:
                 recorder = jlens_trace.recorder_for(prompt)
@@ -6890,7 +6895,8 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                     token_ids = []
                     readout_kwargs = {"observers": [recorder],
                                       "token_ids_out": token_ids}
-            if manifest.record_token_ids and token_ids is None:
+            if token_ids is None and (
+                    manifest.record_token_ids or prompt.get("options")):
                 token_ids = []
                 readout_kwargs["token_ids_out"] = token_ids
             with _seeded_generation(eff.temperature, seed):
@@ -6934,8 +6940,15 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
             elif manifest.case_family == "sentencing":
                 record["parsedMonths"] = judicial.parse_months(text)
             if prompt.get("options"):
+                # A generation that spent its whole token budget was cut off,
+                # not finished (an EOS-terminated one stops short of the cap;
+                # a fake that ignores token_ids_out leaves the count at 0).
+                # parse_choice turns that into None so a declared
+                # unparseableEndpoint exclusion sees it.
+                hit_token_cap = (token_ids is not None
+                                 and len(token_ids) >= manifest.max_tokens)
                 record["parsedChoice"] = judicial.parse_choice(
-                    text, list(prompt["options"]))
+                    text, list(prompt["options"]), truncated=hit_token_cap)
             if reader_scorers:
                 with _adapters_suspended(model, adapter_active):
                     record["readerScores"] = _reader_scores(

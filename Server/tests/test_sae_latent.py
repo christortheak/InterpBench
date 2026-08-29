@@ -848,7 +848,8 @@ def _patch_run(monkeypatch, log, counts=None):
 
     def generate(model, prompt, *, model_id=None, max_tokens=0, temperature=0.0,
                  injections=None, latent_edits=None, prompt_mode=None,
-                 system_prompt=None, qwen_thinking_enabled=False):
+                 system_prompt=None, qwen_thinking_enabled=False,
+                 token_ids_out=None):
         if counts is not None:
             counts[0] += 1
         log.append({"kind": "generate", "prompt": prompt,

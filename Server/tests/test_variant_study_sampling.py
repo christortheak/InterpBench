@@ -124,7 +124,7 @@ def _fake_generate(log=None, counter=None, arm_flag_at=None, flag=None):
     (seed, sampleIndex, temperature stamps) is what these tests measure."""
     def generate(model, prompt, *, model_id=None, max_tokens=0, temperature=0.0,
                  injections=None, prompt_mode=None, system_prompt=None,
-                 qwen_thinking_enabled=False):
+                 qwen_thinking_enabled=False, token_ids_out=None):
         if counter is not None:
             counter[0] += 1
             if arm_flag_at is not None and counter[0] == arm_flag_at:
