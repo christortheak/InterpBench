@@ -517,6 +517,26 @@ public final class LocalServerController {
         }
     }
 
+    /// Re-run the init-time pidfile adoption on demand. The engine sheet's
+    /// Restart needs it: a server the provisioner started AFTER app launch
+    /// wrote the adoption pidfile, but this controller only adopts in
+    /// `init`, so without a re-check `stop()` would have nothing to signal.
+    /// Same identity gates as launch adoption — a pid that fails them is
+    /// never handed to Stop.
+    public func adoptIfRunning() {
+        guard phase == .idle, process == nil else { return }
+        if case .adopt(let pid, let adoptedPort) = LocalServerPidfile.adoption(
+            workspaceRoot: VectorCatalog.projectRoot)
+        {
+            adoptedPID = pid
+            port = adoptedPort
+            wasAdopted = true
+            phase = .running
+            statusLine = "running (started earlier) at "
+                + "http://127.0.0.1:\(adoptedPort) — Stop terminates it"
+        }
+    }
+
     /// The connection dot's auto-connect reports its outcome here so the
     /// menu's one status line says connected-or-why-not.
     public func noteAutoConnectOutcome(_ outcome: String) {

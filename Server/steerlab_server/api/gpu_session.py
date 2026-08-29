@@ -399,7 +399,11 @@ def _lifecycle_lock():
 # signal would hold a billed GPU to walltime forever. Health checks,
 # capability/status/state polling, and catalog GETs are deliberately absent.
 _ACTIVITY_EXACT = frozenset({
+    # load/cancel sits beside unload: a deliberate slot-management action.
+    # /api/models/preflight is deliberately absent — it is a read-only
+    # cache/size check a picker may issue, not GPU work.
     "/api/load", "/api/load/stream", "/api/models/unload",
+    "/api/models/load/cancel",
     "/api/generate", "/api/generate/stream",
     "/api/variant/generate", "/api/variant/generate/stream",
     # Scores a whole capability battery against a variant — the app's
@@ -1323,6 +1327,10 @@ PROXIED_ROUTES = frozenset({
     "/api/load",
     "/api/load/stream",
     "/api/models/unload",
+    # The load a cancel targets, and the cache a preflight inspects, live on
+    # the WORKER — both follow the load routes there.
+    "/api/models/load/cancel",
+    "/api/models/preflight",
     "/api/generate",
     "/api/generate/stream",
     "/api/variant/generate",

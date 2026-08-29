@@ -68,6 +68,11 @@ class ModelSlot:
     # Set once the slot holds a usable model OR its load failed (in which case
     # the slot has been removed from the registry) — waiters re-check and retry.
     ready: threading.Event = field(default_factory=threading.Event)
+    # Set by ``cancel_load``; the load thread polls it (continuously through
+    # a hub download, at phase boundaries otherwise) and aborts with
+    # LoadCancelled, which travels the ordinary failed-load path: slot
+    # removed, waiters released, device debris swept.
+    cancel_requested: threading.Event = field(default_factory=threading.Event)
 
     @property
     def loading(self) -> bool:
@@ -86,6 +91,15 @@ class ModelSlot:
                 # A loading slot IS busy: generations against it will queue.
                 "busy": True,
                 "loading": True,
+                # What the ACTIVE load is doing right now (download progress,
+                # weight copy) — the same phase text the SSE heartbeats
+                # carry, so a client that missed the stream can still show
+                # it. One load runs at a time (the load lock), so with
+                # several loading placeholders the phase belongs to the one
+                # whose load is actually running; a queued placeholder shows
+                # it too, which overstates only its start time.
+                "loadPhase": model_loader.current_load_phase(),
+                "cancelRequested": self.cancel_requested.is_set(),
                 "loadedAt": None,
                 "lastUsed": self.last_used,
             }
@@ -163,6 +177,29 @@ class ModelRegistry:
         if slot is None:
             return None
         return "loading" if slot.loading else "ready"
+
+    def cancel_load(self, model_id: str | None = None,
+                    revision: str | None = None) -> list[dict]:
+        """Request cancellation of in-flight loads (all of them, or the ones
+        matching ``model_id``/``revision``), returning the identities asked
+        to stop. The unload family cannot touch a loading placeholder — the
+        load thread would publish into a dangling slot — so this is the ONE
+        way to free a slot a load is holding (field incident 2026-08-29: a
+        silent ~55 GB download held the only slot and nothing could release
+        it short of SIGTERMing the engine). Cooperative: the flag is set
+        here, and the slot frees when the load thread observes it — within
+        seconds during a download, at the next phase boundary during a
+        weight copy. Watch /api/state for the slot to disappear."""
+        with self._lock:
+            victims = [
+                slot for slot in self._slots.values()
+                if slot.loading
+                and (model_id is None or slot.key[0] == model_id)
+                and (revision is None or slot.key[1] == revision)]
+            for slot in victims:
+                slot.cancel_requested.set()
+        return [{"modelID": slot.key[0], "revision": slot.key[1],
+                 "device": slot.device} for slot in victims]
 
     def unload(self, model_id: str, revision: str | None = None) -> int:
         with self._lock:
@@ -324,9 +361,19 @@ class ModelRegistry:
 
             try:
                 with self._load_lock:
-                    model = model_loader.load(
-                        model_id, revision=revision, dtype=dtype,
-                        device=created.device)
+                    # Point the loader's cancel probe at THIS slot's flag for
+                    # the duration of the load (one loader at a time under
+                    # the load lock, so the module-level seam is unambiguous;
+                    # a seam rather than a parameter so existing callers and
+                    # test fakes keep their signatures).
+                    model_loader.set_cancel_check(
+                        created.cancel_requested.is_set)
+                    try:
+                        model = model_loader.load(
+                            model_id, revision=revision, dtype=dtype,
+                            device=created.device)
+                    finally:
+                        model_loader.set_cancel_check(None)
             except BaseException:
                 with self._lock:
                     self._slots.pop(created.key, None)
@@ -391,14 +438,32 @@ class ModelRegistry:
             busy = ", ".join(sorted(
                 s.key[0] if s.loading else s.model.model_id
                 for s in self._slots.values()))
+            loading = sorted(s.key[0] for s in self._slots.values()
+                             if s.loading)
+            # The remedy must name a repair that EXISTS (field incident
+            # 2026-08-29: this message said "cancel the work holding it"
+            # while an in-flight load had no cancel anywhere, and the only
+            # way out was SIGTERMing the engine).
+            if loading:
+                remedy = (
+                    f"A model load is holding a slot ({', '.join(loading)}) "
+                    "— cancel it with POST /api/models/load/cancel (a "
+                    "download stops within seconds; a weight copy stops at "
+                    "its next phase boundary), or retry when it finishes."
+                )
+            else:
+                remedy = (
+                    "A slot is held for the duration of any in-flight "
+                    "generation or running job (chat, extraction, sweep, "
+                    "study, judging); retry when it finishes or cancel that "
+                    "job."
+                )
             raise model_loader.ModelLoadError(
                 f"cannot load another model: every resident model slot is busy "
-                f"({busy}). A slot is held for the duration of any in-flight "
-                "generation, running job, or model load (chat, extraction, "
-                "sweep, study, judging); retry when it finishes or cancel the "
-                f"work holding it. This server keeps up to {self.max_loaded} "
-                "resident model(s) — raise STEERLAB_MAX_LOADED_MODELS for "
-                "more capacity.")
+                f"({busy}). {remedy} This server keeps up to "
+                f"{self.max_loaded} resident model(s) — raise "
+                "STEERLAB_MAX_LOADED_MODELS for more capacity.",
+                advice_complete=True)
         # Prefer evicting a model from the target device; otherwise evict global LRU.
         same_device = [slot for slot in candidates if slot.device == target_device]
         victim = min(same_device or candidates, key=lambda s: s.last_used)

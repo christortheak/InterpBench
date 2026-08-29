@@ -14,6 +14,54 @@ migration that rewrites frozen bytes.
 
 ### Added
 
+- **An in-flight model load is cancellable, and a load that would download
+  says so first.** Field incident 2026-08-29: selecting an uncached 27B on
+  the app-managed local engine silently began a ~55 GB hub download inside
+  the load, which held the engine's only resident-model slot —
+  `POST /api/models/unload` answered `unloaded: 0` (a loading placeholder is
+  never evictable), no cancel existed anywhere, the busy-slot refusal said
+  "cancel the work holding it" with no such cancel in existence, and the only
+  way out was SIGTERMing the engine process by hand.
+
+  Engine: `POST /api/models/load/cancel` interrupts in-flight load(s)
+  cooperatively — a hub download stops within seconds (cold-cache downloads
+  now run through the install verb's cancellable child process instead of
+  inline in `from_pretrained`, and carry that verb's semantics: the FULL
+  snapshot, which the announced size prices honestly — on a legacy
+  multi-format repo that is more than `from_pretrained` used to fetch, and
+  it is what the install-complete marker has always asserted), a weight
+  copy stops at its next phase boundary — and the slot frees through the
+  ordinary failed-load path. The
+  load stream's FIRST event announces an impending download with its
+  hub-metadata size (`willDownload` / `downloadBytes`), heartbeats carry
+  live download progress, `GET /api/models/preflight` answers
+  cached/downloadBytes before a load commits the slot, unload's answer names
+  the cancel verb when a loading slot blocked it, and the busy-slot refusal
+  names a repair that exists. Capabilities: `chat.loadCancel`,
+  `chat.loadPreflight`.
+
+  App: a server-workspace load of an uncached model asks first
+  ("Download ~N GB and load?") — the same rule the local tier always
+  enforced with its separate Download… verb; Cancel Load now also cancels on
+  the engine (capability-gated); and the Local Engine Details pane gained a
+  running-engine section: resident models with live load phase (download
+  progress included), Unload Models, Cancel Load, and Restart Engine…
+  (identity-gated stop, then re-provision).
+
+### Fixed
+
+- **The Local Engine Details pane's `site qualify` no longer reports a
+  profile nobody is running.** The qualify subprocess inherited the app's
+  working directory (`/` when launched from Finder) and no `STEERLAB_ROOT`,
+  so its serverProfile check derived the artifact root from `getcwd()` and
+  failed on `metadataRoot: /.steerlab does not exist`. The argv now pins
+  `--root` to the same workspace root the serve step passes. Engine-side,
+  env-supplied profile paths (`STEERLAB_ROOT`, `STEERLAB_METADATA_ROOT`, and
+  the optional asset/run/archive/node-cache roots) expand `~` and `$VAR` at
+  the one place they become profile fields — launchers that never ran a
+  shell (managed processes, launchd, cron) pass them verbatim, and the
+  literal spelling was probed, reported, and created as-is.
+
 - **`evaluate` gained a seeded, stratified subsample:
   `--sample-per-condition <n>` with `--sample-seed <hex-or-int>`.**
   Field-discovered 2026-08-29, and the discovery is the shape of the gap: a

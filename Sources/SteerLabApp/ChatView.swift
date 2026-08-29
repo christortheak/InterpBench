@@ -291,6 +291,18 @@ struct ChatView: View {
         return false
     }
 
+    /// The confirm button restates the size, so the destructive-ish choice
+    /// names what it commits to.
+    private func downloadConfirmTitle(
+        _ pending: ChatService.PendingRemoteDownload
+    ) -> String {
+        if let bytes = pending.downloadBytes {
+            return String(
+                format: "Download ~%.1f GB and load", Double(bytes) / 1e9)
+        }
+        return "Download and load"
+    }
+
     private var loadButtonTitle: String {
         switch service.cluster.computeTarget {
         case .local:
@@ -1108,8 +1120,16 @@ struct ChatView: View {
                     if service.isRemoteModelLoading {
                         Button("Cancel Load") { service.cancelRemoteLoad() }
                             .help(
-                                "stop waiting for this load — the server may "
-                                + "still finish it and keep the model resident")
+                                service.cluster.capabilities?.supportsLoadCancel
+                                    == true
+                                    ? "stop this load on the engine too — a "
+                                        + "download stops within seconds, a "
+                                        + "weight copy at its next phase "
+                                        + "boundary, and the resident slot "
+                                        + "frees"
+                                    : "stop waiting for this load — the server "
+                                        + "may still finish it and keep the "
+                                        + "model resident")
                     }
                     if service.modelInstaller.isInstalling {
                         Button("Cancel Download") { service.modelInstaller.cancel() }
@@ -1158,6 +1178,28 @@ struct ChatView: View {
                 .help(
                     "the workspace is global; switch it with the Compute "
                         + "selector in the window toolbar")
+            }
+            // A server load that would really be a multi-GB download asks
+            // first (field incident 2026-08-29: an uncached 27B silently
+            // began a ~55 GB hub download that held the engine's only
+            // resident-model slot). Same rule the local tier enforces with
+            // its separate Download… verb.
+            .confirmationDialog(
+                "Download model weights first?",
+                isPresented: Binding(
+                    get: { service.pendingRemoteDownload != nil },
+                    set: { if !$0 { service.dismissPendingRemoteDownload() } }),
+                titleVisibility: .visible,
+                presenting: service.pendingRemoteDownload
+            ) { pending in
+                Button(downloadConfirmTitle(pending)) {
+                    service.beginConfirmedRemoteLoad()
+                }
+                Button("Cancel", role: .cancel) {
+                    service.dismissPendingRemoteDownload()
+                }
+            } message: { pending in
+                Text(pending.confirmationText)
             }
 
             // GPU session (plan §2.7): conspicuous, adjacent to the model

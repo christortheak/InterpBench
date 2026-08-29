@@ -1448,10 +1448,9 @@ public final class LocalEngineProvisioner {
         let reportFile = FileManager.default.temporaryDirectory
             .appending(component: "steerlab-site-qualify-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: reportFile) }
-        let argv = [
-            source.venvPython.path, "-u", "-m", "steerlab_server.cli",
-            "site", "qualify", "--json", reportFile.path,
-        ]
+        let argv = Self.qualifyArgv(
+            source: source, workspaceRoot: VectorCatalog.projectRoot,
+            reportFile: reportFile)
         let result = await shell.run(argv)
         for line in result.lines.suffix(40) { emit(line) }
         guard let data = try? Data(contentsOf: reportFile),
@@ -1473,6 +1472,28 @@ public final class LocalEngineProvisioner {
             statusLine = "running, but site qualify failed: "
                 + report.failing.joined(separator: ", ")
         }
+    }
+
+    /// The `site qualify` argv — pure, so the root pin is asserted in tests
+    /// rather than trusted.
+    ///
+    /// `--root` is LOAD-BEARING (field incident 2026-08-29): the qualify
+    /// subprocess inherits the app's environment and working directory —
+    /// no `STEERLAB_ROOT`, cwd `/` when launched from Finder — so without
+    /// the pin its profile check derived the artifact root from `getcwd()`
+    /// and probed a metadataRoot at the filesystem root (`/.steerlab does
+    /// not exist`), a verdict about a deployment nobody was running. The
+    /// pin names the SAME workspace root the serve step passes, so the
+    /// check describes the server it just started.
+    public nonisolated static func qualifyArgv(
+        source: CodeResources.LocalEngineSource, workspaceRoot: URL,
+        reportFile: URL
+    ) -> [String] {
+        [
+            source.venvPython.path, "-u", "-m", "steerlab_server.cli",
+            "site", "qualify", "--root", workspaceRoot.path,
+            "--json", reportFile.path,
+        ]
     }
 
     /// `{"service": "steerlab-server", "engineVersion": "steerlab-server 0.1.0+ab12cd34", …}`

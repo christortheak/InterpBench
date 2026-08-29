@@ -218,6 +218,15 @@ CENSUS: tuple[RouteRole, ...] = (
        "SSE variant of /api/load. Same role, same reason."),
     _r("POST", "/api/models/unload", W,
        "Releases the interactive slot. The other half of /api/load."),
+    _r("POST", "/api/models/load/cancel", W,
+       "Interrupts an in-flight interactive load and frees its slot — the "
+       "repair the busy-slot refusal names (2026-08-29: a 55 GB download "
+       "held the only slot with no cancel anywhere). Proxied beside "
+       "/api/load and counted as activity, exactly like unload."),
+    _r("GET", "/api/models/preflight", W,
+       "What loading a model would do right now (cached? download size?) so "
+       "the app's picker can confirm a multi-GB download BEFORE the load "
+       "commits the slot. Read-only; deliberately NOT session activity."),
 
     # ── Playground: synchronous, interactive compute ───────────────────────
     _r("POST", "/api/generate", W,
