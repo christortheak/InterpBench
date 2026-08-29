@@ -29,6 +29,20 @@ WARNING = "warning"
 # Below this, one item is worth more than a tenth of the score, so a single
 # flipped item reads as a large capability change.
 MIN_ITEMS = 10
+# Charter clause 2: an agent is used GENERATIVELY, so a battery with no
+# long-form regime cannot see the failure modes generation has — length
+# inflation, variance collapse, incoherence. The motivating observation: the
+# short greedy per-cell sweep battery scored accuracy 1.0 at a dose three
+# independent instruments had already called degraded.
+MIN_HEALTH_ITEMS = 3
+# One long-form sample per item cannot show variance collapse at all: the
+# reading has no spread to lose. Three is the floor at which a population SD
+# means anything.
+MIN_GENERATIVE_SAMPLES = 3
+# A budget this short clips every agent at the same number, so length
+# inflation is invisible by construction — "generous" is the charter's word
+# and this is the number under it.
+MIN_GENERATIVE_MAX_TOKENS = 256
 # Two options give a 0.5 chance floor: an intervention has to move the model
 # a long way before the accuracy notices.
 MIN_DISCRIMINATIVE_OPTIONS = 3
@@ -133,12 +147,67 @@ def _file_findings(spec: battery_mod.BatterySpec) -> list[Finding]:
             "reproducible, but a persona in the battery's context can itself "
             "suppress plain answers — prefer no system prompt unless the "
             "capability being probed needs one."))
-    if len(spec.items) < MIN_ITEMS:
+    graded = spec.graded_items()
+    if len(graded) < MIN_ITEMS:
         out.append(Finding(
             WARNING, "fewItems",
-            f"{len(spec.items)} item(s): one item is worth "
-            f"{1 / max(1, len(spec.items)):.0%} of the score, so item noise "
+            f"{len(graded)} graded item(s): one item is worth "
+            f"{1 / max(1, len(graded)):.0%} of the score, so item noise "
             f"reads as a capability change (want ≥ {MIN_ITEMS})."))
+    out.extend(_regime_findings(spec))
+    return out
+
+
+def _regime_findings(spec: battery_mod.BatterySpec) -> list[Finding]:
+    """Charter clause 2: BOTH operating regimes, and the long-form one wide
+    enough to show what it exists to show.
+
+    Every finding here is a WARNING, never a blocker, and deliberately so.
+    There are TWO battery artifacts in this codebase and only one of them owes
+    both regimes. A format-2 file is the PINNED per-condition control a study
+    freezes, and it is complete as that — the sampled multi-sample regime is
+    not even pinnable, because scored per condition inside a run matrix it
+    would be a second outcome measure wearing a control's name. A format-3
+    file is the standalone FLOOR battery ``battery run`` reads, and the floor
+    charter asks for both regimes because agents are used generatively.
+    Blocking one for not being the other would be a category error.
+
+    Deliberately NOT here: a warning on every format-2 file for having one
+    regime. The linter's question is "is this a control", and a format-2 file
+    is a complete answer to it; the file only falls short when it is asked to
+    be a FLOOR battery, and the place that knows it was asked is the verb that
+    reads it. ``battery_run.regime_advisory`` says it there, once, on the run
+    that actually wanted both regimes — rather than on every lint of every
+    pinned control in the workspace, where it would be noise the reader learns
+    to skip.
+    """
+    out: list[Finding] = []
+    if not spec.isolated or not spec.two_regime:
+        return out
+    health = spec.health_items()
+    if len(health) < MIN_HEALTH_ITEMS:
+        out.append(Finding(
+            WARNING, "fewHealthItems",
+            f"{len(health)} generationHealth item(s): the long-form regime is "
+            "declared but barely populated, so a generative failure has "
+            f"almost nowhere to show (want ≥ {MIN_HEALTH_ITEMS})."))
+    protocol = spec.generative
+    if protocol is None:
+        return out
+    if protocol.samples_per_item < MIN_GENERATIVE_SAMPLES:
+        out.append(Finding(
+            WARNING, "fewGenerativeSamples",
+            f"samplesPerItem {protocol.samples_per_item}: variance collapse "
+            "is a change in the SPREAD across samples, and a reading with "
+            f"fewer than {MIN_GENERATIVE_SAMPLES} samples has no spread to "
+            "lose."))
+    if protocol.max_tokens < MIN_GENERATIVE_MAX_TOKENS:
+        out.append(Finding(
+            WARNING, "tightGenerativeBudget",
+            f"generativeProtocol maxTokens {protocol.max_tokens}: a budget "
+            "this short clips every agent at the same number, so length "
+            "inflation is invisible by construction (want ≥ "
+            f"{MIN_GENERATIVE_MAX_TOKENS})."))
     return out
 
 
@@ -148,6 +217,22 @@ def _item_findings(spec: battery_mod.BatterySpec, item: dict,
     mode = spec.item_scoring(item)
     prompt = item["prompt"]
     answer = item["answer"]
+
+    if mode == battery_mod.SCORING_HEALTH:
+        # Nothing is graded, so every check below — which is about a scorer
+        # that can be fooled by length or format — has nothing to say. The one
+        # thing a health item can get wrong is asking for something SHORT: a
+        # prompt the model answers in a sentence produces no long-form reading
+        # whatever the token budget allows.
+        if _FORMAT_INSTRUCTION.search(prompt):
+            out.append(Finding(
+                WARNING, "shortAnswerHealthItem",
+                "a generationHealth prompt carries a response-format "
+                "instruction. This item exists to elicit EXTENDED prose — "
+                "length, distinct-2 and completion rate are all read off it "
+                "— and an instruction to answer briefly makes every agent's "
+                "reading the same short one.", index))
+        return out
 
     if mode == battery_mod.SCORING_CHOICE:
         options = item.get("options") or []

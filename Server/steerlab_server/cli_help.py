@@ -31,6 +31,8 @@ METAVARS: dict = {
     "--adjudicated-endpoint": "<file>",
     "--agent": "<name-or-path>",
     "--agent-name": "<name>",
+    "--agents": "<ref,ref,…>",
+    "--alpha-units": "<norm|raw>",
     "--cell": "<layer>:<alpha>",
     "--concept": "<name>",
     "--deltas": "<d1,d2>",
@@ -46,6 +48,7 @@ METAVARS: dict = {
     "--gres": "<spec>",
     "--job-name": "<name>",
     "--mem": "<size>",
+    "--model": "<model-id>",
     "--out": "<file>",
     "--parallel": "<n>",
     "--parallel-jobs": "<n>",
@@ -53,6 +56,7 @@ METAVARS: dict = {
     "--prompts": "<path>",
     "--qualification": "<path>",
     "--reason": "<text>",
+    "--revision": "<sha>",
     "--resume": "<run-dir>",
     "--resume-from": "<run-dir>",
     "--sample-per-condition": "<n>",
@@ -73,6 +77,12 @@ FLAG_PURPOSES: dict = {
         "values; requires --source.",
     "--agent": "The promoted agent the policy perturbs.",
     "--agent-name": "Name the minted variant artifact.",
+    "--agents":
+        "Several agents at once, comma-separated; the same reference shapes "
+        "--agent takes.",
+    "--alpha-units":
+        "How a condition spec's \u03b1 is denominated (default norm, the project "
+        "convention).",
     "--allow-unverified-epoch":
         "Accept a legacy run that carries no experiment-hash stamp.",
     "--cell": "Override the sweep-selected cell, loudly.",
@@ -98,6 +108,7 @@ FLAG_PURPOSES: dict = {
     "--job-name": "Scheduler job name.",
     "--json": "Print exactly one machine-readable envelope on stdout.",
     "--mem": "Scheduler memory request.",
+    "--model": "The base model the reading is taken on.",
     "--no-control": "Omit the control condition.",
     "--no-evidence": "Skip packaging an evidence bundle for the job.",
     "--out": "Write the same document to this file.",
@@ -111,6 +122,7 @@ FLAG_PURPOSES: dict = {
     "--qualification": "Qualification evidence recorded on the promotion.",
     "--reason": "Why the manual cell was chosen; recorded on the certificate.",
     "--resume": "Continue a checkpointed run in this directory.",
+    "--revision": "Pin the model revision, so the reading names one set of weights.",
     "--skip-model-fixtures":
         "Skip the checks that need a tokenizer from the local model cache.",
     "--resume-from": "Continue judging from this run directory.",
@@ -141,11 +153,43 @@ EXIT_CODE_LINE = (
     "· 70 failed  (--json: the envelope's `state` is authoritative)")
 
 
+#: Per-VERB overrides of :data:`FLAG_PURPOSES`, keyed ``"<family> <verb>
+#: --flag"``. The Swift twin is ``CLIHelp.verbPurposes``, and the reason both
+#: engines have one is the same: a flag spelling that two verbs share honestly
+#: (``--agent``, ``--model``) can still mean two different things, and a
+#: single flat line then has to be vague enough to fit both — which is how a
+#: help page stops answering the question a caller had.
+VERB_FLAG_PURPOSES: dict = {
+    # `experiment confirm --agent` names ONE promoted agent to perturb around;
+    # `battery run --agent` names each agent to read, repeats, and accepts
+    # three reference shapes the confirm verb has no use for.
+    "battery run --agent":
+        "One agent to read: `baseline`, a condition spec "
+        "<concept>:<layer>:<alpha>, or a promoted agent artifact by name or "
+        "path. Repeat per agent; prefix <name>= to name one.",
+    # `study submit --dry-run` prints what it WOULD submit; `battery run`
+    # submits nothing to anything — it executes here, so the honest line is
+    # about the plan and the price, not about a submission.
+    "battery run --dry-run":
+        "Report the plan and the walltime estimate; load no model and write "
+        "no run.",
+    "battery run --model":
+        "The base model `baseline` and condition-spec agents are a dose ON — "
+        "required unless every agent is an artifact, which carries its own.",
+}
+
+
 def metavar(flag: str) -> str:
     return METAVARS.get(flag, "<value>")
 
 
-def flag_purpose(flag: str) -> str:
+def flag_purpose(flag: str, spec: VerbSpec | None = None) -> str:
+    """The line one flag gets on one verb's page: the verb's own override
+    where it has one, else the flag's shared line."""
+    if spec is not None:
+        override = VERB_FLAG_PURPOSES.get(f"{spec.label} {flag}")
+        if override:
+            return override
     return FLAG_PURPOSES.get(flag, "")
 
 
@@ -190,7 +234,7 @@ def verb_text(spec: VerbSpec) -> str:
         spellings = [spelling(spec, flag) for flag in flags]
         width = min(max(len(text) for text in spellings), 34)
         for text, flag in zip(spellings, flags):
-            purpose = flag_purpose(flag)
+            purpose = flag_purpose(flag, spec)
             if flag in spec.required_flags:
                 purpose = (purpose + "  (required)") if purpose else "Required."
             padding = " " * max(2, width + 2 - len(text))
@@ -251,10 +295,12 @@ def _verbs_outside_the_envelope(family: str, declared: set) -> list:
     Imported lazily: ``cli`` imports this module inside a function, and a
     module-level import back would close the cycle.
     """
-    if family != "experiment":
+    from . import cli
+    roster = {"experiment": "EXPERIMENT_VERBS",
+              "battery": "BATTERY_VERBS"}.get(family)
+    if roster is None:
         return []
-    from .cli import EXPERIMENT_VERBS
-    return [verb for verb in EXPERIMENT_VERBS if verb not in declared]
+    return [verb for verb in getattr(cli, roster) if verb not in declared]
 
 
 def verb_payload(spec: VerbSpec) -> dict:
@@ -263,7 +309,7 @@ def verb_payload(spec: VerbSpec) -> dict:
     flags = []
     for flag in spec.declared_flags:
         entry = {"flag": flag, "takesValue": takes_value(spec, flag),
-                 "purpose": flag_purpose(flag)}
+                 "purpose": flag_purpose(flag, spec)}
         if takes_value(spec, flag):
             entry["value"] = metavar(flag)
         flags.append(entry)

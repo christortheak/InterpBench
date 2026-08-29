@@ -1449,6 +1449,38 @@ by a stalled study, and the phase's own rule is that this client invents no
 surface the runner protocol does not already expose. When a field discovery
 names it, the pass-through is the change, not a design.
 
+#### A second recorded gap: `battery run` has one surface, not three
+
+`steerlab-server battery run` (2026-08-29, `docs/CLI-REFERENCE.md` §6.10) reads
+a capability battery against one or more agents and writes a pinned evidence
+run. **It exists on the engine and on neither client**, and the split is worth
+recording because it is not the usual one.
+
+The usual rule (§3.2, §7) is *authoring belongs to a client, execution to the
+engine*, and `battery run` is unambiguously execution — it loads models — so
+its absence from the Swift CLI and the Python client follows the rule and needs
+no exception. What does **not** follow is the other half: every other
+model-loading verb is reachable *from* a client, because every other one is
+manifest-shaped. `steerlab-cli remote submit-bundle`, `steerlab runner submit`
+and `steerlab run` all address a **run bundle**, which carries an
+`experiment.json` and is addressed by experiment name and verb. A battery run
+has no manifest and no experiment: its inputs are a battery FILE and a set of
+AGENT references, and no route on the runner protocol accepts that shape.
+
+So the pass-through that would close this is **not** one flag-pair. It needs a
+job kind, a route that accepts `{battery, agents[], model, alphaUnits}`, and an
+evidence shape for a run directory that is not a study's — three additions to
+the runner protocol, each of which this document's own rule (§10.9: the client
+invents no surface the protocol does not already expose) says a client may not
+invent on its own. Recorded rather than built, and for the same reason as the
+gap above: it was named by design, not by a stalled study.
+
+What holds meanwhile: a floor reading is taken where the models are. On a
+cluster that is a shell on the engine; on a Mac with the engine installed it is
+`steerlab-server battery run` locally. The reading is keyed by pins, so it
+travels as evidence to any surface that wants to cite it, even though the verb
+that produced it does not.
+
 ---
 
 ## 11. The route-ownership census — runner-profile narrowing, step 1

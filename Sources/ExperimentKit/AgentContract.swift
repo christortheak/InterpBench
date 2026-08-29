@@ -1325,6 +1325,38 @@ historical**: it is a stable machine code agents switch on, and it means
 "this engine executes, it does not author", never "author on a Mac". Do not
 emulate the verb; run the repair where it belongs.
 
+**One verb runs on the compute engine ALONE and has no client spelling at
+all.** `steerlab-server battery run <battery-file> --agent <ref>…` reads a
+capability battery against one or more agents — `baseline`, a condition spec
+`<concept>:<layer>:<alpha>`, or a promoted agent artifact — and writes its own
+pinned run directory holding `battery.jsonl` and `battery-report.json`. It
+loads models, so it is execution and cannot live on an authoring client; and
+unlike every other model-loading verb it is not manifest-shaped, so no bundle
+route carries it either. If you need a floor reading, take it where the models
+are, then cite the report by its pins.
+
+This is the **floor battery**, and it is a different artifact from the battery
+a study pins. The pinned one (`batteryEvidence`, §4) is a per-condition control
+inside a study's own run matrix. The floor one precedes any study: it asks
+whether an agent is a working model at all, under a charter that is ex ante,
+study-blind and fixed. Two consequences you will meet:
+
+- **A floor battery declares `batteryFormat: 3` and CANNOT be pinned.** It
+  carries a second operating regime — long-form generation at a positive
+  temperature, several samples per item, read for generation health rather
+  than graded — and scored per condition inside a run matrix that would be a
+  second outcome measure wearing a control's name. Pin a `batteryFormat: 2`
+  battery; run a `batteryFormat: 3` one.
+- **Take a floor reading before you compare arms of different kinds.** Before
+  claiming a prompted persona and an injected agent differ in behaviour, show
+  they are capability-equivalent — otherwise the difference you measured is
+  competence, and no analysis afterwards can separate the two. One
+  `battery run` naming each arm as an `--agent` does it, and the report is
+  keyed by pins so a later study can cite the same reading.
+
+`steerlab-server battery generation-prompt` states the charter in full and is
+what you hand an author who is drafting one.
+
 ---
 
 ## 8. Remote execution, and where the depth is

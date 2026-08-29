@@ -166,6 +166,46 @@ import Testing
         #expect(declared.scoring(for: declared.items[0]) == .generatedText)
     }
 
+    /// batteryFormat 3 is the standalone FLOOR battery (server
+    /// `battery.FORMAT_TWO_REGIME`): format 2 plus a long-form regime,
+    /// sampled at a positive temperature and read for GENERATION HEALTH
+    /// rather than graded. It is deliberately not pinnable on either engine
+    /// — scored per condition inside a run matrix, a sampled multi-sample
+    /// regime would be a second outcome measure wearing a control's name —
+    /// and it is refused by NAME rather than as an unknown number, because
+    /// an author who wrote one did not make a typo: they wrote the floor
+    /// battery and pointed a study at it. Server twin:
+    /// `battery.pinnability_problem`.
+    @Test func aFloorBatteryIsRefusedByNameRatherThanPinned() throws {
+        let lines = [
+            #"{"batteryFormat":3,"scoring":"choiceProbability","#
+                + #""generativeProtocol":{"temperature":0.7,"maxTokens":512,"#
+                + #""samplesPerItem":3}}"#,
+            choiceItem,
+        ]
+        let problem = PinShapeValidation.capabilityBatteryShapeProblem(
+            Data(lines.joined(separator: "\n").utf8), file: "floor.jsonl")
+        let reason = try #require(problem)
+        #expect(reason.contains("batteryFormat 3"))
+        #expect(reason.contains("standalone FLOOR battery"))
+        #expect(reason.contains("cannot pin"))
+        // The refusal is only useful if it says where the format DOES run.
+        #expect(reason.contains("steerlab-server battery run"))
+    }
+
+    /// The unknown-format refusal keeps its own sentence, and now says
+    /// "PINNABLE" — because 3 is a real format that is simply not pinnable,
+    /// and a line claiming 2 is "the only header format" would be false.
+    @Test func anUnknownFormatStillRefusesAndNamesTheOnePinnableOne() throws {
+        let lines = [#"{"batteryFormat":9}"#, choiceItem]
+        let reason = try #require(
+            PinShapeValidation.capabilityBatteryShapeProblem(
+                Data(lines.joined(separator: "\n").utf8), file: "b.jsonl"))
+        #expect(reason.contains("batteryFormat 9"))
+        #expect(reason.contains("only PINNABLE header format is 2"))
+        #expect(reason.contains("format 3 is the standalone floor battery"))
+    }
+
     @Test func aLegacyBatteryStillRefusesJunkTheSameWay() throws {
         // Unchanged failure MODE for format 1: the historical malformed-line
         // error, naming the line, not the new ExperimentError wording.

@@ -82,8 +82,6 @@ def main(argv: list[str] | None = None) -> int:
         return _finetune(args[1:])
     if args and args[0] == "housekeeping":
         return _housekeeping(args[1:])
-    if args and args[0] == "battery":
-        return _battery(args[1:])
     if args and args[0] == "panel":
         return _panel(args[1:])
     if args and args[0] == "jlens":
@@ -129,6 +127,8 @@ def _usage_text() -> str:
         "| battery lint <path> [--json] "
         "| battery generation-prompt [--count N] [--avoid <domain text>] "
         "[--out <file>] "
+        "| battery run <path> --agent <ref>… [--model <id>] "
+        "[--alpha-units norm|raw] [--dry-run] [--json] "
         "| panel list | panel check <path-or-name> "
         "| jlens list|supported|acquire|import|inspect|support|qualify|g0|report "
         "[<model-or-lens-id>] "
@@ -150,7 +150,15 @@ def _usage_text() -> str:
 
 #: The verb families whose declared verbs are on the agent path (audit §2.1).
 #: Tuple rather than a set so the dispatch order in ``main`` is readable.
-_AGENT_FAMILY_ORDER = ("experiment", "jobs", "study", "vectors", "data", "site")
+#:
+#: ``battery`` joined in 2026-08-29 for ``battery run``, and joining is
+#: deliberately CHEAP for its two older verbs: ``cli_envelope.parse`` hands an
+#: UNDECLARED verb its arguments intact and suppresses ``--json``, so ``battery
+#: lint`` and ``battery generation-prompt`` print exactly what they printed and
+#: return exactly what they returned — including ``lint``'s historical exit 2,
+#: which ``state_for_legacy_exit`` already reads as a refusal.
+_AGENT_FAMILY_ORDER = ("experiment", "jobs", "study", "vectors", "data",
+                       "site", "battery")
 
 #: Every ``experiment`` verb this engine dispatches, in lifecycle order.
 #:
@@ -168,6 +176,13 @@ EXPERIMENT_VERBS = (
 )
 
 _EXPERIMENT_VERB_LINE = "verbs: " + " | ".join(EXPERIMENT_VERBS) + "\n"
+
+#: Every ``battery`` verb this engine dispatches, in the order a battery meets
+#: them: author the brief, lint the draft, then read agents against it. Same
+#: discipline as :data:`EXPERIMENT_VERBS` and for the same reason — the family
+#: help page spends this list rather than paraphrasing it, so an unlisted verb
+#: cannot become indistinguishable from an absent one.
+BATTERY_VERBS = ("generation-prompt", "lint", "run")
 
 
 #: The argument surface of every ``experiment`` verb that does NOT answer in
@@ -391,7 +406,8 @@ def _run_agent_family(family: str, args: list[str]) -> int:
     from . import cli_envelope as envelope
 
     handlers = {"experiment": _experiment, "data": _data, "vectors": _vectors,
-                "jobs": _jobs, "study": _study, "site": _site}
+                "jobs": _jobs, "study": _study, "site": _site,
+                "battery": _battery}
     handler = handlers[family]
 
     try:
@@ -3448,7 +3464,12 @@ _BATTERY_USAGE = (
     "usage: steerlab-server battery lint <path> [--json]\n"
     "       (path is workspace-relative, e.g. prompts/batteries/x.jsonl)\n"
     "       steerlab-server battery generation-prompt [--count N] "
-    "[--avoid <domain text>] [--out <file>]\n")
+    "[--avoid <domain text>] [--out <file>]\n"
+    "       steerlab-server battery run <path> --agent <ref> [--agent <ref>]… "
+    "[--agents a,b,c]\n"
+    "         [--model <id>] [--revision <sha>] [--alpha-units norm|raw] "
+    "[--dtype D] [--device D]\n"
+    "         [--dry-run] [--json]\n")
 
 
 def _battery(args: list[str]) -> int:
@@ -3467,9 +3488,18 @@ def _battery(args: list[str]) -> int:
     to hand to an LLM so a draft passes ``lint`` first time. Text only — it
     reads no model and writes nothing unless ``--out`` is given.
 
+    ``run`` (2026-08-29) is the standalone reading: one battery against
+    several agents, under the BATTERY's own protocol, into a pinned run
+    directory. It is the only verb of the three that loads a model, and the
+    only one that answers in the agent envelope — the other two keep their
+    historical human output and their historical exit codes exactly.
+
     Exit codes: 0 = done / no blockers (warnings may still print); 2 = at
     least one lint blocker, so the battery should not be pinned as a
-    capability control; 64 = usage."""
+    capability control; 64 = usage; and, on ``run``, the shared state
+    vocabulary (65 refused, 66 not found, 70 failed)."""
+    if args and args[0] == "run":
+        return _battery_run(args[1:])
     if not args or args[0] not in ("lint", "generation-prompt"):
         sys.stderr.write(_BATTERY_USAGE)
         return 64
@@ -3496,6 +3526,159 @@ def _battery(args: list[str]) -> int:
         print(f"\n{len(report.blockers)} blocker(s), "
               f"{len(report.warnings)} warning(s) — {verdict}")
     return 0 if report.ok else 2
+
+
+def _battery_run(rest: list[str]):
+    """``battery run <battery-file> --agent <ref>…`` — the standalone
+    capability reading.
+
+    Everything that can refuse refuses BEFORE the run directory exists
+    (``battery_run.preflight``), so a refused invocation leaves no empty
+    immutable run behind. ``--dry-run`` stops exactly there and reports the
+    plan plus the honest walltime estimate, which is the same estimate the
+    real run would have been priced at — the plan a caller is shown is the
+    plan that runs.
+    """
+    from .cli_envelope import CLIResult
+    from .experiment import battery_run
+
+    if not rest or rest[0].startswith("--"):
+        sys.stderr.write(_BATTERY_USAGE)
+        return CLIResult(
+            state="blocked", exit_code=64, code="usage",
+            message="battery run needs a battery file",
+            repair_action=("steerlab-server battery run "
+                           "prompts/batteries/<name>.jsonl --agent baseline"))
+    battery_file = rest[0]
+    agent_values = battery_run.expand_agent_flags(
+        _repeated_flag(rest, "--agent"), _repeated_flag(rest, "--agents"))
+    alpha_units = _flag(rest, "--alpha-units") or battery_run.DEFAULT_ALPHA_UNITS
+    model_id = _flag(rest, "--model")
+    revision = _flag(rest, "--revision")
+    dtype = _flag(rest, "--dtype")
+    device = _flag(rest, "--device")
+
+    try:
+        spec, agents = battery_run.preflight(
+            battery_file, agent_values, model_id=model_id, revision=revision,
+            alpha_units=alpha_units)
+    except battery_run.BatteryRunRefusal as exc:
+        sys.stderr.write(f"battery run: {exc.reason}\n  {exc.repair_action}\n")
+        return CLIResult(
+            state=("notFound" if exc.code == "notFound"
+                   else "blocked" if exc.code in ("usage", "agentReference",
+                                                  "agentNameCollision",
+                                                  "noAgents", "modelRequired")
+                   else "refused"),
+            exit_code=(66 if exc.code == "notFound"
+                       else 64 if exc.code in ("usage", "agentReference",
+                                               "agentNameCollision",
+                                               "noAgents", "modelRequired")
+                       else 65),
+            code=exc.code, message=exc.reason,
+            repair_action=exc.repair_action,
+            payload={"battery": battery_file})
+
+    plan = _battery_run_plan(spec, agents, battery_file, dtype)
+    if "--dry-run" in rest:
+        for line in _battery_plan_lines(plan):
+            print(line)
+        return CLIResult(
+            message=(f"planned {plan['recordCount']} record(s) over "
+                     f"{len(agents)} agent(s); nothing was run"),
+            state="planned", payload=plan)
+
+    try:
+        report = battery_run.execute(
+            battery_file, agent_values, model_id=model_id, revision=revision,
+            alpha_units=alpha_units, dtype=dtype, device=device,
+            log=lambda message: print(message))
+    except battery_run.BatteryRunRefusal as exc:   # pragma: no cover - preflighted
+        sys.stderr.write(f"battery run: {exc.reason}\n")
+        return CLIResult(state="refused", exit_code=65, code=exc.code,
+                         message=exc.reason,
+                         repair_action=exc.repair_action)
+    accuracies = ", ".join(
+        f"{block['name']} {block['graded']['accuracy']:.4g}"
+        for block in report["agents"])
+    from .cli_envelope import advisory as make_advisory
+    regime = battery_run.regime_advisory(spec)
+    return CLIResult(
+        changed=True,
+        state="okWithAdvisories" if regime else "ready",
+        advisories=([make_advisory("singleRegimeCapabilityReading", regime)]
+                    if regime else []),
+        message=(f"read '{battery_file}' (sha256 {spec.digest[:12]}…) against "
+                 f"{len(agents)} agent(s) — accuracy: {accuracies}"),
+        payload={"runDirectory": report["runDirectory"],
+                 "report": report,
+                 "reportPath": os.path.join(report["runDirectory"],
+                                            battery_run.REPORT_FILENAME)})
+
+
+def _battery_run_plan(spec, agents, battery_file: str, dtype) -> dict:
+    """What the run will cost, priced against this host's own throughput
+    history — the same ``housekeeping.throughput_lookup`` the submission
+    preflight reads, so a battery run and a study submission never disagree
+    about how fast this model is on this GPU. No history means no estimate,
+    never an invented one."""
+    from .experiment import battery_run
+    rate = 0.0
+    try:
+        from .api import housekeeping, instrument_family
+        gpu = housekeeping.parse_gpu_type(os.environ.get("STEERLAB_GRES"))
+        # The SAMPLED family's rate first, then the global. A battery run's
+        # expensive half is the long-form regime — sampled text at a positive
+        # temperature — and pricing the whole run at a deterministic-logprob
+        # rate would under-ask exactly the runs that need the time.
+        entry = housekeeping.throughput_lookup(
+            agents[0].model_id, gpu, None,
+            instrument_family=instrument_family.SAMPLED_STOCHASTIC)
+        if not entry or not float(entry.get("recordsPerHour", 0) or 0):
+            entry = housekeeping.throughput_lookup(agents[0].model_id, gpu,
+                                                   None)
+        rate = float((entry or {}).get("recordsPerHour", 0) or 0)
+    except Exception:  # noqa: BLE001 - pricing metadata, never a blocker
+        rate = 0.0
+    walltime = battery_run.walltime_estimate(spec, agents,
+                                             records_per_hour=rate,
+                                             dtype=dtype)
+    return {"battery": battery_file, "batteryHash": spec.digest,
+            "batteryFormat": spec.format_version,
+            "protocol": battery_run.protocol_block(spec),
+            "recordCount": walltime["plannedRecords"],
+            "modelLoads": walltime["modelLoads"],
+            "residentModelsAtPeak": battery_run.slots_required(agents, dtype),
+            "walltime": walltime,
+            "agents": [{"name": a.name, "kind": a.kind,
+                        "reference": a.reference, "modelID": a.model_id,
+                        "modelRevision": a.revision, "identity": a.identity}
+                       for a in agents]}
+
+
+def _battery_plan_lines(plan: dict) -> list:
+    lines = [f"{plan['battery']}  format {plan['batteryFormat']}  "
+             f"sha256 {plan['batteryHash']}"]
+    protocol = plan["protocol"]
+    generative = protocol.get("generative")
+    lines.append(
+        f"protocol (the BATTERY's): promptMode {protocol['promptMode']}, "
+        f"maxTokens {protocol['maxTokens']}"
+        + (f"; long-form temperature {generative['temperature']}, maxTokens "
+           f"{generative['maxTokens']}, samplesPerItem "
+           f"{generative['samplesPerItem']}" if generative else
+           " (one regime — this battery declares no long-form items)"))
+    for agent in plan["agents"]:
+        lines.append(f"  agent {agent['name']:<24} {agent['kind']:<10} "
+                     f"{agent['reference']}")
+    lines.append(f"{plan['recordCount']} record(s), {plan['modelLoads']} "
+                 f"model load(s), {plan['residentModelsAtPeak']} resident "
+                 "model(s) at the largest single moment")
+    lines.append("walltime: " + (
+        f"~{plan['walltime']['estimatedHours']:.2f} h — "
+        if plan["walltime"]["estimatedHours"] is not None else "")
+        + plan["walltime"]["basis"])
+    return lines
 
 
 def _battery_generation_prompt(rest: list[str]) -> int:
@@ -4156,6 +4339,26 @@ def _flag(args: list[str], name: str) -> str | None:
         if i + 1 < len(args):
             return args[i + 1]
     return None
+
+
+def _repeated_flag(args: list[str], name: str) -> list[str]:
+    """Every occurrence of a repeatable value flag, in the order typed.
+
+    :func:`_flag` is first-wins and single-valued and cannot express one.
+    ``cli_envelope.parse`` already keeps every occurrence in the slice it
+    hands a declared verb, so repeatability needs nothing but a reader that
+    does not stop at the first — the same shape the Swift CLI's
+    ``repeatedFlag`` closure has, for ``panel compile --seat``.
+    """
+    values: list[str] = []
+    index = 0
+    while index < len(args):
+        if args[index] == name and index + 1 < len(args):
+            values.append(args[index + 1])
+            index += 2
+        else:
+            index += 1
+    return values
 
 
 _PREFLIGHT_ENDPOINTS_USAGE = (

@@ -130,6 +130,15 @@ ADVISORY_CODES: tuple[str, ...] = (
     # case: the vocabulary is closed and cross-engine, and what an agent's
     # switch cares about is that something it wrote will not arm every arm.
     "systemPromptNotApplied",
+    # A capability reading was taken under ONE operating regime where the
+    # battery charter asks for two. Today's one instance: a standalone
+    # `battery run` against a format-2 battery, which declares only short
+    # greedy answers — so the report carries accuracy and no generation
+    # health, and cannot express length inflation, variance collapse, or
+    # incoherence. Named for the MECHANISM, not the format: what an agent's
+    # switch cares about is that the floor it is about to cite is narrower
+    # than the charter's floor.
+    "singleRegimeCapabilityReading",
 )
 
 
@@ -510,6 +519,21 @@ VERB_SPECS: tuple[VerbSpec, ...] = (
                  # only thing that requests node-local scratch and arms the
                  # cleanup trap (ledger 2026-08-23).
                  "--resume", "--dependency"})),
+    # The standalone capability battery (2026-08-29). It EXECUTES models, so
+    # it lives here and not on an authoring client — and it is the one verb
+    # in this table with a repeatable value flag: `--agent` may be given once
+    # per agent, the `panel compile --seat` shape. `parse` already keeps
+    # every occurrence in the argument slice it hands the verb, so the only
+    # thing repeatability needs is a reader that does not stop at the first
+    # (``cli._repeated_flag``).
+    VerbSpec("battery", "run", positional="<battery-file>",
+             purpose="Run a capability battery against one or more agents "
+                     "and write a pinned evidence run.",
+             boolean_flags=frozenset({"--dry-run"}),
+             value_flags=frozenset({"--agent", "--agents", "--model",
+                                    "--revision", "--alpha-units", "--dtype",
+                                    "--device"}),
+             required_flags=frozenset({"--agent"})),
 )
 
 _SPECS_BY_LABEL = {spec.label: spec for spec in VERB_SPECS}

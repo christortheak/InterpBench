@@ -240,13 +240,33 @@ public enum PinShapeValidation {
         guard let header = batteryHeaderObject(lines[0]) else { return nil }
         let remedy = "fix the header line, or run "
             + "`steerlab-server battery lint \(file)` which writes a valid one"
+        // batteryFormat 3 (the server's `FORMAT_TWO_REGIME`) is a REAL
+        // format, and refusing it needs its own sentence: an author who
+        // wrote one did not make a typo, they wrote the standalone FLOOR
+        // battery and pointed a study at it. Format 3 adds a sampled,
+        // multi-sample long-form regime read for generation health, which
+        // scored per condition inside a run matrix would be a second outcome
+        // measure wearing a control's name — so it is deliberately not
+        // pinnable on EITHER engine (server `battery.PINNABLE_FORMATS`), and
+        // is reached only through `steerlab-server battery run`.
+        if case .number(let version)? = header["batteryFormat"], version == 3 {
+            return "the capability battery '\(file)' declares batteryFormat 3 "
+                + "— the standalone FLOOR battery, which a study cannot pin. "
+                + "Its long-form regime is sampled and multi-sample; scored "
+                + "per condition inside a run matrix it would be a second "
+                + "outcome measure wearing a control's name. Read it with "
+                + "`steerlab-server battery run \(file) --agent …`, and pin a "
+                + "batteryFormat 2 battery here"
+        }
         guard case .number(let version)? = header["batteryFormat"], version == 2
         else {
             let raw = header["batteryFormat"]?.displayString ?? "nothing"
             return "the capability battery '\(file)' declares batteryFormat "
-                + "\(raw) — the only header format is 2 (a file with NO "
-                + "header is the legacy format 1, and declaring 1 would "
-                + "change what an existing pinned hash means); " + remedy
+                + "\(raw) — the only PINNABLE header format is 2 (a file with "
+                + "NO header is the legacy format 1, and declaring 1 would "
+                + "change what an existing pinned hash means; format 3 is the "
+                + "standalone floor battery, run rather than pinned); "
+                + remedy
         }
         let defaultScoring: String
         switch header["scoring"] {

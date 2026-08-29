@@ -777,6 +777,60 @@ accuracy drops under a condition, report the degradation alongside the effect
 and treat the effect as confounded — extreme doses break tasks rather than
 biasing them, and the battery is what tells you which happened.
 
+#### The floor battery, and why it is not this one
+
+There are **two** capability artifacts, and conflating them is the mistake to
+avoid. The one above is the *pinned per-condition control*: it belongs to a
+study, it is frozen into that study's manifest, and it is scored inside that
+study's run matrix. The other is the **floor battery** — `steerlab-server
+battery run <battery-file> --agent <ref>…`, which reads one or more agents
+against a battery *before any study uses them* and writes its own pinned run.
+
+The floor battery is governed by a charter (`docs/CLI-REFERENCE.md` §6.10):
+ex ante justified, study-blind and fixed; both operating regimes (greedy short
+answers **and** long-form generation at a positive temperature, because agents
+are used generatively); sensitivity validated — never defined — by a known
+degraded positive control. Its boundary is worth stating in the negative,
+because it is the line researchers cross: if your study measures relative
+performance on very hard, lengthy real-analysis proofs, that capability must
+**not** be probed by the battery, much less gated on it. The battery asks
+whether the model still works; whether it is good at your hard task is settled
+by performance in your study.
+
+The second regime exists because the first could not see the failure. A short
+greedy battery scored accuracy **1.0** at a dose that three independent
+instruments had already confirmed degraded. Twenty-four greedy tokens have no
+room for length inflation, variance collapse, or incoherence to appear in — so
+a floor reading also reports mean word count, distinct-2, their spreads, and
+completion rate, each against the baseline agent's.
+
+#### Matched capability: the comparison that needs it first
+
+The floor battery earns its keep on comparisons *between different kinds of
+agent*. Suppose the claim is that an injected agent and a prompted persona
+produce different legal behaviour. Before that comparison means anything, the
+two have to be shown **capability-equivalent**: if the injected agent is
+quietly degraded — writing longer, repeating itself, running past its token
+budget — then any behavioural difference you measure is a difference in
+*competence*, not in the disposition you named, and the study cannot tell them
+apart afterwards. The same applies to a fine-tuned variant against a stock
+model, and to two doses of the same direction against each other.
+
+So run the floor battery over every arm you intend to compare, at the doses you
+intend to use, before the study is frozen — one `battery run` naming each arm
+as an `--agent`. Cite the report's per-agent accuracy *and* its generation
+health in the methods note, and say which arms matched and which did not. A
+comparison whose arms were never shown equivalent is not a comparison of
+dispositions; it is a comparison of two capabilities that happen to have
+different names. Because the report is keyed by pins (battery digest, model
+revision, vector-artifact hashes, dose, protocol), a later study using the same
+agent at the same dose can cite the same reading rather than buying its own.
+
+Nothing in the floor reading refuses anything: whether an arm's floor is
+acceptable is your ruling against your study's stakes. A battery that refused
+on a number would have become a difficulty target, which is exactly what the
+charter's first clause forbids.
+
 ### 5.3 Judge validity
 
 - **At least one judge**, enforced at freeze; a panel of two or more must be

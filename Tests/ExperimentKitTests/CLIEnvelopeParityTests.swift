@@ -124,6 +124,7 @@ import Testing
             "choiceItemsWithoutInstrument", "revisionAdoption",
             "revisionAdoptionWarning", "siteQualifyWarning",
             "deprecatedImplicitSelection", "systemPromptNotApplied",
+            "singleRegimeCapabilityReading",
         ]
         #expect(CLIAdvisory.vocabulary == serverLiteral)
     }

@@ -14,6 +14,107 @@ migration that rewrites frozen bytes.
 
 ### Added
 
+- **The standalone capability battery: `steerlab-server battery run
+  <battery-file> --agent <ref>…`, with a charter, a second operating regime,
+  and a pinned evidence run.**
+
+  **The motivating insensitivity.** The per-cell battery a sweep already runs
+  is short and greedy — 24 tokens, temperature 0 — and it scored accuracy
+  **1.0** at a dose that three independent instruments had separately
+  confirmed degraded. Nothing was wrong with the scoring. A short greedy
+  answer simply has no room for the failure modes an agent actually fails in:
+  length inflation, variance collapse, incoherence. An instrument that cannot
+  move where the thing it measures moves is not a lenient control; it is a
+  control that reports a pass by construction.
+
+  **The charter (maintainer ruling, 2026-08-29)**, recorded in the code
+  (`battery.py`), in the authoring brief (`battery generation-prompt`), in
+  `docs/CLI-REFERENCE.md` §6.10 and in `docs/CONDUCTING-A-STUDY.md` §5.2:
+
+  1. A battery is **ex ante justified, study-blind, and fixed**. An agent
+     precedes any study it appears in, so the battery inherits no study's
+     protocol, domain, or difficulty target. It is a **floor** —
+     instruction-following, basic multi-step reasoning, factual recall, fluent
+     extended generation, moderate difficulty — never a frontier
+     differentiator. The recorded boundary example: a study measuring relative
+     performance on very hard, lengthy real-analysis proofs must **not** find
+     that capability probed, much less gated, by the battery. Study-specific
+     capability is the study's own business, settled by performance in the
+     study itself.
+  2. The **operating regimes are generic and owned by the battery spec**: both
+     greedy short-answer items *and* long-form generative items at a standard
+     positive temperature with a generous token budget — justified because
+     agents are used generatively, never because some study samples.
+  3. **Sensitivity is validated, never defined, by known positives.** A
+     battery version proves itself by *failing* a known-degraded state; if it
+     cannot, it is revised on ex ante grounds until it can. The known positive
+     is a check on the instrument, not a tuning target — a battery tuned until
+     one dose fails has become the difficulty target clause 1 forbids.
+
+  **`batteryFormat: 3`**, additive: format 2 plus a `generativeProtocol`
+  header block (`temperature` 0.7, `maxTokens` 512, `samplesPerItem` 3 by
+  default, all the battery's own) and a third scoring mode
+  `generationHealth` — items with no answer and no grading, generated under
+  that protocol and read for word count, distinct-2 and completion rate, per
+  sample, with means and population spreads per agent. A format-3 battery is
+  deliberately **not pinnable** into a study on either engine
+  (`battery.PINNABLE_FORMATS`, `PinShapeValidation`): scored per condition
+  inside a run matrix, a sampled multi-sample regime would be a second outcome
+  measure wearing a control's name. Existing format-1 and format-2 files are
+  byte-identical in meaning and keep their pinned hashes.
+
+  **Agent references** (repeatable `--agent`, the `panel compile --seat`
+  shape, plus `--agents a,b,c`): `baseline`, a condition spec
+  `<concept>:<layer>:<alpha>` resolved against the workspace's vector
+  catalogue, a promoted agent artifact by name or path, and `<name>=<ref>` for
+  any of them. Doses are built through the same `variant_injections` path a
+  study condition uses, so a battery dose and a study dose are one arithmetic.
+
+  **Sequential agent custody.** Agents group by `(modelID, revision, dtype)` in
+  declaration order, and every container the remainder of the run will not use
+  is released before the next model loads — the agent twin of the judge-column
+  release seam, with the same guarantee: peak device memory is the **max** of
+  any one still-needed model, never the **sum**. Order is never reshuffled;
+  `--dry-run` prices what the order costs first.
+
+  **Honest pricing.** Records are `agents × (graded + health × samplesPerItem)`
+  — a sampled long-form item is one record *per sample* — divided by the
+  sampled family's own observed rate where there is one, times the standard
+  margin, plus the fixed startup cost **per model load**, because sequential
+  custody means a two-model run pays two cold loads. No throughput history
+  gives no estimate rather than an invented one.
+
+  **Evidence.** An immutable `runs/<stamp>-battery-run/` with `battery.jsonl`
+  and `battery-report.json`, keyed by pins throughout (battery digest, model
+  revision, vector-artifact hashes, dose, protocol) so two studies using the
+  same agent at the same dose cite one floor reading instead of each buying
+  their own. Health comparisons speak the sweep's own coherence vocabulary
+  (`distinct2Ratio`, `lengthInflated`), and everything is **reported, never
+  gated**. Sampled generations are seeded per record under the house
+  `derivedSHA256` discipline keyed on the battery digest with an empty
+  condition field — common random numbers across agents, so a health
+  difference is the intervention and not the dice.
+
+  **Refusals**, all upstream of the run directory so a refused invocation
+  writes nothing: `notFound`, `malformedBattery`, `batteryLintBlocked` (the
+  battery must lint clean before a number from it is worth having),
+  `unknownAgent`, `ambiguousAgent` (a concept naming two extractions refuses
+  and lists both — which extraction a dose was read at is a provenance fact),
+  `agentModelConflict`, `agentReference`, `agentNameCollision`, `noAgents`,
+  `modelRequired`. New closed-vocabulary advisory
+  `singleRegimeCapabilityReading` (both engines) for a floor reading taken
+  against a one-regime battery.
+
+  The `battery` family joins the agent path for this verb; `battery lint` and
+  `battery generation-prompt` keep their historical human output and exit
+  codes byte for byte. The verb exists on the **engine alone** — it loads
+  models, so it cannot live on an authoring client, and unlike every other
+  model-loading verb it is not manifest-shaped, so no bundle route carries it
+  either (`docs/PORTABILITY-CONTRACTS.md` §10.9). The battery CONTENT itself
+  is not authored in this change: `battery generation-prompt` now emits the
+  charter, and the first floor battery written against it will be validated
+  against a positive control before it ships.
+
 - **`evaluate` gained a seeded, stratified subsample:
   `--sample-per-condition <n>` with `--sample-seed <hex-or-int>`.**
   Field-discovered 2026-08-29, and the discovery is the shape of the gap: a

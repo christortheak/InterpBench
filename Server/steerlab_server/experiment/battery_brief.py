@@ -120,6 +120,78 @@ def _avoid_rule(avoid: str) -> str:
         "and reasoning.)")
 
 
+def _charter() -> str:
+    """The battery charter, as the brief states it.
+
+    The maintainer's three rulings, verbatim in substance including the
+    real-analysis boundary example — the example is in the brief and not only
+    in the docs because it is the one an author most often gets wrong, and a
+    brief that stated the principle without it would be agreed with and then
+    disregarded. Assembled from :mod:`.battery`'s own constants so the numbers
+    a drafter is told cannot drift from the numbers the loader enforces.
+    """
+    protocol = battery_mod.GenerativeProtocol()
+    return f"""\
+================================================================
+1a. THE CHARTER — read this before you write a single item
+================================================================
+
+Three rulings govern every battery in this project. They are not style
+preferences; an item that violates one makes the battery unusable as the thing
+it is for.
+
+(1) EX ANTE JUSTIFIED, STUDY-BLIND, AND FIXED. An agent exists before any
+    study it appears in, so the battery inherits NO study's protocol, domain,
+    or difficulty target. It is a FLOOR — instruction-following, basic
+    multi-step reasoning, factual recall, fluent extended generation, moderate
+    difficulty — and never a frontier differentiator.
+
+    THE BOUNDARY EXAMPLE, because this is the mistake that gets made: suppose
+    a study measures relative performance on very hard, lengthy real-analysis
+    proofs. The battery must NOT probe that capability, and must certainly not
+    gate on it. Do not write a hard proof item, a graduate-mathematics item,
+    or anything else pitched at the study's own frontier — not even "to be
+    thorough". Capability at the study's own hard task is the STUDY's
+    business. The battery's only question is whether the model still works at
+    all.
+
+    Practically: aim at items a competent model answers reliably and a
+    genuinely degraded one starts to miss. If you find yourself reaching for
+    difficulty to make an item discriminative, you have crossed the line.
+    Whether the model is good at the study's own hard task is settled by
+    performance in the study, not here.
+
+(2) BOTH OPERATING REGIMES, AND THEY BELONG TO THIS FILE. A battery declares
+    its own protocol, and it declares TWO:
+      - GRADED items: short, greedy, scored 0/1.
+      - LONG-FORM items: generated at a standard positive temperature
+        (default {protocol.temperature}), with a generous token budget
+        (default {protocol.max_tokens}) and several samples each (default
+        {protocol.samples_per_item}), read for GENERATION HEALTH — length,
+        distinct-2, completion rate — and never scored right or wrong.
+
+    The justification for the second regime is that agents are USED
+    generatively. It is not "because some study samples" — the numbers are the
+    battery's, chosen ex ante, and no study may change them. The reason it
+    exists at all: a short greedy battery scored accuracy 1.0 at a dose that
+    three independent instruments had already confirmed was degraded. Nothing
+    was wrong with the scoring. Twenty-four greedy tokens simply have no room
+    for length inflation, variance collapse, or incoherence to appear in.
+
+(3) SENSITIVITY IS VALIDATED, NEVER DEFINED, BY KNOWN POSITIVES. Before a
+    battery ships it is run against a state already known to be degraded (a
+    deliberately overdosed positive control), and it must FAIL there. If it
+    cannot, it gets revised — on EX ANTE grounds, by rule (1), never by
+    reaching for whatever happens to separate that particular control.
+
+    The known positive is a check on the instrument, not a tuning target. A
+    battery tuned until one specific dose fails has become a difficulty target
+    wearing a control's name, which is exactly what rule (1) forbids. Write
+    the items you would defend without ever having seen the control.
+
+"""
+
+
 def generation_prompt(count: int = DEFAULT_ITEM_COUNT, *, avoid: str = "",
                       root: str | None = None) -> str:
     """An LLM prompt the researcher can paste elsewhere to draft a format-2
@@ -129,6 +201,8 @@ def generation_prompt(count: int = DEFAULT_ITEM_COUNT, *, avoid: str = "",
     domain the battery must not touch (the study's own subject matter).
     """
     count = max(1, int(count))
+    charter = _charter()
+    protocol = battery_mod.GenerativeProtocol()
     example, example_source = _worked_example(root)
     grading = textwrap.fill(
         ", ".join(f'"{mode}"' for mode in battery_mod.GRADING_MODES),
@@ -163,6 +237,7 @@ lost capability — response length, output format, a persona in the surrounding
 prompt, an ambiguous item, a lucky guess — is not a control and cannot be
 cited as one. Every rule below follows from that single job.
 
+{charter}
 ================================================================
 2. RULES FOR ITEMS
 ================================================================
@@ -193,16 +268,26 @@ cited as one. Every rule below follows from that single job.
    instruments. Put descriptive text in the prompt; keep the options short.
 
 ================================================================
-3. THE FILE FORMAT — batteryFormat {battery_mod.FORMAT_CURRENT}, JSONL
+3. THE FILE FORMAT — batteryFormat {battery_mod.FORMAT_CURRENT} or {battery_mod.FORMAT_TWO_REGIME}, JSONL
 ================================================================
 
 One JSON object per line. The FIRST non-empty line is a header; every line
-after it is an item. Write format {battery_mod.FORMAT_CURRENT} and nothing else — the headerless legacy
-format is scored under the surrounding study's prompt settings, which is why
-it can no longer be certified as a control.
+after it is an item. Never write the headerless legacy format: it is scored
+under the surrounding study's prompt settings, which is why it can no longer
+be certified as a control.
+
+WHICH FORMAT TO WRITE — the charter's rule (2) decides it:
+  {battery_mod.FORMAT_TWO_REGIME}  A FLOOR battery, both regimes, read by `steerlab-server battery
+     run` against agents. This is what you want unless you were told
+     otherwise: it is the only format that can see a generative failure.
+  {battery_mod.FORMAT_CURRENT}  The PINNED per-condition control a study freezes into its
+     manifest and scores inside its run matrix. One regime, graded only.
+     A study may pin ONLY this (a sampled multi-sample regime scored per
+     condition would be a second outcome measure wearing a control's name),
+     so write it when the battery is destined for a manifest pin.
 
 HEADER (first line) keys:
-  "batteryFormat"        REQUIRED, must be {battery_mod.FORMAT_CURRENT}.
+  "batteryFormat"        REQUIRED, {battery_mod.FORMAT_CURRENT} or {battery_mod.FORMAT_TWO_REGIME}.
   "scoring"              "{battery_mod.SCORING_CHOICE}" (default, and what you should
                          write) or "{battery_mod.SCORING_GENERATED}".
   "promptMode"           non-empty string; default "{battery_mod._DEFAULT_PROMPT_MODE}".
@@ -214,6 +299,15 @@ HEADER (first line) keys:
                          are short.
   "description"          free text, optional, ignored by the scorer — a good
                          place to say what this battery probes.
+  "{battery_mod.GENERATIVE_PROTOCOL_KEY}"  format {battery_mod.FORMAT_TWO_REGIME} ONLY, and the second regime's whole
+                         protocol. An object with exactly three keys, each
+                         optional:
+                           "temperature"     > 0; default {protocol.temperature}
+                           "maxTokens"       positive int; default {protocol.max_tokens}
+                           "samplesPerItem"  positive int; default {protocol.samples_per_item}
+                         Write the defaults unless you have a reason you can
+                         state. They are the BATTERY's numbers, chosen ex ante
+                         from how agents are used; no study may override them.
 
 The header is what makes the battery ISOLATED: this arming is applied
 identically to the baseline, to every steering condition, and to every variant
@@ -247,6 +341,32 @@ ITEM LINE — generatedText (the escape hatch; avoid unless forced):
   Every grading mode here is length- or format-sensitive and the linter will
   say so.
 
+ITEM LINE — {battery_mod.SCORING_HEALTH} (format {battery_mod.FORMAT_TWO_REGIME} only; the second regime):
+  {{"id": "...", "prompt": "...", "scoring": "{battery_mod.SCORING_HEALTH}"}}
+  "prompt"   REQUIRED. An open request for EXTENDED prose — several
+             paragraphs' worth. Ordinary generative work of the kind an agent
+             is actually put to: explain something, summarize something,
+             write a short piece, walk through a plan.
+  "answer"   MUST NOT be present. Nothing is graded, so there is nothing for
+             it to be right about.
+  "grading"  MUST NOT be present, for the same reason.
+  "options"  MUST NOT be present.
+
+  Reading: the item is generated {protocol.samples_per_item} times (whatever
+  "samplesPerItem" says), each sample seeded deterministically, and read for
+  word count, distinct-2 (repetition collapse drives it toward 0) and
+  completion rate (did generation END, or hit the token budget?). Means and
+  population spreads are reported per agent, and compared against the
+  baseline agent's. Nothing here is ever scored right or wrong.
+
+  Write these to the charter's rule (1) as strictly as the graded items:
+  moderate, generic, plainly-worded requests. NOT hard, NOT specialist, NOT
+  in the study's domain. And do NOT ask for brevity — "in one sentence", "be
+  concise", "keep it short" makes every agent's reading the same short one
+  and the regime measures nothing.
+
+  Aim for at least {battery_lint.MIN_HEALTH_ITEMS} of them in a format-{battery_mod.FORMAT_TWO_REGIME} battery.
+
 ================================================================
 4. WHAT THE LINTER WILL CHECK
 ================================================================
@@ -273,7 +393,15 @@ WARNINGS (usable, but each one has to be defended in the methods note):
   - two items with the same prompt;
   - a declared "systemPrompt" in the header;
   - a response-format instruction anywhere in a prompt;
-  - any generatedText item, per its grading mode's specific sensitivity.
+  - any generatedText item, per its grading mode's specific sensitivity;
+  - a format-{battery_mod.FORMAT_CURRENT} file (one regime — fine for a pinned control, not a floor
+    battery: `singleRegime`);
+  - a format-{battery_mod.FORMAT_TWO_REGIME} file with fewer than {battery_lint.MIN_HEALTH_ITEMS} generationHealth items,
+    "samplesPerItem" below {battery_lint.MIN_GENERATIVE_SAMPLES} (no spread to lose, so variance collapse
+    is unreadable), or a generative "maxTokens" below {battery_lint.MIN_GENERATIVE_MAX_TOKENS} (a budget that
+    short clips every agent at the same number, so length inflation is
+    invisible by construction);
+  - a response-format instruction in a generationHealth prompt.
 
 ================================================================
 5. WORKED EXAMPLE
@@ -291,7 +419,9 @@ Its items are EXAMPLES OF THE FORMAT, not a battery to copy — write your own
 
 Return ONLY the JSONL: one header line, then {count} item lines. No prose
 before or after it, no code fence, no trailing commentary. Prefer
-choiceProbability for every item.
+choiceProbability for every GRADED item; where you were asked for a
+format-{battery_mod.FORMAT_TWO_REGIME} floor battery, spend {battery_lint.MIN_HEALTH_ITEMS} or more of the {count} on
+{battery_mod.SCORING_HEALTH} items and the rest on choiceProbability.
 
 ================================================================
 7. THEN, IN THE WORKSPACE
@@ -301,6 +431,18 @@ choiceProbability for every item.
 2. Run: steerlab-server battery lint prompts/batteries/<name>.jsonl
 3. Fix every blocker, and every warning you can fix without weakening the
    items. Re-lint until it reports no blockers.
-4. Only then pin it in an experiment manifest. A battery pinned before it
-   lints clean is evidence of nothing, and freeze will have stamped it.
+4. VALIDATE THE SENSITIVITY (charter rule 3). Run the battery against a
+   baseline AND a state already known to be degraded — a deliberately
+   overdosed positive control:
+
+     steerlab-server battery run prompts/batteries/<name>.jsonl \\
+       --model <id> --agent baseline --agent <concept>:<layer>:<a-large-alpha>
+
+   The control must FAIL — its accuracy, or its generation health, has to
+   move. If it does not, the battery is not sensitive enough to be evidence:
+   revise it on ex ante grounds (rule 1) and run it again. Do NOT edit items
+   toward whatever happens to separate this particular control.
+5. Only then pin it in an experiment manifest (format {battery_mod.FORMAT_CURRENT} only) or cite a
+   floor reading from it. A battery pinned before it lints clean is evidence
+   of nothing, and freeze will have stamped it.
 """

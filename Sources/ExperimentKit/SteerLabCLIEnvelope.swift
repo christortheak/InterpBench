@@ -217,6 +217,23 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// something it wrote will not arm every arm of the run.
     case systemPromptNotApplied
 
+    /// A capability reading was taken under ONE operating regime where the
+    /// battery charter asks for two. Today's one instance: a standalone
+    /// `battery run` against a format-2 battery, which declares only short
+    /// greedy answers — so the report carries accuracy and no generation
+    /// health, and cannot express length inflation, variance collapse, or
+    /// incoherence.
+    ///
+    /// Named for the MECHANISM (a reading with one regime), not for the
+    /// format: the vocabulary is closed and cross-engine, and what an agent's
+    /// `switch` cares about is that the floor it is about to cite is
+    /// narrower than the charter's floor. It is deliberately NOT a lint
+    /// finding — a format-2 battery is a complete PINNED per-condition
+    /// control and is the only format a study may pin; it falls short only
+    /// relative to a FLOOR reading, and the verb taking one is the only
+    /// thing that knows a floor reading was asked for.
+    case singleRegimeCapabilityReading
+
     public static let vocabulary: [String] = allCases.map(\.rawValue)
 }
 

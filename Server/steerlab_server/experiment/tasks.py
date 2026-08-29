@@ -7007,6 +7007,15 @@ def _run_capability_battery(model, name, manifest, bundles, conditions, root,
     from . import battery as battery_mod, model_variant
     battery_file = manifest.capability_battery_file
     spec = battery_mod.load_spec(battery_file, root)
+    # The pin gate, checked before the drift check because it is the more
+    # fundamental complaint: an unpinnable format is wrong whatever it hashes
+    # to. `experiment verify` and the Swift pin validator refuse it earlier;
+    # this is the backstop for a manifest that was pinned before the format
+    # existed, and it fires with the model already resident, which is exactly
+    # why the earlier gates are worth having.
+    unpinnable = battery_mod.pinnability_problem(spec)
+    if unpinnable is not None:
+        raise RuntimeError(unpinnable)
     items, digest = spec.items, spec.digest
     if digest != manifest.capability_battery_hash:
         raise RuntimeError(

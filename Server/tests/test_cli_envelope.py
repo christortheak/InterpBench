@@ -134,6 +134,7 @@ def test_advisory_codes_match_the_swift_literal():
         "choiceItemsWithoutInstrument", "revisionAdoption",
         "revisionAdoptionWarning", "siteQualifyWarning",
         "deprecatedImplicitSelection", "systemPromptNotApplied",
+        "singleRegimeCapabilityReading",
     ]
     assert list(cli_envelope.ADVISORY_CODES) == contract
 
@@ -311,21 +312,23 @@ def test_undeclared_verbs_pass_through_untouched():
 
 def test_the_declared_verbs_are_the_audits_fourteen_plus_site_qualify():
     """Audit §2.1's table, server column, plus `site qualify` (WP6/gate 7 — a
-    server-only verb, added after the audit) and `vectors mirror-poles` (pole
+    server-only verb, added after the audit), `vectors mirror-poles` (pole
     mirroring, added later still: pure local file work, so it joined the agent
-    path rather than following `backfill-norms` off it). `data check` is
-    counted once (its argument domain differs from Swift's — a documented §3.2
-    divergence, not a second verb)."""
+    path rather than following `backfill-norms` off it), and `battery run`
+    (the standalone capability reading, 2026-08-29 — it loads models, so it is
+    server-only, and it brought its family onto the agent path with it).
+    `data check` is counted once (its argument domain differs from Swift's — a
+    documented §3.2 divergence, not a second verb)."""
     labels = sorted(spec.label for spec in cli_envelope.VERB_SPECS)
     assert labels == sorted([
-        "data check", "experiment analyze", "experiment confirm",
-        "experiment evaluate", "experiment extract", "experiment list",
-        "experiment promote", "experiment run", "experiment sweep",
-        "experiment validate", "experiment verify", "jobs list",
-        "site qualify", "study submit", "vectors compare",
+        "battery run", "data check", "experiment analyze",
+        "experiment confirm", "experiment evaluate", "experiment extract",
+        "experiment list", "experiment promote", "experiment run",
+        "experiment sweep", "experiment validate", "experiment verify",
+        "jobs list", "site qualify", "study submit", "vectors compare",
         "vectors mirror-poles",
     ])
-    assert len(cli_envelope.VERB_SPECS) == 16
+    assert len(cli_envelope.VERB_SPECS) == 17
 
 
 # =============================================================================

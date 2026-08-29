@@ -44,11 +44,60 @@ pinned hash keeps its historical meaning; the contaminated case is now LOUD
   available per item/file for probes that genuinely need free text, but v2
   requires an EXPLICIT ``grading`` there — no inferred normalization.
 
-Format 2 runs on BOTH engines since 2026-08-19: Swift's ``CapabilityBattery``
-(``Sources/ExperimentKit/Scoring.swift`` + ``BatteryRun.swift``) parses the
-same header, resolves the same arming, and scores choice items through its own
-answer-token logprob instrument. This module remains the contract authority —
-a change here must land there in the same commit.
+**Format 3 (the two-regime floor battery).** Format 2 plus a second OPERATING
+REGIME the battery file owns: long-form generative items, at a positive
+temperature, with several samples each, read for GENERATION HEALTH rather than
+graded. It exists because a short greedy answer cannot express the failure
+modes an agent actually fails in — length inflation, variance collapse,
+incoherence. The motivating observation, recorded so the format's reason
+survives it: the per-cell sweep battery (short, greedy) scored accuracy 1.0 at
+a dose three independent instruments had already called degraded. Nothing was
+wrong with the scoring; the regime simply had no room for the failure.
+
+A format-3 file declares a :data:`GENERATIVE_PROTOCOL_KEY` block —
+temperature, maxTokens, samplesPerItem — which is the battery's OWN protocol,
+not a study's, for exactly the reason format 2's arming is the battery's own:
+a control that inherits its operating point from the thing it controls is not
+a control. Its ``generationHealth`` items carry no answer and no grading; they
+are read by :func:`health_metrics` and reported per agent, never scored 0/1.
+
+Format 3 runs on the ENGINE ONLY, through the standalone ``battery run`` verb
+(:mod:`.battery_run`). It is deliberately NOT pinnable into a study manifest
+on either engine: a study battery is scored per condition inside the run
+matrix, and a sampled multi-sample regime there would be a second outcome
+measure wearing a control's name. Swift refuses a format-3 pin by name
+(``PinShapeValidation.batteryFormat2Problem``, the twin of
+:func:`_parse_header`'s refusal here).
+
+Formats 1 and 2 run on BOTH engines since 2026-08-19: Swift's
+``CapabilityBattery`` (``Sources/ExperimentKit/Scoring.swift`` +
+``BatteryRun.swift``) parses the same header, resolves the same arming, and
+scores choice items through its own answer-token logprob instrument. This
+module remains the contract authority — a change here must land there in the
+same commit.
+
+**The battery charter (maintainer ruling, 2026-08-29).** Every rule in this
+module and in :mod:`.battery_lint` and :mod:`.battery_brief` descends from
+three sentences, restated here because the code is where they have to hold:
+
+1. A battery is **ex ante justified, study-blind, and fixed**. An agent
+   precedes any study it appears in, so the battery inherits NO study's
+   protocol, domain, or difficulty target. The boundary example, recorded
+   verbatim: a study measuring relative performance on very hard, lengthy
+   real-analysis proofs must NOT find that capability probed — much less
+   gated — by the battery. The battery is a FLOOR (instruction-following,
+   basic multi-step reasoning, factual recall, fluent extended generation,
+   moderate difficulty), never a frontier differentiator. Study-specific
+   capability is the study's own business, judged by performance in the
+   study itself.
+2. The **operating regimes are generic and owned by the battery spec**: both
+   greedy short-answer items AND long-form generative items at a standard
+   positive temperature and a generous token budget — justified because
+   agents are used generatively, never because some study samples.
+3. **Sensitivity is validated, never defined, by known positives.** A battery
+   version proves itself by FAILING a known-degraded state; if it cannot, it
+   is revised on ex ante grounds until it can. The known positive is a check
+   on the instrument, not a tuning target.
 
 The Mac app's SERVER-workspace robustness path scores format 2 too, since
 2026-08-20 (open issues §23): it no longer drives ``/api/variant/generate``
@@ -86,11 +135,20 @@ GRADING_MODES = ("exact_number", "yes_no", "token_exact",
                  "exact_normalized", "regex")
 
 # Format versions. 1 = the legacy headerless file; 2 = the header-declared
-# repaired format. Additive by construction: a v1 file's bytes (and therefore
-# its pinned hash) still mean exactly what they meant before.
+# repaired format; 3 = format 2 plus the long-form generative regime, engine
+# only. Additive by construction: a v1 file's bytes (and therefore its pinned
+# hash) still mean exactly what they meant before, and so do a v2 file's.
 FORMAT_LEGACY = 1
 FORMAT_CURRENT = 2
-SUPPORTED_FORMATS = (FORMAT_LEGACY, FORMAT_CURRENT)
+FORMAT_TWO_REGIME = 3
+SUPPORTED_FORMATS = (FORMAT_LEGACY, FORMAT_CURRENT, FORMAT_TWO_REGIME)
+
+#: The formats a STUDY may pin. Format 3's generative regime is sampled and
+#: multi-sample; scored per condition inside a run matrix it would be a second
+#: outcome measure wearing a control's name, so it is reachable only through
+#: the standalone ``battery run`` verb. Swift's pin validator carries the twin
+#: of this rule.
+PINNABLE_FORMATS = (FORMAT_LEGACY, FORMAT_CURRENT)
 
 # How an item is turned into a 0/1. ``choiceProbability`` reads the model's
 # distribution over the item's declared options (no generation, so no length
@@ -98,10 +156,31 @@ SUPPORTED_FORMATS = (FORMAT_LEGACY, FORMAT_CURRENT)
 # legacy behaviour, kept for probes that cannot be posed as a choice.
 SCORING_CHOICE = "choiceProbability"
 SCORING_GENERATED = "generatedText"
-SCORING_MODES = (SCORING_CHOICE, SCORING_GENERATED)
+#: Format 3 only, and NOT a 0/1 at all: the item is generated under the
+#: battery's generative protocol and read for :func:`health_metrics`. It has
+#: no answer and no grading because there is nothing to be right about — the
+#: reading is whether the agent still writes like a working model.
+SCORING_HEALTH = "generationHealth"
+SCORING_MODES = (SCORING_CHOICE, SCORING_GENERATED, SCORING_HEALTH)
+#: The modes a format-1/2 file may use. ``generationHealth`` needs the
+#: generative protocol block, which only format 3 declares.
+SCORING_MODES_LEGACY = (SCORING_CHOICE, SCORING_GENERATED)
 
 # The default prompt mode both engines render with.
 _DEFAULT_PROMPT_MODE = "chatAssistant"
+
+#: The header key carrying the second operating regime (format 3).
+GENERATIVE_PROTOCOL_KEY = "generativeProtocol"
+
+#: Defaults for that block, and the reason each number is what it is. They are
+#: the BATTERY's, chosen ex ante from how agents are used, never from a study:
+#: a standard positive sampling temperature, a budget generous enough for
+#: several paragraphs (length inflation cannot show up under a cap that clips
+#: everyone), and enough samples per item that within-agent variance is
+#: measurable at all — variance collapse is invisible at one sample.
+DEFAULT_GENERATIVE_TEMPERATURE = 0.7
+DEFAULT_GENERATIVE_MAX_TOKENS = 512
+DEFAULT_GENERATIVE_SAMPLES_PER_ITEM = 3
 
 
 def battery_file(manifest) -> str:
@@ -120,9 +199,28 @@ def live_hash(rel_path: str, root: str | None = None) -> str | None:
 
 
 @dataclass(frozen=True)
+class GenerativeProtocol:
+    """The battery's OWN long-form operating regime (format 3).
+
+    Charter clause 2: both regimes belong to the battery spec, and the
+    generative one is justified because agents are used generatively — never
+    because some study samples. Nothing here is read from a manifest, and
+    nothing a manifest declares can override it.
+    """
+
+    temperature: float = DEFAULT_GENERATIVE_TEMPERATURE
+    max_tokens: int = DEFAULT_GENERATIVE_MAX_TOKENS
+    samples_per_item: int = DEFAULT_GENERATIVE_SAMPLES_PER_ITEM
+
+    def to_dict(self) -> dict:
+        return {"temperature": self.temperature, "maxTokens": self.max_tokens,
+                "samplesPerItem": self.samples_per_item}
+
+
+@dataclass(frozen=True)
 class BatterySpec:
-    """A loaded battery: its items, its bytes' digest, and — for format 2 —
-    the arming and scoring policy the FILE declares."""
+    """A loaded battery: its items, its bytes' digest, and — for format 2 and
+    later — the arming and scoring policy the FILE declares."""
 
     path: str
     digest: str
@@ -133,15 +231,50 @@ class BatterySpec:
     system_prompt: str | None
     qwen_thinking_enabled: bool
     items: list[dict]
+    #: The long-form regime, format 3 only. None on formats 1 and 2, which
+    #: have one regime and no way to declare a second.
+    generative: GenerativeProtocol | None = None
 
     @property
     def isolated(self) -> bool:
         """True when the battery's arming comes from the battery itself, so a
-        reading is comparable across instruments. Format 2 only."""
+        reading is comparable across instruments. Format 2 and later."""
         return self.format_version >= FORMAT_CURRENT
+
+    @property
+    def two_regime(self) -> bool:
+        """True when the file declares the long-form generative regime as
+        well as the graded one (format 3)."""
+        return self.format_version >= FORMAT_TWO_REGIME
+
+    @property
+    def pinnable(self) -> bool:
+        """True when a STUDY may pin this battery. See
+        :data:`PINNABLE_FORMATS`."""
+        return self.format_version in PINNABLE_FORMATS
 
     def item_scoring(self, item: dict) -> str:
         return item.get("scoring") or self.scoring
+
+    def graded_items(self) -> list[dict]:
+        """The items that produce a 0/1 — the accuracy denominator."""
+        return [i for i in self.items
+                if self.item_scoring(i) != SCORING_HEALTH]
+
+    def health_items(self) -> list[dict]:
+        """The long-form items read for generation health only."""
+        return [i for i in self.items
+                if self.item_scoring(i) == SCORING_HEALTH]
+
+    def record_count(self, *, agents: int = 1) -> int:
+        """How many model records running this battery costs, per the honest
+        basis the walltime preflight prices: agents × (graded items + health
+        items × samplesPerItem). A graded item is one record whatever its
+        mode; a health item is one record PER SAMPLE, which is the whole
+        reason the sampled regime is expensive enough to price."""
+        samples = self.generative.samples_per_item if self.generative else 1
+        per_agent = len(self.graded_items()) + len(self.health_items()) * samples
+        return max(0, int(agents)) * per_agent
 
 
 @dataclass(frozen=True)
@@ -259,6 +392,58 @@ def _header(obj: dict) -> bool:
     return "batteryFormat" in obj
 
 
+def _positive_number(rel_path: str, block: str, key: str, value,
+                     *, integer: bool):
+    """One numeric field of a declared protocol block, refused by name."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            f"battery '{rel_path}' line 1: \"{block}\".\"{key}\" must be a "
+            f"{'positive integer' if integer else 'number'} (got {value!r})")
+    if integer and (not isinstance(value, int) or value <= 0):
+        raise ValueError(
+            f"battery '{rel_path}' line 1: \"{block}\".\"{key}\" must be a "
+            f"positive integer (got {value!r})")
+    return int(value) if integer else float(value)
+
+
+def _parse_generative_protocol(rel_path: str, obj) -> GenerativeProtocol:
+    """The format-3 ``generativeProtocol`` block: the battery's own long-form
+    operating regime, with every field refused by name rather than defaulted
+    around."""
+    if obj is None:
+        return GenerativeProtocol()
+    if not isinstance(obj, dict):
+        raise ValueError(
+            f"battery '{rel_path}' line 1: \"{GENERATIVE_PROTOCOL_KEY}\" must "
+            "be an object with keys temperature, maxTokens, samplesPerItem")
+    known = {"temperature", "maxTokens", "samplesPerItem"}
+    unknown = sorted(set(obj) - known)
+    if unknown:
+        raise ValueError(
+            f"battery '{rel_path}' line 1: \"{GENERATIVE_PROTOCOL_KEY}\" has "
+            f"unknown key(s) {', '.join(repr(k) for k in unknown)} — the "
+            f"block declares exactly {', '.join(sorted(known))}")
+    temperature = _positive_number(
+        rel_path, GENERATIVE_PROTOCOL_KEY, "temperature",
+        obj.get("temperature", DEFAULT_GENERATIVE_TEMPERATURE), integer=False)
+    if temperature <= 0:
+        raise ValueError(
+            f"battery '{rel_path}' line 1: "
+            f"\"{GENERATIVE_PROTOCOL_KEY}\".\"temperature\" must be greater "
+            "than 0 — the long-form regime exists to read the model at a "
+            "STANDARD POSITIVE temperature, because that is how an agent is "
+            "used; a greedy long-form item is a generatedText item")
+    return GenerativeProtocol(
+        temperature=temperature,
+        max_tokens=_positive_number(
+            rel_path, GENERATIVE_PROTOCOL_KEY, "maxTokens",
+            obj.get("maxTokens", DEFAULT_GENERATIVE_MAX_TOKENS), integer=True),
+        samples_per_item=_positive_number(
+            rel_path, GENERATIVE_PROTOCOL_KEY, "samplesPerItem",
+            obj.get("samplesPerItem", DEFAULT_GENERATIVE_SAMPLES_PER_ITEM),
+            integer=True))
+
+
 def _parse_header(rel_path: str, obj: dict) -> dict:
     version = obj.get("batteryFormat")
     if version not in SUPPORTED_FORMATS:
@@ -270,11 +455,26 @@ def _parse_header(rel_path: str, obj: dict) -> dict:
             f"battery '{rel_path}' line 1: batteryFormat 1 is the HEADERLESS "
             "legacy format — a file that declares a header is format 2 or "
             "later (declaring 1 would change what a legacy hash means)")
+    modes = SCORING_MODES if version >= FORMAT_TWO_REGIME \
+        else SCORING_MODES_LEGACY
     scoring = obj.get("scoring", SCORING_CHOICE)
-    if scoring not in SCORING_MODES:
+    if scoring not in modes:
         raise ValueError(
-            f"battery '{rel_path}' line 1: unknown scoring {scoring!r} — one "
-            f"of {', '.join(SCORING_MODES)}")
+            f"battery '{rel_path}' line 1: unknown scoring {scoring!r} for "
+            f"batteryFormat {version} — one of {', '.join(modes)}"
+            + (f" ({SCORING_HEALTH} needs batteryFormat {FORMAT_TWO_REGIME}, "
+               f"which declares the \"{GENERATIVE_PROTOCOL_KEY}\" block it "
+               "generates under)" if scoring == SCORING_HEALTH else ""))
+    generative = None
+    if version >= FORMAT_TWO_REGIME:
+        generative = _parse_generative_protocol(
+            rel_path, obj.get(GENERATIVE_PROTOCOL_KEY))
+    elif obj.get(GENERATIVE_PROTOCOL_KEY) is not None:
+        raise ValueError(
+            f"battery '{rel_path}' line 1: \"{GENERATIVE_PROTOCOL_KEY}\" is a "
+            f"batteryFormat {FORMAT_TWO_REGIME} block — a format-{version} "
+            "battery has one operating regime and declaring a second here "
+            "would be silently ignored")
     max_tokens = obj.get("maxTokens", BATTERY_MAX_TOKENS)
     if not isinstance(max_tokens, int) or isinstance(max_tokens, bool) \
             or max_tokens <= 0:
@@ -299,7 +499,8 @@ def _parse_header(rel_path: str, obj: dict) -> dict:
     return {"format_version": version, "scoring": scoring,
             "max_tokens": max_tokens, "prompt_mode": prompt_mode,
             "system_prompt": system_prompt or None,
-            "qwen_thinking_enabled": thinking}
+            "qwen_thinking_enabled": thinking,
+            "generative": generative}
 
 
 def _parse_item(rel_path: str, line_no: int, obj: dict, *,
@@ -309,7 +510,31 @@ def _parse_item(rel_path: str, line_no: int, obj: dict, *,
         raise ValueError(
             f"battery '{rel_path}' line {line_no}: \"prompt\" must be a "
             f"non-empty string (got {type(prompt).__name__})")
+    # The SCORING MODE decides what the rest of the line must look like, so it
+    # is validated first — a format-2 file that asked for a generationHealth
+    # item used to be told its "answer" was missing, which is true and useless:
+    # what it actually needs to hear is that the mode needs the format that
+    # declares the protocol it generates under.
+    declared_scoring = obj.get("scoring", default_scoring)
+    if format_version >= FORMAT_CURRENT:
+        modes = SCORING_MODES if format_version >= FORMAT_TWO_REGIME \
+            else SCORING_MODES_LEGACY
+        if declared_scoring not in modes:
+            raise ValueError(
+                f"battery '{rel_path}' line {line_no}: unknown scoring "
+                f"{declared_scoring!r} for batteryFormat {format_version} — "
+                f"one of {', '.join(modes)}"
+                + (f" ({SCORING_HEALTH} needs batteryFormat "
+                   f"{FORMAT_TWO_REGIME}, which declares the "
+                   f"\"{GENERATIVE_PROTOCOL_KEY}\" block it generates under)"
+                   if declared_scoring == SCORING_HEALTH else ""))
+    # A generationHealth item is not scored, so it has nothing to be right
+    # about: its "answer" is absent by construction and reads as "". Every
+    # other mode keeps the strict string it always required.
     answer = obj.get("answer")
+    if answer is None and declared_scoring == SCORING_HEALTH \
+            and format_version >= FORMAT_TWO_REGIME:
+        answer = ""
     if not isinstance(answer, str):
         raise ValueError(
             f"battery '{rel_path}' line {line_no}: \"answer\" must be a "
@@ -329,12 +554,29 @@ def _parse_item(rel_path: str, line_no: int, obj: dict, *,
         raise ValueError(
             f"battery '{rel_path}' line {line_no}: \"id\" must be a non-empty "
             "string or absent")
-    scoring = obj.get("scoring", default_scoring)
-    if scoring not in SCORING_MODES:
-        raise ValueError(
-            f"battery '{rel_path}' line {line_no}: unknown scoring "
-            f"{scoring!r} — one of {', '.join(SCORING_MODES)}")
+    scoring = declared_scoring       # already validated against the format
     options = obj.get("options")
+    if scoring == SCORING_HEALTH:
+        if options is not None:
+            raise ValueError(
+                f"battery '{rel_path}' line {line_no}: \"options\" belongs to "
+                "choiceProbability items only")
+        if grading is not None:
+            raise ValueError(
+                f"battery '{rel_path}' line {line_no}: a "
+                f"{SCORING_HEALTH} item declares \"grading\" — nothing about "
+                "it is graded. It is generated under the battery's "
+                f"\"{GENERATIVE_PROTOCOL_KEY}\" and read for generation "
+                "health (length, distinct-2, completion rate); drop "
+                "\"grading\", or make it a generatedText item")
+        if obj.get("answer"):
+            raise ValueError(
+                f"battery '{rel_path}' line {line_no}: a "
+                f"{SCORING_HEALTH} item declares an \"answer\" — there is "
+                "nothing for it to be right about. Drop it, or make this a "
+                "graded item")
+        return {"id": item_id, "prompt": prompt, "answer": "",
+                "grading": None, "scoring": scoring, "options": None}
     if scoring == SCORING_CHOICE:
         if not isinstance(options, list) or len(options) < 2:
             raise ValueError(
@@ -360,7 +602,7 @@ def _parse_item(rel_path: str, line_no: int, obj: dict, *,
                 "choiceProbability items only")
         if grading is None:
             raise ValueError(
-                f"battery '{rel_path}' line {line_no}: format-2 "
+                f"battery '{rel_path}' line {line_no}: format-{format_version} "
                 "generatedText items must DECLARE \"grading\" — inferred "
                 "normalization is exactly what made legacy readings "
                 f"format-sensitive (one of {', '.join(GRADING_MODES)})")
@@ -389,7 +631,7 @@ def load_spec(rel_path: str, root: str | None = None) -> BatterySpec:
     header = {"format_version": FORMAT_LEGACY, "scoring": SCORING_GENERATED,
               "max_tokens": BATTERY_MAX_TOKENS,
               "prompt_mode": _DEFAULT_PROMPT_MODE, "system_prompt": None,
-              "qwen_thinking_enabled": False}
+              "qwen_thinking_enabled": False, "generative": None}
     body = lines
     if lines:
         first_no, first_text = lines[0]
@@ -423,10 +665,43 @@ def _decode(rel_path: str, line_no: int, text: str) -> dict:
     return obj
 
 
+def pinnability_problem(spec: BatterySpec) -> str | None:
+    """Why a STUDY may not pin this battery, or None.
+
+    Format 3's long-form regime is sampled and multi-sample. Scored per
+    condition inside a run matrix it would be a second outcome measure
+    wearing a control's name — the exact confusion format 2 was created to
+    end — so it is reachable only through the standalone ``battery run``
+    verb. Refusing at the PIN rather than mid-run is the point: a study that
+    discovered this after loading a 27B model would have paid for the
+    discovery.
+
+    Swift twin: ``PinShapeValidation.batteryFormat2Problem``'s format-3 arm,
+    which says the same thing in the same order.
+    """
+    if spec.format_version in PINNABLE_FORMATS:
+        return None
+    return (f"the capability battery '{spec.path}' declares batteryFormat "
+            f"{spec.format_version} — the standalone FLOOR battery, which a "
+            "study cannot pin. Its long-form regime is sampled and "
+            "multi-sample; scored per condition inside a run matrix it would "
+            "be a second outcome measure wearing a control's name. Read it "
+            f"with `steerlab-server battery run {spec.path} --agent …`, and "
+            f"pin a batteryFormat {FORMAT_CURRENT} battery here")
+
+
 def load_battery(rel_path: str, root: str | None = None) -> tuple[list[dict], str]:
     """``(items, sha256)`` — the historical loader signature, kept because
-    verify/shape checks and several call sites only need those two."""
+    verify/shape checks and several call sites only need those two.
+
+    Also the PIN gate: every caller of this signature is a study pinning or
+    replaying a battery, so an unpinnable format refuses here rather than
+    somewhere downstream with a model already resident.
+    """
     spec = load_spec(rel_path, root)
+    problem = pinnability_problem(spec)
+    if problem is not None:
+        raise ValueError(problem)
     return spec.items, spec.digest
 
 
@@ -445,8 +720,21 @@ def score_item(spec: BatterySpec, item: dict, arming: BatteryArming, *,
     ``selected == answer`` over the model's own next-token distribution, so it
     is invariant to how long or how format-compliant the surrounding
     instrument makes the model.
+
+    A ``generationHealth`` item is NOT scored here: it belongs to the
+    battery's other operating regime, is generated once per sample under
+    :class:`GenerativeProtocol`, and is read by :func:`health_record`. Asking
+    this function for one is a programming error rather than a 0 — a health
+    item silently graded 0 would drag every agent's accuracy down by the same
+    amount and look like a working control.
     """
     mode = spec.item_scoring(item)
+    if mode == SCORING_HEALTH:
+        raise ValueError(
+            f"battery '{spec.path}' item "
+            f"{item.get('id') or item['prompt'][:40]!r} is a {SCORING_HEALTH} "
+            "item: it is read by health_record under the battery's "
+            f"\"{GENERATIVE_PROTOCOL_KEY}\", not scored 0/1 by score_item")
     if mode == SCORING_CHOICE:
         options = item["options"]
         selected, probabilities = choice_fn(item["prompt"], options, arming)
@@ -511,3 +799,93 @@ def evaluate(spec: BatterySpec, arming: BatteryArming, *,
             "summary": {"accuracy": (correct / len(records)) if records else 0.0,
                         "itemCount": len(records),
                         "batteryHash": spec.digest}}
+
+
+# --- generation health (format 3's other regime) ----------------------------
+
+
+def health_record(text: str, *, truncated: bool) -> dict:
+    """The per-sample reading of ONE long-form generation.
+
+    Three numbers, and each one is a failure mode the short greedy regime
+    cannot express (charter clause 2, and the sweep-battery insensitivity
+    that motivated it):
+
+    * ``wordCount`` — length inflation. A degraded model that keeps answering
+      correctly but writes three times as much has changed, and 24 greedy
+      tokens cap everyone at the same number.
+    * ``distinct2`` — repetition collapse, the same
+      :func:`scoring.distinct_bigram_ratio` the sweep's coherence gate reads,
+      so a battery reading and a sweep reading are the same instrument.
+    * ``completed`` — whether generation ENDED rather than hitting the token
+      budget. A run of truncations is incoherence's most legible signature,
+      and (unlike the other two) it is invisible in the text itself.
+
+    ``truncated`` is the caller's honest signal, computed the way the study
+    path computes it: the sampled token count reached the budget. Same
+    convention as ``judicial.parse_choice``'s, deliberately — a truncated
+    generation is a failure everywhere in this codebase, never a short one.
+    """
+    from .scoring import distinct_bigram_ratio, word_count
+    return {"wordCount": word_count(text),
+            "distinct2": distinct_bigram_ratio(text),
+            "completed": not truncated}
+
+
+def _mean(values: list[float]) -> float:
+    return (sum(values) / len(values)) if values else 0.0
+
+
+def _population_sd(values: list[float]) -> float:
+    """Population SD — the same convention ``tasks._write_report`` uses for
+    ordinal spread, so two blocks of this codebase never mean two things by
+    'SD'. This is the variance-collapse reading: an agent whose samples stop
+    differing from each other has lost something a mean cannot see."""
+    if len(values) < 2:
+        return 0.0
+    mean = _mean(values)
+    return (sum((v - mean) ** 2 for v in values) / len(values)) ** 0.5
+
+
+def health_metrics(records: list[dict]) -> dict:
+    """Roll per-sample :func:`health_record` readings up to one agent's block.
+
+    Means AND population spreads: the charter's motivating failure had a mean
+    that looked fine (accuracy 1.0) while the regime had no room for what
+    actually moved. An empty list is a defined, honest zero block with
+    ``sampleCount`` 0 — never a missing key, because a reader comparing
+    agents must be able to see that one produced nothing.
+    """
+    words = [float(r["wordCount"]) for r in records]
+    distinct = [float(r["distinct2"]) for r in records]
+    completed = [1.0 for r in records if r.get("completed")]
+    return {"sampleCount": len(records),
+            "meanWordCount": _mean(words),
+            "wordCountSD": _population_sd(words),
+            "meanDistinct2": _mean(distinct),
+            "distinct2SD": _population_sd(distinct),
+            "completionRate": (len(completed) / len(records)) if records
+                              else 0.0}
+
+
+def health_comparison(agent: dict, baseline: dict) -> dict:
+    """One agent's health block against the reference agent's, in the
+    vocabulary the sweep's own coherence gate already speaks
+    (:mod:`.sweep_selection`) so a battery reading and a sweep reading are
+    comparable without translation.
+
+    REPORTED, never a gate. The battery run's job is to produce evidence
+    keyed by pins; whether a dose is acceptable is a study's ruling, made
+    against the study's own stakes. (Charter clause 1: the battery is a
+    floor, and a floor that silently refused would be a difficulty target.)
+    """
+    from . import sweep_selection
+    base_distinct = float(baseline.get("meanDistinct2") or 0.0)
+    base_words = float(baseline.get("meanWordCount") or 0.0)
+    return {"distinct2Ratio": sweep_selection.distinct2_ratio(
+                float(agent.get("meanDistinct2") or 0.0), base_distinct),
+            "lengthInflated": sweep_selection.length_inflated(
+                float(agent.get("meanWordCount") or 0.0), base_words),
+            "completionRateDelta": (float(agent.get("completionRate") or 0.0)
+                                    - float(baseline.get("completionRate")
+                                            or 0.0))}

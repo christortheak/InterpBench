@@ -39,6 +39,7 @@ REGIONS: dict = {
     "server-vectors": ["vectors compare", "vectors mirror-poles"],
     "server-site": ["site qualify"],
     "server-data": ["data check"],
+    "server-battery": ["battery run"],
 }
 
 REGENERATION_NOTE = (

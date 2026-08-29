@@ -4436,12 +4436,56 @@ There is no Gemma Scope import-id verb on the Swift CLI: the direct import is
 server-side, and the Swift `SteeringVectorSidecar` has no `gemmascopeSource`
 twin field yet (a Swift decode→re-encode, e.g. `NormBackfill`, would drop the
 block).
-### 6.10 `battery` — capability-battery preflight and authoring brief (server-only, 2026-08-13)
+### 6.10 `battery` — capability-battery preflight, authoring brief, and standalone run (server-only)
 
 ```
 steerlab-server battery lint <workspace-relative-path> [--json]
 steerlab-server battery generation-prompt [--count N] [--avoid <domain text>] [--out <file>]
+steerlab-server battery run <workspace-relative-path> --agent <ref> [--agent <ref>]… [--json]
 ```
+
+`lint` and `generation-prompt` (2026-08-13) print human output and their own
+exit codes; `run` (2026-08-29) answers in the agent envelope. All three are
+server-only — `run` because it loads models, the other two because the battery
+contract lives here.
+
+<!-- GENERATED:server-battery BEGIN -->
+<!-- Generated from the declarative verb table — `steerlab-server docs cli-reference --write`. Edit the table, not this block. -->
+
+```
+steerlab-server battery run <battery-file> --agent <name-or-path> [--agents <ref,ref,…>] [--alpha-units <norm|raw>] [--device <device>] [--dry-run] [--dtype <dtype>] [--model <model-id>] [--revision <sha>]
+```
+
+| Verb | Purpose |
+|---|---|
+| `battery run` | Run a capability battery against one or more agents and write a pinned evidence run. |
+
+Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
+<!-- GENERATED:server-battery END -->
+
+**The battery charter.** Everything in this family descends from three
+maintainer rulings, and they are worth reading before authoring or running
+anything:
+
+1. **A battery is ex ante justified, study-blind, and fixed.** An agent
+   precedes any study it appears in, so its battery inherits *no* study's
+   protocol, domain, or difficulty target. The boundary example: a study
+   measuring relative performance on very hard, lengthy real-analysis proofs
+   must **not** find that capability probed — much less gated — by the
+   battery. The battery is a **floor** (instruction-following, basic
+   multi-step reasoning, factual recall, fluent extended generation, moderate
+   difficulty), never a frontier differentiator. Study-specific capability is
+   the study's own business, judged by performance in the study itself.
+2. **The operating regimes are generic and owned by the battery spec** — both
+   greedy short-answer items *and* long-form generative items at a standard
+   positive temperature with a generous token budget. The justification is
+   that agents are used generatively; it is never "because some study
+   samples".
+3. **Sensitivity is validated, never defined, by known positives.** A battery
+   version proves itself by *failing* a known-degraded state; if it cannot, it
+   is revised on ex ante grounds until it can. The known positive is a check
+   on the instrument, not a tuning target — a battery tuned until a particular
+   dose fails is a difficulty target wearing a control's name.
 
 #### `battery lint` — the preflight
 
@@ -4518,6 +4562,101 @@ supplied and to ask for it. The parallel helper for contrastive *stimulus*
 sets is `GET /api/concept/{name}/prompt`; this verb's own route is
 `GET /api/battery/generation-prompt?count=&avoid=` (a GET: text render, no
 model, no writes, no caller-named paths).
+
+#### `battery run` — the standalone reading (server-only, 2026-08-29)
+
+```
+steerlab-server battery run <battery-file> --agent <ref> [--agent <ref>]… [--agents a,b,c]
+                            [--model <id>] [--revision <sha>] [--alpha-units norm|raw]
+                            [--dtype D] [--device D] [--dry-run] [--json]
+```
+
+Runs one battery against one or more agents and writes an immutable,
+hash-stamped `runs/<stamp>-battery-run/` holding `battery.jsonl` (one row per
+record) and `battery-report.json` (the evidence document). It **loads models**,
+so it lives on this engine and nowhere else; there is no `steerlab-cli battery
+run` and no `steerlab battery run`, and the same reason applies to both — an
+authoring client does not execute.
+
+**This is not the study path's battery.** A study's battery is scored *per
+condition inside the run matrix* and is pinned into that study's manifest.
+`battery run` answers the question one step earlier and one step wider: is this
+agent a working model at all, before any study uses it? Because the reading is
+keyed by pins (battery digest, model revision, vector-artifact hashes, dose,
+protocol), two studies that use the same agent at the same dose are entitled to
+the same floor reading instead of each buying their own.
+
+**Agent references.** `--agent` repeats — one per agent, the `panel compile
+--seat` shape — and `--agents a,b,c` is the comma convenience for a dose
+series. Four forms:
+
+| Reference | Means |
+| --- | --- |
+| `baseline` | the pinned base model, no intervention. Every health comparison is against it, and a run without one reports no comparisons rather than inventing a reference. |
+| `<concept>:<layer>:<alpha>` | a condition spec — the same three fields `experiment declare-condition --slots` stores. The concept resolves against the workspace's vector catalogue; an *ambiguous* concept refuses and names every candidate, because which extraction a dose was read at is a provenance fact. |
+| `<variant-name-or-path>` | a promoted agent artifact, by name (`runs/model-variants/<name>.json` is searched) or by workspace-relative path. |
+| `<name>=<reference>` | any of the above under an explicit name — split at the first `=`, so a path containing one still parses. |
+
+A reference that splits on `:` into exactly three fields **is** a condition
+spec, and is then held to that: a non-numeric layer or alpha refuses by name
+rather than falling through to "no agent artifact
+`kindness:seventeen:0.28`", which is true and useless. Any other number of
+colon-separated fields is an artifact reference, so a path containing one colon
+is fine and one containing two needs the `<name>=<ref>` form. A name that would
+collide with another agent's refuses — two report blocks a reader cannot tell
+apart is worse than a usage error.
+
+`--model` is required as soon as one agent is a `baseline` or a condition spec:
+neither carries a model of its own, and a reading whose model was guessed is
+not a pin. An artifact carries its own base model, and a `--model` that
+disagrees with it **refuses rather than overriding** — the artifact's model is
+what the agent *is*. `--alpha-units` defaults to `norm`, the project
+convention; the dose is built through the same `variant_injections` path a
+study condition uses, so a battery dose and a study dose are the same
+arithmetic (norm denomination, substrate refusal, denominator-table gate).
+
+**The protocol is the battery's.** A format-3 battery declares a
+`generativeProtocol` block — `temperature`, `maxTokens`, `samplesPerItem` — and
+this verb reads it from the file and nowhere else. Nothing in `battery run`
+reads a manifest, a concept list, or a case family. Sampled long-form
+generations are seeded per record under the house `derivedSHA256` discipline,
+keyed on the *battery digest* with an empty condition field: sample *i* of an
+item draws the same stream for every agent, so a health difference between two
+agents is the intervention and not the dice.
+
+**Sequential agent custody.** Agents are grouped by `(modelID, revision,
+dtype)` in declaration order, and before each group's model loads every
+container the remainder of the run will not use is released — the same seam,
+and the same guarantee, as the judged paths' judge-column release: peak device
+memory is the **max** of any one still-needed model, never the **sum**. Order
+is never reshuffled to minimise loads; `--dry-run` reports what the order costs
+(`modelLoads`, `residentModelsAtPeak`) before it costs it.
+
+**`--dry-run`** stops after every check and prints the plan plus the walltime
+estimate, priced against this host's own throughput history — the sampled
+family's rate first, then the global, and *no estimate at all* rather than an
+invented one when there is no history. The record basis is
+`agents × (graded items + health items × samplesPerItem)`, and the fixed
+startup cost is multiplied by the number of model loads, because sequential
+custody means a two-model run pays two cold loads.
+
+**Refusals** (all before the run directory exists — a refused invocation writes
+nothing): `notFound` (66) for a missing battery file; `malformedBattery` (65)
+when it will not parse; `batteryLintBlocked` (65) when `battery lint` has
+blockers, naming each; `unknownAgent` / `ambiguousAgent` (65) for a reference
+that resolves to nothing or to several things; `agentModelConflict` (65);
+`agentReference` / `agentNameCollision` / `noAgents` / `modelRequired` (64).
+
+**`battery-report.json`** carries, per agent: `graded` (`accuracy`,
+`itemCount`, `correctCount`), `health` (`sampleCount`, `meanWordCount`,
+`wordCountSD`, `meanDistinct2`, `distinct2SD`, `completionRate`),
+`healthVsReference` (`distinct2Ratio`, `lengthInflated`,
+`completionRateDelta` — in the sweep's own coherence vocabulary, so a battery
+reading and a sweep reading compare without translation), and `identity` (the
+pins). Everything in the report is **reported, never gated**: whether a dose is
+acceptable is a study's ruling against a study's stakes, and a battery that
+refused on a number would have become the difficulty target charter clause 1
+forbids.
 
 ### 6.11 `experiment preflight-endpoints` — endpoint-safety preflight
 

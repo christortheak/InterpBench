@@ -100,7 +100,7 @@ def test_v2_header_declares_arming_and_scoring(tmp_path):
 
 
 @pytest.mark.parametrize("mutation,fragment", [
-    ({"batteryFormat": 3}, "unknown batteryFormat"),
+    ({"batteryFormat": 4}, "unknown batteryFormat"),
     ({"batteryFormat": 1}, "HEADERLESS"),
     ({"scoring": "vibes"}, "unknown scoring"),
     ({"maxTokens": 0}, '"maxTokens" must be a positive integer'),
