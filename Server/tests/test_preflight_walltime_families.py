@@ -233,6 +233,85 @@ def test_no_history_at_all_still_warns_honestly(meta):
     assert check["data"]["instrumentFamily"] == fam.LONG_FORM_TEXT
 
 
+# --- the estimate scales with maxTokens ------------------------------------------
+
+
+def test_eight_times_the_max_tokens_is_eight_times_the_estimate(meta):
+    """The 2026-08-29 field case: two arms, identical record counts, one at
+    maxTokens 256 and one at 2048, received the SAME estimate. Against a
+    history that knows its token basis, the 8× budget now prices 8× the
+    hours (the estimator models no fixed overhead — pure linear scaling)."""
+    _seed(meta, [_entry(220.0),
+                 dict(_entry(600.0, family=fam.LONG_FORM_TEXT, samples=4),
+                      tokensBasis=256)])
+    small = _walltime(_manifest(maxTokens=256), 1000)
+    large = _walltime(_manifest(maxTokens=2048), 1000)
+    assert small["data"]["estimatedHours"] == pytest.approx(2.5, abs=0.01)
+    assert large["data"]["estimatedHours"] == \
+        pytest.approx(small["data"]["estimatedHours"] * 8, abs=0.01)
+    assert large["data"]["tokensBasis"] == 256
+    assert large["data"]["maxTokens"] == 2048
+
+
+def test_the_scaled_estimate_says_its_token_assumption_out_loud(meta):
+    _seed(meta, [dict(_entry(600.0, family=fam.LONG_FORM_TEXT, samples=4),
+                      tokensBasis=256)])
+    check = _walltime(_manifest(maxTokens=2048), 1000)
+    assert "scaled ×8 from the rate's 256-token basis" in check["message"]
+    assert "this submission's maxTokens 2048" in check["message"]
+    assert "assumed linear in generated tokens" in check["message"]
+
+
+def test_a_basisless_history_behaves_as_before_and_says_so(meta):
+    """Every entry folded before bases existed: the estimate must not move,
+    and the verdict must name the token budget it is assuming."""
+    _seed(meta, [_entry(220.0),
+                 _entry(600.0, family=fam.LONG_FORM_TEXT, samples=4)])
+    small = _walltime(_manifest(maxTokens=256), 1000)
+    large = _walltime(_manifest(maxTokens=2048), 1000)
+    assert small["data"]["estimatedHours"] == large["data"]["estimatedHours"]
+    assert "tokensBasis" not in large["data"]
+    assert ("carries no token basis — the estimate assumes it was measured "
+            "at this submission's own maxTokens (2048)") in large["message"]
+
+
+def test_the_global_fallback_is_basisless_too_and_says_so(meta):
+    _seed(meta, [_entry(220.0)])
+    check = _walltime(_manifest(maxTokens=2048), 1000)
+    assert check["data"]["rateSource"] == "global"
+    assert "carries no token basis" in check["message"]
+    assert check["data"]["maxTokens"] == 2048
+
+
+def test_non_generating_families_never_token_scale(meta):
+    """A deterministic-logprob record is one scored forward pass whatever
+    maxTokens says; a tokensBasis on its entry (which the fold never writes)
+    must be ignored rather than obeyed."""
+    _seed(meta, [dict(_entry(2000.0, family=fam.DETERMINISTIC_LOGPROB,
+                             samples=5), tokensBasis=256)])
+    manifest = _manifest(outcomeInstruments=["answerTokenLogprob"],
+                         maxTokens=2048)
+    check = _walltime(manifest, 1000)
+    assert check["data"]["rateSource"] == "family"
+    assert "maxTokens" not in check["data"]
+    assert "tokensBasis" not in check["data"]
+    assert "token basis" not in check["message"]
+    assert check["data"]["estimatedHours"] == pytest.approx(0.75, abs=0.01)
+
+
+def test_the_token_scale_composes_with_the_per_shard_division(meta):
+    """Both corrections are multiplicative and both stay visible in the
+    basis line: ×8 for the token budget, ÷4 for the fan-out."""
+    _seed(meta, [dict(_entry(600.0, family=fam.LONG_FORM_TEXT, samples=4),
+                      tokensBasis=256)])
+    whole = _walltime(_manifest(maxTokens=2048), 1000)
+    sharded = _walltime(_manifest(maxTokens=2048), 1000, shard_count=4)
+    assert sharded["data"]["estimatedHours"] == \
+        pytest.approx(whole["data"]["estimatedHours"] / 4, abs=0.01)
+    assert "scaled ×8 from the rate's 256-token basis" in sharded["message"]
+    assert "÷ 4 shard jobs" in sharded["message"]
+
+
 # --- sharded fan-out prices the shard, not the matrix ---------------------------
 
 
@@ -279,10 +358,14 @@ def test_the_refusal_threshold_follows_the_per_shard_estimate(meta):
 # --- the fold learns per family ------------------------------------------------
 
 
-def _terminal_job(store, job_id, *, family, elapsed, count):
-    """A finished Slurm job whose preflight recorded an instrument family."""
+def _terminal_job(store, job_id, *, family, elapsed, count, tokens=None):
+    """A finished Slurm job whose preflight recorded an instrument family
+    (and, for token-bounded families since 2026-08-29, its maxTokens)."""
+    data = {"instrumentFamily": family}
+    if tokens is not None:
+        data["maxTokens"] = tokens
     walltime_check = {"id": "walltime", "status": "ok", "message": "",
-                      "data": {"instrumentFamily": family}}
+                      "data": data}
     job = Job(id=job_id, kind="study-submit", _store=store)
     job.status = "succeeded"
     job.requested_resources = {
@@ -341,3 +424,83 @@ def test_a_job_without_a_family_stamp_folds_globally_only(meta, tmp_path):
     assert len(table["entries"]) == 1
     assert "instrumentFamily" not in table["entries"][0]
     assert fam.stamped_family(job.requested_resources) is None
+
+
+# --- the fold learns the token basis ---------------------------------------------
+
+
+def test_the_fold_stamps_a_token_basis_on_new_family_entries_only(meta, tmp_path):
+    store = DurableJobStore(str(tmp_path / "jobs.sqlite"))
+    _terminal_job(store, "j1", family=fam.LONG_FORM_TEXT,
+                  elapsed=3600, count=600, tokens=512)
+    hk.fold_throughput(JobManager(store, sweep_orphans=False))
+    per_family = hk.throughput_lookup(
+        MODEL, "A100", instrument_family=fam.LONG_FORM_TEXT)
+    assert per_family["tokensBasis"] == 512
+    assert per_family["recordsPerHour"] == 600.0
+    # The global entry keeps its historical meaning — no basis, ever.
+    assert "tokensBasis" not in hk.throughput_lookup(MODEL, "A100")
+
+
+def test_later_samples_are_normalized_to_the_entry_basis(meta, tmp_path):
+    """A 1024-token job observed at 300/h IS the 512-token 600/h machine:
+    folded raw it would drag the mean to 450 and misprice every later
+    512-token submission; normalized, the mean holds."""
+    store = DurableJobStore(str(tmp_path / "jobs.sqlite"))
+    _terminal_job(store, "j1", family=fam.LONG_FORM_TEXT,
+                  elapsed=3600, count=600, tokens=512)
+    _terminal_job(store, "j2", family=fam.LONG_FORM_TEXT,
+                  elapsed=3600, count=300, tokens=1024)
+    hk.fold_throughput(JobManager(store, sweep_orphans=False))
+    per_family = hk.throughput_lookup(
+        MODEL, "A100", instrument_family=fam.LONG_FORM_TEXT)
+    # Whichever job folds first sets the basis; either way the entry must
+    # mean "600/h at 512 tokens" (= 300/h at 1024) — not the raw-mean 450.
+    assert per_family["tokensBasis"] in (512, 1024)
+    assert (per_family["recordsPerHour"] * per_family["tokensBasis"] / 512
+            == pytest.approx(600.0))
+    assert per_family["samples"] == 2
+    # The basisless global entry folds raw, exactly as it always has.
+    assert hk.throughput_lookup(MODEL, "A100")["recordsPerHour"] == \
+        pytest.approx(450.0)
+
+
+def test_a_legacy_family_entry_stays_basisless_and_folds_raw(meta, tmp_path):
+    """An entry minted before bases existed cannot claim one retroactively —
+    its old samples' budgets are unknown, and pretending they matched the
+    next job's would be invented precision."""
+    _seed(meta, [_entry(600.0, family=fam.LONG_FORM_TEXT, samples=3)])
+    store = DurableJobStore(str(tmp_path / "jobs.sqlite"))
+    _terminal_job(store, "j1", family=fam.LONG_FORM_TEXT,
+                  elapsed=3600, count=200, tokens=2048)
+    hk.fold_throughput(JobManager(store, sweep_orphans=False))
+    per_family = hk.throughput_lookup(
+        MODEL, "A100", instrument_family=fam.LONG_FORM_TEXT)
+    assert "tokensBasis" not in per_family
+    assert per_family["recordsPerHour"] == pytest.approx(500.0)  # raw mean
+
+
+def test_the_stamp_round_trips_from_preflight_through_fold_to_estimate(
+        meta, tmp_path):
+    """The whole loop: a submission's walltime check stamps maxTokens, the
+    finished job folds it into a token basis, and the NEXT submission at 8×
+    the budget is priced 8× the hours."""
+    _seed(meta, [])
+    first = _walltime(_manifest(maxTokens=512), 600)
+    assert first["status"] == "warn"            # no history yet
+    assert first["data"]["maxTokens"] == 512
+    store = DurableJobStore(str(tmp_path / "jobs.sqlite"))
+    job = Job(id="j1", kind="study-submit", _store=store)
+    job.status = "succeeded"
+    job.requested_resources = {
+        "modelID": MODEL, "gres": "gpu:A100:1",
+        "preflight": {"checks": [first], "verdict": "warn"}}
+    job.result = {"elapsedSeconds": 3600, "recordCount": 600}
+    store.insert(job)
+    hk.fold_throughput(JobManager(store, sweep_orphans=False))
+    same = _walltime(_manifest(maxTokens=512), 1000)
+    scaled = _walltime(_manifest(maxTokens=4096), 1000)
+    assert same["data"]["estimatedHours"] == pytest.approx(2.5, abs=0.01)
+    assert scaled["data"]["estimatedHours"] == pytest.approx(20.0, abs=0.05)
+    assert scaled["data"]["tokensBasis"] == 512
+    assert "scaled ×8 from the rate's 512-token basis" in scaled["message"]

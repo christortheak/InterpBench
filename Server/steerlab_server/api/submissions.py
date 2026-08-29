@@ -1426,6 +1426,14 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
       families) figure and saying so, because a deterministic answer-token
       study and a sampled panel are not the same job at all.
 
+    And one correction to the rate itself: a token-bounded family's
+    records-per-hour was measured under some ``maxTokens``, and generation
+    time scales roughly linearly with generated tokens — so when the history
+    carries a ``tokensBasis`` the estimate is scaled by
+    planned-maxTokens / tokensBasis, and when it does not (every entry folded
+    before the basis existed) the estimate is unchanged and the verdict says
+    which token budget it is assuming.
+
     ``shard_count`` is the RESOLVED fan-out (parallelJobs after
     ``_resolve_parallel_jobs``): the requested walltime is what each shard
     job gets, and a shard runs 1/K of the record matrix, so the record-based
@@ -1450,6 +1458,11 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
                        "instrumentFamilyReason": family.reason}
         if family.custody is not None:
             family_data["judgingCustody"] = family.custody
+        if (family.id in instrument_family.TOKEN_BOUNDED_FAMILIES
+                and manifest.max_tokens > 0):
+            # Stamped so the fold can record the token budget this job's
+            # throughput sample was generated under (its ``tokensBasis``).
+            family_data["maxTokens"] = manifest.max_tokens
     if planned_records is None:
         return _check(check_id, "warn",
                       "cannot count planned records (no readable task-prompt "
@@ -1503,6 +1516,26 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
             "rateSource": rate_source,
             "gpuType": gpu_type,
             **family_data}
+    planned_tokens = family_data.get("maxTokens")
+    tokens_basis = entry.get("tokensBasis") if entry else None
+    if planned_tokens:
+        # Generation time scales roughly linearly with generated tokens, so a
+        # rate measured at one maxTokens misprices a submission at another —
+        # two arms with identical record counts at maxTokens 256 and 2048 got
+        # the same estimate (field-observed 2026-08-29). Scale only against a
+        # recorded basis; a basisless history says its assumption out loud
+        # rather than inventing one.
+        if isinstance(tokens_basis, (int, float)) and tokens_basis > 0:
+            estimated_hours *= planned_tokens / tokens_basis
+            data["tokensBasis"] = tokens_basis
+            basis += (f", scaled ×{planned_tokens / tokens_basis:.2g} from "
+                      f"the rate's {tokens_basis:.0f}-token basis to this "
+                      f"submission's maxTokens {planned_tokens} — generation "
+                      "time assumed linear in generated tokens")
+        else:
+            basis += (", where the rate history carries no token basis — the "
+                      "estimate assumes it was measured at this submission's "
+                      f"own maxTokens ({planned_tokens})")
     if shard_count > 1:
         # The requested walltime is per shard JOB, and each shard runs 1/K of
         # the matrix — so the number compared against it must be per shard too.

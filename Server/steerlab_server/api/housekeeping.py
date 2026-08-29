@@ -664,9 +664,15 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
     the estimator prefers. The family entry is additive: an older reader
     that ignores ``instrumentFamily`` still finds the global entry first,
     because the sort puts the family-less entry ahead of its siblings.
+
+    A token-bounded family entry also carries a ``tokensBasis`` — the
+    ``maxTokens`` its first stamped sample generated under — and later
+    stamped samples are normalized to that basis before entering the mean
+    (records-per-hour is taken as inverse-linear in generated tokens).
+    The global entry never carries a basis: it keeps its historical meaning.
     """
     from .jobs import TERMINAL  # local import: jobs.py imports us lazily
-    from .instrument_family import stamped_family
+    from .instrument_family import stamped_family, stamped_max_tokens
     profile = profile or ServerProfile.from_env()
     with _IO_LOCK:
         table = read_throughput(profile)
@@ -688,6 +694,7 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
                 (job.requested_resources or {}).get("gres"))
             rate = count / (elapsed / 3600.0)
             family = stamped_family(job.requested_resources)
+            tokens = stamped_max_tokens(job.requested_resources)
             for bucket in (None, family) if family else (None,):
                 entry = next((e for e in entries
                               if e.get("modelId") == model_id
@@ -703,12 +710,25 @@ def fold_throughput(jobs, profile: ServerProfile | None = None) -> dict:
                     }
                     if bucket is not None:
                         minted["instrumentFamily"] = bucket
+                        if tokens:
+                            minted["tokensBasis"] = tokens
                     entries.append(minted)
                 else:
                     samples = int(entry.get("samples", 0))
                     mean = float(entry.get("recordsPerHour", 0.0))
+                    basis = entry.get("tokensBasis")
+                    fold_rate = rate
+                    if (bucket is not None and tokens
+                            and isinstance(basis, (int, float)) and basis > 0):
+                        # A rate measured at 2048 tokens is ~8× slower than the
+                        # same hardware's 256-token rate; normalize each sample
+                        # to the entry's basis or the mean means nothing. An
+                        # entry minted before bases existed stays basisless and
+                        # keeps folding raw rates — the estimator then says the
+                        # token budget it is assuming instead of scaling.
+                        fold_rate = rate * tokens / basis
                     entry["recordsPerHour"] = round(
-                        (mean * samples + rate) / (samples + 1), 3)
+                        (mean * samples + fold_rate) / (samples + 1), 3)
                     entry["samples"] = samples + 1
                     entry["updatedAt"] = _now_iso()
             folded.add(job.id)

@@ -41,6 +41,14 @@ PARKED_JUDGMENT = "parkedJudgment"
 FAMILY_IDS = (DETERMINISTIC_LOGPROB, SAMPLED_STOCHASTIC, LONG_FORM_TEXT,
               JUDGED_EVALUATE, PARKED_JUDGMENT)
 
+#: Families whose records ARE the model's own generations, capped by the
+#: manifest's ``maxTokens`` — so their record time scales roughly linearly
+#: with that cap, and a records-per-hour figure means nothing without the
+#: token budget it was measured at. Deterministic logprob generates nothing
+#: (one scored forward pass), a judged evaluate's records are judge tokens
+#: the study's ``maxTokens`` does not bound, and parked judgment renders.
+TOKEN_BOUNDED_FAMILIES = frozenset({SAMPLED_STOCHASTIC, LONG_FORM_TEXT})
+
 #: Human labels for the estimate line — a refusal must say WHICH rate refused.
 FAMILY_LABELS = {
     DETERMINISTIC_LOGPROB: "deterministic-logprob",
@@ -143,11 +151,11 @@ def classify(manifest, verb: str) -> Family | None:
         f"greedy sampled text up to {manifest.max_tokens} tokens per record")
 
 
-def stamped_family(requested_resources) -> str | None:
-    """The family the SUBMISSION's own preflight recorded, read back from a
-    job's requested resources so the throughput fold can attribute a
-    completed job without re-deriving anything (and without a new record
-    key). None for jobs submitted before this existed, for local-executor
+def _stamped_walltime_data(requested_resources) -> dict | None:
+    """The ``data`` block the submission's own walltime preflight recorded,
+    read back from a job's requested resources — the one place submission-time
+    pricing metadata survives to the throughput fold without a new record
+    key. None for jobs submitted before stamping existed, for local-executor
     jobs (no preflight), and for model-free verbs."""
     if not isinstance(requested_resources, dict):
         return None
@@ -157,6 +165,23 @@ def stamped_family(requested_resources) -> str | None:
         if not isinstance(check, dict) or check.get("id") != "walltime":
             continue
         data = check.get("data")
-        family = data.get("instrumentFamily") if isinstance(data, dict) else None
-        return family if family in FAMILY_IDS else None
+        return data if isinstance(data, dict) else None
     return None
+
+
+def stamped_family(requested_resources) -> str | None:
+    """The family the SUBMISSION's own preflight recorded, so the throughput
+    fold can attribute a completed job without re-deriving anything."""
+    data = _stamped_walltime_data(requested_resources)
+    family = data.get("instrumentFamily") if data else None
+    return family if family in FAMILY_IDS else None
+
+
+def stamped_max_tokens(requested_resources) -> int | None:
+    """The manifest ``maxTokens`` the submission's preflight recorded — the
+    token budget its throughput sample was generated under. The preflight
+    stamps it only for TOKEN_BOUNDED_FAMILIES, so a value here already means
+    the budget bounds the record; None for every earlier or unbounded job."""
+    data = _stamped_walltime_data(requested_resources)
+    tokens = data.get("maxTokens") if data else None
+    return tokens if isinstance(tokens, int) and tokens > 0 else None
