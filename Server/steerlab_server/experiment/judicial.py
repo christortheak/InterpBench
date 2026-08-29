@@ -5,9 +5,10 @@ These are the engine's two SHIPPED parsers, both concept-agnostic text
 readers over whatever prose a study's items elicit:
 
 - **categorical choice** — the option a response settled on, read from a JSON
-  object with a declared key, an exact whole-response match, or the earliest
-  word-boundary mention. Derived endpoints over it are outcome rates and
-  between-item contrasts.
+  object with a declared key, an exact whole-response match, or (over complete
+  text only — a truncated output parses as a failure, never as its
+  first-enumerated option) the earliest word-boundary mention. Derived
+  endpoints over it are outcome rates and between-item contrasts.
 - **duration in months** — a numeric quantity stated in years and/or months.
   Derived endpoints are the mean shift, spread, anchor slope, and
   proportionality; the parse-failure rate is itself a coherence signal.
@@ -33,14 +34,40 @@ from dataclasses import dataclass
 # --- categorical option parsing ----------------------------------------------
 
 
-def parse_choice(text: str, options: list[str], *, json_key: str = "answer") -> str | None:
+def parse_choice(text: str, options: list[str], *, json_key: str = "answer",
+                 truncated: bool = False) -> str | None:
     """Extract a categorical choice from sampled prose.
 
     Tries, in order: a JSON object carrying ``json_key`` (the usual
     answer-in-JSON schema), an exact normalized match of the whole response,
-    then the option whose earliest word-boundary mention appears first in the
-    text. Returns the matched option verbatim, or ``None`` (a parse failure —
-    count it).
+    then — for text that finished saying its piece — the option whose earliest
+    word-boundary mention appears first in the text. Returns the matched
+    option verbatim, or ``None`` (a parse failure — count it).
+
+    The first-mention fallback is legitimate only for a COMPLETE free-form
+    answer that names its choice in prose ("I would rule for X because…").
+    Over an output that was cut off before it decided, first-mention does not
+    read a decision at all — it reads the order the options were enumerated
+    in, since a deliberation restates every option long before it rules. A
+    1,200-record run observed 2026-08-29 made that concrete: 19 outputs hit
+    the token cap mid-deliberation, every one was coerced to the
+    first-enumerated option, and the declared unparseableEndpoint exclusion
+    excluded zero records — truncation became a deterministic, dose-correlated
+    verdict (longest outputs, highest dose). The same non-random-attrition
+    hazard is documented at ``NUMBER_WORDS`` for the duration parser; here it
+    was worse, a WRONG VALUE instead of a null. Two truncation signals
+    therefore force ``None`` instead of the fallback:
+
+    - ``truncated=True``: the caller's honest signal that generation was cut
+      off (the run loop counts the sampled token ids against the manifest's
+      token budget — see the ``parsedChoice`` site in ``tasks.py``);
+    - the text opens a JSON object it never closes (the answer-in-JSON schema
+      was started but cut off) — detectable from the text alone, so records
+      parsed without a token count are still covered.
+
+    A complete embedded JSON answer or an exact whole-response match is still
+    honored on a ``truncated`` output: answering and then running out of room
+    while elaborating is a decision, not a coerced one.
     """
     if not text or not options:
         return None
@@ -56,6 +83,9 @@ def parse_choice(text: str, options: list[str], *, json_key: str = "answer") -> 
     whole = _normalize(text)
     if whole in normalized:
         return normalized[whole]
+
+    if truncated or _opens_unclosed_json(text):
+        return None
 
     earliest: tuple[int, str] | None = None
     for option in options:
@@ -92,6 +122,48 @@ def _json_objects(text: str):
             continue
         if isinstance(payload, dict):
             yield payload
+
+
+def _opens_unclosed_json(text: str) -> bool:
+    """Does the text open a JSON object it never closes — the shape of an
+    answer-in-JSON response cut off mid-object? Complete objects are skipped
+    wholesale (braces inside their strings do not count), so only a brace
+    depth still open at end-of-text answers True. Twin of the Swift
+    ``Judicial.opensUnclosedJSON``."""
+    index = text.find("{")
+    while index != -1:
+        end = _balanced_object_end(text, index)
+        if end is None:
+            return True
+        index = text.find("{", end + 1)
+    return False
+
+
+def _balanced_object_end(text: str, start: int) -> int | None:
+    """Index of the ``}`` closing the object opened at ``start``, tracking
+    JSON string/escape state so braces inside strings do not count; ``None``
+    when the object never closes (Swift twin: ``balancedObjectEnd``)."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
 
 
 # --- duration-in-months parsing ----------------------------------------------

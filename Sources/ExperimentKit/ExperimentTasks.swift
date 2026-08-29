@@ -2678,6 +2678,36 @@ public enum ExperimentTasks {
         transcript: [TranscriptTurn]? = nil,
         onChunk: GenerationChunkHandler? = nil
     ) async throws -> String {
+        try await generateMeasured(
+            container, prompt: prompt, modelID: modelID, maxTokens: maxTokens,
+            temperature: temperature, injections: injections,
+            promptMode: promptMode, systemPrompt: systemPrompt,
+            qwenThinkingEnabled: qwenThinkingEnabled, transcript: transcript,
+            onChunk: onChunk
+        ).text
+    }
+
+    /// One sampled generation plus the stream's own account of why it
+    /// stopped. `hitTokenCap` is the honest truncation signal the choice
+    /// parser needs — a decode that ended by exhausting `maxTokens` was cut
+    /// off, not finished, and must parse as a failure rather than as its
+    /// first-enumerated option (`Judicial.parseChoice`). Server twin: the
+    /// sampled loop's `token_ids_out` count against the manifest's budget.
+    struct MeasuredGeneration {
+        let text: String
+        let hitTokenCap: Bool
+    }
+
+    static func generateMeasured(
+        _ container: ModelContainer, prompt: String, modelID: String, maxTokens: Int,
+        temperature: Double = 0,
+        injections: [CellInjection] = [],
+        promptMode: ExperimentManifest.PromptMode = .chatAssistant,
+        systemPrompt: String? = nil,
+        qwenThinkingEnabled: Bool = false,
+        transcript: [TranscriptTurn]? = nil,
+        onChunk: GenerationChunkHandler? = nil
+    ) async throws -> MeasuredGeneration {
         let input = try await container.prepare(
             input: studyUserInput(
                 text: prompt,
@@ -2705,9 +2735,11 @@ public enum ExperimentTasks {
                 prefillStepSize: 512))
         var text = ""
         var lastProgressCount = 0
+        var hitTokenCap = false
         for await event in stream {
             try Task.checkCancellation()
-            if case .chunk(let chunk) = event {
+            switch event {
+            case .chunk(let chunk):
                 text += chunk
                 if let onChunk,
                     text.count - lastProgressCount >= 120 || chunk.contains("\n")
@@ -2715,12 +2747,16 @@ public enum ExperimentTasks {
                     lastProgressCount = text.count
                     await onChunk(text)
                 }
+            case .info(let info):
+                hitTokenCap = info.stopReason == .length
+            default:
+                break
             }
         }
         if let onChunk, text.count != lastProgressCount {
             await onChunk(text)
         }
-        return text
+        return MeasuredGeneration(text: text, hitTokenCap: hitTokenCap)
     }
 
     public static func preparedPromptTokenCount(
@@ -3764,7 +3800,8 @@ public enum ExperimentTasks {
     /// the server's `_execute_condition`.
     static func judicialParses(
         output: String, options: [String]?, caseFamily: String?,
-        numericParser: ParserRegistry.ResolvedNumericParser? = nil
+        numericParser: ParserRegistry.ResolvedNumericParser? = nil,
+        hitTokenCap: Bool = false
     ) -> (parsedMonths: Double??, parsedChoice: String??) {
         let parsedMonths: Double?? =
             if let numericParser {
@@ -3776,7 +3813,12 @@ public enum ExperimentTasks {
             }
         let parsedChoice: String?? =
             if let options, !options.isEmpty {
-                .some(Judicial.parseChoice(output, options: options))
+                // A capped generation was cut off, not finished — the parser
+                // turns it into a counted failure so a declared
+                // unparseableEndpoint exclusion sees it (`parseChoice`).
+                .some(
+                    Judicial.parseChoice(
+                        output, options: options, truncated: hitTokenCap))
             } else {
                 .none
             }
@@ -3815,11 +3857,16 @@ public enum ExperimentTasks {
         agentPlaygroundTemperature: Double? = nil,
         readerScores: [String: Float]? = nil,
         randomVectorAlgorithm: String? = nil,
-        numericParser: ParserRegistry.ResolvedNumericParser? = nil
+        numericParser: ParserRegistry.ResolvedNumericParser? = nil,
+        // Defaulted (like `systemPromptComposition`) so engine-pure unit
+        // tests that predate the truncation rule keep compiling; both run
+        // loops pass the stream's own stop reason (`MeasuredGeneration`).
+        hitTokenCap: Bool = false
     ) -> GenerationRecord {
         let parses = judicialParses(
             output: output, options: prompt.options,
-            caseFamily: manifest.caseFamily, numericParser: numericParser)
+            caseFamily: manifest.caseFamily, numericParser: numericParser,
+            hitTokenCap: hitTokenCap)
         return GenerationRecord(
             experiment: manifest.name,
             experimentHash: experimentHash,
@@ -4438,7 +4485,7 @@ public enum ExperimentTasks {
                             condition: condition.name,
                             promptID: prompt.id,
                             prompt: prompt.text))
-                    let output = try await generate(
+                    let generation = try await generateMeasured(
                         container, prompt: prompt.text, modelID: manifest.modelID,
                         maxTokens: manifest.maxTokens, temperature: manifest.temperature,
                         injections: conditionInjections,
@@ -4453,6 +4500,7 @@ public enum ExperimentTasks {
                                 promptID: prompt.id,
                                 output: output))
                     }
+                    let output = generation.text
                     let markerDensity = Dictionary(
                         uniqueKeysWithValues: conceptNames.map { concept in
                             (concept, rubrics[concept]?.density(in: output) ?? 0)
@@ -4499,7 +4547,8 @@ public enum ExperimentTasks {
                         row: row,
                         readerScores: readerScores,
                         randomVectorAlgorithm: randomAlgorithm,
-                        numericParser: numericParser)
+                        numericParser: numericParser,
+                        hitTokenCap: generation.hitTokenCap)
                     if manifest.exclusionRules?.isEmpty == false {
                         exclusionViews.append(exclusionView(of: record))
                     }
@@ -5359,7 +5408,7 @@ public enum ExperimentTasks {
                                     condition: condition.name,
                                     promptID: prompt.id,
                                     prompt: prompt.text))
-                            let output = try await generate(
+                            let generation = try await generateMeasured(
                                 container,
                                 prompt: prompt.text,
                                 modelID: pinnedManifest.modelID,
@@ -5377,6 +5426,7 @@ public enum ExperimentTasks {
                                         promptID: prompt.id,
                                         output: output))
                             }
+                            let output = generation.text
                             // Marker densities from the same attached-concept
                             // rubrics the ordinary path scores (a variant
                             // study with no attached concepts scores none —
@@ -5432,7 +5482,8 @@ public enum ExperimentTasks {
                                 variantArtifactHash: condition.artifactHash,
                                 agentPlaygroundTemperature: condition.variant?.temperature,
                                 readerScores: readerScores,
-                                numericParser: numericParser)
+                                numericParser: numericParser,
+                                hitTokenCap: generation.hitTokenCap)
                             if pinnedManifest.exclusionRules?.isEmpty == false {
                                 exclusionViews.append(exclusionView(of: record))
                             }

@@ -33,6 +33,77 @@ import Testing
         #expect(Judicial.parseChoice("", options: options) == nil)
     }
 
+    // Truncation must parse as failure, never as the first-enumerated option.
+    // FIXTURES SHARED WITH THE SERVER TWIN (`test_judicial.py`). A 2026-08-29
+    // 1,200-record run: 19 outputs hit the token cap mid-deliberation and
+    // every one was coerced to the first option the deliberation enumerated,
+    // so the declared unparseableEndpoint exclusion excluded zero records.
+
+    /// The observed shape: a deliberation restates every option
+    /// (first-enumerated first), then the cap lands before any ruling.
+    private let truncatedDeliberation =
+        "Weighing the choices: Apply Kansas law would honor the place of "
+        + "contracting, while Apply Nebraska law tracks the parties' "
+        + "expectations. On balance the stronger argument is"
+
+    @Test func parseChoiceTruncatedDeliberationIsAFailure() {
+        // Without the honest signal the fallback coerces the first mention…
+        #expect(
+            Judicial.parseChoice(truncatedDeliberation, options: options)
+                == "Apply Kansas law")
+        // …with it, the record parses as nil so unparseableEndpoint can fire.
+        #expect(
+            Judicial.parseChoice(
+                truncatedDeliberation, options: options, truncated: true) == nil)
+    }
+
+    @Test func parseChoiceUnclosedJSONIsAFailureWithoutTheFlag() {
+        // The answer-in-JSON schema was started but cut off — detectable from
+        // the text alone, covering records parsed without a stop reason.
+        #expect(
+            Judicial.parseChoice(
+                "Both were argued: Apply Kansas law and Apply Nebraska law.\n"
+                    + "```json\n{\"answer\": \"Apply Nebr",
+                options: options) == nil)
+        #expect(
+            Judicial.parseChoice(
+                "Apply Kansas law was urged. My ruling: {\"answer\":",
+                options: options) == nil)
+    }
+
+    @Test func parseChoiceTruncatedStillHonorsACompleteAnswer() {
+        // Answering, then running out of room while elaborating, is a decision.
+        #expect(
+            Judicial.parseChoice(
+                "{\"answer\": \"Apply Nebraska law\"} because the contacts "
+                    + "with Kansas were",
+                options: options, truncated: true) == "Apply Nebraska law")
+        #expect(
+            Judicial.parseChoice(
+                "apply kansas law.", options: options, truncated: true)
+                == "Apply Kansas law")
+    }
+
+    @Test func parseChoiceCompleteProseKeepsTheFallback() {
+        // Braces inside a COMPLETE object's strings must not read as unclosed.
+        #expect(
+            Judicial.parseChoice(
+                "noted {\"aside\": \"brace { inside a string\"} — I would "
+                    + "apply Nebraska law here.",
+                options: options) == "Apply Nebraska law")
+    }
+
+    @Test func truncatedBatchIsExcludableNotCoerced() {
+        // The incident shape in miniature: every truncated deliberation
+        // parses as nil, so a batch of them can no longer masquerade as a
+        // unanimous first-option verdict.
+        let parsed = (0 ..< 19).map { _ in
+            Judicial.parseChoice(
+                truncatedDeliberation, options: options, truncated: true)
+        }
+        #expect(parsed.allSatisfy { $0 == nil })
+    }
+
     @Test func parseMonthsSinglesYearsAndDecimals() {
         #expect(Judicial.parseMonths("I sentence the defendant to 18 months.") == 18.0)
         #expect(Judicial.parseMonths("A term of 2 years is appropriate.") == 24.0)

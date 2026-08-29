@@ -154,12 +154,18 @@ def test_the_compact_reference_block_carries_no_observations(tmp_path):
 def test_token_id_retention_is_opt_in_and_widens_no_existing_call():
     """The whole reason this is a flag: threading `token_ids_out`
     unconditionally broke 48 tests across 9 files whose generate fakes were
-    built against the plain signature. Retention is a study's declared choice,
-    so an undeclaring study's call stays byte-for-byte what it was."""
+    built against the plain signature. The capture stays conditional — but
+    since 2026-08-29 an option-set item is a second capturer alongside the
+    declared flag: the choice parser needs the honest token count to tell a
+    capped generation from a finished one (a truncated output must parse as
+    a failure, never as its first-enumerated option). Every other study's
+    call stays byte-for-byte what it was, and a fake that ignores
+    `token_ids_out` leaves the count at 0, which reads as not-capped."""
     src = inspect.getsource(tasks._execute_condition)
-    assert "manifest.record_token_ids and token_ids is None" in src
+    assert 'manifest.record_token_ids or prompt.get("options")' in src
+    assert "token_ids is None and (" in src
     # Persisted only when DECLARED — never as a side effect of a jlens run
-    # having captured ids for its own alignment.
+    # (or an option-set item) having captured ids for its own purpose.
     assert "manifest.record_token_ids and token_ids" in src
     assert "outputTokenIDs" in src
 

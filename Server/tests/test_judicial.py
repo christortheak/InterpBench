@@ -29,6 +29,66 @@ def test_parse_choice_failure_returns_none():
     assert judicial.parse_choice("", OPTIONS) is None
 
 
+# --- truncation must parse as failure, never as the first-enumerated option --
+# FIXTURES SHARED WITH THE SWIFT TWIN (JudicialTests). A 2026-08-29
+# 1,200-record run: 19 outputs hit the token cap mid-deliberation and every
+# one was coerced to the first option the deliberation enumerated, so the
+# declared unparseableEndpoint exclusion excluded zero records.
+
+# The observed shape: a deliberation restates every option (first-enumerated
+# first), then the cap lands before any ruling.
+TRUNCATED_DELIBERATION = (
+    "Weighing the choices: Apply Kansas law would honor the place of "
+    "contracting, while Apply Nebraska law tracks the parties' expectations. "
+    "On balance the stronger argument is")
+
+
+def test_parse_choice_truncated_deliberation_is_a_failure():
+    # Without the honest signal the fallback coerces the first mention…
+    assert judicial.parse_choice(
+        TRUNCATED_DELIBERATION, OPTIONS) == "Apply Kansas law"
+    # …with it, the record parses as None so unparseableEndpoint can fire.
+    assert judicial.parse_choice(
+        TRUNCATED_DELIBERATION, OPTIONS, truncated=True) is None
+
+
+def test_parse_choice_unclosed_json_is_a_failure_without_the_flag():
+    # The answer-in-JSON schema was started but cut off — detectable from the
+    # text alone, so records parsed without a token count are covered too.
+    assert judicial.parse_choice(
+        'Both were argued: Apply Kansas law and Apply Nebraska law.\n'
+        '```json\n{"answer": "Apply Nebr', OPTIONS) is None
+    assert judicial.parse_choice(
+        'Apply Kansas law was urged. My ruling: {"answer":', OPTIONS) is None
+
+
+def test_parse_choice_truncated_still_honors_a_complete_answer():
+    # Answering, then running out of room while elaborating, is a decision.
+    complete_json = ('{"answer": "Apply Nebraska law"} because the contacts '
+                     'with Kansas were')
+    assert judicial.parse_choice(
+        complete_json, OPTIONS, truncated=True) == "Apply Nebraska law"
+    assert judicial.parse_choice(
+        "apply kansas law.", OPTIONS, truncated=True) == "Apply Kansas law"
+
+
+def test_parse_choice_complete_prose_keeps_the_fallback():
+    # Braces inside a COMPLETE object's strings must not read as unclosed.
+    assert judicial.parse_choice(
+        'noted {"aside": "brace { inside a string"} — I would apply Nebraska '
+        'law here.', OPTIONS) == "Apply Nebraska law"
+
+
+def test_truncated_batch_is_excludable_not_coerced():
+    # The incident shape in miniature: every truncated deliberation parses as
+    # None (counted by parse_failure_rate / unparseableEndpoint), so a batch
+    # of them can no longer masquerade as a unanimous first-option verdict.
+    parsed = [judicial.parse_choice(TRUNCATED_DELIBERATION, OPTIONS,
+                                    truncated=True) for _ in range(19)]
+    assert parsed == [None] * 19
+    assert judicial.parse_failure_rate(parsed) == 1.0
+
+
 def test_parse_months_singles_years_and_decimals():
     assert judicial.parse_months("I sentence the defendant to 18 months.") == 18.0
     assert judicial.parse_months("A term of 2 years is appropriate.") == 24.0

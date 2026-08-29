@@ -483,6 +483,54 @@ def test_factors_reach_both_record_kinds_and_metrics_csv(tmp_path, monkeypatch):
     assert by_id["plain"]["factor_anchor"] == ""
 
 
+def test_token_cap_truncation_parses_choice_as_failure(tmp_path, monkeypatch):
+    """Run-loop wiring of the honest truncation signal (Swift twin:
+    ``MeasuredGeneration`` -> ``judicialParses``). A generation that spends
+    its whole token budget on an option-set item must stamp
+    ``parsedChoice: null`` — a 2026-08-29 run saw 19 capped mid-deliberation
+    outputs all coerced to the first-enumerated option by the first-mention
+    fallback, so the declared unparseableEndpoint exclusion excluded zero
+    records. The same text on a generation that stopped on its own still
+    parses by first mention."""
+    root = str(tmp_path)
+    es.create("cap", model_id="org/m", revision="abc", root=root)
+    raw = es.load_raw("cap", root)
+    raw["seeds"] = [0]
+    raw["temperature"] = 0.0
+    raw["maxTokens"] = 16
+    raw["outcomeInstruments"] = ["sampledText"]
+    es.save_raw(raw, root)
+    prompts_path = os.path.join(root, "prompts", "tasks", "items.jsonl")
+    _write_file(prompts_path, "\n".join([
+        json.dumps({"id": "cut", "prompt": "Runs long.",
+                    "options": ["yes", "no"]}),
+        json.dumps({"id": "fin", "prompt": "Stops early.",
+                    "options": ["yes", "no"]}),
+    ]) + "\n")
+    # The incident shape: both options restated, the budget gone before any
+    # ruling — first mention would read the enumeration order ("yes").
+    deliberation = ("Option yes has merits, and option no as well; "
+                    "on balance the stronger case is")
+
+    def generate(model, prompt, **kw):
+        ids = kw.get("token_ids_out")
+        if ids is not None:
+            ids.extend(range(16 if prompt == "Runs long." else 3))
+        return deliberation
+
+    monkeypatch.setattr(tasks, "_extract_all",
+                        lambda model, manifest, root: {})
+    monkeypatch.setattr(tasks, "generate", generate)
+    run_dir = tasks.run("cap", prompts_path, root, model_provider=_fake_model,
+                        log=lambda *_: None)
+    with open(os.path.join(run_dir, "generations.jsonl"),
+              encoding="utf-8") as handle:
+        records = {r["promptID"]: r for line in handle if line.strip()
+                   for r in [json.loads(line)]}
+    assert records["cut"]["parsedChoice"] is None
+    assert records["fin"]["parsedChoice"] == "yes"
+
+
 def test_metrics_csv_without_factors_keeps_the_historical_header(tmp_path):
     records = [{"condition": "baseline", "seed": 0, "promptIndex": 0,
                 "promptID": "p1", "wordCount": 10, "distinct2": 0.8}]
