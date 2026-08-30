@@ -465,6 +465,98 @@ import Testing
         #expect(result.resubmitCount == 1)
     }
 
+    /// The walltime override (field incident 2026-08-29: a shard that
+    /// checkpointed AT its limit would only checkpoint again under the same
+    /// one) rides the body exactly when given — and never otherwise, so
+    /// older servers see the request they have always seen. A server that
+    /// understood it echoes `walltime` back; the echo is what the CLI reads
+    /// before believing the override was applied.
+    @Test func resubmitJobEncodesWalltimeOnlyWhenGivenAndDecodesTheEcho() async throws {
+        let withOverride = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { request in
+                let body = try #require(Self.bodyData(from: request))
+                let object = try #require(
+                    JSONSerialization.jsonObject(with: body) as? [String: Any])
+                #expect(object["walltime"] as? String == "08:00:00")
+                return (
+                    Data(
+                        """
+                        {"ok": true, "jobId": "child88", "resubmitOf": "abc123",
+                         "slurmJobID": "9003", "resubmitCount": 1,
+                         "autoResubmitLimit": 5, "manualResubmit": true,
+                         "walltime": "08:00:00"}
+                        """.utf8),
+                    200)
+            })
+        let echoed = try await withOverride.resubmitJob(
+            "abc123", walltime: "08:00:00")
+        #expect(echoed.walltime == "08:00:00")
+        #expect(echoed.slurmJobID == "9003")
+
+        let withoutOverride = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { request in
+                let body = try #require(Self.bodyData(from: request))
+                let object = try #require(
+                    JSONSerialization.jsonObject(with: body) as? [String: Any])
+                #expect(object["walltime"] == nil)
+                return (
+                    Data(
+                        #"{"ok": true, "jobId": "child89", "resubmitOf": "abc123"}"#
+                            .utf8),
+                    200)
+            })
+        let plain = try await withoutOverride.resubmitJob("abc123")
+        // No override requested, none echoed — nil, never a phantom value.
+        #expect(plain.walltime == nil)
+    }
+
+    /// A sharded parent's answer fans out (`resumedShards`), and a raced
+    /// resume reports the continuation it found (`alreadyResumed`). Both
+    /// decode from the additive fields; an older server's answer without
+    /// them still decodes to nil.
+    @Test func resubmitJobDecodesShardFanOutAndAlreadyResumedAnswers() async throws {
+        let client = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { _ in
+                (
+                    Data(
+                        """
+                        {"ok": true, "resubmitOf": "parent1",
+                         "manualResubmit": true,
+                         "resumedShards": [
+                           {"ok": true, "jobId": "s1", "slurmJobID": "9101",
+                            "walltime": "06:00:00"},
+                           {"ok": true, "jobId": "s2", "slurmJobID": "9102",
+                            "walltime": "06:00:00"}]}
+                        """.utf8),
+                    200)
+            })
+        let fanned = try await client.resubmitJob("parent1", walltime: "06:00:00")
+        #expect(fanned.jobId == nil)
+        #expect(fanned.resumedShards?.count == 2)
+        #expect(fanned.resumedShards?.first?.slurmJobID == "9101")
+        #expect(fanned.resumedShards?.first?.walltime == "06:00:00")
+
+        let raced = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { _ in
+                (
+                    Data(
+                        """
+                        {"ok": true, "jobId": "child90", "resubmitOf": "abc123",
+                         "slurmJobID": "9104", "alreadyResumed": true}
+                        """.utf8),
+                    200)
+            })
+        let adopted = try await raced.resubmitJob("abc123", walltime: "06:00:00")
+        #expect(adopted.alreadyResumed == true)
+        // The continuation was adopted, not submitted — no walltime echo,
+        // which is exactly the signal that the override did NOT apply.
+        #expect(adopted.walltime == nil)
+    }
+
     @Test func resubmitJobSurfacesThe409RefusalDetailVerbatim() async throws {
         let client = ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),

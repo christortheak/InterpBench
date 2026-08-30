@@ -554,6 +554,17 @@ public struct RemoteJobResubmission: Codable, Sendable {
     public var resubmitCount: Int?
     public var autoResubmitLimit: Int?
     public var manualResubmit: Bool?
+    /// The walltime override, echoed back by a server that UNDERSTOOD it —
+    /// absent when none was requested, and absent from an older server that
+    /// silently ignored the field, which is exactly why callers must read
+    /// this echo rather than assume the request was honored.
+    public var walltime: String?
+    /// The resume raced (or repaired) an existing continuation: nothing was
+    /// submitted, and `jobId` names what is already carrying the run.
+    public var alreadyResumed: Bool?
+    /// Sharded parent only: one entry per checkpointed shard that was
+    /// resubmitted (`jobId` is nil on the parent answer itself).
+    public var resumedShards: [RemoteJobResubmission]?
 }
 
 public struct RemoteJobRecord: Codable, Sendable, Identifiable {
@@ -2724,10 +2735,24 @@ public struct ClusterClient: Sendable {
     /// continues from its checkpoint. Refusals (not checkpointed, already
     /// resubmitted, cancelled) are 409s whose `detail` is the actionable
     /// text, rethrown verbatim.
-    public func resubmitJob(_ id: String) async throws -> RemoteJobResubmission {
-        struct Empty: Encodable {}
+    ///
+    /// `walltime` (field incident 2026-08-29: a shard that checkpointed AT
+    /// its limit would only checkpoint again under the same one) raises the
+    /// scheduler limit for the continuation. Encoded only when given, so
+    /// older servers see the request they have always seen; a server that
+    /// understood it echoes `walltime` back — read that echo, because an
+    /// older server ignores the field silently. The server applies it on
+    /// sbatch's command line, so the rendered script is still re-submitted
+    /// byte-for-byte.
+    public func resubmitJob(
+        _ id: String, walltime: String? = nil
+    ) async throws -> RemoteJobResubmission {
+        struct Body: Encodable {
+            var walltime: String?
+        }
         do {
-            return try await post("/api/jobs/\(id)/resubmit", body: Empty())
+            return try await post("/api/jobs/\(id)/resubmit",
+                                  body: Body(walltime: walltime))
         } catch let error as ClientError {
             throw Self.unwrappingDetail(error)
         }

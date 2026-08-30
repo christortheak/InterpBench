@@ -2036,6 +2036,7 @@ steerlab-cli remote submit-bundle <server-bundle-path> [--bundle <server-path>] 
 steerlab-cli remote jobs [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote logs <job-id> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote cancel <job-id> [--site <id>] [--token <token>] [--url <server>]
+steerlab-cli remote resubmit <job-id> [--site <id>] [--token <token>] [--url <server>] [--walltime <hh:mm:ss>]
 steerlab-cli remote fetch <artifact-path> [--out <dir>] [--path <server-path>] [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote import <server-evidence-path> [--out <dir>] [--path <server-path>] [--sha256 <hex>] [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote import-chain <pipeline-run-id-or-experiment> [--site <id>] [--token <token>] [--url <server>]
@@ -2052,6 +2053,7 @@ steerlab-cli remote chat [--hash <sha256>] [--max-tokens <n>] --prompt <text> [-
 | `remote jobs` | List the server's jobs. |
 | `remote logs` | Stream one job's log. |
 | `remote cancel` | Request cancellation of one job. |
+| `remote resubmit` | Resume a checkpointed job: the server re-submits the job's own rendered sbatch script byte-for-byte, optionally under a longer walltime. |
 | `remote fetch` | Download one server artifact without importing it. |
 | `remote import` | Download, hash-verify, and import an evidence bundle into runs/. |
 | `remote import-chain` | Import a whole pipeline chain, skipping directories already present. |

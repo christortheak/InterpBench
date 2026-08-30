@@ -690,6 +690,11 @@ import Testing
             "vectors compare", "vectors backfill-norms", "vectors mirror-poles",
             "remote capabilities", "remote package", "remote upload",
             "remote submit-bundle", "remote jobs", "remote logs", "remote cancel",
+            // The managed resume of a checkpointed job (field incident
+            // 2026-08-29: the designed resume had no managed spelling and
+            // forced a hand-rolled scheduler command). A new verb in an
+            // existing family; nothing in the lifecycle moved.
+            "remote resubmit",
             "remote fetch", "remote import", "remote import-chain",
             "remote variants", "remote chat",
             "experiment list", "experiment create", "experiment attach",

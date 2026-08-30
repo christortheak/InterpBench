@@ -103,8 +103,9 @@ public enum CLIReferenceDocument {
             verbLabels: [
                 "remote capabilities", "remote package", "remote upload",
                 "remote submit-bundle", "remote jobs", "remote logs",
-                "remote cancel", "remote fetch", "remote import",
-                "remote import-chain", "remote variants", "remote chat",
+                "remote cancel", "remote resubmit", "remote fetch",
+                "remote import", "remote import-chain", "remote variants",
+                "remote chat",
             ]),
         .init(id: "swift-authoring", verbLabels: ["authoring prompt"]),
         .init(id: "swift-docs", verbLabels: ["docs cli-reference"]),

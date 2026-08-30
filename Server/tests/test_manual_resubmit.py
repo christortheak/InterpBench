@@ -258,6 +258,114 @@ def test_manual_then_auto_never_double_submits(tmp_path, fake_slurm, monkeypatch
     assert len(fake_slurm.calls("sbatch")) == 1
 
 
+# --- walltime override (field incident 2026-08-29) ---------------------------------
+# A shard that checkpointed AT its walltime would only checkpoint again under
+# the same limit. The override rides sbatch's COMMAND LINE (flag beats
+# `#SBATCH` header), so the rendered script is still re-submitted
+# byte-for-byte — the reliability contract's identical-script rule holds.
+
+def test_manual_resubmit_walltime_override_rides_the_command_line(
+        tmp_path, fake_slurm, monkeypatch):
+    script = _dummy_script(tmp_path)
+    script_bytes_before = open(script, "rb").read()
+    mgr = _manager(tmp_path)
+    monkeypatch.setenv("FAKE_SLURM_JOB_ID", "8102")
+    job = _checkpointed(mgr, "8101", script=script)
+
+    outcome = mgr.resubmit(job.id, walltime="08:00:00")
+
+    assert outcome["ok"] is True
+    assert outcome["slurmJobID"] == "8102"
+    # The echo is the caller's proof the server understood the override.
+    assert outcome["walltime"] == "08:00:00"
+    calls = fake_slurm.calls("sbatch")
+    assert len(calls) == 1
+    # The override is a CLI flag; the submitted script is the original path
+    # with its bytes untouched — never a re-render.
+    assert "--time=08:00:00" in calls[0]
+    assert calls[0].endswith(script)
+    assert open(script, "rb").read() == script_bytes_before
+    # The continuation's durable record prices the limit it actually runs
+    # under, and says the limit was an override.
+    child = mgr.get(outcome["jobId"])
+    assert child.requested_resources["walltime"] == "08:00:00"
+    assert child.requested_resources["walltimeOverride"] == "08:00:00"
+    assert any("walltime raised to 08:00:00" in line
+               for line in child.all_logs())
+
+
+def test_manual_resubmit_without_override_keeps_the_command_line_bare(
+        tmp_path, fake_slurm, monkeypatch):
+    script = _dummy_script(tmp_path)
+    mgr = _manager(tmp_path)
+    monkeypatch.setenv("FAKE_SLURM_JOB_ID", "8202")
+    job = _checkpointed(mgr, "8201", script=script)
+    outcome = mgr.resubmit(job.id)
+    assert "walltime" not in outcome
+    calls = fake_slurm.calls("sbatch")
+    assert len(calls) == 1 and "--time=" not in calls[0]
+    child = mgr.get(outcome["jobId"])
+    assert "walltimeOverride" not in child.requested_resources
+
+
+def test_manual_resubmit_refuses_a_malformed_walltime(tmp_path, fake_slurm):
+    script = _dummy_script(tmp_path)
+    mgr = _manager(tmp_path)
+    job = _checkpointed(mgr, "8301", script=script)
+    with pytest.raises(ResubmitRefused, match="invalid walltime"):
+        mgr.resubmit(job.id, walltime="8 hours")
+    with pytest.raises(ResubmitRefused, match="must be positive"):
+        mgr.resubmit(job.id, walltime="0")
+    assert fake_slurm.calls("sbatch") == []
+
+
+# --- the scheduler's exit code beats a stale record (field incident 2026-08-29) ----
+
+def test_manual_resubmit_corrects_a_record_whose_exit_code_is_85(
+        tmp_path, fake_slurm, monkeypatch):
+    """A checkpoint the record missed — 'failed' from a wrapper that reported
+    the checkpoint exit as a plain failure, or 'running' with no reconciler
+    tick yet — is re-asked of the scheduler before refusing: sacct's ExitCode
+    85 means the run parked resumably, and the resume proceeds."""
+    script = _dummy_script(tmp_path)
+    mgr = _manager(tmp_path)
+    monkeypatch.setenv("FAKE_SLURM_JOB_ID", "8402")
+    stale_failed = _checkpointed(mgr, "8401", script=script, status="failed")
+    fake_slurm.set_state("8401", "FAILED", exit_code="85:0")
+
+    outcome = mgr.resubmit(stale_failed.id)
+
+    assert outcome["ok"] is True
+    assert outcome["slurmJobID"] == "8402"
+    original = mgr.get(stale_failed.id)
+    assert original.status == "checkpointed"
+    assert original.finished_at is None
+    assert any("record corrected to checkpointed" in line
+               for line in original.all_logs())
+    assert len(fake_slurm.calls("sbatch")) == 1
+
+
+def test_manual_resubmit_still_refuses_a_truly_failed_record(
+        tmp_path, fake_slurm):
+    """The correction is for the checkpoint exit code ONLY — a job the
+    scheduler confirms failed stays refused, and succeeded/cancelled records
+    are never even re-asked (cancelled beats checkpointed)."""
+    script = _dummy_script(tmp_path)
+    mgr = _manager(tmp_path)
+    hard_failed = _checkpointed(mgr, "8501", script=script, status="failed")
+    fake_slurm.set_state("8501", "FAILED", exit_code="1:0")
+    with pytest.raises(ResubmitRefused, match="already finished"):
+        mgr.resubmit(hard_failed.id)
+
+    done = _checkpointed(mgr, "8502", script=script, status="succeeded")
+    fake_slurm.set_state("8502", "FAILED", exit_code="85:0")
+    with pytest.raises(ResubmitRefused, match="already finished"):
+        mgr.resubmit(done.id)
+    # Succeeded was refused WITHOUT a scheduler round trip.
+    assert not any("-j 8502" in call for call in fake_slurm.calls("sacct"))
+    assert fake_slurm.calls("sbatch") == []
+
+
 # --- the HTTP route ---------------------------------------------------------------
 
 def _route_client(tmp_path, monkeypatch):
@@ -308,6 +416,56 @@ def test_resubmit_route_maps_refusals_to_409_and_unknown_to_404(
     assert "already finished" in r.json()["detail"]
     assert client.post("/api/jobs/ghost/resubmit").status_code == 404
     assert fake_slurm.calls("sbatch") == []
+
+
+def test_resubmit_route_walltime_override_round_trip(tmp_path, fake_slurm,
+                                                     monkeypatch):
+    """The body's walltime reaches sbatch as a --time flag, the identical
+    script is what is submitted, and the response echoes the override."""
+    client, state = _route_client(tmp_path, monkeypatch)
+    script = _dummy_script(tmp_path)
+    monkeypatch.setenv("FAKE_SLURM_JOB_ID", "8602")
+    job = _checkpointed(state.jobs, "8601", script=script)
+
+    resp = client.post(f"/api/jobs/{job.id}/resubmit",
+                       json={"walltime": "12:00:00"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["slurmJobID"] == "8602"
+    assert body["walltime"] == "12:00:00"
+    calls = fake_slurm.calls("sbatch")
+    assert len(calls) == 1
+    assert "--time=12:00:00" in calls[0] and calls[0].endswith(script)
+
+
+def test_resubmit_route_refuses_malformed_walltime_with_400(
+        tmp_path, fake_slurm, monkeypatch):
+    client, state = _route_client(tmp_path, monkeypatch)
+    script = _dummy_script(tmp_path)
+    job = _checkpointed(state.jobs, "8701", script=script)
+    resp = client.post(f"/api/jobs/{job.id}/resubmit",
+                       json={"walltime": "tomorrow"})
+    assert resp.status_code == 400
+    assert "invalid walltime" in resp.json()["detail"]
+    # Refused before the job was even considered — nothing submitted, the
+    # parked run untouched.
+    assert fake_slurm.calls("sbatch") == []
+    assert state.jobs.get(job.id).status == "checkpointed"
+
+
+def test_resubmit_route_refuses_walltime_on_in_process_resume(
+        tmp_path, fake_slurm, monkeypatch):
+    """A cancel-parked in-process run has no scheduler limit to raise — a
+    walltime override there would be silently meaningless, so it refuses."""
+    client, state = _route_client(tmp_path, monkeypatch)
+    job = state.jobs.record_external("experiment:sweep",
+                                     status="cancelledResumable",
+                                     executor="local")
+    resp = client.post(f"/api/jobs/{job.id}/resubmit",
+                       json={"walltime": "02:00:00"})
+    assert resp.status_code == 400
+    assert "no scheduler limit to raise" in resp.json()["detail"]
 
 
 def test_resubmit_route_surfaces_sbatch_failure_as_502(tmp_path, fake_slurm,

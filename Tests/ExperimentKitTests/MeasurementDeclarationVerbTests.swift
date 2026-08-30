@@ -535,4 +535,42 @@ import Testing
         #expect(help.contains("renamed"))
         #expect(help.contains("SUBMIT time"))
     }
+
+    // MARK: - remote resubmit
+
+    /// The managed resume (field incident 2026-08-29: a checkpointed shard's
+    /// designed resume — re-executing its own rendered sbatch script — had no
+    /// managed spelling, and the fix was a hand-rolled scheduler command).
+    /// The verb is declared beside its family with the one override it
+    /// carries, and the walltime help names the mechanism that preserves the
+    /// identical-script contract: the flag beats the header, so nothing is
+    /// re-rendered.
+    @Test func theResubmitVerbIsDeclaredAndItsWalltimeHelpNamesTheOverride() throws {
+        let spec = try #require(
+            ExperimentCLIParser.specs.first {
+                $0.namespace == "remote" && $0.verb == "resubmit"
+            })
+        #expect(spec.positional == "<job-id>")
+        #expect(spec.valueFlags.contains("--walltime"))
+        #expect(spec.purpose.contains("byte-for-byte"))
+        let help = CLIFlagVocabulary.purpose("--walltime")
+        #expect(help.contains("OVERRIDES"))
+        #expect(help.contains("byte-for-byte"))
+    }
+
+    /// The client-side walltime vocabulary matches the server's validator:
+    /// minutes, mm:ss, or hh:mm:ss, positive — a typo refuses on the
+    /// terminal instead of costing a round trip.
+    @Test func theWalltimeShapeCheckMatchesTheServerVocabulary() {
+        #expect(ExperimentCLIRunner.isSchedulerWalltime("90"))
+        #expect(ExperimentCLIRunner.isSchedulerWalltime("30:00"))
+        #expect(ExperimentCLIRunner.isSchedulerWalltime("08:00:00"))
+        #expect(!ExperimentCLIRunner.isSchedulerWalltime("8 hours"))
+        #expect(!ExperimentCLIRunner.isSchedulerWalltime("tomorrow"))
+        #expect(!ExperimentCLIRunner.isSchedulerWalltime("0"))
+        #expect(!ExperimentCLIRunner.isSchedulerWalltime("0:00:00"))
+        #expect(!ExperimentCLIRunner.isSchedulerWalltime("-5"))
+        #expect(!ExperimentCLIRunner.isSchedulerWalltime(""))
+        #expect(!ExperimentCLIRunner.isSchedulerWalltime("1:2:3:4"))
+    }
 }

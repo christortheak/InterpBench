@@ -579,9 +579,11 @@ class SlurmExecutor:
         return bundle
 
     def submit(self, bundle: JobBundle, *, job_name: str | None = None,
-               dependency: str | None = None) -> str:
+               dependency: str | None = None,
+               walltime: str | None = None) -> str:
         if crosses_maintenance_window(
-            bundle.resources.walltime, self.profile.maintenance_calendar_path):
+            walltime or bundle.resources.walltime,
+            self.profile.maintenance_calendar_path):
             raise RuntimeError("requested walltime crosses a configured maintenance window")
         # Submit FROM the bundle dir (run_root side, scratch on most sites), not
         # from wherever the daemon happens to be running (often a /home cwd):
@@ -606,6 +608,12 @@ class SlurmExecutor:
             # a dependency that was satisfied before the job ever started. The
             # shape was validated at submission (`normalized_dependency`).
             command.append(f"--dependency={normalized_dependency(dependency)}")
+        if walltime:
+            # Same command-line-not-header rule: a resubmission re-submits the
+            # rendered script byte-for-byte, and sbatch's own precedence (CLI
+            # flags beat `#SBATCH` headers) is what lets a continuation run
+            # under a longer limit without the script ever being re-rendered.
+            command.append(f"--time={_sbatch_value(validated_walltime(walltime))}")
         command.append(bundle.script_path)
         proc = scheduler_run(command, text=True,
                              capture_output=True, check=False,
@@ -976,3 +984,23 @@ def _parse_walltime(value: str) -> timedelta:
         m, s = (int(p) for p in parts)
         return timedelta(minutes=m, seconds=s)
     return timedelta(minutes=int(value))
+
+
+def validated_walltime(value: str) -> str:
+    """A caller-supplied walltime (e.g. a resubmission's override), validated
+    to the vocabulary ``_parse_walltime`` accepts — minutes, ``mm:ss``, or
+    ``hh:mm:ss`` — so a typo refuses on the terminal rather than at sbatch,
+    and so the maintenance-window math can always price it. Returns the
+    value stripped; raises ``ValueError`` naming the accepted shapes."""
+    text = (value or "").strip()
+    try:
+        if not text:
+            raise ValueError
+        delta = _parse_walltime(text)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"invalid walltime {value!r} — use minutes, mm:ss, or hh:mm:ss"
+        ) from None
+    if delta <= timedelta(0):
+        raise ValueError(f"walltime {value!r} must be positive")
+    return text
