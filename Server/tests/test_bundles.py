@@ -483,6 +483,37 @@ def test_package_refuses_an_agent_whose_vector_is_missing(tmp_path):
         bundles.package_experiment("closure-study", root=root)
 
 
+def test_bundle_carries_a_preserved_authored_preregistration(tmp_path):
+    """Review 2026-08-29, P1: a bundle is a workspace with no git and no
+    neighbours, so a preregistration that does not travel in it has no
+    integrity at all on the far side. The freeze stamps the authored file,
+    which puts it on the pin surface — and the surface is what the packer
+    walks, so it travels and verifies after import."""
+    from steerlab_server.experiment.manifest import Manifest
+
+    root = str(tmp_path / "source")
+    _study(root)
+    prereg = os.path.join(root, "experiments", "bundle-study",
+                          "preregistration.md")
+    authored = "# Analysis preregistration\n\nOne estimator, chosen now.\n"
+    with open(prereg, "w", encoding="utf-8") as handle:
+        handle.write(authored)
+    es.freeze("bundle-study", force=True, root=root)
+
+    meta = bundles.package_experiment("bundle-study", root=root)
+    packed = {e["path"] for e in meta["entries"]}
+    assert "experiments/bundle-study/preregistration.md" in packed
+    assert "experiments/bundle-study/pinned/preregistration.md" in packed
+    assert meta["verificationViolations"] == []
+
+    target = str(tmp_path / "target")
+    bundles.import_bundle(meta["bundlePath"], target_root=target)
+    assert Manifest.load("bundle-study", target).verify(target) == []
+    with open(os.path.join(target, "experiments", "bundle-study",
+                           "preregistration.md"), encoding="utf-8") as handle:
+        assert handle.read() == authored
+
+
 def test_package_refuses_missing_pinned_input(tmp_path):
     """A pinned-but-missing file fails at PACKAGE time, named — never as a
     child-side verify failure hours later on the cluster."""

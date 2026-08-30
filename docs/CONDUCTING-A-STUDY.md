@@ -518,11 +518,23 @@ manifest's content hash and the workspace git commit, snapshots every pinned
 input into `experiments/<name>/pinned/` (the no-git reproducibility floor),
 writes the generated settings summary beside the manifest, and makes the
 manifest read-only. The summary lands at `preregistration.md` when that path
-is free (or holds a previous freeze's own generated file, recognized by its
-"*Generated at freeze*" marker line); a researcher-authored preregistration at
-that path — analysis commitments written before any data existed — is
-preserved untouched, and the summary lands beside it as
-`preregistration-frozen-settings.md` instead. There is no unfreeze. **Pin verification** always runs and is
+is free, or holds a file that is *provably* a previous freeze's own untouched
+output — the manifest's stamped hash of what it last generated matches the
+bytes exactly, or (for files predating that stamp) the first line is the
+generated header and the marker line `*Generated at freeze; do not edit.` is
+the last non-empty line. Anything else is a researcher-authored
+preregistration — analysis commitments written before any data existed — and
+is preserved untouched, with the summary landing beside it as
+`preregistration-frozen-settings.md`. Quoting the marker inside your own
+document is safe: when in doubt the file is preserved, never overwritten.
+
+A preserved preregistration is then **frozen like any other pinned input**:
+its SHA-256 is stamped into the manifest, it is snapshotted into
+`experiments/<name>/pinned/`, `verify` re-hashes it from then on, and it
+travels in run bundles — so editing it after the freeze is drift the
+instrument reports, not a silent rewrite of the record. Experiments frozen
+before the stamp existed carry none, and their absence is not a violation.
+There is no unfreeze. **Pin verification** always runs and is
 **never skippable** — `--force` does not reach it — while the **seven evidence
 gates**, each with a stable cross-engine id, are force-skippable:
 
@@ -1177,7 +1189,7 @@ which is the good outcome, or as a silently different study, which is not.
 | `alien-residuals.csv` | server `analyze` | model-minus-human residuals against the pinned table |
 | `config.json` | every writer | substrate, platform, dtype, sampling policy, environment stamp |
 | `advisories.txt` | every writer | everything that did not stop the verb — read it |
-| `preregistration.md` | `freeze` (or the researcher, first) | the frozen design, exported at the freeze instant — unless the researcher authored this path before freezing, which freeze preserves, exporting to `preregistration-frozen-settings.md` instead |
+| `preregistration.md` | `freeze` (or the researcher, first) | the frozen design, exported at the freeze instant — unless the researcher authored this path before freezing, which freeze preserves, hash-stamps, and exports beside as `preregistration-frozen-settings.md` |
 
 [RESULTS-ARCHITECTURE.md](RESULTS-ARCHITECTURE.md) is the authority on what
 each layer of result licenses: in outline, a model-internal layer needing no

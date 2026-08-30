@@ -119,6 +119,7 @@ def _concept(root, name="french"):
 VOLATILE_FREEZE_KEYS = [
     "status", "frozenAt", "freezeHash", "gitCommit", "frozenBy", "createdAt",
     "appVersion", "freezeForced", "forcedGatesSkipped",
+    "preregistrationHash", "preregistrationGeneratedHash",
 ]
 
 #: The ``steerlab-bundle.json`` header keys for a run bundle, copied from the
@@ -274,7 +275,13 @@ def test_a_python_authored_manifest_fixture_is_current(tmp_path):
     for key, value in (("frozenAt", "1970-01-01T00:00:00Z"),
                        ("createdAt", "1970-01-01T00:00:00Z"),
                        ("appVersion", "<appVersion>"),
-                       ("gitCommit", "<gitCommit>")):
+                       ("gitCommit", "<gitCommit>"),
+                       # The generated preregistration hashes over the freeze
+                       # instant and the commit, so it varies per run exactly
+                       # like the stamps above — and like them it is outside
+                       # every canonicalization here.
+                       ("preregistrationGeneratedHash",
+                        "<preregistrationGeneratedHash>")):
         if key in normalized:
             normalized[key] = value
     normalized_draft = dict(draft)
@@ -305,7 +312,13 @@ def test_a_python_authored_manifest_fixture_is_current(tmp_path):
     for key, value in (("frozenAt", "1970-01-01T00:00:00Z"),
                        ("createdAt", "1970-01-01T00:00:00Z"),
                        ("appVersion", "<appVersion>"),
-                       ("gitCommit", "<gitCommit>")):
+                       ("gitCommit", "<gitCommit>"),
+                       # The generated preregistration hashes over the freeze
+                       # instant and the commit, so it varies per run exactly
+                       # like the stamps above — and like them it is outside
+                       # every canonicalization here.
+                       ("preregistrationGeneratedHash",
+                        "<preregistrationGeneratedHash>")):
         if key in normalized_swift:
             normalized_swift[key] = value
 

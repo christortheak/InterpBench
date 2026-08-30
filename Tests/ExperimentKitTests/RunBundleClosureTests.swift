@@ -254,6 +254,47 @@ import Testing
         }
     }
 
+    /// Review 2026-08-29, P1: a bundle is a workspace with no git and no
+    /// neighbours, so a preregistration that does not travel in it has no
+    /// integrity at all on the far side. The freeze stamps the authored file,
+    /// which puts it on the pin surface — and the surface is what the packer
+    /// walks. Parallel to
+    /// `test_bundle_carries_a_preserved_authored_preregistration`.
+    @Test func runBundleCarriesAPreservedAuthoredPreregistration() throws {
+        try withTempWorkspace { root in
+            _ = try ExperimentStore.create(
+                name: "prereg-bundle", description: "", modelID: "test/model",
+                modelRevision: "abc123")
+            try write(
+                root, "prompts/emotions/calm/stories.jsonl",
+                "{\"concept\":\"calm\",\"text\":\"a calm tale\"}\n")
+            _ = try ExperimentStore.attachConcept(
+                "calm", method: .emotionGrandMean,
+                experimentName: "prereg-bundle")
+            let authored = "# Analysis preregistration\n\nOne estimator, chosen now.\n"
+            try authored.write(
+                to: ExperimentStore.directory.appending(
+                    components: "prereg-bundle",
+                    ExperimentStore.preregistrationFilename),
+                atomically: true, encoding: .utf8)
+            let frozen = try ExperimentStore.freeze(name: "prereg-bundle", force: true)
+
+            let bundle = try RunBundlePackager.packageExperiment(frozen)
+            let extracted = try extractBundle(bundle)
+            defer { try? FileManager.default.removeItem(at: extracted) }
+            let packedPreregistration = extracted.appending(
+                path: "experiments/prereg-bundle/preregistration.md")
+            #expect(
+                try String(contentsOf: packedPreregistration, encoding: .utf8)
+                    == authored)
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: extracted.appending(
+                        path: "experiments/prereg-bundle/pinned/preregistration.md"
+                    ).path))
+        }
+    }
+
     /// Fail closed: an agent whose vector is absent must refuse packaging
     /// HERE, not fail on the cluster after the queue wait and model load.
     @Test func packagingRefusesAnAgentWhoseVectorIsMissing() throws {

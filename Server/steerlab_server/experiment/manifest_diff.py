@@ -48,7 +48,8 @@ def _flatten(value: Any, path: str, out: dict[str, str]) -> None:
 #: contradict the verdict the diff is explaining.
 VOLATILE_KEYS = ("status", "frozenAt", "freezeHash", "gitCommit", "frozenBy",
                  "appVersion", "createdAt", "freezeForced",
-                 "forcedGatesSkipped")
+                 "forcedGatesSkipped", "preregistrationHash",
+                 "preregistrationGeneratedHash")
 
 
 def flattened(manifest) -> dict[str, str]:

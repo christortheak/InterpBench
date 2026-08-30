@@ -775,6 +775,8 @@ extension ExperimentStore {
         manifest.gitCommit = nil
         manifest.freezeForced = nil
         manifest.forcedGatesSkipped = nil
+        manifest.preregistrationHash = nil
+        manifest.preregistrationGeneratedHash = nil
         // Pack files land BEFORE the manifest so pinning sees real bytes.
         // TRANSACTIONAL (engineer finding 2026-07-19): every path is
         // validated before the FIRST write, and a later failure —
