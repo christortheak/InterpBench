@@ -694,6 +694,27 @@ migration that rewrites frozen bytes.
 
 ### Fixed
 
+- **A declared evaluation-sampling design can no longer be frozen into a
+  study that could never execute it.** The `evaluationSampling` declaration
+  applies to the per-response coding instrument only — the paired-rubric
+  evaluation path refuses every sampling request unconditionally, because a
+  per-condition record count does not name a set of (baseline, variant)
+  pairs. Verification, however, checked only the declaration's own shape and
+  never the pinned rubric's MODE, so a study carrying both a declaration and
+  a paired rubric verified, froze — permanently, and a frozen declaration can
+  never be cleared — and then refused at evaluate every single time it ran.
+  Both engines now report a typed violation at verify/freeze naming both
+  facts and both repairs, and `experiment set-evaluation-sampling` refuses
+  with the same sentence when the study ALREADY pins an incompatible rubric.
+  The mode is read by the evaluate path's own predicate (`parse_rubric` /
+  `ResponseCoding.parseRubric`), never by a second reading that could drift
+  from it. Legacy tolerance is deliberate: a declaration with no rubric
+  pinned yet stays clean (the declaration may precede the rubric), a
+  per-response rubric plus a declaration stays clean, and a manifest with no
+  declaration — every frozen study written before this — gains nothing.
+  Pair-level sampling is explicitly NOT implemented: defining a seeded draw
+  over pairs is a design decision nobody has taken, and the gate is the fix.
+
 - **The Local Engine Details pane's `site qualify` no longer reports a
   profile nobody is running.** The qualify subprocess inherited the app's
   working directory (`/` when launched from Finder) and no `STEERLAB_ROOT`,

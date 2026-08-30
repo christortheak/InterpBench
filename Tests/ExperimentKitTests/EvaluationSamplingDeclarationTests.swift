@@ -275,6 +275,248 @@ import Testing
         }
     }
 
+    // MARK: - The declaration vs the INSTRUMENT that would draw it
+    //
+    // The sampled evaluate is per-response coding ONLY: the paired path
+    // refuses every sampling request unconditionally. Verification checked
+    // the declaration's own shape and never the pinned rubric's MODE, so a
+    // study carrying both verified, froze — permanently, declaration and all
+    // — and then refused at evaluate every single time. Refusals upstream:
+    // the gate fires at verify/freeze always, and at the declaration verb
+    // when the rubric is already pinned.
+    //
+    // Server twin: `Server/tests/test_evaluation_sampling.py`, same section.
+
+    static let pairedRubric =
+        "Prefer the response that applies the controlling rule.\n"
+
+    static let codingRubric =
+        "---\nmode: perResponseCoding\nfield: mentionsLegalRule boolean\n"
+        + "---\nCode whether the response names the controlling rule.\n"
+
+    static let rubricPath = "prompts/rubrics/r.md"
+
+    /// The declaration-vs-instrument conflict, said identically by verify, by
+    /// freeze, and by the declaration verb, on both engines. The two repairs
+    /// are IN the sentence because verify's violations are plain strings with
+    /// no `repairAction` to carry them. Server twin:
+    /// `LITERAL_INSTRUMENT_CONFLICT`.
+    static let literalInstrumentConflict =
+        "evaluationSampling declares a seeded subsample, but the judge rubric "
+        + "this study pins ('prompts/rubrics/r.md') is a PAIRED comparison "
+        + "rubric — the draw is defined over per-response coding records, and "
+        + "the paired judge's unit is a (baseline, variant) PAIR rather than "
+        + "a record, so evaluate would refuse this study on every run. A "
+        + "freeze is permanent and a frozen declaration can never be cleared, "
+        + "so the combination is refused here instead: clear the declaration "
+        + "with experiment set-evaluation-sampling <name> \"\", or pin a "
+        + "perResponseCoding rubric if per-record coding is the design"
+
+    /// Server twin: `LITERAL_INSTRUMENT_REPAIR`.
+    static let literalInstrumentRepair =
+        "clear the declaration with experiment set-evaluation-sampling "
+        + "<name> \"\", or pin a perResponseCoding rubric if per-record "
+        + "coding is the design"
+
+    /// Pin a rubric onto an existing study, hash and all — the state a study
+    /// is in by the time it reaches freeze.
+    func pinRubric(_ text: String, onto name: String = "demo") throws {
+        let url = ExperimentStore.workspaceRoot.appending(
+            path: Self.rubricPath)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        var manifest = try ExperimentStore.load(name: name)
+        try JudgeRubricStore.pin(Self.rubricPath, into: &manifest)
+        try ExperimentStore.save(manifest)
+    }
+
+    func instrumentViolations(_ name: String = "demo") throws -> [String] {
+        ExperimentStore.verify(try ExperimentStore.load(name: name)).filter {
+            $0.hasPrefix("evaluationSampling declares a seeded subsample")
+        }
+    }
+
+    /// The finding, end to end. Declaring first and pinning the rubric second
+    /// is the ORDER that reaches here — the declaration verb owns the other
+    /// order — and it is the order a study is often authored in.
+    ///
+    /// Freeze is where it matters: a frozen declaration can never be cleared,
+    /// so without this gate the study is frozen around a design it can never
+    /// execute. The always-run `verify()` inside freeze is the
+    /// never-skippable class, so `--force` does not get past it either.
+    @Test func aDeclarationOverAPairedRubricFailsVerifyAndFreeze()
+        async throws
+    {
+        try await withTempRoot { _ in
+            try draft()
+            try ExperimentStore.declareEvaluationSampling(
+                samplePerCondition: "2400", sampleSeed: "0x2a",
+                experimentName: "demo")
+            try pinRubric(Self.pairedRubric)
+
+            #expect(try instrumentViolations() == [
+                Self.literalInstrumentConflict
+            ])
+
+            var refusal = ""
+            do {
+                _ = try ExperimentStore.freeze(name: "demo", force: true)
+            } catch let error as ExperimentError {
+                refusal = error.reason
+            }
+            #expect(refusal.contains(Self.literalInstrumentConflict))
+            #expect(try ExperimentStore.load(name: "demo").status == .draft)
+        }
+    }
+
+    /// The other order, refused at the desk: when the rubric is ALREADY
+    /// pinned the incompatibility is knowable at declaration time, so nothing
+    /// is written and the sentence is the one verify would have said.
+    @Test func theDeclarationVerbRefusesAnAlreadyPinnedPairedRubric()
+        async throws
+    {
+        try await withTempRoot { _ in
+            try draft()
+            try pinRubric(Self.pairedRubric)
+
+            var refusal = ("", "")
+            do {
+                try ExperimentStore.declareEvaluationSampling(
+                    samplePerCondition: "2400", sampleSeed: "0x2a",
+                    experimentName: "demo")
+            } catch let error as ExperimentError {
+                refusal = (
+                    error.reason,
+                    error.malformedInvocation?.repairAction ?? "")
+            }
+            #expect(refusal.0 == Self.literalInstrumentConflict)
+            #expect(refusal.1 == Self.literalInstrumentRepair)
+            #expect(
+                try ExperimentStore.load(name: "demo").evaluationSampling
+                    == nil)
+
+            // …and through the CLI verb, at 64 with nothing written.
+            let outcome = await invoke(
+                ["set-evaluation-sampling", "demo", "2400", "0x2a"])
+            #expect(outcome.envelope.exitCode == 64)
+            #expect(
+                try ExperimentStore.load(name: "demo").evaluationSampling
+                    == nil)
+        }
+    }
+
+    /// The repair the refusal names must always be runnable. Clearing writes
+    /// no declaration, so there is nothing for the rubric to be incompatible
+    /// with — a gate that blocked the clear would be a trap.
+    @Test func theClearIsNeverRefusedByTheGate() async throws {
+        try await withTempRoot { _ in
+            try draft()
+            try ExperimentStore.declareEvaluationSampling(
+                samplePerCondition: "2400", sampleSeed: "0x2a",
+                experimentName: "demo")
+            try pinRubric(Self.pairedRubric)
+            try ExperimentStore.declareEvaluationSampling(
+                samplePerCondition: "", sampleSeed: "", experimentName: "demo")
+            #expect(
+                try ExperimentStore.load(name: "demo").evaluationSampling
+                    == nil)
+            #expect(try instrumentViolations().isEmpty)
+        }
+    }
+
+    /// Legacy tolerance, and the authoring order it protects: the declaration
+    /// may precede the rubric. The gate fires only when BOTH are present, so
+    /// a draft that has not chosen its rubric is not refused for a choice it
+    /// has not made — the same rule that keeps the population check out of
+    /// verify.
+    @Test func aDeclarationWithNoRubricPinnedYetStaysClean() async throws {
+        try await withTempRoot { _ in
+            try draft()
+            try ExperimentStore.declareEvaluationSampling(
+                samplePerCondition: "2400", sampleSeed: "0x2a",
+                experimentName: "demo")
+            #expect(try instrumentViolations().isEmpty)
+            #expect(
+                EvaluateSubsample.instrumentViolations(
+                    try ExperimentStore.load(name: "demo").evaluationSampling,
+                    rubricText: nil, rubricFile: nil
+                ).isEmpty)
+        }
+    }
+
+    /// The combination the feature exists FOR: a coding rubric is exactly the
+    /// instrument the seeded draw is defined over.
+    @Test func aPerResponseRubricAndADeclarationStayClean() async throws {
+        try await withTempRoot { _ in
+            try draft()
+            try pinRubric(Self.codingRubric)
+            try ExperimentStore.declareEvaluationSampling(
+                samplePerCondition: "2400", sampleSeed: "0x2a",
+                experimentName: "demo")
+            #expect(try instrumentViolations().isEmpty)
+            #expect(
+                try ExperimentStore.load(name: "demo").evaluationSampling?
+                    .samplePerCondition == 2400)
+        }
+    }
+
+    /// Every manifest written before the declaration existed — including the
+    /// frozen ones, which are the ones that could not be repaired — verifies
+    /// exactly as it did. ABSENT declaration = no check.
+    @Test func aPairedRubricWithoutADeclarationGainsNothing() async throws {
+        try await withTempRoot { _ in
+            try draft()
+            try pinRubric(Self.pairedRubric)
+            #expect(try instrumentViolations().isEmpty)
+            #expect(
+                EvaluateSubsample.instrumentViolations(
+                    nil, rubricText: Self.pairedRubric,
+                    rubricFile: Self.rubricPath
+                ).isEmpty)
+        }
+    }
+
+    /// Not a second reading of rubric frontmatter: the gate forks on
+    /// `ResponseCoding.parseRubric`, the predicate `evaluatePairedJudge`
+    /// itself forks on. A malformed coding block is neither answer — the mode
+    /// is genuinely unknown, and the rubric parser refuses it at read time on
+    /// its own account.
+    @Test func theModeIsReadByTheEvaluatePathsOwnPredicate() throws {
+        #expect(
+            EvaluateSubsample.rubricHonorsSampling(Self.codingRubric) == true)
+        #expect(
+            EvaluateSubsample.rubricHonorsSampling(Self.pairedRubric) == false)
+        #expect(
+            EvaluateSubsample.rubricHonorsSampling(
+                "---\nmode: perResponseCoding\n---\n") == nil)
+        // …and an undecidable rubric is not turned into a violation.
+        #expect(
+            EvaluateSubsample.instrumentViolations(
+                .init(
+                    rule: EvaluateSubsample.rule, samplePerCondition: 7,
+                    sampleSeed: "0x000000000000002a"),
+                rubricText: "---\nmode: perResponseCoding\n---\n",
+                rubricFile: Self.rubricPath
+            ).isEmpty)
+    }
+
+    /// One sentence for one condition — the same convention the flag and
+    /// declaration refusals follow. Server twin:
+    /// `test_the_instrument_conflict_reads_identically_on_both_engines`.
+    @Test func theInstrumentConflictReadsIdenticallyOnBothEngines() throws {
+        #expect(
+            EvaluateSubsample.instrumentConflictMessage(
+                rubricFile: Self.rubricPath) == Self.literalInstrumentConflict)
+        let refusal = EvaluateSubsample.instrumentRefusal(
+            rubricFile: Self.rubricPath)
+        #expect(refusal.reason == Self.literalInstrumentConflict)
+        let repair = refusal.malformedInvocation?.repairAction ?? ""
+        #expect(repair == Self.literalInstrumentRepair)
+        #expect(!repair.contains("--force"))
+    }
+
     // MARK: - The flags become a cross-check
 
     @Test func aDeclarationAloneIsTheEffectiveDraw() throws {

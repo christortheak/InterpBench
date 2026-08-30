@@ -2203,6 +2203,23 @@ def declare_evaluation_sampling(name: str, sample_per_condition,
         d.pop(evaluate_subsample.DECLARATION_KEY, None)
         save_raw(d, root)
         return d
+    # The rubric this study ALREADY pins decides whether the design can ever
+    # run (review round 13): a paired rubric refuses every sampling request at
+    # evaluate, so declaring a subsample over one writes a design guaranteed
+    # to be refused — and a freeze would make it permanent. When the rubric is
+    # pinned the incompatibility is knowable HERE, so it is refused HERE, with
+    # the sentence verify would say. When it is NOT pinned yet nothing is
+    # knowable and the declaration stands: verify/freeze is the backstop that
+    # sees whichever rubric eventually arrives.
+    conflict = evaluate_subsample.instrument_violations(
+        block,
+        evaluate_subsample.pinned_rubric_text(d.get("judgeRubricFile"), root),
+        rubric_file=d.get("judgeRubricFile"))
+    if conflict:
+        refusal = evaluate_subsample.instrument_refusal(
+            d.get("judgeRubricFile"))
+        raise MeasurementDeclarationError(
+            refusal.reason, repair=refusal.repair_action)
     d[evaluate_subsample.DECLARATION_KEY] = block
     save_raw(d, root)
     return d

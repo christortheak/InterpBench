@@ -495,6 +495,139 @@ def declaration_violations(block) -> list[str]:
     return problems
 
 
+# =============================================================================
+# The declaration vs the INSTRUMENT it would be drawn by (review round 13).
+#
+# `declaration_violations` checks the declaration against itself. It cannot
+# see that the study's pinned rubric is a PAIRED one — and `paired_refusal`
+# above declines every sampling request on that path, unconditionally. So a
+# manifest carrying both verified, froze (permanently, declaration and all),
+# and then refused at evaluate every single time: a study frozen around a
+# design it could never execute. The house doctrine is refusals upstream, so
+# the incompatibility is caught wherever it is KNOWABLE — at verify/freeze
+# always, and at the declaration verb when the rubric is already pinned.
+#
+# NOT implemented, deliberately: pair-level sampling. Defining a seeded draw
+# over pairs is a design decision nobody has taken, and inventing one here
+# would put a second, uncross-checked draw rule in the evidence chain. The
+# gate is the fix.
+#
+# Swift twins: `EvaluateSubsample.instrumentConflictMessage`,
+# `.rubricHonorsSampling`, `.instrumentViolations`, `.instrumentRefusal`.
+# =============================================================================
+
+#: The machine code the declaration verb refuses under. Exit 64 like every
+#: other member of this family: the ask names a design this study cannot
+#: execute, which is a malformed ask rather than a gate declining a healthy
+#: study.
+INSTRUMENT_CODE = "evaluationSamplingInstrument"
+
+
+def instrument_conflict_message(rubric_file: str | None) -> str:
+    """The ONE sentence both surfaces and both engines say, naming both facts
+    (a declaration is present; the pinned rubric is paired) and both repairs
+    (drop the declaration, or pin a per-response rubric).
+
+    No program name appears in it: verify's violations are plain strings with
+    no ``repairAction`` to carry one, and a sentence that differed between the
+    two surfaces would be two sentences to learn for one condition.
+    """
+    named = f"'{rubric_file}'" if rubric_file else "the pinned rubric"
+    return (
+        f"{DECLARATION_KEY} declares a seeded subsample, but the judge rubric "
+        f"this study pins ({named}) is a PAIRED comparison rubric — the draw "
+        "is defined over per-response coding records, and the paired judge's "
+        "unit is a (baseline, variant) PAIR rather than a record, so evaluate "
+        "would refuse this study on every run. A freeze is permanent and a "
+        "frozen declaration can never be cleared, so the combination is "
+        "refused here instead: clear the declaration with experiment "
+        'set-evaluation-sampling <name> "", or pin a perResponseCoding rubric '
+        "if per-record coding is the design")
+
+
+def rubric_honors_sampling(rubric_text: str) -> bool | None:
+    """Can a study pinning this rubric execute a sampled evaluate?
+
+    ``True`` per-response coding, ``False`` paired, ``None`` when the rubric
+    declares a coding block and then fails its own grammar — the mode is
+    genuinely unknown there, and a malformed rubric is a different finding
+    that :mod:`response_coding` already refuses at read time.
+
+    The mode is decided by ``response_coding.parse_rubric``, the SAME
+    predicate the evaluate path forks on (``tasks.evaluate``: a schema runs
+    the coding instrument, ``None`` falls through to the paired judge and
+    :func:`paired_refusal`). Reusing it is the point — a second reading of
+    rubric frontmatter here could drift from the one that actually decides,
+    and a gate that disagreed with the path it guards would be worse than no
+    gate.
+    """
+    from . import response_coding
+    try:
+        return response_coding.parse_rubric(rubric_text) is not None
+    except response_coding.CodingRubricError:
+        return None
+
+
+def instrument_violations(block, rubric_text: str | None, *,
+                          rubric_file: str | None = None) -> list[str]:
+    """The verify() surface for the declaration-vs-rubric-mode conflict.
+
+    Fires only when BOTH are present and incompatible. Legacy tolerance is
+    deliberate and load-bearing in two directions:
+
+    * no declaration → nothing to check, so every manifest written before the
+      declaration existed verifies exactly as it did;
+    * no rubric pinned yet (``rubric_text`` None, which is also what an
+      unreadable or drifted pin reads as — verify already reports those) →
+      CLEAN, because the declaration legitimately precedes the rubric. A study
+      is authored in whatever order its author works in, and refusing a
+      declaration for a rubric that has not been chosen yet would invent an
+      obligation a draft cannot meet — the same rule that keeps the population
+      check out of :func:`declaration_violations`.
+    """
+    if block is None or rubric_text is None:
+        return []
+    if rubric_honors_sampling(rubric_text) is False:
+        return [instrument_conflict_message(rubric_file)]
+    return []
+
+
+def instrument_refusal(rubric_file: str | None) -> SubsampleRefusal:
+    """The same sentence at the DECLARATION verb, for a study that already
+    pins an incompatible rubric.
+
+    The repair is the message's own two options rather than a third one: this
+    refusal and the verify violation describe one condition, and a researcher
+    who reads it at the desk must not have to re-derive it at freeze.
+    """
+    message = instrument_conflict_message(rubric_file)
+    return SubsampleRefusal(
+        message, code=INSTRUMENT_CODE,
+        repair=('clear the declaration with experiment '
+                'set-evaluation-sampling <name> "", or pin a '
+                "perResponseCoding rubric if per-record coding is the design"))
+
+
+def pinned_rubric_text(rubric_file, root) -> str | None:
+    """The pinned judge rubric's bytes as text, or ``None`` when there is no
+    pin or it cannot be read.
+
+    Unreadable reads as absent on purpose: a missing or unreadable rubric is
+    already a verify violation of its own (``_verify_file_hash``), and a
+    second sentence about the same file would be noise. Drift is NOT special
+    either — the bytes on disk are what a rerun would judge with, so they are
+    what the mode is read from.
+    """
+    if not rubric_file:
+        return None
+    from . import paths
+    try:
+        with open(paths.resolve(rubric_file, root), "rb") as handle:
+            return handle.read().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
 def stream_seed(seed: int, *parts: str) -> int:
     """The per-stratum stream seed: first 8 bytes, big-endian, of
     SHA-256(seed as 8-byte big-endian ‖ each length-prefixed UTF-8 part).

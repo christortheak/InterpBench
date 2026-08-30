@@ -647,6 +647,14 @@ of at least 1, a seed that parses, and a rule this build derives; the
 POPULATION check stays at `evaluate`, because at declaration time the source
 run need not exist yet.
 
+The design must also be one this study's INSTRUMENT can run: the draw is over
+per-response coding records, and a paired rubric refuses every sampling
+request. So a declaration plus a PAIRED pinned rubric is a verify (and
+therefore freeze) violation naming both facts and both repairs — clear the
+declaration, or pin a `perResponseCoding` rubric — and this verb refuses the
+same way when the rubric is already pinned. Declaring before choosing a rubric
+stays legal; the gate fires only when both are present.
+
 **`set-style-taxonomy <name> prompts/taxonomies/<file>.json`** — pins a
 reasoning-style taxonomy (path + hash) on a draft. No pin, no reasoning-style
 scoring; drift after pinning is a verify violation like any other.

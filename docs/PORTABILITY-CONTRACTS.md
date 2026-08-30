@@ -567,6 +567,19 @@ at `evaluate`, where the records are, and still refuses rather than clamping.
 Inventing a desk-time obligation a draft cannot meet would make the
 declaration unusable in the order a study is actually authored.
 
+*The INSTRUMENT check splits the same way.* The draw is over per-response
+coding records; the paired judge's unit is a pair, so a paired `evaluate`
+refuses every sampling request. That makes a declaration plus a **paired**
+pinned rubric a study which can never execute its own design — and freezing is
+permanent, so `verify()` reports it on both engines (one twin sentence, both
+repairs inside it, since a verify violation has no `repairAction` to carry
+them), and `set-evaluation-sampling` refuses identically when the rubric is
+already pinned. The mode is read by the evaluate path's own predicate
+(`parse_rubric` / `ResponseCoding.parseRubric`) on both engines, never by a
+second reading that could drift from the one that decides. Both halves must be
+present: a declaration with no rubric yet is clean, because the declaration
+legitimately precedes the rubric.
+
 The scope's pin needs the study's task prompts, and the loader of record
 (`tasks._load_prompts`) imports torch. `experiment_store.scope_items` is the
 torch-free reader that answers the same question — same blank-line handling,
