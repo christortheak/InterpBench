@@ -4104,11 +4104,30 @@ public enum ExperimentStore {
         try updateDraft(name: experimentName) { manifest in
             // Thrown INSIDE `updateDraft`, so a refused declaration saves
             // nothing — the same posture as the two declarations above.
-            manifest.evaluationSampling =
-                try EvaluateSubsample.resolveDeclaration(
-                    samplePerCondition: samplePerCondition,
-                    sampleSeed: sampleSeed,
-                    experiment: experimentName, program: "steerlab-cli")
+            let declaration = try EvaluateSubsample.resolveDeclaration(
+                samplePerCondition: samplePerCondition,
+                sampleSeed: sampleSeed,
+                experiment: experimentName, program: "steerlab-cli")
+            // The rubric this study ALREADY pins decides whether the design
+            // can ever run (review round 13): a paired rubric refuses every
+            // sampling request at evaluate, so declaring a subsample over one
+            // writes a design guaranteed to be refused — and a freeze would
+            // make it permanent. When the rubric is pinned the
+            // incompatibility is knowable HERE, so it is refused HERE, with
+            // the sentence verify would say. When it is NOT pinned yet
+            // nothing is knowable and the declaration stands: verify/freeze
+            // is the backstop that sees whichever rubric eventually arrives.
+            // The CLEAR (a nil declaration) is never gated — the repair this
+            // refusal names has to stay runnable.
+            if !EvaluateSubsample.instrumentViolations(
+                declaration,
+                rubricText: pinnedRubricText(manifest),
+                rubricFile: manifest.judgeRubricFile
+            ).isEmpty {
+                throw EvaluateSubsample.instrumentRefusal(
+                    rubricFile: manifest.judgeRubricFile)
+            }
+            manifest.evaluationSampling = declaration
         }
     }
 
@@ -7029,9 +7048,38 @@ public enum ExperimentStore {
         violations.append(
             contentsOf: EvaluateSubsample.declarationViolations(
                 manifest.evaluationSampling))
+        // …and the declaration against the INSTRUMENT that would draw it
+        // (review round 13). The sampled evaluate is per-response coding ONLY
+        // — the paired path refuses every sampling request unconditionally —
+        // so a manifest carrying both a declaration and a PAIRED pinned
+        // rubric describes a study that can never execute its own declared
+        // design. Freezing is permanent and a frozen declaration can never be
+        // cleared, so the incompatibility is caught here rather than at the
+        // evaluate it would refuse every time. Either half absent = clean:
+        // the declaration may legitimately precede the rubric (server twin:
+        // Manifest.verify → evaluate_subsample.instrument_violations).
+        violations.append(
+            contentsOf: EvaluateSubsample.instrumentViolations(
+                manifest.evaluationSampling,
+                rubricText: pinnedRubricText(manifest),
+                rubricFile: manifest.judgeRubricFile))
         return violations
     }
 
+    /// The pinned judge rubric's bytes as text, or nil when there is no pin
+    /// or it cannot be read.
+    ///
+    /// Unreadable reads as absent on purpose: a missing or unreadable rubric
+    /// is already a verify violation of its own, and a second sentence about
+    /// the same file would be noise. Drift is NOT special either — the bytes
+    /// on disk are what a rerun would judge with, so they are what the mode
+    /// is read from. Server twin: `evaluate_subsample.pinned_rubric_text`.
+    static func pinnedRubricText(_ manifest: ExperimentManifest) -> String? {
+        guard let file = manifest.judgeRubricFile, !file.isEmpty,
+            let data = try? Data(contentsOf: resolveProjectPath(file))
+        else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
 
     private static let volatileFreezeKeys = [
         "status", "frozenAt", "freezeHash", "gitCommit", "frozenBy", "createdAt",

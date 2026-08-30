@@ -1262,6 +1262,24 @@ record count — cannot run at the desk, because the source run the design will
 be drawn from need not exist yet and usually does not; it stays at `evaluate`,
 where an over-ask refuses rather than clamping.
 
+*The design must be one the study's instrument can execute.* The seeded draw
+is defined over per-response coding **records**; the paired judge's unit is a
+(baseline, variant) **pair**, so a paired `evaluate` refuses every sampling
+request unconditionally. A study that declared a design and pinned a paired
+rubric could therefore be frozen — permanently, and a frozen declaration can
+never be cleared — around a coding it would refuse on every run. Both engines
+now refuse the combination upstream: `verify` (and therefore `freeze`, whose
+`verify` is never skippable, `--force` included) reports a violation naming
+both facts and both repairs — clear the declaration, or pin a
+`perResponseCoding` rubric — and `set-evaluation-sampling` refuses with the
+same sentence at `64` when the study already pins an incompatible rubric.
+Either half absent is clean: the declaration may legitimately precede the
+rubric, so a draft that has not yet chosen one is not refused for a choice it
+has not made, and a manifest with no declaration is unaffected. Pair-level
+sampling is deliberately **not** implemented — a seeded draw over pairs is a
+design decision nobody has taken, and a second draw rule in the evidence chain
+would be worse than the gate.
+
 All four of `set-system-prompt`, `set-parser`, `set-instrument-scope` and
 `set-evaluation-sampling` are
 also **client verbs** (§1.4) — spelled identically, refusing identically, and

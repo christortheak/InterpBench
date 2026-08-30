@@ -1079,6 +1079,21 @@ class Manifest:
         from . import evaluate_subsample as _evaluate_subsample
         violations += _evaluate_subsample.declaration_violations(
             self.raw.get(_evaluate_subsample.DECLARATION_KEY))
+        # …and the declaration against the INSTRUMENT that would draw it
+        # (review round 13). The sampled evaluate is per-response coding ONLY
+        # — the paired path refuses every sampling request unconditionally —
+        # so a manifest carrying both a declaration and a PAIRED pinned rubric
+        # describes a study that can never execute its own declared design.
+        # Freezing is permanent and a frozen declaration can never be cleared,
+        # so the incompatibility is caught here rather than at the evaluate it
+        # would refuse every time. Either half absent = clean: the declaration
+        # may legitimately precede the rubric (Swift twin:
+        # ExperimentStore.verify → EvaluateSubsample.instrumentViolations).
+        violations += _evaluate_subsample.instrument_violations(
+            self.raw.get(_evaluate_subsample.DECLARATION_KEY),
+            _evaluate_subsample.pinned_rubric_text(
+                self.judge_rubric_file, base),
+            rubric_file=self.judge_rubric_file)
         # Sweep-input pins (firewall closure, 2026-07-20 — cross-engine
         # contract keys "sweep.devPromptsHash" + "sweep.batteryHash"): the
         # sweep's dev prompts and capability battery decide which cell WINS,

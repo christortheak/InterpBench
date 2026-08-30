@@ -210,6 +210,160 @@ def test_an_undeclared_study_gains_nothing_at_verify(tmp_path):
 
 
 # =============================================================================
+# The declaration vs the INSTRUMENT that would draw it (review round 13)
+#
+# The sampled evaluate is per-response coding ONLY: the paired path refuses
+# every sampling request unconditionally. Verification checked the
+# declaration's own shape and never the pinned rubric's MODE, so a study
+# carrying both verified, froze — permanently, declaration and all — and then
+# refused at evaluate every single time. Refusals upstream: the gate fires at
+# verify/freeze always, and at the declaration verb when the rubric is already
+# pinned.
+# =============================================================================
+
+PAIRED_RUBRIC = "Prefer the response that applies the controlling rule.\n"
+
+CODING_RUBRIC = (
+    "---\n"
+    "mode: perResponseCoding\n"
+    "field: mentionsLegalRule boolean\n"
+    "---\n"
+    "Code whether the response names the controlling rule.\n")
+
+RUBRIC_PATH = "prompts/rubrics/r.md"
+
+
+def _pin_rubric(root, text, *, name="demo"):
+    """Pin a rubric onto an existing study, hash and all — the state a study
+    is in by the time it reaches freeze."""
+    import hashlib
+
+    path = os.path.join(root, RUBRIC_PATH)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    document = es.load_raw(name, root)
+    document["judgeRubricFile"] = RUBRIC_PATH
+    document["judgeRubricHash"] = hashlib.sha256(
+        text.encode("utf-8")).hexdigest()
+    es.save_raw(document, root)
+    return document
+
+
+def _instrument_violations(root, name="demo"):
+    manifest = Manifest.from_dict(es.load_raw(name, root))
+    return [v for v in manifest.verify(root=root)
+            if v.startswith("evaluationSampling declares a seeded subsample")]
+
+
+def test_a_declaration_over_a_paired_rubric_fails_verify_and_freeze(tmp_path):
+    """The finding, end to end. Declaring first and pinning the rubric second
+    is the ORDER that reaches here — the declaration verb owns the other
+    order — and it is the order a study is often authored in.
+
+    Freeze is where it matters: a frozen declaration can never be cleared, so
+    without this gate the study is frozen around a design it can never
+    execute. The always-run ``verify()`` inside freeze is the never-skippable
+    class, so ``--force`` does not get past it either.
+    """
+    root = _workspace(tmp_path)
+    es.declare_evaluation_sampling("demo", "2400", "0x2a", root=root)
+    _pin_rubric(root, PAIRED_RUBRIC)
+
+    assert _instrument_violations(root) == [LITERAL_INSTRUMENT_CONFLICT]
+
+    with pytest.raises(es.ExperimentStoreError) as frozen:
+        es.freeze("demo", root=root, force=True)
+    assert LITERAL_INSTRUMENT_CONFLICT in str(frozen.value)
+    assert es.load_raw("demo", root)["status"] == "draft"
+
+
+def test_the_declaration_verb_refuses_an_already_pinned_paired_rubric(
+        tmp_path):
+    """The other order, refused at the desk: when the rubric is ALREADY
+    pinned the incompatibility is knowable at declaration time, so nothing is
+    written and the sentence is the one verify would have said."""
+    root = _workspace(tmp_path)
+    _pin_rubric(root, PAIRED_RUBRIC)
+
+    with pytest.raises(es.MeasurementDeclarationError) as caught:
+        es.declare_evaluation_sampling("demo", "2400", "0x2a", root=root)
+    assert str(caught.value) == LITERAL_INSTRUMENT_CONFLICT
+    assert caught.value.repair_action == LITERAL_INSTRUMENT_REPAIR
+    assert "evaluationSampling" not in es.load_raw("demo", root)
+
+    # …and through the client verb, at 64 with nothing written.
+    assert client_cli.main(
+        ["experiment", "set-evaluation-sampling", "demo", "2400", "0x2a",
+         "--root", root, "--json"]) == 64
+    assert "evaluationSampling" not in es.load_raw("demo", root)
+
+
+def test_the_clear_is_never_refused_by_the_gate(tmp_path):
+    """The repair the refusal names must always be runnable. Clearing writes
+    no declaration, so there is nothing for the rubric to be incompatible
+    with — a gate that blocked the clear would be a trap."""
+    root = _workspace(tmp_path)
+    es.declare_evaluation_sampling("demo", "2400", "0x2a", root=root)
+    _pin_rubric(root, PAIRED_RUBRIC)
+    document = es.declare_evaluation_sampling("demo", "", "", root=root)
+    assert "evaluationSampling" not in document
+    assert _instrument_violations(root) == []
+
+
+def test_a_declaration_with_no_rubric_pinned_yet_stays_clean(tmp_path):
+    """Legacy tolerance, and the authoring order it protects: the declaration
+    may precede the rubric. The gate fires only when BOTH are present, so a
+    draft that has not chosen its rubric is not refused for a choice it has
+    not made — the same rule that keeps the population check out of verify."""
+    root = _workspace(tmp_path)
+    es.declare_evaluation_sampling("demo", "2400", "0x2a", root=root)
+    assert _instrument_violations(root) == []
+    assert subsample.instrument_violations(
+        es.load_raw("demo", root)["evaluationSampling"], None) == []
+
+
+def test_a_per_response_rubric_and_a_declaration_stay_clean(tmp_path):
+    """The combination the feature exists FOR: a coding rubric is exactly the
+    instrument the seeded draw is defined over."""
+    root = _workspace(tmp_path)
+    _pin_rubric(root, CODING_RUBRIC)
+    es.declare_evaluation_sampling("demo", "2400", "0x2a", root=root)
+    assert _instrument_violations(root) == []
+    assert es.load_raw("demo", root)["evaluationSampling"][
+        "samplePerCondition"] == 2400
+
+
+def test_a_paired_rubric_without_a_declaration_gains_nothing(tmp_path):
+    """Every manifest written before the declaration existed — including the
+    frozen ones, which are the ones that could not be repaired — verifies
+    exactly as it did. ABSENT declaration = no check."""
+    root = _workspace(tmp_path)
+    _pin_rubric(root, PAIRED_RUBRIC)
+    assert _instrument_violations(root) == []
+    assert subsample.instrument_violations(None, PAIRED_RUBRIC) == []
+
+
+def test_the_mode_is_read_by_the_evaluate_paths_own_predicate(tmp_path):
+    """Not a second reading of rubric frontmatter: the gate forks on
+    ``response_coding.parse_rubric``, the predicate ``tasks.evaluate`` itself
+    forks on. A malformed coding block is neither answer — the mode is
+    genuinely unknown, and the rubric parser refuses it at read time on its
+    own account."""
+    assert subsample.rubric_honors_sampling(CODING_RUBRIC) is True
+    assert subsample.rubric_honors_sampling(PAIRED_RUBRIC) is False
+    assert subsample.rubric_honors_sampling(
+        "---\nmode: perResponseCoding\n---\n") is None
+
+    # …and an undecidable rubric is not turned into a violation.
+    root = _workspace(tmp_path)
+    es.declare_evaluation_sampling("demo", "2400", "0x2a", root=root)
+    assert subsample.instrument_violations(
+        es.load_raw("demo", root)["evaluationSampling"],
+        "---\nmode: perResponseCoding\n---\n") == []
+
+
+# =============================================================================
 # The flags become a cross-check
 # =============================================================================
 
@@ -472,6 +626,38 @@ LITERAL_DECLARATION_REFUSALS = {
         'it — both, always; "" clears the declaration)',
     ),
 }
+
+
+#: The declaration-vs-instrument conflict, said identically by verify, by
+#: freeze, and by the declaration verb, on both engines. The rubric path is
+#: the fixture's; the two repairs are IN the sentence because verify's
+#: violations are plain strings with no `repairAction` to carry them.
+LITERAL_INSTRUMENT_CONFLICT = (
+    "evaluationSampling declares a seeded subsample, but the judge rubric "
+    "this study pins ('prompts/rubrics/r.md') is a PAIRED comparison rubric "
+    "— the draw is defined over per-response coding records, and the paired "
+    "judge's unit is a (baseline, variant) PAIR rather than a record, so "
+    "evaluate would refuse this study on every run. A freeze is permanent "
+    "and a frozen declaration can never be cleared, so the combination is "
+    "refused here instead: clear the declaration with experiment "
+    'set-evaluation-sampling <name> "", or pin a perResponseCoding rubric if '
+    "per-record coding is the design")
+
+LITERAL_INSTRUMENT_REPAIR = (
+    'clear the declaration with experiment set-evaluation-sampling <name> "", '
+    "or pin a perResponseCoding rubric if per-record coding is the design")
+
+
+def test_the_instrument_conflict_reads_identically_on_both_engines():
+    """One sentence for one condition — the same convention the flag and
+    declaration refusals follow."""
+    assert subsample.instrument_conflict_message("prompts/rubrics/r.md") == \
+        LITERAL_INSTRUMENT_CONFLICT
+    refusal = subsample.instrument_refusal("prompts/rubrics/r.md")
+    assert refusal.code == "evaluationSamplingInstrument"
+    assert refusal.reason == LITERAL_INSTRUMENT_CONFLICT
+    assert refusal.repair_action == LITERAL_INSTRUMENT_REPAIR
+    assert "--force" not in refusal.repair_action
 
 
 def _refusal(fn):

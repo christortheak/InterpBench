@@ -511,6 +511,115 @@ public enum EvaluateSubsample {
         return problems
     }
 
+    // MARK: - The declaration vs the INSTRUMENT it would be drawn by
+
+    // `declarationViolations` checks the declaration against itself. It
+    // cannot see that the study's pinned rubric is a PAIRED one — and
+    // `pairedRefusal` below declines every sampling request on that path,
+    // unconditionally. So a manifest carrying both verified, froze
+    // (permanently, declaration and all), and then refused at evaluate every
+    // single time: a study frozen around a design it could never execute. The
+    // house doctrine is refusals upstream, so the incompatibility is caught
+    // wherever it is KNOWABLE — at verify/freeze always, and at the
+    // declaration verb when the rubric is already pinned.
+    //
+    // NOT implemented, deliberately: pair-level sampling. Defining a seeded
+    // draw over pairs is a design decision nobody has taken, and inventing
+    // one here would put a second, uncross-checked draw rule in the evidence
+    // chain. The gate is the fix.
+    //
+    // Server twins: `evaluate_subsample.instrument_conflict_message`,
+    // `.rubric_honors_sampling`, `.instrument_violations`,
+    // `.instrument_refusal`.
+
+    /// The ONE sentence both surfaces and both engines say, naming both facts
+    /// (a declaration is present; the pinned rubric is paired) and both
+    /// repairs (drop the declaration, or pin a per-response rubric).
+    ///
+    /// No program name appears in it: verify's violations are plain strings
+    /// with no `repairAction` to carry one, and a sentence that differed
+    /// between the two surfaces would be two sentences to learn for one
+    /// condition.
+    public static func instrumentConflictMessage(
+        rubricFile: String?
+    ) -> String {
+        let named =
+            (rubricFile?.isEmpty == false)
+            ? "'\(rubricFile!)'" : "the pinned rubric"
+        return "\(declarationKey) declares a seeded subsample, but the judge "
+            + "rubric this study pins (\(named)) is a PAIRED comparison "
+            + "rubric — the draw is defined over per-response coding records, "
+            + "and the paired judge's unit is a (baseline, variant) PAIR "
+            + "rather than a record, so evaluate would refuse this study on "
+            + "every run. A freeze is permanent and a frozen declaration can "
+            + "never be cleared, so the combination is refused here instead: "
+            + "clear the declaration with experiment set-evaluation-sampling "
+            + "<name> \"\", or pin a perResponseCoding rubric if per-record "
+            + "coding is the design"
+    }
+
+    /// Can a study pinning this rubric execute a sampled evaluate?
+    ///
+    /// `true` per-response coding, `false` paired, nil when the rubric
+    /// declares a coding block and then fails its own grammar — the mode is
+    /// genuinely unknown there, and a malformed rubric is a different finding
+    /// that `ResponseCoding` already refuses at read time.
+    ///
+    /// The mode is decided by `ResponseCoding.parseRubric`, the SAME
+    /// predicate the evaluate path forks on (`ExperimentTasks`: a schema runs
+    /// the coding instrument, nil falls through to the paired judge and
+    /// `pairedRefusal`). Reusing it is the point — a second reading of rubric
+    /// frontmatter here could drift from the one that actually decides, and a
+    /// gate that disagreed with the path it guards would be worse than no
+    /// gate. Written long-hand rather than with `try?`, which would flatten
+    /// "paired" and "malformed" into one nil.
+    public static func rubricHonorsSampling(_ rubricText: String) -> Bool? {
+        do {
+            return try ResponseCoding.parseRubric(rubricText) != nil
+        } catch {
+            return nil
+        }
+    }
+
+    /// The verify() surface for the declaration-vs-rubric-mode conflict.
+    ///
+    /// Fires only when BOTH are present and incompatible. Legacy tolerance is
+    /// deliberate and load-bearing in two directions:
+    ///
+    /// * no declaration → nothing to check, so every manifest written before
+    ///   the declaration existed verifies exactly as it did;
+    /// * no rubric pinned yet (`rubricText` nil, which is also what an
+    ///   unreadable or drifted pin reads as — verify already reports those) →
+    ///   CLEAN, because the declaration legitimately precedes the rubric. A
+    ///   study is authored in whatever order its author works in, and
+    ///   refusing a declaration for a rubric that has not been chosen yet
+    ///   would invent an obligation a draft cannot meet — the same rule that
+    ///   keeps the population check out of `declarationViolations`.
+    public static func instrumentViolations(
+        _ declaration: Declaration?, rubricText: String?, rubricFile: String?
+    ) -> [String] {
+        guard declaration != nil, let rubricText else { return [] }
+        guard rubricHonorsSampling(rubricText) == false else { return [] }
+        return [instrumentConflictMessage(rubricFile: rubricFile)]
+    }
+
+    /// The same sentence at the DECLARATION verb, for a study that already
+    /// pins an incompatible rubric.
+    ///
+    /// The repair is the message's own two options rather than a third one:
+    /// this refusal and the verify violation describe one condition, and a
+    /// researcher who reads it at the desk must not have to re-derive it at
+    /// freeze.
+    public static func instrumentRefusal(
+        rubricFile: String?
+    ) -> ExperimentError {
+        ExperimentError.malformed(
+            instrumentConflictMessage(rubricFile: rubricFile),
+            repair: "clear the declaration with experiment "
+                + "set-evaluation-sampling <name> \"\", or pin a "
+                + "perResponseCoding rubric if per-record coding is the design")
+    }
+
     // MARK: - The draw
 
     /// The per-stratum stream seed: the first 8 bytes, big-endian, of

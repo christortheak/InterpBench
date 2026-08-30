@@ -710,6 +710,16 @@ at `evaluate`, where the records are, not at the declaration, where no run
 exists yet; per-response
 coding only, because the paired judge's unit is a pair rather than a record.
 
+That last constraint is enforced where it can still be repaired. A study that
+declares a design AND pins a **paired** rubric can never execute the design —
+so `verify`, and therefore `freeze`, refuses the combination, naming both
+facts and both repairs (clear the declaration, or pin a `perResponseCoding`
+rubric). A freeze is permanent and a frozen declaration cannot be cleared, so
+catching it at the desk is the difference between a five-second fix and a
+study duplicated to escape it. The declaration verb refuses the same way when
+the rubric is already pinned. Declaring **before** choosing a rubric stays
+legal — that is the ordinary authoring order, and the gate simply waits.
+
 Everything the reader needs is stamped: a `sampling` block in
 `coding-report.json` and the run's `config.json` carrying the size, the seed,
 the counts and the derivation rule (plus `declared: true` when the draw came
