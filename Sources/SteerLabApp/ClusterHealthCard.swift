@@ -295,12 +295,19 @@ struct ClusterHealthCard: View {
             }
             .help("observed records/hour per (model, GPU) — the walltime "
                 + "estimator's feed; one pair lists a row per instrument "
-                + "family plus the all-families average")
+                + "family plus the all-families average, and a token-bounded "
+                + "rate is quoted at its recorded token basis")
         }
     }
 
     private func throughputSummary(_ entry: HousekeepingThroughputEntry) -> String {
-        let rate = entry.recordsPerHour.map { "\(Int($0.rounded()))/h" } ?? "?/h"
+        var rate = entry.recordsPerHour.map { "\(Int($0.rounded()))/h" } ?? "?/h"
+        // A token-bounded rate is normalized to its entry's basis server-side,
+        // so "600/h" alone misreads by whatever ratio the next submission's
+        // maxTokens differs; say the budget the number is quoted at.
+        if let basis = entry.tokensBasis {
+            rate += " @ \(Int(basis.rounded())) tok"
+        }
         var line = "\(entry.modelID ?? "?") · \(entry.gpuType ?? "?") — \(rate) · \(entry.familyLabel)"
         if let samples = entry.samples {
             line += " (n=\(samples))"

@@ -1183,10 +1183,17 @@ public struct HousekeepingThroughputEntry: Codable, Sendable, Equatable {
     /// `parkedJudgment`). Nil is the GLOBAL row — every family folded
     /// together — which is also all an older server ever sends.
     public var instrumentFamily: String?
+    /// The `maxTokens` this rate is quoted at (2026-08-29): the server
+    /// normalizes a token-bounded family's samples to the entry's first
+    /// recorded budget, so its `recordsPerHour` means "at this many tokens"
+    /// and reads wrong without it. Nil on the global row, on families that
+    /// are not token-bounded, and on entries minted before bases existed.
+    public var tokensBasis: Double?
 
     public init(
         modelID: String? = nil, gpuType: String? = nil, recordsPerHour: Double? = nil,
-        samples: Int? = nil, updatedAt: String? = nil, instrumentFamily: String? = nil
+        samples: Int? = nil, updatedAt: String? = nil, instrumentFamily: String? = nil,
+        tokensBasis: Double? = nil
     ) {
         self.modelID = modelID
         self.gpuType = gpuType
@@ -1194,6 +1201,7 @@ public struct HousekeepingThroughputEntry: Codable, Sendable, Equatable {
         self.samples = samples
         self.updatedAt = updatedAt
         self.instrumentFamily = instrumentFamily
+        self.tokensBasis = tokensBasis
     }
 
     /// Display scope for this entry's rate. The server folds each finished
@@ -1208,6 +1216,7 @@ public struct HousekeepingThroughputEntry: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case modelID = "modelId"
         case gpuType, recordsPerHour, samples, updatedAt, instrumentFamily
+        case tokensBasis
     }
 }
 
