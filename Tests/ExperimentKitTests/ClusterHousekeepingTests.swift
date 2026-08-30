@@ -108,7 +108,11 @@ struct ClusterHousekeepingTests {
               {"modelId": "Qwen/Qwen3-14B", "gpuType": "A100",
                "recordsPerHour": 1100.0, "samples": 2,
                "updatedAt": "2026-07-11T22:00:00Z",
-               "instrumentFamily": "deterministicLogprob"}
+               "instrumentFamily": "deterministicLogprob"},
+              {"modelId": "Qwen/Qwen3-14B", "gpuType": "A100",
+               "recordsPerHour": 600.0, "samples": 3,
+               "updatedAt": "2026-07-11T22:00:00Z",
+               "instrumentFamily": "longFormText", "tokensBasis": 512}
             ]
           }
         }
@@ -154,11 +158,13 @@ struct ClusterHousekeepingTests {
         let status = try JSONDecoder().decode(
             RemoteHousekeepingStatus.self, from: Data(Self.fullStatusJSON.utf8))
         let entries = try #require(status.throughput?.entryList)
-        #expect(entries.count == 2)
+        #expect(entries.count == 3)
 
         let global = entries[0]
         #expect(global.instrumentFamily == nil)
         #expect(global.familyLabel == "all families")
+        // The global row keeps its historical meaning — no basis, ever.
+        #expect(global.tokensBasis == nil)
 
         let family = entries[1]
         #expect(family.modelID == "Qwen/Qwen3-14B")
@@ -167,6 +173,15 @@ struct ClusterHousekeepingTests {
         #expect(family.familyLabel == "deterministicLogprob")
         #expect(family.recordsPerHour == 1100.0)
         #expect(family.samples == 2)
+        #expect(family.tokensBasis == nil)
+
+        // 2026-08-29: a token-bounded family's rate is normalized to the
+        // entry's token basis server-side, and the row carries that basis so
+        // the number can be read as "600/h at 512 tokens", not bare 600/h.
+        let bounded = entries[2]
+        #expect(bounded.instrumentFamily == "longFormText")
+        #expect(bounded.recordsPerHour == 600.0)
+        #expect(bounded.tokensBasis == 512)
     }
 
     /// WP5 Step 11 (audit c46). The df numbers beside it are whole-filesystem
