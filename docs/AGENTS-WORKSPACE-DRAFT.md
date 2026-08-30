@@ -351,11 +351,21 @@ workspace git commit, snapshots every pinned input into
 judge rubric, capability battery, reasoning-style taxonomy, human tables, and
 the neutral corpus that denominates norm-unit α — writes the generated
 settings summary beside the manifest (`experiments/<name>/preregistration.md`
-when that path is free or holds a previous freeze's own generated file; a
-researcher-authored preregistration there is preserved untouched and the
-summary lands as `preregistration-frozen-settings.md` instead), and makes the
-manifest read-only. There is no unfreeze. **Iterate by `experiment duplicate
-<name> <new-name>`, never by editing.**
+when that path is free or holds a file that is *provably* a previous freeze's
+own untouched output; a researcher-authored preregistration there is preserved
+untouched, frozen — its SHA-256 is stamped into the manifest, it is
+snapshotted into `pinned/`, `verify` re-hashes it from then on, and it travels
+in run bundles — and the generated summary lands as
+`preregistration-frozen-settings.md` instead), and makes the manifest
+read-only. There is no unfreeze. **Iterate by `experiment duplicate <name>
+<new-name>`, never by editing.**
+
+A file at `preregistration.md` counts as the freeze's own only when the
+manifest's stamped hash of what it last generated matches the bytes exactly,
+or — for files predating those stamps — when the first line is the generated
+header and the marker line `*Generated at freeze; do not edit.` is the last
+non-empty line. Quoting that marker anywhere else in your own document is
+safe: when in doubt the file is preserved, never overwritten.
 
 The snapshot is taken at freeze time only: it is the no-git reproducibility
 floor, not a live mirror. A study frozen before a pin joined the snapshot

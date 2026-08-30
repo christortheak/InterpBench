@@ -2649,7 +2649,12 @@ def duplicate(name: str, new_name: str, root: str | None = None) -> dict:
     copy["status"] = "draft"
     copy["createdAt"] = _now()
     for key in ("frozenAt", "freezeHash", "gitCommit", "frozenBy", "appVersion",
-                "freezeForced", "forcedGatesSkipped"):
+                "freezeForced", "forcedGatesSkipped",
+                # The preregistration stamps name bytes in the SOURCE
+                # experiment's directory; the duplicate is a fresh directory
+                # holding only a manifest, so carrying them over would make
+                # verify demand a file the copy never had.
+                PREREG_AUTHORED_HASH_KEY, PREREG_GENERATED_HASH_KEY):
         copy.pop(key, None)
     save_raw(copy, root)
     return copy
@@ -3604,7 +3609,9 @@ def freeze(name: str, *, force: bool = False, cached_revision=None,
     auto-committed when it is its own git work-tree root
     (``_auto_commit_workspace``); (4) the freeze stamps — status, frozenAt,
     freezeHash, frozenBy, appVersion, gitCommit (now the auto-commit's HEAD)
-    — land and the canonical bytes + preregistration are written; (5) a
+    — land, the preregistration is exported (stamping its own two hashes
+    into the manifest first), and the manifest + canonical bytes are
+    written; (5) a
     follow-up ``freeze <name> (stamp)`` commit (Swift parity) lands the frozen
     manifest / canonical bytes / preregistration so a standalone workspace
     ends CLEAN. gitCommit deliberately stays the step-3 commit — the one that
@@ -3823,9 +3830,13 @@ def freeze(name: str, *, force: bool = False, cached_revision=None,
         # but every gate would have passed anyway.
         d["freezeForced"] = True
         d["forcedGatesSkipped"] = [gate_id for gate_id, _ in gate_failures]
+    # BEFORE the manifest is written: the preregistration export stamps its
+    # own freeze stamps into ``d`` (the preserved authored file's hash and
+    # the generated summary's), and a stamp that lands after the write is a
+    # stamp nobody can read back.
+    _write_preregistration(d, root)
     save_raw(d, root, freeze_transition=True)
     _write_freeze_canonical(name, d, root)
-    _write_preregistration(d, root)
     _auto_commit_workspace(name, root,
                            message=f"freeze {name} (stamp)", quiet=True)
     return d
@@ -3845,7 +3856,9 @@ def _write_freeze_canonical(name: str, d: dict, root: str | None) -> None:
     payload = {k: v for k, v in d.items()
                if k not in ("status", "frozenAt", "freezeHash", "gitCommit",
                             "frozenBy", "appVersion", "createdAt",
-                            "freezeForced", "forcedGatesSkipped")}
+                            "freezeForced", "forcedGatesSkipped",
+                            PREREG_AUTHORED_HASH_KEY,
+                            PREREG_GENERATED_HASH_KEY)}
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     with open(os.path.join(directory, "freeze-canonical.json"), "w",
               encoding="utf-8") as handle:
@@ -4669,26 +4682,91 @@ def _auto_commit_workspace(name: str, root: str | None,
 
 #: The generated preregistration's self-identification line — both engines
 #: emit it verbatim (Swift twin: `ExperimentStore.preregistrationGeneratedMarker`).
-#: Its presence is how freeze recognizes ITS OWN prior output at
-#: preregistration.md, as distinct from a researcher-authored preregistration.
+#: It is the LAST line of the generated summary, and the destination rule
+#: keys on that position, never on the line merely appearing somewhere.
 PREREG_GENERATED_MARKER = "*Generated at freeze; do not edit."
+
+#: The generated summary's first line, up to the study name (Swift twin:
+#: `ExperimentStore.preregistrationGeneratedHeaderPrefix`). Together with the
+#: marker's terminal position this is the structural signature of a file this
+#: instrument wrote.
+PREREG_GENERATED_HEADER_PREFIX = "# Preregistration: "
+
+#: The canonical preregistration path inside an experiment directory (Swift
+#: twin: `ExperimentStore.preregistrationFilename`).
+PREREG_FILENAME = "preregistration.md"
 
 #: Where the generated settings summary lands when preregistration.md is
 #: researcher-authored (Swift twin:
 #: `ExperimentStore.preregistrationFrozenSettingsFilename`).
 PREREG_FROZEN_SETTINGS_FILENAME = "preregistration-frozen-settings.md"
 
+#: Freeze stamp: sha256 of the researcher-authored preregistration.md this
+#: freeze PRESERVED. Excluded from the canonical payload like ``frozenAt``,
+#: cleared on duplicate, and enforced by ``Manifest.verify`` — an authored
+#: preregistration is a frozen artifact, so a post-freeze edit is drift.
+PREREG_AUTHORED_HASH_KEY = "preregistrationHash"
 
-def _is_generated_preregistration(path: str) -> bool:
-    """True when the file at ``path`` is a previous freeze's own generated
-    output, recognized by :data:`PREREG_GENERATED_MARKER`. An unreadable or
-    non-UTF-8 file is treated as researcher-authored — when in doubt,
-    preserve."""
+#: Freeze stamp: sha256 of the settings summary this freeze GENERATED,
+#: wherever it landed. Provenance only (never verified): it is what lets a
+#: later freeze prove a file is its own untouched output instead of guessing
+#: from the text. Same stamp discipline as the key above.
+PREREG_GENERATED_HASH_KEY = "preregistrationGeneratedHash"
+
+
+def _preregistration_is_generated(path: str, d: dict) -> bool:
+    """True only when the file at ``path`` is PROVABLY this instrument's own
+    generated settings summary — the single case in which freeze may
+    overwrite it. Everything else is researcher-authored and preserved; when
+    in doubt, preserve (Swift twin:
+    `ExperimentStore.preregistrationIsGenerated`).
+
+    The rule, in order:
+
+    1. unreadable → authored (an unreadable file is never provably ours);
+    2. a stamped :data:`PREREG_AUTHORED_HASH_KEY` the bytes match → authored;
+    3. a stamped :data:`PREREG_GENERATED_HASH_KEY` the bytes match → generated;
+    4. EITHER stamp present but matching neither → authored: a stamp exists
+       and these are not the bytes it names, so the file was edited or
+       replaced and its content is not ours to destroy;
+    5. no stamp at all (a freeze that predates them) → the structural
+       fallback: the first line must open with
+       :data:`PREREG_GENERATED_HEADER_PREFIX` AND the final non-empty line
+       must open with :data:`PREREG_GENERATED_MARKER`.
+
+    Step 5 is strictly POSITIONAL because the old rule was a substring test
+    (``marker in content``): a researcher who copied a generated summary and
+    wrote commitments above it — footer left in place, the natural way to do
+    that — was classified as generated and destroyed. Commitments above the
+    footer move the header off line 1; commitments below it move the marker
+    off the last non-empty line; either way the file is preserved."""
     try:
-        with open(path, encoding="utf-8") as handle:
-            return PREREG_GENERATED_MARKER in handle.read()
-    except (OSError, UnicodeDecodeError):
+        with open(path, "rb") as handle:
+            payload = handle.read()
+    except OSError:
         return False
+    digest = hashlib.sha256(payload).hexdigest()
+    authored_stamp = d.get(PREREG_AUTHORED_HASH_KEY)
+    generated_stamp = d.get(PREREG_GENERATED_HASH_KEY)
+    if isinstance(authored_stamp, str) and authored_stamp == digest:
+        return False
+    if isinstance(generated_stamp, str) and generated_stamp == digest:
+        return True
+    if (isinstance(authored_stamp, str) and authored_stamp) \
+            or (isinstance(generated_stamp, str) and generated_stamp):
+        return False
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    lines = text.splitlines()
+    if not lines or not lines[0].startswith(PREREG_GENERATED_HEADER_PREFIX):
+        return False
+    for line in reversed(lines):
+        stripped = line.strip()
+        if stripped:
+            return stripped.startswith(PREREG_GENERATED_MARKER)
+    return False
 
 
 def _write_preregistration(d: dict, root: str | None) -> None:
@@ -4698,14 +4776,25 @@ def _write_preregistration(d: dict, root: str | None) -> None:
     frozen.
 
     Destination rule (field incident 2026-08-29): the summary lands at
-    ``preregistration.md`` only when that path is free or holds a previous
-    freeze's own generated file (:data:`PREREG_GENERATED_MARKER`). A
-    researcher-authored file at that path — analysis commitments written
-    before any data existed, the scientifically load-bearing kind of
-    preregistration — is preserved byte-for-byte, and the generated summary
-    lands beside it as :data:`PREREG_FROZEN_SETTINGS_FILENAME` instead, with
-    the displacement announced on stderr. Existing frozen directories are
-    never rewritten by this rule — it governs future freezes only."""
+    ``preregistration.md`` only when that path is free or holds a file that is
+    PROVABLY this instrument's own generated output
+    (:func:`_preregistration_is_generated`). A researcher-authored file at
+    that path — analysis commitments written before any data existed, the
+    scientifically load-bearing kind of preregistration — is preserved
+    byte-for-byte, and the generated summary lands beside it as
+    :data:`PREREG_FROZEN_SETTINGS_FILENAME` instead, with the displacement
+    announced on stderr. Existing frozen directories are never rewritten by
+    this rule — it governs future freezes only.
+
+    STAMPS ``d`` (review 2026-08-29, P1): a preserved authored file's sha256
+    lands at :data:`PREREG_AUTHORED_HASH_KEY` and the generated summary's at
+    :data:`PREREG_GENERATED_HASH_KEY`, so the freeze actually FREEZES what it
+    preserved — verify re-hashes it, the pin surface carries it into bundles,
+    and a copy goes into the experiment's ``pinned/`` for the no-git floor.
+    Both are freeze stamps, excluded from the canonical payload exactly like
+    ``frozenAt``; the caller must therefore run this BEFORE it writes the
+    manifest. Called with a legacy flat manifest it stamps nothing, because
+    there is no directory to write into."""
     directory = _dir(d["name"], root)
     if not os.path.isdir(directory):
         return  # legacy flat-file manifest; no directory to write into
@@ -4770,15 +4859,39 @@ def _write_preregistration(d: dict, root: str | None) -> None:
         + " Duplicate the experiment to change anything.*",
         "",
     ]
-    target = os.path.join(directory, "preregistration.md")
-    if os.path.exists(target) and not _is_generated_preregistration(target):
-        print(f"freeze '{d['name']}': preregistration.md is researcher-authored "
-              "(no generated-at-freeze marker) — preserving it untouched; the "
-              "generated settings summary lands as "
-              f"{PREREG_FROZEN_SETTINGS_FILENAME}.", file=sys.stderr)
+    canonical = os.path.join(directory, PREREG_FILENAME)
+    target = canonical
+    authored_digest: str | None = None
+    if os.path.exists(canonical) and not _preregistration_is_generated(canonical, d):
+        with open(canonical, "rb") as handle:
+            authored_digest = hashlib.sha256(handle.read()).hexdigest()
+        print(f"freeze '{d['name']}': {PREREG_FILENAME} is researcher-authored "
+              "— preserving it untouched and FREEZING it (sha256 "
+              f"{authored_digest[:12]}…, stamped {PREREG_AUTHORED_HASH_KEY}, "
+              "snapshotted into pinned/, verified from now on); the generated "
+              f"settings summary lands as {PREREG_FROZEN_SETTINGS_FILENAME}.",
+              file=sys.stderr)
+        # The no-git reproducibility floor for the one pinned input whose
+        # identity is only decided HERE — `_snapshot_pinned_inputs` ran
+        # earlier in the freeze, before this file was classified, so this
+        # copy is made by hand. Flat destination on both engines (the two
+        # snapshot layouts differ elsewhere; this file has one obvious name).
+        snapshot = os.path.join(directory, "pinned", PREREG_FILENAME)
+        os.makedirs(os.path.dirname(snapshot), exist_ok=True)
+        shutil.copyfile(canonical, snapshot)
         target = os.path.join(directory, PREREG_FROZEN_SETTINGS_FILENAME)
+    body = "\n".join(lines)
     with open(target, "w", encoding="utf-8") as handle:
-        handle.write("\n".join(lines))
+        handle.write(body)
+    d[PREREG_GENERATED_HASH_KEY] = hashlib.sha256(
+        body.encode("utf-8")).hexdigest()
+    if authored_digest is not None:
+        d[PREREG_AUTHORED_HASH_KEY] = authored_digest
+    else:
+        # This freeze OWNS preregistration.md, so no authored file is frozen.
+        # A stale stamp inherited from a copied experiment directory would
+        # make verify demand bytes nobody preserved.
+        d.pop(PREREG_AUTHORED_HASH_KEY, None)
 
 
 def _git_commit(root: str | None) -> str | None:
@@ -5106,6 +5219,17 @@ def pinned_input_entries(d: dict, root: str | None = None) -> list[PinnedInput]:
                         _add(rel, f"sweep choice prompts '{concept}'",
                              required=True)
     if d.get("name"):
+        # A PRESERVED researcher-authored preregistration is a frozen input
+        # like any other once freeze has stamped its hash: git-gated,
+        # snapshotted, packed, re-hashed by verify. Keyed on the stamp, so a
+        # draft (and every legacy frozen manifest) gains no entry — and the
+        # freeze that creates the stamp does so after the snapshot pass, which
+        # is why `_write_preregistration` copies it into pinned/ itself.
+        # Optional: a bundle is still executable without it, and the missing
+        # file is already verify()'s loud violation.
+        if d.get(PREREG_AUTHORED_HASH_KEY):
+            _add(os.path.join("experiments", d["name"], PREREG_FILENAME),
+                 "researcher-authored preregistration", required=False)
         _add(os.path.join("experiments", d["name"], "pinned"),
              "pinned-input snapshot", required=False)
     return out

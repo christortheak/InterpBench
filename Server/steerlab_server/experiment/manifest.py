@@ -1589,6 +1589,23 @@ class Manifest:
             # never a silent re-pin.
             violations += _verify_training_provenance(base, variant, root)
 
+        # A PRESERVED researcher-authored preregistration is a frozen
+        # artifact (review 2026-08-29, P1: freeze preserved the file but
+        # froze nothing about it, so a post-freeze edit — or a swap — was
+        # undetectable, and a no-git workspace or a shipped bundle had no
+        # integrity at all). Freeze stamps its sha256; verify re-hashes it
+        # like any other pinned input. ABSENT stamp = a freeze that owned
+        # the path, or a frozen experiment predating the stamp = no
+        # obligation and no violation; PRESENT with a mismatch is drift.
+        # Swift twin: ExperimentStore.verify → preregistrationViolations.
+        prereg_hash = self.raw.get("preregistrationHash")
+        if isinstance(prereg_hash, str) and prereg_hash and self.name:
+            violations += _verify_file_hash(
+                base,
+                os.path.join("experiments", self.name,
+                             experiment_store.PREREG_FILENAME),
+                prereg_hash, "researcher-authored preregistration")
+
         # Frozen-manifest content drift (parallel to Swift's freezeHash ==
         # manifestHash check). Only checkable for SERVER-frozen manifests — the
         # server can't reproduce Swift's manifestHash, so a Swift-frozen manifest
@@ -1991,7 +2008,9 @@ class Manifest:
         payload = {k: v for k, v in self.raw.items()
                    if k not in ("status", "frozenAt", "freezeHash", "gitCommit",
                                 "frozenBy", "appVersion", "createdAt",
-                                "freezeForced", "forcedGatesSkipped")}
+                                "freezeForced", "forcedGatesSkipped",
+                                "preregistrationHash",
+                                "preregistrationGeneratedHash")}
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"),
                           default=str).encode("utf-8")
         return hashlib.sha256(blob).hexdigest()

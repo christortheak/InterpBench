@@ -138,6 +138,7 @@
     "modelRevision": "0123456789abcdef0123456789abcdef01234567",
     "name": "portability-interop",
     "neutralCorpusHash": "d7ade169c4c1f2b51954a9a8bbb5fd2c8d48c36f1ddd79781e19a2eea912988c",
+    "preregistrationGeneratedHash": "<preregistrationGeneratedHash>",
     "promptMode": "chatAssistant",
     "qwenThinkingEnabled": false,
     "samplesPerItem": 3,
@@ -217,6 +218,7 @@
     "multiAgentIncludeBaseline": true,
     "name": "portability-interop",
     "neutralCorpusHash": "d7ade169c4c1f2b51954a9a8bbb5fd2c8d48c36f1ddd79781e19a2eea912988c",
+    "preregistrationGeneratedHash": "<preregistrationGeneratedHash>",
     "promptMode": "chatAssistant",
     "qwenThinkingEnabled": false,
     "recordTokenIDs": false,
@@ -251,6 +253,8 @@
     "createdAt",
     "appVersion",
     "freezeForced",
-    "forcedGatesSkipped"
+    "forcedGatesSkipped",
+    "preregistrationHash",
+    "preregistrationGeneratedHash"
   ]
 }

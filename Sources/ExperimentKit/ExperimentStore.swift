@@ -87,6 +87,8 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         case appVersion
         case freezeForced
         case forcedGatesSkipped
+        case preregistrationHash
+        case preregistrationGeneratedHash
     }
 
     public enum Status: String, Codable, Sendable {
@@ -1635,6 +1637,22 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
     /// "variantValidity", "gitClean", "measurementPins". Lifecycle stamp
     /// like `freezeForced`.
     public var forcedGatesSkipped: [String]?
+    /// SHA-256 of the researcher-authored `preregistration.md` this freeze
+    /// PRESERVED (nil when the freeze owned that path and generated the file
+    /// itself). A lifecycle stamp like `freezeForced` — excluded from the
+    /// content hash, cleared on duplicate — but unlike the others it is
+    /// ENFORCED: `verify` re-hashes the file, and the pin surface carries it
+    /// into bundles. An authored preregistration is the scientifically
+    /// load-bearing kind, so freezing the study must freeze it too.
+    /// Cross-engine key: "preregistrationHash".
+    public var preregistrationHash: String?
+    /// SHA-256 of the settings summary this freeze GENERATED, wherever it
+    /// landed. Provenance only — never verified: it is what lets a later
+    /// freeze PROVE a file at `preregistration.md` is its own untouched
+    /// output rather than guess from the text. Same stamp discipline as
+    /// `preregistrationHash`. Cross-engine key:
+    /// "preregistrationGeneratedHash".
+    public var preregistrationGeneratedHash: String?
 
     public init(
         name: String, description: String, modelID: String,
@@ -1709,6 +1727,8 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         self.appVersion = nil
         self.freezeForced = nil
         self.forcedGatesSkipped = nil
+        self.preregistrationHash = nil
+        self.preregistrationGeneratedHash = nil
     }
 
     public init(from decoder: Decoder) throws {
@@ -1839,6 +1859,10 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         freezeForced = try container.decodeIfPresent(Bool.self, forKey: .freezeForced)
         forcedGatesSkipped = try container.decodeIfPresent(
             [String].self, forKey: .forcedGatesSkipped)
+        preregistrationHash = try container.decodeIfPresent(
+            String.self, forKey: .preregistrationHash)
+        preregistrationGeneratedHash = try container.decodeIfPresent(
+            String.self, forKey: .preregistrationGeneratedHash)
     }
 }
 
@@ -5890,6 +5914,11 @@ public enum ExperimentStore {
                         + "(per-record seeds derived from condition/prompt/sampleIndex)")
             }
         }
+        // A PRESERVED researcher-authored preregistration is a frozen
+        // artifact: freeze stamps its sha256 and verify re-hashes it like any
+        // other pinned input (server twin: Manifest.verify's preregistration
+        // block). Kind-agnostic — every study may carry one.
+        violations += preregistrationViolations(manifest)
         if let frozen = manifest.freezeHash, manifest.status != .draft {
             if manifest.frozenBy == "server" {
                 violations += serverFreezeCanonicalViolations(manifest, freezeHash: frozen)
@@ -7036,6 +7065,7 @@ public enum ExperimentStore {
     private static let volatileFreezeKeys = [
         "status", "frozenAt", "freezeHash", "gitCommit", "frozenBy", "createdAt",
         "appVersion", "freezeForced", "forcedGatesSkipped",
+        "preregistrationHash", "preregistrationGeneratedHash",
     ]
 
     /// Keys this engine's encoder ALWAYS writes and the server OMITS when they
@@ -7292,6 +7322,8 @@ public enum ExperimentStore {
         canonical.appVersion = nil
         canonical.freezeForced = nil
         canonical.forcedGatesSkipped = nil
+        canonical.preregistrationHash = nil
+        canonical.preregistrationGeneratedHash = nil
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = (try? encoder.encode(canonical)) ?? Data()
@@ -8833,6 +8865,22 @@ public enum ExperimentStore {
         add(manifest.reasoningStyleTaxonomyPath, "reasoning-style taxonomy", required: true)
         add(manifest.humanBaseline?.path, "human baseline", required: true)
         add(manifest.humanValidation?.path, "human validation", required: true)
+        // A PRESERVED researcher-authored preregistration is a frozen input
+        // like any other once freeze has stamped its hash: git-gated, packed,
+        // re-hashed by verify. Keyed on the stamp, so a draft (and every
+        // legacy frozen manifest) gains no entry — and the freeze that
+        // creates the stamp does so after the snapshot pass, which is why
+        // `exportPreregistration` copies it into pinned/ itself. Optional: a
+        // bundle is still executable without it, and the missing file is
+        // already verify's loud violation.
+        if manifest.preregistrationHash?.isEmpty == false {
+            entries.append(
+                .init(
+                    url: directory.appending(
+                        components: manifest.name, preregistrationFilename),
+                    label: "researcher-authored preregistration",
+                    required: false))
+        }
         entries.append(
             .init(
                 url: directory.appending(components: manifest.name, "pinned"),
@@ -9561,20 +9609,22 @@ public enum ExperimentStore {
         manifest.freezeHash = manifestHash(manifest)
         manifest.gitCommit = currentGitCommit()
 
-        // Bypass the frozen-immutability guard for this one transition.
-        let url = manifestURL(manifest.name)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(manifest).write(to: url)
         // A9: export the freeze-time settings summary beside the frozen
         // manifest — generated at the freeze instant from the frozen
         // manifest so it cannot disagree with what was frozen (the server's
         // `_write_preregistration` twin: same sections, facts, and
         // destination rule; byte-identity across engines is a non-goal).
         // Best-effort like the server's — a failed export never un-freezes
-        // a stamped manifest.
+        // a stamped manifest. BEFORE the manifest is written, because the
+        // export stamps its own two freeze stamps into it, and a stamp that
+        // lands after the write is a stamp nobody can read back.
         exportPreregistration(
-            manifest, into: directory.appending(component: manifest.name))
+            into: directory.appending(component: manifest.name), &manifest)
+        // Bypass the frozen-immutability guard for this one transition.
+        let url = manifestURL(manifest.name)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(manifest).write(to: url)
         // The stamped manifest cannot be inside the commit it stamps (a
         // commit cannot contain its own hash), so a managed workspace gets a
         // follow-up stamp commit — freeze leaves the tree clean. The
@@ -9587,11 +9637,21 @@ public enum ExperimentStore {
 
     /// The generated preregistration's self-identification line — both
     /// engines emit it verbatim (server twin:
-    /// `experiment_store.PREREG_GENERATED_MARKER`). Its presence is how
-    /// freeze recognizes ITS OWN prior output at preregistration.md, as
-    /// distinct from a researcher-authored preregistration.
+    /// `experiment_store.PREREG_GENERATED_MARKER`). It is the LAST line of
+    /// the generated summary, and the destination rule keys on that
+    /// position, never on the line merely appearing somewhere.
     public static let preregistrationGeneratedMarker =
         "*Generated at freeze; do not edit."
+
+    /// The generated summary's first line, up to the study name (server twin:
+    /// `experiment_store.PREREG_GENERATED_HEADER_PREFIX`). Together with the
+    /// marker's terminal position this is the structural signature of a file
+    /// this instrument wrote.
+    public static let preregistrationGeneratedHeaderPrefix = "# Preregistration: "
+
+    /// The canonical preregistration path inside an experiment directory
+    /// (server twin: `experiment_store.PREREG_FILENAME`).
+    public static let preregistrationFilename = "preregistration.md"
 
     /// Where the generated settings summary lands when preregistration.md is
     /// researcher-authored (server twin:
@@ -9599,41 +9659,166 @@ public enum ExperimentStore {
     public static let preregistrationFrozenSettingsFilename =
         "preregistration-frozen-settings.md"
 
+    /// True only when the file at `url` is PROVABLY this instrument's own
+    /// generated settings summary — the single case in which freeze may
+    /// overwrite it. Everything else is researcher-authored and preserved;
+    /// when in doubt, preserve (server twin:
+    /// `experiment_store._preregistration_is_generated`).
+    ///
+    /// The rule, in order:
+    ///
+    /// 1. unreadable → authored (an unreadable file is never provably ours);
+    /// 2. a stamped `preregistrationHash` the bytes match → authored;
+    /// 3. a stamped `preregistrationGeneratedHash` the bytes match →
+    ///    generated;
+    /// 4. EITHER stamp present but matching neither → authored: a stamp
+    ///    exists and these are not the bytes it names, so the file was
+    ///    edited or replaced and its content is not ours to destroy;
+    /// 5. no stamp at all (a freeze that predates them) → the structural
+    ///    fallback: the first line must open with
+    ///    `preregistrationGeneratedHeaderPrefix` AND the final non-empty
+    ///    line must open with `preregistrationGeneratedMarker`.
+    ///
+    /// Step 5 is strictly POSITIONAL because the old rule was a substring
+    /// test (`contains(marker)`): a researcher who copied a generated summary
+    /// and wrote commitments above it — footer left in place, the natural way
+    /// to do that — was classified as generated and destroyed. Commitments
+    /// above the footer move the header off line 1; commitments below it move
+    /// the marker off the last non-empty line; either way the file is
+    /// preserved.
+    static func preregistrationIsGenerated(
+        at url: URL, manifest: ExperimentManifest
+    ) -> Bool {
+        guard let payload = try? Data(contentsOf: url) else { return false }
+        let digest = sha256Hex(payload)
+        if let authored = manifest.preregistrationHash, authored == digest {
+            return false
+        }
+        if let generated = manifest.preregistrationGeneratedHash,
+            generated == digest
+        {
+            return true
+        }
+        if manifest.preregistrationHash?.isEmpty == false
+            || manifest.preregistrationGeneratedHash?.isEmpty == false
+        {
+            return false
+        }
+        guard let text = String(data: payload, encoding: .utf8) else { return false }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let first = lines.first,
+            first.hasPrefix(preregistrationGeneratedHeaderPrefix)
+        else { return false }
+        for line in lines.reversed() {
+            let stripped = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !stripped.isEmpty else { continue }
+            return stripped.hasPrefix(preregistrationGeneratedMarker)
+        }
+        return false
+    }
+
     /// Write the freeze-time settings summary into the experiment directory
-    /// (server twin: `_write_preregistration`, destination rule included).
+    /// and STAMP the manifest with what it found there (server twin:
+    /// `_write_preregistration`, destination rule and stamps included).
     ///
     /// Destination rule (field incident 2026-08-29): the summary lands at
-    /// `preregistration.md` only when that path is free or holds a previous
-    /// freeze's own generated file (`preregistrationGeneratedMarker`). A
-    /// researcher-authored file at that path — analysis commitments written
-    /// before any data existed, the scientifically load-bearing kind of
-    /// preregistration — is preserved byte-for-byte, and the generated
-    /// summary lands beside it as `preregistrationFrozenSettingsFilename`
-    /// instead, announced loudly. An existing-but-unreadable file counts as
-    /// researcher-authored — when in doubt, preserve. Existing frozen
-    /// directories are never rewritten by this rule — it governs future
-    /// freezes only. Best-effort: a failed write never un-freezes a stamped
+    /// `preregistration.md` only when that path is free or holds a file that
+    /// is provably this instrument's own output
+    /// (`preregistrationIsGenerated`). A researcher-authored file at that
+    /// path — analysis commitments written before any data existed, the
+    /// scientifically load-bearing kind of preregistration — is preserved
+    /// byte-for-byte, and the generated summary lands beside it as
+    /// `preregistrationFrozenSettingsFilename` instead, announced loudly.
+    /// Existing frozen directories are never rewritten by this rule — it
+    /// governs future freezes only. Best-effort: a failed write never
+    /// un-freezes a stamped manifest.
+    ///
+    /// STAMPS (review 2026-08-29, P1): a preserved authored file's SHA-256
+    /// lands at `preregistrationHash` and the generated summary's at
+    /// `preregistrationGeneratedHash`, so the freeze actually FREEZES what it
+    /// preserved — verify re-hashes it, the pin surface carries it into
+    /// bundles, and a copy goes into the experiment's `pinned/` for the
+    /// no-git floor. The caller must therefore run this BEFORE it writes the
     /// manifest.
     static func exportPreregistration(
-        _ manifest: ExperimentManifest, into experimentDirectory: URL
+        into experimentDirectory: URL, _ manifest: inout ExperimentManifest
     ) {
+        let fm = FileManager.default
+        // No experiment directory (the server's legacy flat-manifest case):
+        // nothing is written, so nothing is stamped either — a stamp naming
+        // bytes that do not exist is worse than no stamp.
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: experimentDirectory.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        else { return }
         let canonical = experimentDirectory.appending(
-            component: "preregistration.md")
+            component: preregistrationFilename)
         var target = canonical
-        if FileManager.default.fileExists(atPath: canonical.path),
-            (try? String(contentsOf: canonical, encoding: .utf8))?
-                .contains(preregistrationGeneratedMarker) != true
+        var authoredDigest: String?
+        if fm.fileExists(atPath: canonical.path),
+            !preregistrationIsGenerated(at: canonical, manifest: manifest),
+            let authored = try? Data(contentsOf: canonical)
         {
+            authoredDigest = sha256Hex(authored)
             print(
-                "⚠︎ freeze '\(manifest.name)': preregistration.md is "
-                    + "researcher-authored (no generated-at-freeze marker) — "
-                    + "preserving it untouched; the generated settings summary "
+                "⚠︎ freeze '\(manifest.name)': \(preregistrationFilename) is "
+                    + "researcher-authored — preserving it untouched and "
+                    + "FREEZING it (sha256 \(authoredDigest!.prefix(12))…, "
+                    + "stamped preregistrationHash, snapshotted into pinned/, "
+                    + "verified from now on); the generated settings summary "
                     + "lands as \(preregistrationFrozenSettingsFilename).")
+            // The no-git reproducibility floor for the one pinned input whose
+            // identity is only decided HERE — `snapshotPinnedInputs` ran
+            // earlier in the freeze, before this file was classified, so this
+            // copy is made by hand. Flat destination on both engines.
+            let snapshot = experimentDirectory.appending(
+                components: "pinned", preregistrationFilename)
+            try? fm.createDirectory(
+                at: snapshot.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            if fm.fileExists(atPath: snapshot.path) {
+                try? fm.removeItem(at: snapshot)
+            }
+            try? authored.write(to: snapshot, options: .atomic)
             target = experimentDirectory.appending(
                 component: preregistrationFrozenSettingsFilename)
         }
-        try? preregistrationMarkdown(manifest).write(
-            to: target, atomically: true, encoding: .utf8)
+        let body = preregistrationMarkdown(manifest)
+        try? body.write(to: target, atomically: true, encoding: .utf8)
+        manifest.preregistrationGeneratedHash = sha256Hex(Data(body.utf8))
+        // This freeze OWNS preregistration.md when nothing was preserved, so
+        // a stale stamp inherited from a copied experiment directory must not
+        // survive to make verify demand bytes nobody preserved.
+        manifest.preregistrationHash = authoredDigest
+    }
+
+    /// Freeze-time preregistration integrity (review 2026-08-29, P1: freeze
+    /// preserved the file but froze nothing about it, so a post-freeze edit —
+    /// or a swap — was undetectable, and a no-git workspace or a shipped
+    /// bundle had no integrity at all). ABSENT stamp = a freeze that owned
+    /// the path, or a frozen experiment predating the stamp = no obligation
+    /// and no violation; PRESENT with a mismatch is drift. Server twin:
+    /// `Manifest.verify`'s preregistration block.
+    static func preregistrationViolations(
+        _ manifest: ExperimentManifest
+    ) -> [String] {
+        guard let pinned = manifest.preregistrationHash, !pinned.isEmpty,
+            !manifest.name.isEmpty
+        else { return [] }
+        let url = directory.appending(
+            components: manifest.name, preregistrationFilename)
+        guard let data = try? Data(contentsOf: url) else {
+            return [
+                "researcher-authored preregistration: file missing at "
+                    + "experiments/\(manifest.name)/\(preregistrationFilename)"
+            ]
+        }
+        let live = sha256Hex(data)
+        guard live != pinned else { return [] }
+        return [
+            "researcher-authored preregistration changed since pinning "
+                + "(have \(live.prefix(12))…, pinned \(pinned.prefix(12))…)"
+        ]
     }
 
     /// The preregistration export's content — the study's settings-chosen-
@@ -10921,6 +11106,12 @@ public enum ExperimentStore {
         copy.appVersion = nil
         copy.freezeForced = nil
         copy.forcedGatesSkipped = nil
+        // The preregistration stamps name bytes in the SOURCE experiment's
+        // directory; the duplicate is a fresh directory holding only a
+        // manifest, so carrying them over would make verify demand a file
+        // the copy never had (server twin: `experiment_store.duplicate`).
+        copy.preregistrationHash = nil
+        copy.preregistrationGeneratedHash = nil
         guard (try? load(name: newName)) == nil else {
             throw ExperimentError(reason: "experiment '\(newName)' already exists")
         }

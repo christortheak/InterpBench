@@ -339,9 +339,11 @@ extension ExperimentStoreTests {
     }
 
     @Test func localFreezeRefreshesStaleGeneratedPreregistration() throws {
-        // A file carrying the generated-at-freeze marker is the freeze's own
-        // prior output (e.g. copied in by hand from another study):
-        // regenerating it keeps it in sync with THIS freeze instead of
+        // LEGACY structural path: a file with no stamp to check it against is
+        // the freeze's own prior output only when it LOOKS exactly like one —
+        // generated header on line 1, marker line last. Such a file (copied
+        // in by hand from another study, or written by a freeze predating the
+        // stamps) is regenerated in sync with THIS freeze instead of
         // displacing the summary.
         try withAttachTempRoot { root in
             _ = try ExperimentStore.create(
@@ -372,6 +374,252 @@ extension ExperimentStoreTests {
         }
     }
 
+    @Test func localFreezePreservesAPreregistrationThatQuotesTheFooter() throws {
+        // Review 2026-08-29, P1: the marker test was a SUBSTRING check, so the
+        // most natural way to write a real preregistration — start from the
+        // generated summary, add the commitments above it, leave the footer
+        // alone — was classified as generated and destroyed. Position, not
+        // presence: the marker is only ours when it is the final non-empty
+        // line AND the generated header is line 1.
+        try withAttachTempRoot { root in
+            _ = try ExperimentStore.create(
+                name: "prereg-quoting", description: "", modelID: "test/model")
+            try plantStories("calm", root: root)
+            _ = try ExperimentStore.attachConcept(
+                "calm", method: .emotionGrandMean, experimentName: "prereg-quoting")
+            let experimentDirectory = ExperimentStore.directory.appending(
+                component: "prereg-quoting")
+            let authored = "# Analysis preregistration\n\n"
+                + "We commit to the paired-difference estimator.\n\n"
+                + "The settings summary a previous freeze wrote follows:\n\n"
+                + ExperimentStore.preregistrationGeneratedMarker
+                + " Duplicate the experiment to change anything.*\n\n"
+                + "## Deviations\n\nNone so far.\n"
+            try authored.write(
+                to: experimentDirectory.appending(
+                    component: ExperimentStore.preregistrationFilename),
+                atomically: true, encoding: .utf8)
+            let frozen = try ExperimentStore.freeze(
+                name: "prereg-quoting", force: true)
+            let preserved = try String(
+                contentsOf: experimentDirectory.appending(
+                    component: ExperimentStore.preregistrationFilename),
+                encoding: .utf8)
+            #expect(preserved == authored)  // footer quote and all
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: experimentDirectory.appending(
+                        component: ExperimentStore.preregistrationFrozenSettingsFilename
+                    ).path))
+            #expect(
+                frozen.preregistrationHash
+                    == ExperimentStore.sha256Hex(Data(authored.utf8)))
+        }
+    }
+
+    @Test func localFreezeStampsAndSnapshotsThePreservedPreregistration() throws {
+        // Review 2026-08-29, P1: preserving the file froze NOTHING about it.
+        // The freeze now stamps its sha256, snapshots it into pinned/ for the
+        // no-git floor, and puts it on the pin surface — without disturbing
+        // the freeze hash, because the stamps are outside the canonical
+        // payload like frozenAt.
+        try withAttachTempRoot { root in
+            _ = try ExperimentStore.create(
+                name: "prereg-stamped", description: "", modelID: "test/model")
+            try plantStories("calm", root: root)
+            _ = try ExperimentStore.attachConcept(
+                "calm", method: .emotionGrandMean, experimentName: "prereg-stamped")
+            let experimentDirectory = ExperimentStore.directory.appending(
+                component: "prereg-stamped")
+            let authored = "# Analysis preregistration\n\nOne estimator, chosen now.\n"
+            try authored.write(
+                to: experimentDirectory.appending(
+                    component: ExperimentStore.preregistrationFilename),
+                atomically: true, encoding: .utf8)
+            let frozen = try ExperimentStore.freeze(
+                name: "prereg-stamped", force: true)
+            let digest = ExperimentStore.sha256Hex(Data(authored.utf8))
+            #expect(frozen.preregistrationHash == digest)
+            #expect(frozen.freezeHash == ExperimentStore.manifestHash(frozen))
+            let snapshot = try String(
+                contentsOf: experimentDirectory.appending(
+                    components: "pinned", ExperimentStore.preregistrationFilename),
+                encoding: .utf8)
+            #expect(snapshot == authored)  // no-git reproducibility floor
+            let labels = ExperimentStore.pinnedInputEntries(frozen).map(\.label)
+            #expect(labels.contains("researcher-authored preregistration"))
+            #expect(ExperimentStore.verify(frozen).isEmpty)
+            _ = root
+        }
+    }
+
+    @Test func editingAPreservedPreregistrationAfterFreezeFailsVerify() throws {
+        // The whole point of the stamp: an authored preregistration is a
+        // frozen artifact, so a post-freeze edit is drift like any other
+        // pinned input.
+        try withAttachTempRoot { root in
+            _ = try ExperimentStore.create(
+                name: "prereg-drift", description: "", modelID: "test/model")
+            try plantStories("calm", root: root)
+            _ = try ExperimentStore.attachConcept(
+                "calm", method: .emotionGrandMean, experimentName: "prereg-drift")
+            let prereg = ExperimentStore.directory.appending(
+                components: "prereg-drift", ExperimentStore.preregistrationFilename)
+            try "# Analysis preregistration\n\nWe predict a positive shift.\n"
+                .write(to: prereg, atomically: true, encoding: .utf8)
+            let frozen = try ExperimentStore.freeze(name: "prereg-drift", force: true)
+            #expect(ExperimentStore.verify(frozen).isEmpty)
+
+            try "# Analysis preregistration\n\nWe predicted the shift we got.\n"
+                .write(to: prereg, atomically: true, encoding: .utf8)
+            #expect(
+                ExperimentStore.verify(frozen).contains {
+                    $0.contains("researcher-authored preregistration")
+                })
+            try FileManager.default.removeItem(at: prereg)
+            #expect(
+                ExperimentStore.verify(frozen).contains {
+                    $0.contains("researcher-authored preregistration")
+                })
+        }
+    }
+
+    @Test func aLegacyFrozenExperimentVerifiesWithoutThePreregistrationStamp() throws {
+        // Frozen directories are immutable, so experiments frozen before the
+        // stamp existed have none: absence is not a violation, and their
+        // authored preregistration is free to sit there unhashed.
+        try withAttachTempRoot { root in
+            _ = try ExperimentStore.create(
+                name: "prereg-legacy", description: "", modelID: "test/model")
+            try plantStories("calm", root: root)
+            _ = try ExperimentStore.attachConcept(
+                "calm", method: .emotionGrandMean, experimentName: "prereg-legacy")
+            var frozen = try ExperimentStore.freeze(name: "prereg-legacy", force: true)
+            try "# Analysis preregistration\n\nWritten in 2026.\n".write(
+                to: ExperimentStore.directory.appending(
+                    components: "prereg-legacy",
+                    ExperimentStore.preregistrationFilename),
+                atomically: true, encoding: .utf8)
+            frozen.preregistrationHash = nil
+            frozen.preregistrationGeneratedHash = nil
+            #expect(ExperimentStore.verify(frozen).isEmpty)
+            #expect(
+                !ExperimentStore.pinnedInputEntries(frozen).contains {
+                    $0.label == "researcher-authored preregistration"
+                })
+        }
+    }
+
+    @Test func localFreezeRefreshesItsOwnStampedGeneratedPreregistration() throws {
+        // Provenance-plus-hash: when the manifest carries the stamp of the
+        // summary this instrument generated and the bytes still match it, the
+        // file is provably ours and is refreshed rather than displaced — no
+        // structural guessing required.
+        try withAttachTempRoot { root in
+            _ = try ExperimentStore.create(
+                name: "prereg-own", description: "", modelID: "test/model")
+            try plantStories("calm", root: root)
+            _ = try ExperimentStore.attachConcept(
+                "calm", method: .emotionGrandMean, experimentName: "prereg-own")
+            let experimentDirectory = ExperimentStore.directory.appending(
+                component: "prereg-own")
+            var frozen = try ExperimentStore.freeze(name: "prereg-own", force: true)
+            let generated = try Data(
+                contentsOf: experimentDirectory.appending(
+                    component: ExperimentStore.preregistrationFilename))
+            #expect(
+                frozen.preregistrationGeneratedHash
+                    == ExperimentStore.sha256Hex(generated))
+            // Re-open the study as a draft carrying its stamps (what copying
+            // an experiment directory by hand produces) and freeze again: the
+            // untouched generated file is recognized by its hash.
+            frozen.status = .draft
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(frozen).write(
+                to: ExperimentStore.directory.appending(
+                    components: "prereg-own", "experiment.json"))
+            let refrozen = try ExperimentStore.freeze(name: "prereg-own", force: true)
+            #expect(refrozen.preregistrationHash == nil)
+            #expect(
+                !FileManager.default.fileExists(
+                    atPath: experimentDirectory.appending(
+                        component: ExperimentStore.preregistrationFrozenSettingsFilename
+                    ).path))
+            _ = root
+        }
+    }
+
+    @Test func preregistrationClassificationRule() throws {
+        // The classifier itself, at the boundaries the freeze tests cannot
+        // isolate: a stored hash decides when there is one, structure decides
+        // when there is not, and doubt always resolves to "preserve".
+        try withAttachTempRoot { root in
+            try FileManager.default.createDirectory(
+                at: root, withIntermediateDirectories: true)
+            let url = root.appending(component: "preregistration.md")
+            var manifest = ExperimentManifest(
+                name: "rule", description: "", modelID: "test/model")
+            @discardableResult
+            func writeFile(_ text: String) throws -> String {
+                try text.write(to: url, atomically: true, encoding: .utf8)
+                return ExperimentStore.sha256Hex(Data(text.utf8))
+            }
+            let footer = ExperimentStore.preregistrationGeneratedMarker
+                + " Duplicate the experiment to change anything.*"
+
+            // 1. A stamped generated hash wins over a file that looks nothing
+            //    like ours.
+            manifest.preregistrationGeneratedHash = try writeFile(
+                "not remotely our shape\n")
+            #expect(
+                ExperimentStore.preregistrationIsGenerated(
+                    at: url, manifest: manifest))
+            // 2. A stamp that does NOT match the bytes preserves, even when
+            //    the file is structurally perfect: something edited it.
+            try writeFile("# Preregistration: s\n\nbody\n\n" + footer + "\n")
+            manifest.preregistrationGeneratedHash = String(repeating: "0", count: 64)
+            #expect(
+                !ExperimentStore.preregistrationIsGenerated(
+                    at: url, manifest: manifest))
+            // 3. The preserved-authored stamp names it as the researcher's.
+            manifest.preregistrationGeneratedHash = nil
+            manifest.preregistrationHash = try writeFile(
+                "# Preregistration: s\n\nbody\n\n" + footer + "\n")
+            #expect(
+                !ExperimentStore.preregistrationIsGenerated(
+                    at: url, manifest: manifest))
+            // 4. No stamps: structure decides. Header first, marker last.
+            manifest.preregistrationHash = nil
+            try writeFile("# Preregistration: s\n\nbody\n\n" + footer + "\n")
+            #expect(
+                ExperimentStore.preregistrationIsGenerated(
+                    at: url, manifest: manifest))
+            // 5. …the marker quoted mid-document is NOT ours.
+            try writeFile("# Analysis preregistration\n\n" + footer + "\n\nmore\n")
+            #expect(
+                !ExperimentStore.preregistrationIsGenerated(
+                    at: url, manifest: manifest))
+            // 6. …nor is one whose header is right but whose footer moved.
+            try writeFile(
+                "# Preregistration: s\n\n" + footer + "\n\ntrailing commitments\n")
+            #expect(
+                !ExperimentStore.preregistrationIsGenerated(
+                    at: url, manifest: manifest))
+            // 7. …nor a footer-terminated file under someone else's heading.
+            try writeFile("# Analysis preregistration\n\nbody\n\n" + footer + "\n")
+            #expect(
+                !ExperimentStore.preregistrationIsGenerated(
+                    at: url, manifest: manifest))
+            // 8. Unreadable-as-text bytes are authored — when in doubt,
+            //    preserve.
+            try Data([0xff, 0xfe, 0x20, 0x6e, 0x6f, 0x74]).write(to: url)
+            #expect(
+                !ExperimentStore.preregistrationIsGenerated(
+                    at: url, manifest: manifest))
+        }
+    }
+
     @Test func exportPreregistrationNoopsWithoutExperimentDirectory() throws {
         // The server's legacy flat-file guard, twinned: no experiment
         // directory means nothing is written and none is created.
@@ -381,8 +629,12 @@ extension ExperimentStoreTests {
             var manifest = ExperimentManifest(
                 name: "never-created", description: "", modelID: "test/model")
             manifest.status = .frozen
-            ExperimentStore.exportPreregistration(manifest, into: missing)
+            ExperimentStore.exportPreregistration(into: missing, &manifest)
             #expect(!FileManager.default.fileExists(atPath: missing.path))
+            // Nothing written means nothing stamped: a stamp naming bytes
+            // that do not exist would fail verify forever.
+            #expect(manifest.preregistrationHash == nil)
+            #expect(manifest.preregistrationGeneratedHash == nil)
         }
     }
 

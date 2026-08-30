@@ -58,7 +58,8 @@ import Testing
     /// `test_portability_contracts.py::test_volatile_freeze_stamps_are_outside_the_content_hash`.
     static let volatileFreezeKeys = [
         "appVersion", "createdAt", "forcedGatesSkipped", "freezeForced",
-        "freezeHash", "frozenAt", "frozenBy", "gitCommit", "status",
+        "freezeHash", "frozenAt", "frozenBy", "gitCommit",
+        "preregistrationGeneratedHash", "preregistrationHash", "status",
     ]
 
     /// The `steerlab-bundle.json` header keys for a run bundle. Copied from

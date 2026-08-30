@@ -261,9 +261,11 @@ public enum StudyTemplateStore {
     /// Removed, and why:
     /// - `name`, `createdAt` — identity of an instance, not of the recipe.
     /// - `status`, `frozenAt`, `freezeHash`, `frozenBy`, `gitCommit`,
-    ///   `appVersion`, `freezeForced`, `forcedGatesSkipped` — lifecycle
+    ///   `appVersion`, `freezeForced`, `forcedGatesSkipped`,
+    ///   `preregistrationHash`, `preregistrationGeneratedHash` — lifecycle
     ///   stamps; a template is never frozen and must never mint a study that
-    ///   claims to be.
+    ///   claims to be (and the preregistration stamps name bytes in one
+    ///   experiment's directory, which a template has none of).
     /// - `variantConditions` — THE agents. The entire point.
     /// - `conditions` — steering arms are per-instance too, and a
     ///   sweep-stamped `<concept>-recommended` condition carries selection
@@ -293,6 +295,8 @@ public enum StudyTemplateStore {
         body.appVersion = nil
         body.freezeForced = nil
         body.forcedGatesSkipped = nil
+        body.preregistrationHash = nil
+        body.preregistrationGeneratedHash = nil
         body.variantConditions = []
         body.conditions = []
         body.multiAgentScenarioPath = nil

@@ -1,12 +1,14 @@
 """Experiment authoring: create/attach/condition/duplicate/freeze + the
 frozen-immutability guard and freeze gating."""
 
+import hashlib
 import json
 import os
 
 import pytest
 
 from steerlab_server.experiment import experiment_store as es
+from steerlab_server.experiment.manifest import Manifest
 
 
 def _concept(root, name="french"):
@@ -92,9 +94,11 @@ def test_freeze_preserves_hand_authored_preregistration(tmp_path):
 
 
 def test_freeze_overwrites_stale_generated_preregistration(tmp_path):
-    """A file carrying the generated-at-freeze marker is the freeze's own
-    prior output (e.g. copied in by hand from another study): regenerating it
-    keeps it in sync with THIS freeze instead of displacing the summary."""
+    """LEGACY structural path: a file with no stamp to check it against is the
+    freeze's own prior output only when it LOOKS exactly like one — generated
+    header on line 1, marker line last. Such a file (e.g. copied in by hand
+    from another study, or written by a freeze predating the stamps) is
+    regenerated in sync with THIS freeze instead of displacing the summary."""
     root = str(tmp_path)
     _concept(root)
     es.create("s", model_id="org/m", revision="abc", root=root)
@@ -112,6 +116,181 @@ def test_freeze_overwrites_stale_generated_preregistration(tmp_path):
     assert "# Preregistration: s" in text
     assert not os.path.exists(
         os.path.join(exp_dir, es.PREREG_FROZEN_SETTINGS_FILENAME))
+
+
+def test_freeze_preserves_authored_preregistration_that_quotes_the_footer(tmp_path):
+    """Review 2026-08-29, P1: the marker test was a SUBSTRING check, so the
+    most natural way to write a real preregistration — start from the
+    generated summary, add the commitments above it, leave the footer alone —
+    was classified as generated and destroyed. Position, not presence: the
+    marker is only ours when it is the final non-empty line AND the generated
+    header is line 1."""
+    root = str(tmp_path)
+    _concept(root)
+    es.create("s", model_id="org/m", revision="abc", root=root)
+    es.attach("s", ["french"], root=root)
+    exp_dir = os.path.join(root, "experiments", "s")
+    authored = ("# Analysis preregistration\n\n"
+                "We commit to the paired-difference estimator.\n\n"
+                "The settings summary a previous freeze wrote follows:\n\n"
+                + es.PREREG_GENERATED_MARKER + " Duplicate the experiment to "
+                "change anything.*\n\n"
+                "## Deviations\n\nNone so far.\n")
+    with open(os.path.join(exp_dir, "preregistration.md"), "w",
+              encoding="utf-8") as h:
+        h.write(authored)
+    frozen = es.freeze("s", force=True, root=root)
+    with open(os.path.join(exp_dir, "preregistration.md"), encoding="utf-8") as h:
+        assert h.read() == authored  # preserved, footer quote and all
+    assert os.path.exists(os.path.join(exp_dir, es.PREREG_FROZEN_SETTINGS_FILENAME))
+    assert frozen[es.PREREG_AUTHORED_HASH_KEY] == hashlib.sha256(
+        authored.encode("utf-8")).hexdigest()
+
+
+def test_freeze_stamps_and_snapshots_the_preserved_preregistration(tmp_path):
+    """Review 2026-08-29, P1: preserving the file froze NOTHING about it. The
+    freeze now stamps its sha256, snapshots it into pinned/ for the no-git
+    floor, and puts it on the pin surface."""
+    root = str(tmp_path)
+    _concept(root)
+    es.create("s", model_id="org/m", revision="abc", root=root)
+    es.attach("s", ["french"], root=root)
+    exp_dir = os.path.join(root, "experiments", "s")
+    authored = "# Analysis preregistration\n\nOne estimator, chosen now.\n"
+    with open(os.path.join(exp_dir, "preregistration.md"), "w",
+              encoding="utf-8") as h:
+        h.write(authored)
+    frozen = es.freeze("s", force=True, root=root)
+    digest = hashlib.sha256(authored.encode("utf-8")).hexdigest()
+    assert frozen[es.PREREG_AUTHORED_HASH_KEY] == digest
+    # The stamp is a FREEZE stamp: outside the canonical payload, so it
+    # cannot disturb the freeze hash it is written beside.
+    with open(os.path.join(exp_dir, "freeze-canonical.json"),
+              encoding="utf-8") as h:
+        canonical = json.load(h)
+    assert es.PREREG_AUTHORED_HASH_KEY not in canonical
+    assert es.PREREG_GENERATED_HASH_KEY not in canonical
+    assert Manifest.load("s", root).content_hash() == frozen["freezeHash"]
+    with open(os.path.join(exp_dir, "pinned", "preregistration.md"),
+              encoding="utf-8") as h:
+        assert h.read() == authored  # no-git reproducibility floor
+    surface = {e.label for e in es.pinned_input_entries(frozen, root)}
+    assert "researcher-authored preregistration" in surface
+
+
+def test_editing_a_preserved_preregistration_after_freeze_fails_verify(tmp_path):
+    """The whole point of the stamp: an authored preregistration is a frozen
+    artifact, so a post-freeze edit is drift like any other pinned input."""
+    root = str(tmp_path)
+    _concept(root)
+    es.create("s", model_id="org/m", revision="abc", root=root)
+    es.attach("s", ["french"], root=root)
+    prereg = os.path.join(root, "experiments", "s", "preregistration.md")
+    with open(prereg, "w", encoding="utf-8") as h:
+        h.write("# Analysis preregistration\n\nWe predict a positive shift.\n")
+    es.freeze("s", force=True, root=root)
+    assert Manifest.load("s", root).verify(root) == []
+    with open(prereg, "w", encoding="utf-8") as h:
+        h.write("# Analysis preregistration\n\nWe predicted the shift we got.\n")
+    violations = Manifest.load("s", root).verify(root)
+    assert any("researcher-authored preregistration" in v for v in violations)
+    os.remove(prereg)
+    assert any("researcher-authored preregistration" in v
+               for v in Manifest.load("s", root).verify(root))
+
+
+def test_legacy_frozen_experiment_verifies_without_the_preregistration_stamp(tmp_path):
+    """Frozen directories are immutable, so experiments frozen before the
+    stamp existed have none: absence is not a violation, and their authored
+    preregistration is free to sit there unhashed."""
+    root = str(tmp_path)
+    _concept(root)
+    es.create("s", model_id="org/m", revision="abc", root=root)
+    es.attach("s", ["french"], root=root)
+    frozen = es.freeze("s", force=True, root=root)
+    exp_dir = os.path.join(root, "experiments", "s")
+    # Roll the manifest back to what a pre-stamp freeze wrote, and put an
+    # authored preregistration beside it.
+    frozen.pop(es.PREREG_AUTHORED_HASH_KEY, None)
+    frozen.pop(es.PREREG_GENERATED_HASH_KEY, None)
+    with open(os.path.join(exp_dir, "experiment.json"), "w",
+              encoding="utf-8") as h:
+        json.dump(frozen, h)
+    with open(os.path.join(exp_dir, "preregistration.md"), "w",
+              encoding="utf-8") as h:
+        h.write("# Analysis preregistration\n\nWritten in 2026.\n")
+    assert Manifest.load("s", root).verify(root) == []
+
+
+def test_freeze_refreshes_its_own_stamped_generated_preregistration(tmp_path):
+    """Provenance-plus-hash: when the manifest carries the stamp of the
+    summary this instrument generated and the bytes still match it, the file
+    is provably ours and is refreshed rather than displaced — no structural
+    guessing required."""
+    root = str(tmp_path)
+    _concept(root)
+    es.create("s", model_id="org/m", revision="abc", root=root)
+    es.attach("s", ["french"], root=root)
+    exp_dir = os.path.join(root, "experiments", "s")
+    frozen = es.freeze("s", force=True, root=root)
+    with open(os.path.join(exp_dir, "preregistration.md"), "rb") as h:
+        generated = h.read()
+    assert frozen[es.PREREG_GENERATED_HASH_KEY] == hashlib.sha256(
+        generated).hexdigest()
+    # Re-open the study as a draft carrying its stamps (what copying an
+    # experiment directory by hand produces) and freeze again: the untouched
+    # generated file is recognized by its hash.
+    frozen["status"] = "draft"
+    with open(os.path.join(exp_dir, "experiment.json"), "w",
+              encoding="utf-8") as h:
+        json.dump(frozen, h)
+    refrozen = es.freeze("s", force=True, root=root)
+    assert es.PREREG_AUTHORED_HASH_KEY not in refrozen
+    assert not os.path.exists(
+        os.path.join(exp_dir, es.PREREG_FROZEN_SETTINGS_FILENAME))
+
+
+def test_preregistration_classification_rule(tmp_path):
+    """The classifier itself, at the boundaries the freeze tests cannot
+    isolate: a stored hash decides when there is one, structure decides when
+    there is not, and doubt always resolves to 'preserve'."""
+    path = str(tmp_path / "preregistration.md")
+
+    def _write(text):
+        with open(path, "w", encoding="utf-8") as h:
+            h.write(text)
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    footer = es.PREREG_GENERATED_MARKER + " Duplicate the experiment to change anything.*"
+    # 1. Stamped generated hash wins over a file that looks nothing like ours.
+    digest = _write("not remotely our shape\n")
+    assert es._preregistration_is_generated(
+        path, {es.PREREG_GENERATED_HASH_KEY: digest})
+    # 2. A stamp that does NOT match the bytes preserves, even when the file
+    #    is structurally perfect: something edited it.
+    _write("# Preregistration: s\n\nbody\n\n" + footer + "\n")
+    assert not es._preregistration_is_generated(
+        path, {es.PREREG_GENERATED_HASH_KEY: "0" * 64})
+    # 3. The preserved-authored stamp names it as the researcher's.
+    digest = _write("# Preregistration: s\n\nbody\n\n" + footer + "\n")
+    assert not es._preregistration_is_generated(
+        path, {es.PREREG_AUTHORED_HASH_KEY: digest})
+    # 4. No stamps: structure decides. Header first, marker last → ours.
+    _write("# Preregistration: s\n\nbody\n\n" + footer + "\n")
+    assert es._preregistration_is_generated(path, {})
+    # 5. …the marker quoted mid-document is NOT ours.
+    _write("# Analysis preregistration\n\n" + footer + "\n\nmore\n")
+    assert not es._preregistration_is_generated(path, {})
+    # 6. …nor is one whose header is right but whose footer moved.
+    _write("# Preregistration: s\n\n" + footer + "\n\ntrailing commitments\n")
+    assert not es._preregistration_is_generated(path, {})
+    # 7. …nor a footer-terminated file under someone else's heading.
+    _write("# Analysis preregistration\n\nbody\n\n" + footer + "\n")
+    assert not es._preregistration_is_generated(path, {})
+    # 8. Unreadable bytes are authored — when in doubt, preserve.
+    with open(path, "wb") as h:
+        h.write(b"\xff\xfe not utf-8")
+    assert not es._preregistration_is_generated(path, {})
 
 
 def test_write_preregistration_noops_for_legacy_flat_manifest(tmp_path):
