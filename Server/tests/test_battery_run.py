@@ -875,6 +875,376 @@ def test_a_failing_release_never_fails_the_run(tmp_path, monkeypatch,
 
 
 # =============================================================================
+# 10b. Adapters, object lifetime, and resolved execution identity
+# =============================================================================
+
+
+class _FakeLM:
+    """The transformers PeftAdapterMixin adapter API, recorded."""
+
+    def __init__(self):
+        self.calls = []
+        self.loaded = {}
+        self.active = None
+
+    def load_adapter(self, path, adapter_name):
+        self.calls.append(("load", str(path), adapter_name))
+        self.loaded[adapter_name] = str(path)
+        self.active = adapter_name
+
+    def set_adapter(self, name):
+        self.calls.append(("set", name))
+        self.active = name
+
+    def enable_adapters(self):
+        self.calls.append(("enable",))
+
+    def disable_adapters(self):
+        self.calls.append(("disable",))
+
+    def delete_adapter(self, name):
+        self.calls.append(("delete", name))
+        del self.loaded[name]
+
+
+class _AdaptableModel:
+    """What a loaded ``SteeredModel`` exposes to this module: the adapter API
+    underneath, and the RESOLVED identity read back off the load."""
+
+    model_id = "fake/model"
+    revision = "cafebabe" * 5
+    dtype = "bfloat16"
+    attn_implementation = "sdpa"
+    device = "cuda:0"
+
+    def __init__(self):
+        self.model = _FakeLM()
+
+
+def _adapter_directory(root, name="agent-adapter", weights=b"weights",
+                       adapter_format="hf-peft-lora", substrate=None):
+    """A minimal native adapter on disk: the two files its identity is
+    measured over, and the sidecar that stamps the format."""
+    from steerlab_server.steering import vector_store
+    rel = os.path.join("runs", "20260301T000000000-lora", name)
+    directory = os.path.join(root, rel)
+    os.makedirs(directory, exist_ok=True)
+    with open(os.path.join(directory, "adapter_config.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump({"peft_type": "LORA", "r": 8}, handle)
+    with open(os.path.join(directory, "adapter_model.safetensors"),
+              "wb") as handle:
+        handle.write(weights)
+    with open(directory + ".json", "w", encoding="utf-8") as handle:
+        json.dump({"adapterFormat": adapter_format,
+                   "substrate": substrate or vector_store.SUBSTRATE}, handle)
+    return rel
+
+
+def _adapter_agent(root, adapter_rel, *, name="tuned", base="fake/model",
+                   adapter_hash=None):
+    """An agent artifact whose whole intervention IS its adapter."""
+    variants = os.path.join(root, "runs", "model-variants")
+    os.makedirs(variants, exist_ok=True)
+    adapter = {"name": name, "adapterDirectory": adapter_rel}
+    if adapter_hash is not None:
+        adapter["adapterHash"] = adapter_hash
+    with open(os.path.join(variants, f"{name}.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump({"schemaVersion": 1, "name": name, "baseModelID": base,
+                   "injections": [], "adapters": [adapter],
+                   "alphaInNormUnits": True}, handle)
+    return name
+
+
+@pytest.fixture
+def adapter_run(tmp_path, monkeypatch, floor_battery):
+    """One run over an adapter-only agent, with the scoring back-ends injected
+    and the REAL adapter path exercised underneath."""
+    root, rel = floor_battery
+    from contextlib import contextmanager
+
+    from steerlab_server.experiment import generate as generate_mod
+    from steerlab_server.experiment import tasks
+
+    monkeypatch.setattr(
+        tasks, "_battery_backends",
+        lambda model, model_id, injections, latent_edits=None: (
+            lambda p, a: "a", lambda p, o, a: (o[0], {o[0]: 1.0})))
+    monkeypatch.setattr(
+        generate_mod, "generate",
+        lambda model, prompt, **kwargs: "one two three four five six")
+
+    adapter_rel = _adapter_directory(root)
+    _adapter_agent(root, adapter_rel)
+    model = _AdaptableModel()
+
+    @contextmanager
+    def provider(model_id, revision):
+        yield model
+
+    lines: list = []
+    report = battery_run.execute(rel, ["tuned"], root=root,
+                                 model_provider=provider, log=lines.append)
+    return report, model, root, lines
+
+
+def test_an_adapter_bearing_agent_is_measured_through_its_adapter(adapter_run):
+    """The agent IS its adapter. Before this, `battery run` built the
+    variant's injections and never armed the adapter, so an adapter-only
+    agent was measured as its BASE MODEL while the report named the agent —
+    a floor reading attributable to nothing that was asked for."""
+    _report, model, _root, _lines = adapter_run
+    kinds = [call[0] for call in model.model.calls]
+    assert "load" in kinds and "set" in kinds
+    # Armed before the reading, removed after it: the next agent on this
+    # container must not inherit the previous one's intervention.
+    assert kinds.index("load") < kinds.index("delete")
+    assert model.model.loaded == {}
+
+
+def test_the_report_block_states_what_was_applied(adapter_run):
+    """A reader of the report never has to infer the arming."""
+    report, _model, _root, _lines = adapter_run
+    block = report["agents"][0]
+    assert block["adapters"]["applied"] is True
+    assert block["adapters"]["declaredCount"] == 1
+    assert block["adapters"]["activeAdapterName"] == "tuned"
+    verified = block["adapters"]["verifiedIdentity"]
+    assert len(verified) == 1
+    assert verified[0]["adapterContentHashAlgorithm"] == \
+        model_variant_module().ADAPTER_CONTENT_HASH_ALGORITHM
+    assert block["injectionCount"] == 0
+
+
+def test_a_pure_steering_agent_says_so_rather_than_saying_nothing(executed):
+    """"No adapters" and "adapters were not checked" must not read
+    identically, so the block is stamped on every agent."""
+    report, _root, _rel, _loads, _released, _lines = executed
+    for block in report["agents"]:
+        assert block["adapters"] == {"declaredCount": 0, "applied": False,
+                                     "activeAdapterName": None,
+                                     "verifiedIdentity": []}
+
+
+def model_variant_module():
+    from steerlab_server.experiment import model_variant
+    return model_variant
+
+
+def test_an_adapter_that_drifted_from_its_pin_refuses_before_the_run(
+        tmp_path, floor_battery):
+    """A declared hash is a claim ABOUT an adapter, not a measurement of the
+    one that will load. A pin that disagrees with the bytes refuses — and
+    refuses at preflight, so `--dry-run` refuses it too and no run directory
+    is minted."""
+    root, rel = floor_battery
+    adapter_rel = _adapter_directory(root)
+    _adapter_agent(root, adapter_rel, adapter_hash="0" * 64)
+    with pytest.raises(battery_run.BatteryRunRefusal) as err:
+        battery_run.preflight(rel, ["tuned"], root=root)
+    assert err.value.code == "adapterIdentity"
+    assert "not the agent it declares" in err.value.reason
+    assert err.value.repair_action
+    assert not any(name.endswith(battery_run.RUN_SLUG)
+                   for name in os.listdir(os.path.join(root, "runs")))
+
+
+def test_a_foreign_adapter_refuses_before_the_run(tmp_path, floor_battery):
+    """Format validation is the run's, so the dry run has it too: an adapter
+    trained on another substrate refuses with the retrain message rather than
+    a load failure with weights already resident."""
+    root, rel = floor_battery
+    adapter_rel = _adapter_directory(root, adapter_format="mlx-lora",
+                                     substrate="swift-mlx")
+    _adapter_agent(root, adapter_rel)
+    with pytest.raises(battery_run.BatteryRunRefusal) as err:
+        battery_run.preflight(rel, ["tuned"], root=root)
+    assert err.value.code == "adapterFormat"
+    assert "retrain" in err.value.repair_action
+
+
+def test_a_dangling_artifact_reference_refuses_before_the_run(floor_battery):
+    """The execution-specific artifact surface, checked with no model load —
+    a dangling reference used to surface as a file error after the weights
+    were resident."""
+    root, rel = floor_battery
+    variants = os.path.join(root, "runs", "model-variants")
+    os.makedirs(variants, exist_ok=True)
+    with open(os.path.join(variants, "ghost.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump({"schemaVersion": 1, "name": "ghost",
+                   "baseModelID": "fake/model", "adapters": [],
+                   "alphaInNormUnits": True,
+                   "injections": [{"concept": "kindness",
+                                   "vectorArtifactID": "runs/nowhere/kindness",
+                                   "layer": 17, "alpha": 0.2}]}, handle)
+    with pytest.raises(battery_run.BatteryRunRefusal) as err:
+        battery_run.preflight(rel, ["ghost"], root=root)
+    assert err.value.code == "missingArtifact"
+    assert "runs/nowhere/kindness" in err.value.reason
+
+
+def test_an_unbuildable_dose_refuses_before_the_run(floor_battery):
+    """Norm-unit denomination, substrate and the denominator table all live
+    inside the ONE injection path, and all three can refuse from files alone.
+    The dry run refuses what the run would refuse."""
+    root, rel = floor_battery
+    from steerlab_server.steering import vector_store
+    from steerlab_server.steering.vector_store import (ConceptVectors,
+                                                       SteeringVectorSidecar)
+    # A vector that carries NO residual norms cannot denominate a norm-unit
+    # dose. The artifact resolves; the dose does not build.
+    vector_store.save(
+        ConceptVectors(per_layer=[[1.0, 0.0]] * 20),
+        SteeringVectorSidecar(
+            modelID="fake/model", concept="kindness", stimulusSetHash="h",
+            layerCount=20, hiddenSize=2, normsPerLayer=[1.0] * 20,
+            extractionDate="2026-01-01T00:00:00Z",
+            substrate=vector_store.SUBSTRATE),
+        os.path.join(root, "runs", "20260101T000000000-extract"), "kindness")
+    with pytest.raises(battery_run.BatteryRunRefusal) as err:
+        battery_run.preflight(rel, ["kindness:17:0.2"], model_id="fake/model",
+                              root=root)
+    assert err.value.code == "injectionsUnbuildable"
+    assert "kindness:17:0.2" in err.value.reason
+    assert "residual norms" in err.value.reason
+
+
+def test_a_refused_agent_surface_writes_no_run_directory(floor_battery):
+    """The module's contract, extended to the checks that were missing from
+    it: every artifact-surface check is UPSTREAM of the mint."""
+    root, rel = floor_battery
+    adapter_rel = _adapter_directory(root)
+    _adapter_agent(root, adapter_rel, adapter_hash="0" * 64)
+    with pytest.raises(battery_run.BatteryRunRefusal):
+        battery_run.execute(rel, ["tuned"], root=root)
+    assert not [name for name in os.listdir(os.path.join(root, "runs"))
+                if name.endswith(battery_run.RUN_SLUG)]
+
+
+def test_the_finished_model_is_unreachable_before_the_next_one_loads(
+        tmp_path, monkeypatch, floor_battery):
+    """Object lifetime, not event order. `_release_stale` fires in the right
+    place either way; what makes the release REAL is that this frame no
+    longer holds the finished container. A `with` block does not unbind its
+    target, so the previous model stayed strongly referenced through the next
+    load and a two-model run transiently paid the SUM."""
+    import weakref
+    from contextlib import contextmanager
+
+    from steerlab_server.experiment import generate as generate_mod
+    from steerlab_server.experiment import model_variant, tasks
+
+    root, rel = floor_battery
+    monkeypatch.setattr(
+        tasks, "_battery_backends",
+        lambda model, model_id, injections, latent_edits=None: (
+            lambda p, a: "a", lambda p, o, a: (o[0], {o[0]: 1.0})))
+    monkeypatch.setattr(
+        generate_mod, "generate",
+        lambda model, prompt, **kwargs: "one two three four five six")
+    monkeypatch.setattr(model_variant, "variant_injections",
+                        lambda variant, root=None: [])
+
+    variants = os.path.join(root, "runs", "model-variants")
+    os.makedirs(variants, exist_ok=True)
+    for name, base in (("alpha", "model/one"), ("beta", "model/two")):
+        with open(os.path.join(variants, f"{name}.json"), "w",
+                  encoding="utf-8") as handle:
+            json.dump({"schemaVersion": 1, "name": name, "baseModelID": base,
+                       "injections": [], "adapters": [],
+                       "alphaInNormUnits": True}, handle)
+
+    refs: list = []
+
+    @contextmanager
+    def provider(model_id, revision):
+        # The load event. Every model this run has finished with must already
+        # be unreachable — a live weakref here is a model the allocator could
+        # not have reclaimed, whatever the registry was told.
+        alive = [index for index, ref in enumerate(refs) if ref() is not None]
+        assert not alive, (
+            f"model(s) {alive} were still referenced when '{model_id}' "
+            f"loaded — release cannot free what this frame still holds")
+        loaded = _FakeModel()
+        refs.append(weakref.ref(loaded))
+        yield loaded
+
+    battery_run.execute(rel, ["alpha", "beta"], root=root,
+                        model_provider=provider, log=lambda line: None)
+    assert len(refs) == 2
+
+
+def test_the_report_stamps_the_identity_that_ran_not_the_one_requested(
+        adapter_run):
+    """A revisionless model resolves to its cached commit, "auto" resolves to
+    a concrete dtype, and the attention kernel is chosen per device. A report
+    that stamped only the REQUEST carried nulls beside numbers that concrete
+    values produced."""
+    report, model, _root, _lines = adapter_run
+    block = report["agents"][0]
+    # The request is kept, clearly, so the invocation stays auditable.
+    assert block["modelRevision"] is None
+    execution = block["execution"]
+    assert execution["modelRevision"] == model.revision
+    assert execution["dtype"] == "bfloat16"
+    assert execution["device"] == "cuda:0"
+    assert execution["attentionImplementation"] == "sdpa"
+    # And at the top level, both, side by side.
+    assert report["execution"]["requested"] == {"dtype": None, "device": None}
+    assert report["execution"]["resolved"] == [execution]
+    assert report["dtype"] is None and report["device"] is None
+
+
+def test_two_base_models_resolve_to_two_execution_stamps(
+        tmp_path, monkeypatch, floor_battery):
+    """One top-level stamp over two loads would make one of the two a false
+    claim, so the resolved identities are a list in load order."""
+    from contextlib import contextmanager
+
+    from steerlab_server.experiment import generate as generate_mod
+    from steerlab_server.experiment import model_variant, tasks
+
+    root, rel = floor_battery
+    monkeypatch.setattr(
+        tasks, "_battery_backends",
+        lambda model, model_id, injections, latent_edits=None: (
+            lambda p, a: "a", lambda p, o, a: (o[0], {o[0]: 1.0})))
+    monkeypatch.setattr(
+        generate_mod, "generate",
+        lambda model, prompt, **kwargs: "one two three four five six")
+    monkeypatch.setattr(model_variant, "variant_injections",
+                        lambda variant, root=None: [])
+    variants = os.path.join(root, "runs", "model-variants")
+    os.makedirs(variants, exist_ok=True)
+    for name, base in (("alpha", "model/one"), ("beta", "model/two")):
+        with open(os.path.join(variants, f"{name}.json"), "w",
+                  encoding="utf-8") as handle:
+            json.dump({"schemaVersion": 1, "name": name, "baseModelID": base,
+                       "injections": [], "adapters": [],
+                       "alphaInNormUnits": True}, handle)
+
+    @contextmanager
+    def provider(model_id, revision):
+        loaded = _FakeModel()
+        loaded.model_id = model_id
+        loaded.revision = f"{model_id}-commit"
+        loaded.dtype = "float16"
+        yield loaded
+
+    report = battery_run.execute(rel, ["alpha", "beta"], root=root,
+                                 model_provider=provider,
+                                 log=lambda line: None)
+    resolved = report["execution"]["resolved"]
+    assert [entry["modelID"] for entry in resolved] == ["model/one",
+                                                        "model/two"]
+    assert [entry["modelRevision"] for entry in resolved] == [
+        "model/one-commit", "model/two-commit"]
+    assert all(entry["dtype"] == "float16" for entry in resolved)
+
+
+# =============================================================================
 # 11. The CLI surface
 # =============================================================================
 
@@ -900,6 +1270,22 @@ def test_dry_run_reports_the_plan_and_runs_nothing(floor_battery, capsys):
     assert plan["protocol"]["generative"]["samplesPerItem"] == 3
     assert not os.path.isdir(os.path.join(root, "runs",
                                           "20260101T000000000-battery-run"))
+
+
+def test_dry_run_refuses_what_the_run_would_refuse(floor_battery, capsys):
+    """The plan a caller is shown is the plan that runs — so a `--dry-run`
+    that reported a plan for an agent the run would refuse would be worse
+    than no dry run. 65, refused, with the repair."""
+    from steerlab_server.cli import main
+    root, rel = floor_battery
+    adapter_rel = _adapter_directory(root)
+    _adapter_agent(root, adapter_rel, adapter_hash="0" * 64)
+    code = main(["--root", root, "battery", "run", rel, "--agent", "tuned",
+                 "--dry-run", "--json"])
+    document = _document(capsys)
+    assert code == 65 and document["state"] == "refused"
+    assert document["error"]["code"] == "adapterIdentity"
+    assert document["error"]["repairAction"]
 
 
 def test_the_verb_repeats_its_agent_flag(floor_battery, capsys):

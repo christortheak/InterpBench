@@ -35,11 +35,16 @@ before each group's model loads, every container the remainder of the run will
 not use is released (:func:`models_still_needed`, the twin of
 ``tasks.judge_models_still_needed``). Peak device memory is therefore the MAX
 of any one still-needed model, never the SUM — the same guarantee, for the
-same reason, as the judge-column release seam.
+same reason, as the judge-column release seam. The guarantee is only real if
+the finished model is UNREACHABLE when the release runs, which is why the
+group loop drops its own reference explicitly: a ``with`` block does not
+unbind its target, and a registry release cannot free weights this frame is
+still holding.
 """
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import os
@@ -89,6 +94,26 @@ class BatteryRunRefusal(ValueError):
 
     Every refusal in this module is raised BEFORE the run directory is minted.
     Refusals never write.
+    """
+
+    def __init__(self, reason: str, *, code: str, repair: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.code = code
+        self.repair_action = repair
+
+
+class BatteryRunFailure(RuntimeError):
+    """A typed failure raised AFTER the run directory exists — the same
+    machine code and runnable repair a refusal carries, under a different
+    name because the guarantee above is different.
+
+    It exists so that the "refusals never write" claim stays literally true.
+    A refusal is a decision taken from files alone and is always upstream of
+    the mint; a failure is an execution fact discovered with weights already
+    resident — an adapter that verified at preflight and no longer matches
+    its pin. Continuing there would measure the base model and report it
+    under the agent's name, which is the one outcome worse than stopping.
     """
 
     def __init__(self, reason: str, *, code: str, repair: str) -> None:
@@ -593,13 +618,96 @@ def preflight(battery_file: str, agent_values: list[str], *,
 
     Called by the CLI before the run directory exists and by ``--dry-run``
     afterwards without re-deciding anything, so the plan a caller is shown is
-    the plan that runs.
+    the plan that runs — which means ``--dry-run`` has to refuse everything
+    the run would refuse. Grammar and resolution are not enough for that: an
+    agent whose vector is missing, whose adapter is a foreign format, or whose
+    dose cannot be denominated at its layer resolves perfectly and then fails
+    with weights resident. :func:`check_artifact_surface` closes that gap,
+    without loading a model.
     """
     spec = load_battery(battery_file, root)
     agents = resolve_agents(parse_agents(agent_values), model_id=model_id,
                             revision=revision, alpha_units=alpha_units,
                             root=root)
+    check_artifact_surface(agents, root)
     return spec, agents
+
+
+def check_artifact_surface(agents: list[ResolvedAgent],
+                           root: str | None = None) -> None:
+    """Every disk-side thing execution needs, checked with no model load.
+
+    Three surfaces, in the order execution meets them, each mapped to a typed
+    refusal rather than the underlying exception's own vocabulary:
+
+    * **Referenced artifacts resolve** (``model_variant.missing_artifacts``,
+      the same predicate the run/panel artifact preflight uses) — a dangling
+      vector or adapter directory otherwise surfaces as a FileNotFoundError
+      after the weights have loaded.
+    * **Adapters are this engine's and are the ones the agent was pinned
+      with** (``require_native_adapter`` for the format,
+      ``verified_adapter_identity`` for the bytes). Not a formality here: an
+      adapter is what makes an agent that agent, and a battery report names
+      the agent.
+    * **Injections construct** (``variant_injections``) — norm-unit
+      denomination, substrate refusal and the denominator-table gate all live
+      inside that ONE path, and all three can refuse from files alone.
+
+    The verification is repeated immediately before each adapter loads (the
+    house pattern the study run loop follows): these files are not immutable
+    for the life of a run, and only the second reading describes the bytes
+    that actually shaped the numbers.
+    """
+    from . import model_variant
+
+    for agent in agents:
+        variant = agent.variant
+        if variant is None:
+            continue
+        missing = model_variant.missing_artifacts(variant, root)
+        if missing:
+            named = ", ".join(f"{m['kind']} {m['reference'] or '(unnamed)'!r} "
+                              f"({m['reason']})" for m in missing)
+            raise BatteryRunRefusal(
+                f"agent {agent.name!r} references {len(missing)} artifact(s) "
+                f"this workspace does not have: {named}",
+                code="missingArtifact",
+                repair=("bring the artifact into this workspace, or point "
+                        "--agent at one that is here (steerlab-server "
+                        "experiment list shows what resolves)"))
+        if getattr(variant, "adapters", None):
+            try:
+                model_variant.require_native_adapter(
+                    model_variant._adapter_directory(variant, root))
+                model_variant.verified_adapter_identity(variant, root)
+            except model_variant.AdapterIdentityError as exc:
+                raise BatteryRunRefusal(
+                    f"agent {agent.name!r} is not the agent it declares: "
+                    f"{exc}",
+                    code="adapterIdentity",
+                    repair=("re-pin the agent against the adapter now on "
+                            "disk, or restore the adapter it was pinned "
+                            "with — a reading through the wrong bytes is "
+                            "attributable to nothing")) from None
+            except (OSError, ValueError, RuntimeError) as exc:
+                raise BatteryRunRefusal(
+                    f"agent {agent.name!r} declares an adapter this engine "
+                    f"cannot load: {exc}",
+                    code="adapterFormat",
+                    repair=("retrain the adapter on this substrate, or run "
+                            "this agent on the engine that trained "
+                            "it")) from None
+        try:
+            model_variant.variant_injections(variant, root=root)
+        except (OSError, KeyError, ValueError, RuntimeError) as exc:
+            raise BatteryRunRefusal(
+                f"agent {agent.name!r} has injections that cannot be built: "
+                f"{exc}",
+                code="injectionsUnbuildable",
+                repair=("fix the dose the message names, or drop the agent "
+                        "from this reading — the same construction runs at "
+                        "execution time and would fail there with the model "
+                        "already resident")) from None
 
 
 def load_battery(battery_file: str, root: str | None = None):
@@ -763,6 +871,16 @@ def execute(battery_file: str, agent_values: list[str], *,
         done: list[ResolvedAgent] = []
         for group_index, (identity, group) in enumerate(groups):
             remaining = [a for g in groups[group_index:] for a in g[1]]
+            # Drop the PREVIOUS group's container before anything else. A
+            # `with` block does not unbind its target, so this frame kept a
+            # strong reference to the finished model across the release seam
+            # and into the next load: the registry could drop its own handle
+            # and the allocator could trim, and neither would reclaim a byte,
+            # so a two-model run transiently paid the SUM the "largest single
+            # moment" line above promises it does not. gc.collect() because a
+            # module tree is cyclic — refcounting alone does not free it.
+            model = None
+            gc.collect()
             _release_stale(model_release, done, remaining, dtype, _log)
             with _model_context(model_provider, identity, dtype, device,
                                 _log) as model:
@@ -770,6 +888,10 @@ def execute(battery_file: str, agent_values: list[str], *,
                     blocks.append(_run_one_agent(
                         spec, agent, model, records, root=root, log=_log))
                     done.append(agent)
+        # Same reason, at the end: the report is composed and written with no
+        # weights held.
+        model = None
+        gc.collect()
     report = _report(spec, agents, blocks, run_directory=run_directory,
                      battery_file=battery_file, dtype=dtype, device=device)
     _write_report(run_directory, report)
@@ -821,12 +943,87 @@ def _model_context(model_provider, identity, dtype, device, _log):
     return model_provider(model_id, revision)
 
 
+def _apply_adapters(agent: ResolvedAgent, model, root, log) -> tuple:
+    """``(handle, block)`` — the agent's adapter, ON the model, plus what the
+    report says about it.
+
+    The study path's pattern verbatim (``tasks._run_capability_battery``,
+    ``tasks._execute_run``): verify the bytes that are ABOUT to load, then
+    ``model_variant.apply_adapter``, whose own gate refuses a foreign format
+    before touching the adapter API. The verification is deliberately
+    repeated after :func:`check_artifact_surface` for the reason round 10
+    gave the run loop: preflight can run long before this point, files are
+    not immutable for the life of a run, and only THIS reading describes the
+    adapter that shaped the numbers.
+
+    An adapter-bearing agent that could not be armed FAILS rather than
+    proceeding. The study path records an error row and moves to the next
+    condition; here there is no next condition to move to — the agent IS the
+    reading, and a base-model number reported under an agent's name is the
+    outcome this function exists to make impossible.
+    """
+    from . import model_variant
+
+    declared = list(getattr(agent.variant, "adapters", None) or []) \
+        if agent.variant is not None else []
+    block = {"declaredCount": len(declared), "applied": False,
+             "activeAdapterName": None, "verifiedIdentity": []}
+    if not declared:
+        return None, block
+    try:
+        verified = model_variant.verified_adapter_identity(agent.variant, root)
+        handle = model_variant.apply_adapter(model, agent.variant, root=root)
+    except (OSError, KeyError, ValueError, RuntimeError) as exc:
+        raise BatteryRunFailure(
+            f"agent {agent.name!r} declares {len(declared)} adapter(s) that "
+            f"could not be armed on the loaded model: {exc}",
+            code="adapterNotApplied",
+            repair=("re-run once the adapter resolves and matches its pin — "
+                    "this agent verified at preflight, so the adapter or its "
+                    "pin changed while the run was under way")) from None
+    if handle is None:  # pragma: no cover - declared adapters always arm one
+        raise BatteryRunFailure(
+            f"agent {agent.name!r} declares {len(declared)} adapter(s) but "
+            f"none was armed — the reading would be of the base model under "
+            f"the agent's name",
+            code="adapterNotApplied",
+            repair="re-pin the agent with an adapter this engine can load")
+    block.update({"applied": True, "activeAdapterName": handle,
+                  "verifiedIdentity": verified})
+    log(f"agent '{agent.name}': armed adapter '{handle}' "
+        f"({len(declared)} declared) — the reading is of the ADAPTED model")
+    return handle, block
+
+
+def _execution_identity(model, agent: ResolvedAgent) -> dict:
+    """What ACTUALLY produced this agent's numbers, read back off the loaded
+    model rather than echoed from the request.
+
+    A revisionless ``--model`` resolves to the cached commit at load, "auto"
+    resolves to a concrete dtype, and the attention kernel is chosen per
+    device — so a report that stamped only the REQUEST could carry nulls
+    beside numbers that concrete values produced, and two readings taken on
+    two kernels would look identical. Every field is read defensively: an
+    injected model seam is not obliged to be a ``SteeredModel``, and a
+    provenance block is never worth failing a reading over.
+    """
+    try:
+        device = str(model.device)
+    except Exception:  # noqa: BLE001 - provenance, never a blocker
+        device = None
+    return {"modelID": getattr(model, "model_id", None) or agent.model_id,
+            "modelRevision": getattr(model, "revision", None),
+            "dtype": getattr(model, "dtype", None),
+            "device": device,
+            "attentionImplementation": getattr(model, "attn_implementation",
+                                               None)}
+
+
 def _run_one_agent(spec, agent: ResolvedAgent, model, records, *, root,
                    log) -> dict:
     """One agent's whole reading: both regimes, records streamed, block
     returned."""
     from . import model_variant
-    from .tasks import _battery_backends
 
     injections = (model_variant.variant_injections(agent.variant, root=root)
                   if agent.variant is not None else [])
@@ -835,9 +1032,52 @@ def _run_one_agent(spec, agent: ResolvedAgent, model, records, *, root,
     advisory = battery_mod.contamination_advisory(spec, arming)
     if advisory:
         log(f"WARNING: {advisory}")
+    handle, adapter_block = _apply_adapters(agent, model, root, log)
+    try:
+        graded, health = _read_both_regimes(spec, agent, model, records,
+                                            injections, arming)
+    finally:
+        # The next agent shares this container: an adapter left active would
+        # be the previous agent's intervention, silently, on every row.
+        model_variant.remove_adapter(model, handle)
+
+    correct = sum(1 for r in graded if r["correct"])
+    block = {"name": agent.name, "kind": agent.kind,
+             "reference": agent.reference,
+             # REQUESTED identity — what the caller named, null and all.
+             "modelID": agent.model_id, "modelRevision": agent.revision,
+             "identity": agent.identity,
+             # RESOLVED identity — what the load actually produced. Both are
+             # stamped: the request is what makes the run auditable, the
+             # resolution is what the numbers are attributable to.
+             "execution": _execution_identity(model, agent),
+             "adapters": adapter_block,
+             "injectionCount": len(injections),
+             "graded": {"itemCount": len(graded), "correctCount": correct,
+                        "accuracy": (correct / len(graded)) if graded
+                                    else 0.0},
+             "health": battery_mod.health_metrics(health)}
+    accuracy = block["graded"]["accuracy"]
+    log(f"agent '{agent.name}': accuracy {accuracy:.4g} over "
+        f"{len(graded)} graded item(s); "
+        f"health over {len(health)} long-form sample(s) — "
+        f"meanWordCount {block['health']['meanWordCount']:.4g}, "
+        f"meanDistinct2 {block['health']['meanDistinct2']:.4g}, "
+        f"completionRate {block['health']['completionRate']:.4g}")
+    return block
+
+
+def _read_both_regimes(spec, agent: ResolvedAgent, model, records, injections,
+                       arming) -> tuple:
+    """``(graded, health)`` — every item of the battery, in file order, with
+    each row streamed as it is produced. Split out of :func:`_run_one_agent`
+    so the whole reading sits inside the adapter's ``try/finally``: an early
+    return or a raised generation must not leave the adapter armed for the
+    next agent on this container."""
+    from .tasks import _battery_backends
+
     generate_fn, choice_fn = _battery_backends(model, agent.model_id,
                                                injections)
-
     graded: list[dict] = []
     health: list[dict] = []
     for index, item in enumerate(spec.items):
@@ -863,24 +1103,7 @@ def _run_one_agent(spec, agent: ResolvedAgent, model, records, *, root,
         records.write(json.dumps(record, sort_keys=True) + "\n")
         graded.append(record)
     records.flush()
-
-    correct = sum(1 for r in graded if r["correct"])
-    block = {"name": agent.name, "kind": agent.kind,
-             "reference": agent.reference,
-             "modelID": agent.model_id, "modelRevision": agent.revision,
-             "identity": agent.identity,
-             "graded": {"itemCount": len(graded), "correctCount": correct,
-                        "accuracy": (correct / len(graded)) if graded
-                                    else 0.0},
-             "health": battery_mod.health_metrics(health)}
-    accuracy = block["graded"]["accuracy"]
-    log(f"agent '{agent.name}': accuracy {accuracy:.4g} over "
-        f"{len(graded)} graded item(s); "
-        f"health over {len(health)} long-form sample(s) — "
-        f"meanWordCount {block['health']['meanWordCount']:.4g}, "
-        f"meanDistinct2 {block['health']['meanDistinct2']:.4g}, "
-        f"completionRate {block['health']['completionRate']:.4g}")
-    return block
+    return graded, health
 
 
 def _health_readings(spec, item, prompt_id, model, agent, injections, arming):
@@ -932,6 +1155,13 @@ def _report(spec, agents: list[ResolvedAgent], blocks: list[dict], *,
     two studies that use the same agent at the same dose are entitled to the
     same floor reading, and a report that could not be matched by pins would
     force each of them to buy their own.
+
+    Which is why the provenance carries BOTH identities. ``dtype``/``device``
+    are the REQUEST, kept at the top level under the names they have always
+    had; ``execution.resolved`` is what the loads produced, one entry per
+    distinct execution identity in load order. A request may be null on every
+    field while concrete values produced the numbers, and pins that can be
+    null are not the ones a second study can match against.
     """
     from ..build_identity import build_commit
     from .. import cli_envelope
@@ -954,10 +1184,25 @@ def _report(spec, agents: list[ResolvedAgent], blocks: list[dict], *,
                     "healthItemCount": len(spec.health_items()),
                     "protocol": protocol_block(spec)},
         "dtype": dtype, "device": device,
+        "execution": {"requested": {"dtype": dtype, "device": device},
+                      "resolved": _resolved_executions(blocks)},
         "recordCount": record_count(spec, len(agents)),
         "referenceAgent": reference["name"] if reference else None,
         "agents": blocks,
     }
+
+
+def _resolved_executions(blocks: list[dict]) -> list[dict]:
+    """The distinct execution identities this run actually ran on, in load
+    order. A list rather than one block because agents on two base models are
+    two loads and may resolve to two dtypes or two kernels — collapsing them
+    into a single top-level stamp would make one of the two a false claim."""
+    seen: list[dict] = []
+    for block in blocks:
+        execution = block.get("execution")
+        if execution and execution not in seen:
+            seen.append(execution)
+    return seen
 
 
 def _write_report(run_directory: str, report: dict) -> str:

@@ -3533,11 +3533,13 @@ def _battery_run(rest: list[str]):
     capability reading.
 
     Everything that can refuse refuses BEFORE the run directory exists
-    (``battery_run.preflight``), so a refused invocation leaves no empty
-    immutable run behind. ``--dry-run`` stops exactly there and reports the
-    plan plus the honest walltime estimate, which is the same estimate the
+    (``battery_run.preflight``, artifact surface included), so a refused
+    invocation leaves no empty immutable run behind and ``--dry-run`` refuses
+    what the run would refuse. ``--dry-run`` stops exactly there and reports
+    the plan plus the honest walltime estimate, which is the same estimate the
     real run would have been priced at — the plan a caller is shown is the
-    plan that runs.
+    plan that runs. What can still go wrong afterwards is an execution fact,
+    not a decision, and exits 70 rather than borrowing the refusal's word.
     """
     from .cli_envelope import CLIResult
     from .experiment import battery_run
@@ -3596,6 +3598,15 @@ def _battery_run(rest: list[str]):
     except battery_run.BatteryRunRefusal as exc:   # pragma: no cover - preflighted
         sys.stderr.write(f"battery run: {exc.reason}\n")
         return CLIResult(state="refused", exit_code=65, code=exc.code,
+                         message=exc.reason,
+                         repair_action=exc.repair_action)
+    except battery_run.BatteryRunFailure as exc:
+        # 70, not 65: the run directory exists and holds whatever was read
+        # before the failure. A refusal promises it wrote nothing; this
+        # cannot, so it does not borrow the word.
+        sys.stderr.write(f"battery run: {exc.reason}\n  "
+                         f"{exc.repair_action}\n")
+        return CLIResult(state="failed", exit_code=70, code=exc.code,
                          message=exc.reason,
                          repair_action=exc.repair_action)
     accuracies = ", ".join(
