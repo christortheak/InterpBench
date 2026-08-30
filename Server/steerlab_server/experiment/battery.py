@@ -826,10 +826,19 @@ def health_record(text: str, *, truncated: bool) -> dict:
     convention as ``judicial.parse_choice``'s, deliberately — a truncated
     generation is a failure everywhere in this codebase, never a short one.
     """
+    from . import truncation_gate
     from .scoring import distinct_bigram_ratio, word_count
     return {"wordCount": word_count(text),
             "distinct2": distinct_bigram_ratio(text),
-            "completed": not truncated}
+            "completed": not truncated,
+            # The same fact in the vocabulary every other generation record
+            # speaks. ``completed`` stays — ``health_metrics`` reads it and
+            # ``completionRate`` is a published battery reading — but a
+            # battery row is a generation record too, and a reader joining it
+            # to generations.jsonl should not have to translate.
+            truncation_gate.RECORD_KEY: (
+                truncation_gate.FINISH_LENGTH if truncated
+                else truncation_gate.FINISH_STOP)}
 
 
 def _mean(values: list[float]) -> float:

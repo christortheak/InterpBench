@@ -30,7 +30,7 @@ from ..steering.reading_position import (LAST_TOKEN, ReadingPosition, from_label
                                          mean_from_token)
 from ..steering.stimulus_set import StimulusSet, load_texts
 from ..steering.vector_store import SUBSTRATE as _THIS_SUBSTRATE
-from . import paths
+from . import paths, truncation_gate
 
 # The closed ``ordinalAggregation`` vocabulary for the ``ordinalScale``
 # outcome instrument (kept torch-free here; ``logprob.ORDINAL_AGGREGATIONS``
@@ -508,6 +508,20 @@ class Manifest:
     # ABSENT = today's behavior exactly: no exclusion, no stamp, unchanged
     # manifest bytes.
     exclusion_rules: list = field(default_factory=list)
+    # Declared truncation ceiling (cross-engine contract key
+    # "maxLengthStoppedFraction"): the largest fraction of ANY ONE CELL's
+    # generations (condition × promptID) that may have stopped at the token
+    # cap rather than finishing. Exceeding it refuses the run
+    # (``lifecycle_gates.LENGTH_STOPPED``) as soon as the offending cell is
+    # complete. See :mod:`.truncation_gate` for the 2026-08-30 incident this
+    # answers.
+    #
+    # ABSENT/None = off, which is what every manifest written before this key
+    # existed says: the per-cell fractions are still reported, nothing
+    # refuses. Manifest data like ``exclusionRules``, so freeze pins it
+    # through the ordinary content hash and an absent key leaves that hash
+    # byte-identical.
+    max_length_stopped_fraction: float | None = None
     concepts: list[ConceptRef] = field(default_factory=list)
     grand_mean_corpus: GrandMeanCorpus | None = None
     conditions: list[Condition] = field(default_factory=list)
@@ -683,6 +697,7 @@ class Manifest:
             sae_candidates=(d.get("saeCandidates")
                             if d.get("saeCandidates") is not None else None),
             exclusion_rules=list(d.get("exclusionRules") or []),
+            max_length_stopped_fraction=truncation_gate.declared_threshold(d),
             concepts=concepts, grand_mean_corpus=grand_mean_corpus,
             conditions=conditions,
             study_kind=d.get("studyKind") or "modelOutput",

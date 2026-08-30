@@ -151,21 +151,27 @@ def test_the_compact_reference_block_carries_no_observations(tmp_path):
 
 # --- recordTokenIDs (2026-08-15) ---------------------------------------------
 
-def test_token_id_retention_is_opt_in_and_widens_no_existing_call():
-    """The whole reason this is a flag: threading `token_ids_out`
-    unconditionally broke 48 tests across 9 files whose generate fakes were
-    built against the plain signature. The capture stays conditional — but
-    since 2026-08-29 an option-set item is a second capturer alongside the
-    declared flag: the choice parser needs the honest token count to tell a
-    capped generation from a finished one (a truncated output must parse as
-    a failure, never as its first-enumerated option). Every other study's
-    call stays byte-for-byte what it was, and a fake that ignores
-    `token_ids_out` leaves the count at 0, which reads as not-capped."""
+def test_token_ids_are_captured_always_but_retained_only_when_declared():
+    """CAPTURE became unconditional on 2026-08-30; RETENTION did not.
+
+    This test used to pin the opposite of its first half. `token_ids_out` was
+    threaded only for a jlens readout, a declared `recordTokenIDs`, or an
+    option-set item, because widening the call unconditionally had once broken
+    48 test doubles built against the plain signature. What changed is that
+    every record now carries a `finishReason`, and the sampled ids are the
+    only honest way the server can know it — so the narrow signature was
+    buying test-double convenience at the price of a run that cannot say
+    whether its generations finished. A double that ignores `token_ids_out`
+    still leaves the list empty, which reads as "stop": the same conservative
+    default the truncation flag has always had.
+
+    Retention is a separate question and keeps its flag: `outputTokenIDs` is
+    ~7 bytes per token on every record, and it must never appear as a side
+    effect of ids having been captured for some other purpose."""
     src = inspect.getsource(tasks._execute_condition)
-    assert 'manifest.record_token_ids or prompt.get("options")' in src
-    assert "token_ids is None and (" in src
-    # Persisted only when DECLARED — never as a side effect of a jlens run
-    # (or an option-set item) having captured ids for its own purpose.
+    assert "if token_ids is None:" in src
+    assert 'readout_kwargs["token_ids_out"] = token_ids' in src
+    # Persisted only when DECLARED.
     assert "manifest.record_token_ids and token_ids" in src
     assert "outputTokenIDs" in src
 

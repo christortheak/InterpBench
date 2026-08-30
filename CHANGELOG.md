@@ -12,6 +12,54 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+### Added
+
+- **`finishReason` on every generation record, and an optional per-cell
+  truncation gate (`maxLengthStoppedFraction`).** Field incident 2026-08-30: a
+  run capped at a token budget produced outputs where a large fraction never
+  reached their required final line. The generation record carried 28 fields
+  and not one of them said whether the model had stopped because it finished
+  or because it hit the cap — so the loss was invisible in the record and
+  surfaced only when a human read the text. And it was not random: it fell
+  almost entirely on one arm of an order manipulation and dropped the longer
+  class of output roughly 16:1, which silently biases any endpoint computed
+  from those records.
+
+  Three answers, both engines:
+
+  1. **The field.** Every generation record now carries `finishReason` —
+     `"stop"` when the decode ended itself (EOS or a stop sequence) and
+     `"length"` when it hit the token cap. Read from the generation, never
+     inferred from the text: the server compares the sampled token count
+     against `max_new_tokens` and, at exactly the cap, checks whether the last
+     sampled id is a stop token, so an EOS landing on the final budgeted step
+     is recorded as the natural ending it is; the Swift/MLX engine reads
+     `GenerateCompletionInfo.stopReason` directly, which is why it also has
+     the third spelling `"cancelled"` (its stream genuinely has that ending;
+     the server's record-writing paths do not). The choice parser's truncation
+     flag now derives from the same field, so a record and its parse cannot
+     disagree. A record WITHOUT the key means an engine that predates it,
+     never a generation nobody classified.
+  2. **The gate.** A new optional manifest key `maxLengthStoppedFraction` (a
+     fraction in [0, 1]; absent = off, which is every manifest written before
+     it) makes a run refuse — typed `lengthStopped`, with a runnable repair —
+     when a CELL's length-stopped fraction exceeds it. Per cell (condition ×
+     promptID), never pooled over the run: pooling is exactly what hid the
+     incident, since one arm was fine and the other was not. Checked as each
+     cell completes, which is the first moment its fraction is trustworthy and
+     long before the whole budget is spent. The key is optional and
+     omit-when-nil on both engines, so existing manifests keep their content
+     hash byte-for-byte; a declared ceiling is manifest data and freeze pins it
+     through the ordinary hash.
+  3. **The report.** Per-cell length-stopped counts land in `report.json`'s new
+     `truncation` block and in `summaries.csv`'s new `lengthStopped` /
+     `lengthStoppedFraction` columns **whether or not a ceiling is declared** —
+     the last incident was invisible precisely because nothing counted.
+
+  Authoring the ceiling today means declaring the key in the manifest; a
+  `set-sampling --max-length-stopped-fraction` flag is the obvious next verb
+  and is deliberately not in this change.
+
 ## [0.9.4] — 2026-08-29
 
 ### Added

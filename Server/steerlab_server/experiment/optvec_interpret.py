@@ -56,7 +56,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import gemma_scope, paths, prompt_render, scoring
+from . import gemma_scope, paths, prompt_render, scoring, truncation_gate
 from .generate import CellInjection, generate
 from .optvec_eval import (FileRef, LoadedArtifact, OptVecArtifactError,
                           OptVecEvalDataError, OptVecTarget, cell_injection,
@@ -707,12 +707,14 @@ def probe_generations(model, target: OptVecTarget, prompts: list[str],
                      else f"alpha-{_condition_suffix(multiple)}")
         outputs: list[str] = []
         for index, prompt in enumerate(prompts):
+            token_ids: list = []
             text = generate(
                 model, prompt, model_id=target.artifact.sidecar.modelID,
                 max_tokens=config.max_tokens, temperature=0.0,
                 injections=injections, prompt_mode=config.prompt_mode,
                 system_prompt=config.system_prompt,
-                qwen_thinking_enabled=config.qwen_thinking_enabled)
+                qwen_thinking_enabled=config.qwen_thinking_enabled,
+                token_ids_out=token_ids)
             outputs.append(text)
             records.append({
                 **common,
@@ -727,6 +729,13 @@ def probe_generations(model, target: OptVecTarget, prompts: list[str],
                 "output": text,
                 "wordCount": scoring.word_count(text),
                 "distinct2": scoring.distinct_bigram_ratio(text),
+                # A probe transcript that hit the cap is a cut-off reading of
+                # the vector, not a short one — and at high α that is exactly
+                # the regime where truncation gets common. Stamped like every
+                # other generation record's.
+                truncation_gate.RECORD_KEY: truncation_gate.finish_reason(
+                    token_ids, max_tokens=config.max_tokens,
+                    stop_ids=truncation_gate.stop_token_ids(model)),
             })
         per_dose.append({
             "alphaMultiple": float(multiple),

@@ -37,6 +37,7 @@ from . import run_epoch
 from . import sharding as sharding_mod
 from . import system_prompt as system_prompt_mod
 from . import choice_deltas
+from . import truncation_gate
 from . import turn_endpoint
 from .generate import CellInjection, generate
 from . import manifest as manifest_mod
@@ -5877,6 +5878,12 @@ def _panel_records_from(sub: str, name: str, manifest, model, condition: str,
             # it at write time). Absent on turns written before the lint
             # existed, so old runs flatten byte for byte as before.
             lint = turn.get("voiceLint")
+            # Stop reason, likewise carried verbatim — the runner classified
+            # it against the TURN's token budget, which is the only place that
+            # number is known. Re-deriving it here from the manifest's
+            # maxTokens would classify against a cap the generation never ran
+            # under. Absent on turns written before the field existed.
+            finish = turn.get(truncation_gate.RECORD_KEY)
             out.append({
                 "experiment": name, "experimentHash": manifest.content_hash(),
                 "modelID": turn.get("modelID", manifest.model_id),
@@ -5902,6 +5909,8 @@ def _panel_records_from(sub: str, name: str, manifest, model, condition: str,
                 "device": turn.get("device"),
                 "wordCount": word_count(output),
                 "distinct2": distinct_bigram_ratio(output),
+                **({truncation_gate.RECORD_KEY: finish}
+                   if isinstance(finish, str) else {}),
                 **({"endpoint": endpoint} if endpoint else {}),
                 **({"voiceLint": lint} if lint else {})})
     return out
@@ -6747,6 +6756,14 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
             "transcript items render through the chat template by "
             "definition; use chatAssistant")
     sampling = _sampling_metadata(model, eff.temperature)
+    # Stop-reason machinery, resolved ONCE per condition. `stop_ids` is what
+    # lets a generation that emits EOS on its very last budgeted step be
+    # recorded as the natural ending it is instead of as a cap; `tally` is
+    # seeded from the records this job already holds, so a resumed run counts
+    # a cell's earlier samples and not just the ones it generates now.
+    stop_ids = truncation_gate.stop_token_ids(model)
+    tally = truncation_gate.Tally(writer.records)
+    length_stopped_ceiling = manifest.max_length_stopped_fraction
     # Threaded as kwargs ONLY for a latent condition, exactly as
     # transcript_kwargs and readout_kwargs are: every other condition's
     # generate/score_options call signature stays byte-for-byte unchanged, so
@@ -6888,6 +6905,18 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
             # capped generation from a finished one — a truncated output must
             # parse as a choice FAILURE, never as its first-enumerated option
             # (see judicial.parse_choice).
+            #
+            # …and now a fourth, which is why the ids are captured for EVERY
+            # generation rather than for the three special cases: `finishReason`
+            # is stamped on every record, and it is knowable only from the ids.
+            # The 2026-08-30 incident was a run whose records could not say
+            # whether the model had finished or been cut off, so a structural
+            # loss on one arm stayed invisible until a human read the text.
+            # `token_ids_out` is the seam that already existed for the
+            # question; this widens the generate() call for every study, so a
+            # test double built against the narrow signature must accept the
+            # keyword (leaving the list empty reads as "stop", the same
+            # conservative default the truncation flag has always had).
             readout_kwargs = {}
             if jlens_trace is not None:
                 recorder = jlens_trace.recorder_for(prompt)
@@ -6895,8 +6924,7 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                     token_ids = []
                     readout_kwargs = {"observers": [recorder],
                                       "token_ids_out": token_ids}
-            if token_ids is None and (
-                    manifest.record_token_ids or prompt.get("options")):
+            if token_ids is None:
                 token_ids = []
                 readout_kwargs["token_ids_out"] = token_ids
             with _seeded_generation(eff.temperature, seed):
@@ -6920,6 +6948,14 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                 **transcript_fields,
                 "output": text, "wordCount": word_count(text),
                 "distinct2": distinct_bigram_ratio(text),
+                # The third thing every record says about its text, and the
+                # only one the text itself cannot express: WHY generation
+                # ended. Stamped unconditionally, so a record without the key
+                # means an engine that predates it — never a generation nobody
+                # classified.
+                truncation_gate.RECORD_KEY: truncation_gate.finish_reason(
+                    token_ids, max_tokens=manifest.max_tokens,
+                    stop_ids=stop_ids),
                 **sampling,
             }
             # The exact sampled sequence, for replay. Written only when the
@@ -6941,12 +6977,14 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                 record["parsedMonths"] = judicial.parse_months(text)
             if prompt.get("options"):
                 # A generation that spent its whole token budget was cut off,
-                # not finished (an EOS-terminated one stops short of the cap;
-                # a fake that ignores token_ids_out leaves the count at 0).
-                # parse_choice turns that into None so a declared
-                # unparseableEndpoint exclusion sees it.
-                hit_token_cap = (token_ids is not None
-                                 and len(token_ids) >= manifest.max_tokens)
+                # not finished. parse_choice turns that into None so a
+                # declared unparseableEndpoint exclusion sees it. The reading
+                # is now the record's own `finishReason` rather than a second
+                # count comparison beside it — one notion of truncation, one
+                # place, so the field and the parser can never disagree about
+                # the same generation.
+                hit_token_cap = (record[truncation_gate.RECORD_KEY]
+                                 == truncation_gate.FINISH_LENGTH)
                 record["parsedChoice"] = judicial.parse_choice(
                     text, list(prompt["options"]), truncated=hit_token_cap)
             if reader_scorers:
@@ -6961,7 +6999,37 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                     model=model, manifest=manifest,
                     generated_ids=token_ids or [])
             writer.emit(record)
+            tally.observe(record)
             memory_diagnostic.observe(writer, model, eff)
+
+        # THE COMPLETENESS GATE, AT THE END OF THE CELL.
+        #
+        # Here and not two other places. Not mid-cell: a cell is not complete
+        # until its last sample, and refusing on the first sample of eight
+        # would decide a fraction from one draw. Not at the end of the run
+        # either: by then the whole allocation is spent, and every later cell
+        # was generated under a budget already known to be too small — the
+        # cheapest honest moment to stop is the first moment the reading is
+        # trustworthy, which is the sample that completes a cell.
+        #
+        # "Complete" means complete FOR THIS JOB: `tally` was seeded from the
+        # records the writer already held, so a resumed run counts a cell's
+        # earlier attempts too. Under a multi-GPU fan-out a shard's contiguous
+        # key range can split a cell, and the shard then gates on the samples
+        # it owns — a legitimate subsample, since samples within a cell differ
+        # only by seed — while the merged run's report carries the whole cell's
+        # fraction either way.
+        if length_stopped_ceiling is not None:
+            classified, length_stopped = tally.cell(eff.name, prompt["id"])
+            problem = truncation_gate.cell_refusal(
+                classified, length_stopped, threshold=length_stopped_ceiling,
+                condition=eff.name, prompt_id=str(prompt["id"]),
+                max_tokens=manifest.max_tokens)
+            if problem:
+                raise lifecycle_gates.refusing(
+                    lifecycle_gates.LENGTH_STOPPED, problem,
+                    repair=truncation_gate.repair_action(
+                        name, manifest.max_tokens))
     return False
 
 
@@ -12326,7 +12394,16 @@ def _write_summaries_csv(records: list[dict], run_directory: str) -> None:
     header = ["condition", "promptID", "samples",
               "monthsParseFailureRate", "monthsMean", "monthsStdev", "monthsMin",
               "monthsQ25", "monthsMedian", "monthsQ75", "monthsMax",
-              "choiceRates", "selectedOption", "targetProbability", "targetLogOdds"]
+              "choiceRates", "selectedOption", "targetProbability", "targetLogOdds",
+              # Truncation, per cell and unconditionally — appended last, so a
+              # reader of the historical columns is unaffected. Reported even
+              # with the gate off (see truncation_gate): the 2026-08-30
+              # incident was invisible because nothing counted, and a reader
+              # who was never told to look for truncation should still meet it
+              # here beside the other per-cell aggregates. Blank on a cell that
+              # classified nothing — no generation of it carried a
+              # `finishReason` — which is a different claim from zero.
+              "lengthStopped", "lengthStoppedFraction"]
     path = os.path.join(run_directory, "summaries.csv")
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=header)
@@ -12349,6 +12426,16 @@ def _write_summaries_csv(records: list[dict], run_directory: str) -> None:
                         "monthsQ75": f"{summary.q75:.6g}",
                         "monthsMax": f"{summary.maximum:.6g}",
                     })
+            classified = [r for r in sampled
+                          if isinstance(r.get(truncation_gate.RECORD_KEY), str)]
+            if classified:
+                stopped = sum(
+                    1 for r in classified
+                    if r[truncation_gate.RECORD_KEY]
+                    == truncation_gate.FINISH_LENGTH)
+                row["lengthStopped"] = stopped
+                row["lengthStoppedFraction"] = \
+                    f"{stopped / len(classified):.6g}"
             choices = [r["parsedChoice"] for r in sampled if "parsedChoice" in r]
             if choices:
                 parsed = [c for c in choices if c is not None]
@@ -12488,6 +12575,15 @@ def _write_report(name: str, manifest: Manifest, records: list[dict],
         "experiment": name, "experimentHash": manifest.content_hash(),
         "promptMode": manifest.prompt_mode, "conditionCount": len(by_condition),
         "conditions": conditions,
+        # Truncation (cross-engine contract key "truncation": {"threshold",
+        # "classified", "lengthStopped", "lengthStoppedFraction", "cells"}).
+        # Written whether or not the study declared a ceiling — the reading
+        # is evidence about the run, and the gate is only what a study chose
+        # to do about it. Per CELL, because a run-wide fraction is exactly
+        # what hid the 2026-08-30 incident: one arm was fine, the other was
+        # not, and the pooled number looked unremarkable.
+        "truncation": truncation_gate.report(
+            records, threshold=manifest.max_length_stopped_fraction),
     }
     # Registry-parser provenance (cross-engine contract key "numericParser":
     # {"name", "kind", "registryFile", "registryHash"}): stamped only when a

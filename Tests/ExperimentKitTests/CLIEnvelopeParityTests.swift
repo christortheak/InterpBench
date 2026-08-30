@@ -95,7 +95,7 @@ import Testing
             "samplingPolicy", "thinkingModeConflict", "inertConditions",
             "responseFormat", "confirmationPool", "confirmationAgentShape",
             "parityThreshold", "missingPrerequisite", "armsCleared",
-            "conceptInUse", "sweepGridRule",
+            "conceptInUse", "sweepGridRule", "lengthStopped",
         ]
         #expect(LifecycleGate.vocabulary == serverLiteral)
         // Round-trips: every wire id parses back to its case, so a gate id read

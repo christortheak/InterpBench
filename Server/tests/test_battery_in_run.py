@@ -72,7 +72,7 @@ def _battery_aware_generate(counter=None, cancel_flag=None):
     accuracies must separate per condition."""
     def generate(model, prompt, *, model_id=None, max_tokens=0, temperature=0.0,
                  injections=None, prompt_mode=None, system_prompt=None,
-                 qwen_thinking_enabled=False):
+                 qwen_thinking_enabled=False, **kwargs):
         if counter is not None:
             counter[0] += 1
         if "2+2" in prompt:

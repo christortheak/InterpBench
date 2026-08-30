@@ -117,6 +117,17 @@ public enum ExperimentTasks {
         let output: String
         let wordCount: Int
         let distinct2: Float
+        /// WHY the generation ended — `FinishReason`'s closed vocabulary,
+        /// read from the decode stream rather than inferred from the text.
+        /// The third thing a record says about its output, and the only one
+        /// the output cannot express: a capped generation and a terse one
+        /// read the same, and `wordCount` only approximates.
+        ///
+        /// Optional so a record from an engine that predates the field (or a
+        /// path that genuinely cannot know) is ABSENT rather than guessed —
+        /// "nobody classified this" is a different claim from "this
+        /// finished". Every sampled record this engine writes carries it.
+        var finishReason: String? = nil
         let markerDensity: [String: Float]
         let variantArtifactPath: String?
         let variantArtifactHash: String?
@@ -291,6 +302,14 @@ public enum ExperimentTasks {
         let promptID: String
         let wordCount: Int
         let distinct2: Float
+        /// Why this row's generation ended (`FinishReason`), so the run's
+        /// per-cell truncation block and its gate read the same in-memory
+        /// rows every other per-condition aggregate is built from. NOT a
+        /// metrics.csv column: that header is a closed cross-engine contract,
+        /// and the reading belongs in report.json's `truncation` block beside
+        /// the other aggregates. nil = a row from a path that classified
+        /// nothing.
+        var finishReason: String? = nil
         let markerDensity: [String: Float]
         /// Reasoning-style feature values (`rs_<featureID>` columns), keyed
         /// by feature id — empty when the manifest pins no taxonomy.
@@ -555,6 +574,123 @@ public enum ExperimentTasks {
         /// exclusionRules; nil ⇒ key omitted (legacy report bytes
         /// unchanged).
         var exclusions: ExclusionStamp? = nil
+        /// Per-cell truncation (cross-engine contract key "truncation").
+        /// Written whether or not the study declared a ceiling: the reading
+        /// is evidence about the run, and the gate is only what a study chose
+        /// to do about it. nil ⇒ key omitted (legacy report bytes unchanged).
+        var truncation: TruncationReport? = nil
+    }
+
+    /// One cell's truncation reading — (condition, promptID), the same unit
+    /// `summaries.csv` aggregates over and deliberately NOT the run.
+    struct TruncationCellReport: Codable, Equatable {
+        let condition: String
+        let promptID: String
+        /// Generations that carry a `finishReason` at all. A record from an
+        /// engine that predates the field is a generation nobody classified,
+        /// which is a different fact from one that finished.
+        let classified: Int
+        let lengthStopped: Int
+        let lengthStoppedFraction: Double
+    }
+
+    /// The run's truncation block. Server twin: `truncation_gate.report`.
+    struct TruncationReport: Codable {
+        /// The declared ceiling, or nil when the study declared none.
+        let threshold: Double?
+        let classified: Int
+        let lengthStopped: Int
+        /// Pooled over the run — reported for orientation and never gated on.
+        /// The 2026-08-30 incident's pooled fraction looked unremarkable
+        /// while one whole arm was truncated; `cells` is the reading that
+        /// would have caught it.
+        let lengthStoppedFraction: Double
+        let cells: [TruncationCellReport]
+    }
+
+    /// `(classified, lengthStopped)` for one cell of a row set.
+    static func truncationCell(
+        rows: [MetricRow], condition: String, promptID: String
+    ) -> (classified: Int, lengthStopped: Int) {
+        var classified = 0
+        var stopped = 0
+        for row in rows where row.condition == condition && row.promptID == promptID {
+            guard let reason = row.finishReason else { continue }
+            classified += 1
+            if reason == FinishReason.length { stopped += 1 }
+        }
+        return (classified, stopped)
+    }
+
+    static func truncationReport(
+        rows: [MetricRow], threshold: Double?
+    ) -> TruncationReport {
+        var order: [String] = []
+        var byCell: [String: (condition: String, promptID: String, n: Int, stopped: Int)] = [:]
+        for row in rows {
+            guard let reason = row.finishReason else { continue }
+            let key = row.condition + "\u{0}" + row.promptID
+            if byCell[key] == nil {
+                order.append(key)
+                byCell[key] = (row.condition, row.promptID, 0, 0)
+            }
+            byCell[key]?.n += 1
+            if reason == FinishReason.length { byCell[key]?.stopped += 1 }
+        }
+        let cells =
+            order
+            .compactMap { byCell[$0] }
+            .map {
+                TruncationCellReport(
+                    condition: $0.condition, promptID: $0.promptID,
+                    classified: $0.n, lengthStopped: $0.stopped,
+                    lengthStoppedFraction: Double($0.stopped) / Double($0.n))
+            }
+            .sorted {
+                ($0.condition, $0.promptID) < ($1.condition, $1.promptID)
+            }
+        let classified = cells.reduce(0) { $0 + $1.classified }
+        let stopped = cells.reduce(0) { $0 + $1.lengthStopped }
+        return TruncationReport(
+            threshold: threshold, classified: classified, lengthStopped: stopped,
+            lengthStoppedFraction: classified == 0
+                ? 0 : Double(stopped) / Double(classified),
+            cells: cells)
+    }
+
+    /// The complete refusal for one cell over the declared ceiling, or nil.
+    ///
+    /// STRICTLY over: a declared ceiling of 0.25 permits a cell sitting
+    /// exactly at a quarter, so the number an author writes down is the
+    /// largest fraction they are willing to accept rather than one short of
+    /// it. Server twin: `truncation_gate.cell_refusal`.
+    static func lengthStoppedRefusal(
+        classified: Int, lengthStopped: Int, threshold: Double,
+        condition: String, promptID: String, maxTokens: Int
+    ) -> String? {
+        guard classified > 0 else { return nil }
+        let fraction = Double(lengthStopped) / Double(classified)
+        guard fraction > threshold else { return nil }
+        return
+            "condition '\(condition)' item '\(promptID)': \(lengthStopped) of "
+            + "\(classified) generation(s) stopped at the \(maxTokens)-token cap "
+            + "instead of finishing "
+            + String(format: "(%.1f%%)", fraction * 100)
+            + ", over the declared maxLengthStoppedFraction of "
+            + String(format: "%.1f%%", threshold * 100)
+            + ". A capped generation is cut off, not short — its text is "
+            + "missing whatever the model had not written yet, and an endpoint "
+            + "computed from this cell is computed from truncated text. "
+            + "Truncation is not spread evenly across arms, so a run-wide "
+            + "fraction would not have shown this"
+    }
+
+    /// The executable repair. A command, not advice.
+    static func lengthStoppedRepair(experiment: String, maxTokens: Int) -> String {
+        "steerlab-cli experiment set-sampling \(experiment) --max-tokens <n>  "
+            + "(n above \(maxTokens)), then re-run; a frozen study is iterated "
+            + "by duplicating first: steerlab-cli experiment duplicate "
+            + "\(experiment) \(experiment)-v2"
     }
 
     struct EvaluationGeneration: Decodable {
@@ -2695,7 +2831,43 @@ public enum ExperimentTasks {
     /// sampled loop's `token_ids_out` count against the manifest's budget.
     struct MeasuredGeneration {
         let text: String
-        let hitTokenCap: Bool
+        /// Why the decode ended, in the closed cross-engine vocabulary
+        /// (`FinishReason`). Stamped on every generation record.
+        let finishReason: String
+        /// The truncation signal `Judicial.parseChoice` reads, derived from
+        /// the same fact so the record and the parser can never disagree
+        /// about one generation.
+        var hitTokenCap: Bool { finishReason == FinishReason.length }
+    }
+
+    /// The closed vocabulary of a generation record's `finishReason`
+    /// (2026-08-30). Server twin: `truncation_gate.FINISH_REASONS`.
+    ///
+    /// The incident: a run capped at a token budget produced outputs where a
+    /// large fraction never reached their required final line, and the
+    /// 28-field generation record could not say whether the model had
+    /// finished or been cut off — so the loss stayed invisible until a human
+    /// read the text, and it was structural rather than random (almost
+    /// entirely on one arm of an order manipulation, dropping the longer class
+    /// of output roughly 16:1). This engine already knew the answer and threw
+    /// it away: `GenerateCompletionInfo.stopReason` says so directly.
+    enum FinishReason {
+        /// EOS or a stop sequence — the generation ended itself.
+        static let stop = "stop"
+        /// The token cap. Cut off, not short.
+        static let length = "length"
+        /// Cancelled mid-stream. Reachable here because the stream can report
+        /// it on its final event; the server's record-writing paths never
+        /// produce it, so a server record carries only the first two.
+        static let cancelled = "cancelled"
+
+        static func of(_ stopReason: GenerateStopReason) -> String {
+            switch stopReason {
+            case .length: length
+            case .cancelled: cancelled
+            default: stop
+            }
+        }
     }
 
     static func generateMeasured(
@@ -2735,7 +2907,10 @@ public enum ExperimentTasks {
                 prefillStepSize: 512))
         var text = ""
         var lastProgressCount = 0
-        var hitTokenCap = false
+        // Defaults to `stop`: a stream that reported no `.info` event told us
+        // nothing about a cap, and claiming one on no evidence is the same
+        // silent misclassification this field exists to end.
+        var finishReason = FinishReason.stop
         for await event in stream {
             try Task.checkCancellation()
             switch event {
@@ -2748,7 +2923,7 @@ public enum ExperimentTasks {
                     await onChunk(text)
                 }
             case .info(let info):
-                hitTokenCap = info.stopReason == .length
+                finishReason = FinishReason.of(info.stopReason)
             default:
                 break
             }
@@ -2756,7 +2931,7 @@ public enum ExperimentTasks {
         if let onChunk, text.count != lastProgressCount {
             await onChunk(text)
         }
-        return MeasuredGeneration(text: text, hitTokenCap: hitTokenCap)
+        return MeasuredGeneration(text: text, finishReason: finishReason)
     }
 
     public static func preparedPromptTokenCount(
@@ -3861,12 +4036,14 @@ public enum ExperimentTasks {
         // Defaulted (like `systemPromptComposition`) so engine-pure unit
         // tests that predate the truncation rule keep compiling; both run
         // loops pass the stream's own stop reason (`MeasuredGeneration`).
-        hitTokenCap: Bool = false
+        // ONE notion of truncation, so the stamped field and the choice
+        // parser can never disagree about the same generation.
+        finishReason: String = FinishReason.stop
     ) -> GenerationRecord {
         let parses = judicialParses(
             output: output, options: prompt.options,
             caseFamily: manifest.caseFamily, numericParser: numericParser,
-            hitTokenCap: hitTokenCap)
+            hitTokenCap: finishReason == FinishReason.length)
         return GenerationRecord(
             experiment: manifest.name,
             experimentHash: experimentHash,
@@ -3887,6 +4064,7 @@ public enum ExperimentTasks {
             output: output,
             wordCount: row.wordCount,
             distinct2: row.distinct2,
+            finishReason: finishReason,
             markerDensity: row.markerDensity,
             variantArtifactPath: variantArtifactPath,
             variantArtifactHash: variantArtifactHash,
@@ -4471,7 +4649,7 @@ public enum ExperimentTasks {
             }
 
             guard wantsSampled else { continue }
-            for seed in manifest.seeds {
+            for (seedIndex, seed) in manifest.seeds.enumerated() {
                 for (index, prompt) in taskPrompts.prompts.enumerated() {
                     if await cancel.observed(
                         at: "\(condition.name) seed \(seed) prompt "
@@ -4509,6 +4687,7 @@ public enum ExperimentTasks {
                         condition: condition.name, seed: seed, promptIndex: index + 1,
                         promptID: prompt.id, wordCount: wordCount(output),
                         distinct2: distinctBigramRatio(output),
+                        finishReason: generation.finishReason,
                         markerDensity: markerDensity,
                         reasoningStyle: style.map { $0.taxonomy.score(output) } ?? [:],
                         factors: prompt.factors ?? [:])
@@ -4548,7 +4727,7 @@ public enum ExperimentTasks {
                         readerScores: readerScores,
                         randomVectorAlgorithm: randomAlgorithm,
                         numericParser: numericParser,
-                        hitTokenCap: generation.hitTokenCap)
+                        finishReason: generation.finishReason)
                     if manifest.exclusionRules?.isEmpty == false {
                         exclusionViews.append(exclusionView(of: record))
                     }
@@ -4577,6 +4756,37 @@ public enum ExperimentTasks {
                     print(
                         "\(condition.name) seed \(seed) prompt \(index + 1)/"
                             + "\(taskPrompts.prompts.count): \(row.wordCount) words")
+                    // THE COMPLETENESS GATE, AT THE END OF THE CELL.
+                    //
+                    // Seeds are the OUTER loop here, so a (condition,
+                    // promptID) cell is complete only once the last seed has
+                    // passed this prompt — that is the first moment the
+                    // fraction is trustworthy, and it is where the check
+                    // runs. Not mid-cell: a fraction from one draw of eight
+                    // decides nothing. Not at the end of the run either: by
+                    // then the whole budget is spent, and every later cell
+                    // was generated under a cap already known to be too
+                    // small. Server twin: the end of `_execute_condition`'s
+                    // per-prompt sample loop.
+                    if let ceiling = manifest.maxLengthStoppedFraction,
+                        seedIndex == manifest.seeds.count - 1
+                    {
+                        let cell = truncationCell(
+                            rows: rows, condition: condition.name,
+                            promptID: prompt.id)
+                        if let problem = lengthStoppedRefusal(
+                            classified: cell.classified,
+                            lengthStopped: cell.lengthStopped,
+                            threshold: ceiling, condition: condition.name,
+                            promptID: prompt.id, maxTokens: manifest.maxTokens)
+                        {
+                            throw ExperimentError.refusing(
+                                .lengthStopped, problem,
+                                repair: lengthStoppedRepair(
+                                    experiment: manifest.name,
+                                    maxTokens: manifest.maxTokens))
+                        }
+                    }
                 }
             }
         }
@@ -4796,6 +5006,11 @@ public enum ExperimentTasks {
                     promptID: turn.turnID,
                     wordCount: wordCount(turn.output),
                     distinct2: distinctBigramRatio(turn.output),
+                    // Carried verbatim from the turn record: the runner
+                    // classified it against the TURN's budget, and
+                    // re-deriving it here against the manifest's would
+                    // classify against a cap the generation never ran under.
+                    finishReason: turn.finishReason,
                     markerDensity: [:],
                     reasoningStyle: style.map { $0.taxonomy.score(turn.output) } ?? [:],
                     replicate: replicate)
@@ -4824,6 +5039,7 @@ public enum ExperimentTasks {
                     output: turn.output,
                     wordCount: row.wordCount,
                     distinct2: row.distinct2,
+                    finishReason: turn.finishReason,
                     markerDensity: row.markerDensity,
                     variantArtifactPath: nil,
                     variantArtifactHash: nil,
@@ -4930,7 +5146,9 @@ public enum ExperimentTasks {
                 scenario.agents.map { ($0.name, $0.baseModelID) },
                 uniquingKeysWith: { first, _ in first }),
             unitOfAnalysis: "transcript",
-            transcriptsPerCondition: replicates)
+            transcriptsPerCondition: replicates,
+            truncation: truncationReport(
+                rows: rows, threshold: manifest.maxLengthStoppedFraction))
         try encoder.encode(report).write(to: runDirectory.appending(component: "report.json"))
         return runDirectory
     }
@@ -5394,7 +5612,9 @@ public enum ExperimentTasks {
                     }
                 }
                 if wantsSampled, !cancelled {
-                    seedLoop: for seed in pinnedManifest.seeds {
+                    seedLoop: for (seedIndex, seed) in pinnedManifest.seeds
+                        .enumerated()
+                    {
                         for (index, prompt) in taskPrompts.prompts.enumerated() {
                             if await cancel.observed(
                                 at: "\(condition.name) seed \(seed) prompt "
@@ -5442,6 +5662,7 @@ public enum ExperimentTasks {
                                 promptID: prompt.id,
                                 wordCount: wordCount(output),
                                 distinct2: distinctBigramRatio(output),
+                                finishReason: generation.finishReason,
                                 markerDensity: markerDensity,
                                 reasoningStyle: style.map { $0.taxonomy.score(output) } ?? [:],
                                 factors: prompt.factors ?? [:])
@@ -5483,7 +5704,7 @@ public enum ExperimentTasks {
                                 agentPlaygroundTemperature: condition.variant?.temperature,
                                 readerScores: readerScores,
                                 numericParser: numericParser,
-                                hitTokenCap: generation.hitTokenCap)
+                                finishReason: generation.finishReason)
                             if pinnedManifest.exclusionRules?.isEmpty == false {
                                 exclusionViews.append(exclusionView(of: record))
                             }
@@ -5506,6 +5727,31 @@ public enum ExperimentTasks {
                             print(
                                 "\(condition.name) seed \(seed) prompt \(index + 1)/"
                                     + "\(taskPrompts.prompts.count): \(row.wordCount) words")
+                            // The same end-of-cell completeness gate the
+                            // ordinary loop applies — one rule for every
+                            // condition type, exactly as the record contract
+                            // is one rule.
+                            if let ceiling = pinnedManifest.maxLengthStoppedFraction,
+                                seedIndex == pinnedManifest.seeds.count - 1
+                            {
+                                let cell = truncationCell(
+                                    rows: rows, condition: condition.name,
+                                    promptID: prompt.id)
+                                if let problem = lengthStoppedRefusal(
+                                    classified: cell.classified,
+                                    lengthStopped: cell.lengthStopped,
+                                    threshold: ceiling,
+                                    condition: condition.name,
+                                    promptID: prompt.id,
+                                    maxTokens: pinnedManifest.maxTokens)
+                                {
+                                    throw ExperimentError.refusing(
+                                        .lengthStopped, problem,
+                                        repair: lengthStoppedRepair(
+                                            experiment: pinnedManifest.name,
+                                            maxTokens: pinnedManifest.maxTokens))
+                                }
+                            }
                         }
                     }
                 }
@@ -9464,7 +9710,13 @@ public enum ExperimentTasks {
                 } ?? choiceReadouts,
                 phase: experiment.phase),
             numericParser: numericParser,
-            exclusions: exclusions?.stamp)
+            exclusions: exclusions?.stamp,
+            // Per-cell truncation, written whether or not the study declared
+            // a ceiling: the reading is evidence about the run, and the gate
+            // is only what a study chose to do about it. Built from the SAME
+            // rows every other per-condition aggregate here is built from.
+            truncation: truncationReport(
+                rows: rows, threshold: experiment.maxLengthStoppedFraction))
     }
 
     // MARK: - Paired effect sizes (StudyStatistics wiring)

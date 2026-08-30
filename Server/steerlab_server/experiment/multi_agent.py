@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 
 import re
 
-from . import model_variant, paths, turn_endpoint, voice_lint
+from . import model_variant, paths, truncation_gate, turn_endpoint, voice_lint
 from . import system_prompt as system_prompt_mod
 from .generate import generate
 from .turn_endpoint import EndpointError, TurnEndpoint
@@ -955,15 +955,25 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
             # than the zero the previous scheme guaranteed.
             turn_seed = derive_seed(experiment_hash, "", turn.id,
                                     replicate_index)
+            # A panel turn's budget is the TURN's, not the study's — so the
+            # stop reason has to be classified against that number, here,
+            # rather than re-derived downstream from a manifest-level cap that
+            # is not what this generation ran under.
+            turn_max_tokens = max(1, turn.max_tokens or scenario.max_tokens)
+            turn_token_ids: list = []
             try:
                 with _seeded_generation(effective_temperature, turn_seed):
                     output = generate(active_model, prompt, model_id=active_model.model_id,
-                                      max_tokens=max(1, turn.max_tokens or scenario.max_tokens),
+                                      max_tokens=turn_max_tokens,
                                       temperature=effective_temperature,
                                       injections=injections, prompt_mode=prompt_mode,
-                                      system_prompt=system, qwen_thinking_enabled=qwen_thinking)
+                                      system_prompt=system, qwen_thinking_enabled=qwen_thinking,
+                                      token_ids_out=turn_token_ids)
             finally:
                 model_variant.remove_adapter(active_model, adapter)
+            finish = truncation_gate.finish_reason(
+                turn_token_ids, max_tokens=turn_max_tokens,
+                stop_ids=truncation_gate.stop_token_ids(active_model))
 
         label = turn.output_label.strip() or f"turn_{index + 1}"
         outputs_by_label[label] = output
@@ -994,6 +1004,14 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                   "modelRevision": active_model.revision,
                   "device": str(getattr(active_model, "device", "")),
                   "replicateIndex": replicate_index,
+                  # Why this turn's generation ended, against the turn's own
+                  # budget. Stamped at write time like every other derived
+                  # stamp on a turn record, and carried verbatim into
+                  # generations.jsonl when the transcript is flattened — one
+                  # classification, one place. Turns written before this key
+                  # existed simply lack it, which is a different claim from
+                  # "this turn finished".
+                  truncation_gate.RECORD_KEY: finish,
                   "temperature": effective_temperature,
                   # Null for greedy turns: no RNG was consulted, so naming a
                   # seed would imply a stream that was never drawn.

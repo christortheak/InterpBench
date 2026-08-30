@@ -64,6 +64,7 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         case numericParser
         case parserRegistryHash
         case exclusionRules
+        case maxLengthStoppedFraction
         case acknowledgeUnequalOptionLengths
         case samplesPerItem
         case seedPolicy
@@ -1585,6 +1586,23 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
     /// exclusion, no stamp. Optional so pre-existing manifests decode
     /// unchanged and keep their content hash.
     public var exclusionRules: [ExclusionRule]?
+    /// The largest fraction of ANY ONE CELL's generations (condition ×
+    /// promptID) that may have stopped at the token cap rather than
+    /// finishing, before the run refuses (`LifecycleGate.lengthStopped`).
+    ///
+    /// The 2026-08-30 incident: a run capped at a token budget produced
+    /// outputs where a large fraction never reached their required final
+    /// line, and the loss fell almost entirely on ONE arm — so a run-wide
+    /// fraction looked unremarkable while a whole arm was truncated. Hence
+    /// per cell, and hence declared IN ADVANCE rather than discovered
+    /// afterwards.
+    ///
+    /// ABSENT = off, which is what every manifest written before this key
+    /// says; the per-cell fractions are reported either way. Optional so
+    /// pre-existing manifests decode unchanged and keep their content hash
+    /// (the `exclusionRules` template — omit-when-nil, no
+    /// `defaultElidedFreezeKeys` entry needed).
+    public var maxLengthStoppedFraction: Double?
     /// Opt-in acknowledgement that the scored answer options tokenize to
     /// unequal lengths (joint logprobs favor shorter options). nil/false =
     /// the run loop refuses unequal option sets (server
@@ -1831,6 +1849,8 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
             String.self, forKey: .parserRegistryHash)
         exclusionRules = try container.decodeIfPresent(
             [ExclusionRule].self, forKey: .exclusionRules)
+        maxLengthStoppedFraction = try container.decodeIfPresent(
+            Double.self, forKey: .maxLengthStoppedFraction)
         acknowledgeUnequalOptionLengths = try container.decodeIfPresent(
             Bool.self, forKey: .acknowledgeUnequalOptionLengths)
         samplesPerItem = try container.decodeIfPresent(Int.self, forKey: .samplesPerItem)

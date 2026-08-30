@@ -153,6 +153,16 @@ public enum LifecycleGate: String, CaseIterable, Sendable, Codable {
     /// from, and the two repairs are different verbs.
     case sweepGridRule
 
+    /// Too many of a CELL's generations stopped at the token cap instead of
+    /// finishing, against the ceiling the manifest declared
+    /// (`maxLengthStoppedFraction`). A capped generation is cut off, not
+    /// short: its text is missing whatever the model had not written yet, and
+    /// an endpoint computed from it is computed from truncated text. Per cell
+    /// (condition × promptID) and never pooled over the run — the 2026-08-30
+    /// incident had one arm fine and the other not, so the run-wide fraction
+    /// looked unremarkable while a whole arm was truncated.
+    case lengthStopped
+
     /// The vocabulary as wire strings, in the fixed cross-engine order. Python
     /// twin (step 8): `LIFECYCLE_GATE_IDS`.
     public static let vocabulary: [String] = allCases.map(\.rawValue)
@@ -506,6 +516,17 @@ public enum RefusalSiteRegistry {
                 + "--layer-fractions 0.5,0.7,0.85 --alphas 0.05,0.08,0.1,0.13 "
                 + "(both axes ascend; alphas are residual-norm units > 0, and "
                 + "0 is the implied baseline cell)"),
+        .init(
+            gate: .lengthStopped,
+            verbs: ["experiment run"],
+            origin: "ExperimentTasks.lengthStoppedRefusal — the per-cell "
+                + "truncation gate, checked as each (condition, promptID) "
+                + "cell completes, against the manifest's declared "
+                + "maxLengthStoppedFraction",
+            repairAction: "steerlab-cli experiment set-sampling <name> "
+                + "--max-tokens <n>  (n above the study's current budget), "
+                + "then re-run; a frozen study is iterated by duplicating "
+                + "first: steerlab-cli experiment duplicate <name> <name>-v2"),
     ]
 
     /// The site claiming a gate, or nil — nil is what the exhaustiveness test

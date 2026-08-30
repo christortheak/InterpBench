@@ -53,6 +53,15 @@ public struct MultiAgentTurnResult: Codable, Identifiable, Sendable, Equatable {
     /// stamps it. Server twin: the `systemPromptComposition` key on
     /// `multi_agent.run_scenario`'s turn record.
     public let systemPromptComposition: PanelSystemPromptCompositionStamp?
+    /// Why this turn's generation ended (`ExperimentTasks.FinishReason`),
+    /// classified against the TURN's own token budget — the only place that
+    /// number is known, which is why the runner stamps it at write time
+    /// instead of leaving the flattener to re-derive it against a manifest
+    /// cap the generation never ran under. Optional so pre-existing
+    /// turns.jsonl files still decode; absent means a turn nobody classified,
+    /// never a turn that finished. Server twin: the `finishReason` key on
+    /// `multi_agent.run_scenario`'s turn record.
+    public let finishReason: String?
 
     public init(
         turnID: String, turnIndex: Int, title: String, speakerAgentID: String,
@@ -61,7 +70,8 @@ public struct MultiAgentTurnResult: Codable, Identifiable, Sendable, Equatable {
         replicateIndex: Int? = nil, temperature: Double? = nil,
         endpoint: TurnEndpointStamp? = nil, promptRenderer: String? = nil,
         voiceLint: VoiceLintStamp? = nil,
-        systemPromptComposition: PanelSystemPromptCompositionStamp? = nil
+        systemPromptComposition: PanelSystemPromptCompositionStamp? = nil,
+        finishReason: String? = nil
     ) {
         self.turnID = turnID
         self.turnIndex = turnIndex
@@ -79,6 +89,7 @@ public struct MultiAgentTurnResult: Codable, Identifiable, Sendable, Equatable {
         self.promptRenderer = promptRenderer
         self.voiceLint = voiceLint
         self.systemPromptComposition = systemPromptComposition
+        self.finishReason = finishReason
     }
 }
 
@@ -286,9 +297,13 @@ public enum MultiAgentRunner {
                     adapter = nil
                 }
 
-                let output: String
+                // `generateMeasured`, not `generate`: the plain wrapper
+                // discards the stream's own stop reason, and a panel turn's
+                // budget is the TURN's — so this is the only place the
+                // classification can honestly be made.
+                let measured: ExperimentTasks.MeasuredGeneration
                 do {
-                    output = try await ExperimentTasks.generate(
+                    measured = try await ExperimentTasks.generateMeasured(
                         runtime.container,
                         prompt: prompt,
                         modelID: modelID,
@@ -319,6 +334,7 @@ public enum MultiAgentRunner {
                 try await ExperimentTasks.setInterventions(runtime.container, [])
                 try Task.checkCancellation()
 
+                let output = measured.text
                 let routed = routedAgentIDs(for: turn, agents: scenario.agents)
                 let outputLabel = normalizedOutputLabel(turn: turn, index: index)
                 outputsByLabel[outputLabel] = output
@@ -359,7 +375,10 @@ public enum MultiAgentRunner {
                     // actually generated under. Built with the effective text
                     // in `runtimeSettings`, so the stamp and the arming can
                     // never describe two different things.
-                    systemPromptComposition: systemComposition)
+                    systemPromptComposition: systemComposition,
+                    // The stream's own account of why this turn ended,
+                    // against the TURN's budget. Same seam, same fsync.
+                    finishReason: measured.finishReason)
                 results.append(result)
                 // Flush BEFORE the next turn starts: an unflushed transcript
                 // is a transcript replayed from turn 1.

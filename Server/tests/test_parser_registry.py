@@ -311,7 +311,7 @@ def _fake_model(model_id, revision=None):
 def _fake_generate(output_text):
     def generate(model, prompt, *, model_id=None, max_tokens=0, temperature=0.0,
                  injections=None, prompt_mode=None, system_prompt=None,
-                 qwen_thinking_enabled=False):
+                 qwen_thinking_enabled=False, **kwargs):
         return output_text
     return generate
 

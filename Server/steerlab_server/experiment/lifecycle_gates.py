@@ -109,6 +109,12 @@ CONCEPT_IN_USE = "conceptInUse"
 #: resolve, this one says there are no honest cells to pick from, and the two
 #: repairs are different verbs.
 SWEEP_GRID_RULE = "sweepGridRule"
+#: Too many of a CELL's generations stopped at the token cap instead of
+#: finishing, against the ceiling the manifest declared
+#: (``maxLengthStoppedFraction``). A capped generation is cut off, not short,
+#: and truncation lands unevenly across arms — so this is a per-cell gate, and
+#: a run-wide fraction is exactly what would hide it.
+LENGTH_STOPPED = "lengthStopped"
 
 #: The closed vocabulary, in the fixed cross-engine order. Swift twin:
 #: ``LifecycleGate.vocabulary`` (declaration order of the enum's cases).
@@ -134,6 +140,7 @@ LIFECYCLE_GATE_IDS: tuple[str, ...] = (
     ARMS_CLEARED,
     CONCEPT_IN_USE,
     SWEEP_GRID_RULE,
+    LENGTH_STOPPED,
 )
 
 
