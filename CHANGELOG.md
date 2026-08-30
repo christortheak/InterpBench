@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.4] — 2026-08-29
+
 ### Added
 
 - **`steerlab-cli remote resubmit <job-id> [--walltime hh:mm:ss]` — the

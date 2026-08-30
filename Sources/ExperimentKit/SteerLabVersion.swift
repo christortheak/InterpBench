@@ -23,7 +23,7 @@ public enum SteerLabVersion {
     /// Hand-maintained; bump on release-worthy changes.
     // One release version across both engines as of the public flip
     // (v0.9.0, 2026-08-20); the server's __version__ matches.
-    public static let version = "0.9.3"
+    public static let version = "0.9.4"
 
     /// "swift-app 0.9.0+1a2b3c4d" (dev checkout) or "swift-app 0.9.0".
     /// Computed once; neither the packaged manifest nor the code repo's HEAD
