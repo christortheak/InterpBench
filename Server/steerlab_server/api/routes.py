@@ -3368,20 +3368,44 @@ def build_router(state: ServiceState) -> APIRouter:
                 "manualResubmit": True}
 
     @router.post("/api/jobs/{job_id}/resubmit")
-    def resubmit_job(job_id: str):
-        """Manual resume of a checkpointed job (the app's Resume button).
-        Valid in the ``checkpointed`` state (re-sbatches the job's OWN
-        ``run.sbatch`` through the same implementation auto-resubmit uses)
-        and the ``cancelledResumable`` state (re-dispatches the in-process
-        verb against the parked directory). Privileged
-        (app._PRIVILEGED_PREFIXES clause): this route runs sbatch."""
+    def resubmit_job(job_id: str, body: dict | None = None):
+        """Manual resume of a checkpointed job (the app's Resume button and
+        the CLI's resubmit verb). Valid in the ``checkpointed`` state
+        (re-sbatches the job's OWN ``run.sbatch`` through the same
+        implementation auto-resubmit uses) and the ``cancelledResumable``
+        state (re-dispatches the in-process verb against the parked
+        directory). Privileged (app._PRIVILEGED_PREFIXES clause): this
+        route runs sbatch.
+
+        Optional body ``{"walltime": "hh:mm:ss"}`` (field incident
+        2026-08-29): raise the scheduler limit for the continuation — on
+        sbatch's command line, so the rendered script is still re-submitted
+        byte-for-byte. Validated here so a typo refuses on the terminal,
+        not at sbatch; the response echoes ``walltime`` back as proof the
+        override was understood (older servers omit the echo)."""
+        walltime = (body or {}).get("walltime")
+        if walltime is not None:
+            walltime = str(walltime).strip() or None
+        if walltime is not None:
+            from .executors import validated_walltime
+            try:
+                walltime = validated_walltime(walltime)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
         job = state.jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="no such job")
         if job.status == "cancelledResumable":
+            if walltime is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="walltime override applies to scheduler "
+                           "resubmission only — this job resumes in-process "
+                           "(there is no scheduler limit to raise); "
+                           "re-request without walltime")
             return _resume_cancelled_in_process(job)
         try:
-            return state.jobs.resubmit(job_id)
+            return state.jobs.resubmit(job_id, walltime=walltime)
         except ResubmitRefused as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         except Exception as exc:  # noqa: BLE001 - sbatch and kin; run stays parked

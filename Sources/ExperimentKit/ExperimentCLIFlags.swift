@@ -382,6 +382,12 @@ public enum ExperimentCLIParser {
             purpose: "Request cancellation of one job.",
             valueFlags: remoteConnection),
         .init(
+            namespace: "remote", verb: "resubmit", positional: "<job-id>",
+            purpose: "Resume a checkpointed job: the server re-submits the "
+                + "job's own rendered sbatch script byte-for-byte, "
+                + "optionally under a longer walltime.",
+            valueFlags: remoteConnection.union(["--walltime"])),
+        .init(
             namespace: "remote", verb: "fetch", positional: "<artifact-path>",
             purpose: "Download one server artifact without importing it.",
             valueFlags: remoteConnection.union(["--path", "--out"]),

@@ -533,6 +533,23 @@ public struct ExperimentCLIRunner: Sendable {
         return nil
     }
 
+    /// The scheduler walltime vocabulary `remote resubmit --walltime`
+    /// accepts — minutes, `mm:ss`, or `hh:mm:ss`, all positive — matching
+    /// the server's own validator so a typo refuses on the terminal instead
+    /// of costing a round trip.
+    static func isSchedulerWalltime(_ value: String) -> Bool {
+        let parts = value.split(separator: ":", omittingEmptySubsequences: false)
+        guard (1...3).contains(parts.count) else { return false }
+        var total = 0
+        for part in parts {
+            guard part.count <= 9, let number = Int(part), number >= 0 else {
+                return false
+            }
+            total += number
+        }
+        return total > 0
+    }
+
     /// `envelopeReason` overrides the human `failure.reason` in the DOCUMENT
     /// only — used where the thrown error's own description is unstable or
     /// unreadable, and the human line must nonetheless stay byte-identical.
@@ -1916,7 +1933,7 @@ public struct ExperimentCLIRunner: Sendable {
         }
         guard let verb = args.first else {
             throw ExperimentError(
-                reason: "usage: remote capabilities|package|upload|submit-bundle|jobs|logs|cancel|fetch|import|import-chain|variants|chat (--site <id> | --url <server>)")
+                reason: "usage: remote capabilities|package|upload|submit-bundle|jobs|logs|cancel|resubmit|fetch|import|import-chain|variants|chat (--site <id> | --url <server>)")
         }
         // Site-aware resolution (CLUSTER-CLI-LIFECYCLE-PLAN §5.4): `--site` reads
         // the endpoint from the shared registry and the bearer token from the
@@ -2119,6 +2136,106 @@ public struct ExperimentCLIRunner: Sendable {
             return ExperimentCLIResult(
                 message: "cancel requested for job \(args[1])", changed: true,
                 payload: ["jobID": .string(args[1])])
+        case "resubmit":
+            // Managed resume of a checkpointed job (field incident
+            // 2026-08-29: a shard hit its walltime, checkpointed cleanly,
+            // and the designed resume — re-executing the shard's own
+            // rendered sbatch script so the resume pointer is consulted —
+            // had no managed spelling; the fix was a hand-rolled sbatch).
+            // The server locates the submission's script from the job
+            // record and re-submits it byte-for-byte; `--walltime` rides
+            // sbatch's command line (flag beats header), never the script.
+            guard args.count >= 2 else {
+                throw ExperimentError(
+                    reason: "usage: remote resubmit <job-id> [--walltime hh:mm:ss]")
+            }
+            let resubmitJobID = args[1]
+            let walltimeRequested = flag("--walltime")
+            if let requested = walltimeRequested,
+                !Self.isSchedulerWalltime(requested)
+            {
+                // A typo refuses on the terminal, before the round trip —
+                // same vocabulary the server's own validator accepts.
+                throw ExperimentError.malformed(
+                    "invalid walltime '\(requested)'",
+                    repair: "spell --walltime as minutes, mm:ss, or "
+                        + "hh:mm:ss (e.g. --walltime 08:00:00)")
+            }
+            let resubmission: RemoteJobResubmission
+            do {
+                resubmission = try await client.resubmitJob(
+                    resubmitJobID, walltime: walltimeRequested)
+            } catch let ClusterClient.ClientError.badResponse(status, detail)
+                where status == 409
+            {
+                // The server's typed refusal: the record is not resumable
+                // (running, finished, cancelled, already resubmitted, or
+                // its script is gone). 65, not 70 — the request was
+                // well-formed and the instrument declined it.
+                sink.err("steerlab-cli remote: \(detail)\n")
+                throw ExperimentCLIStop(
+                    exitCode: 1, state: .refused, code: "resubmitRefused",
+                    reason: detail,
+                    repairAction: "steerlab-cli remote jobs --json — find "
+                        + "the record; resume applies to a checkpointed "
+                        + "record (or one whose scheduler exit code is the "
+                        + "checkpoint code, 85). A succeeded or failed job "
+                        + "is re-run by submitting the study again",
+                    payload: ["jobID": .string(resubmitJobID)])
+            } catch let ClusterClient.ClientError.badResponse(status, detail)
+                where status == 404
+            {
+                sink.err("steerlab-cli remote: \(detail)\n")
+                throw ExperimentCLIStop(
+                    exitCode: 1, state: .notFound, code: "notFound",
+                    reason: "no job '\(resubmitJobID)' on this server",
+                    repairAction: "steerlab-cli remote jobs --json — list "
+                        + "the server's job records, then re-run with an id "
+                        + "from it",
+                    payload: ["jobID": .string(resubmitJobID)])
+            }
+            // The echo is the proof (same rule as parallelJobs): an older
+            // server ignores an unknown body field silently, and the
+            // continuation would then run under the script's own limit
+            // while the caller believes it was raised. A fan-out echoes per
+            // shard; an adopted continuation submitted nothing, so there is
+            // no override to acknowledge and nothing to warn about.
+            let overrideAcknowledged = resubmission.walltime != nil
+                || (resubmission.resumedShards?.contains { $0.walltime != nil }
+                    ?? false)
+            if walltimeRequested != nil, !overrideAcknowledged,
+                resubmission.alreadyResumed != true
+            {
+                sink.err(
+                    "warning: the server did not acknowledge the walltime "
+                        + "override (older server?) — the continuation runs "
+                        + "under the script's own walltime\n")
+            }
+            let continuation = resubmission.jobId ?? "(existing continuation)"
+            let message: String
+            if let shards = resubmission.resumedShards {
+                message = "resume fanned out to \(shards.count) checkpointed "
+                    + "shard(s) of \(resubmitJobID)"
+            } else if resubmission.alreadyResumed == true {
+                message = "job \(resubmitJobID) was already resumed as "
+                    + "\(continuation) — no new submission"
+            } else {
+                message = "resubmitted job \(resubmitJobID) as \(continuation)"
+                    + (resubmission.slurmJobID.map {
+                        " — continuing as Slurm job \($0)"
+                    } ?? "")
+            }
+            return try respond(
+                resubmission, message: message,
+                extra: [
+                    "jobID": .string(resubmitJobID),
+                    // What this client ASKED for; `response.walltime` is
+                    // what the server acknowledged. nil means no override
+                    // was requested.
+                    "walltimeRequested": walltimeRequested.map {
+                        JSONValue.string($0)
+                    } ?? .null,
+                ])
         case "fetch":
             guard let path = flag("--path") ?? (args.count >= 2 ? args[1] : nil) else {
                 throw ExperimentError(reason: "usage: remote fetch <artifact-path> [--out dir]")
@@ -2271,7 +2388,7 @@ public struct ExperimentCLIRunner: Sendable {
                 payload: ["variant": .string(variant)])
         default:
             throw ExperimentError(
-                reason: "remote verbs: capabilities | package | upload | submit-bundle | jobs | logs | cancel | fetch | import | import-chain | variants | chat")
+                reason: "remote verbs: capabilities | package | upload | submit-bundle | jobs | logs | cancel | resubmit | fetch | import | import-chain | variants | chat")
         }
     }
 

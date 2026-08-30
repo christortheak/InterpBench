@@ -1055,6 +1055,25 @@ site profile's `maxParallelGPUJobs` records that limit when the researcher has
 declared one; ask rather than guess. The merge is performed by a **running**
 `steerlab-server serve`, not by the submitting process.
 
+**A shard that hits its walltime checkpoints — resume it with the managed
+verb, never a hand-rolled scheduler command.** The checkpoint trap flushes
+what ran, writes a resume pointer, and exits with the checkpoint code (85);
+the record reads `checkpointed`. Continue it with:
+
+```bash
+steerlab-cli remote resubmit <job-id> --walltime 08:00:00 --json
+```
+
+The server re-submits the job's **own rendered sbatch script byte-for-byte**
+(the resume pointer beside its child record is what makes the continuation
+pick up where the shard parked), with `--walltime` applied on the scheduler's
+command line so a shard that parked AT its limit gets a longer one. The verb
+refuses any record that is not resumable — running, succeeded, hard-failed,
+cancelled, or already resubmitted — and **read the `walltime` echo in the
+response**: an older server ignores the override silently, and the echo is
+the proof it was applied. The sharded parent needs nothing from you; it
+merges when its shards finish.
+
 The shared SSH master EXPIRES — routinely, daily. A `Permission denied
 (publickey,keyboard-interactive)` from an otherwise-working site means
 expired authentication, not a broken site or profile: run

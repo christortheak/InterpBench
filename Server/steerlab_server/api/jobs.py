@@ -1240,10 +1240,11 @@ class JobManager:
                         # the child record now so the resumable run directory
                         # is visible.
                         job.log("child exited with the checkpoint code (85): run is "
-                                "resumable — press Resume in the app (POST "
-                                f"/api/jobs/{job.id}/resubmit) to continue it, or "
-                                "auto-resume (autoResubmit) re-submits it "
-                                "automatically when enabled")
+                                "resumable — press Resume in the app or run the "
+                                f"remote resubmit verb (POST /api/jobs/{job.id}"
+                                "/resubmit, optionally with a longer walltime) to "
+                                "continue it, or auto-resume (autoResubmit) "
+                                "re-submits it automatically when enabled")
                     else:
                         job.finished_at = time.time()
                     # The child record replaces job.result on fold, so later
@@ -2200,7 +2201,8 @@ class JobManager:
         return f"slre-{job.id}-{uuid.uuid4().hex[:8]}"
 
     def _resolve_stale_claim(self, job: "Job", result_now: dict, *,
-                             limit: int, manual: bool) -> tuple[str, dict]:
+                             limit: int, manual: bool,
+                             walltime: str | None = None) -> tuple[str, dict]:
         """Resolve a STALE resubmission claim (resume crash-safety,
         2026-07-23): the claimant died between claiming and stamping, and
         the crash window includes "sbatch succeeded, continuation record
@@ -2314,7 +2316,7 @@ class JobManager:
         job.result = {**(job.result or {}), **result_after}
         try:
             child = self._perform_resubmit(job, limit=limit, manual=manual,
-                                           token=new_token)
+                                           token=new_token, walltime=walltime)
         except Exception as exc:  # noqa: BLE001 - surfaced; retried next tick
             released = self.store.release_resubmit_claim(job.id, new_claimant)
             if released is not None:
@@ -2391,7 +2393,8 @@ class JobManager:
 
     def _perform_resubmit(self, job: Job, *, limit: int,
                           manual: bool = False,
-                          token: str | None = None) -> Job:
+                          token: str | None = None,
+                          walltime: str | None = None) -> Job:
         """THE SAME sbatch script, verbatim, through the executor's normal
         submit path (which re-checks the maintenance window itself): the
         script re-executes and the resume pointer continues the parked run.
@@ -2404,37 +2407,57 @@ class JobManager:
         cross-process, by the scheduler search for ``token``, which the
         durable claim already carries and which sbatch runs under as the
         job name). Raises on sbatch failure; callers own turning that into
-        a reconcile note (auto) or an HTTP error (manual)."""
+        a reconcile note (auto) or an HTTP error (manual).
+
+        ``walltime`` (manual only; field incident 2026-08-29: a shard that
+        checkpointed AT its walltime would only checkpoint again under the
+        same limit) rides sbatch's command line, never the script — the
+        rendered script is re-submitted byte-for-byte, and sbatch's
+        flag-beats-header precedence is what applies the longer limit."""
         import inspect
         from .executors import JobBundle, SlurmResources
         rr = job.requested_resources or {}
         script = self._resubmit_script_candidate(job)
-        walltime = str(rr.get("walltime") or "04:00:00")
+        effective_walltime = walltime or str(rr.get("walltime") or "04:00:00")
         bundle_dir = os.path.dirname(script)
         bundle = JobBundle(
             bundle_dir=bundle_dir, command=[], env={},
             resources=SlurmResources(job_name=str(rr.get("job_name") or "steerlab"),
-                                     walltime=walltime),
+                                     walltime=effective_walltime),
             stdout_path=os.path.join(bundle_dir, "slurm-%j.out"),
             stderr_path=os.path.join(bundle_dir, "slurm-%j.err"),
             script_path=script,
             manifest_path=os.path.join(bundle_dir, "bundle.json"))
         executor = self._slurm()
-        supports_name = False
-        if token:
-            try:
-                supports_name = ("job_name"
-                                 in inspect.signature(executor.submit).parameters)
-            except (TypeError, ValueError):
-                supports_name = False
-        slurm_id = (executor.submit(bundle, job_name=token)
-                    if supports_name else executor.submit(bundle))
+        try:
+            submit_params = inspect.signature(executor.submit).parameters
+        except (TypeError, ValueError):
+            submit_params = {}
+        submit_kwargs = {}
+        if token and "job_name" in submit_params:
+            submit_kwargs["job_name"] = token
+        if walltime:
+            if "walltime" not in submit_params:
+                # Loud, never silent: an executor that cannot carry the
+                # override must not run the continuation under the old limit
+                # while the caller believes it raised it.
+                raise RuntimeError(
+                    "this executor cannot override walltime on resubmission")
+            submit_kwargs["walltime"] = walltime
+        slurm_id = executor.submit(bundle, **submit_kwargs)
         count = int(rr.get("resubmitCount") or 0)
         next_count = count + 1
         chain = [str(x) for x in (rr.get("resubmitChain") or [])] + [job.id]
         child_resources = dict(rr)
         child_resources.update({"resubmitOf": job.id, "resubmitChain": chain,
                                 "resubmitCount": next_count})
+        if walltime:
+            # The continuation's durable record prices the limit it actually
+            # runs under (window math, walltime forensics), plus a provenance
+            # stamp saying the limit was a caller's override, not the
+            # script's own header.
+            child_resources["walltime"] = walltime
+            child_resources["walltimeOverride"] = walltime
         if token:
             # The durable token the claim carried and sbatch ran under —
             # provenance for the adopt-on-crash search.
@@ -2453,7 +2476,9 @@ class JobManager:
             result=({"recordsDirectory": records_dir} if records_dir else None),
             log=(f"{how} of {job.id} ({next_count}/{limit}): the same "
                  f"sbatch script re-executes as Slurm job {slurm_id} and resumes "
-                 "the checkpointed run via its pointer"))
+                 "the checkpointed run via its pointer"
+                 + (f" (walltime raised to {walltime} on the sbatch command "
+                    "line; the script is unchanged)" if walltime else "")))
         # The stamp CONSUMES the resubmission claim: resubmittedAs is now the
         # durable "this checkpoint was continued exactly once" marker.
         job.result = {**{k: v for k, v in (job.result or {}).items()
@@ -2468,12 +2493,12 @@ class JobManager:
         self._resubmit_notes.pop(job.id, None)
         return child
 
-    def resubmit(self, job_id: str) -> dict:
-        """Manual resume of a CHECKPOINTED job — the app's Resume button
-        (``POST /api/jobs/{id}/resubmit``). Live incident 2026-07-22: a
-        frozen pipeline checkpointed cleanly at the walltime margin (exit
-        85), the app relayed "requeue or resubmit to continue it" — and
-        offered neither. This verb is the resubmit half.
+    def resubmit(self, job_id: str, *, walltime: str | None = None) -> dict:
+        """Manual resume of a CHECKPOINTED job — the app's Resume button and
+        the CLI's resubmit verb (``POST /api/jobs/{id}/resubmit``). Live
+        incident 2026-07-22: a frozen pipeline checkpointed cleanly at the
+        walltime margin (exit 85), the app relayed "requeue or resubmit to
+        continue it" — and offered neither. This verb is the resubmit half.
 
         Reuses ``_perform_resubmit`` (never a forked implementation): the
         job's OWN ``run.sbatch`` re-executes and the resume pointer
@@ -2482,7 +2507,18 @@ class JobManager:
         ignored, the chain cap may be EXCEEDED (explicit consent, logged),
         and the continuation record is stamped ``manualResubmit``. Every
         non-resumable state refuses with a plain-language
-        ``ResubmitRefused``; sbatch failures raise through untouched."""
+        ``ResubmitRefused``; sbatch failures raise through untouched.
+
+        ``walltime`` (field incident 2026-08-29: a shard that checkpointed
+        AT its limit would only checkpoint again under the same one) raises
+        the scheduler limit for the continuation — on sbatch's command
+        line, never by editing the script."""
+        if walltime is not None:
+            from .executors import validated_walltime
+            try:
+                walltime = validated_walltime(walltime)
+            except ValueError as exc:
+                raise ResubmitRefused(str(exc)) from None
         job = self.get(job_id)
         if job is None:
             raise ResubmitRefused(
@@ -2509,7 +2545,7 @@ class JobManager:
                 if child is None or child.status != "checkpointed":
                     continue
                 try:
-                    resumed.append(self.resubmit(cid))
+                    resumed.append(self.resubmit(cid, walltime=walltime))
                 except ResubmitRefused as exc:
                     refusals.append(f"{cid}: {exc}")
             if not resumed:
@@ -2524,6 +2560,27 @@ class JobManager:
             self.store.update(job)
             return {"ok": True, "resubmitOf": job.id,
                     "resumedShards": resumed, "manualResubmit": True}
+        if (job.status != "checkpointed" and job.executor_job_id
+                and job.status not in ("succeeded", "cancelled")):
+            # The record is the gate, but the SCHEDULER is the truth about
+            # the exit code (field incident 2026-08-29): a job whose child
+            # exited with the checkpoint code (85) may still be recorded
+            # "running" (no reconciler tick yet) or "failed" (a wrapper that
+            # reported the checkpoint as a plain failure). Re-ask before
+            # refusing — sacct's ExitCode is what ``poll_state`` keys the
+            # ``checkpointed`` answer on. Never for succeeded or cancelled:
+            # those are decided, and cancelled beats checkpointed.
+            try:
+                polled = self._slurm().poll_state(job.executor_job_id)
+            except Exception:  # noqa: BLE001 - silence must not block the gate check
+                polled = None
+            if polled == "checkpointed":
+                job.status = "checkpointed"
+                job.finished_at = None
+                job.log("resume request: the scheduler reports the "
+                        "checkpoint exit code (85) for this job — record "
+                        "corrected to checkpointed, resume proceeds")
+                self.store.update(job)
         if job.status in TERMINAL:
             raise ResubmitRefused(
                 f"job {job_id} already finished ({job.status}) — a terminal "
@@ -2564,17 +2621,17 @@ class JobManager:
                 f"disk ({script!r}) — this job cannot be resumed from here; "
                 "submit the study again")
         from .executors import first_crossing_window
-        walltime = str((job.requested_resources or {}).get("walltime")
-                       or "04:00:00")
+        effective_walltime = walltime or str(
+            (job.requested_resources or {}).get("walltime") or "04:00:00")
         calendar = getattr(getattr(self._slurm(), "profile", None),
                            "maintenance_calendar_path", None)
-        window = first_crossing_window(walltime, calendar)
+        window = first_crossing_window(effective_walltime, calendar)
         if window is not None:
             raise ResubmitRefused(
-                f"resume refused for now: walltime {walltime} crosses the "
-                f"maintenance window {window['start']} – {window['end']} — "
-                "try again after it clears (auto-resume, when enabled, "
-                "retries on its own)")
+                f"resume refused for now: walltime {effective_walltime} "
+                f"crosses the maintenance window {window['start']} – "
+                f"{window['end']} — try again after it clears (auto-resume, "
+                "when enabled, retries on its own)")
         limit = self._resubmit_limit(job.requested_resources or {})
         count = int((job.requested_resources or {}).get("resubmitCount") or 0)
         if count >= limit:
@@ -2596,7 +2653,8 @@ class JobManager:
                 # and never a spurious wait on a claimant that no longer
                 # exists (resume crash-safety, 2026-07-23).
                 outcome, payload = self._resolve_stale_claim(
-                    job, result_now, limit=limit, manual=True)
+                    job, result_now, limit=limit, manual=True,
+                    walltime=walltime)
                 if outcome == "blocked":
                     raise ResubmitRefused(str(payload.get("message")))
                 child = self.get(str(payload.get("jobId") or ""))
@@ -2612,12 +2670,16 @@ class JobManager:
                     "autoResubmitLimit": limit,
                     "manualResubmit": True,
                     **({"alreadyResumed": True} if outcome == "adopted" else {}),
+                    # Echoed only when a NEW submission carried the override
+                    # — an adopted continuation runs under its own limit.
+                    **({"walltime": walltime}
+                       if walltime and outcome == "resubmitted" else {}),
                 }
             return self._await_concurrent_resubmission(job, result_now)
         job.result = {**(job.result or {}), **result_now}
         try:
             child = self._perform_resubmit(job, limit=limit, manual=True,
-                                           token=token)
+                                           token=token, walltime=walltime)
         except Exception:
             released = self.store.release_resubmit_claim(job.id, claimant)
             if released is not None:
@@ -2632,6 +2694,10 @@ class JobManager:
                 (child.requested_resources or {}).get("resubmitCount") or 0),
             "autoResubmitLimit": limit,
             "manualResubmit": True,
+            # The override, echoed only when a NEW submission carried it —
+            # the caller's proof the server understood the request (an older
+            # server ignores the field and omits the echo).
+            **({"walltime": walltime} if walltime else {}),
         }
 
     def _await_concurrent_resubmission(self, job: Job, result_now: dict,

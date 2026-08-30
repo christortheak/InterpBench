@@ -14,6 +14,40 @@ migration that rewrites frozen bytes.
 
 ### Added
 
+- **`steerlab-cli remote resubmit <job-id> [--walltime hh:mm:ss]` — the
+  managed resume of a checkpointed job.** Field incident 2026-08-29: a
+  sharded run's shard hit its walltime, checkpointed cleanly (the trap
+  flushed its records, wrote the resume pointer, exited with the checkpoint
+  code 85, record status `checkpointed`) — and the designed resume,
+  re-executing the shard's own rendered `run.sbatch` so the resume pointer
+  beside its child record is consulted, had **no managed spelling**: neither
+  the `remote` nor the `cluster` family could run it, and the fix was a
+  hand-rolled scheduler command. The workspace operating contract calls that
+  a missing verb; this is the verb.
+
+  The CLI calls the server's existing manual-resume implementation (the
+  Resume button's `POST /api/jobs/{id}/resubmit` — the same single core
+  auto-resubmit uses), which locates the submission's rendered sbatch script
+  from the job record and re-submits it **byte-for-byte**. `--walltime`
+  (new, both surfaces) raises the scheduler limit for the continuation on
+  sbatch's **command line** — flag beats `#SBATCH` header — so a shard that
+  parked AT its limit gets a longer one while the identical-script contract
+  (gres, cleanup trap, record path) holds untouched. The override is encoded
+  only when given; a server that understood it echoes `walltime` back, the
+  envelope carries `walltimeRequested` beside the response, and the CLI
+  warns when the echo is missing (an older server ignores unknown fields
+  silently). Refusals are typed (`resubmitRefused`, 65; `notFound`, 66) with
+  runnable repairs; a resume that races an existing continuation reports
+  `alreadyResumed` and submits nothing; a sharded parent fans the resume out
+  to its checkpointed shards and needs nothing else — it merges when its
+  shards finish. The gate also re-asks the scheduler before refusing a stale
+  record: a job recorded `running` or `failed` whose sacct ExitCode is the
+  checkpoint code is corrected to `checkpointed` and resumed, while
+  succeeded and cancelled records are never re-asked (cancelled beats
+  checkpointed). An idempotent re-run of a continuation whose run already
+  completed remains the child's own answer (`alreadyComplete`), per the
+  bundle-execute reliability contract.
+
 - **The standalone capability battery: `steerlab-server battery run
   <battery-file> --agent <ref>…`, with a charter, a second operating regime,
   and a pinned evidence run.**

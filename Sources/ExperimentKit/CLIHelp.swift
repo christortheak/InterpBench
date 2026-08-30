@@ -324,7 +324,11 @@ public enum CLIFlagVocabulary {
         "--validation-count": "How many held-out probe rows the prompt asks for.",
         "--variant": "The server-resident variant to generate through.",
         "--verb": "The verb the submitted job runs (defaults to run).",
-        "--walltime": "Scheduler wall-time request.",
+        "--walltime":
+            "Scheduler wall-time request. On `remote resubmit` it OVERRIDES "
+            + "the rendered script's own limit for the continuation — on the "
+            + "scheduler's command line (flag beats header), so the script "
+            + "itself is still re-submitted byte-for-byte.",
         "--write": "Rewrite this engine's marked regions in place.",
     ]
 
