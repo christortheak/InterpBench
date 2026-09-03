@@ -254,7 +254,7 @@ def test_a_templated_sidecar_stamps_the_rendering_that_made_the_vector():
     encoded = sidecar.to_dict()
     assert encoded["extractionRendering"] == {
         "mode": "chatTemplate", "addGenerationPrompt": False,
-        "qwenThinkingEnabled": False}
+        "reasoningEffort": "off"}
     assert encoded["residualNormRendering"] == "chatTemplate"
     assert encoded["readingPosition"] == "turn close token"
     assert encoded["readingPositionResolution"]["requested"] == "turn close token"
@@ -701,7 +701,9 @@ def test_raw_extraction_says_which_declarations_cannot_reach_it():
     line = lines[0]
     assert line.startswith("ADVISORY:")
     # It names the inert declarations, the consequence, and the repair.
-    assert "qwenThinkingEnabled true" in line
+    # The legacy boolean is spoken in today's vocabulary: thinking on with no
+    # declared effort ran under the template's default, xhigh.
+    assert "reasoningEffort xhigh" in line
     assert "promptMode chatAssistant" in line
     assert "byte-identical" in line
     # The repair names the FLAG that makes them effective — a repair naming
@@ -782,13 +784,13 @@ def test_a_chat_template_declaration_resolves_its_defaults_explicitly():
     # The block a manifest stores writes the resolved defaults out.
     assert bare.to_dict() == {"mode": "chatTemplate",
                               "addGenerationPrompt": True,
-                              "qwenThinkingEnabled": False}
+                              "reasoningEffort": "off"}
 
 
 def test_every_rendering_parameter_survives_the_declaration():
     full = er.parse_declaration(
         '{"mode":"chatTemplate","addGenerationPrompt":false,'
-        '"qwenThinkingEnabled":true,"systemPrompt":"be brief"}')
+        '"reasoningEffort":"xhigh","systemPrompt":"be brief"}')
     assert full.add_generation_prompt is False
     assert full.qwen_thinking_enabled is True
     assert full.system_prompt == "be brief"
@@ -867,7 +869,7 @@ def test_the_assistant_voice_stamps_itself_and_nothing_it_cannot_honor():
     # addGenerationPrompt is refused at declaration time, so the artifact must
     # not claim a choice nobody made.
     assert declared.to_dict() == {"mode": "chatTemplate",
-                                  "qwenThinkingEnabled": False,
+                                  "reasoningEffort": "off",
                                   "voice": "assistant"}
     assert declared.label == "chatTemplate (voice=assistant)"
 

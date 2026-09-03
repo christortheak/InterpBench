@@ -533,13 +533,17 @@ public enum ExperimentCLIParser {
             purpose: "Declare the generation protocol: temperature, token "
                 + "budget, prompt mode ("
                 + ExperimentStore.knownPromptModes.joined(separator: ", ")
-                + "), and the stochastic replication policy (samples per "
+                + "), the stochastic replication policy (samples per "
                 + "item × seed policy: "
                 + ExperimentStore.knownSeedPolicies.joined(separator: ", ")
-                + ").",
+                + "), and the reasoning protocol (effort "
+                + ReasoningEffort.vocabulary.joined(separator: ", ")
+                + " × the reasoning block's own token cap; --max-tokens is "
+                + "then the answer budget).",
             valueFlags: [
                 "--temperature", "--max-tokens", "--prompt-mode",
                 "--samples-per-item", "--seed-policy",
+                "--reasoning-effort", "--reasoning-max-tokens",
             ]),
         // The legal values come from `ExclusionEngine.ruleVocabulary` — the
         // SAME constant the refusal prints — so `--help` and the refusal

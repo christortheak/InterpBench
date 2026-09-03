@@ -393,10 +393,11 @@ public enum RefusalSiteRegistry {
         .init(
             gate: .thinkingModeConflict,
             verbs: ["experiment verify", "experiment run"],
-            origin: "ExperimentStore.verify — answer-token instrument with "
-                + "qwenThinkingEnabled",
+            origin: "ExperimentStore.verify — answer-token instrument with a "
+                + "non-off reasoningEffort (or the legacy qwenThinkingEnabled)",
             repairAction: "steerlab-cli experiment set-instruments <name> "
-                + "sampledText, or disable thinking mode on the study",
+                + "sampledText, or steerlab-cli experiment set-sampling <name> "
+                + "--reasoning-effort off",
             surfacing: .verifyViolation),
         .init(
             gate: .inertConditions,
@@ -524,9 +525,11 @@ public enum RefusalSiteRegistry {
                 + "cell completes, against the manifest's declared "
                 + "maxLengthStoppedFraction",
             repairAction: "steerlab-cli experiment set-sampling <name> "
-                + "--max-tokens <n>  (n above the study's current budget), "
-                + "then re-run; a frozen study is iterated by duplicating "
-                + "first: steerlab-cli experiment duplicate <name> <name>-v2"),
+                + "--max-tokens <n>  (n above the study's current budget; under "
+                + "a reasoning budget the refusal names which cap was hit, and "
+                + "--reasoning-max-tokens <m> raises the other), then re-run; a "
+                + "frozen study is iterated by duplicating first: steerlab-cli "
+                + "experiment duplicate <name> <name>-v2"),
     ]
 
     /// The site claiming a gate, or nil — nil is what the exhaustiveness test

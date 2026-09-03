@@ -224,7 +224,9 @@ import Testing
         // Defaults stamped EXPLICITLY, so a reader never needs to know them.
         let stamped = try #require(sidecar.extractionRendering)
         #expect(stamped.addGenerationPrompt == true)
-        #expect(stamped.qwenThinkingEnabled == false)
+        // The effort spelling, never the legacy boolean (2026-09-03).
+        #expect(stamped.reasoningEffort == .off)
+        #expect(stamped.qwenThinkingEnabled == nil)
     }
 
     // MARK: - 2. the chat-template path reuses the measurement renderer
@@ -539,7 +541,7 @@ import Testing
         encoder.outputFormatting = [.sortedKeys]
         let stamped = try #require(ExtractionRendering.chatTemplate().stamp)
         let json = String(decoding: try encoder.encode(stamped), as: UTF8.self)
-        #expect(json == #"{"addGenerationPrompt":true,"mode":"chatTemplate","qwenThinkingEnabled":false}"#)
+        #expect(json == #"{"addGenerationPrompt":true,"mode":"chatTemplate","reasoningEffort":"off"}"#)
 
         let decoded = try JSONDecoder().decode(
             ExtractionRendering.self, from: Data(json.utf8))
@@ -588,16 +590,20 @@ import Testing
         #expect(bare.mode == .chatTemplate)
         // Resolved, not left to a reader to infer — the `stamp` discipline.
         #expect(bare.addGenerationPrompt == true)
-        #expect(bare.qwenThinkingEnabled == false)
+        #expect(bare.reasoningEffort == .off)
+        #expect(bare.resolvedQwenThinkingEnabled == false)
         #expect(bare.systemPrompt == nil)
 
         // The shell-friendly bare word is the same declaration.
         #expect(try ExtractionRendering.declared("chatTemplate") == bare)
 
+        // The LEGACY boolean declares the template's default effort, and
+        // comes back resolved in the effort spelling.
         let full = try #require(
             try ExtractionRendering.declared(
                 #"{"mode":"chatTemplate","qwenThinkingEnabled":true,"systemPrompt":"be brief"}"#))
-        #expect(full.qwenThinkingEnabled == true)
+        #expect(full.reasoningEffort == .xhigh)
+        #expect(full.resolvedQwenThinkingEnabled == true)
         #expect(full.systemPrompt == "be brief")
     }
 
@@ -689,7 +695,7 @@ import Testing
         let declared = try #require(
             try ExtractionRendering.declared("chatTemplate"))
         #expect(String(decoding: try encoder.encode(declared), as: UTF8.self)
-                == #"{"addGenerationPrompt":true,"mode":"chatTemplate","qwenThinkingEnabled":false}"#)
+                == #"{"addGenerationPrompt":true,"mode":"chatTemplate","reasoningEffort":"off"}"#)
     }
 
     // MARK: - 7. THE VOICE, and what this engine can honor of it
@@ -711,7 +717,7 @@ import Testing
         #expect(absent == explicit)
         #expect(explicit.voice == nil)
         #expect(String(decoding: try encoder.encode(explicit), as: UTF8.self)
-                == #"{"addGenerationPrompt":true,"mode":"chatTemplate","qwenThinkingEnabled":false}"#)
+                == #"{"addGenerationPrompt":true,"mode":"chatTemplate","reasoningEffort":"off"}"#)
     }
 
     /// The engine asymmetry, at DECLARATION time — the
@@ -789,7 +795,7 @@ import Testing
         // addGenerationPrompt is NOT stamped under this voice — it is refused
         // at declaration, so an artifact may not claim it.
         #expect(String(decoding: try encoder.encode(stamped), as: UTF8.self)
-                == #"{"mode":"chatTemplate","qwenThinkingEnabled":false,"voice":"assistant"}"#)
+                == #"{"mode":"chatTemplate","reasoningEffort":"off","voice":"assistant"}"#)
         #expect(decoded.label == "chatTemplate (voice=assistant)")
     }
 

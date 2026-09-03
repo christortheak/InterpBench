@@ -28,7 +28,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from . import lifecycle_gates, paths
+from . import lifecycle_gates, paths, prompt_render
 from ..build_identity import engine_version
 from .manifest import KNOWN_ORDINAL_AGGREGATIONS as KNOWN_ORDINAL_AGGREGATIONS  # noqa: F401
 from .manifest import Manifest
@@ -271,7 +271,7 @@ def create(name: str, *, model_id: str, revision: str | None = None,
         "modelID": model_id, "modelRevision": revision, "createdAt": _now(),
         "studyKind": "modelOutput", "concepts": [], "conditions": [],
         "variantConditions": [], "promptMode": "chatAssistant", "temperature": 0.0,
-        "maxTokens": 512, "seeds": [0], "qwenThinkingEnabled": False,
+        "maxTokens": 512, "seeds": [0], "reasoningEffort": "off",
     }
     save_raw(manifest, root)
     return manifest
@@ -414,6 +414,20 @@ def attach(name: str, concepts: list[str], *, method: str = "meanDifference",
     # Parsed FIRST, before anything is read or written: a malformed or
     # unsupportable declaration must not half-attach a study.
     rendering_block = _extraction_rendering_block(extraction_rendering)
+    if rendering_block is not None:
+        # A non-off effort on a family without a thinking mode is answered
+        # HERE, where the pinned model id is known — the parser cannot see
+        # one — rather than rendered silently without the scaffold it claims.
+        from ..steering.extraction_rendering import thinking_mode_problem
+        from ..steering.extraction_rendering import from_json as _rendering_from_json
+        problem = thinking_mode_problem(
+            _rendering_from_json(rendering_block),
+            str(load_raw(name, root).get("modelID") or ""))
+        if problem:
+            raise ExperimentStoreError(
+                problem, repair=(f"re-run attach with --extraction-rendering "
+                                 f"'{{\"mode\": \"chatTemplate\", "
+                                 f"\"reasoningEffort\": \"off\"}}'"))
     position = _declared_reading_position(
         reading_position, pool_from_token, rendering_block, method)
     if method == "pinnedArtifact":
@@ -1718,7 +1732,15 @@ def set_sweep_grid(name: str, *, layer_fractions=None, layers=None,
 #: reachability to the client.
 PROTOCOL_FIELDS: tuple[str, ...] = (
     "experimentDescription", "taskDescription", "outcomeMeasures", "promptMode",
-    "systemPrompt", "qwenThinkingEnabled", "temperature", "maxTokens", "seeds",
+    # `reasoningEffort` (off | low | medium | xhigh) replaced the Qwen-specific
+    # boolean `qwenThinkingEnabled` (2026-09-03); `reasoningMaxTokens` is the
+    # reasoning block's own cap, required beside a non-off effort. Both are
+    # `set-sampling` flags on the Mac. The old boolean is not a writable field
+    # any more — a manifest that still carries it is READ as off/xhigh — and
+    # writing the effort into a draft that carries it drops it, so a draft
+    # never spells the same parameter twice.
+    "systemPrompt", "reasoningEffort", "temperature", "maxTokens",
+    "reasoningMaxTokens", "seeds",
     # The stochastic replication policy (field-discovered gap: a replication
     # arm of N samples × temperature × token budget could not be authored
     # headlessly on either engine). The Mac's verb for the whole sampling
@@ -1843,6 +1865,36 @@ def set_protocol(name: str, fields: dict, root: str | None = None) -> dict:
                 + ", ".join(KNOWN_SEED_POLICIES),
                 repair="re-run with --set seedPolicy="
                        + "|".join(KNOWN_SEED_POLICIES))
+    # The reasoning protocol, gated on the MERGED document (Swift twin:
+    # `ExperimentStore.setSamplingProtocol`, same sentences): the effort is
+    # closed-vocabulary; a non-off effort needs a family with a thinking mode
+    # AND a declared reasoning budget (declared, never defaulted — the
+    # workbench rule); an off effort takes no budget. Declaring the effort
+    # off drops a budget the draft already carried, because the budget was
+    # only ever meaningful beside the effort; declaring a budget IN THE SAME
+    # CALL as an off effort is refused, because that call says two things.
+    if (fields.get("reasoningEffort") is not None
+            or fields.get("reasoningMaxTokens") is not None):
+        merged_effort = (fields["reasoningEffort"]
+                         if fields.get("reasoningEffort") is not None
+                         else prompt_render.read_reasoning_effort(d))
+        budget_in_call = fields.get("reasoningMaxTokens") is not None
+        merged_budget = (fields["reasoningMaxTokens"] if budget_in_call
+                         else d.get("reasoningMaxTokens"))
+        if (merged_effort == prompt_render.REASONING_OFF
+                and not budget_in_call):
+            merged_budget = None  # the off declaration retires the budget
+        problems = prompt_render.reasoning_protocol_violations(
+            effort=merged_effort, reasoning_max_tokens=merged_budget,
+            model_id=str(d.get("modelID") or ""))
+        if problems:
+            raise ExperimentStoreError(
+                "; ".join(problems),
+                repair=("re-run with --set reasoningEffort="
+                        + "|".join(prompt_render.REASONING_EFFORTS)
+                        + " --set reasoningMaxTokens=<n≥1> (the budget only "
+                        "beside a non-off effort, on a model with a thinking "
+                        "mode)"))
     if fields.get("exclusionRules") is not None:
         # The engine's own rule validation, at the moment of declaration
         # (Swift twin: `ExperimentStore.setExclusionRules`) — verify() and
@@ -1876,6 +1928,13 @@ def set_protocol(name: str, fields: dict, root: str | None = None) -> dict:
             d.pop(key, None)
         else:
             d[key] = value
+    if fields.get("reasoningEffort") is not None:
+        # One spelling per draft: the effort supersedes the legacy boolean it
+        # replaced, and an off effort retires the budget (gated above).
+        d.pop(prompt_render.LEGACY_THINKING_KEY, None)
+        if (fields["reasoningEffort"] == prompt_render.REASONING_OFF
+                and fields.get("reasoningMaxTokens") is None):
+            d.pop("reasoningMaxTokens", None)
     save_raw(d, root)
     return d
 
@@ -4828,7 +4887,11 @@ def _write_preregistration(d: dict, root: str | None) -> None:
         f"{', '.join(d.get('outcomeInstruments') or []) or 'sampledText'}",
         f"- **Sampling:** temperature {d.get('temperature', 0)}, "
         f"samplesPerItem {d.get('samplesPerItem', 1)}, "
-        f"seedPolicy {d.get('seedPolicy') or 'manifestSeeds'}",
+        f"seedPolicy {d.get('seedPolicy') or 'manifestSeeds'}, "
+        f"reasoningEffort {prompt_render.read_reasoning_effort(d)}, "
+        f"maxTokens {d.get('maxTokens', 512)}, "
+        f"reasoningMaxTokens "
+        f"{prompt_render.read_reasoning_max_tokens(d) or 'none'}",
         "",
         "## Conditions",
         "",

@@ -2513,6 +2513,15 @@ public struct ExperimentCLIRunner: Sendable {
                 throw ExperimentError.malformed(error.reason, repair: error.repair)
             }
             var manifest = try ExperimentStore.load(name: args[1])
+            // A non-off reasoning effort on a family without a thinking mode
+            // is answered HERE, where the pinned model id is known — the
+            // parser cannot see one — never rendered silently without the
+            // scaffold it claims. Server twin: `experiment_store.attach`.
+            if let problem = ExtractionRendering.thinkingModeProblem(
+                declaredRendering, modelID: manifest.modelID)
+            {
+                throw ExperimentError.malformed(problem.reason, repair: problem.repair)
+            }
             let neutralPCs = flag("--project-neutral").flatMap(Int.init)
             if let neutralPCs, neutralPCs > 0 {
                 sink.out(
@@ -3778,13 +3787,19 @@ public struct ExperimentCLIRunner: Sendable {
                         + ExperimentStore.knownPromptModes.joined(separator: "|")
                         + "] [--samples-per-item <n>] [--seed-policy "
                         + ExperimentStore.knownSeedPolicies.joined(separator: "|")
-                        + "]  (\"\" clears --prompt-mode/--seed-policy; "
+                        + "] [--reasoning-effort "
+                        + ReasoningEffort.vocabulary.joined(separator: "|")
+                        + "] [--reasoning-max-tokens <n>]"
+                        + "  (\"\" clears --prompt-mode/--seed-policy; "
                         + "--samples-per-item 1 clears to the deterministic "
-                        + "default)")
+                        + "default; a non-off --reasoning-effort needs "
+                        + "--reasoning-max-tokens, and --reasoning-effort off "
+                        + "retires it)")
             }
             let samplingFlags = [
                 "--temperature", "--max-tokens", "--prompt-mode",
                 "--samples-per-item", "--seed-policy",
+                "--reasoning-effort", "--reasoning-max-tokens",
             ]
             guard samplingFlags.contains(where: args.contains) else {
                 throw ExperimentError.malformed(
@@ -3825,12 +3840,29 @@ public struct ExperimentCLIRunner: Sendable {
                 }
                 declaredSamples = value
             }
+            // The reasoning protocol (2026-09-03): the effort's vocabulary and
+            // the joint rules (a non-off effort needs its budget, on a model
+            // with a thinking mode; off takes none) are the store's, so the
+            // verb and the panel route refuse with one sentence.
+            var declaredReasoningMaxTokens: Int?
+            if let raw = flag("--reasoning-max-tokens") {
+                guard let value = Int(raw) else {
+                    throw ExperimentError.malformed(
+                        "--reasoning-max-tokens must be an integer, not '\(raw)'",
+                        repair: "steerlab-cli experiment set-sampling "
+                            + "\(args[1]) --reasoning-effort low "
+                            + "--reasoning-max-tokens 2048")
+                }
+                declaredReasoningMaxTokens = value
+            }
             let sampling = try ExperimentStore.setSamplingProtocol(
                 temperature: declaredTemperature,
                 maxTokens: declaredMaxTokens,
                 promptMode: flag("--prompt-mode"),
                 samplesPerItem: declaredSamples,
                 seedPolicy: flag("--seed-policy"),
+                reasoningEffort: flag("--reasoning-effort"),
+                reasoningMaxTokens: declaredReasoningMaxTokens,
                 experimentName: args[1])
             // The design line the panel shows, said where the values landed:
             // the SAMPLES × TEMPERATURE × TOKENS product is the study's cost
@@ -3846,6 +3878,19 @@ public struct ExperimentCLIRunner: Sendable {
                 + "\(temperatureText) × up to \(sampling.maxTokens) tokens"
             samplingLine += "  ·  prompt mode "
                 + (sampling.promptMode ?? .chatAssistant).rawValue
+            // The reasoning protocol is part of the cost row: a reasoning
+            // budget is generated tokens too, and the answer cap is the
+            // ANSWER's cap only once one is declared.
+            let effort = sampling.resolvedReasoningEffort
+            if effort.isOn {
+                samplingLine += "  ·  reasoning \(effort.rawValue)"
+                if let budget = sampling.reasoningMaxTokens {
+                    samplingLine += " (≤ \(budget) reasoning tokens, "
+                        + "\(sampling.maxTokens) for the answer)"
+                }
+            } else {
+                samplingLine += "  ·  reasoning off"
+            }
             if let policy = sampling.seedPolicy {
                 samplingLine += "  ·  seed policy \(policy)"
             }

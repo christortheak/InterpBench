@@ -191,7 +191,7 @@ def test_the_sidecar_records_the_rendering_and_the_position(harness):
     assert sidecar.readingPosition == "turn close token"
     assert sidecar.extractionRendering == {"mode": "chatTemplate",
                                            "addGenerationPrompt": True,
-                                           "qwenThinkingEnabled": False}
+                                           "reasoningEffort": "off"}
     assert sidecar.residualNormRendering == "chatTemplate"
     assert sidecar.readingPositionResolution == {"requested": "turn close token"}
 
@@ -213,7 +213,7 @@ def test_the_assistant_voice_reaches_this_engine(harness):
                                          "voice": "assistant"}).status_code == 200
     assert harness.recorder.rendering.is_assistant_voice
     assert harness.recorder.sidecars[-1].extractionRendering == {
-        "mode": "chatTemplate", "qwenThinkingEnabled": False,
+        "mode": "chatTemplate", "reasoningEffort": "off",
         "voice": "assistant"}
 
 
@@ -330,7 +330,7 @@ def test_the_response_echoes_the_applied_declaration(harness):
         "readingPosition": "content offset 2",
         "extractionRendering": {"mode": "chatTemplate",
                                 "addGenerationPrompt": True,
-                                "qwenThinkingEnabled": False}}
+                                "reasoningEffort": "off"}}
 
 
 def test_the_echo_is_absent_not_null_for_the_legacy_rendering(harness):

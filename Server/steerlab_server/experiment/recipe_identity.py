@@ -25,6 +25,11 @@ escaping). Top-level keys, in sorted order:
   "qwenThinkingEnabled": bool, "systemPrompt": string|null} with every inner
   field explicit (an identity may not depend on a default a later version
   could change), plus ``"voice": "assistant"`` — and ONLY for that voice. The
+  ``qwenThinkingEnabled`` boolean is the effort's IDENTITY SPELLING even
+  though declarations now say ``reasoningEffort`` (2026-09-03): off/xhigh
+  hash exactly as false/true always did, and a ``"reasoningEffort": "low" |
+  "medium"`` key joins (between qwenThinkingEnabled and systemPrompt) only
+  for the two efforts the boolean cannot express. The
   voice key follows the same absent-is-legacy rule one level down: every
   chat-template recipe written before the voice existed rendered the user
   voice, so an absent (or explicitly ``"user"``) voice adds nothing and keeps

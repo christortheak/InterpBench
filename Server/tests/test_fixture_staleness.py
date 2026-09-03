@@ -104,8 +104,13 @@ def test_extraction_rendering_and_positions_fixture_is_current():
             er.unknown_chat_template_key_reason(["addGenerationPromt"]),
         "rawParameters":
             er.raw_parameters_reason(["addGenerationPrompt", "voice"]),
+        "bothThinkingKeys": er.BOTH_THINKING_KEYS_REASON,
+        "unknownEffort": er.unknown_effort_reason("hgih"),
+        "effortWithoutThinkingMode": er.effort_without_thinking_mode_reason(
+            "low", "google/gemma-3-4b-it"),
     }, REGENERATE
     assert fixture["chatTemplateKeys"] == list(er.CHAT_TEMPLATE_KEYS), REGENERATE
+    assert fixture["reasoningEfforts"] == list(er.REASONING_EFFORTS), REGENERATE
 
     for entry in fixture["positions"]:
         position = rp.parse_label_strict(entry["label"])

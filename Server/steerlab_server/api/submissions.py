@@ -1639,7 +1639,15 @@ def _check_walltime(manifest: Manifest | None, resources: SlurmResources,
                 and manifest.max_tokens > 0):
             # Stamped so the fold can record the token budget this job's
             # throughput sample was generated under (its ``tokensBasis``).
-            family_data["maxTokens"] = manifest.max_tokens
+            # BOTH budgets: the observed rate is per GENERATED token, and a
+            # reasoning block's tokens are generated tokens — a study that
+            # declares a 4096-token reasoning budget beside a 512-token answer
+            # is priced at 4608 tokens per record, not 512.
+            family_data["maxTokens"] = (
+                manifest.max_tokens + (manifest.reasoning_max_tokens or 0))
+            if manifest.reasoning_max_tokens:
+                family_data["answerMaxTokens"] = manifest.max_tokens
+                family_data["reasoningMaxTokens"] = manifest.reasoning_max_tokens
     if planned_records is None:
         return _check(check_id, "warn",
                       "cannot count planned records (no readable task-prompt "

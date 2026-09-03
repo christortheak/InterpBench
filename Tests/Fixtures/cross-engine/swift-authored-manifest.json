@@ -48,7 +48,7 @@
     "name" : "portability-interop-swift",
     "neutralCorpusHash" : "252a00e477ffd11b651cfd625cdeedb8c67afbb13a0bc41d2016fb6e25660db1",
     "promptMode" : "chatAssistant",
-    "qwenThinkingEnabled" : false,
+    "reasoningEffort" : "off",
     "recordTokenIDs" : false,
     "samplesPerItem" : 3,
     "seedPolicy" : "derivedSHA256",
@@ -68,7 +68,7 @@
 
     ]
   },
-  "manifestHash" : "fbc4176a17965d9091a40f3ac60e94a4371ec118d9dbe93827faf7e8cd43130b",
+  "manifestHash" : "ceddfd5012e2998f58765df9e748ed958a4b230c3c763a2cf0c259499bacfb58",
   "note" : "produced by the Swift engine's ExperimentStore (Tests/ExperimentKitTests/PortabilityContractTests.swift) — do not hand-edit; delete this file and re-run that suite to regenerate",
   "stimulusSetHash" : "9711fc1dd6a12a339c175189a62cd5d189d017d0e3e855143512d0967805af7a"
 }

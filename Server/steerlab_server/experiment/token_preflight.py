@@ -76,15 +76,23 @@ def preflight(prompts: list[dict], *, model_id: str, revision: str | None,
               prompt_mode: str = prompt_render.CHAT_ASSISTANT,
               system_prompt: str | None = None,
               qwen_thinking_enabled: bool = False,
-              max_tokens: int = 0) -> dict:
+              max_tokens: int = 0,
+              reasoning_effort: str | None = None,
+              reasoning_max_tokens: int | None = None) -> dict:
     """Exact per-item token counts and the context verdict.
 
     Returns a report dict; it never raises for oversized items (that is the
     CALLER's decision to refuse), only for inputs it genuinely cannot read.
+
+    The generation reserve is BOTH budgets: under a declared reasoning
+    protocol the decode may emit ``reasoning_max_tokens`` reasoning tokens
+    before its ``max_tokens`` answer, and every one of them sits in the
+    context window (matches ``generate._stream_rendered``'s outer bound).
     """
     tokenizer = _tokenizer(model_id, revision)
     window = context_window(model_id, revision)
-    budget = (window - max_tokens - CONTEXT_BUDGET_RESERVE
+    reasoning_reserve = int(reasoning_max_tokens or 0)
+    budget = (window - max_tokens - reasoning_reserve - CONTEXT_BUDGET_RESERVE
               if window else None)
 
     items: list[dict] = []
@@ -94,12 +102,14 @@ def preflight(prompts: list[dict], *, model_id: str, revision: str | None,
             rendered = prompt_render.render_transcript(
                 tokenizer, prompt["transcript"], model_id=model_id,
                 prompt_mode=prompt_mode, system_prompt=system_prompt,
-                qwen_thinking_enabled=qwen_thinking_enabled)
+                qwen_thinking_enabled=qwen_thinking_enabled,
+                reasoning_effort=reasoning_effort)
         else:
             rendered = prompt_render.render(
                 tokenizer, text, model_id=model_id, prompt_mode=prompt_mode,
                 system_prompt=system_prompt,
-                qwen_thinking_enabled=qwen_thinking_enabled)
+                qwen_thinking_enabled=qwen_thinking_enabled,
+                reasoning_effort=reasoning_effort)
         count = rendered.prompt_token_count
         entry = {"id": prompt.get("id") or f"prompt-{index}",
                  "promptTokens": count}
@@ -115,6 +125,7 @@ def preflight(prompts: list[dict], *, model_id: str, revision: str | None,
         "revision": revision,
         "contextWindow": window,
         "maxTokens": max_tokens,
+        "reasoningMaxTokens": reasoning_reserve,
         "reservedTokens": CONTEXT_BUDGET_RESERVE,
         "promptBudget": budget,
         "itemCount": len(items),
@@ -139,13 +150,19 @@ def refusal(report: dict) -> str | None:
         for i in over)
     revision = report.get("revision")
     at_revision = f" at revision {revision[:12]}…" if revision else ""
+    reasoning = report.get("reasoningMaxTokens") or 0
+    generation = (f"{report.get('maxTokens')} for the answer plus "
+                  f"{reasoning} for the reasoning block"
+                  if reasoning else f"{report.get('maxTokens')} for generation")
+    lower = ("lower maxTokens or reasoningMaxTokens" if reasoning
+             else "lower Max tokens")
     return (
         f"{len(over)} of {report.get('itemCount')} task prompts exceed the "
         f"context budget for {report.get('modelID')}{at_revision}"
         f": the model's context window is {window} tokens, and reserving "
-        f"{report.get('maxTokens')} for generation plus "
+        f"{generation} plus "
         f"{report.get('reservedTokens')} leaves {budget} for the prompt. "
         f"Over-budget items: {lines}. The longest needs {worst} tokens. "
-        "Shorten those items, lower Max tokens, or use a model with a larger "
+        f"Shorten those items, {lower}, or use a model with a larger "
         "context window — nothing is dropped automatically, because silently "
         "excluding items would change the measured sample without recording it.")

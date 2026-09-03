@@ -382,9 +382,26 @@ struct ExperimentsPanelView: View {
                                     + "user turn (this affects prompt-set "
                                     + "hashing and prompt design)")
 
-                        Toggle("Baseline Qwen thinking mode", isOn: $panel.qwenThinkingEnabled)
-                            .disabled(manifest.status != .draft || !manifest.modelID.lowercased().contains("qwen"))
-                            .help("baseline Qwen-only setting; measured studies default to no-think")
+                        Picker("Reasoning effort", selection: $panel.reasoningEffort) {
+                            ForEach(ReasoningEffort.vocabulary, id: \.self) { effort in
+                                Text(effort).tag(effort)
+                            }
+                        }
+                        .disabled(manifest.status != .draft
+                            || !PromptRendering.hasThinkingMode(manifest.modelID))
+                        .help("The reasoning effort the chat template is rendered with "
+                            + "(off = no thinking block). A non-off effort needs a "
+                            + "reasoning token budget; only families with a thinking "
+                            + "mode (Qwen) can declare one.")
+                        if panel.qwenThinkingEnabled {
+                            TextField(
+                                "Reasoning max tokens",
+                                value: $panel.reasoningMaxTokens,
+                                format: .number)
+                            .disabled(manifest.status != .draft)
+                            .help("The reasoning block's own token cap (up to </think>); "
+                                + "Max tokens is then the answer budget. Required.")
+                        }
                     }
 
                     TemperatureRow(value: $panel.runTemperature)

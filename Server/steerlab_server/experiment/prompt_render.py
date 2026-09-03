@@ -10,11 +10,24 @@ Swift does:
   single ``add_special_tokens=False`` tokenize to avoid a double BOS.
 - **Qwen3** disables thinking mode for studies: ``enable_thinking=False`` is
   passed to the chat template (chat mode), or `` /no_think`` is appended (raw
-  completion), unless thinking is explicitly enabled.
+  completion), unless a non-off ``reasoningEffort`` is declared — then
+  ``enable_thinking=True`` AND ``reasoning_effort=<value>`` go to the template
+  (Qwen3.8's template reads the effort; Qwen3's ignores the extra variable,
+  which is what makes the declared study reproducible on either).
 
 Two prompt modes mirror ``ExperimentManifest.PromptMode``:
 ``chatAssistant`` (apply chat template, add generation prompt) and
 ``rawCompletion`` (no template; the bare/scaffolded text).
+
+THE REASONING EFFORT (2026-09-03). The Qwen-specific boolean
+``qwenThinkingEnabled`` was replaced by ``reasoningEffort`` ∈ {off, low,
+medium, xhigh}, on the study protocol and on a concept's
+``extractionRendering`` alike. Every renderer here takes the effort; the old
+boolean survives as a keyword alias (``qwen_thinking_enabled``) that means
+``off``/``xhigh`` — because a manifest frozen under the old spelling with
+thinking ON ran under the template's DEFAULT effort, which on Qwen3.8 is
+``xhigh``. Callers that pass the effort pass it explicitly; callers that
+never heard of it keep rendering exactly what they always did.
 """
 
 from __future__ import annotations
@@ -23,6 +36,17 @@ from dataclasses import dataclass
 
 CHAT_ASSISTANT = "chatAssistant"
 RAW_COMPLETION = "rawCompletion"
+
+#: The declared reasoning effort that means NO thinking block: today's
+#: ``enable_thinking=False`` path, byte for byte.
+REASONING_OFF = "off"
+#: The closed vocabulary of ``reasoningEffort``, in the fixed cross-engine
+#: order. The non-off values are the ones the Qwen3.8 chat template accepts.
+#: Swift twin: ``ReasoningEffort`` (SteeringKit).
+REASONING_EFFORTS: tuple[str, ...] = (REASONING_OFF, "low", "medium", "xhigh")
+#: What a legacy ``qwenThinkingEnabled: true`` means: the template's own
+#: default effort, which is what every such study actually ran under.
+LEGACY_THINKING_EFFORT = "xhigh"
 
 
 @dataclass
@@ -38,6 +62,160 @@ def _is_gemma(model_id: str) -> bool:
 
 def _is_qwen(model_id: str) -> bool:
     return "qwen" in model_id.lower()
+
+
+def has_thinking_mode(model_id: str) -> bool:
+    """Whether this family's chat template HAS a thinking mode to declare an
+    effort for. Qwen3/Qwen3.8 do; Gemma 3 does not — a non-off effort on it
+    would reach nothing, so the declaration gates refuse it by name rather
+    than letting a study look as if it reasoned. Swift twin:
+    ``PromptRendering.hasThinkingMode``."""
+    return _is_qwen(model_id)
+
+
+def resolve_reasoning_effort(reasoning_effort: str | None,
+                             qwen_thinking_enabled: bool = False) -> str:
+    """The effort a renderer applies: the declared value when one was passed,
+    else the legacy boolean's meaning (``off`` / ``xhigh``)."""
+    if reasoning_effort is None:
+        return LEGACY_THINKING_EFFORT if qwen_thinking_enabled else REASONING_OFF
+    if reasoning_effort not in REASONING_EFFORTS:
+        raise ValueError(
+            f"unknown reasoningEffort {reasoning_effort!r} — known: "
+            + ", ".join(REASONING_EFFORTS))
+    return reasoning_effort
+
+
+def thinking_template_kwargs(model_id: str, effort: str) -> dict:
+    """The chat-template variables the effort becomes, for this family.
+
+    Nothing for a family without a thinking mode. For Qwen, ``off`` is
+    exactly the kwargs every study has always rendered with
+    (``enable_thinking=False``), so an off study's prompt bytes cannot move;
+    a non-off effort adds ``reasoning_effort`` beside ``enable_thinking=True``.
+    Swift twin: ``PromptRendering.thinkingContext``.
+    """
+    if not has_thinking_mode(model_id):
+        return {}
+    if effort == REASONING_OFF:
+        return {"enable_thinking": False}
+    return {"enable_thinking": True, "reasoning_effort": effort}
+
+
+# --- the declared reasoning protocol (manifest keys and their rules) ---------
+
+#: Manifest / protocol key of the effort. Swift twin: `CodingKeys.reasoningEffort`.
+REASONING_EFFORT_KEY = "reasoningEffort"
+#: Manifest / protocol key of the reasoning block's own token cap.
+REASONING_MAX_TOKENS_KEY = "reasoningMaxTokens"
+#: The key this vocabulary replaced. READ (as off/xhigh) wherever no
+#: ``reasoningEffort`` is present, so every manifest frozen under it keeps
+#: loading and verifying unchanged; never written by a new declaration.
+LEGACY_THINKING_KEY = "qwenThinkingEnabled"
+
+
+def read_reasoning_effort(d: dict) -> str:
+    """The effort a manifest dict declares.
+
+    A NON-OFF ``reasoningEffort`` wins outright. Otherwise a legacy
+    ``qwenThinkingEnabled: true`` still means the template's default effort
+    (xhigh) — even beside an explicit ``off``, which every manifest created
+    since the effort existed carries by default: the boolean is the OLDER,
+    more deliberate declaration on such a document (a hand edit, or a
+    pre-effort toggle written onto a fresh manifest), and reading it as off
+    would silently drop a thinking mode the study asked for. The writers never
+    leave both keys on a draft (``set_protocol`` drops the boolean). Then
+    ``reasoningEffort`` as spelled, else off.
+
+    A malformed value comes back VERBATIM (as a string) rather than being
+    corrected: :func:`verify` names it, and silently reading ``"hgih"`` as off
+    would be the exact misspelling-changes-the-measurement failure the closed
+    vocabulary exists to prevent. Swift twin:
+    ``ExperimentManifest.resolvedReasoningEffort``.
+    """
+    effort = d.get(REASONING_EFFORT_KEY)
+    if effort is not None and str(effort) != REASONING_OFF:
+        return str(effort)
+    if bool(d.get(LEGACY_THINKING_KEY, False)):
+        return LEGACY_THINKING_EFFORT
+    return REASONING_OFF if effort is None else str(effort)
+
+
+def read_reasoning_max_tokens(d: dict) -> int | None:
+    """The declared reasoning budget, or None. A non-integer (or a bool, or
+    a non-positive number) reads as None here and is named by
+    :func:`reasoning_protocol_violations` — the same split
+    ``truncation_gate.declared_threshold`` makes."""
+    value = d.get(REASONING_MAX_TOKENS_KEY)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return None
+    return value
+
+
+#: Refusal sentences shared VERBATIM with the Swift twin
+#: (``ExperimentStore.setSamplingProtocol`` / ``modelOutputPinViolations``).
+BUDGET_WITHOUT_EFFORT_REASON = (
+    f"{REASONING_MAX_TOKENS_KEY} is declared but {REASONING_EFFORT_KEY} is "
+    "off — the model generates no reasoning block to cap; declare a non-off "
+    f"{REASONING_EFFORT_KEY} or drop the budget")
+
+
+def unknown_effort_reason(value) -> str:
+    return (f"unknown {REASONING_EFFORT_KEY} {value!r} — known: "
+            + ", ".join(REASONING_EFFORTS))
+
+
+def effort_without_budget_reason(effort: str) -> str:
+    return (f"{REASONING_EFFORT_KEY} '{effort}' needs a "
+            f"{REASONING_MAX_TOKENS_KEY} — the reasoning block's own token "
+            "cap, declared and never defaulted; maxTokens stays the answer "
+            "budget, counted from the token after </think>")
+
+
+def effort_without_thinking_mode_reason(effort: str, model_id: str) -> str:
+    return (f"{REASONING_EFFORT_KEY} '{effort}' declared for {model_id}, "
+            "whose family has no thinking mode — the chat template would "
+            "ignore it and the study would look as if it reasoned when it "
+            f"did not; declare {REASONING_EFFORT_KEY} off")
+
+
+def malformed_budget_reason(value) -> str:
+    return (f"{REASONING_MAX_TOKENS_KEY} must be a positive integer — got "
+            f"{value!r}")
+
+
+def reasoning_protocol_violations(*, effort, reasoning_max_tokens,
+                                  model_id: str) -> list[str]:
+    """Every rule a declared reasoning protocol must satisfy, as the
+    sentences both engines refuse with. ``effort`` and
+    ``reasoning_max_tokens`` are the RAW declared values (None = absent).
+
+    - the effort is in the closed vocabulary;
+    - a non-off effort names a family with a thinking mode;
+    - a non-off effort carries a positive-integer reasoning budget;
+    - an off effort carries none.
+    """
+    problems: list[str] = []
+    if effort is None:
+        effort = REASONING_OFF
+    if not isinstance(effort, str) or effort not in REASONING_EFFORTS:
+        problems.append(unknown_effort_reason(effort))
+        return problems
+    if reasoning_max_tokens is not None and (
+            isinstance(reasoning_max_tokens, bool)
+            or not isinstance(reasoning_max_tokens, int)
+            or reasoning_max_tokens < 1):
+        problems.append(malformed_budget_reason(reasoning_max_tokens))
+        return problems
+    if effort == REASONING_OFF:
+        if reasoning_max_tokens is not None:
+            problems.append(BUDGET_WITHOUT_EFFORT_REASON)
+        return problems
+    if not has_thinking_mode(model_id):
+        problems.append(effort_without_thinking_mode_reason(effort, model_id))
+    if reasoning_max_tokens is None:
+        problems.append(effort_without_budget_reason(effort))
+    return problems
 
 
 def has_system_role(model_id: str) -> bool:
@@ -216,7 +394,8 @@ def transcript_display_text(turns: list) -> str:
 def render_transcript(tokenizer, transcript: list, *, model_id: str,
                       prompt_mode: str = CHAT_ASSISTANT,
                       system_prompt: str | None = None,
-                      qwen_thinking_enabled: bool = False) -> RenderedPrompt:
+                      qwen_thinking_enabled: bool = False,
+                      reasoning_effort: str | None = None) -> RenderedPrompt:
     """Render one scripted-transcript study item through the model family's
     REAL chat template — the same :func:`render_messages` path the interactive
     Playground verified byte-parity for, so pinned stimulus bytes and the
@@ -236,7 +415,8 @@ def render_transcript(tokenizer, transcript: list, *, model_id: str,
         turns = turns[1:]
     return render_messages(
         tokenizer, turns, model_id=model_id, prompt_mode=CHAT_ASSISTANT,
-        system_prompt=system, qwen_thinking_enabled=qwen_thinking_enabled)
+        system_prompt=system, qwen_thinking_enabled=qwen_thinking_enabled,
+        reasoning_effort=reasoning_effort)
 
 
 class ChatTemplateConstraintError(ValueError):
@@ -297,7 +477,8 @@ def _apply_chat_template(tokenizer, chat, *, model_id: str, **kwargs) -> str:
 def render(tokenizer, prompt: str, *, model_id: str,
            prompt_mode: str = CHAT_ASSISTANT, system_prompt: str | None = None,
            qwen_thinking_enabled: bool = False,
-           add_generation_prompt: bool = True) -> RenderedPrompt:
+           add_generation_prompt: bool = True,
+           reasoning_effort: str | None = None) -> RenderedPrompt:
     """Render one prompt to token ids.
 
     ``add_generation_prompt`` exists for the EXTRACTION rendering path
@@ -305,7 +486,11 @@ def render(tokenizer, prompt: str, *, model_id: str,
     rendered without the trailing generation prompt. Generation callers never
     pass it: the default reproduces the measured-generation render exactly,
     so this parameter cannot change what any existing caller does.
+
+    ``reasoning_effort`` is the declared effort (see the module docstring);
+    when None the legacy ``qwen_thinking_enabled`` boolean decides.
     """
+    effort = resolve_reasoning_effort(reasoning_effort, qwen_thinking_enabled)
     system = (system_prompt or "").strip()
     has_system = bool(system)
 
@@ -314,7 +499,7 @@ def render(tokenizer, prompt: str, *, model_id: str,
         if has_system:
             text = system + "\n\n" + text
         if _is_qwen(model_id):
-            text += " /think" if qwen_thinking_enabled else " /no_think"
+            text += " /no_think" if effort == REASONING_OFF else " /think"
         # Raw completion: tokenize as-is (special tokens per tokenizer default,
         # matching the Swift raw-text path which adds them once).
         ids = tokenizer(text, add_special_tokens=True).input_ids
@@ -330,9 +515,7 @@ def render(tokenizer, prompt: str, *, model_id: str,
             messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": user})
 
-    template_kwargs = {}
-    if _is_qwen(model_id):
-        template_kwargs["enable_thinking"] = qwen_thinking_enabled
+    template_kwargs = thinking_template_kwargs(model_id, effort)
 
     text = _apply_chat_template(
         tokenizer, messages, model_id=model_id,
@@ -365,7 +548,8 @@ class AssistantVoiceUnsupported(ValueError):
 
 
 def render_assistant_turn(tokenizer, text: str, *, model_id: str,
-                          qwen_thinking_enabled: bool = False) -> RenderedPrompt:
+                          qwen_thinking_enabled: bool = False,
+                          reasoning_effort: str | None = None) -> RenderedPrompt:
     """Render one stimulus as the model's OWN OUTPUT — the assistant voice.
 
     THE EXACT RENDERED FORM. On Gemma 3 this produces, and nothing else::
@@ -405,9 +589,8 @@ def render_assistant_turn(tokenizer, text: str, *, model_id: str,
     by token arithmetic holds for Gemma but breaks on Qwen3's thinking
     scaffold. A study that needs this voice extracts here.
     """
-    template_kwargs = {}
-    if _is_qwen(model_id):
-        template_kwargs["enable_thinking"] = qwen_thinking_enabled
+    template_kwargs = thinking_template_kwargs(
+        model_id, resolve_reasoning_effort(reasoning_effort, qwen_thinking_enabled))
     probe = [{"role": "user", "content": ASSISTANT_VOICE_PROBE_TURN}]
     prefix = _apply_chat_template(
         tokenizer, probe, model_id=model_id, tokenize=False,
@@ -535,7 +718,8 @@ def render_messages(tokenizer, messages: list[dict], *, model_id: str,
                     prompt_mode: str = CHAT_ASSISTANT,
                     system_prompt: str | None = None,
                     qwen_thinking_enabled: bool = False,
-                    continue_final_message: bool = False) -> RenderedPrompt:
+                    continue_final_message: bool = False,
+                    reasoning_effort: str | None = None) -> RenderedPrompt:
     """Render a multi-turn chat transcript for interactive server chat.
 
     Study runs intentionally stay on ``render``'s single-prompt path. This
@@ -580,12 +764,14 @@ def render_messages(tokenizer, messages: list[dict], *, model_id: str,
     if not cleaned:
         return render(tokenizer, "", model_id=model_id, prompt_mode=prompt_mode,
                       system_prompt=system_prompt,
-                      qwen_thinking_enabled=qwen_thinking_enabled)
+                      qwen_thinking_enabled=qwen_thinking_enabled,
+                      reasoning_effort=reasoning_effort)
     if prompt_mode == RAW_COMPLETION:
         text = "\n".join(f"{m['role']}: {m['content']}" for m in cleaned)
         return render(tokenizer, text, model_id=model_id, prompt_mode=prompt_mode,
                       system_prompt=system_prompt,
-                      qwen_thinking_enabled=qwen_thinking_enabled)
+                      qwen_thinking_enabled=qwen_thinking_enabled,
+                      reasoning_effort=reasoning_effort)
 
     system = (system_prompt or "").strip()
     chat = list(cleaned)
@@ -600,9 +786,8 @@ def render_messages(tokenizer, messages: list[dict], *, model_id: str,
         elif chat[0]["role"] != "system":
             chat.insert(0, {"role": "system", "content": system})
 
-    template_kwargs = {}
-    if _is_qwen(model_id):
-        template_kwargs["enable_thinking"] = qwen_thinking_enabled
+    template_kwargs = thinking_template_kwargs(
+        model_id, resolve_reasoning_effort(reasoning_effort, qwen_thinking_enabled))
     if continue_final_message:
         # transformers renders the final assistant turn WITHOUT its
         # end-of-turn suffix and adds no generation prompt (sentinel-tag

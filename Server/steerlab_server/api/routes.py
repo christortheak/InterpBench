@@ -811,6 +811,14 @@ def _declared_extraction(body: dict, *, legacy_position=None):
         rendering = er.parse_declaration(body.get("extractionRendering"))
     except er.ExtractionRenderingError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    # A non-off reasoning effort on a family without a thinking mode is a
+    # 400 here, at declaration, where the body names the model — never a
+    # silent render without the scaffold the declaration claims.
+    model_id = str(body.get("modelID") or body.get("model") or "")
+    if model_id:
+        problem = er.thinking_mode_problem(rendering, model_id)
+        if problem is not None:
+            raise HTTPException(status_code=400, detail=problem)
     if rendering is None or rendering.is_raw:
         refusal = rp.templated_rendering_refusal(position)
         if refusal is not None:
@@ -3078,7 +3086,9 @@ def build_router(state: ServiceState) -> APIRouter:
                 prompt_mode=manifest.prompt_mode,
                 system_prompt=manifest.system_prompt,
                 qwen_thinking_enabled=manifest.qwen_thinking_enabled,
-                max_tokens=int(body.get("maxTokens") or manifest.max_tokens or 0))
+                max_tokens=int(body.get("maxTokens") or manifest.max_tokens or 0),
+                reasoning_effort=manifest.reasoning_effort,
+                reasoning_max_tokens=manifest.reasoning_max_tokens)
         except token_preflight.PreflightError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except (OSError, ValueError, RuntimeError) as exc:

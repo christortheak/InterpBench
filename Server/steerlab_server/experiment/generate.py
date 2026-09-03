@@ -18,7 +18,7 @@ import torch
 from ..steering import plan
 from ..steering.injector import VectorInjector
 from ..steering.model_loader import SteeredModel
-from . import prompt_render
+from . import prompt_render, truncation_gate
 
 CONTEXT_BUDGET_RESERVE = 16  # matches Swift contextBudgetReserve
 
@@ -376,7 +376,9 @@ def stream_generate(model: SteeredModel, prompt: str, *, model_id: str | None = 
                     transcript: list | None = None,
                     should_stop: "threading.Event | None" = None,
                     token_ids_out: list | None = None,
-                    observers: list | None = None) -> Iterator[str]:
+                    observers: list | None = None,
+                    reasoning_effort: str | None = None,
+                    reasoning_max_tokens: int | None = None) -> Iterator[str]:
     """Yield decoded text chunks as they are produced, under active steering.
 
     ``latent_edits`` (``steering.sae_latent.SAELatentEdit``) arm TRUE SAE
@@ -388,23 +390,32 @@ def stream_generate(model: SteeredModel, prompt: str, *, model_id: str | None = 
     conversation IS the prompt, so the injector gate and the context budget
     see the full rendered token count; the transcript's own system turn
     replaces ``system_prompt`` for this generation.
+
+    ``reasoning_effort``/``reasoning_max_tokens`` are the declared reasoning
+    protocol (see :mod:`.truncation_gate`): the effort reaches the chat
+    template, and a declared reasoning budget makes ``max_tokens`` the ANSWER
+    budget with the reasoning block capped separately. Both default to off, so
+    a caller that does not pass them generates exactly as before.
     """
     mid = model_id or model.model_id
     if transcript is not None:
         rendered = prompt_render.render_transcript(
             model.tokenizer, transcript, model_id=mid, prompt_mode=prompt_mode,
             system_prompt=system_prompt,
-            qwen_thinking_enabled=qwen_thinking_enabled)
+            qwen_thinking_enabled=qwen_thinking_enabled,
+            reasoning_effort=reasoning_effort)
     else:
         rendered = prompt_render.render(
             model.tokenizer, prompt, model_id=mid, prompt_mode=prompt_mode,
             system_prompt=system_prompt,
-            qwen_thinking_enabled=qwen_thinking_enabled)
+            qwen_thinking_enabled=qwen_thinking_enabled,
+            reasoning_effort=reasoning_effort)
     yield from _stream_rendered(
         model, rendered, max_tokens=max_tokens, temperature=temperature,
         injections=injections, latent_edits=latent_edits,
         should_stop=should_stop,
-        token_ids_out=token_ids_out, observers=observers)
+        token_ids_out=token_ids_out, observers=observers,
+        reasoning_max_tokens=reasoning_max_tokens)
 
 
 def stream_generate_messages(model: SteeredModel, messages: list[dict], *,
@@ -416,7 +427,9 @@ def stream_generate_messages(model: SteeredModel, messages: list[dict], *,
                              system_prompt: str | None = None,
                              qwen_thinking_enabled: bool = False,
                              continue_final_message: bool = False,
-                             should_stop: "threading.Event | None" = None) -> Iterator[str]:
+                             should_stop: "threading.Event | None" = None,
+                             reasoning_effort: str | None = None,
+                             reasoning_max_tokens: int | None = None) -> Iterator[str]:
     """Yield decoded text chunks from a multi-turn chat transcript.
 
     ``continue_final_message=True`` continues an INCOMPLETE final assistant
@@ -426,11 +439,12 @@ def stream_generate_messages(model: SteeredModel, messages: list[dict], *,
     rendered = prompt_render.render_messages(
         model.tokenizer, messages, model_id=mid, prompt_mode=prompt_mode,
         system_prompt=system_prompt, qwen_thinking_enabled=qwen_thinking_enabled,
-        continue_final_message=continue_final_message)
+        continue_final_message=continue_final_message,
+        reasoning_effort=reasoning_effort)
     yield from _stream_rendered(
         model, rendered, max_tokens=max_tokens, temperature=temperature,
         injections=injections, latent_edits=latent_edits,
-        should_stop=should_stop)
+        should_stop=should_stop, reasoning_max_tokens=reasoning_max_tokens)
 
 
 def _stream_rendered(model: SteeredModel, rendered: prompt_render.RenderedPrompt, *,
@@ -439,7 +453,8 @@ def _stream_rendered(model: SteeredModel, rendered: prompt_render.RenderedPrompt
                      latent_edits: list | None = None,
                      should_stop: "threading.Event | None" = None,
                      token_ids_out: list | None = None,
-                     observers: list | None = None) -> Iterator[str]:
+                     observers: list | None = None,
+                     reasoning_max_tokens: int | None = None) -> Iterator[str]:
     """Stream decoded chunks; optionally retain the sampled ids and observers.
 
     Both new keywords are additive and default to off, so every existing caller
@@ -447,15 +462,34 @@ def _stream_rendered(model: SteeredModel, rendered: prompt_render.RenderedPrompt
     ids after the generation thread joins (§8.3 prediction alignment);
     ``observers`` are extra read-only ``LayerIntervention``s armed AFTER the
     injectors, so a recorder sees the post-intervention residual.
+
+    ``reasoning_max_tokens`` (a declared reasoning budget) splits the decode
+    into two budgets: the reasoning block up to ``</think>`` gets this many
+    tokens, the answer after it gets ``max_tokens``. The framework is handed
+    their SUM as ``max_new_tokens`` — the outer bound — and the split itself
+    is enforced by a stopping criterion on the same seam as cancellation
+    (:func:`_stopping_criteria`), so the context preflight reserves both. A
+    tokenizer with no single ``</think>`` token gets no split (the declaration
+    gates already refuse the effort on such a family).
     """
     from transformers import LogitsProcessorList, TextIteratorStreamer
 
-    check_context_budget(model, rendered.prompt_token_count, max_tokens)
+    budget = None
+    if reasoning_max_tokens:
+        close_id = truncation_gate.think_close_token_id(model.tokenizer)
+        if close_id is not None:
+            budget = truncation_gate.ReasoningBudget(
+                reasoning_max_tokens=int(reasoning_max_tokens),
+                max_tokens=int(max_tokens), close_id=close_id)
+    outer_bound = budget.outer_bound if budget is not None else max_tokens
+
+    check_context_budget(model, rendered.prompt_token_count, outer_bound)
 
     input_ids = torch.tensor([rendered.input_ids], device=model.device)
     streamer = TextIteratorStreamer(model.tokenizer, skip_prompt=True,
                                     skip_special_tokens=True)
-    kwargs = _generation_kwargs(input_ids, max_tokens, temperature, model.tokenizer, model)
+    kwargs = _generation_kwargs(input_ids, outer_bound, temperature,
+                                model.tokenizer, model)
     kwargs["streamer"] = streamer
 
     # Self-naming non-finite guard: checks the raw logits of every decode step
@@ -473,7 +507,8 @@ def _stream_rendered(model: SteeredModel, rendered: prompt_render.RenderedPrompt
     # sets it when THIS generator is closed early — either way an abandoned
     # generation cannot squat on the model-slot lock until max_tokens.
     stop = should_stop or threading.Event()
-    kwargs["stopping_criteria"] = _stopping_criteria(stop)
+    kwargs["stopping_criteria"] = _stopping_criteria(
+        stop, budget=budget, prompt_length=len(rendered.input_ids))
 
     injectors = _injectors(injections or [], rendered.prompt_token_count,
                            latent_edits=latent_edits)
@@ -547,16 +582,67 @@ def _stream_rendered(model: SteeredModel, rendered: prompt_render.RenderedPrompt
         raise translated from error[0]
 
 
-def _stopping_criteria(stop: "threading.Event"):
+def _stopping_criteria(stop: "threading.Event", *, budget=None,
+                       prompt_length: int = 0):
     """A transformers StoppingCriteriaList that ends generation when the
-    event is set (checked after every decode step)."""
+    event is set (checked after every decode step) — and, under a declared
+    reasoning budget, when either block's own cap fills
+    (:class:`truncation_gate.ReasoningBudget`).
+
+    The budget criterion feeds every NEW sampled id to the budget rule in
+    order — transformers hands the whole sequence to a criterion each step,
+    so the criterion remembers how many it has already fed and reads only the
+    tail beyond the prompt. It stops exactly when the rule says to, and the
+    finish reason is later re-derived from the retained ids by
+    :func:`truncation_gate.finish_reason` under the same rule, so the record
+    and the decode cannot disagree.
+    """
     from transformers import StoppingCriteria, StoppingCriteriaList
 
     class _StopOnEvent(StoppingCriteria):
         def __call__(self, input_ids, scores, **kwargs) -> bool:
             return stop.is_set()
 
-    return StoppingCriteriaList([_StopOnEvent()])
+    criteria = [_StopOnEvent()]
+    if budget is not None:
+        criteria.append(_ReasoningStop(budget, prompt_length))
+    return StoppingCriteriaList(criteria)
+
+
+def _reasoning_stop_class():
+    """The budget stopping criterion, built lazily so the transformers import
+    stays where every other one in this module is (inside the function that
+    needs it) and the pure rule stays testable without a model."""
+    from transformers import StoppingCriteria
+
+    class ReasoningStop(StoppingCriteria):
+        """Stop when :class:`truncation_gate.ReasoningBudget` says to."""
+
+        def __init__(self, budget, prompt_length: int):
+            super().__init__()
+            self.budget = budget
+            self.prompt_length = int(prompt_length)
+            self.fed = 0
+            self.verdict: str | None = None
+
+        def __call__(self, input_ids, scores, **kwargs) -> bool:
+            if self.verdict is not None:
+                return True
+            row = input_ids[0]
+            total = int(row.shape[-1]) - self.prompt_length
+            while self.fed < total:
+                verdict = self.budget.observe(int(row[self.prompt_length + self.fed]))
+                self.fed += 1
+                if verdict is not None:
+                    self.verdict = verdict
+                    return True
+            return False
+
+    return ReasoningStop
+
+
+def _ReasoningStop(budget, prompt_length: int):  # noqa: N802 - class factory
+    return _reasoning_stop_class()(budget, prompt_length)
 
 
 def generated_token_ids(outcome, prompt_length: int) -> list[int]:
@@ -612,12 +698,15 @@ def generate(model: SteeredModel, prompt: str, *, model_id: str | None = None,
              transcript: list | None = None,
              on_chunk: Callable[[str], None] | None = None,
              token_ids_out: list | None = None,
-             observers: list | None = None) -> str:
+             observers: list | None = None,
+             reasoning_effort: str | None = None,
+             reasoning_max_tokens: int | None = None) -> str:
     """Generate a full response, optionally invoking ``on_chunk`` as text grows.
 
     ``token_ids_out``/``observers`` are the read-only observation seam (J-lens
     readout). Both default to off, so a caller that does not ask generates
-    exactly as before.
+    exactly as before. ``reasoning_effort``/``reasoning_max_tokens`` are the
+    declared reasoning protocol (see :func:`stream_generate`).
     """
     text = ""
     for chunk in stream_generate(
@@ -626,7 +715,8 @@ def generate(model: SteeredModel, prompt: str, *, model_id: str | None = None,
             latent_edits=latent_edits, prompt_mode=prompt_mode,
             system_prompt=system_prompt, qwen_thinking_enabled=qwen_thinking_enabled,
             transcript=transcript, token_ids_out=token_ids_out,
-            observers=observers):
+            observers=observers, reasoning_effort=reasoning_effort,
+            reasoning_max_tokens=reasoning_max_tokens):
         text += chunk
         if on_chunk is not None:
             on_chunk(text)
@@ -642,14 +732,18 @@ def generate_messages(model: SteeredModel, messages: list[dict], *,
                       system_prompt: str | None = None,
                       qwen_thinking_enabled: bool = False,
                       continue_final_message: bool = False,
-                      on_chunk: Callable[[str], None] | None = None) -> str:
+                      on_chunk: Callable[[str], None] | None = None,
+                      reasoning_effort: str | None = None,
+                      reasoning_max_tokens: int | None = None) -> str:
     text = ""
     for chunk in stream_generate_messages(
             model, messages, model_id=model_id, max_tokens=max_tokens,
             temperature=temperature, injections=injections,
             latent_edits=latent_edits, prompt_mode=prompt_mode,
             system_prompt=system_prompt, qwen_thinking_enabled=qwen_thinking_enabled,
-            continue_final_message=continue_final_message):
+            continue_final_message=continue_final_message,
+            reasoning_effort=reasoning_effort,
+            reasoning_max_tokens=reasoning_max_tokens):
         text += chunk
         if on_chunk is not None:
             on_chunk(text)

@@ -174,7 +174,8 @@ def inert_declaration_advisory(
         rendering: ExtractionRendering | None, *,
         qwen_thinking_enabled: bool = False,
         prompt_mode: str | None = None,
-        system_prompt: str | None = None) -> str | None:
+        system_prompt: str | None = None,
+        reasoning_effort: str | None = None) -> str | None:
     """One loud line when a manifest declares chat context that raw extraction
     provably ignores — or ``None``, which is the common case.
 
@@ -200,15 +201,21 @@ def inert_declaration_advisory(
     from ..experiment import prompt_render
 
     system = (system_prompt or "").strip()
-    if not qwen_thinking_enabled and not system:
+    # The effort a thinking-on study declared, in today's vocabulary: an
+    # explicit effort wins, and the legacy boolean alone means the template's
+    # default (xhigh) — the same reading every renderer applies.
+    effort = prompt_render.resolve_reasoning_effort(
+        reasoning_effort, qwen_thinking_enabled)
+    thinking = effort != prompt_render.REASONING_OFF
+    if not thinking and not system:
         return None
     inert = []
     if prompt_mode and prompt_mode != prompt_render.RAW_COMPLETION:
         inert.append(f"promptMode {prompt_mode}")
     if system:
         inert.append("systemPrompt")
-    if qwen_thinking_enabled:
-        inert.append("qwenThinkingEnabled true")
+    if thinking:
+        inert.append(f"reasoningEffort {effort}")
     return (
         "extraction is running under RAW rendering, which tokenizes the "
         "stimulus string alone — these declarations do not reach it: "

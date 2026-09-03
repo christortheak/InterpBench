@@ -590,7 +590,13 @@ public enum ExperimentTasks {
         /// engine that predates the field is a generation nobody classified,
         /// which is a different fact from one that finished.
         let classified: Int
+        /// Generations that were CUT OFF anywhere — at the answer cap or, under
+        /// a reasoning budget, at the reasoning cap. Both are incomplete.
         let lengthStopped: Int
+        /// The subset of `lengthStopped` that never closed its reasoning
+        /// block, reported beside it so a reader can tell an answer budget
+        /// that is too small from a reasoning budget that is.
+        let lengthStoppedInReasoning: Int
         let lengthStoppedFraction: Double
     }
 
@@ -600,6 +606,7 @@ public enum ExperimentTasks {
         let threshold: Double?
         let classified: Int
         let lengthStopped: Int
+        let lengthStoppedInReasoning: Int
         /// Pooled over the run — reported for orientation and never gated on.
         /// The 2026-08-30 incident's pooled fraction looked unremarkable
         /// while one whole arm was truncated; `cells` is the reading that
@@ -608,34 +615,42 @@ public enum ExperimentTasks {
         let cells: [TruncationCellReport]
     }
 
-    /// `(classified, lengthStopped)` for one cell of a row set.
+    /// `(classified, lengthStopped, lengthStoppedInReasoning)` for one cell
+    /// of a row set.
     static func truncationCell(
         rows: [MetricRow], condition: String, promptID: String
-    ) -> (classified: Int, lengthStopped: Int) {
+    ) -> (classified: Int, lengthStopped: Int, inReasoning: Int) {
         var classified = 0
         var stopped = 0
+        var inReasoning = 0
         for row in rows where row.condition == condition && row.promptID == promptID {
             guard let reason = row.finishReason else { continue }
             classified += 1
-            if reason == FinishReason.length { stopped += 1 }
+            if FinishReason.isCutOff(reason) { stopped += 1 }
+            if reason == FinishReason.lengthInReasoning { inReasoning += 1 }
         }
-        return (classified, stopped)
+        return (classified, stopped, inReasoning)
     }
 
     static func truncationReport(
         rows: [MetricRow], threshold: Double?
     ) -> TruncationReport {
         var order: [String] = []
-        var byCell: [String: (condition: String, promptID: String, n: Int, stopped: Int)] = [:]
+        var byCell:
+            [String: (condition: String, promptID: String, n: Int, stopped: Int,
+                inReasoning: Int)] = [:]
         for row in rows {
             guard let reason = row.finishReason else { continue }
             let key = row.condition + "\u{0}" + row.promptID
             if byCell[key] == nil {
                 order.append(key)
-                byCell[key] = (row.condition, row.promptID, 0, 0)
+                byCell[key] = (row.condition, row.promptID, 0, 0, 0)
             }
             byCell[key]?.n += 1
-            if reason == FinishReason.length { byCell[key]?.stopped += 1 }
+            if FinishReason.isCutOff(reason) { byCell[key]?.stopped += 1 }
+            if reason == FinishReason.lengthInReasoning {
+                byCell[key]?.inReasoning += 1
+            }
         }
         let cells =
             order
@@ -644,6 +659,7 @@ public enum ExperimentTasks {
                 TruncationCellReport(
                     condition: $0.condition, promptID: $0.promptID,
                     classified: $0.n, lengthStopped: $0.stopped,
+                    lengthStoppedInReasoning: $0.inReasoning,
                     lengthStoppedFraction: Double($0.stopped) / Double($0.n))
             }
             .sorted {
@@ -651,8 +667,10 @@ public enum ExperimentTasks {
             }
         let classified = cells.reduce(0) { $0 + $1.classified }
         let stopped = cells.reduce(0) { $0 + $1.lengthStopped }
+        let inReasoning = cells.reduce(0) { $0 + $1.lengthStoppedInReasoning }
         return TruncationReport(
             threshold: threshold, classified: classified, lengthStopped: stopped,
+            lengthStoppedInReasoning: inReasoning,
             lengthStoppedFraction: classified == 0
                 ? 0 : Double(stopped) / Double(classified),
             cells: cells)
@@ -666,15 +684,29 @@ public enum ExperimentTasks {
     /// it. Server twin: `truncation_gate.cell_refusal`.
     static func lengthStoppedRefusal(
         classified: Int, lengthStopped: Int, threshold: Double,
-        condition: String, promptID: String, maxTokens: Int
+        condition: String, promptID: String, maxTokens: Int,
+        lengthStoppedInReasoning: Int = 0, reasoningMaxTokens: Int? = nil
     ) -> String? {
         guard classified > 0 else { return nil }
         let fraction = Double(lengthStopped) / Double(classified)
         guard fraction > threshold else { return nil }
+        // Under a reasoning budget the sentence says which cap was hit:
+        // raising maxTokens would not have helped a generation that never
+        // closed its reasoning block. Server twin: `truncation_gate.cell_refusal`.
+        let hit: String
+        if let reasoningMaxTokens, lengthStoppedInReasoning > 0 {
+            hit =
+                "stopped at a token cap instead of finishing — "
+                + "\(lengthStoppedInReasoning) inside the reasoning block at the "
+                + "\(reasoningMaxTokens)-token reasoning cap, "
+                + "\(lengthStopped - lengthStoppedInReasoning) in the answer at "
+                + "the \(maxTokens)-token answer cap —"
+        } else {
+            hit = "stopped at the \(maxTokens)-token cap instead of finishing"
+        }
         return
             "condition '\(condition)' item '\(promptID)': \(lengthStopped) of "
-            + "\(classified) generation(s) stopped at the \(maxTokens)-token cap "
-            + "instead of finishing "
+            + "\(classified) generation(s) \(hit) "
             + String(format: "(%.1f%%)", fraction * 100)
             + ", over the declared maxLengthStoppedFraction of "
             + String(format: "%.1f%%", threshold * 100)
@@ -685,12 +717,23 @@ public enum ExperimentTasks {
             + "fraction would not have shown this"
     }
 
-    /// The executable repair. A command, not advice.
-    static func lengthStoppedRepair(experiment: String, maxTokens: Int) -> String {
-        "steerlab-cli experiment set-sampling \(experiment) --max-tokens <n>  "
-            + "(n above \(maxTokens)), then re-run; a frozen study is iterated "
-            + "by duplicating first: steerlab-cli experiment duplicate "
-            + "\(experiment) \(experiment)-v2"
+    /// The executable repair. A command, not advice. Under a reasoning budget
+    /// it names BOTH flags, because the refusal has said which cap was hit.
+    static func lengthStoppedRepair(
+        experiment: String, maxTokens: Int, reasoningMaxTokens: Int? = nil
+    ) -> String {
+        let flags: String
+        if let reasoningMaxTokens {
+            flags =
+                "--max-tokens <n> and/or --reasoning-max-tokens <m>  "
+                + "(n above \(maxTokens), m above \(reasoningMaxTokens), "
+                + "whichever cap the refusal names)"
+        } else {
+            flags = "--max-tokens <n>  (n above \(maxTokens))"
+        }
+        return "steerlab-cli experiment set-sampling \(experiment) \(flags), "
+            + "then re-run; a frozen study is iterated by duplicating first: "
+            + "steerlab-cli experiment duplicate \(experiment) \(experiment)-v2"
     }
 
     struct EvaluationGeneration: Decodable {
@@ -2836,8 +2879,9 @@ public enum ExperimentTasks {
         let finishReason: String
         /// The truncation signal `Judicial.parseChoice` reads, derived from
         /// the same fact so the record and the parser can never disagree
-        /// about one generation.
-        var hitTokenCap: Bool { finishReason == FinishReason.length }
+        /// about one generation. A generation cut off inside its reasoning
+        /// block never started an answer, so it is truncated too.
+        var hitTokenCap: Bool { FinishReason.isCutOff(finishReason) }
     }
 
     /// The closed vocabulary of a generation record's `finishReason`
@@ -2854,12 +2898,30 @@ public enum ExperimentTasks {
     enum FinishReason {
         /// EOS or a stop sequence — the generation ended itself.
         static let stop = "stop"
-        /// The token cap. Cut off, not short.
+        /// The token cap — under a reasoning budget, the ANSWER's cap
+        /// (`maxTokens`, counted from the token after `</think>`). Cut off,
+        /// not short.
         static let length = "length"
+        /// The reasoning block spent its whole `reasoningMaxTokens` before
+        /// emitting `</think>`: cut off before any answer was started. Only a
+        /// generation under a declared reasoning budget can end this way, and
+        /// it is incomplete for the completeness gate exactly as `length` is.
+        static let lengthInReasoning = "lengthInReasoning"
         /// Cancelled mid-stream. Reachable here because the stream can report
         /// it on its final event; the server's record-writing paths never
         /// produce it, so a server record carries only the first two.
         static let cancelled = "cancelled"
+
+        /// The closed vocabulary, in the fixed cross-engine order. Server
+        /// twin: `truncation_gate.FINISH_REASONS`.
+        static let vocabulary = [stop, length, lengthInReasoning, cancelled]
+
+        /// Whether the reason means the generation was CUT OFF rather than
+        /// finished — what the completeness gate counts. Server twin:
+        /// `truncation_gate.CUT_OFF_REASONS`.
+        static func isCutOff(_ reason: String) -> Bool {
+            reason == length || reason == lengthInReasoning
+        }
 
         static func of(_ stopReason: GenerateStopReason) -> String {
             switch stopReason {
@@ -2870,6 +2932,29 @@ public enum ExperimentTasks {
         }
     }
 
+    /// The `</think>` token's id in this model's vocabulary, or nil when the
+    /// vocabulary has no single token for it (a family without a thinking
+    /// mode). nil means no reasoning budget can be applied, which the
+    /// declaration gates already guarantee for such a family. Server twin:
+    /// `truncation_gate.think_close_token_id`.
+    static func thinkCloseTokenID(_ container: ModelContainer) async -> Int? {
+        await container.perform { context in
+            let id = context.tokenizer.convertTokenToId(ReasoningBudget.closeToken)
+            guard let id, id >= 0, id != context.tokenizer.unknownTokenId else {
+                return nil
+            }
+            return id
+        }
+    }
+
+    /// `reasoningEffort`/`reasoningMaxTokens` are the declared reasoning
+    /// protocol (2026-09-03): the effort reaches the chat template (nil means
+    /// the legacy `qwenThinkingEnabled` decides), and a declared reasoning
+    /// budget makes `maxTokens` the ANSWER budget with the reasoning block
+    /// capped separately — the decode then runs token by token
+    /// (`generateWithReasoningBudget`) so the split is enforced where the
+    /// tokens are, and the context preflight reserves both. Both default to
+    /// off, so a caller that does not pass them generates exactly as before.
     static func generateMeasured(
         _ container: ModelContainer, prompt: String, modelID: String, maxTokens: Int,
         temperature: Double = 0,
@@ -2878,8 +2963,12 @@ public enum ExperimentTasks {
         systemPrompt: String? = nil,
         qwenThinkingEnabled: Bool = false,
         transcript: [TranscriptTurn]? = nil,
+        reasoningEffort: ReasoningEffort? = nil,
+        reasoningMaxTokens: Int? = nil,
         onChunk: GenerationChunkHandler? = nil
     ) async throws -> MeasuredGeneration {
+        let effort = ReasoningEffort.resolve(
+            reasoningEffort, qwenThinkingEnabled: qwenThinkingEnabled)
         let input = try await container.prepare(
             input: studyUserInput(
                 text: prompt,
@@ -2887,24 +2976,43 @@ public enum ExperimentTasks {
                 modelID: modelID,
                 promptMode: promptMode,
                 systemPrompt: systemPrompt,
-                qwenThinkingEnabled: qwenThinkingEnabled))
+                qwenThinkingEnabled: effort.isOn,
+                reasoningEffort: effort))
         let promptTokenCount = input.text.tokens.size
+        // The budgeted decode, when the study declared a reasoning cap and
+        // the vocabulary can name the close token; otherwise the single
+        // budget every study ran under before the cap existed.
+        var budget: ReasoningBudget?
+        if let reasoningMaxTokens, effort.isOn,
+            let closeID = await thinkCloseTokenID(container)
+        {
+            budget = ReasoningBudget(
+                reasoningMaxTokens: reasoningMaxTokens, maxTokens: maxTokens,
+                closeID: closeID)
+        }
+        let outerBound = budget?.outerBound ?? maxTokens
         try await validateContextBudget(
             container,
             modelID: modelID,
             promptTokens: promptTokenCount,
-            requestedGenerationTokens: maxTokens)
+            requestedGenerationTokens: outerBound)
         try await setInterventions(
             container,
             try InterventionPlan.interventions(
                 injections.map(\.planEdit),
                 promptTokenCount: promptTokenCount))
+        let parameters = GenerateParameters(
+            maxTokens: outerBound,
+            temperature: Float(temperature),
+            prefillStepSize: 512)
+        if let budget {
+            return try await generateWithReasoningBudget(
+                container, input: input, parameters: parameters,
+                budget: budget, onChunk: onChunk)
+        }
         let stream = try await container.generate(
             input: input,
-            parameters: GenerateParameters(
-                maxTokens: maxTokens,
-                temperature: Float(temperature),
-                prefillStepSize: 512))
+            parameters: parameters)
         var text = ""
         var lastProgressCount = 0
         // Defaults to `stop`: a stream that reported no `.info` event told us
@@ -2930,6 +3038,78 @@ public enum ExperimentTasks {
         }
         if let onChunk, text.count != lastProgressCount {
             await onChunk(text)
+        }
+        return MeasuredGeneration(text: text, finishReason: finishReason)
+    }
+
+    /// The token-by-token decode under a declared reasoning budget: the same
+    /// iterator MLXLMCommon's own `generate` runs, consumed here as raw token
+    /// ids so the two-phase rule (`ReasoningBudget.observe`) is applied where
+    /// the tokens are, and the finish reason is re-derived from the retained
+    /// ids under the same rule — so the record and the decode cannot
+    /// disagree. Text is produced by the library's own streaming detokenizer,
+    /// so a budgeted generation's text is byte-identical to what the chunk
+    /// path would have streamed. Breaking out of the token stream ends the
+    /// producer within one step (its `yield` reports termination). Server
+    /// twin: `generate._stopping_criteria` + `truncation_gate.finish_reason`.
+    static func generateWithReasoningBudget(
+        _ container: ModelContainer, input: LMInput,
+        parameters: GenerateParameters, budget: ReasoningBudget,
+        onChunk: GenerationChunkHandler? = nil
+    ) async throws -> MeasuredGeneration {
+        struct Outcome: Sendable {
+            let text: String
+            let tokens: [Int]
+            let stopReason: GenerateStopReason?
+            let stopIDs: Set<Int>
+        }
+        let outcome: Outcome = try await container.perform(nonSendable: input) {
+            context, input in
+            let stream = try MLXLMCommon.generateTokens(
+                input: input, parameters: parameters, context: context,
+                includeStopToken: true)
+            var detokenizer = NaiveStreamingDetokenizer(tokenizer: context.tokenizer)
+            var rule = budget
+            var text = ""
+            var tokens: [Int] = []
+            var stopReason: GenerateStopReason?
+            var stopIDs = Set<Int>(context.configuration.extraEOSTokens.compactMap {
+                context.tokenizer.convertTokenToId($0)
+            })
+            if let eos = context.tokenizer.eosTokenId { stopIDs.insert(eos) }
+            stream: for await event in stream {
+                try Task.checkCancellation()
+                switch event {
+                case .token(let token):
+                    tokens.append(token)
+                    detokenizer.append(token: token)
+                    if let chunk = detokenizer.next() { text += chunk }
+                    if rule.observe(token: token) != nil { break stream }
+                case .info(let info):
+                    stopReason = info.stopReason
+                }
+            }
+            return Outcome(text: text, tokens: tokens, stopReason: stopReason,
+                           stopIDs: stopIDs)
+        }
+        if let onChunk { await onChunk(outcome.text) }
+        // A stop token yielded by `includeStopToken` is decoded into the
+        // text by the naive detokenizer only as whatever its string is; the
+        // chunk path never shows it. Strip it so the two paths agree.
+        var text = outcome.text
+        if let last = outcome.tokens.last, outcome.stopIDs.contains(last),
+            let piece = await container.perform({ context -> String? in
+                context.tokenizer.convertIdToToken(last)
+            }), !piece.isEmpty, text.hasSuffix(piece)
+        {
+            text.removeLast(piece.count)
+        }
+        let finishReason: String
+        if outcome.stopReason == .cancelled, outcome.tokens.isEmpty {
+            finishReason = FinishReason.cancelled
+        } else {
+            finishReason = budget.finishReason(
+                tokens: outcome.tokens, stopIDs: outcome.stopIDs)
         }
         return MeasuredGeneration(text: text, finishReason: finishReason)
     }
@@ -3041,8 +3221,13 @@ public enum ExperimentTasks {
         modelID: String,
         promptMode: ExperimentManifest.PromptMode,
         systemPrompt: String?,
-        qwenThinkingEnabled: Bool
+        qwenThinkingEnabled: Bool,
+        reasoningEffort: ReasoningEffort? = nil
     ) -> UserInput {
+        // The declared effort when one was passed, else the legacy boolean's
+        // meaning — the same resolution the server's renderers apply.
+        let effort = ReasoningEffort.resolve(
+            reasoningEffort, qwenThinkingEnabled: qwenThinkingEnabled)
         switch promptMode {
         case .rawCompletion:
             return UserInput(
@@ -3050,15 +3235,16 @@ public enum ExperimentTasks {
                     PromptRendering.rawCompletionText(
                         prompt: prompt, modelID: modelID,
                         systemPrompt: systemPrompt,
-                        qwenThinkingEnabled: qwenThinkingEnabled)))
+                        qwenThinkingEnabled: qwenThinkingEnabled,
+                        reasoningEffort: effort)))
 
         case .chatAssistant:
             return UserInput(
                 chat: PromptRendering.chatMessages(
                     prompt: prompt, modelID: modelID,
                     systemPrompt: systemPrompt),
-                additionalContext: qwenContext(
-                    modelID: modelID, qwenThinkingEnabled: qwenThinkingEnabled))
+                additionalContext: PromptRendering.thinkingContext(
+                    modelID: modelID, effort: effort))
         }
     }
 
@@ -3411,13 +3597,15 @@ public enum ExperimentTasks {
         modelID: String,
         promptMode: ExperimentManifest.PromptMode,
         systemPrompt: String?,
-        qwenThinkingEnabled: Bool
+        qwenThinkingEnabled: Bool,
+        reasoningEffort: ReasoningEffort? = nil
     ) throws -> UserInput {
         guard let transcript, !transcript.isEmpty else {
             return userInput(
                 prompt: text, modelID: modelID, promptMode: promptMode,
                 systemPrompt: systemPrompt,
-                qwenThinkingEnabled: qwenThinkingEnabled)
+                qwenThinkingEnabled: qwenThinkingEnabled,
+                reasoningEffort: reasoningEffort)
         }
         // Defense in depth — the manifest/run gates refuse this combination
         // long before generation.
@@ -3428,8 +3616,10 @@ public enum ExperimentTasks {
         return UserInput(
             chat: transcriptMessages(
                 transcript, modelID: modelID, studySystemPrompt: systemPrompt),
-            additionalContext: qwenContext(
-                modelID: modelID, qwenThinkingEnabled: qwenThinkingEnabled))
+            additionalContext: PromptRendering.thinkingContext(
+                modelID: modelID,
+                effort: ReasoningEffort.resolve(
+                    reasoningEffort, qwenThinkingEnabled: qwenThinkingEnabled)))
     }
 
     /// Family-correct multi-turn history for the local chat path — the
@@ -4043,7 +4233,7 @@ public enum ExperimentTasks {
         let parses = judicialParses(
             output: output, options: prompt.options,
             caseFamily: manifest.caseFamily, numericParser: numericParser,
-            hitTokenCap: finishReason == FinishReason.length)
+            hitTokenCap: FinishReason.isCutOff(finishReason))
         return GenerationRecord(
             experiment: manifest.name,
             experimentHash: experimentHash,
@@ -4669,8 +4859,10 @@ public enum ExperimentTasks {
                         injections: conditionInjections,
                         promptMode: manifest.promptMode ?? .chatAssistant,
                         systemPrompt: armSystemPrompt.effective,
-                        qwenThinkingEnabled: manifest.qwenThinkingEnabled ?? false,
-                        transcript: prompt.transcript
+                        qwenThinkingEnabled: manifest.thinkingEnabled,
+                        transcript: prompt.transcript,
+                        reasoningEffort: manifest.resolvedReasoningEffort,
+                        reasoningMaxTokens: manifest.reasoningMaxTokens
                     ) { output in
                         await progress?(
                             .generationChunk(
@@ -4778,13 +4970,16 @@ public enum ExperimentTasks {
                             classified: cell.classified,
                             lengthStopped: cell.lengthStopped,
                             threshold: ceiling, condition: condition.name,
-                            promptID: prompt.id, maxTokens: manifest.maxTokens)
+                            promptID: prompt.id, maxTokens: manifest.maxTokens,
+                            lengthStoppedInReasoning: cell.inReasoning,
+                            reasoningMaxTokens: manifest.reasoningMaxTokens)
                         {
                             throw ExperimentError.refusing(
                                 .lengthStopped, problem,
                                 repair: lengthStoppedRepair(
                                     experiment: manifest.name,
-                                    maxTokens: manifest.maxTokens))
+                                    maxTokens: manifest.maxTokens,
+                                    reasoningMaxTokens: manifest.reasoningMaxTokens))
                         }
                     }
                 }

@@ -81,8 +81,15 @@ public struct ExtractionRendering: Codable, Sendable, Equatable {
     /// chatTemplate only. nil resolves to `true` — what generation does.
     /// Meaningless (and refused) under the assistant voice.
     public var addGenerationPrompt: Bool?
-    /// chatTemplate only. nil resolves to `false`.
+    /// chatTemplate only. The LEGACY spelling of the reasoning effort
+    /// (false ≡ off, true ≡ xhigh) — read from a recorded block, never
+    /// written by a new declaration. nil with no `reasoningEffort` resolves to
+    /// off.
     public var qwenThinkingEnabled: Bool?
+    /// chatTemplate only. The declared reasoning effort (2026-09-03); nil
+    /// resolves through the legacy boolean, else to `.off`. A block carrying
+    /// BOTH spellings is refused as two declarations of one parameter.
+    public var reasoningEffort: ReasoningEffort?
     /// chatTemplate only. The system text included in the render, if any.
     /// Meaningless (and refused) under the assistant voice.
     public var systemPrompt: String?
@@ -97,12 +104,16 @@ public struct ExtractionRendering: Codable, Sendable, Equatable {
         addGenerationPrompt: Bool = true,
         qwenThinkingEnabled: Bool = false,
         systemPrompt: String? = nil,
-        voice: Voice? = nil
+        voice: Voice? = nil,
+        reasoningEffort: ReasoningEffort? = nil
     ) -> ExtractionRendering {
         ExtractionRendering(
             mode: .chatTemplate,
             addGenerationPrompt: addGenerationPrompt,
-            qwenThinkingEnabled: qwenThinkingEnabled,
+            // One spelling in memory: an effort given explicitly supersedes
+            // the boolean, and a boolean alone becomes its effort.
+            reasoningEffort: reasoningEffort
+                ?? ReasoningEffort.legacy(qwenThinkingEnabled: qwenThinkingEnabled),
             systemPrompt: systemPrompt,
             voice: voice)
     }
@@ -111,12 +122,14 @@ public struct ExtractionRendering: Codable, Sendable, Equatable {
         mode: Mode = .raw,
         addGenerationPrompt: Bool? = nil,
         qwenThinkingEnabled: Bool? = nil,
+        reasoningEffort: ReasoningEffort? = nil,
         systemPrompt: String? = nil,
         voice: Voice? = nil
     ) {
         self.mode = mode
         self.addGenerationPrompt = addGenerationPrompt
         self.qwenThinkingEnabled = qwenThinkingEnabled
+        self.reasoningEffort = reasoningEffort
         self.systemPrompt = systemPrompt
         self.voice = voice
     }
@@ -140,22 +153,32 @@ public struct ExtractionRendering: Codable, Sendable, Equatable {
         isAssistantVoice ? false : (addGenerationPrompt ?? true)
     }
 
-    /// What the renderer actually passes for the Qwen thinking switch.
-    public var resolvedQwenThinkingEnabled: Bool { qwenThinkingEnabled ?? false }
+    /// The effort the renderer actually applies: the declared one, else the
+    /// legacy boolean's meaning, else off. Server twin:
+    /// `ExtractionRendering.reasoning_effort` (resolved at parse).
+    public var resolvedReasoningEffort: ReasoningEffort {
+        ReasoningEffort.resolve(
+            reasoningEffort, qwenThinkingEnabled: qwenThinkingEnabled ?? false)
+    }
+
+    /// Whether the render carries a thinking scaffold at all — derived from
+    /// the effort, never stored separately.
+    public var resolvedQwenThinkingEnabled: Bool { resolvedReasoningEffort.isOn }
 
     /// Short human label for logs and refusal messages (server twin:
     /// `ExtractionRendering.label`).
     public var label: String {
         guard !isRaw else { return "raw" }
+        let effort = resolvedReasoningEffort
         if isAssistantVoice {
             // addGenerationPrompt is not a knob under this voice, so naming
             // it in a human label would invite a reader to look for it.
             var bits = ["voice=assistant"]
-            if resolvedQwenThinkingEnabled { bits.append("qwenThinkingEnabled=true") }
+            if effort.isOn { bits.append("reasoningEffort=\(effort.rawValue)") }
             return "chatTemplate (" + bits.joined(separator: ", ") + ")"
         }
         var bits = ["addGenerationPrompt=\(resolvedAddGenerationPrompt)"]
-        if resolvedQwenThinkingEnabled { bits.append("qwenThinkingEnabled=true") }
+        if effort.isOn { bits.append("reasoningEffort=\(effort.rawValue)") }
         if systemPrompt?.isEmpty == false { bits.append("systemPrompt=set") }
         return "chatTemplate (" + bits.joined(separator: ", ") + ")"
     }
@@ -172,23 +195,27 @@ public struct ExtractionRendering: Codable, Sendable, Equatable {
     /// twin: `ExtractionRendering.to_dict`.
     public var stamp: ExtractionRendering? {
         guard !isRaw else { return nil }
+        // A NEW stamp spells the effort, never the legacy boolean (the
+        // server's `to_dict` writes the same keys). A block READ under the
+        // old spelling is never re-serialized into a frozen file.
         if isAssistantVoice {
             return ExtractionRendering(
                 mode: .chatTemplate,
-                qwenThinkingEnabled: resolvedQwenThinkingEnabled,
+                reasoningEffort: resolvedReasoningEffort,
                 voice: .assistant)
         }
         return ExtractionRendering(
             mode: .chatTemplate,
             addGenerationPrompt: resolvedAddGenerationPrompt,
-            qwenThinkingEnabled: resolvedQwenThinkingEnabled,
+            reasoningEffort: resolvedReasoningEffort,
             systemPrompt: systemPrompt)
     }
 
     // MARK: - Reading is as strict as declaring
 
     public enum CodingKeys: String, CodingKey {
-        case mode, addGenerationPrompt, qwenThinkingEnabled, systemPrompt, voice
+        case mode, addGenerationPrompt, qwenThinkingEnabled, reasoningEffort
+        case systemPrompt, voice
     }
 
     /// A key of ARBITRARY name, so the decoder can see the strangers a typed
@@ -258,6 +285,23 @@ public struct ExtractionRendering: Codable, Sendable, Equatable {
             Bool.self, forKey: .addGenerationPrompt)
         self.qwenThinkingEnabled = try container.decodeIfPresent(
             Bool.self, forKey: .qwenThinkingEnabled)
+        // Decoded as the string it is, so a value outside the vocabulary is
+        // THIS type's refusal (the server's `unknown_effort_reason`), not a
+        // bare decoder error — and both spellings at once is refused as two
+        // declarations of one parameter, exactly as `declared(object:)` does.
+        if let spelled = try container.decodeIfPresent(
+            String.self, forKey: .reasoningEffort)
+        {
+            guard let parsed = ReasoningEffort(rawValue: spelled) else {
+                throw ExtractionRendering.unknownEffortError(spelled)
+            }
+            if qwenThinkingEnabled != nil {
+                throw ExtractionRendering.bothThinkingKeysError
+            }
+            self.reasoningEffort = parsed
+        } else {
+            self.reasoningEffort = nil
+        }
         self.systemPrompt = try container.decodeIfPresent(
             String.self, forKey: .systemPrompt)
         self.voice = try container.decodeIfPresent(Voice.self, forKey: .voice)
@@ -337,9 +381,67 @@ extension ExtractionRendering {
     /// a refusal about a stranger names. Server twin:
     /// `extraction_rendering.CHAT_TEMPLATE_KEYS`.
     public static let chatTemplateKeys = [
-        "addGenerationPrompt", "mode", "qwenThinkingEnabled", "systemPrompt",
-        "voice",
+        "addGenerationPrompt", "mode", "qwenThinkingEnabled", "reasoningEffort",
+        "systemPrompt", "voice",
     ]
+
+    // MARK: - The reasoning effort (2026-09-03)
+
+    /// Refusal text shared VERBATIM with the server twin
+    /// (`extraction_rendering.BOTH_THINKING_KEYS_REASON`), in its one-line
+    /// form; `bothThinkingKeysError` carries the same text split into reason
+    /// and repair.
+    public static let bothThinkingKeysReason =
+        "extractionRendering declares both qwenThinkingEnabled and "
+        + "reasoningEffort — two spellings of one parameter; qwenThinkingEnabled "
+        + "is the legacy boolean (false ≡ off, true ≡ xhigh) and reasoningEffort "
+        + "replaces it — repair: keep reasoningEffort and drop qwenThinkingEnabled"
+
+    public static let bothThinkingKeysError = DeclarationError(
+        reason: "extractionRendering declares both qwenThinkingEnabled and "
+            + "reasoningEffort — two spellings of one parameter; "
+            + "qwenThinkingEnabled is the legacy boolean (false ≡ off, true ≡ "
+            + "xhigh) and reasoningEffort replaces it",
+        repair: "keep reasoningEffort and drop qwenThinkingEnabled")
+
+    /// Server twin: `extraction_rendering.unknown_effort_reason`.
+    public static func unknownEffortError(_ value: String) -> DeclarationError {
+        DeclarationError(
+            reason: "extractionRendering.reasoningEffort '\(value)' is not in "
+                + "the closed vocabulary",
+            repair: "declare one of "
+                + ReasoningEffort.vocabulary.joined(separator: ", ")
+                + " (absent means off)")
+    }
+
+    /// Server twin: `extraction_rendering.effort_without_thinking_mode_reason`.
+    public static func effortWithoutThinkingModeError(
+        _ effort: ReasoningEffort, modelID: String
+    ) -> DeclarationError {
+        DeclarationError(
+            reason: "extractionRendering declares reasoningEffort "
+                + "'\(effort.rawValue)' for \(modelID), whose family has no "
+                + "thinking mode — the chat template would ignore it and the "
+                + "recipe would look as if it rendered a reasoning scaffold "
+                + "when it did not",
+            repair: "declare reasoningEffort off, or pin a model with a "
+                + "thinking mode")
+    }
+
+    /// The refusal for a non-off effort on a family without a thinking mode,
+    /// or nil — asked wherever a declaration meets the pinned model id
+    /// (attach, the build routes), because the parser itself never sees one.
+    /// Server twin: `extraction_rendering.thinking_mode_problem`.
+    public static func thinkingModeProblem(
+        _ rendering: ExtractionRendering?, modelID: String
+    ) -> DeclarationError? {
+        guard let rendering, !rendering.isRaw else { return nil }
+        let effort = rendering.resolvedReasoningEffort
+        guard effort.isOn, !PromptRendering.hasThinkingMode(modelID) else {
+            return nil
+        }
+        return effortWithoutThinkingModeError(effort, modelID: modelID)
+    }
 
     /// The non-null keys a `raw` block carries beyond `mode`, sorted.
     ///
@@ -502,6 +604,20 @@ extension ExtractionRendering {
             object["addGenerationPrompt"], key: "addGenerationPrompt")
         let qwenThinkingEnabled = try strictBool(
             object["qwenThinkingEnabled"], key: "qwenThinkingEnabled")
+        // The effort (2026-09-03): closed vocabulary, and never beside the
+        // legacy boolean — one parameter, one spelling per declaration.
+        var declaredEffort: ReasoningEffort?
+        if let spelled = object["reasoningEffort"], !(spelled is NSNull) {
+            guard let text = spelled as? String,
+                let parsed = ReasoningEffort(rawValue: text)
+            else {
+                throw unknownEffortError("\(spelled)")
+            }
+            if qwenThinkingEnabled != nil {
+                throw bothThinkingKeysError
+            }
+            declaredEffort = parsed
+        }
         var systemPrompt: String?
         if let declaredSystem = object["systemPrompt"], !(declaredSystem is NSNull) {
             guard let text = declaredSystem as? String else {
@@ -554,6 +670,7 @@ extension ExtractionRendering {
             mode: .chatTemplate,
             addGenerationPrompt: addGenerationPrompt,
             qwenThinkingEnabled: qwenThinkingEnabled,
+            reasoningEffort: declaredEffort,
             systemPrompt: systemPrompt,
             voice: voice)
         // THE ENGINE ASYMMETRY, ANSWERED AT PARSE TIME. This engine cannot
@@ -632,12 +749,38 @@ public enum PromptRendering {
         return [.system(system), .user(prompt)]
     }
 
-    /// The template's extra context: Qwen3 studies disable thinking mode
-    /// unless it is explicitly enabled. nil for every other family.
+    /// Whether this family's chat template HAS a thinking mode to declare an
+    /// effort for. Qwen3/Qwen3.8 do; Gemma 3 does not — a non-off effort on
+    /// it would reach nothing, so the declaration gates refuse it by name.
+    /// Server twin: `prompt_render.has_thinking_mode`.
+    public static func hasThinkingMode(_ modelID: String) -> Bool {
+        isQwen(modelID)
+    }
+
+    /// The template's extra context for the declared effort, for this
+    /// family. nil for a family without a thinking mode. For Qwen, `off` is
+    /// exactly the context every study has always rendered with
+    /// (`enable_thinking: false`), so an off study's prompt bytes cannot
+    /// move; a non-off effort adds `reasoning_effort` beside
+    /// `enable_thinking: true` — the variable the Qwen3.8 template reads.
+    /// Server twin: `prompt_render.thinking_template_kwargs`.
+    public static func thinkingContext(
+        modelID: String, effort: ReasoningEffort
+    ) -> [String: any Sendable]? {
+        guard hasThinkingMode(modelID) else { return nil }
+        guard effort.isOn else { return ["enable_thinking": false] }
+        return ["enable_thinking": true, "reasoning_effort": effort.rawValue]
+    }
+
+    /// The template's extra context, from the LEGACY boolean: Qwen3 studies
+    /// disable thinking mode unless it is explicitly enabled (true means the
+    /// template's default effort). nil for every other family.
     public static func qwenContext(
         modelID: String, qwenThinkingEnabled: Bool
     ) -> [String: any Sendable]? {
-        isQwen(modelID) ? ["enable_thinking": qwenThinkingEnabled] : nil
+        thinkingContext(
+            modelID: modelID,
+            effort: ReasoningEffort.legacy(qwenThinkingEnabled: qwenThinkingEnabled))
     }
 
     /// The rawCompletion text: system prepended, family thinking suffix
@@ -645,7 +788,7 @@ public enum PromptRendering {
     /// special tokens exactly once).
     public static func rawCompletionText(
         prompt: String, modelID: String, systemPrompt: String?,
-        qwenThinkingEnabled: Bool
+        qwenThinkingEnabled: Bool, reasoningEffort: ReasoningEffort? = nil
     ) -> String {
         var text = prompt
         let system = systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -653,7 +796,9 @@ public enum PromptRendering {
             text = system + "\n\n" + text
         }
         if isQwen(modelID) {
-            text += qwenThinkingEnabled ? " /think" : " /no_think"
+            let effort = ReasoningEffort.resolve(
+                reasoningEffort, qwenThinkingEnabled: qwenThinkingEnabled)
+            text += effort.isOn ? " /think" : " /no_think"
         }
         return text
     }
@@ -748,8 +893,8 @@ public enum PromptRendering {
         return try tokenizer.applyChatTemplate(
             messages: DefaultMessageGenerator().generate(messages: messages),
             tools: nil,
-            additionalContext: qwenContext(
+            additionalContext: thinkingContext(
                 modelID: modelID,
-                qwenThinkingEnabled: rendering.resolvedQwenThinkingEnabled))
+                effort: rendering.resolvedReasoningEffort))
     }
 }
