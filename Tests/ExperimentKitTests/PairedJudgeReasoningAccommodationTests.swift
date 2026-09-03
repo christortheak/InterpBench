@@ -432,6 +432,82 @@ import Testing
                 == "no tags here")
     }
 
+    @Test func anOrphanClosingThinkTagTerminatesTheReasoningPreamble() throws {
+        // Qwen3 with enable_thinking: the chat template emits the OPENING
+        // `<think>` as the last token of the PROMPT, and generation decodes
+        // with skip_prompt, so the text begins INSIDE the reasoning block
+        // and the first `</think>` is the only boundary it carries
+        // (2026-09-03).
+        let thinking =
+            "Let me compare. A cites the statute; B does not. A draft verdict\n"
+            + "might be {\"winner\": \"B\"} but that is wrong.\n</think>\n\n"
+        let verdictJSON =
+            "{\"winner\": \"A\", \"confidence\": 0.9, "
+            + "\"brief_reason\": \"A cites it.\"}"
+        #expect(
+            PairedJudgeVerdictParser.strippingLeadingThinkBlock(
+                thinking + verdictJSON) == "\n\n" + verdictJSON)
+        let verdict = try PairedJudgeVerdictParser.parse(thinking + verdictJSON)
+        #expect(verdict.winner == "A")
+        #expect(verdict.confidence == 0.9)
+        #expect(verdict.reasoningTruncated == nil)
+        // Case-insensitive, like the opening-tag path.
+        #expect(
+            PairedJudgeVerdictParser.strippingLeadingThinkBlock(
+                "hidden</THINK>rest") == "rest")
+    }
+
+    @Test func allFourThinkBoundaryShapes() {
+        // The four shapes the stripper has to tell apart, side by side.
+        let body = "{\"winner\": \"A\"}"
+        // 1. Opening tag present (closed): the whole block comes off.
+        #expect(
+            PairedJudgeVerdictParser.strippingLeadingThinkBlock(
+                "<think>hidden</think>" + body) == body)
+        // 2. Orphan closing tag only (Qwen3 thinking mode): terminator.
+        #expect(
+            PairedJudgeVerdictParser.strippingLeadingThinkBlock(
+                "hidden</think>" + body) == body)
+        // 3. No tags at all: untouched.
+        #expect(PairedJudgeVerdictParser.strippingLeadingThinkBlock(body) == body)
+        // 4. Unclosed/truncated reasoning. With an opening tag the rest is
+        //    the candidate; WITHOUT one (thinking mode cut before
+        //    `</think>`) the text carries no tag and is indistinguishable
+        //    from plain prose, so it is returned unchanged.
+        #expect(
+            PairedJudgeVerdictParser.strippingLeadingThinkBlock(
+                "<think>still deliberating " + body)
+                == "still deliberating " + body)
+        let truncated = "still deliberating about {A} and {B"
+        #expect(
+            PairedJudgeVerdictParser.strippingLeadingThinkBlock(truncated)
+                == truncated)
+    }
+
+    @Test func anOrphanClosingTagAfterAThinkAsideIsNotATerminator() throws {
+        // The orphan rule needs the closing tag to precede EVERY `<think>`:
+        // a `<think>…</think>` aside after the verdict is content, and its
+        // closing tag must not drag the verdict away with it.
+        let tail = "{\"winner\": \"A\"} <think>afterthought</think> more"
+        #expect(PairedJudgeVerdictParser.strippingLeadingThinkBlock(tail) == tail)
+        #expect(try PairedJudgeVerdictParser.parse(tail).winner == "A")
+        // Likewise a leading block followed by an aside: only the leading
+        // block comes off, the aside stays.
+        let both = "<think>hidden</think>{\"winner\": \"B\"} <think>aside</think>"
+        #expect(
+            PairedJudgeVerdictParser.strippingLeadingThinkBlock(both)
+                == "{\"winner\": \"B\"} <think>aside</think>")
+    }
+
+    @Test func aThinkingModeResponseThatIsAllReasoningStillRefuses() {
+        // Orphan-closing-tag shape with nothing after the boundary: no
+        // verdict to salvage, so the refusal path is unchanged.
+        #expect(throws: PairedJudgeError.self) {
+            try PairedJudgeVerdictParser.parse(
+                "I compared {A} and {B} at length.</think>\n")
+        }
+    }
+
     @Test func aThinkOnlyResponseStillRefuses() {
         // Nothing but reasoning: no verdict to salvage, so the refusal path
         // is unchanged.

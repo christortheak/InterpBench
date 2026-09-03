@@ -601,12 +601,36 @@ enum PairedJudgeVerdictParser {
     /// closing tag, or the provider simply omits it) is treated the same
     /// way: everything after the opening tag is the candidate text. Only a
     /// LEADING block is stripped — a `<think>` after the verdict is content.
+    ///
+    /// An ORPHAN leading `</think>` — a closing tag with no opening tag
+    /// anywhere before it — is treated as the block terminator
+    /// (2026-09-03). Qwen3's chat template with `enable_thinking` emits the
+    /// OPENING `<think>` as the last token of the PROMPT, so a generation
+    /// decoded with `skip_prompt` begins inside the reasoning block and the
+    /// first `</think>` is the only boundary the text carries. Everything
+    /// up to and including that first `</think>` is dropped. The rule is
+    /// deliberately narrow: the closing tag must precede EVERY `<think>` in
+    /// the text, so a `<think>…</think>` aside after the verdict is still
+    /// content. Reasoning truncated before its `</think>` in this mode
+    /// carries no tag at all and is indistinguishable from plain text; it
+    /// is returned unchanged.
     /// Server twin: `paired_judge.strip_leading_think_block`.
     static func strippingLeadingThinkBlock(_ text: String) -> String {
         let leading = text.drop(while: { $0.isWhitespace })
         guard leading.lowercased().hasPrefix("<think"),
             let tagEnd = leading.firstIndex(of: ">")
-        else { return text }
+        else {
+            // No leading opening tag. An orphan closing tag that comes
+            // before any opening tag terminates a prompt-opened block.
+            guard let close = text.range(of: "</think>", options: [.caseInsensitive])
+            else { return text }
+            if let open = text.range(of: "<think", options: [.caseInsensitive]),
+                open.lowerBound < close.lowerBound
+            {
+                return text
+            }
+            return String(text[close.upperBound...])
+        }
         let rest = leading[leading.index(after: tagEnd)...]
         if let close = rest.range(of: "</think>", options: [.caseInsensitive]) {
             return String(rest[close.upperBound...])

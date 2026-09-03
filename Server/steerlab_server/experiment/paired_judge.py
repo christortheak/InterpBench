@@ -285,6 +285,10 @@ class JudgeResponseError(ValueError):
 #: the verdict is content, not a reasoning preamble.
 _THINK_OPEN = re.compile(r"\A\s*<think(?:\s[^>]*)?>", re.IGNORECASE)
 
+#: Either think tag, anywhere — used to find the FIRST tag of any kind when
+#: the text does not open with one (the orphan-closing-tag case below).
+_THINK_ANY = re.compile(r"<(/?)think(?:\s[^>]*)?>", re.IGNORECASE)
+
 
 def strip_leading_think_block(text: str) -> str:
     """Drop a leading ``<think>…</think>`` reasoning preamble.
@@ -296,11 +300,27 @@ def strip_leading_think_block(text: str) -> str:
 
     An UNCLOSED leading ``<think>`` (the response was cut before the closing
     tag, or the provider simply omits it) is treated the same way:
-    everything after the opening tag is the candidate text. Cross-engine
-    twin: Swift ``PairedJudgeVerdictParser.strippingLeadingThinkBlock``.
+    everything after the opening tag is the candidate text.
+
+    An ORPHAN leading ``</think>`` — a closing tag with no opening tag
+    anywhere before it — is treated as the block terminator (2026-09-03).
+    Qwen3's chat template with ``enable_thinking`` emits the OPENING
+    ``<think>`` as the last token of the PROMPT, so a generation decoded with
+    ``skip_prompt`` begins inside the reasoning block and the first
+    ``</think>`` is the only boundary the text carries. Everything up to and
+    including that first ``</think>`` is dropped. The rule is deliberately
+    narrow: the closing tag must precede EVERY ``<think>`` in the text, so a
+    ``<think>…</think>`` aside after the verdict is still content, not a
+    preamble. Reasoning that was truncated before its ``</think>`` in this
+    mode carries no tag at all and is indistinguishable from plain text; it
+    is returned unchanged. Cross-engine twin: Swift
+    ``PairedJudgeVerdictParser.strippingLeadingThinkBlock``.
     """
     match = _THINK_OPEN.match(text or "")
     if match is None:
+        first = _THINK_ANY.search(text or "")
+        if first is not None and first.group(1) == "/":
+            return text[first.end():]
         return text
     rest = text[match.end():]
     close = rest.lower().find("</think>")

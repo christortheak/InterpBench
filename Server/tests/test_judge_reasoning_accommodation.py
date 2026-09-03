@@ -379,6 +379,71 @@ def test_think_stripping_is_leading_only_and_whitespace_tolerant():
         "no tags here")
 
 
+def test_an_orphan_closing_think_tag_terminates_the_reasoning_preamble():
+    # Qwen3 with enable_thinking: the chat template emits the OPENING
+    # `<think>` as the last token of the PROMPT, and generation decodes with
+    # skip_prompt, so the text begins INSIDE the reasoning block and the
+    # first `</think>` is the only boundary it carries (2026-09-03).
+    thinking = (
+        'Let me compare. A cites the statute; B does not. A draft verdict\n'
+        'might be {"winner": "B"} but that is wrong.\n</think>\n\n')
+    verdict_json = (
+        '{"winner": "A", "confidence": 0.9, "brief_reason": "A cites it."}')
+    assert paired_judge.strip_leading_think_block(thinking + verdict_json) == (
+        "\n\n" + verdict_json)
+    verdict = paired_judge.parse_response(thinking + verdict_json)
+    assert verdict["winner"] == "A"
+    assert verdict["confidence"] == 0.9
+    assert "reasoningTruncated" not in verdict
+    # Case-insensitive, like the opening-tag path.
+    assert paired_judge.strip_leading_think_block(
+        "hidden</THINK>rest") == "rest"
+
+
+def test_all_four_think_boundary_shapes():
+    # The four shapes the stripper has to tell apart, side by side.
+    body = '{"winner": "A"}'
+    # 1. Opening tag present (closed): the whole block comes off.
+    assert paired_judge.strip_leading_think_block(
+        "<think>hidden</think>" + body) == body
+    # 2. Orphan closing tag only (Qwen3 thinking mode): terminator.
+    assert paired_judge.strip_leading_think_block(
+        "hidden</think>" + body) == body
+    # 3. No tags at all: untouched.
+    assert paired_judge.strip_leading_think_block(body) == body
+    # 4. Unclosed/truncated reasoning. With an opening tag the rest is the
+    #    candidate; WITHOUT one (thinking mode cut before `</think>`) the
+    #    text carries no tag and is indistinguishable from plain prose, so
+    #    it is returned unchanged.
+    assert paired_judge.strip_leading_think_block(
+        "<think>still deliberating " + body) == "still deliberating " + body
+    truncated = "still deliberating about {A} and {B"
+    assert paired_judge.strip_leading_think_block(truncated) == truncated
+
+
+def test_an_orphan_closing_tag_after_a_think_aside_is_not_a_terminator():
+    # The orphan rule needs the closing tag to precede EVERY `<think>`: a
+    # `<think>…</think>` aside after the verdict is content, and its
+    # closing tag must not drag the verdict away with it.
+    tail = '{"winner": "A"} <think>afterthought</think> more'
+    assert paired_judge.strip_leading_think_block(tail) == tail
+    assert paired_judge.parse_response(tail)["winner"] == "A"
+    # Likewise a leading block followed by an aside: only the leading block
+    # comes off, the aside stays.
+    both = '<think>hidden</think>{"winner": "B"} <think>aside</think>'
+    assert paired_judge.strip_leading_think_block(both) == (
+        '{"winner": "B"} <think>aside</think>')
+
+
+def test_a_thinking_mode_response_that_is_all_reasoning_still_refuses():
+    # Orphan-closing-tag shape with nothing after the boundary: no verdict
+    # to salvage, and the refusal keeps the UNTOUCHED response as `raw`.
+    raw = "I compared {A} and {B} at length.</think>\n"
+    with pytest.raises(paired_judge.JudgeResponseError) as caught:
+        paired_judge.parse_response(raw)
+    assert caught.value.raw == raw
+
+
 def test_a_think_only_response_still_refuses_with_the_raw_text():
     # Nothing but reasoning: no verdict to salvage. The refusal keeps the
     # UNTOUCHED response as `raw` so judge-failures.jsonl shows what came
