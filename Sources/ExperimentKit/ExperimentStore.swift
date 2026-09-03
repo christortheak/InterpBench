@@ -76,6 +76,8 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         case promptMode
         case systemPrompt
         case qwenThinkingEnabled
+        case reasoningEffort
+        case reasoningMaxTokens
         case seeds
         case temperature
         case maxTokens
@@ -1627,7 +1629,24 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
     public var perturbationPolicy: PerturbationPolicy?
     public var promptMode: PromptMode?
     public var systemPrompt: String?
+    /// The LEGACY spelling of the reasoning effort (false ≡ off, true ≡
+    /// xhigh, the template's default). Read from a manifest frozen under it
+    /// and never rewritten — the ladder program is frozen under this key and
+    /// its hashes stand; a new manifest writes `reasoningEffort` instead.
     public var qwenThinkingEnabled: Bool?
+    /// The declared reasoning effort (2026-09-03): off | low | medium |
+    /// xhigh, stored as the string it is so a hand-edited value outside the
+    /// vocabulary is a `verify` violation on both engines rather than a
+    /// decode failure here. nil = absent; `resolvedReasoningEffort` reads
+    /// through the legacy boolean. Server twin: `Manifest.reasoning_effort`.
+    public var reasoningEffort: String?
+    /// The reasoning block's own token cap, REQUIRED beside a non-off effort
+    /// and refused beside off (declared, never defaulted). `maxTokens` is then
+    /// the ANSWER budget, counted from the token after `</think>`. nil for a
+    /// study that predates the key, which keeps it on the single budget it
+    /// always ran under. Optional and omit-when-nil, so pre-existing manifests
+    /// keep their content hash.
+    public var reasoningMaxTokens: Int?
     public var seeds: [UInt64]
     public var temperature: Double
     public var maxTokens: Int
@@ -1732,7 +1751,11 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         self.perturbationPolicy = nil
         self.promptMode = .chatAssistant
         self.systemPrompt = nil
-        self.qwenThinkingEnabled = false
+        // A NEW manifest spells the effort, never the legacy boolean — the
+        // server's `create` writes the same key.
+        self.qwenThinkingEnabled = nil
+        self.reasoningEffort = ReasoningEffort.off.rawValue
+        self.reasoningMaxTokens = nil
         self.seeds = [20260610]
         self.temperature = 0
         self.maxTokens = 2048
@@ -1865,6 +1888,8 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         promptMode = try container.decodeIfPresent(PromptMode.self, forKey: .promptMode)
         systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt)
         qwenThinkingEnabled = try container.decodeIfPresent(Bool.self, forKey: .qwenThinkingEnabled)
+        reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
+        reasoningMaxTokens = try container.decodeIfPresent(Int.self, forKey: .reasoningMaxTokens)
         seeds = try container.decodeIfPresent([UInt64].self, forKey: .seeds) ?? [20260610]
         temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0
         maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 2048
@@ -3713,13 +3738,50 @@ public enum ExperimentStore {
     /// (samplesPerItem > 1 needs temperature > 0 and seedPolicy
     /// derivedSHA256) stay verify() violations, because a merge setter that
     /// enforced them would forbid declaring the fields one flag at a time.
+    ///
+    /// The reasoning protocol (2026-09-03) is gated on the MERGED document,
+    /// with the server's sentences (`experiment_store.set_protocol`): the
+    /// effort is closed-vocabulary; a non-off effort needs a family with a
+    /// thinking mode AND a declared `reasoningMaxTokens` (declared, never
+    /// defaulted); an off effort takes no budget. Declaring the effort off
+    /// retires a budget the draft already carried; declaring a budget IN THE
+    /// SAME CALL as an off effort is refused, because that call says two
+    /// things. Writing the effort drops the legacy `qwenThinkingEnabled`
+    /// from the draft, so a draft never spells one parameter twice.
     @discardableResult
     public static func setSamplingProtocol(
         temperature: Double? = nil, maxTokens: Int? = nil,
         promptMode: String? = nil, samplesPerItem: Int? = nil,
-        seedPolicy: String? = nil, experimentName: String
+        seedPolicy: String? = nil, reasoningEffort: String? = nil,
+        reasoningMaxTokens: Int? = nil, experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
+            if reasoningEffort != nil || reasoningMaxTokens != nil {
+                let mergedEffort =
+                    reasoningEffort ?? manifest.resolvedReasoningEffort.rawValue
+                var mergedBudget = reasoningMaxTokens ?? manifest.reasoningMaxTokens
+                if mergedEffort == ReasoningEffort.off.rawValue,
+                    reasoningMaxTokens == nil
+                {
+                    mergedBudget = nil  // the off declaration retires the budget
+                }
+                let problems = ReasoningEffort.protocolViolations(
+                    effort: mergedEffort, reasoningMaxTokens: mergedBudget,
+                    modelID: manifest.modelID)
+                guard problems.isEmpty else {
+                    throw ExperimentError.malformed(
+                        problems.joined(separator: "; "),
+                        repair: "steerlab-cli experiment set-sampling "
+                            + "\(experimentName) --reasoning-effort <"
+                            + ReasoningEffort.vocabulary.joined(separator: "|")
+                            + "> --reasoning-max-tokens <n≥1>  (the budget only "
+                            + "beside a non-off effort, on a model with a "
+                            + "thinking mode)")
+                }
+                manifest.reasoningEffort = mergedEffort
+                manifest.reasoningMaxTokens = mergedBudget
+                manifest.qwenThinkingEnabled = nil
+            }
             if let temperature {
                 guard temperature.isFinite, temperature >= 0 else {
                     throw ExperimentError.malformed(
@@ -7018,16 +7080,25 @@ public enum ExperimentStore {
         // marginal over sampled reasoning paths, so the answer-token logprob
         // instrument (conditional on NO reasoning prefix) is only valid with
         // thinking off. Thinking-mode arms must use sampled answers instead.
-        if manifest.qwenThinkingEnabled == true,
+        if manifest.thinkingEnabled,
             let instruments = manifest.outcomeInstruments,
             !Set(instruments).isDisjoint(
                 with: ["answerTokenLogprob", "choiceProbability", "ordinalScale"])
         {
             violations.append(
                 "outcomeInstruments includes an answer-token instrument but "
-                    + "qwenThinkingEnabled is true — thinking-mode answers are marginals "
-                    + "over reasoning paths; disable thinking or use sampled answers")
+                    + "reasoningEffort is '\(manifest.resolvedReasoningEffort.rawValue)' "
+                    + "(thinking mode on) — thinking-mode answers are marginals "
+                    + "over reasoning paths; declare reasoningEffort off or use "
+                    + "sampled answers")
         }
+        // The reasoning protocol's joint rules, for a manifest that SPELLS
+        // reasoningEffort (a legacy `qwenThinkingEnabled` manifest is exempt:
+        // it was frozen under one budget and must keep verifying unchanged).
+        // The same sentences `setSamplingProtocol` refuses with — here as
+        // defence in depth for a hand-edited manifest. Server twin:
+        // `Manifest.verify`.
+        violations += manifest.reasoningProtocolViolations
         // Ordinal-scale contract: the collapse of the ladder distribution to
         // one position is an instrument-design choice — DECLARED in the
         // manifest, never silently defaulted (workbench rule). Server twin:
@@ -9916,7 +9987,8 @@ public enum ExperimentStore {
                     : (manifest.outcomeInstruments ?? []).joined(separator: ", ")),
             "- **Sampling:** temperature \(formatNumber(manifest.temperature)), "
                 + "samplesPerItem \(manifest.samplesPerItem ?? 1), "
-                + "seedPolicy \(manifest.seedPolicy ?? "manifestSeeds")",
+                + "seedPolicy \(manifest.seedPolicy ?? "manifestSeeds"), "
+                + manifest.reasoningProtocolSummary,
             "",
             "## Conditions",
             "",
@@ -11264,6 +11336,8 @@ public enum ExperimentStore {
         draft.promptMode = screen.promptMode
         draft.systemPrompt = screen.systemPrompt
         draft.qwenThinkingEnabled = screen.qwenThinkingEnabled
+        draft.reasoningEffort = screen.reasoningEffort
+        draft.reasoningMaxTokens = screen.reasoningMaxTokens
         draft.temperature = screen.temperature
         draft.maxTokens = screen.maxTokens
         draft.seeds = screen.seeds

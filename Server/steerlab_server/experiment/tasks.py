@@ -1130,6 +1130,8 @@ def _effective_sae_latent_condition(spec, edit, provenance,
         system_prompt=system_prompt_mod.compose(None, manifest.system_prompt),
         qwen_thinking_enabled=manifest.qwen_thinking_enabled,
         temperature=manifest.temperature,
+        reasoning_effort=manifest.reasoning_effort,
+        reasoning_max_tokens=manifest.reasoning_max_tokens,
         agent_system_prompt=None,
         study_system_prompt=manifest.system_prompt)
 
@@ -1405,7 +1407,8 @@ def _advise_inert_declarations(manifest: Manifest, _log) -> None:
         None,
         qwen_thinking_enabled=manifest.qwen_thinking_enabled,
         prompt_mode=manifest.prompt_mode,
-        system_prompt=manifest.system_prompt)
+        system_prompt=manifest.system_prompt,
+        reasoning_effort=getattr(manifest, "reasoning_effort", None))
     if advisory:
         _log(f"ADVISORY: {advisory}")
 
@@ -4900,7 +4903,9 @@ def _token_preflight_or_warn(manifest, prompts_file, root, _log) -> None:
             prompt_mode=manifest.prompt_mode,
             system_prompt=manifest.system_prompt,
             qwen_thinking_enabled=manifest.qwen_thinking_enabled,
-            max_tokens=manifest.max_tokens)
+            max_tokens=manifest.max_tokens,
+            reasoning_effort=manifest.reasoning_effort,
+            reasoning_max_tokens=manifest.reasoning_max_tokens)
     except token_preflight.PreflightError as exc:
         _log(f"token preflight unavailable ({exc}) — the in-generation "
              "context check remains the backstop")
@@ -6243,6 +6248,15 @@ class EffectiveCondition:
     system_prompt: str | None
     qwen_thinking_enabled: bool
     temperature: float
+    #: The declared reasoning protocol this arm generates under
+    #: (``reasoningEffort`` / ``reasoningMaxTokens``). ``qwen_thinking_enabled``
+    #: above is its boolean shadow (effort != off), kept because every
+    #: renderer and battery arming still asks the boolean question. A None
+    #: budget means the single-budget decode every study ran before the
+    #: budget existed — which is what a legacy thinking-on manifest still
+    #: declares.
+    reasoning_effort: str = prompt_render.REASONING_OFF
+    reasoning_max_tokens: int | None = None
     #: The two LEVELS the effective prompt was composed from, kept beside it so
     #: every record can stamp which level contributed what
     #: (``systemPromptComposition``) and so the run-start comparability
@@ -6294,6 +6308,8 @@ def _effective_ordinary_condition(condition, bundles, manifest) -> EffectiveCond
         system_prompt=system_prompt_mod.compose(None, manifest.system_prompt),
         qwen_thinking_enabled=manifest.qwen_thinking_enabled,
         temperature=manifest.temperature,
+        reasoning_effort=manifest.reasoning_effort,
+        reasoning_max_tokens=manifest.reasoning_max_tokens,
         agent_system_prompt=None,
         study_system_prompt=manifest.system_prompt)
 
@@ -6372,6 +6388,14 @@ def _effective_variant_condition(vc, manifest, model, root, *,
         system_prompt=system_prompt_mod.compose(
             variant.system_prompt, manifest.system_prompt),
         qwen_thinking_enabled=variant.qwen_thinking_enabled,
+        # An agent artifact carries the boolean (its own schema), so its
+        # effort is that boolean's meaning: off, or the template default. The
+        # reasoning BUDGET is study-owned like the temperature below — the
+        # manifest's, applied only when the arm actually reasons.
+        reasoning_effort=prompt_render.resolve_reasoning_effort(
+            None, variant.qwen_thinking_enabled),
+        reasoning_max_tokens=(manifest.reasoning_max_tokens
+                              if variant.qwen_thinking_enabled else None),
         # Study-owned sampling (2026-07-21): the MANIFEST owns the measured-
         # run sampling policy for EVERY condition; an agent artifact's stored
         # temperature is a Playground convenience, never a measured-run
@@ -6764,6 +6788,18 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
     stop_ids = truncation_gate.stop_token_ids(model)
     tally = truncation_gate.Tally(writer.records)
     length_stopped_ceiling = manifest.max_length_stopped_fraction
+    # The declared reasoning protocol, threaded as kwargs ONLY when this arm
+    # carries a reasoning budget (exactly as transcript_kwargs is): every
+    # other arm's generate() call stays byte-for-byte unchanged, so the test
+    # fakes built against it keep working. The `</think>` id is the split the
+    # finish reason is read at, resolved once per condition.
+    reasoning_kwargs = {}
+    think_close_id = None
+    if eff.reasoning_max_tokens:
+        reasoning_kwargs = {"reasoning_effort": eff.reasoning_effort,
+                            "reasoning_max_tokens": eff.reasoning_max_tokens}
+        think_close_id = truncation_gate.think_close_token_id(
+            getattr(model, "tokenizer", None))
     # Threaded as kwargs ONLY for a latent condition, exactly as
     # transcript_kwargs and readout_kwargs are: every other condition's
     # generate/score_options call signature stays byte-for-byte unchanged, so
@@ -6935,7 +6971,8 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                     prompt_mode=eff.prompt_mode,
                     system_prompt=eff.system_prompt,
                     qwen_thinking_enabled=eff.qwen_thinking_enabled,
-                    **readout_kwargs, **transcript_kwargs)
+                    **readout_kwargs, **transcript_kwargs,
+                    **reasoning_kwargs)
             record = {
                 **common,
                 "condition": eff.name, "seed": seed,
@@ -6955,7 +6992,9 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                 # classified.
                 truncation_gate.RECORD_KEY: truncation_gate.finish_reason(
                     token_ids, max_tokens=manifest.max_tokens,
-                    stop_ids=stop_ids),
+                    stop_ids=stop_ids,
+                    reasoning_max_tokens=eff.reasoning_max_tokens,
+                    think_close_id=think_close_id),
                 **sampling,
             }
             # The exact sampled sequence, for replay. Written only when the
@@ -6984,7 +7023,7 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                 # place, so the field and the parser can never disagree about
                 # the same generation.
                 hit_token_cap = (record[truncation_gate.RECORD_KEY]
-                                 == truncation_gate.FINISH_LENGTH)
+                                 in truncation_gate.CUT_OFF_REASONS)
                 record["parsedChoice"] = judicial.parse_choice(
                     text, list(prompt["options"]), truncated=hit_token_cap)
             if reader_scorers:
@@ -7024,12 +7063,16 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
             problem = truncation_gate.cell_refusal(
                 classified, length_stopped, threshold=length_stopped_ceiling,
                 condition=eff.name, prompt_id=str(prompt["id"]),
-                max_tokens=manifest.max_tokens)
+                max_tokens=manifest.max_tokens,
+                length_stopped_in_reasoning=tally.cell_in_reasoning(
+                    eff.name, prompt["id"]),
+                reasoning_max_tokens=eff.reasoning_max_tokens)
             if problem:
                 raise lifecycle_gates.refusing(
                     lifecycle_gates.LENGTH_STOPPED, problem,
                     repair=truncation_gate.repair_action(
-                        name, manifest.max_tokens))
+                        name, manifest.max_tokens,
+                        reasoning_max_tokens=eff.reasoning_max_tokens))
     return False
 
 
@@ -12403,7 +12446,10 @@ def _write_summaries_csv(records: list[dict], run_directory: str) -> None:
               # here beside the other per-cell aggregates. Blank on a cell that
               # classified nothing — no generation of it carried a
               # `finishReason` — which is a different claim from zero.
-              "lengthStopped", "lengthStoppedFraction"]
+              # `lengthStoppedInReasoning` is the subset that never closed
+              # its reasoning block (always 0 without a reasoning budget).
+              "lengthStopped", "lengthStoppedInReasoning",
+              "lengthStoppedFraction"]
     path = os.path.join(run_directory, "summaries.csv")
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=header)
@@ -12432,8 +12478,13 @@ def _write_summaries_csv(records: list[dict], run_directory: str) -> None:
                 stopped = sum(
                     1 for r in classified
                     if r[truncation_gate.RECORD_KEY]
-                    == truncation_gate.FINISH_LENGTH)
+                    in truncation_gate.CUT_OFF_REASONS)
+                in_reasoning = sum(
+                    1 for r in classified
+                    if r[truncation_gate.RECORD_KEY]
+                    == truncation_gate.FINISH_LENGTH_IN_REASONING)
                 row["lengthStopped"] = stopped
+                row["lengthStoppedInReasoning"] = in_reasoning
                 row["lengthStoppedFraction"] = \
                     f"{stopped / len(classified):.6g}"
             choices = [r["parsedChoice"] for r in sampled if "parsedChoice" in r]

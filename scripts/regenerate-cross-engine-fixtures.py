@@ -757,9 +757,24 @@ def extraction_rendering_and_positions() -> None:
         ("chatTemplate", {"mode": "chatTemplate"}),
         ("explicitUserVoice", {"mode": "chatTemplate", "voice": "user"}),
         ("assistantVoice", {"mode": "chatTemplate", "voice": "assistant"}),
+        # The LEGACY boolean spelling, kept as an input on purpose: a recipe
+        # declared under it must keep parsing (true ≡ xhigh) and must keep
+        # its identity fragment byte-identical to what it hashed before the
+        # effort existed. Both engines are pinned to that by this entry.
         ("assistantVoiceThinking", {"mode": "chatTemplate",
                                     "voice": "assistant",
                                     "qwenThinkingEnabled": True}),
+        ("legacyThinkingTrue", {"mode": "chatTemplate",
+                                "qwenThinkingEnabled": True}),
+        # The effort spelling (2026-09-03): xhigh hashes exactly as the legacy
+        # true did; low/medium add the one key the boolean cannot express.
+        ("reasoningEffortXhigh", {"mode": "chatTemplate",
+                                  "reasoningEffort": "xhigh"}),
+        ("reasoningEffortLow", {"mode": "chatTemplate",
+                                "reasoningEffort": "low"}),
+        ("reasoningEffortMediumSystem", {"mode": "chatTemplate",
+                                         "reasoningEffort": "medium",
+                                         "systemPrompt": "be brief"}),
         ("systemPrompt", {"mode": "chatTemplate", "systemPrompt": "be brief"}),
     ]
     renderings = []
@@ -846,8 +861,17 @@ def extraction_rendering_and_positions() -> None:
             # engine read a manifest the other refuses.
             "rawParameters": er.raw_parameters_reason(
                 ["addGenerationPrompt", "voice"]),
+            # The reasoning-effort refusals (2026-09-03), pinned the same
+            # way: two spellings of one parameter, a value outside the closed
+            # vocabulary, and a non-off effort on a family whose template has
+            # no thinking mode (raised where the model id is known).
+            "bothThinkingKeys": er.BOTH_THINKING_KEYS_REASON,
+            "unknownEffort": er.unknown_effort_reason("hgih"),
+            "effortWithoutThinkingMode": er.effort_without_thinking_mode_reason(
+                "low", "google/gemma-3-4b-it"),
         },
         "chatTemplateKeys": list(er.CHAT_TEMPLATE_KEYS),
+        "reasoningEfforts": list(er.REASONING_EFFORTS),
     })
 
 

@@ -587,6 +587,15 @@ public final class ConceptBuilder {
             extractionRendering = try extractionRenderingChoice.declared()
             extractionRenderingRefusal = nil
             extractionRenderingRefusalIsLocalEngineLimit = false
+            // The family gate, when a model is loaded to ask it of: a non-off
+            // reasoning effort on a family without a thinking mode reaches
+            // nothing, and is said here rather than at extraction.
+            if let modelID = host?.loadedModelID,
+                let problem = ExtractionRendering.thinkingModeProblem(
+                    extractionRendering, modelID: modelID)
+            {
+                extractionRenderingRefusal = problem.message
+            }
         } catch let error as ExtractionRendering.DeclarationError {
             extractionRenderingRefusal = "\(error.reason) — repair: \(error.repair)"
             extractionRenderingRefusalIsLocalEngineLimit =

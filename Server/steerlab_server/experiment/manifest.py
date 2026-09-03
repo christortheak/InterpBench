@@ -30,7 +30,7 @@ from ..steering.reading_position import (LAST_TOKEN, ReadingPosition, from_label
                                          mean_from_token)
 from ..steering.stimulus_set import StimulusSet, load_texts
 from ..steering.vector_store import SUBSTRATE as _THIS_SUBSTRATE
-from . import paths, truncation_gate
+from . import paths, prompt_render, truncation_gate
 
 # The closed ``ordinalAggregation`` vocabulary for the ``ordinalScale``
 # outcome instrument (kept torch-free here; ``logprob.ORDINAL_AGGREGATIONS``
@@ -428,7 +428,27 @@ class Manifest:
     task_description: str | None = None
     prompt_mode: str = "chatAssistant"
     system_prompt: str | None = None
-    qwen_thinking_enabled: bool = False
+    #: The declared reasoning effort (cross-engine contract key
+    #: ``reasoningEffort`` ∈ off | low | medium | xhigh). Replaces the
+    #: Qwen-specific boolean ``qwenThinkingEnabled`` (2026-09-03): ``off`` is
+    #: exactly the old ``false`` (``enable_thinking=False``), and the other
+    #: three reach the chat template as ``enable_thinking=True`` plus
+    #: ``reasoning_effort=<value>``. A frozen manifest that still spells the
+    #: old boolean is READ as off/xhigh — ``true`` meant the template's default
+    #: effort, which on Qwen3.8 is xhigh — and is never rewritten; the ladder
+    #: program is frozen under that spelling and its hashes stand.
+    reasoning_effort: str = prompt_render.REASONING_OFF
+    #: The reasoning block's own token cap (``reasoningMaxTokens``), REQUIRED
+    #: beside a non-off effort and refused beside ``off`` — declared, never
+    #: defaulted. ``max_tokens`` is then the ANSWER budget, counted from the
+    #: token after ``</think>``. None for every study that predates the key,
+    #: which keeps such a study on the single budget it always ran under.
+    reasoning_max_tokens: int | None = None
+    #: Whether the manifest spells ``reasoningEffort`` itself (as against a
+    #: legacy boolean, or neither). The joint declaration rules in
+    #: :meth:`verify` apply only to the new spelling: a legacy manifest with
+    #: thinking on and no reasoning budget must keep verifying, unchanged.
+    reasoning_effort_declared: bool = False
     temperature: float = 0.0
     max_tokens: int = 512
     seeds: list[int] = field(default_factory=lambda: [0])
@@ -580,6 +600,14 @@ class Manifest:
         with open(path, encoding="utf-8") as handle:
             return cls.from_dict(json.load(handle))
 
+    @property
+    def qwen_thinking_enabled(self) -> bool:
+        """Whether the study generates with a thinking block at all — the
+        one question the ~30 pre-effort call sites in this engine ask. Derived
+        from the effort, never stored: ``off`` is the only value that means
+        no block."""
+        return self.reasoning_effort != prompt_render.REASONING_OFF
+
     @classmethod
     def from_dict(cls, d: dict) -> "Manifest":
         concepts = [ConceptRef(name=c["name"], stimulus_set_hash=c["stimulusSetHash"],
@@ -679,7 +707,10 @@ class Manifest:
             task_description=d.get("taskDescription"),
             prompt_mode=d.get("promptMode") or "chatAssistant",
             system_prompt=d.get("systemPrompt"),
-            qwen_thinking_enabled=bool(d.get("qwenThinkingEnabled", False)),
+            reasoning_effort=prompt_render.read_reasoning_effort(d),
+            reasoning_max_tokens=prompt_render.read_reasoning_max_tokens(d),
+            reasoning_effort_declared=(
+                prompt_render.REASONING_EFFORT_KEY in d),
             temperature=float(d.get("temperature", 0.0)),
             max_tokens=int(d.get("maxTokens", 512)),
             seeds=[int(s) for s in (d.get("seeds") or [0])],
@@ -1322,8 +1353,28 @@ class Manifest:
                 & {"answerTokenLogprob", "choiceProbability", "ordinalScale"}):
             violations.append(
                 "outcomeInstruments includes an answer-token instrument but "
-                "qwenThinkingEnabled is true — thinking-mode answers are marginals "
-                "over reasoning paths; disable thinking or use sampled answers")
+                f"reasoningEffort is '{self.reasoning_effort}' (thinking mode "
+                "on) — thinking-mode answers are marginals over reasoning "
+                "paths; declare reasoningEffort off or use sampled answers")
+
+        # The reasoning protocol's joint rules, for a manifest that SPELLS
+        # reasoningEffort (a legacy `qwenThinkingEnabled` manifest is exempt:
+        # it was frozen under one budget and must keep verifying unchanged).
+        # The same sentences the declaration writers refuse with
+        # (`experiment_store.set_protocol`, Swift `setSamplingProtocol`) —
+        # here as defence in depth for a hand-edited manifest. Swift twin:
+        # `ExperimentStore.modelOutputPinViolations`.
+        if self.reasoning_effort_declared:
+            violations += prompt_render.reasoning_protocol_violations(
+                effort=self.raw.get(prompt_render.REASONING_EFFORT_KEY),
+                reasoning_max_tokens=self.raw.get(
+                    prompt_render.REASONING_MAX_TOKENS_KEY),
+                model_id=self.model_id)
+        elif (self.raw.get(prompt_render.REASONING_MAX_TOKENS_KEY) is not None
+              and not self.qwen_thinking_enabled):
+            # A budget beside no effort at all: meaningless unless the legacy
+            # boolean already says the study reasons (then the run honours it).
+            violations.append(prompt_render.BUDGET_WITHOUT_EFFORT_REASON)
 
         # Ordinal-scale contract: the collapse of the ladder distribution to
         # one position is an instrument-design choice — DECLARED in the

@@ -178,6 +178,7 @@ public final class SteerLabWebServer: Sendable {
     static let protocolBodyKeys: [String] = [
         "description", "task", "outcomes", "judgeModel", "judgePrompt",
         "taskPromptsFile", "promptMode", "systemPrompt", "qwenThinkingEnabled",
+        "reasoningEffort", "reasoningMaxTokens",
         "temperature", "maxTokens", "samplesPerItem", "seedPolicy",
         "exclusionRules",
     ]
@@ -780,6 +781,8 @@ public final class SteerLabWebServer: Sendable {
                 let promptMode: ExperimentManifest.PromptMode?
                 let systemPrompt: String?
                 let qwenThinkingEnabled: Bool?
+                let reasoningEffort: String?
+                let reasoningMaxTokens: Int?
                 let temperature: Double?
                 let maxTokens: Int?
                 let samplesPerItem: Int?
@@ -837,6 +840,15 @@ public final class SteerLabWebServer: Sendable {
             }
             if let qwenThinkingEnabled = request.qwenThinkingEnabled {
                 service.experiments.qwenThinkingEnabled = qwenThinkingEnabled
+            }
+            // The effort spelling wins over the legacy boolean when a body
+            // carries both; the joint rules are the panel's own at save.
+            if let reasoningEffort = request.reasoningEffort {
+                service.experiments.reasoningEffort = reasoningEffort
+            }
+            if let reasoningMaxTokens = request.reasoningMaxTokens {
+                service.experiments.reasoningMaxTokens =
+                    reasoningMaxTokens > 0 ? reasoningMaxTokens : nil
             }
             if let temperature = request.temperature {
                 service.experiments.runTemperature = temperature

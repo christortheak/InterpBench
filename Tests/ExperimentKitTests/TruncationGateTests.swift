@@ -30,6 +30,13 @@ import Testing
         // that neither finished nor filled its budget. The server's
         // record-writing paths cannot produce it.
         #expect(ExperimentTasks.FinishReason.of(.cancelled) == "cancelled")
+        // The fourth spelling (2026-09-03) is never produced by the stream's
+        // own stop reason — only the budgeted decode can end there — and it
+        // counts as cut off exactly as `length` does.
+        #expect(ExperimentTasks.FinishReason.vocabulary
+            == ["stop", "length", "lengthInReasoning", "cancelled"])
+        #expect(ExperimentTasks.FinishReason.isCutOff("lengthInReasoning"))
+        #expect(!ExperimentTasks.FinishReason.isCutOff("cancelled"))
     }
 
     @Test func truncationIsDerivedFromTheReasonNotStoredTwice() {
@@ -44,6 +51,12 @@ import Testing
         #expect(
             !ExperimentTasks.MeasuredGeneration(text: "x", finishReason: "cancelled")
                 .hitTokenCap)
+        // Cut off inside the reasoning block: no answer was ever started, so
+        // the choice parser must read it as truncated too.
+        #expect(
+            ExperimentTasks.MeasuredGeneration(
+                text: "x", finishReason: "lengthInReasoning"
+            ).hitTokenCap)
     }
 
     private func manifest(maxLengthStoppedFraction: Double? = nil)

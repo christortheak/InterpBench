@@ -574,10 +574,18 @@ verbs run for you, available alone, safe at any status.
 
 **`set-sampling <name> [--temperature <t>] [--max-tokens <n>]
 [--prompt-mode chatAssistant|rawCompletion] [--samples-per-item <n>]
-[--seed-policy manifestSeeds|derivedSHA256]`** — declares the generation
-protocol on a draft, merge-style: only the flags given move, `""` clears
-`--prompt-mode`/`--seed-policy`, and `--samples-per-item 1` clears to the
-deterministic default. A stochastic replication arm is `--samples-per-item 25
+[--seed-policy manifestSeeds|derivedSHA256]
+[--reasoning-effort off|low|medium|xhigh] [--reasoning-max-tokens <n>]`** —
+declares the generation protocol on a draft, merge-style: only the flags given
+move, `""` clears `--prompt-mode`/`--seed-policy`, and `--samples-per-item 1`
+clears to the deterministic default. The reasoning protocol replaced the
+Qwen-specific `qwenThinkingEnabled` boolean: a non-off effort renders the chat
+template in thinking mode at that effort and REQUIRES `--reasoning-max-tokens`
+(the reasoning block's own cap, counted up to `</think>`; `--max-tokens` is
+then the answer budget), needs a model whose family has a thinking mode, and
+`--reasoning-effort off` retires the budget. A manifest frozen under the old
+boolean still reads (`true` meant the template's default effort, xhigh) and is
+never rewritten. A stochastic replication arm is `--samples-per-item 25
 --temperature 0.7 --max-tokens 1024 --seed-policy derivedSHA256` — legal to
 declare locally; §7's greedy-only rule then routes the run to the server
 engine. The joint rules (`samplesPerItem > 1` needs `temperature > 0` and

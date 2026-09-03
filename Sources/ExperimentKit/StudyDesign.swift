@@ -1,4 +1,5 @@
 import Foundation
+import SteeringKit
 
 // The design/study split as the UI expresses it (2026-08-06, researcher
 // walkthrough).
@@ -174,7 +175,14 @@ public enum StudyDesignSummary {
     private static func promptLine(_ study: ExperimentManifest) -> String {
         var parts = [(study.promptMode ?? .chatAssistant).label]
         if study.systemPrompt?.isEmpty == false { parts.append("system prompt set") }
-        if study.qwenThinkingEnabled == true { parts.append("thinking ON") }
+        let effort = study.resolvedReasoningEffort
+        if effort.isOn {
+            var reasoning = "reasoning \(effort.rawValue)"
+            if let budget = study.reasoningMaxTokens {
+                reasoning += " (≤ \(budget) tokens)"
+            }
+            parts.append(reasoning)
+        }
         return parts.joined(separator: "  ·  ")
     }
 

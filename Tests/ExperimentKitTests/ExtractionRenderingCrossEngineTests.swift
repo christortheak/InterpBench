@@ -86,6 +86,25 @@ import Testing
         ) throws -> [Int] { [] }
     }
 
+    /// The reasoning-effort refusals (2026-09-03) carry twin texts, and the
+    /// effort vocabulary is the same closed list on both engines.
+    @Test func theReasoningEffortRefusalTextsAndVocabularyAreTwins() throws {
+        let url = CodeResources.compiledCheckoutPath.appending(
+            components: "Tests", "Fixtures", "cross-engine",
+            "extraction-rendering-and-positions.json")
+        let root = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: url)) as? [String: Any]
+        let refusals = try #require(root?["refusals"] as? [String: String])
+        #expect(ExtractionRendering.bothThinkingKeysReason
+            == refusals["bothThinkingKeys"])
+        #expect(ExtractionRendering.unknownEffortError("hgih").message
+            == refusals["unknownEffort"])
+        #expect(ExtractionRendering.effortWithoutThinkingModeError(
+            .low, modelID: "google/gemma-3-4b-it").message
+            == refusals["effortWithoutThinkingMode"])
+        #expect(ReasoningEffort.vocabulary == root?["reasoningEfforts"] as? [String])
+    }
+
     // MARK: - 1. declarations canonicalize identically on both engines
 
     @Test func everyDeclarationCanonicalizesTheWayThePythonEngineDoes() throws {
@@ -354,6 +373,11 @@ import Testing
         var out = "{\"addGenerationPrompt\":\(fragment["addGenerationPrompt"] as? Bool ?? true)"
         out += ",\"mode\":\(string(fragment["mode"]))"
         out += ",\"qwenThinkingEnabled\":\(fragment["qwenThinkingEnabled"] as? Bool ?? false)"
+        // Present only for low/medium (2026-09-03), between the boolean and
+        // systemPrompt — the server's sorted-key position.
+        if let effort = fragment["reasoningEffort"] as? String {
+            out += ",\"reasoningEffort\":\"\(effort)\""
+        }
         out += ",\"systemPrompt\":\(string(fragment["systemPrompt"]))"
         if let voice = fragment["voice"] as? String {
             out += ",\"voice\":\"\(voice)\""

@@ -428,10 +428,34 @@ reachable through `set-protocol --set <key>=<json>` — `taskPromptsFile` +
 `outcomeInstruments`, and `sweep` respectively — because that is the shape
 `set_protocol` actually has. The same shape covers the Mac's `set-sampling`
 and `set-exclusions`: the generation protocol (`temperature`, `maxTokens`,
-`promptMode`, `samplesPerItem`, `seedPolicy`) and the declared
+`promptMode`, `samplesPerItem`, `seedPolicy`, `reasoningEffort`,
+`reasoningMaxTokens`) and the declared
 `exclusionRules` are protocol fields here, so a stochastic replication arm
 (`--set samplesPerItem=25 --set temperature=0.7 --set maxTokens=1024 --set
-seedPolicy=derivedSHA256`) is authorable from any machine. The field
+seedPolicy=derivedSHA256`) is authorable from any machine, and so is a
+reasoning arm (`--set reasoningEffort=low --set reasoningMaxTokens=2048`).
+The reasoning protocol (2026-09-03) replaced the Qwen-specific manifest
+boolean `qwenThinkingEnabled`: `reasoningEffort` ∈ off | low | medium | xhigh
+is what the chat template is rendered with (`off` is the old `false`,
+`enable_thinking=false`; a non-off value passes `enable_thinking=true` plus
+`reasoning_effort=<value>`), and `reasoningMaxTokens` caps the reasoning
+block up to `</think>` on its own, `maxTokens` then being the ANSWER budget
+counted from the token after it. A non-off effort is refused without the
+budget and on a family whose template has no thinking mode (Gemma); `off`
+refuses a budget and retires one already on the draft. **The old boolean is
+still read, never rewritten, and never writable:** a manifest frozen under
+`qwenThinkingEnabled` loads as `off` (false) or `xhigh` (true) — `true` ran
+under the template's default effort, which on Qwen3.8 is `xhigh` — and
+verifies and hashes exactly as it did, with the joint rules applying only to
+a manifest that spells `reasoningEffort` itself. Writing the effort into a
+draft drops the boolean, so a draft never spells one parameter twice; should
+a document carry both anyway (a hand edit), a non-off `reasoningEffort` wins
+and otherwise a `qwenThinkingEnabled: true` still means `xhigh` — the same
+reading on both engines. The
+same two spellings, the same reading, and the same refusals hold for a
+concept's `extractionRendering` block, whose recipe-identity fragment keeps
+the boolean spelling for off/xhigh (every frozen recipe hashed under it) and
+adds `reasoningEffort` only for low/medium. The field
 vocabulary is closed
 (`experiment_store.PROTOCOL_FIELDS`) and a key outside it **refuses at 64**,
 naming the key and listing the vocabulary, with nothing written — never a

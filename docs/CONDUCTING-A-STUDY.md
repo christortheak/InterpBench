@@ -152,8 +152,14 @@ but the instrument remains an explicit declaration:
 
 `pin-prompts` raises a `choiceItemsWithoutInstrument` advisory when a file
 carries options and no direct-scoring instrument is declared — the run will
-then record prose and nothing else. Thinking modes must be off for
-log-probability arms, and a manifest asking for both is refused.
+then record prose and nothing else. The reasoning effort must be `off` for
+log-probability arms (`reasoningEffort`, declared by `set-sampling
+--reasoning-effort`; a manifest frozen under the old `qwenThinkingEnabled`
+boolean reads `true` as `xhigh`), and a manifest asking for both is refused.
+A study that DOES reason declares the reasoning block's own cap beside the
+effort (`--reasoning-max-tokens`); `--max-tokens` is then the answer budget,
+and a generation that spends the reasoning cap without ever closing its block
+is recorded `lengthInReasoning`, which the truncation gate counts as cut off.
 
 **Two declarations that scope what an instrument reads.** Both are draft-only,
 both exist on the cross-platform client under the same spelling, and both

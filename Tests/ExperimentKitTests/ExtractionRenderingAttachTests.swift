@@ -85,7 +85,8 @@ import Testing
             // Resolved defaults written out, so the manifest says what the
             // extraction will do without a reader knowing the type's defaults.
             #expect(declared.addGenerationPrompt == true)
-            #expect(declared.qwenThinkingEnabled == false)
+            #expect(declared.reasoningEffort == .off)
+            #expect(declared.qwenThinkingEnabled == nil)
             #expect(ref.options.resolvedExtractionRendering.isRaw == false)
 
             // The identity the extraction must reproduce carries it…
@@ -107,7 +108,9 @@ import Testing
     /// Every rendering PARAMETER survives the flag, not just the mode.
     @Test func theRenderingParametersSurviveTheFlagVerbatim() async throws {
         try await withTempRoot { _ in
-            await invoke(["create", "params", "--model", Self.model])
+            // A thinking-on rendering is only declarable on a family with a
+            // thinking mode (the attach gate refuses it on any other).
+            await invoke(["create", "params", "--model", "Qwen/Qwen3-0.6B"])
             #expect(
                 await invoke(
                     [
@@ -118,8 +121,20 @@ import Testing
             let ref = try #require(
                 try ExperimentStore.load(name: "params").concepts.first)
             let declared = try #require(ref.options.extractionRendering)
-            #expect(declared.qwenThinkingEnabled == true)
+            // The legacy boolean lands resolved in the effort spelling.
+            #expect(declared.reasoningEffort == .xhigh)
+            #expect(declared.resolvedQwenThinkingEnabled == true)
             #expect(declared.systemPrompt == "be brief")
+
+            // …and on a family without a thinking mode it is refused by name.
+            await invoke(["create", "gemma", "--model", "google/gemma-3-4b-it"])
+            let refused = await invoke(
+                [
+                    "attach", "gemma", "french", "--extraction-rendering",
+                    #"{"mode":"chatTemplate","reasoningEffort":"low"}"#,
+                ])
+            #expect(refused.envelope.exitCode == 64)
+            #expect(refused.envelope.error?.reason.contains("no thinking mode") == true)
         }
     }
 

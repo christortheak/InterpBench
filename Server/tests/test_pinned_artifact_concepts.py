@@ -338,13 +338,13 @@ def test_attach_copies_the_artifacts_rendering_so_verify_passes(tmp_path):
     rendering travels from the sidecar exactly as the reading position does,
     and the assistant voice travels with it."""
     root, artifact = _workspace(
-        tmp_path, rendering={"mode": "chatTemplate", "qwenThinkingEnabled": False,
+        tmp_path, rendering={"mode": "chatTemplate", "reasoningEffort": "off",
                              "voice": "assistant"})
     es.attach_artifact("gm-study", "crit-gm", artifact, source_concept="crit",
                        root=root)
     d = es.load_raw("gm-study", root)
     assert d["concepts"][0]["options"]["extractionRendering"] == {
-        "mode": "chatTemplate", "qwenThinkingEnabled": False,
+        "mode": "chatTemplate", "reasoningEffort": "off",
         "voice": "assistant"}
     marker = "held-out activations must be read as the vector was rendered"
     assert not any(marker in v for v in Manifest.from_dict(d).verify(root))

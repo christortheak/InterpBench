@@ -5,7 +5,7 @@
   "observedAt": "1970-01-01T00:16:40Z",
   "result": {
     "experiment": "demo",
-    "experimentHash": "f69550efc0aaeee6144b0af1c75c2131142cff6d15f156de10462269414157c1",
+    "experimentHash": "23198da6cbd0b7a9d323a3254d4b96791f5bd5ac44da76fa13acdea26149e09e",
     "status": "draft",
     "verified": true,
     "violations": []

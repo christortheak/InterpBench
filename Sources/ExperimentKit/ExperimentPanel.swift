@@ -172,7 +172,21 @@ public final class ExperimentPanel {
     public var taskPromptsText = ""
     public var promptMode: ExperimentManifest.PromptMode = .chatAssistant
     public var systemPrompt = ""
-    public var qwenThinkingEnabled = false
+    /// The declared reasoning effort (off | low | medium | xhigh) and the
+    /// reasoning block's own token cap — the study protocol's
+    /// `reasoningEffort`/`reasoningMaxTokens` (2026-09-03). The legacy
+    /// `qwenThinkingEnabled` boolean survives below as a derived view for the
+    /// route and the toggle that still speak it: on ≡ the template's default
+    /// effort, off ≡ off.
+    public var reasoningEffort: String = ReasoningEffort.off.rawValue
+    public var reasoningMaxTokens: Int?
+    public var qwenThinkingEnabled: Bool {
+        get { (ReasoningEffort(rawValue: reasoningEffort) ?? .off).isOn }
+        set {
+            reasoningEffort = ReasoningEffort.legacy(qwenThinkingEnabled: newValue).rawValue
+            if !newValue { reasoningMaxTokens = nil }
+        }
+    }
     public var evaluationPrompt = ""
     public var evaluationStructuredPrompt = ""
     public var judgeModel = ""
@@ -1618,7 +1632,9 @@ public final class ExperimentPanel {
             manifest.temperature = 0
             manifest.maxTokens = 2048
             manifest.promptMode = .chatAssistant
-            manifest.qwenThinkingEnabled = false
+            manifest.qwenThinkingEnabled = nil
+            manifest.reasoningEffort = ReasoningEffort.off.rawValue
+            manifest.reasoningMaxTokens = nil
             try ExperimentStore.save(manifest)
             newName = ""
             newDescription = ""
@@ -3423,7 +3439,23 @@ public final class ExperimentPanel {
             let baseModelChanged = applyStudyBaseModelChoice(to: &manifest)
             manifest.promptMode = promptMode
             manifest.systemPrompt = nilIfEmpty(systemPrompt)
-            manifest.qwenThinkingEnabled = qwenThinkingEnabled
+            // The panel writes the effort spelling and drops the legacy
+            // boolean, exactly as `setSamplingProtocol` does; the joint
+            // rules (budget beside a non-off effort, on a family with a
+            // thinking mode) are refused HERE with the store's sentences so
+            // a draft the run would refuse is never saved.
+            let reasoningProblems = ReasoningEffort.protocolViolations(
+                effort: reasoningEffort, reasoningMaxTokens: reasoningMaxTokens,
+                modelID: manifest.modelID)
+            guard reasoningProblems.isEmpty else {
+                throw ExperimentError.malformed(
+                    reasoningProblems.joined(separator: "; "),
+                    repair: "declare a reasoning budget beside a non-off "
+                        + "effort (or set the effort to off)")
+            }
+            manifest.reasoningEffort = reasoningEffort
+            manifest.reasoningMaxTokens = reasoningMaxTokens
+            manifest.qwenThinkingEnabled = nil
             manifest.dtype = nilIfEmpty(studyDtypeField)
             // Judge-rubric versioning: pin the selected rubric file at its
             // CURRENT hash ("" clears the pin — draft-only inline text).
@@ -4683,6 +4715,15 @@ public final class ExperimentPanel {
             note("\(error)", severity: .error)
             return
         }
+        // A non-off reasoning effort on a family without a thinking mode is
+        // answered here, where the study's model id is known (the parser
+        // cannot see one). Server twin: `experiment_store.attach`.
+        if let problem = ExtractionRendering.thinkingModeProblem(
+            declaredRendering, modelID: selected?.modelID ?? "")
+        {
+            note(problem.message, severity: .error)
+            return
+        }
         // WHERE it is read, as the cross-engine label. nil for the recipe
         // default, which keeps the manifest byte-identical.
         let declaredPosition = attachReadingPositionChoice.declarationLabel(
@@ -5460,7 +5501,8 @@ public final class ExperimentPanel {
             multiAgentIncludeBaseline = true
             promptMode = .chatAssistant
             systemPrompt = ""
-            qwenThinkingEnabled = false
+            reasoningEffort = ReasoningEffort.off.rawValue
+            reasoningMaxTokens = nil
             evaluationPrompt = ""
             evaluationStructuredPrompt = ""
             judgeModel = defaultJudgeModel(for: nil)
@@ -5537,7 +5579,8 @@ public final class ExperimentPanel {
         }
         promptMode = manifest.promptMode ?? .chatAssistant
         systemPrompt = manifest.systemPrompt ?? ""
-        qwenThinkingEnabled = manifest.qwenThinkingEnabled ?? false
+        reasoningEffort = manifest.resolvedReasoningEffort.rawValue
+        reasoningMaxTokens = manifest.reasoningMaxTokens
         evaluationPrompt = manifest.evaluation?.judgePrompt ?? ""
         evaluationStructuredPrompt = manifest.evaluation?.structuredPrompt ?? ""
         judgeModel = manifest.evaluation?.judgeModel ?? defaultJudgeModel(for: manifest)

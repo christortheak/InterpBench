@@ -180,7 +180,7 @@ public enum RecipeIdentity {
             return ExtractionRendering(
                 mode: .chatTemplate,
                 addGenerationPrompt: rendering.resolvedAddGenerationPrompt,
-                qwenThinkingEnabled: rendering.resolvedQwenThinkingEnabled,
+                reasoningEffort: rendering.resolvedReasoningEffort,
                 systemPrompt: rendering.systemPrompt,
                 // nil for the USER voice — the second optional key, and the
                 // reason is the first one's: every chat-template recipe
@@ -218,6 +218,15 @@ public enum RecipeIdentity {
             out += "\"addGenerationPrompt\":\(rendering.resolvedAddGenerationPrompt)"
             out += ",\"mode\":\(jsonString(rendering.mode.rawValue))"
             out += ",\"qwenThinkingEnabled\":\(rendering.resolvedQwenThinkingEnabled)"
+            // THE BOOLEAN SPELLING, DELIBERATELY: every recipe hashed before
+            // the effort existed hashed it, and xhigh renders the scaffold
+            // `true` always did. The effort key joins ONLY for the two values
+            // the boolean cannot express, in sorted position between
+            // qwenThinkingEnabled and systemPrompt (q < r < s). Server twin:
+            // `extraction_rendering.canonical_identity_fragment`.
+            if let effort = Self.identityEffort(rendering) {
+                out += ",\"reasoningEffort\":\(jsonString(effort))"
+            }
             out += ",\"systemPrompt\":\(jsonOptionalString(rendering.systemPrompt))"
             // The second optional key, in sorted position AFTER systemPrompt
             // (s < v) and present only for the assistant voice — absent ≡
@@ -357,11 +366,23 @@ public enum RecipeIdentity {
         var out = "{\"addGenerationPrompt\":\(rendering.resolvedAddGenerationPrompt)"
             + ",\"mode\":\(jsonString(rendering.mode.rawValue))"
             + ",\"qwenThinkingEnabled\":\(rendering.resolvedQwenThinkingEnabled)"
-            + ",\"systemPrompt\":\(jsonOptionalString(rendering.systemPrompt))"
+        if let effort = identityEffort(rendering) {
+            out += ",\"reasoningEffort\":\(jsonString(effort))"
+        }
+        out += ",\"systemPrompt\":\(jsonOptionalString(rendering.systemPrompt))"
         if let voice = rendering.voice, voice != .user {
             out += ",\"voice\":\(jsonString(voice.rawValue))"
         }
         return out + "}"
+    }
+
+    /// The effort's contribution to the identity, or nil: only `low` and
+    /// `medium` — the two values the boolean spelling cannot express — so
+    /// off/xhigh hash exactly as false/true always did.
+    static func identityEffort(_ rendering: ExtractionRendering) -> String? {
+        let effort = rendering.resolvedReasoningEffort
+        guard effort.isOn, effort != ReasoningEffort.legacyThinking else { return nil }
+        return effort.rawValue
     }
 
     /// The population's canonical JSON fragment (sorted, compact) — the same

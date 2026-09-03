@@ -1,7 +1,7 @@
 {
   "changed" : true,
   "engine" : "swift-mlx",
-  "message" : "declared sampling protocol on 'demo': 25 sample(s) × temperature 0.7 × up to 1024 tokens  ·  prompt mode chatAssistant  ·  seed policy derivedSHA256  ·  server substrate only",
+  "message" : "declared sampling protocol on 'demo': 25 sample(s) × temperature 0.7 × up to 1024 tokens  ·  prompt mode chatAssistant  ·  reasoning off  ·  seed policy derivedSHA256  ·  server substrate only",
   "nextAction" : {
     "missingPermissionFlags" : [
 

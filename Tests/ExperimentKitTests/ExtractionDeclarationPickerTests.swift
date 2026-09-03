@@ -99,7 +99,8 @@ import Testing
         let declared = try #require(try templated.declared())
         #expect(declared.mode == .chatTemplate)
         #expect(declared.addGenerationPrompt == true)
-        #expect(declared.qwenThinkingEnabled == false)
+        #expect(declared.reasoningEffort == .off)
+        #expect(declared.resolvedQwenThinkingEnabled == false)
         // Absent ≡ user: the legacy voice stamps no key at all.
         #expect(declared.voice == nil)
         #expect(declared.resolvedVoice == .user)

@@ -53,7 +53,52 @@ def test_qwen_enable_thinking_true_when_requested():
     tok = FakeTokenizer()
     prompt_render.render(tok, "Decide.", model_id="Qwen/Qwen3-14B",
                          qwen_thinking_enabled=True)
-    assert tok.last_template_kwargs == {"enable_thinking": True}
+    # The legacy boolean means the template's DEFAULT effort (xhigh), and the
+    # effort is now passed explicitly so the declared study is reproducible
+    # on a template whose default could change.
+    assert tok.last_template_kwargs == {"enable_thinking": True,
+                                        "reasoning_effort": "xhigh"}
+
+
+def test_qwen_reasoning_effort_reaches_the_template_by_value():
+    for effort in ("low", "medium", "xhigh"):
+        tok = FakeTokenizer()
+        prompt_render.render(tok, "Decide.", model_id="Qwen/Qwen3-14B",
+                             reasoning_effort=effort)
+        assert tok.last_template_kwargs == {"enable_thinking": True,
+                                            "reasoning_effort": effort}
+
+
+def test_qwen_reasoning_effort_off_is_byte_for_byte_the_old_no_think_path():
+    tok = FakeTokenizer()
+    prompt_render.render(tok, "Decide.", model_id="Qwen/Qwen3-14B",
+                         reasoning_effort="off")
+    assert tok.last_template_kwargs == {"enable_thinking": False}
+    raw = prompt_render.render(tok, "Decide.", model_id="Qwen/Qwen3-14B",
+                               prompt_mode=prompt_render.RAW_COMPLETION,
+                               reasoning_effort="off")
+    assert raw.text.endswith(" /no_think")
+    thinking = prompt_render.render(tok, "Decide.", model_id="Qwen/Qwen3-14B",
+                                    prompt_mode=prompt_render.RAW_COMPLETION,
+                                    reasoning_effort="low")
+    assert thinking.text.endswith(" /think")
+
+
+def test_a_family_without_a_thinking_mode_gets_no_effort_variable():
+    tok = FakeTokenizer()
+    prompt_render.render(tok, "Hi", model_id="google/gemma-3-4b-it",
+                         reasoning_effort="off")
+    assert tok.last_template_kwargs == {}
+    assert not prompt_render.has_thinking_mode("google/gemma-3-4b-it")
+    assert prompt_render.has_thinking_mode("Qwen/Qwen3-14B")
+
+
+def test_an_unknown_effort_is_refused_at_render_time():
+    import pytest
+    tok = FakeTokenizer()
+    with pytest.raises(ValueError, match="unknown reasoningEffort"):
+        prompt_render.render(tok, "Hi", model_id="Qwen/Qwen3-14B",
+                             reasoning_effort="hgih")
 
 
 def test_non_gemma_keeps_system_role():

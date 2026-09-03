@@ -3,6 +3,7 @@
     "addGenerationPrompt",
     "mode",
     "qwenThinkingEnabled",
+    "reasoningEffort",
     "systemPrompt",
     "voice"
   ],
@@ -112,11 +113,20 @@
       "requiresTemplatedRendering": false
     }
   ],
+  "reasoningEfforts": [
+    "off",
+    "low",
+    "medium",
+    "xhigh"
+  ],
   "refusals": {
     "assistantVoiceGenerationPrompt": "extractionRendering declares voice 'assistant' together with addGenerationPrompt: under the assistant voice the stimulus IS the generation, so there is no generation prompt to add or withhold and the key would reach nothing \u2014 repair: drop addGenerationPrompt, or declare voice 'user' if you meant the model READING the stimulus",
     "assistantVoiceSystemPrompt": "extractionRendering declares voice 'assistant' together with a systemPrompt: the assistant-voice construction renders the assistant turn ALONE, with no preceding turn for system text to live in (injected context would confound the very contrast the voice exists to isolate) \u2014 repair: drop systemPrompt, or declare voice 'user' if the model is meant to read the stimulus under that system prompt",
+    "bothThinkingKeys": "extractionRendering declares both qwenThinkingEnabled and reasoningEffort \u2014 two spellings of one parameter; qwenThinkingEnabled is the legacy boolean (false \u2261 off, true \u2261 xhigh) and reasoningEffort replaces it \u2014 repair: keep reasoningEffort and drop qwenThinkingEnabled",
+    "effortWithoutThinkingMode": "extractionRendering declares reasoningEffort 'low' for google/gemma-3-4b-it, whose family has no thinking mode \u2014 the chat template would ignore it and the recipe would look as if it rendered a reasoning scaffold when it did not \u2014 repair: declare reasoningEffort off, or pin a model with a thinking mode",
     "rawParameters": "extractionRendering mode 'raw' takes no parameters but declares addGenerationPrompt, voice \u2014 repair: drop the parameters, or declare mode 'chatTemplate' if you meant the template rendering",
-    "unknownChatTemplateKey": "extractionRendering mode 'chatTemplate' does not accept addGenerationPromt: a key this engine does not read reaches nothing, so a misspelling (addGenerationPromt) silently leaves the default in place and changes what a frozen study measured \u2014 repair: correct or drop the key; the accepted parameters are addGenerationPrompt, mode, qwenThinkingEnabled, systemPrompt, voice"
+    "unknownChatTemplateKey": "extractionRendering mode 'chatTemplate' does not accept addGenerationPromt: a key this engine does not read reaches nothing, so a misspelling (addGenerationPromt) silently leaves the default in place and changes what a frozen study measured \u2014 repair: correct or drop the key; the accepted parameters are addGenerationPrompt, mode, qwenThinkingEnabled, reasoningEffort, systemPrompt, voice",
+    "unknownEffort": "extractionRendering.reasoningEffort 'hgih' is not in the closed vocabulary \u2014 repair: declare one of off, low, medium, xhigh (absent means off)"
   },
   "renderings": [
     {
@@ -150,7 +160,7 @@
       "stamp": {
         "addGenerationPrompt": true,
         "mode": "chatTemplate",
-        "qwenThinkingEnabled": false
+        "reasoningEffort": "off"
       }
     },
     {
@@ -169,7 +179,7 @@
       "stamp": {
         "addGenerationPrompt": true,
         "mode": "chatTemplate",
-        "qwenThinkingEnabled": false
+        "reasoningEffort": "off"
       }
     },
     {
@@ -188,7 +198,7 @@
       "label": "assistantVoice",
       "stamp": {
         "mode": "chatTemplate",
-        "qwenThinkingEnabled": false,
+        "reasoningEffort": "off",
         "voice": "assistant"
       }
     },
@@ -198,7 +208,7 @@
         "qwenThinkingEnabled": true,
         "voice": "assistant"
       },
-      "humanLabel": "chatTemplate (voice=assistant, qwenThinkingEnabled=true)",
+      "humanLabel": "chatTemplate (voice=assistant, reasoningEffort=xhigh)",
       "identityFragment": {
         "addGenerationPrompt": false,
         "mode": "chatTemplate",
@@ -209,8 +219,88 @@
       "label": "assistantVoiceThinking",
       "stamp": {
         "mode": "chatTemplate",
-        "qwenThinkingEnabled": true,
+        "reasoningEffort": "xhigh",
         "voice": "assistant"
+      }
+    },
+    {
+      "declaration": {
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": true
+      },
+      "humanLabel": "chatTemplate (addGenerationPrompt=true, reasoningEffort=xhigh)",
+      "identityFragment": {
+        "addGenerationPrompt": true,
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": true,
+        "systemPrompt": null
+      },
+      "label": "legacyThinkingTrue",
+      "stamp": {
+        "addGenerationPrompt": true,
+        "mode": "chatTemplate",
+        "reasoningEffort": "xhigh"
+      }
+    },
+    {
+      "declaration": {
+        "mode": "chatTemplate",
+        "reasoningEffort": "xhigh"
+      },
+      "humanLabel": "chatTemplate (addGenerationPrompt=true, reasoningEffort=xhigh)",
+      "identityFragment": {
+        "addGenerationPrompt": true,
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": true,
+        "systemPrompt": null
+      },
+      "label": "reasoningEffortXhigh",
+      "stamp": {
+        "addGenerationPrompt": true,
+        "mode": "chatTemplate",
+        "reasoningEffort": "xhigh"
+      }
+    },
+    {
+      "declaration": {
+        "mode": "chatTemplate",
+        "reasoningEffort": "low"
+      },
+      "humanLabel": "chatTemplate (addGenerationPrompt=true, reasoningEffort=low)",
+      "identityFragment": {
+        "addGenerationPrompt": true,
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": true,
+        "reasoningEffort": "low",
+        "systemPrompt": null
+      },
+      "label": "reasoningEffortLow",
+      "stamp": {
+        "addGenerationPrompt": true,
+        "mode": "chatTemplate",
+        "reasoningEffort": "low"
+      }
+    },
+    {
+      "declaration": {
+        "mode": "chatTemplate",
+        "reasoningEffort": "medium",
+        "systemPrompt": "be brief"
+      },
+      "humanLabel": "chatTemplate (addGenerationPrompt=true, reasoningEffort=medium, systemPrompt=set)",
+      "identityFragment": {
+        "addGenerationPrompt": true,
+        "mode": "chatTemplate",
+        "qwenThinkingEnabled": true,
+        "reasoningEffort": "medium",
+        "systemPrompt": "be brief"
+      },
+      "label": "reasoningEffortMediumSystem",
+      "stamp": {
+        "addGenerationPrompt": true,
+        "mode": "chatTemplate",
+        "reasoningEffort": "medium",
+        "systemPrompt": "be brief"
       }
     },
     {
@@ -229,7 +319,7 @@
       "stamp": {
         "addGenerationPrompt": true,
         "mode": "chatTemplate",
-        "qwenThinkingEnabled": false,
+        "reasoningEffort": "off",
         "systemPrompt": "be brief"
       }
     }

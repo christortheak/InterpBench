@@ -138,6 +138,9 @@ public enum CLIFlagVocabulary {
             "<" + ExperimentStore.knownPromptModes.joined(separator: "|") + ">",
         "experiment set-sampling --seed-policy":
             "<" + ExperimentStore.knownSeedPolicies.joined(separator: "|") + ">",
+        "experiment set-sampling --reasoning-effort":
+            "<" + ReasoningEffort.vocabulary.joined(separator: "|") + ">",
+        "experiment set-sampling --reasoning-max-tokens": "<n>",
         "remote fetch --out": "<dir>",
         "remote import --out": "<dir>",
         "docs cli-reference --path": "<file>",
@@ -360,6 +363,16 @@ public enum CLIFlagVocabulary {
         "experiment set-sampling --prompt-mode":
             "How the prompt is rendered (default chatAssistant; \"\" clears "
             + "the declaration).",
+        "experiment set-sampling --reasoning-effort":
+            "The reasoning effort the chat template is rendered with (default "
+            + "off; the legacy qwenThinkingEnabled true meant xhigh). A non-off "
+            + "value needs --reasoning-max-tokens and a model with a thinking "
+            + "mode; off retires the budget.",
+        "experiment set-sampling --reasoning-max-tokens":
+            "The reasoning block's own token cap, counted up to </think>; "
+            + "--max-tokens is then the answer budget, counted from the token "
+            + "after it. Required beside a non-off --reasoning-effort, refused "
+            + "beside off.",
         "experiment create --model": "The model this experiment is pinned to (required).",
         "vectors backfill-norms --model": "Load this model for the measurement.",
         "vectors mirror-poles --concept":

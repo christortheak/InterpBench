@@ -31,14 +31,31 @@ defaults:
 
     {"mode": "raw"}
     {"mode": "chatTemplate", "addGenerationPrompt": true,
-     "qwenThinkingEnabled": false, "systemPrompt": null}
+     "reasoningEffort": "off", "systemPrompt": null}
 
 ``mode`` is the only required key. ``addGenerationPrompt`` defaults to true,
-``qwenThinkingEnabled`` to false, ``systemPrompt`` to absent — the parameters
+``reasoningEffort`` to ``off``, ``systemPrompt`` to absent — the parameters
 the MEASUREMENT renderer (``prompt_render.render``) actually varies, and no
 more. Family handling (Gemma has no system role; Qwen's ``enable_thinking``)
 is derived from the pinned model id by that same renderer, so it is not
 re-declared here: there is ONE rendering definition, and extraction calls it.
+
+THE REASONING EFFORT (2026-09-03)
+---------------------------------
+
+``reasoningEffort`` ∈ off | low | medium | xhigh replaced the Qwen-specific
+boolean ``qwenThinkingEnabled``. The old key is still READ — ``false`` is
+``off`` and ``true`` is ``xhigh``, because a recipe declared with thinking on
+rendered under the chat template's DEFAULT effort, which on Qwen3.8 is xhigh
+— so every existing declaration, sidecar stamp, and recipe identity keeps
+its meaning and its bytes; a block that spells both keys is refused as two
+declarations of one parameter. A new declaration writes ``reasoningEffort``
+only. The recipe-identity fragment (:func:`canonical_identity_fragment`)
+keeps the boolean spelling for off/xhigh — the hashes of every frozen recipe
+depend on it — and adds ``reasoningEffort`` only for the two values the
+boolean cannot express. A non-off effort on a family without a thinking mode
+is refused where the model id is known (attach and the extraction routes),
+never silently rendered without it.
 
 THE VOICE (2026-08-25, maintainer ruling)
 -----------------------------------------
@@ -129,7 +146,53 @@ DECLARATION_FLAG = "--extraction-rendering"
 #: refusal about a stranger names, and the list :func:`from_json` measures an
 #: object against. Swift twin: ``ExtractionRendering.chatTemplateKeys``.
 CHAT_TEMPLATE_KEYS = ("addGenerationPrompt", "mode", "qwenThinkingEnabled",
-                      "systemPrompt", "voice")
+                      "reasoningEffort", "systemPrompt", "voice")
+
+#: The reasoning-effort vocabulary, in the fixed cross-engine order — the
+#: same closed set the study protocol's ``reasoningEffort`` takes
+#: (``experiment.prompt_render.REASONING_EFFORTS``; duplicated here rather
+#: than imported because ``steering`` may not depend on ``experiment`` at
+#: import time). Swift twin: ``ReasoningEffort.allCases``.
+REASONING_OFF = "off"
+REASONING_EFFORTS = (REASONING_OFF, "low", "medium", "xhigh")
+#: What a legacy ``qwenThinkingEnabled: true`` declaration meant: the chat
+#: template's default effort.
+LEGACY_THINKING_EFFORT = "xhigh"
+
+#: Refusal text shared VERBATIM with the Swift twin
+#: (``ExtractionRendering.bothThinkingKeysReason``).
+BOTH_THINKING_KEYS_REASON = (
+    "extractionRendering declares both qwenThinkingEnabled and "
+    "reasoningEffort — two spellings of one parameter; qwenThinkingEnabled "
+    "is the legacy boolean (false ≡ off, true ≡ xhigh) and reasoningEffort "
+    "replaces it — repair: keep reasoningEffort and drop qwenThinkingEnabled")
+
+
+def unknown_effort_reason(value) -> str:
+    """Refusal text shared VERBATIM with the Swift twin
+    (``ExtractionRendering.unknownEffortReason``)."""
+    return (f"extractionRendering.reasoningEffort '{value}' is not in the "
+            f"closed vocabulary — repair: declare one of "
+            f"{', '.join(REASONING_EFFORTS)} (absent means off)")
+
+
+def effort_without_thinking_mode_reason(effort: str, model_id: str) -> str:
+    """Refusal for a non-off effort on a family whose chat template has no
+    thinking mode, raised where the model id is known. Shared VERBATIM with
+    the Swift twin (``ExtractionRendering.effortWithoutThinkingModeReason``)."""
+    return (f"extractionRendering declares reasoningEffort '{effort}' for "
+            f"{model_id}, whose family has no thinking mode — the chat "
+            "template would ignore it and the recipe would look as if it "
+            "rendered a reasoning scaffold when it did not — repair: declare "
+            "reasoningEffort off, or pin a model with a thinking mode")
+
+
+def has_thinking_mode(model_id: str) -> bool:
+    """Whether the pinned family's chat template has a thinking mode. The
+    one family rule, restated here so the attach path can ask it without a
+    ``steering`` → ``experiment`` import; ``prompt_render.has_thinking_mode``
+    is the renderer's own copy and the two are pinned equal by test."""
+    return "qwen" in (model_id or "").lower()
 
 
 def unknown_chat_template_keys(value: dict) -> list[str]:
@@ -202,7 +265,9 @@ class ExtractionRendering:
 
     mode: str = RAW
     add_generation_prompt: bool = True
-    qwen_thinking_enabled: bool = False
+    #: The declared reasoning effort (``reasoningEffort``); ``off`` is the
+    #: legacy ``qwenThinkingEnabled: false`` and what an absent key means.
+    reasoning_effort: str = REASONING_OFF
     system_prompt: str | None = None
     #: WHOSE TURN the stimulus is rendered as. ``VOICE_USER`` is the legacy
     #: value and what an absent key means; see the module docstring.
@@ -217,6 +282,12 @@ class ExtractionRendering:
         return self.voice == VOICE_ASSISTANT
 
     @property
+    def qwen_thinking_enabled(self) -> bool:
+        """Whether the render carries a thinking scaffold at all — the
+        boolean every pre-effort reader asked for. Derived from the effort."""
+        return self.reasoning_effort != REASONING_OFF
+
+    @property
     def label(self) -> str:
         """Short human label for logs and refusal messages."""
         if self.is_raw:
@@ -226,11 +297,11 @@ class ExtractionRendering:
             # in a human label would invite the reader to look for it.
             bits = ["voice=assistant"]
             if self.qwen_thinking_enabled:
-                bits.append("qwenThinkingEnabled=true")
+                bits.append(f"reasoningEffort={self.reasoning_effort}")
             return "chatTemplate (" + ", ".join(bits) + ")"
         bits = [f"addGenerationPrompt={str(self.add_generation_prompt).lower()}"]
         if self.qwen_thinking_enabled:
-            bits.append("qwenThinkingEnabled=true")
+            bits.append(f"reasoningEffort={self.reasoning_effort}")
         if self.system_prompt:
             bits.append("systemPrompt=set")
         return "chatTemplate (" + ", ".join(bits) + ")"
@@ -246,19 +317,24 @@ class ExtractionRendering:
         voice writes the key AND omits ``addGenerationPrompt``: that parameter
         is refused at declaration time as meaningless there, so stamping the
         internal ``false`` would be an artifact claiming a choice nobody made.
+
+        Writes ``reasoningEffort`` (never the legacy boolean): this is what a
+        NEW stamp or declaration says. A block READ under the old spelling is
+        never re-serialized into a frozen file — attach writes into a draft,
+        extraction stamps a new sidecar — so no frozen bytes move.
         """
         if self.is_raw:
             return {"mode": RAW}
         if self.is_assistant_voice:
             return {
                 "mode": CHAT_TEMPLATE,
-                "qwenThinkingEnabled": self.qwen_thinking_enabled,
+                "reasoningEffort": self.reasoning_effort,
                 "voice": VOICE_ASSISTANT,
             }
         block = {
             "mode": CHAT_TEMPLATE,
             "addGenerationPrompt": self.add_generation_prompt,
-            "qwenThinkingEnabled": self.qwen_thinking_enabled,
+            "reasoningEffort": self.reasoning_effort,
         }
         if self.system_prompt is not None:
             block["systemPrompt"] = self.system_prompt
@@ -319,8 +395,11 @@ def from_json(value) -> ExtractionRendering:
         raise ExtractionRenderingError(unknown_chat_template_key_reason(unknown))
     add_generation_prompt = value.get("addGenerationPrompt")
     qwen_thinking = value.get("qwenThinkingEnabled")
+    declared_effort = value.get("reasoningEffort")
     system_prompt = value.get("systemPrompt")
     voice = value.get("voice")
+    if qwen_thinking is not None and declared_effort is not None:
+        raise ExtractionRenderingError(BOTH_THINKING_KEYS_REASON)
     if voice is not None and (not isinstance(voice, str) or voice not in VOICES):
         raise ExtractionRenderingError(
             f"extraction rendering voice '{voice}' is not supported by the "
@@ -345,10 +424,20 @@ def from_json(value) -> ExtractionRendering:
         raise ExtractionRenderingError(
             "extractionRendering.qwenThinkingEnabled must be a boolean — "
             "repair: use true or false")
+    if declared_effort is not None and (
+            not isinstance(declared_effort, str)
+            or declared_effort not in REASONING_EFFORTS):
+        raise ExtractionRenderingError(unknown_effort_reason(declared_effort))
     if system_prompt is not None and not isinstance(system_prompt, str):
         raise ExtractionRenderingError(
             "extractionRendering.systemPrompt must be a string or absent — "
             "repair: drop the key when the render carries no system prompt")
+    if declared_effort is not None:
+        effort = declared_effort
+    else:
+        # The legacy boolean's meaning: true ran under the template's default
+        # effort. Absent is off, exactly as it always was.
+        effort = LEGACY_THINKING_EFFORT if qwen_thinking else REASONING_OFF
     return ExtractionRendering(
         mode=CHAT_TEMPLATE,
         # The assistant voice renders a COMPLETED assistant turn, which is the
@@ -359,10 +448,25 @@ def from_json(value) -> ExtractionRendering:
             False if voice == VOICE_ASSISTANT
             else (True if add_generation_prompt is None
                   else add_generation_prompt)),
-        qwen_thinking_enabled=(False if qwen_thinking is None
-                               else qwen_thinking),
+        reasoning_effort=effort,
         system_prompt=system_prompt,
         voice=voice or VOICE_USER)
+
+
+def thinking_mode_problem(rendering: "ExtractionRendering | None",
+                          model_id: str) -> str | None:
+    """The refusal for a non-off effort on a family without a thinking mode,
+    or None — asked wherever a declaration meets the pinned model id (attach,
+    the extraction routes), because :func:`from_json` itself never sees one.
+    Swift twin: ``ExtractionRendering.thinkingModeProblem(modelID:)``."""
+    if rendering is None or rendering.is_raw:
+        return None
+    if rendering.reasoning_effort == REASONING_OFF:
+        return None
+    if has_thinking_mode(model_id):
+        return None
+    return effort_without_thinking_mode_reason(
+        rendering.reasoning_effort, model_id)
 
 
 def parse_declaration(value) -> ExtractionRendering | None:
@@ -432,9 +536,19 @@ def canonical_identity_fragment(rendering: "ExtractionRendering | None") -> dict
     fragment = {
         "addGenerationPrompt": rendering.add_generation_prompt,
         "mode": CHAT_TEMPLATE,
+        # THE BOOLEAN SPELLING, DELIBERATELY. Every recipe hashed before the
+        # effort existed hashed `qwenThinkingEnabled`, and a recipe declared
+        # `reasoningEffort: "xhigh"` today renders the identical scaffold a
+        # `qwenThinkingEnabled: true` recipe rendered — so both must hash the
+        # same. The effort key joins the fragment ONLY for the two values the
+        # boolean cannot express (sorted position: after qwenThinkingEnabled,
+        # before systemPrompt — where the Swift twin's hand-built JSON puts
+        # it).
         "qwenThinkingEnabled": rendering.qwen_thinking_enabled,
-        "systemPrompt": rendering.system_prompt,
     }
+    if rendering.reasoning_effort not in (REASONING_OFF, LEGACY_THINKING_EFFORT):
+        fragment["reasoningEffort"] = rendering.reasoning_effort
+    fragment["systemPrompt"] = rendering.system_prompt
     if rendering.is_assistant_voice:
         fragment["voice"] = VOICE_ASSISTANT
     return fragment
@@ -467,7 +581,7 @@ def rendered_token_ids(model, text: str,
             rendered = prompt_render.render_assistant_turn(
                 model.tokenizer, text,
                 model_id=getattr(model, "model_id", "") or "",
-                qwen_thinking_enabled=rendering.qwen_thinking_enabled)
+                reasoning_effort=rendering.reasoning_effort)
         except prompt_render.AssistantVoiceUnsupported as exc:
             # Typed and re-homed, so every caller of this module sees one
             # error type — never a silent fallback to the user voice, which
@@ -479,6 +593,6 @@ def rendered_token_ids(model, text: str,
         model_id=getattr(model, "model_id", "") or "",
         prompt_mode=prompt_render.CHAT_ASSISTANT,
         system_prompt=rendering.system_prompt,
-        qwen_thinking_enabled=rendering.qwen_thinking_enabled,
+        reasoning_effort=rendering.reasoning_effort,
         add_generation_prompt=rendering.add_generation_prompt)
     return list(rendered.input_ids)

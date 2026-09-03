@@ -502,9 +502,11 @@ through.)*
 ### A note on models
 
 SteerLab vendors two model families so any finding can be checked against a
-second architecture. **Qwen3** is Apache-2.0; disable thinking mode for measured
-runs unless you are studying it, since reasoning traces change output structure
-and break parsers. **Gemma 3** has no system role in its chat template (system
+second architecture. **Qwen3** is Apache-2.0; keep the reasoning effort `off`
+(`set-sampling --reasoning-effort off`, the default) for measured runs unless
+you are studying it, since reasoning traces change output structure and break
+parsers — and when you do study it, declare the reasoning block's own token
+cap (`--reasoning-max-tokens`) so it cannot eat the answer's budget. **Gemma 3** has no system role in its chat template (system
 text is prepended to the first user turn, which affects prompt design and
 prompt-set hashing) and needs care about double-BOS when templates meet manual
 tokenization; its license is custom rather than Apache, with use restrictions

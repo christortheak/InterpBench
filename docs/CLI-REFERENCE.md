@@ -892,7 +892,7 @@ steerlab-cli experiment declare-condition <name> <condition> [--alpha-units <nor
 steerlab-cli experiment set-sweep-selection <name> [--capability-tolerance <ratio>] [--choice-prompts <path>] [--coherence-backstop <ratio>] [--coherence-floor <ratio>] [--coherence-ratio <ratio>] [--control-apply-to <winner|topK>] [--control-margin <margin>] [--control-top-k <k>] [--objective <metric>]
 steerlab-cli experiment set-sweep-grid <name> [--alphas <a1,a2,…>] [--battery <path>] [--dev-prompts <path>] [--layer-fractions <f1,f2,…>] [--layers <L1,L2,…>] [--max-tokens <n>]
 steerlab-cli experiment set-instruments <name> <instrument>[,…] [--ordinal-aggregation <expectedValue|argmax>]
-steerlab-cli experiment set-sampling <name> [--max-tokens <n>] [--prompt-mode <chatAssistant|rawCompletion>] [--samples-per-item <n>] [--seed-policy <manifestSeeds|derivedSHA256>] [--temperature <t>]
+steerlab-cli experiment set-sampling <name> [--max-tokens <n>] [--prompt-mode <chatAssistant|rawCompletion>] [--reasoning-effort <off|low|medium|xhigh>] [--reasoning-max-tokens <n>] [--samples-per-item <n>] [--seed-policy <manifestSeeds|derivedSHA256>] [--temperature <t>]
 steerlab-cli experiment set-exclusions <name> <rule>[,…] [--endpoint <key>] [--max <x>] [--min <x>]
 steerlab-cli experiment set-system-prompt <name> <text>
 steerlab-cli experiment set-parser <name> <parser>
@@ -916,7 +916,7 @@ steerlab-cli experiment duplicate <name> <new-name>
 | `experiment set-sweep-selection` | Declare the sweep's selection criterion as manifest data. |
 | `experiment set-sweep-grid` | Declare the sweep's layer × alpha grid, its instrument files, and its per-cell token budget. |
 | `experiment set-instruments` | Declare which outcome instruments the run measures (sampledText, answerTokenLogprob, choiceProbability, repeReaderScore, ordinalScale; "" clears the declaration). |
-| `experiment set-sampling` | Declare the generation protocol: temperature, token budget, prompt mode (chatAssistant, rawCompletion), and the stochastic replication policy (samples per item × seed policy: manifestSeeds, derivedSHA256). |
+| `experiment set-sampling` | Declare the generation protocol: temperature, token budget, prompt mode (chatAssistant, rawCompletion), the stochastic replication policy (samples per item × seed policy: manifestSeeds, derivedSHA256), and the reasoning protocol (effort off, low, medium, xhigh × the reasoning block's own token cap; --max-tokens is then the answer budget). |
 | `experiment set-exclusions` | Declare the record-exclusion rules analysis applies (failedAttentionCheck, unparseableEndpoint, outOfRange; "" clears the declaration). |
 | `experiment set-system-prompt` | Declare the study's system prompt — the deployment frame every arm is read under. Inserted as a genuine system turn where the model's chat template has a system role; prepended to the first user turn where it does not (e.g. Gemma-family); prepended to the prompt text under rawCompletion. An agent arm reads under its persona then this frame. "" clears the declaration. |
 | `experiment set-parser` | Declare the numeric-endpoint parser from prompts/parsers/parser-registry.json and pin that registry's hash ("" clears both). |

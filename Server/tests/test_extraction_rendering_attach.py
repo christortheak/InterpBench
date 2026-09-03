@@ -81,7 +81,7 @@ def test_attach_writes_the_declaration_where_the_consumers_read_it(tmp_path):
     # not have to know this engine's defaults to know what will happen.
     assert _options(document)["extractionRendering"] == {
         "mode": "chatTemplate", "addGenerationPrompt": True,
-        "qwenThinkingEnabled": False}
+        "reasoningEffort": "off"}
 
     # …and the typed reader the extraction paths go through agrees.
     manifest = Manifest.load("s", root=root)
@@ -101,16 +101,18 @@ def test_attach_writes_the_declaration_where_the_consumers_read_it(tmp_path):
 def test_every_rendering_parameter_survives_the_attach(tmp_path):
     root = str(tmp_path)
     _concept(root)
-    es.create("s", model_id="org/m", root=root)
+    # A non-off effort is only declarable on a family with a thinking mode
+    # (the attach gate refuses it on any other — pinned below).
+    es.create("s", model_id="Qwen/Qwen3-0.6B", root=root)
     document = es.attach(
         "s", ["french"], root=root,
         extraction_rendering='{"mode":"chatTemplate",'
                              '"addGenerationPrompt":false,'
-                             '"qwenThinkingEnabled":true,'
+                             '"reasoningEffort":"xhigh",'
                              '"systemPrompt":"be brief"}')
     assert _options(document)["extractionRendering"] == {
         "mode": "chatTemplate", "addGenerationPrompt": False,
-        "qwenThinkingEnabled": True, "systemPrompt": "be brief"}
+        "reasoningEffort": "xhigh", "systemPrompt": "be brief"}
 
 
 def test_the_voice_survives_the_attach_and_reaches_the_identity(tmp_path):
@@ -124,7 +126,7 @@ def test_the_voice_survives_the_attach_and_reaches_the_identity(tmp_path):
         "v", ["french"], root=root,
         extraction_rendering='{"mode":"chatTemplate","voice":"assistant"}')
     assert _options(document)["extractionRendering"] == {
-        "mode": "chatTemplate", "qwenThinkingEnabled": False,
+        "mode": "chatTemplate", "reasoningEffort": "off",
         "voice": "assistant"}
     manifest = Manifest.load("v", root)
     fragment = ri.rendering_fragment(
@@ -448,7 +450,7 @@ def test_the_http_attach_route_reaches_the_same_store_parameter(
     assert response.status_code == 200
     assert _options(response.json())["extractionRendering"] == {
         "mode": "chatTemplate", "addGenerationPrompt": True,
-        "qwenThinkingEnabled": False}
+        "reasoningEffort": "off"}
 
     # A body that never mentions the field writes what it always did…
     plain = client.post("/api/authoring/web/attach", json={"concepts": ["joy"]})
