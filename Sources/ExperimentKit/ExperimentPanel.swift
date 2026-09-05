@@ -17,6 +17,9 @@ public final class ExperimentPanel {
     public let submission = StudySubmissionOptions()
     public let management: StudyManagementController
     public let freezeCoordinator = StudyFreezeController()
+    public let bundleSubmission: StudyBundleSubmissionController
+    public let serverExecution: StudyServerJobCoordinator
+    public let pipelines = StudyPipelineController()
 
     public internal(set) weak var host: ChatService?
 
@@ -163,11 +166,6 @@ public final class ExperimentPanel {
     /// The active server's `runs/` listing (read-only browse; refreshed on
     /// demand, cleared when no server workspace is active).
     public private(set) var remoteRuns: [RemoteRunRecord] = []
-    /// Chain-runner runs for the selected experiment (stage 5 affordance).
-    public private(set) var pipelineRuns: [ClusterClient.PipelineRunSummary] = []
-    /// Imported/local chains for the selected experiment — read from the
-    /// portable ledger (preferred) or the raw ledger in the local runs tree.
-    public private(set) var localPipelineRuns: [ClusterClient.PipelineRunSummary] = []
 
     /// Server jobs submitted from THIS panel this session (run-verb jobs and
     /// bundle submissions), id-first so a researcher can always copy the id
@@ -230,18 +228,8 @@ public final class ExperimentPanel {
     /// cancelled record server-side; the follow loop unwinds on the terminal
     /// state).
     public func cancelActiveServerJob() async {
-        guard let job = activeServerJob else { return }
         loadStoredRemoteToken()
-        guard let client = remoteClient else {
-            note("invalid server URL", severity: .error)
-            return
-        }
-        do {
-            try await client.cancelJob(job.id)
-            note("cancel requested for server \(job.verb) job \(job.id) ('\(job.study)')", severity: .warning)
-        } catch {
-            note("cancel failed for job \(job.id): \(error)", severity: .error)
-        }
+        await remoteJobs.cancelActiveServerJob(client: remoteClient)
     }
 
     // Display-pane live log (same affordance LoRA training and vector builds
@@ -519,6 +507,23 @@ public final class ExperimentPanel {
 
     public init() {
         management = StudyManagementController(draft: draft)
+        bundleSubmission = StudyBundleSubmissionController(jobs: remoteJobs)
+        serverExecution = StudyServerJobCoordinator(jobs: remoteJobs)
+        serverExecution.presentation = StudyServerJobPresentation(
+            residency: { [weak self] name, resident in
+                guard let self, self.selectedName == name else { return }
+                self.noteServerResidency(resident)
+            },
+            refreshResidency: { [weak self] in
+                self?.serverResidencyKey = nil
+                await self?.refreshServerResidency()
+            },
+            refreshRuns: { [weak self] in await self?.refreshRemoteRuns() },
+            importEvidence: { [weak self] id in await self?.importEvidence(fromJobID: id) },
+            refresh: { [weak self] in self?.refresh() })
+        pipelines.presentation = StudyPipelinePresentation(
+            note: { [weak self] text, severity in self?.note(text, severity: severity) },
+            refresh: { [weak self] in self?.refresh() })
         management.presentation = StudyManagementPresentation(
             note: { [weak self] text, severity in self?.note(text, severity: severity) },
             selectionChanged: { [weak self] in self?.managementSelectionChanged() },
@@ -554,8 +559,7 @@ public final class ExperimentPanel {
         // clear immediately, refresh in the background (sixth
         // round: stale chains must never render under the wrong
         // study).
-        pipelineRuns = []
-        localPipelineRuns = []
+        pipelines.resetSelection()
         // The focus override is per-study view state.
         studyFocusOverride = nil
         refresh()
@@ -1253,138 +1257,6 @@ public final class ExperimentPanel {
         return await submitStudyRemotely(manifest, followLog: false)
     }
 
-    /// The one bundle-submit implementation: package, upload, submit, stamp.
-    ///
-    /// Extracted from `submitSelectedStudyRemotely` unchanged so a batch row
-    /// and a single click take the identical path — including every guard
-    /// (frozen-on-server, stochastic-agent refusal) and the recent-jobs stamp.
-    /// The only difference a batch asks for is that it does not seize the
-    /// shared log stream.
-    @discardableResult
-    private func submitStudyRemotely(
-        _ manifest: ExperimentManifest,
-        verbOverride: String? = nil,
-        followLog: Bool
-    ) async -> Result<String, StudyBatchSubmission.Failure> {
-        let submissionVerb = verbOverride ?? remoteVerb
-        loadStoredRemoteToken()
-        guard let remoteClient else {
-            remoteStatus = "invalid server URL"
-            let refusal =
-                "remote submit refused: no server connection — connect a "
-                + "server in the substrate selector first"
-            note(refusal, severity: .error)
-            return .failure(StudyBatchSubmission.Failure(reason: refusal))
-        }
-        // Frozen-on-server guard — SHARED with every bundle path
-        // (`ClusterClient.frozenOnServerConflict`): a local draft must not
-        // shadow the server's frozen same-named study.
-        if let conflict = await remoteClient.frozenOnServerConflict(
-            study: manifest.name, localStatus: manifest.status)
-        {
-            remoteStatus = conflict
-            note(conflict, severity: .error)
-            return .failure(StudyBatchSubmission.Failure(reason: conflict))
-        }
-        // Old-server guard (2026-07-21): a stochastic saved-agent study on a
-        // server without study-owned sampling would run the agents greedy
-        // while the baseline samples — refuse BEFORE packaging/uploading
-        // (same rule as UnifiedStudyRunner.submitBundle).
-        if let refusal = SubstrateRouting.stochasticVariantSubmissionRefusal(
-            temperature: manifest.temperature,
-            samplesPerItem: manifest.samplesPerItem,
-            variantConditionCount: manifest.variantConditions.count,
-            verb: submissionVerb,
-            capabilities: cluster?.capabilities)
-        {
-            remoteStatus = refusal
-            note(refusal, severity: .error)
-            return .failure(StudyBatchSubmission.Failure(reason: refusal))
-        }
-        // Scope-drift guard (2026-08-06 field incident) — same rule as
-        // UnifiedStudyRunner.submitBundle: a stale outcomeInstrumentScope
-        // pin refuses at SUBMIT, before packaging/upload, instead of on the
-        // compute node after the model staged.
-        if let refusal = ExperimentTasks.scopeDriftSubmitRefusal(
-            for: manifest, verb: submissionVerb)
-        {
-            remoteStatus = refusal
-            note(refusal, severity: .error)
-            return .failure(StudyBatchSubmission.Failure(reason: refusal))
-        }
-        do {
-            remoteStatus = "packaging \(manifest.name)..."
-            remoteLogLines = []
-            // Packaging copies files, hashes them, and shells out to tar; keep it
-            // off the main actor so the UI doesn't freeze on a real study bundle.
-            let bundle = try await Task.detached {
-                try RunBundlePackager.packageExperiment(manifest)
-            }.value
-            remoteStatus = "uploading \(bundle.lastPathComponent)..."
-            let uploaded = try await remoteClient.uploadBundle(bundle)
-            remoteLastUploadedBundle = uploaded.path
-            let resources = [
-                "gres": remoteGres,
-                "walltime": remoteWalltime,
-            ].filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            remoteStatus = "submitting \(submissionVerb)..."
-            // The resume policy applies to Slurm submissions only — sending
-            // it on a local-executor submission would stamp a policy that
-            // cannot act.
-            let resumePolicy: RemoteResumePolicy? =
-                remoteExecutor == "slurm" ? remoteResumePolicy : nil
-            let submission = try await remoteClient.submitBundle(
-                path: uploaded.path,
-                verb: submissionVerb,
-                executor: remoteExecutor,
-                dryRun: remoteDryRun,
-                resources: resources,
-                resumePolicy: resumePolicy,
-                parallelJobs: remoteParallelJobs)
-            remoteJobID = submission.jobId
-            let substrate = cluster?.substrateLabel ?? submission.executor
-            var submitted = Self.bundleSubmittedStatus(
-                study: manifest.name, verb: submissionVerb, dryRun: remoteDryRun,
-                substrate: substrate, jobID: submission.jobId)
-            if let resumePolicy {
-                submitted += " — \(resumePolicy.transcriptStamp)"
-            }
-            // The sharding stamp derives from the server's RESPONSE (the
-            // shard ids it actually created), never from the request — the
-            // server may have ignored the fan-out (finding 5, 2026-07-22).
-            if let stamp = ShardedSubmission.transcriptStamp(
-                shardJobIDs: submission.shardJobIDs)
-            {
-                submitted += " — \(stamp)"
-            }
-            remoteStatus = submitted
-            note(submitted, severity: .info)
-            noteRecentServerJob(
-                id: submission.jobId, verb: "\(submissionVerb) (bundle)",
-                study: manifest.name, state: "submitted")
-            if followLog {
-                remoteJobs.stopRemoteLogStream()  // don't interleave with a prior stream
-                let verb = submissionVerb
-                let dryRun = remoteDryRun
-                let study = manifest.name
-                remoteJobs.follow { [weak self] in
-                    await self?.followBundleJob(
-                        jobID: submission.jobId, verb: verb, study: study, dryRun: dryRun)
-                }
-            }
-            return .success(submission.jobId)
-        } catch {
-            remoteStatus = "remote submit failed: \(error)"
-            let refusal =
-                "Couldn't submit the bundle to the server — nothing is "
-                + "running; check the connection in Compute and submit "
-                + "again. Details: \(error)"
-            note(refusal, severity: .error)
-            return .failure(StudyBatchSubmission.Failure(reason: refusal))
-        }
-    }
-
-    /// Follows a bundle-submission job in the SHARED display pane (the same
     // MARK: Two-phase sweep judgment (key-custody design 2026-07-18)
 
     /// Sweep AND evaluate runs of the selected study awaiting Mac-side
@@ -1442,57 +1314,6 @@ public final class ExperimentPanel {
         }
     }
 
-    /// live-log affordance direct server runs use), mirroring each line into
-    /// `remoteLogLines` for the Studies disclosure. Bundle jobs must be
-    /// visible in the activity pane, not only inside Compute.
-    private func followBundleJob(
-        jobID: String, verb: String, study: String, dryRun: Bool
-    ) async {
-        guard let client = remoteClient else { return }
-        guard host != nil else {
-            // No display host (headless/test) — fall back to the plain
-            // remote-log stream so the lines still land somewhere.
-            await streamRemoteJobLog(jobID: jobID)
-            return
-        }
-        let label = dryRun ? "\(verb) (dry run)" : verb
-        let job = await followServerJobInDisplay(
-            jobID: jobID,
-            client: client,
-            title: "Bundled study \(label) — \(study) [job \(jobID)]",
-            label: "bundle \(label)",
-            mirrorToRemoteLog: true)
-        guard let job else { return }
-        noteRecentServerJob(
-            id: jobID, verb: "\(verb) (bundle)", study: study, state: job.status)
-        if job.status == "succeeded" {
-            // Executing a bundle imports the study into the server's tree —
-            // the residency preflight may now say yes; drop the cache and
-            // re-check so Run Server Copy re-enables without reselecting.
-            serverResidencyKey = nil
-            await refreshServerResidency()
-            // Evidence comes home (Mac-authority mode, 2026-07-21): a
-            // bundled validate exists to mint freeze evidence for THIS
-            // workspace — import its evidence bundle now and recompute
-            // freeze readiness, instead of waiting for the auto-import
-            // poll. Hash-verified by the same importer either way; a
-            // failure surfaces in the status line and the run stays
-            // importable manually.
-            if verb == "validate" {
-                await importEvidence(fromJobID: jobID)
-                refresh()
-            }
-        }
-        if job.status == "prepared" {
-            remoteStatus = "job \(jobID) prepared — dry run staged the bundle; "
-                + "nothing executed"
-        } else if let error = job.error, !error.isEmpty {
-            remoteStatus = "job \(jobID) \(job.status): \(error)"
-        } else {
-            remoteStatus = "job \(jobID) \(job.status)"
-        }
-    }
-
     // MARK: Run on the active server (durable jobs, no bundle transfer)
 
     /// Runs an experiment verb on the ACTIVE server workspace as a durable
@@ -1510,129 +1331,11 @@ public final class ExperimentPanel {
         await runExperimentVerbOnActiveServer(experimentName: name, verb: verb)
     }
 
-    /// The parameterized core: Optimizations keeps its OWN selection, so its
-    /// Optimize must be able to submit for an arbitrary experiment name without
-    /// touching the Studies panel's `selectedName`.
-    public func runExperimentVerbOnActiveServer(
-        experimentName name: String, verb: String
-    ) async {
-        guard isServerWorkspace else {
-            note("no server workspace active — switch the substrate selector first", severity: .info)
-            return
-        }
-        loadStoredRemoteToken()
-        guard let client = remoteClient else {
-            note("invalid server URL", severity: .error)
-            return
-        }
-        let substrate = cluster?.substrateLabel ?? "server"
-        do {
-            // Preflight: direct experiment verbs run SERVER-RESIDENT studies
-            // only. On a workspace-paired server this always passes; on an
-            // unpaired (remote) server it refuses with the portable path
-            // named, instead of a confusing job-side missing-file failure.
-            if let names = try? await client.experimentNames() {
-                let resident = names.contains(name)
-                // The cached residency answer belongs to the Studies
-                // selection; an Optimizations-initiated verb for another study must
-                // not overwrite it.
-                if name == selectedName { noteServerResidency(resident) }
-                if !resident {
-                    note("study '\(name)' is not in \(substrate)'s workspace — "
-                        + "direct runs execute the server-resident copy only. Pair "
-                        + "the server to this workspace (serve --root <workspace>) "
-                        + "or use Submit Bundle, the portable path for remote engines", severity: .info)
-                    return
-                }
-            }
-            note("submitting \(verb) for '\(name)' to \(substrate)…", severity: .info)
-            let jobID = try await client.submitExperimentJob(experiment: name, verb: verb)
-            remoteJobID = jobID
-            activeServerJob = ActiveServerJob(id: jobID, verb: verb, study: name)
-            // Sweep jobs additionally occupy their own slot so Optimizations'
-            // Cancel targets exactly this job, never another flow's.
-            if verb == "sweep" { activeSweepJob = activeServerJob }
-            noteRecentServerJob(id: jobID, verb: verb, study: name, state: "pending")
-            note("server \(verb) job \(jobID) submitted for '\(name)' on \(substrate)", severity: .info)
-            let job = await followServerJobInDisplay(
-                jobID: jobID,
-                client: client,
-                title: "Server study \(verb) — \(name) [job \(jobID)]",
-                label: "study \(verb)")
-            if let job {
-                // Terminal: the cancel affordance retires. A timed-out follow
-                // (job == nil) deliberately KEEPS activeServerJob set — the
-                // job is still running server-side and must stay cancellable.
-                activeServerJob = nil
-                if verb == "sweep" { activeSweepJob = nil }
-                noteRecentServerJob(id: jobID, verb: verb, study: name, state: job.status)
-                if let result = job.result,
-                    let directory = Self.findString(
-                        in: .object(result), keyPath: ["runDirectory"])
-                {
-                    lastServerRunDirectory = directory
-                }
-                if let error = job.error, !error.isEmpty {
-                    note("server \(verb) job \(jobID) \(job.status): \(error)", severity: .error)
-                } else {
-                    note("server \(verb) job \(jobID) \(job.status)"
-                        + (lastServerRunDirectory.map { " → \($0)" } ?? ""), severity: .info)
-                }
-            } else {
-                note("server \(verb) job \(jobID) still running on \(substrate) — "
-                    + "reconnect from Compute or the recent-jobs list", severity: .info)
-            }
-            await refreshRemoteRuns()
-            await refreshRecentServerJobs()
-        } catch {
-            note(
-                "Couldn't submit the \(verb) job to the server — nothing is "
-                    + "running on the server; check the connection in Compute "
-                    + "and submit again. Details: \(error)",
-                severity: .error)
-        }
-    }
-
-    /// Upserts a session-scoped recent-job row (newest first, capped).
-    private func noteRecentServerJob(id: String, verb: String, study: String, state: String) {
-        remoteJobs.noteRecentServerJob(id: id, verb: verb, study: study, state: state)
-    }
-
     /// Refreshes recent-job states from the server (`client.jobs()`,
     /// filtered to experiment job kinds). Jobs this panel did not submit are
     /// appended too — they persist server-side and remain reconnectable.
     public func refreshRecentServerJobs() async {
         await remoteJobs.refreshRecentServerJobs(client: remoteClient)
-    }
-
-    /// Streams a server job's log into a display-pane live log until the
-    /// stream ends, then resolves the job's terminal record (panel twin of
-    /// `ConceptBuilder.followServerJobInDisplay`). Returns nil when the job
-    /// is still running at timeout or the task was cancelled — the job keeps
-    /// running server-side either way.
-    private func followServerJobInDisplay(
-        jobID: String,
-        client: ClusterClient,
-        title: String,
-        label: String,
-        maxLines: Int = 400,
-        mirrorToRemoteLog: Bool = false
-    ) async -> RemoteJobRecord? {
-        await remoteJobs.followServerJobInDisplay(jobID: jobID, client: client, title: title, label: label, maxLines: maxLines, mirrorToRemoteLog: mirrorToRemoteLog)
-    }
-
-    /// Terminal statuses of the server's durable job store. "prepared" is
-    /// the terminal outcome of a dry-run submission (staged, nothing
-    /// executed) and "parked" of a worker that stopped short with durable
-    /// state and a recovery action; "cancelling" is deliberately NOT here —
-    /// it is the non-terminal window between a cancel request and the
-    /// worker's acknowledgement, and a follower must keep following through
-    /// it.
-    private static let terminalJobStatuses = StudyRemoteJobController.terminalJobStatuses
-
-    /// Appends to the Studies-disclosure job log with the shared 400-line cap.
-    private func appendRemoteLogLine(_ line: String) {
-        remoteJobs.appendRemoteLogLine(line)
     }
 
     public func streamRemoteJobLog(jobID: String? = nil) async {
@@ -1659,35 +1362,6 @@ public final class ExperimentPanel {
         } catch {
             remoteRuns = []
             remoteStatus = "could not list server runs: \(error)"
-        }
-    }
-
-    /// Chain-runner runs for the selected experiment (stage 5): per-stage
-    /// status, disposition, and the abort record's gate details. Older
-    /// servers without the route read as "none". Local/imported chains are
-    /// listed from the workspace runs tree (portable ledger preferred).
-    /// The captured name is re-checked after the await (seventh round): a
-    /// slow response for a PREVIOUS selection must never overwrite the
-    /// current one's list.
-    public func refreshPipelineRuns() async {
-        guard let name = selectedName else {
-            pipelineRuns = []
-            localPipelineRuns = []
-            return
-        }
-        localPipelineRuns = LocalPipelineCatalog.summaries(experiment: name)
-        guard let cluster, case .server = cluster.activeWorkspace,
-            let remoteClient
-        else {
-            pipelineRuns = []
-            return
-        }
-        do {
-            let runs = try await remoteClient.pipelineRuns(experiment: name)
-            guard selectedName == name else { return }
-            pipelineRuns = runs
-        } catch {
-            if selectedName == name { pipelineRuns = [] }
         }
     }
 
@@ -1960,13 +1634,7 @@ public final class ExperimentPanel {
     }
 
     public func cancelRemoteJob() async {
-        guard let remoteClient, let remoteJobID else { return }
-        do {
-            try await remoteClient.cancelJob(remoteJobID)
-            remoteStatus = "cancel requested for \(remoteJobID)"
-        } catch {
-            remoteStatus = "remote cancel failed: \(error)"
-        }
+        await remoteJobs.cancelRemoteJob(client: remoteClient)
     }
 
     public func downloadRemoteEvidence() async {
@@ -1987,33 +1655,7 @@ public final class ExperimentPanel {
     /// record.
     public func resubmitRemoteJob(_ id: String) async {
         loadStoredRemoteToken()
-        guard let client = remoteClient else {
-            note(
-                "remote resume refused: no server connection — connect a "
-                    + "server in the substrate selector first",
-                severity: .error)
-            return
-        }
-        do {
-            let result = try await client.resubmitJob(id)
-            let line = RemoteJobStatusClass.resumedStatusLine(
-                jobID: id, slurmJobID: result.slurmJobID,
-                continuationJobID: result.jobId)
-            remoteStatus = line
-            note(line, severity: .success)
-            await refreshRecentServerJobs()
-        } catch let error as ClusterClient.ClientError {
-            // 409 details are the server's own plain-language refusal
-            // (already resubmitted / still running / cancelled) — show its
-            // words verbatim.
-            let detail = ClusterClient.unwrappingDetail(error)
-            remoteStatus = "resume failed: \(detail)"
-            note("Couldn't resume job \(id) — \(detail)", severity: .error)
-        } catch {
-            note(
-                "Couldn't resume job \(id) — \(error.localizedDescription)",
-                severity: .error)
-        }
+        await remoteJobs.resume(id, client: remoteClient)
     }
 
     /// Which job rows should offer the Import Evidence action: completed
@@ -3418,29 +3060,6 @@ public final class ExperimentPanel {
                 "Couldn't import the study JSON — nothing was created; check "
                     + "it is valid JSON and that its \"name\" is not already "
                     + "in use. Details: \(error)",
-                severity: .error)
-        }
-    }
-
-    /// Save the Pipeline Composer's declaration into the manifest (stage 5,
-    /// sixth round — the app must AUTHOR the chain it runs, not just submit
-    /// it). `nil` removes the block. Draft-only, like every declaration.
-    public func savePipelineDeclaration(_ draft: PipelineDraft?) {
-        guard var manifest = selected, manifest.status == .draft else { return }
-        manifest.pipeline = draft?.encoded()
-        do {
-            try ExperimentStore.save(manifest)
-            refresh()
-            note(
-                draft == nil
-                    ? "pipeline declaration removed"
-                    : "pipeline declared — submit it with Run Pipeline",
-                severity: .success)
-        } catch {
-            note(
-                "Couldn't save the pipeline declaration — the study must "
-                    + "still be a draft and its file writable. "
-                    + "Details: \(error)",
                 severity: .error)
         }
     }

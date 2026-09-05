@@ -110,10 +110,7 @@ public final class UnifiedStudyRunner {
             return
         }
         let dryRun = request.dryRun
-        let resources = [
-            "gres": request.gres,
-            "walltime": request.walltime,
-        ].filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let resources = request.resources
         do {
             statusLine = "packaging \(manifest.name)…"
             // Packaging copies files, hashes them, and shells out to tar;
@@ -130,8 +127,7 @@ public final class UnifiedStudyRunner {
             // Resume-on-checkpoint policy (2026-07-22 incident): Slurm
             // submissions carry the panel's toggle — default ON — and the
             // transcript line below stamps what was sent.
-            let resumePolicy: RemoteResumePolicy? =
-                request.executor == "slurm" ? request.resumePolicy : nil
+            let resumePolicy = request.effectiveResumePolicy
             let submission = try await client.submitBundle(
                 path: uploaded.path,
                 verb: verb,

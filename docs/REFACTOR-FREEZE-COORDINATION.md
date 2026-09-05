@@ -127,7 +127,8 @@ outstanding.
 
 ## Next and integration
 
-Next: remaining remote submission/pipeline coordination and presentation.
+The subsequent remote submission/pipeline coordination and presentation slice
+is now complete; see [its handoff](REFACTOR-REMOTE-COORDINATION.md).
 Other protocol/condition/prompt authoring commands and global workspace
 boundaries remain separate work. Before the other coding agents' final review
 and merge, integrate newer main commits if any, apply moved-code fixes to these

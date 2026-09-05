@@ -49,3 +49,25 @@ public struct StudySubmissionRequest: Sendable, Equatable {
     public let resumePolicy: RemoteResumePolicy
     public let parallelJobs: Int
 }
+
+extension StudySubmissionOptions {
+    public func snapshot(verb: String?) -> StudySubmissionRequest {
+        guard let verb else { return snapshot }
+        return snapshot.replacingVerb(verb)
+    }
+}
+
+extension StudySubmissionRequest {
+    public func replacingVerb(_ verb: String) -> Self {
+        Self(
+            executor: executor, verb: verb, dryRun: dryRun, gres: gres,
+            walltime: walltime, resumePolicy: resumePolicy, parallelJobs: parallelJobs)
+    }
+    var resources: [String: String] {
+        ["gres": gres, "walltime": walltime]
+            .filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+    var effectiveResumePolicy: RemoteResumePolicy? {
+        executor == "slurm" ? resumePolicy : nil
+    }
+}
