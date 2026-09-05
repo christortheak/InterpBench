@@ -30,6 +30,7 @@ npm run build:embed     # the embedded SPA → ../web/results-explorer/
 npm run dev             # standalone dev server
 npm run build           # standalone production build
 npm run lint            # eslint (not yet clean; not gated in CI)
+npm run typecheck       # wrangler runtime types (from wrangler.types.jsonc) + tsc --noEmit
 ```
 
 CI (release repository) runs `npm ci`, `npm test`, and `npm run build:embed`,

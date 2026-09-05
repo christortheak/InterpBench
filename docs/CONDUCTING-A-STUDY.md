@@ -156,6 +156,11 @@ then record prose and nothing else. The reasoning effort must be `off` for
 log-probability arms (`reasoningEffort`, declared by `set-sampling
 --reasoning-effort`; a manifest frozen under the old `qwenThinkingEnabled`
 boolean reads `true` as `xhigh`), and a manifest asking for both is refused.
+A non-off effort is gated on the model's chat-template capability record
+(`prompts/models/`, probed from the pinned template — CLI-REFERENCE §4.4):
+`on` needs only a thinking switch, a level needs the template to accept it
+(Qwen3-14B/-32B ignore `reasoning_effort` and take `on`; Qwen3.8 accepts
+low/medium/xhigh), and the run stamps the record it rendered under.
 A study that DOES reason declares the reasoning block's own cap beside the
 effort (`--reasoning-max-tokens`); `--max-tokens` is then the answer budget,
 and a generation that spends the reasoning cap without ever closing its block

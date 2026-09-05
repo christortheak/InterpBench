@@ -210,6 +210,15 @@ CENSUS: tuple[RouteRole, ...] = (
        "Prefetches a HF repo into THIS substrate's cache as a durable job — a "
        "model-cache operation, and the way a runner acquires weights before a "
        "compute node goes offline."),
+    _r("GET", "/api/models/capabilities", B,
+       "Reads the chat-template capability record for a model (2026-09-05) — "
+       "the workspace file, or the id heuristic saying so. A read of "
+       "recipe-side data any client displays beside the model."),
+    _r("POST", "/api/models/capabilities/probe", R,
+       "Renders the pinned template through THIS engine's tokenizer "
+       "(weights-free) and writes the workspace record — the probe is the "
+       "engine's because only the engine holds a tokenizer; the record it "
+       "writes is what every authoring gate then reads."),
     _r("POST", "/api/load", W,
        "Loads a model into the one interactive slot. Proxied to a GPU-session "
        "worker and counted as interactive activity; residency is the "

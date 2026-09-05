@@ -161,5 +161,85 @@ import Testing
         #expect(!inverted.isMonotone)
         let single = StudyStatistics.doseMonotonicity(alphas: [1.0], effects: [0.4])
         #expect(!single.isMonotone)
+        // SCI-04 (external review, 2026-09-05): a flat ladder satisfies every
+        // consecutive step trivially (0 >= -slack) but carries no dose
+        // evidence, and its rho is undefined. Nondecreasing GEOMETRY is not
+        // the ACCEPTANCE criterion — zero effect range is not monotone.
+        let flat = StudyStatistics.doseMonotonicity(
+            alphas: [0.5, 1.0, 2.0], effects: [0.3, 0.3, 0.3])
+        #expect(!flat.isMonotone)
+        #expect(flat.spearmanRho.isNaN)
+    }
+
+    /// A length mismatch is a pairing bug in the caller. `zip` would silently
+    /// truncate and score a ladder nobody measured, so the helper refuses with
+    /// the shape this file already uses for a mismatched pairing —
+    /// (NaN, false), as in `percentAgreement`/`cohensKappa`. The Python twin
+    /// raises `ValueError` from the same position; that asymmetry is
+    /// deliberate and is why the shared fixture carries no mismatch case.
+    @Test func doseMonotonicityRefusesUnequalLengths() {
+        let short = StudyStatistics.doseMonotonicity(
+            alphas: [0.5, 1.0, 2.0], effects: [0.1, 0.3])
+        #expect(!short.isMonotone)
+        #expect(short.spearmanRho.isNaN)
+        let long = StudyStatistics.doseMonotonicity(
+            alphas: [0.5], effects: [0.1, 0.3])
+        #expect(!long.isMonotone)
+        #expect(long.spearmanRho.isNaN)
+    }
+
+    // MARK: - The cross-engine dose contract
+
+    /// JSON has no NaN/Infinity literal and `JSONSerialization` refuses the
+    /// non-standard tokens, so the fixture spells nonfinite inputs as strings.
+    private func fixtureNumber(_ value: Any) -> Double? {
+        if let text = value as? String {
+            switch text {
+            case "nan": return .nan
+            case "inf": return .infinity
+            case "-inf": return -.infinity
+            default: return nil
+            }
+        }
+        return (value as? NSNumber)?.doubleValue
+    }
+
+    /// The dose verdict is a cross-engine contract: the Python twin
+    /// (`test_dose_monotonicity_matches_the_cross_engine_fixture`) replays the
+    /// same file, so the two engines provably agree case by case. Unlike most
+    /// of `Tests/Fixtures/cross-engine`, this one is hand-authored rather than
+    /// regenerated — it states the INTENDED contract (external review,
+    /// 2026-09-05, SCI-04) instead of dumping one engine's current output.
+    @Test func theDoseVerdictMatchesTheCrossEngineFixture() throws {
+        let url = CodeResources.compiledCheckoutPath.appending(
+            components: "Tests", "Fixtures", "cross-engine",
+            "dose-monotonicity.json")
+        let payload = try #require(
+            try JSONSerialization.jsonObject(with: try Data(contentsOf: url))
+                as? [String: Any])
+        let cases = try #require(payload["cases"] as? [[String: Any]])
+        #expect(cases.count >= 14)
+        for entry in cases {
+            let name = entry["name"] as? String ?? "?"
+            let alphas = try #require(entry["alphas"] as? [Any])
+                .compactMap(fixtureNumber)
+            let effects = try #require(entry["effects"] as? [Any])
+                .compactMap(fixtureNumber)
+            #expect(alphas.count == (entry["alphas"] as? [Any])?.count)
+            #expect(effects.count == (entry["effects"] as? [Any])?.count)
+            let tolerance = try #require(
+                (entry["tolerance"] as? NSNumber)?.doubleValue)
+            let expectMonotone = try #require(entry["expectMonotone"] as? Bool)
+            let expectRhoDefined = try #require(
+                entry["expectRhoDefined"] as? Bool)
+            let dose = StudyStatistics.doseMonotonicity(
+                alphas: alphas, effects: effects, tolerance: tolerance)
+            #expect(
+                dose.isMonotone == expectMonotone,
+                "monotone verdict drift on '\(name)'")
+            #expect(
+                !dose.spearmanRho.isNaN == expectRhoDefined,
+                "rho definedness drift on '\(name)'")
+        }
     }
 }

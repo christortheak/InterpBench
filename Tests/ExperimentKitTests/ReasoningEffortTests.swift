@@ -50,7 +50,13 @@ import Testing
     // MARK: - 1. the vocabulary and the legacy reading
 
     @Test func theVocabularyIsClosedAndOffIsFirst() {
-        #expect(ReasoningEffort.vocabulary == ["off", "low", "medium", "xhigh"])
+        // `on` (thinking at the template's default, no effort variable) and
+        // `high` (a probe candidate) joined 2026-09-05 with the capability
+        // record; which LEVELS a model may declare is the pinned template's
+        // answer, not the vocabulary's.
+        #expect(ReasoningEffort.vocabulary == ["off", "on", "low", "medium", "high", "xhigh"])
+        #expect(ReasoningEffort.levels.map(\.rawValue) == ModelCapabilities.effortCandidates)
+        #expect(ReasoningEffort.on.isOn && !ReasoningEffort.on.isLevel)
         #expect(ReasoningEffort.legacy(qwenThinkingEnabled: true) == .xhigh)
         #expect(ReasoningEffort.legacy(qwenThinkingEnabled: false) == .off)
         #expect(PromptRendering.hasThinkingMode(Self.qwen))
@@ -284,16 +290,17 @@ import Testing
             + "model generates no reasoning block to cap; declare a non-off "
             + "reasoningEffort or drop the budget")
         #expect(ReasoningEffort.unknownEffortReason("hgih")
-            == "unknown reasoningEffort 'hgih' — known: off, low, medium, xhigh")
+            == "unknown reasoningEffort 'hgih' — known: off, on, low, medium, high, xhigh")
         #expect(ReasoningEffort.effortWithoutBudgetReason(.low)
             == "reasoningEffort 'low' needs a reasoningMaxTokens — the reasoning "
             + "block's own token cap, declared and never defaulted; maxTokens "
             + "stays the answer budget, counted from the token after </think>")
         #expect(ReasoningEffort.effortWithoutThinkingModeReason(.low, modelID: Self.gemma)
             == "reasoningEffort 'low' declared for google/gemma-3-4b-it, whose "
-            + "family has no thinking mode — the chat template would ignore it "
-            + "and the study would look as if it reasoned when it did not; "
-            + "declare reasoningEffort off")
+            + "chat template has no thinking switch (enable_thinking changes "
+            + "nothing it renders) — the template would ignore it and the study "
+            + "would look as if it reasoned when it did not; declare "
+            + "reasoningEffort off")
         #expect(ReasoningEffort.malformedBudgetReason(0)
             == "reasoningMaxTokens must be a positive integer — got 0")
     }

@@ -2,10 +2,16 @@
 
 Canonical readout (plan §2, confirmed against the reference in Stage 1a)::
 
-    softcap( U · RMSNorm(J_l h) )
+    softcap( U · (g ⊙ RMSNorm(J_l h)) ),   g = 1 + norm.weight
 
-with Gemma's ``g = 1 + norm.weight`` folded into the token rows. Two modes,
-whose costs differ by orders of magnitude and therefore drive the defaults:
+``g`` is applied exactly ONCE on both vocabulary paths, but not in the same
+place: the watchlist folds it into its own copy of the token rows at build
+time, while the full-vocabulary path scales the transported residual because
+``U`` there is the model's live output head and must not be touched. The two
+associations of the same product agree to float32 reassociation, and a test
+pins them together — the full path was silently dropping ``g`` altogether
+until an external review found it (2026-09-05). Two modes, whose costs differ
+by orders of magnitude and therefore drive the defaults:
 
 * **Watchlist** — only the watched rows of ``U`` are needed, a ``[W, d]`` slice.
   Negligible, and it does not grow with vocabulary size.
@@ -126,7 +132,10 @@ class LensReadout:
         if config.watchlist:
             rows = head.weight.detach()[config.watchlist].to(
                 device=device, dtype=compute_dtype)
-            watched_rows = rows * gain          # g . u_t, per §2
+            # g . u_t, per §2 — folded ONCE, here. The full-vocabulary path
+            # cannot fold (it uses the model's own head) and scales ``z``
+            # instead; see :meth:`logits`.
+            watched_rows = rows * gain
         text_cfg = getattr(model.model.config, "text_config", model.model.config)
         return cls(jacobians=jacobians, gain=gain, watched_rows=watched_rows,
                    watchlist=config.watchlist,
@@ -172,10 +181,26 @@ class LensReadout:
         """
         if self.lm_head is None:
             raise JLensError("top-k readout was not armed for this configuration")
+        # The norm gain, applied to ``z`` rather than folded into ``U``: this
+        # path projects through the model's LIVE output head, which must not be
+        # scaled, so the same product ``z_d · g_d · U_td`` the watchlist path
+        # computes is associated the other way round. It is applied in float32
+        # before the cast into the head's weight dtype — the same order the
+        # pinned reference uses — so the two paths differ only by float32
+        # reassociation.
+        #
+        # It was absent here entirely until an external review found it
+        # (2026-09-05). Because ``g`` varies per COORDINATE its absence
+        # reordered tokens rather than merely rescaling them, so every top-k,
+        # emergent-token table and full-vocabulary rank taken from this path
+        # read a distribution the model does not compute. The watchlist path
+        # was correct throughout, which is exactly why the reference-agreement
+        # check — watchlist-only at the time — could not see it.
         z = self._normalize(self.transported(hidden, layer,
                                              use_jacobian=use_jacobian))
         return self._cap(
-            self.lm_head(z.to(self.lm_head.weight.dtype)).to(self.dtype))
+            self.lm_head((z * self.gain).to(self.lm_head.weight.dtype))
+                .to(self.dtype))
 
     @staticmethod
     def topk_of(logits, k: int):

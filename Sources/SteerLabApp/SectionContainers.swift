@@ -1,6 +1,7 @@
 import AppKit
 import ExperimentKit
 import QuickLook
+import SteeringKit
 import SwiftUI
 
 /// Data section: concepts/corpora/vector builders (the former Concept Lab)
@@ -155,6 +156,7 @@ struct ComputeSectionView: View {
             ClaudeAPIKeyRow()
             ExternalJudgeKeyRow(service: service)
             HuggingFaceTokenRow()
+            ModelCapabilitiesRow(service: service)
             pairingWarningRow
             Divider()
             ServerJobsPanelView(service: service)
@@ -242,6 +244,81 @@ struct ComputeSectionView: View {
         case .server:
             return "\(service.cluster.status ?? "not connected") · \(modelText)"
         }
+    }
+}
+
+/// The workspace's chat-template capability records (2026-09-05): one line
+/// per probed model — what its template does with a system turn, whether it
+/// has a thinking switch, which reasoning-effort levels it accepts — with any
+/// human override shown beside the detected value. Read from
+/// `prompts/models/` of the active workspace, which both engines share, so
+/// the row is the same whichever substrate computed the record.
+private struct ModelCapabilitiesRow: View {
+    @Bindable var service: ChatService
+    @State private var records: [(path: String, record: ModelCapabilities.Record)] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Text("Model capabilities")
+                    .font(.callout)
+                Spacer()
+                Button("Refresh") { refresh() }
+                    .controlSize(.small)
+            }
+            if records.isEmpty {
+                Text("no probed chat-template record in this workspace yet — one is "
+                    + "written when a model is installed or first loaded here "
+                    + "(prompts/models/); until then declarations are gated on the "
+                    + "model id and say so")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(records, id: \.path) { entry in
+                    let view = entry.record.effective(path: entry.path)
+                    Text(Self.line(for: view))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .help(view.summaryLines.joined(separator: "\n")
+                            .replacingOccurrences(of: "**", with: ""))
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+        .onAppear { refresh() }
+        .onChange(of: service.workspaceModelOptions.count) { _, _ in refresh() }
+    }
+
+    /// One line per record: the detected facts, an override marked beside
+    /// the value it replaces.
+    static func line(for view: ModelCapabilities) -> String {
+        func shown(_ field: String, _ detected: String) -> String {
+            guard let override = view.overrides[field] else { return detected }
+            return "\(override.value.description) (override; detected \(detected))"
+        }
+        let record = view
+        var parts: [String] = [
+            "\(record.modelID) @ \((record.revision ?? "unpinned").prefix(12))",
+            "system role \(shown("systemRole", record.systemRole.rawValue))",
+            "thinking switch \(shown("thinkingSwitch", record.thinkingSwitch.rawValue))",
+        ]
+        let accepted = record.acceptedEfforts
+        if record.hasThinkingSwitch {
+            parts.append(
+                accepted.isEmpty
+                    ? "effort levels: none accepted"
+                    : "effort levels: " + accepted.joined(separator: ", "))
+        }
+        if record.source == .heuristic { parts.append("HEURISTIC — not probed") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func refresh() {
+        records = ModelCapabilitiesStore.list(root: ExperimentStore.workspaceRoot)
+            .filter { $0.record.source == .probe }
     }
 }
 

@@ -107,7 +107,7 @@ public struct ExperimentCLIRunner: Sendable {
     /// nothing is dispatched twice.
     public static let namespaces: Set<String> = [
         "init", "workspace", "data", "vectors", "remote", "experiment", "docs",
-        "install", "panel", "authoring",
+        "install", "panel", "authoring", "model",
     ]
 
     /// The top-level spelling of `install version`. `--version` is what a
@@ -188,6 +188,7 @@ public struct ExperimentCLIRunner: Sendable {
             case "authoring": result = try runAuthoringCommand(invocation)
             case "install": result = try runInstallCommand(invocation)
             case "panel": result = try runPanelCommand(invocation)
+            case "model": result = try await runModelCommand(invocation)
             default:
                 // Unreachable via `main.swift`, which checks `namespaces`
                 // first. Answering rather than trapping keeps the runner's
@@ -1244,6 +1245,188 @@ public struct ExperimentCLIRunner: Sendable {
                     + "[--file-slug <slug>]")
         }
         return (seat, path)
+    }
+
+    // MARK: - model (the chat-template capability record)
+
+    /// `model capabilities <modelID> [--revision R] [--probe]` and
+    /// `model set-capability <modelID> <field> <value> --reason <text>`.
+    /// Server twin: `steerlab-server model capabilities`; client twin:
+    /// `steerlab model capabilities|set-capability`.
+    func runModelCommand(_ invocation: ExperimentCLIInvocation) async throws
+        -> ExperimentCLIResult
+    {
+        let args = invocation.args
+        func flag(_ name: String) -> String? {
+            guard let index = args.firstIndex(of: name), args.count > index + 1 else {
+                return nil
+            }
+            return args[index + 1]
+        }
+        let root = ExperimentStore.workspaceRoot
+        switch args.first {
+        case "capabilities":
+            guard args.count >= 2 else {
+                throw ExperimentError(
+                    reason: "usage: model capabilities <modelID> [--revision <r>] [--probe]")
+            }
+            let modelID = args[1]
+            let revision = flag("--revision")
+            let probe = args.contains("--probe")
+            var view: ModelCapabilities
+            if probe {
+                let record: ModelCapabilities.Record
+                do {
+                    record = try await ModelCapabilitiesStore.probeSnapshot(
+                        modelID: modelID, revision: revision,
+                        engineVersion: SteerLabVersion.current)
+                } catch {
+                    throw ExperimentCLIStop(
+                        exitCode: 70, state: .failed, code: "capabilityProbeFailed",
+                        reason: "could not probe the chat template of \(modelID): \(error)",
+                        repairAction: "install the model on this Mac first (the "
+                            + "Playground's Install, or steerlab-cli remote … on a "
+                            + "server) so its tokenizer is in the HF cache, then re-run",
+                        payload: ["modelID": .string(modelID)])
+                }
+                var toWrite = record
+                let url = ModelCapabilitiesStore.recordURL(
+                    modelID: modelID, revision: record.revision, root: root)
+                var diffLines: [String] = []
+                if FileManager.default.fileExists(atPath: url.path) {
+                    if let existing = try? ModelCapabilitiesStore.read(url) {
+                        toWrite.overrides = existing.overrides
+                        diffLines = ModelCapabilitiesStore.diff(old: existing, new: toWrite)
+                    } else {
+                        diffLines = ["previous record unreadable; rewritten"]
+                    }
+                }
+                let written = try ModelCapabilitiesStore.write(toWrite, root: root)
+                view = toWrite.effective(path: written)
+                ModelCapabilities.register(view, for: modelID)
+                sink.out("probed \(modelID) @ \(record.revision ?? "unpinned") → \(written)")
+                for line in diffLines { sink.out("  changed: \(line)") }
+            } else {
+                view = ModelCapabilitiesStore.resolve(
+                    modelID: modelID, revision: revision, root: root)
+            }
+            for line in view.summaryLines {
+                sink.out(line.replacingOccurrences(of: "**", with: ""))
+            }
+            var advisories: [SteerLabCLIEnvelope.Advisory] = []
+            for note in view.advisories {
+                sink.err("ADVISORY: \(note)\n")
+                advisories.append(.init(CLIAdvisory.modelCapabilities, note))
+            }
+            var payload = Self.capabilitiesPayload(view)
+            payload["probed"] = .bool(probe)
+            return ExperimentCLIResult(
+                message: "\(modelID): capabilities from \(view.source.rawValue)"
+                    + (view.path.map { " (\($0))" } ?? ""),
+                changed: probe, payload: payload, advisories: advisories)
+
+        case "set-capability":
+            guard args.count >= 4 else {
+                throw ExperimentError(
+                    reason: "usage: model set-capability <modelID> "
+                        + "<systemRole|thinkingSwitch|thinkOpenInPrompt> <value> "
+                        + "--reason <text> [--revision <r>]  (\"\" as the value "
+                        + "clears the override)")
+            }
+            let modelID = args[1]
+            let field = args[2]
+            let value = args[3]
+            guard
+                let found = ModelCapabilitiesStore.lookup(
+                    modelID: modelID, revision: flag("--revision"), root: root),
+                let path = found.path
+            else {
+                throw ExperimentCLIStop(
+                    exitCode: 66, state: .notFound, code: "capabilityRecordMissing",
+                    reason: "no capability record for \(modelID)"
+                        + (flag("--revision").map { " at revision \($0)" } ?? "")
+                        + " under \(ModelCapabilities.directory)/ — an override sits "
+                        + "beside a DETECTED value, so the template has to be probed first",
+                    repairAction: "steerlab-cli model capabilities \(modelID) --probe, "
+                        + "then re-run",
+                    payload: ["modelID": .string(modelID)])
+            }
+            let url = root.appending(path: path)
+            let record = try ModelCapabilitiesStore.read(url)
+            let updated: ModelCapabilities.Record
+            do {
+                updated = try ModelCapabilitiesStore.setOverride(
+                    record, field: field, value: value, reason: flag("--reason") ?? "")
+            } catch let error as ModelCapabilities.RecordError {
+                throw ExperimentError.malformed(
+                    error.description,
+                    repair: "steerlab-cli model set-capability \(modelID) "
+                        + "<systemRole|thinkingSwitch|thinkOpenInPrompt> <value> "
+                        + "--reason <text>; \"\" as the value clears the override")
+            }
+            let written = try ModelCapabilitiesStore.write(updated, root: root)
+            let view = updated.effective(path: written)
+            ModelCapabilities.register(view, for: modelID)
+            let cleared = updated.overrides[field] == nil
+            let line: String
+            if cleared {
+                line = "cleared the \(field) override on \(modelID)"
+            } else {
+                let detected = CanonicalJSON.encode(record.detected.jsonObject[field] ?? NSNull())
+                line = "overrode \(field) on \(modelID): detected \(detected) → "
+                    + "\(CanonicalJSON.encode(updated.overrides[field]!.value.any)) "
+                    + "(\(updated.overrides[field]!.reason))"
+            }
+            sink.out(line)
+            return ExperimentCLIResult(
+                message: line, changed: true, payload: Self.capabilitiesPayload(view))
+
+        default:
+            throw ExperimentError(
+                reason: "usage: model capabilities <modelID> [--revision <r>] [--probe] "
+                    + "| model set-capability <modelID> <field> <value> --reason <text>")
+        }
+    }
+
+    /// The record as the envelope's `result`: the effective view's stamp
+    /// plus the facts a reader displays beside it. Server twin:
+    /// `_capabilities_payload`.
+    static func capabilitiesPayload(_ view: ModelCapabilities) -> [String: JSONValue] {
+        var object = view.stamp
+        object["modelID"] = view.modelID
+        object["revision"] = view.revision ?? NSNull()
+        object["foldSeparator"] = view.foldSeparator ?? NSNull()
+        object["thinkTokens"] = [
+            "open": view.thinkTokens.open ?? NSNull(),
+            "close": view.thinkTokens.close ?? NSNull(),
+        ] as [String: Any]
+        object["architecture"] = view.architecture.map {
+            [
+                "layerCount": $0.layerCount ?? NSNull(),
+                "hiddenSize": $0.hiddenSize ?? NSNull(),
+                "layerTypes": $0.layerTypes ?? NSNull(),
+            ] as [String: Any]
+        } ?? NSNull()
+        object["overrideDetail"] = view.overrides.mapValues {
+            ["value": $0.value.any, "reason": $0.reason, "setAt": $0.setAt] as [String: Any]
+        }
+        object["advisories"] = view.advisories
+        return object.mapValues { Self.jsonValue($0) }
+    }
+
+    /// A JSON-shaped `Any` (what `JSONSerialization` reads and the record
+    /// types emit) as the envelope's value type.
+    static func jsonValue(_ any: Any) -> JSONValue {
+        switch any {
+        case is NSNull: return .null
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return .bool(number.boolValue) }
+            return .number(number.doubleValue)
+        case let text as String: return .string(text)
+        case let array as [Any]: return .array(array.map(jsonValue))
+        case let object as [String: Any]: return .object(object.mapValues(jsonValue))
+        default: return .string(String(describing: any))
+        }
     }
 
     func runPanelCommand(_ invocation: ExperimentCLIInvocation) throws
@@ -2518,7 +2701,8 @@ public struct ExperimentCLIRunner: Sendable {
             // parser cannot see one — never rendered silently without the
             // scaffold it claims. Server twin: `experiment_store.attach`.
             if let problem = ExtractionRendering.thinkingModeProblem(
-                declaredRendering, modelID: manifest.modelID)
+                declaredRendering, modelID: manifest.modelID,
+                capabilities: ExperimentStore.modelCapabilities(for: manifest))
             {
                 throw ExperimentError.malformed(problem.reason, repair: problem.repair)
             }
@@ -3089,6 +3273,15 @@ public struct ExperimentCLIRunner: Sendable {
             let violations = ExperimentStore.verify(manifest)
             if violations.isEmpty {
                 sink.out("OK [\(manifest.status.rawValue)] — all pinned inputs verified")
+                // What the model's capability record says without blocking
+                // — for a FROZEN study, the template-derived rules it was
+                // not frozen under (an effort level the probed template
+                // ignores). Server twin: the client's `verify`.
+                var capabilityAdvisories: [SteerLabCLIEnvelope.Advisory] = []
+                for note in ExperimentStore.capabilityAdvisories(for: manifest) {
+                    sink.err("ADVISORY: \(note)\n")
+                    capabilityAdvisories.append(.init(CLIAdvisory.modelCapabilities, note))
+                }
                 return ExperimentCLIResult(
                     message: "OK [\(manifest.status.rawValue)] — all pinned "
                         + "inputs verified",
@@ -3099,7 +3292,8 @@ public struct ExperimentCLIRunner: Sendable {
                         "violations": .array([]),
                         "experimentHash": .string(
                             ExperimentStore.manifestHash(manifest)),
-                    ])
+                    ],
+                    advisories: capabilityAdvisories)
             }
             // STREAM FIX: violations are a FAILURE and belong on stderr. They
             // went to stdout, which the audit records as "prose, stdout even
@@ -3911,6 +4105,16 @@ public struct ExperimentCLIRunner: Sendable {
                 samplingAdvisories.append(
                     .init(CLIAdvisory.choiceItemsWithoutInstrument, inert))
             }
+            // The capability record's non-blocking notes on what was just
+            // declared — an effort level ASSUMED from the model id because
+            // no probed record exists, for one — said at the write, not at
+            // the run. Server twin: `set-protocol`'s advisories.
+            if flag("--reasoning-effort") != nil {
+                for note in ExperimentStore.capabilityAdvisories(for: sampling) {
+                    sink.err("ADVISORY: \(note)\n")
+                    samplingAdvisories.append(.init(CLIAdvisory.modelCapabilities, note))
+                }
+            }
             return ExperimentCLIResult(
                 message: samplingLine, changed: true,
                 payload: [
@@ -4102,14 +4306,10 @@ public struct ExperimentCLIRunner: Sendable {
             // study, naming a route the run never took. Execution was always
             // right; only this sentence lied. Server twin: the same
             // three-way branch in `client_cli.set-system-prompt`.
-            let systemPromptDelivery: String
-            if framed.promptMode == .rawCompletion {
-                systemPromptDelivery = "promptPrepend"
-            } else {
-                systemPromptDelivery =
-                    PromptRendering.hasSystemRole(framed.modelID)
-                    ? "systemTurn" : "prependedToFirstUserTurn"
-            }
+            let systemPromptDelivery = PromptRendering.systemPromptDelivery(
+                modelID: framed.modelID,
+                rawCompletion: framed.promptMode == .rawCompletion,
+                capabilities: ExperimentStore.modelCapabilities(for: framed))
             let framePromptLine: String
             if let frame = framed.systemPrompt {
                 framePromptLine =

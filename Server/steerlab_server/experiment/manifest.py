@@ -856,6 +856,21 @@ class Manifest:
                     f"every watched token ID now names a different piece")
         return violations
 
+    def _capabilities_for_gates(self, root: str | None):
+        """The capability record the declaration rules read: the workspace
+        record (probed; heuristic when none) for a draft, the id heuristic
+        for anything frozen — see :meth:`verify`."""
+        from . import model_capabilities as mc
+        if self.status == "draft":
+            return mc.resolve(self.model_id, self.model_revision, root)
+        return mc.effective(mc.heuristic(self.model_id, self.model_revision))
+
+    def capability_advisories(self, root: str | None = None) -> list[str]:
+        """What the capability record says about this manifest without
+        blocking it — see ``experiment_store.capability_advisories``."""
+        from . import experiment_store
+        return experiment_store.capability_advisories(self.raw, root)
+
     def verify(self, root: str | None = None) -> list[str]:
         """Re-hash all pinned inputs, reporting drift (parallel to Swift
         ``ExperimentStore.verify``). Empty list = verified."""
@@ -1364,17 +1379,28 @@ class Manifest:
         # (`experiment_store.set_protocol`, Swift `setSamplingProtocol`) —
         # here as defence in depth for a hand-edited manifest. Swift twin:
         # `ExperimentStore.modelOutputPinViolations`.
+        #
+        # The template-derived rules (which LEVELS the pinned template
+        # accepts, whether it can deliver a system prompt) read the model's
+        # capability record for a DRAFT. A frozen manifest is checked against
+        # the id heuristic the record replaced — the rules it was frozen
+        # under — so no frozen study stops verifying over a fact probed after
+        # its freeze; ``capability_advisories`` says those out loud instead.
+        record = self._capabilities_for_gates(root)
         if self.reasoning_effort_declared:
             violations += prompt_render.reasoning_protocol_violations(
                 effort=self.raw.get(prompt_render.REASONING_EFFORT_KEY),
                 reasoning_max_tokens=self.raw.get(
                     prompt_render.REASONING_MAX_TOKENS_KEY),
-                model_id=self.model_id)
+                model_id=self.model_id, capabilities=record)
         elif (self.raw.get(prompt_render.REASONING_MAX_TOKENS_KEY) is not None
               and not self.qwen_thinking_enabled):
             # A budget beside no effort at all: meaningless unless the legacy
             # boolean already says the study reasons (then the run honours it).
             violations.append(prompt_render.BUDGET_WITHOUT_EFFORT_REASON)
+        violations += prompt_render.system_prompt_violations(
+            system_prompt=self.system_prompt, model_id=self.model_id,
+            prompt_mode=self.prompt_mode, capabilities=record)
 
         # Ordinal-scale contract: the collapse of the ladder distribution to
         # one position is an instrument-design choice — DECLARED in the

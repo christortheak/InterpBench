@@ -34,6 +34,34 @@ step" and "take the best validation loss" can disagree by more than the
 intervention being measured. An evidence-grade run whose manifest declares no
 metric refuses at start rather than silently picking one.
 
+**The objective** (``TRAINING_OBJECTIVE``, external review 2026-09-05). One
+optimizer step minimizes the token-average cross-entropy over ALL supervised
+next-token targets in that step's group of micro-batches::
+
+    L = sum(token losses in the group) / count(supervised targets in the group)
+
+A *supervised target* is a position where ``labels != IGNORE_LABEL`` AFTER the
+causal shift — i.e. ``labels[:, 1:]``. Prompt tokens (masked ``-100`` by
+:mod:`lora_data`) and padding are not targets, and the first position of a
+sequence is never one because nothing predicts it.
+
+The denominator is a property of the OPTIMIZER STEP, never of how the step was
+cut into micro-batches. The trainer therefore counts the group's targets before
+the first backward pass and scales each micro-batch's SUMMED loss by
+``1/group_targets``. The obvious-looking alternative — take HF's per-micro-batch
+mean and divide by ``gradient_accumulation`` — is a mean of means weighted by
+the partitioning: it makes ``batch_size=2, accumulation=1`` and
+``batch_size=1, accumulation=2`` produce different gradients from identical
+data (measured: gradient cosine 0.968, relative difference 0.300 on the
+two-layer test model), and it scales an incomplete final group down by the
+accumulation factor it never filled (measured: exactly half). Both were real
+defects here before 2026-09-05; ``tests/test_lora_train_objective.py`` is what
+keeps them fixed.
+
+The same definition is what ``_evaluate`` reports, so a training row and a
+validation row in ``training-history.json`` are comparable numbers rather than
+two differently-weighted averages. Every history row names its denominator.
+
 Checkpoint/resume reuses :mod:`resume` verbatim — exit code 85, SIGUSR1/SIGTERM
 via :class:`resume.CheckpointFlag`, tmp+fsync+rename atomicity — so a preempted
 27B training job continues to a run directory indistinguishable from an
@@ -82,6 +110,16 @@ TRAINING_MODES = (lora_data.DOCUMENT, lora_data.INSTRUCTION_CHAT, LEGACY_INLINE)
 #: evidence-grade ones (plan §0.5).
 VALIDATION_LOSS = "validationLoss"
 SELECTION_METRICS = (VALIDATION_LOSS,)
+
+#: The training OBJECTIVE, stamped into the schedule provenance and into the
+#: config fingerprint a resumed run must still agree with. See "The objective"
+#: in this module's docstring: token-average cross-entropy over every
+#: supervised target in one optimizer step's group. Named (rather than left
+#: implicit in the loop) because "the loss" is ambiguous until its denominator
+#: is: a mean of micro-batch means is a DIFFERENT objective, and an adapter
+#: trained under one cannot be compared to an adapter trained under the other
+#: (external review, 2026-09-05).
+TRAINING_OBJECTIVE = "tokenMeanPerOptimizerStep"
 
 #: The verb name in ``resume-state.json`` — a study run's state and a LoRA
 #: training run's state must never be mistaken for each other.
@@ -276,6 +314,13 @@ class LoRAConfig:
             "epochs": self.epochs, "maxSteps": self.max_steps,
             "batchSize": self.batch_size,
             "gradientAccumulation": self.gradient_accumulation,
+            # The objective belongs in the fingerprint for the same reason the
+            # learning rate does: a checkpoint trained under a different
+            # weighting of its targets is a different experiment, and adopting
+            # it mid-run would be a silent provenance forgery. Checkpoints
+            # written before 2026-09-05 therefore refuse to resume under this
+            # code — correctly (external review, 2026-09-05).
+            "objective": TRAINING_OBJECTIVE,
             "seed": self.seed,
             "maxSequenceTokens": self.max_sequence_tokens,
             "longDocumentPolicy": self.long_document_policy,
@@ -622,6 +667,10 @@ class Schedule:
     eval_interval_steps: int | None
     checkpoint_interval_steps: int | None
     micro_batches_per_epoch: int
+    #: What ``gradientAccumulation`` and ``batchSize`` accumulate INTO. Carried
+    #: beside them so a sidecar reader never has to infer the denominator from
+    #: the code that happened to be deployed (external review, 2026-09-05).
+    objective: str = TRAINING_OBJECTIVE
 
     def to_dict(self) -> dict:
         return {"epochs": self.epochs, "maxSteps": self.max_steps,
@@ -629,6 +678,7 @@ class Schedule:
                 "warmupSteps": self.warmup_steps,
                 "lrSchedule": self.lr_schedule,
                 "gradientAccumulation": self.gradient_accumulation,
+                "objective": self.objective,
                 "batchSize": self.batch_size,
                 "effectiveBatchSize": self.effective_batch_size,
                 "seed": self.seed,
@@ -925,17 +975,53 @@ def _supervised_positions(labels) -> int:
     return int((labels[:, 1:] != lora_data.IGNORE_LABEL).sum().item())
 
 
-def _evaluate(model, examples, *, pad_token_id: int, device, batch_size: int
-              ) -> float | None:
-    """Full-validation-set loss: the token-weighted mean over every example.
+def _supervised_loss_sum(model, *, input_ids, labels, attention):
+    """Cross-entropy SUMMED (not averaged) over this batch's supervised targets.
 
-    Weighted by supervised token count rather than averaged over batches, so
-    the number is a property of the validation set and not of how it happened
-    to be batched.
+    Computed here rather than taken from ``model(..., labels=...).loss`` because
+    the sum is the quantity the objective composes: the caller divides ONE
+    total by ONE denominator (the whole optimizer-step group's target count),
+    which is what makes the gradient independent of the micro-batch cut. Taking
+    HF's mean and multiplying it back by this batch's target count would give
+    the same number today — ``test_lora_train_objective`` pins that identity for
+    the installed transformers — but it would silently re-weight every run the
+    day HF changes its denominator (it already has one: ``num_items_in_batch``).
+
+    The shift, the ``-100`` ignore index and the float upcast mirror
+    :func:`transformers.loss.loss_utils.ForCausalLMLoss` exactly, so the numbers
+    stay comparable to anything computed the HF way, and the memory profile is
+    unchanged: HF materializes the same upcast logits to compute its own loss.
+    Labels are not passed to the model, so that loss is not computed twice.
+    (external review, 2026-09-05)
+    """
+    import torch
+    logits = model(input_ids=input_ids, attention_mask=attention).logits.float()
+    # Shift the LABELS (as HF does) rather than slicing ``logits[:, :-1]``:
+    # slicing would force a copy of the whole (batch × sequence × vocab)
+    # tensor, which at a 150k vocab is the largest allocation in the step.
+    # The appended ignore column is the position nothing predicts.
+    shifted = torch.nn.functional.pad(
+        labels, (0, 1), value=lora_data.IGNORE_LABEL)[..., 1:]
+    return torch.nn.functional.cross_entropy(
+        logits.reshape(-1, logits.size(-1)), shifted.reshape(-1),
+        ignore_index=lora_data.IGNORE_LABEL, reduction="sum")
+
+
+def _evaluate(model, examples, *, pad_token_id: int, device, batch_size: int
+              ) -> tuple[float | None, int]:
+    """Full-validation-set loss and the denominator it was divided by.
+
+    The SAME objective the training loop optimizes (see "The objective" in the
+    module docstring): the summed token losses over every supervised target in
+    the split, divided by their count. Weighted by supervised token count
+    rather than averaged over batches, so the number is a property of the
+    validation set and not of how it happened to be batched — and directly
+    comparable to a training row, which is the point of returning the count
+    alongside it (external review, 2026-09-05).
     """
     import torch
     if not examples:
-        return None
+        return None, 0
     was_training = model.training
     model.eval()
     total_loss = 0.0
@@ -948,13 +1034,15 @@ def _evaluate(model, examples, *, pad_token_id: int, device, batch_size: int
             tokens = _supervised_positions(labels)
             if tokens == 0:
                 continue
-            loss = model(input_ids=input_ids, attention_mask=attention,
-                         labels=labels).loss
-            total_loss += float(loss.detach().cpu()) * tokens
+            loss_sum = _supervised_loss_sum(model, input_ids=input_ids,
+                                            labels=labels, attention=attention)
+            total_loss += float(loss_sum.detach().cpu())
             total_tokens += tokens
     if was_training:
         model.train()
-    return (total_loss / total_tokens) if total_tokens else None
+    if not total_tokens:
+        return None, 0
+    return total_loss / total_tokens, total_tokens
 
 
 def _train_split_mode(config: LoRAConfig, emit: Callable[[str], None], *,
@@ -1061,7 +1149,11 @@ def _train_split_mode(config: LoRAConfig, emit: Callable[[str], None], *,
                                                   _lr_lambda(schedule))
 
     # --- state ---------------------------------------------------------------
-    history: dict = {"train": [], "validation": [], "checkpoints": []}
+    # ``objective`` names what every "loss" in this file was divided by, so the
+    # history is readable without knowing which build wrote it (external
+    # review, 2026-09-05).
+    history: dict = {"objective": TRAINING_OBJECTIVE,
+                     "train": [], "validation": [], "checkpoints": []}
     evaluated_steps: set[int] = set()
     best: dict | None = None
     resume_lineage: list[dict] = []
@@ -1081,6 +1173,7 @@ def _train_split_mode(config: LoRAConfig, emit: Callable[[str], None], *,
                                map_location="cpu", weights_only=False)
         _restore_rng(rng_state)
         history = adopted.get("history") or history
+        history.setdefault("objective", TRAINING_OBJECTIVE)
         evaluated_steps = set(adopted.get("evaluatedSteps") or [])
         best = adopted.get("best")
         resume_lineage = list(adopted.get("resumeLineage") or [])
@@ -1148,12 +1241,17 @@ def _train_split_mode(config: LoRAConfig, emit: Callable[[str], None], *,
         nonlocal best
         if current_step in evaluated_steps or not validation_examples:
             return
-        value = _evaluate(model, validation_examples, pad_token_id=pad_token_id,
-                          device=torch_device, batch_size=schedule.batch_size)
+        value, tokens = _evaluate(model, validation_examples,
+                                  pad_token_id=pad_token_id,
+                                  device=torch_device,
+                                  batch_size=schedule.batch_size)
         evaluated_steps.add(current_step)
         if value is None:
             return
-        history["validation"].append({"step": current_step, "loss": value})
+        history["validation"].append({
+            "step": current_step, "loss": value,
+            "supervisedTokens": tokens,
+            "lossDenominator": "supervisedTokens"})
         # Strict improvement, so a tie keeps the EARLIER step: later steps have
         # trained longer on the same data, and preferring them on a tie is a
         # silent bias toward overfitting.
@@ -1179,8 +1277,22 @@ def _train_split_mode(config: LoRAConfig, emit: Callable[[str], None], *,
         micro_index = start_position if epoch == start_epoch else 0
         while micro_index < schedule.micro_batches_per_epoch:
             optimizer.zero_grad(set_to_none=True)
-            group_losses: list[float] = []
-            group_tokens = 0
+            # The objective's denominator is fixed BEFORE the first backward
+            # pass. The group's micro-batches are known from ``order`` without
+            # any forward, and ``_batch_tensors`` needs only the labels, so the
+            # group's supervised-target count can be totalled up front — which
+            # is what lets each micro-batch contribute its SUM scaled by one
+            # shared 1/N. Dividing per micro-batch instead (by its own mean, or
+            # by the nominal ``accumulation``) weights the objective by the
+            # partitioning and under-scales a partial final group
+            # (external review, 2026-09-05).
+            #
+            # Only the integer index/label/mask tensors are held across the
+            # group — activations are still freed by each backward, so gradient
+            # accumulation keeps the memory profile it exists for.
+            group: list[tuple] = []
+            group_targets = 0
+            group_sequence_tokens = 0
             for _ in range(accumulation):
                 if micro_index >= schedule.micro_batches_per_epoch:
                     break
@@ -1190,25 +1302,51 @@ def _train_split_mode(config: LoRAConfig, emit: Callable[[str], None], *,
                 micro_index += 1
                 if not batch:
                     continue
-                input_ids, labels, attention = _batch_tensors(
-                    batch, pad_token_id=pad_token_id, device=torch_device)
-                loss = model(input_ids=input_ids, attention_mask=attention,
-                             labels=labels).loss
-                (loss / accumulation).backward()
-                group_losses.append(float(loss.detach().cpu()))
-                group_tokens += int(attention.sum().item())
+                tensors = _batch_tensors(batch, pad_token_id=pad_token_id,
+                                         device=torch_device)
+                targets = _supervised_positions(tensors[1])
+                if targets == 0:
+                    # Nothing to learn from and no denominator to contribute:
+                    # forwarding it would divide by zero inside the loss.
+                    continue
+                group.append(tensors)
+                group_targets += targets
+                group_sequence_tokens += int(tensors[2].sum().item())
+            group_loss_sum = 0.0
+            for input_ids, labels, attention in group:
+                loss_sum = _supervised_loss_sum(
+                    model, input_ids=input_ids, labels=labels,
+                    attention=attention)
+                (loss_sum / group_targets).backward()
+                group_loss_sum += float(loss_sum.detach().cpu())
+            # Clipping sees the FULLY accumulated gradient — the norm of one
+            # optimizer step's update, not of a fraction of it.
             torch.nn.utils.clip_grad_norm_(
                 [p for p in model.parameters() if p.requires_grad],
                 config.max_grad_norm)
             current_lr = float(scheduler.get_last_lr()[0])
+            # Exactly one optimizer and one scheduler step per logical group,
+            # empty group included: the step count IS the schedule contract
+            # that checkpoint/resume and the LR curve are pinned to.
             optimizer.step()
             scheduler.step()
             step += 1
             history["train"].append({
                 "step": step,
-                "loss": sum(group_losses) / len(group_losses) if group_losses else None,
+                # The objective itself: this group's summed token losses over
+                # this group's supervised-target count. Named denominators,
+                # because the old "loss"/"tokens" pair reported a mean of
+                # micro-batch means beside a count of every non-padding
+                # position, prompts included — two different denominators,
+                # neither of them stated.
+                "loss": (group_loss_sum / group_targets
+                         if group_targets else None),
                 "lr": current_lr,
-                "tokens": group_tokens,
+                "supervisedTokens": group_targets,
+                "lossDenominator": "supervisedTokens",
+                # NOT the denominator: every non-padding position in the group,
+                # prompt tokens included. Kept for throughput accounting only.
+                "sequenceTokens": group_sequence_tokens,
             })
             if schedule.eval_interval_steps and \
                     step % schedule.eval_interval_steps == 0:

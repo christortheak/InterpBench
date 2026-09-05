@@ -1,0 +1,12 @@
+{#- Synthetic ADVERSARIAL template: its generation header and its rendered
+    assistant turn deliberately DISAGREE, so the prompt-only render is not a
+    prefix of the completed render. No real model ships this; it exists to
+    prove the trainer refuses instead of supervising a wrong span
+    (external review, 2026-09-05 - SCI-03). -#}
+{%- for message in messages -%}
+<|im_start|>{{ message['role'] }}
+{{ message['content'] }}<|im_end|>
+{% endfor -%}
+{%- if add_generation_prompt -%}
+<|im_start|>bot
+{% endif -%}

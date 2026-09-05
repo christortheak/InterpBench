@@ -77,6 +77,9 @@ from .run_artifacts import (
     _model_dtype,
     _actual_dtype,
     _write_config_snapshot,
+    _model_capabilities_for_run,
+    _advise_capabilities,
+    _RENDERING_RUN_TYPES,
     _latest_run,
 )
 from .study_admission import (
@@ -1290,7 +1293,8 @@ def extract(name: str, root: str | None = None, dtype: str = "auto",
         manifest = _pin_model_revision(name, manifest, model, root, _log)
         bundles = _extract_all(model, manifest, root)
         run_directory = paths.make_unique_run_directory(f"exp-{name}-extract", root)
-        _write_config_snapshot(manifest, run_directory, "extract", model=model)
+        _write_config_snapshot(manifest, run_directory, "extract", model=model,
+                               root=root, log=_log)
         _persist_vectors(bundles, manifest, model, run_directory)
         _write_reading_position_diagnostics(bundles, run_directory, _log)
         _write_logit_lens_vocabulary(bundles, manifest, model,
@@ -1507,7 +1511,8 @@ def _validate_impl(name: str, manifest: Manifest, model, root, _log) -> str:
         condition_layer=None, layer_count=max(_depth, 1))
 
     run_directory = paths.make_unique_run_directory(f"exp-{name}-validate", root)
-    _write_config_snapshot(manifest, run_directory, "validate", model=model)
+    _write_config_snapshot(manifest, run_directory, "validate", model=model,
+                           root=root, log=_log)
     # Validation-evidence contract (parallel to Swift ``isCompleteValidationRun``):
     # a freeze accepts this run only if validation-evidence.json names task
     # "validate" with the matching scope hash AND a validation report exists.
@@ -3632,7 +3637,8 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
     else:
         run_directory = paths.make_unique_run_directory(
             f"exp-{name}-sweep", root)
-        _write_config_snapshot(manifest, run_directory, "sweep", model=model)
+        _write_config_snapshot(manifest, run_directory, "sweep", model=model,
+                               root=root, log=_log)
         # Persist the sweep's re-derived vectors as first-class extraction
         # artifacts (same helper as extract/validate — never a parallel
         # writer): the sweep run itself then carries recipe-matching
@@ -4241,7 +4247,8 @@ def _sweep_impl(name, manifest, model, root, layer_fractions, alphas, prompt,
                 should_cancel, _log) -> str:
     bundles = _extract_all(model, manifest, root)
     run_directory = paths.make_unique_run_directory(f"exp-{name}-sweep", root)
-    _write_config_snapshot(manifest, run_directory, "sweep", model=model)
+    _write_config_snapshot(manifest, run_directory, "sweep", model=model,
+                           root=root, log=_log)
     sweep_prompt = prompt or (manifest.task_description or "Write a short paragraph.")
 
     rows = []
@@ -4954,7 +4961,7 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
             run_notes["saeLatentConditions"] = [
                 provenance for _spec, _edit, provenance in latent_conditions]
         _write_config_snapshot(manifest, run_directory, "run", model=model,
-                               notes=run_notes or None)
+                               notes=run_notes or None, root=root, log=_log)
         _persist_vectors(bundles, manifest, model, run_directory)
         _write_substrate(model, run_directory, sampling)
     # WS7.1: study-run-start cross-substrate check — logged every start
@@ -5472,7 +5479,8 @@ def _run_multi_agent_study(name, manifest, model, root, model_provider=None,
     resuming = run_directory is not None
     if not resuming:
         run_directory = paths.make_unique_run_directory(f"exp-{name}-run", root)
-        _write_config_snapshot(manifest, run_directory, "run", model=model)
+        _write_config_snapshot(manifest, run_directory, "run", model=model,
+                               root=root, log=log)
     else:
         # Same admission guards the ordinary resume path enforces. Accepting
         # any supplied directory would permit mutating a COMPLETE run, or

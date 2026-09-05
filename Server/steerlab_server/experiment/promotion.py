@@ -51,6 +51,13 @@ class PromotionDecision:
             "adjustedP": None if math.isnan(effect.adjusted_p) else effect.adjusted_p,
             "correction": effect.correction,
             "doseMonotone": self.candidate.dose.is_monotone if self.candidate.dose else None,
+            # An UNDEFINED rho (flat ladder, or tied doses — zero rank
+            # variance) must stay distinguishable from a valid zero, so it
+            # serializes as null and never as 0.0. This is load-bearing, not
+            # tidiness: json.dump would otherwise emit the bare token NaN,
+            # which is not JSON and which a reader comparing `>= 0` would
+            # misread as "no correlation" rather than "no answer" (external
+            # review, 2026-09-05, SCI-04).
             "doseSpearmanRho": (None if self.candidate.dose is None
                                 or math.isnan(self.candidate.dose.spearman_rho)
                                 else self.candidate.dose.spearman_rho),

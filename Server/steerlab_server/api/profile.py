@@ -358,6 +358,14 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             # GET /api/models/preflight — cached/downloadBytes for a model
             # BEFORE loading it, so pickers can confirm multi-GB downloads.
             "loadPreflight": True,
+            # GET /api/models/capabilities and POST
+            # /api/models/capabilities/probe — the chat-template capability
+            # record (2026-09-05): what the pinned template does with a
+            # system turn, the thinking switch and each reasoning-effort
+            # level, probed from the template and kept under
+            # prompts/models/. Clients display it where they display the
+            # model.
+            "modelCapabilities": True,
         },
         "remoteStudy": {
             "bundleUpload": True,

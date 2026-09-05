@@ -19,12 +19,28 @@ import Foundation
 /// readers beside it.
 public enum ReasoningEffort: String, CaseIterable, Codable, Sendable, Hashable {
     case off
+    /// Thinking ON at the template's own default effort: `enable_thinking`
+    /// true and no `reasoning_effort` variable at all — the only non-off
+    /// effort a template with a thinking switch but no effort control can
+    /// honour (2026-09-05, with the capability record).
+    case on
     case low
     case medium
+    case high
     case xhigh
 
-    /// The closed vocabulary as wire strings, in the fixed cross-engine order.
+    /// The closed vocabulary as wire strings, in the fixed cross-engine
+    /// order: off, on, then the probe candidates a template may accept
+    /// (`ModelCapabilities.effortCandidates`). Which LEVELS a given model may
+    /// declare is the pinned template's answer, not the vocabulary's.
     public static let vocabulary: [String] = allCases.map(\.rawValue)
+
+    /// The vocabulary entries that name a LEVEL (a value of
+    /// `reasoning_effort`).
+    public static let levels: [ReasoningEffort] = [.low, .medium, .high, .xhigh]
+
+    /// Whether this effort names a level the template is asked for.
+    public var isLevel: Bool { Self.levels.contains(self) }
 
     /// What a legacy `qwenThinkingEnabled: true` means: the chat template's
     /// default effort.
@@ -82,10 +98,100 @@ public enum ReasoningEffort: String, CaseIterable, Codable, Sendable, Hashable {
     public static func effortWithoutThinkingModeReason(
         _ effort: ReasoningEffort, modelID: String
     ) -> String {
-        "\(effortKey) '\(effort.rawValue)' declared for \(modelID), whose family "
-            + "has no thinking mode — the chat template would ignore it and the "
-            + "study would look as if it reasoned when it did not; declare "
-            + "\(effortKey) off"
+        "\(effortKey) '\(effort.rawValue)' declared for \(modelID), whose chat "
+            + "template has no thinking switch (enable_thinking changes nothing "
+            + "it renders) — the template would ignore it and the study would "
+            + "look as if it reasoned when it did not; declare \(effortKey) off"
+    }
+
+    /// A level on a template that has the switch but never reads
+    /// `reasoning_effort` (Qwen3-14B/-32B): the study would run at the
+    /// template's default while its manifest asserted the level.
+    public static func effortIgnoredReason(
+        _ effort: ReasoningEffort, modelID: String
+    ) -> String {
+        "\(effortKey) '\(effort.rawValue)' declared for \(modelID), whose chat "
+            + "template reads enable_thinking but ignores reasoning_effort — the "
+            + "study would run at the template's default effort while its "
+            + "manifest asserts \(effort.rawValue); declare \(effortKey) "
+            + "\(ReasoningEffort.on.rawValue) (thinking at the template's default), "
+            + "or pin a model whose template reads the effort"
+    }
+
+    public static func effortRejectedReason(
+        _ effort: ReasoningEffort, modelID: String, capabilities: ModelCapabilities
+    ) -> String {
+        let accepted = capabilities.acceptedEfforts.joined(separator: ", ")
+        return "\(effortKey) '\(effort.rawValue)' is rejected by the chat template "
+            + "of \(modelID) (the template raises on it) — accepted levels: "
+            + (accepted.isEmpty ? "none" : accepted)
+            + "; or declare \(effortKey) \(ReasoningEffort.on.rawValue)"
+    }
+
+    /// A level the record never judged — a heuristic record asked for a
+    /// level the old family rule never assumed (`high`), or a probed record
+    /// from an older candidate list.
+    public static func effortUnprobedReason(
+        _ effort: ReasoningEffort, modelID: String, capabilities: ModelCapabilities
+    ) -> String {
+        let accepted = capabilities.acceptedEfforts.joined(separator: ", ")
+        return "\(effortKey) '\(effort.rawValue)' is not known to be accepted by "
+            + "the chat template of \(modelID) (record source "
+            + "\(capabilities.source.rawValue); accepted levels: "
+            + (accepted.isEmpty ? "none" : accepted)
+            + ") — probe the template (model capabilities --probe) or declare a "
+            + "level it accepts"
+    }
+
+    public static func effortAssumedAdvisory(
+        _ effort: ReasoningEffort, modelID: String
+    ) -> String {
+        "\(effortKey) '\(effort.rawValue)' on \(modelID) is ASSUMED accepted "
+            + "from the model id — no probed capability record; a template that "
+            + "ignores reasoning_effort would run at its default effort. Probe "
+            + "it: model capabilities --probe"
+    }
+
+    public static func systemPromptUnsupportedReason(modelID: String) -> String {
+        "a system prompt is declared for \(modelID), whose chat template has no "
+            + "way to deliver system text (it raises on, or drops, a system turn) "
+            + "— drop the system prompt, or write the frame into the task prompts "
+            + "yourself and say so in METHODS"
+    }
+
+    /// The one rule about a LEVEL: the pinned template must accept it.
+    /// Server twin: `prompt_render.effort_level_violations`.
+    public static func effortLevelViolations(
+        _ effort: ReasoningEffort, modelID: String, capabilities: ModelCapabilities
+    ) -> [String] {
+        switch capabilities.effortVerdict(effort.rawValue) {
+        case .accepted, .assumed: return []
+        case .ignored: return [effortIgnoredReason(effort, modelID: modelID)]
+        case .rejected:
+            return [effortRejectedReason(effort, modelID: modelID, capabilities: capabilities)]
+        case nil:
+            return [effortUnprobedReason(effort, modelID: modelID, capabilities: capabilities)]
+        }
+    }
+
+    /// Non-blocking notes beside a declaration the gates accepted: a level
+    /// ASSUMED from a heuristic record, and the record's own advisories.
+    /// Server twin: `prompt_render.reasoning_protocol_advisories`.
+    public static func protocolAdvisories(
+        effort: ReasoningEffort, modelID: String, capabilities: ModelCapabilities
+    ) -> [String] {
+        // Only where the record DECIDED something — a non-off effort. A
+        // study that reasons not at all is not nagged about a record it
+        // never read.
+        guard effort.isOn else { return [] }
+        var notes: [String] = []
+        if effort.isLevel, capabilities.effortVerdict(effort.rawValue) == .assumed {
+            notes.append(effortAssumedAdvisory(effort, modelID: modelID))
+        }
+        for note in capabilities.advisories where !notes.contains(note) {
+            notes.append(note)
+        }
+        return notes
     }
 
     public static func malformedBudgetReason(_ value: Int) -> String {
@@ -94,14 +200,20 @@ public enum ReasoningEffort: String, CaseIterable, Codable, Sendable, Hashable {
 
     /// Every rule a declared reasoning protocol must satisfy, as the
     /// sentences both engines refuse with. `effort` is the RAW declared
-    /// string (nil = absent = off); `reasoningMaxTokens` nil = absent.
+    /// string (nil = absent = off); `reasoningMaxTokens` nil = absent;
+    /// `capabilities` is the model's record (nil: the registered record for
+    /// the id, else the heuristic).
     ///
     /// - the effort is in the closed vocabulary;
-    /// - a non-off effort names a family with a thinking mode;
+    /// - a non-off effort names a template with a thinking switch;
+    /// - a LEVEL names one the template accepts (`on` needs only the
+    ///   switch; an ignored or rejected level is refused, an assumed one —
+    ///   heuristic record — passes and is advised on elsewhere);
     /// - a non-off effort carries a positive reasoning budget;
     /// - an off effort carries none.
     public static func protocolViolations(
-        effort: String?, reasoningMaxTokens: Int?, modelID: String
+        effort: String?, reasoningMaxTokens: Int?, modelID: String,
+        capabilities: ModelCapabilities? = nil
     ) -> [String] {
         let spelled = effort ?? ReasoningEffort.off.rawValue
         guard let parsed = ReasoningEffort(rawValue: spelled) else {
@@ -114,8 +226,11 @@ public enum ReasoningEffort: String, CaseIterable, Codable, Sendable, Hashable {
             return reasoningMaxTokens == nil ? [] : [budgetWithoutEffortReason]
         }
         var problems: [String] = []
-        if !PromptRendering.hasThinkingMode(modelID) {
+        let record = PromptRendering.capabilities(for: modelID, explicit: capabilities)
+        if !record.hasThinkingSwitch {
             problems.append(effortWithoutThinkingModeReason(parsed, modelID: modelID))
+        } else if parsed.isLevel {
+            problems += effortLevelViolations(parsed, modelID: modelID, capabilities: record)
         }
         if reasoningMaxTokens == nil {
             problems.append(effortWithoutBudgetReason(parsed))

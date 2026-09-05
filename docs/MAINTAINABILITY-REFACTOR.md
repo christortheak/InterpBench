@@ -6,6 +6,11 @@ Base: `cd299e2d0fcf6fe2fa93090631c3a2713e1f9047`
 
 Prepared: 2026-09-05
 
+The base above identifies the original refactor. Main's subsequent scientific
+and operational fixes through `5309b5f2efc8f70dfb7b1a444feb5312b27c7704` have
+now been integrated. See [main integration record](MAIN-INTEGRATION.md) for
+the merge resolutions, preservation checks and updated validation.
+
 This change establishes focused owners for reusable Python task support,
 offline analysis, Swift contracts, and workspace file access. It is a staged
 migration of the maintainability proposal, not a claim that the remaining large
@@ -109,14 +114,16 @@ The intended invariants are unchanged:
 - Source-run epoch checks, measurement-drift stamps and refusal messages.
 - Result ordering, preview limits and handling of legacy or unreadable files.
 
-This is not the scientific-correctness repair. In particular it does not change
-J-lens gain, fine-tuning loss normalization, chat template behavior or promotion
-decisions. Passing characterization tests preserves current behavior; it does
-not resolve the separate scientific findings.
+The original refactor commits did not repair scientific behavior. The later
+main integration brings in the landed J-lens gain, fine-tuning loss normalization,
+chat-template and promotion fixes, with their regression tests. Further refactoring
+must preserve this corrected baseline. Passing tests is evidence for the covered
+contracts, not a general certification of every scientific claim.
 
 ## Verification
 
-Validated on 2026-09-05:
+Original refactor validation on 2026-09-05, before integrating main's fixes
+(updated results are in the integration record):
 
 - Python: **5,460 passed, 9 skipped** in the complete suite, with loopback
   networking available for managed-runner integration tests.
@@ -185,7 +192,7 @@ should be migrated as separately reviewed slices:
 6. Split the feature views after their state owners are independent. Remove
    compatibility bridges only when production callers and tests have migrated.
 
-When integrating the separate correctness branch, apply each scientific fix in
+When integrating later main changes, apply each scientific fix in
 its new owning module and carry its regression tests with it. Do not restore a
 deleted implementation into `tasks.py` or a schema declaration into the store
 just to resolve a merge conflict.

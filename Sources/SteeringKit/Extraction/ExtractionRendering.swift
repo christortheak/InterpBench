@@ -420,10 +420,10 @@ extension ExtractionRendering {
     ) -> DeclarationError {
         DeclarationError(
             reason: "extractionRendering declares reasoningEffort "
-                + "'\(effort.rawValue)' for \(modelID), whose family has no "
-                + "thinking mode — the chat template would ignore it and the "
-                + "recipe would look as if it rendered a reasoning scaffold "
-                + "when it did not",
+                + "'\(effort.rawValue)' for \(modelID), whose chat template has "
+                + "no thinking switch (enable_thinking changes nothing it "
+                + "renders) — the template would ignore it and the recipe would "
+                + "look as if it rendered a reasoning scaffold when it did not",
             repair: "declare reasoningEffort off, or pin a model with a "
                 + "thinking mode")
     }
@@ -433,15 +433,31 @@ extension ExtractionRendering {
     /// (attach, the build routes), because the parser itself never sees one.
     /// Server twin: `extraction_rendering.thinking_mode_problem`.
     public static func thinkingModeProblem(
-        _ rendering: ExtractionRendering?, modelID: String
+        _ rendering: ExtractionRendering?, modelID: String,
+        capabilities: ModelCapabilities? = nil
     ) -> DeclarationError? {
         guard let rendering, !rendering.isRaw else { return nil }
         let effort = rendering.resolvedReasoningEffort
-        guard effort.isOn, !PromptRendering.hasThinkingMode(modelID) else {
-            return nil
+        guard effort.isOn else { return nil }
+        let record = PromptRendering.capabilities(for: modelID, explicit: capabilities)
+        guard record.hasThinkingSwitch else {
+            return effortWithoutThinkingModeError(effort, modelID: modelID)
         }
-        return effortWithoutThinkingModeError(effort, modelID: modelID)
+        guard effort.isLevel else { return nil }
+        guard let problem = ReasoningEffort.effortLevelViolations(
+            effort, modelID: modelID, capabilities: record).first
+        else { return nil }
+        return DeclarationError(
+            reason: effortLevelProblemPrefix + problem,
+            repair: "declare \"reasoningEffort\": \"\(ReasoningEffort.on.rawValue)\" "
+                + "(thinking at the template's default), a level the template "
+                + "accepts, or off")
     }
+
+    /// The prefix the study-protocol level sentences carry when the
+    /// declaration is a concept's `extractionRendering`. Server twin:
+    /// `extraction_rendering.effort_level_problem_prefix`.
+    public static let effortLevelProblemPrefix = "extractionRendering: "
 
     /// The non-null keys a `raw` block carries beyond `mode`, sorted.
     ///
@@ -719,68 +735,149 @@ public enum PromptRendering {
         modelID.lowercased().contains("qwen")
     }
 
-    /// Whether this family's chat template has a SYSTEM ROLE.
+    /// The capability record a renderer or gate reads, in precedence order:
+    /// the one the caller resolved; else the one registered for the loaded
+    /// model (`ModelCapabilitiesStore.ensure`, at load); else the id
+    /// heuristic, which says so. Server twin:
+    /// `prompt_render.capabilities_for`.
+    public static func capabilities(
+        for modelID: String, explicit: ModelCapabilities? = nil
+    ) -> ModelCapabilities {
+        explicit ?? ModelCapabilities.registered(for: modelID)
+            ?? ModelCapabilities.heuristicView(modelID: modelID)
+    }
+
+    /// Whether the pinned chat template has a SYSTEM ROLE — the record's
+    /// `systemRole == systemTurn`.
     ///
     /// The capability `chatMessages` branches on, named so authoring
-    /// surfaces can ask it without re-deriving the family rule: true means a
+    /// surfaces can ask it without re-deriving the rule: true means a
     /// declared system prompt is inserted as a genuine system turn, false
     /// means the SAME text is prepended to the first user turn
-    /// (`system + "\n\n" + user`) because the template has nowhere else to
-    /// put it. Either way it reaches the model — which is the property
-    /// `experiment set-system-prompt` reports. Gemma 3 is today's only
-    /// false. Server twin: `prompt_render.has_system_role`.
-    public static func hasSystemRole(_ modelID: String) -> Bool {
-        !isGemma(modelID)
+    /// (`system + separator + user`, the separator the probe recorded)
+    /// because the template has nowhere else to put it. Either way it
+    /// reaches the model — which is the property `experiment
+    /// set-system-prompt` reports — unless the record says `unsupported`,
+    /// which the declaration gates refuse. Server twin:
+    /// `prompt_render.has_system_role`.
+    public static func hasSystemRole(
+        _ modelID: String, capabilities: ModelCapabilities? = nil
+    ) -> Bool {
+        self.capabilities(for: modelID, explicit: capabilities).hasSystemRole
+    }
+
+    /// How a declared system prompt reaches the model: `promptPrepend`
+    /// (rawCompletion renders no template at all), `systemTurn`,
+    /// `prependedToFirstUserTurn`, or `undeliverable`. Server twin:
+    /// `prompt_render.system_prompt_delivery`.
+    public static func systemPromptDelivery(
+        modelID: String, rawCompletion: Bool, capabilities: ModelCapabilities? = nil
+    ) -> String {
+        if rawCompletion { return "promptPrepend" }
+        let record = self.capabilities(for: modelID, explicit: capabilities)
+        if record.hasSystemRole { return "systemTurn" }
+        if record.systemPromptDeliverable { return "prependedToFirstUserTurn" }
+        return "undeliverable"
+    }
+
+    /// The one rule about a system prompt: under a chat template, the
+    /// template must be able to deliver it. Server twin:
+    /// `prompt_render.system_prompt_violations`.
+    public static func systemPromptViolations(
+        systemPrompt: String?, modelID: String, rawCompletion: Bool,
+        capabilities: ModelCapabilities? = nil
+    ) -> [String] {
+        let trimmed = systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return [] }
+        guard systemPromptDelivery(
+            modelID: modelID, rawCompletion: rawCompletion, capabilities: capabilities)
+            == "undeliverable"
+        else { return [] }
+        return [ReasoningEffort.systemPromptUnsupportedReason(modelID: modelID)]
+    }
+
+    /// The fold a template without a system role gets: the probe-recorded
+    /// separator (`"\n\n"` on Gemma 3 and under the heuristic).
+    public static func foldSystemPrompt(
+        _ system: String, into user: String, capabilities: ModelCapabilities
+    ) -> String {
+        system + (capabilities.foldSeparator ?? "\n\n") + user
     }
 
     /// The chat turns for a single-prompt render.
     ///
-    /// **Gemma 3 has no system role**: system text is prepended to the user
-    /// turn (`system + "\n\n" + user`). Every other family gets a real system
-    /// turn.
+    /// A template with a system role gets a real system turn; one without
+    /// (Gemma 3) gets the system text prepended to the user turn with the
+    /// recorded separator; one that cannot deliver system text at all gets
+    /// the prompt alone — the declaration gates refuse that frame first, and
+    /// `systemPromptViolations` is the render-time check.
     public static func chatMessages(
-        prompt: String, modelID: String, systemPrompt: String?
+        prompt: String, modelID: String, systemPrompt: String?,
+        capabilities: ModelCapabilities? = nil
     ) -> [Chat.Message] {
         let system = systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let system, !system.isEmpty else { return [.user(prompt)] }
-        if !hasSystemRole(modelID) {
-            return [.user(system + "\n\n" + prompt)]
+        let record = self.capabilities(for: modelID, explicit: capabilities)
+        if record.hasSystemRole { return [.system(system), .user(prompt)] }
+        if record.systemPromptDeliverable {
+            return [.user(foldSystemPrompt(system, into: prompt, capabilities: record))]
         }
-        return [.system(system), .user(prompt)]
+        return [.user(prompt)]
     }
 
-    /// Whether this family's chat template HAS a thinking mode to declare an
-    /// effort for. Qwen3/Qwen3.8 do; Gemma 3 does not — a non-off effort on
-    /// it would reach nothing, so the declaration gates refuse it by name.
-    /// Server twin: `prompt_render.has_thinking_mode`.
-    public static func hasThinkingMode(_ modelID: String) -> Bool {
-        isQwen(modelID)
+    /// Whether the pinned chat template HAS a thinking switch to declare an
+    /// effort for — the record's `thinkingSwitch` (Qwen3/Qwen3.8 do; Gemma 3
+    /// does not — a non-off effort on it would reach nothing, so the
+    /// declaration gates refuse it by name). Server twin:
+    /// `prompt_render.has_thinking_mode`.
+    public static func hasThinkingMode(
+        _ modelID: String, capabilities: ModelCapabilities? = nil
+    ) -> Bool {
+        self.capabilities(for: modelID, explicit: capabilities).hasThinkingSwitch
     }
 
-    /// The template's extra context for the declared effort, for this
-    /// family. nil for a family without a thinking mode. For Qwen, `off` is
-    /// exactly the context every study has always rendered with
-    /// (`enable_thinking: false`), so an off study's prompt bytes cannot
-    /// move; a non-off effort adds `reasoning_effort` beside
-    /// `enable_thinking: true` — the variable the Qwen3.8 template reads.
+    /// The template's extra context for the declared effort — ONLY the
+    /// variables the record says the template reads. nil for a template
+    /// without a thinking switch. `off` is exactly the context every study
+    /// has always rendered with (`enable_thinking: false`), so an off
+    /// study's prompt bytes cannot move; `on` is `enable_thinking: true`
+    /// alone; a level adds `reasoning_effort` beside it when the template
+    /// reads the variable and accepts the level — a level the template
+    /// IGNORES renders as `on` (byte-identical to what such a template
+    /// always produced; the gates refuse declaring it anew), a level the
+    /// template REJECTS also renders as `on` here, because a render cannot
+    /// refuse — the gates already did. A heuristic record keeps the
+    /// pre-record behaviour: every assumed level is passed through.
     /// Server twin: `prompt_render.thinking_template_kwargs`.
     public static func thinkingContext(
-        modelID: String, effort: ReasoningEffort
+        modelID: String, effort: ReasoningEffort, capabilities: ModelCapabilities? = nil
     ) -> [String: any Sendable]? {
-        guard hasThinkingMode(modelID) else { return nil }
+        let record = self.capabilities(for: modelID, explicit: capabilities)
+        guard record.hasThinkingSwitch else { return nil }
         guard effort.isOn else { return ["enable_thinking": false] }
-        return ["enable_thinking": true, "reasoning_effort": effort.rawValue]
+        guard effort.isLevel else { return ["enable_thinking": true] }
+        switch record.effortVerdict(effort.rawValue) {
+        case .accepted, .assumed:
+            return ["enable_thinking": true, "reasoning_effort": effort.rawValue]
+        case .ignored, .rejected:
+            return ["enable_thinking": true]
+        case nil:
+            return record.effortVariableRead == false
+                ? ["enable_thinking": true]
+                : ["enable_thinking": true, "reasoning_effort": effort.rawValue]
+        }
     }
 
     /// The template's extra context, from the LEGACY boolean: Qwen3 studies
     /// disable thinking mode unless it is explicitly enabled (true means the
-    /// template's default effort). nil for every other family.
+    /// template's default effort). nil for every family without a switch.
     public static func qwenContext(
-        modelID: String, qwenThinkingEnabled: Bool
+        modelID: String, qwenThinkingEnabled: Bool, capabilities: ModelCapabilities? = nil
     ) -> [String: any Sendable]? {
         thinkingContext(
             modelID: modelID,
-            effort: ReasoningEffort.legacy(qwenThinkingEnabled: qwenThinkingEnabled))
+            effort: ReasoningEffort.legacy(qwenThinkingEnabled: qwenThinkingEnabled),
+            capabilities: capabilities)
     }
 
     /// The rawCompletion text: system prepended, family thinking suffix
@@ -788,14 +885,17 @@ public enum PromptRendering {
     /// special tokens exactly once).
     public static func rawCompletionText(
         prompt: String, modelID: String, systemPrompt: String?,
-        qwenThinkingEnabled: Bool, reasoningEffort: ReasoningEffort? = nil
+        qwenThinkingEnabled: Bool, reasoningEffort: ReasoningEffort? = nil,
+        capabilities: ModelCapabilities? = nil
     ) -> String {
         var text = prompt
         let system = systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let system, !system.isEmpty {
             text = system + "\n\n" + text
         }
-        if isQwen(modelID) {
+        // The soft switch of a ChatML thinking family, appended to raw text
+        // exactly as before the record existed.
+        if self.capabilities(for: modelID, explicit: capabilities).hasThinkingSwitch {
             let effort = ReasoningEffort.resolve(
                 reasoningEffort, qwenThinkingEnabled: qwenThinkingEnabled)
             text += effort.isOn ? " /think" : " /no_think"
@@ -887,14 +987,16 @@ public enum PromptRendering {
         guard rendering.resolvedAddGenerationPrompt else {
             throw UnsupportedForm(reason: addGenerationPromptFalseReason)
         }
+        let record = capabilities(for: modelID)
         let messages = chatMessages(
             prompt: text, modelID: modelID,
-            systemPrompt: rendering.systemPrompt)
+            systemPrompt: rendering.systemPrompt, capabilities: record)
         return try tokenizer.applyChatTemplate(
             messages: DefaultMessageGenerator().generate(messages: messages),
             tools: nil,
             additionalContext: thinkingContext(
                 modelID: modelID,
-                effort: rendering.resolvedReasoningEffort))
+                effort: rendering.resolvedReasoningEffort,
+                capabilities: record))
     }
 }

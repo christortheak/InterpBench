@@ -121,9 +121,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 from urllib.parse import quote, urlsplit, urlunsplit
+
+#: A SHA-256 pin as this client accepts it: exactly 64 hex characters, case
+#: folded. Checked by SHAPE before anything is compared against it.
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 #: Read/connect/write budget for one request, in seconds. Generous: a runner
 #: on a cluster login node can be slow to answer while its filesystem is busy,
@@ -208,6 +213,31 @@ class RunnerRefusal(RunnerError):
 
     state = "refused"
     code = "runnerRefused"
+
+
+def _digest_pin(value, *, what: str, detail: dict | None = None) -> str:
+    """Normalize an EXPLICIT digest pin, or refuse it as malformed.
+
+    ``(expected or "").strip().lower()`` followed by ``if expected:`` — the
+    old shape of the submit pre-check — turned an explicit EMPTY pin into "no
+    pin" and silently skipped the one integrity check that call has, and let
+    ``"abc"`` reach the comparison as though it were a digest (external
+    review, 2026-09-05). A pin that was GIVEN is either a well-formed digest
+    or a typed refusal; whether an ABSENT pin is acceptable is the caller's
+    decision, made before this helper is reached.
+    """
+    text = str(value).strip().lower() if value is not None else ""
+    if not _SHA256_HEX.fullmatch(text):
+        raise RunnerRefusal(
+            f"{what} is not a SHA-256 digest (64 hex characters): "
+            f"{value!r} — nothing was done with it",
+            code="malformedDigestPin",
+            repair_action=(
+                "pass the digest exactly as `steerlab runner upload` (or the "
+                "job record's evidenceBundle.bundleSha256) printed it. A pin "
+                "this client cannot check is refused, never ignored."),
+            detail={"pin": value, **(detail or {})})
+    return text
 
 
 class RunnerHTTPError(RunnerError):
@@ -739,7 +769,10 @@ class RunnerClient:
         a timeout here means "look at the job list", not "submit again".
 
         ``expected_sha256``, when given, is checked FIRST against the runner's
-        own ``POST /api/bundles/inspect`` of that path. That extra round trip
+        own ``POST /api/bundles/inspect`` of that path — and a pin that is
+        given must be a well-formed digest: an explicit empty or malformed
+        value is refused as ``malformedDigestPin``, never treated as absent.
+        That extra round trip
         is deliberate and cheap: verifying is free while ``inspect`` is
         idempotent, and it stops the one mistake this surface makes easy —
         submitting the path of a *different* staged bundle (an earlier upload,
@@ -750,8 +783,14 @@ class RunnerClient:
         ``slurmJobID``, ``command``, ``recordsDirectory``,
         ``submissionDirectory``, ``preflight``, ``shardJobIDs``.
         """
-        expected = (expected_sha256 or "").strip().lower()
-        if expected:
+        # An ABSENT pin is the caller's call (`runner submit` and the
+        # composite `run` always send one). A pin that is PRESENT is checked
+        # for shape before anything else: an empty or malformed value used to
+        # switch the comparison off instead of failing it.
+        expected = (None if expected_sha256 is None
+                    else _digest_pin(expected_sha256, what="the bundle pin",
+                                     detail={"bundlePath": remote_path}))
+        if expected is not None:
             staged = self.inspect_remote_bundle(remote_path)
             actual = str(staged.get("bundleSha256") or "")
             if actual != expected:
@@ -982,6 +1021,11 @@ class RunnerClient:
                     "none, the runner never packaged evidence for it — check "
                     "`steerlab runner jobs <id>` for the run directory and "
                     "package it there."))
+        # Present but not a digest: refused BEFORE any bytes move, rather
+        # than after a full download that could only ever mismatch.
+        expected = _digest_pin(expected,
+                               what="the expected sha256 for the download",
+                               detail={"remotePath": remote_path})
         cap = int(self.max_download_bytes if max_bytes is None else max_bytes)
         destination = os.path.abspath(os.path.expanduser(destination))
         if os.path.exists(destination):

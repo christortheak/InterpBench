@@ -101,7 +101,28 @@ public enum WorkspaceImportPolicy {
     public static let shardStampFileName = "shard.json"
 
     /// The report a merged run writes; carries the merge completeness stamp.
+    /// It is also the engines' completion marker for a study run
+    /// (`resume.completion_file_for`): a run directory that lacks it has not
+    /// finished — see `isIncomplete(kind:remote:exclusions:)`.
     public static let reportFileName = "report.json"
+
+    /// The record stream a study run writes as it goes. Records present with
+    /// no `reportFileName` beside them is the shape of a run — or a shard
+    /// merge — that never finished.
+    public static let recordsFileName = "generations.jsonl"
+    /// The report a validate stage writes when it finishes.
+    public static let validationReportFileName = "validation-report.json"
+    /// The report a coding evaluation writes when it finishes.
+    public static let codingReportFileName = "coding-report.json"
+    /// The report a judgment evaluation writes when it finishes.
+    public static let judgeReportFileName = "judge-report.json"
+    /// The artifact a sweep writes when it finishes (sweeps never write a
+    /// `report.json`; this is the engine's own completion marker for them).
+    public static let sweepRecommendationsFileName = "recommendations.json"
+
+    /// The directory-name shape of an upload's staging directory: the engine
+    /// mints one per bundle a client sends up, and the bundle lands in it.
+    public static let uploadStagingDirectoryShape = "uploaded-bundle"
 
     /// The final trained-adapter weight file. A submit directory containing
     /// one under `run/<name>/` is a finetune receipt whose weights the
@@ -137,6 +158,11 @@ public enum WorkspaceImportPolicy {
         case lensSupport
         /// An interactive GPU-session receipt.
         case session
+        /// The staging directory of a bundle a client uploaded for
+        /// execution. Holds only that bundle — bytes the client's own
+        /// workspace produced and still has — so there is nothing to bring
+        /// home; the execution it fed writes an ordinary stage directory.
+        case uploadStaging
         /// One shard of a fan-out. NEVER imported — but only once a merged
         /// run's completeness stamp proves the family merged.
         case shardPartial
@@ -154,8 +180,33 @@ public enum WorkspaceImportPolicy {
                 .confirm, .promote, .pipeline, .submit, .vectorArtifact,
                 .lensSupport, .session:
                 true
-            case .shardPartial, .unknown, .notARunDirectory:
+            case .uploadStaging, .shardPartial, .unknown, .notARunDirectory:
                 false
+            }
+        }
+
+        /// The file names any ONE of which proves a directory of this kind
+        /// ran to completion — the engine's own completion markers, read by
+        /// content. Empty for shapes whose completion no artifact marks
+        /// (receipts, sessions, vector campaigns, the chain ledger), which
+        /// the in-progress gate therefore never holds back.
+        ///
+        /// A stage still running has not written its report yet, and a
+        /// directory without one must not be transferred: the transfer fills
+        /// gaps and never rewrites, so a half-written record file copied now
+        /// would be frozen here for good, and the finished file could never
+        /// replace it. The artifact is the content-based proof this policy
+        /// already rests on for merges; the scheduler is never consulted.
+        public var completionArtifacts: [String] {
+            switch self {
+            case .run: [reportFileName]
+            case .validate: [validationReportFileName, reportFileName]
+            case .evaluate: [codingReportFileName, judgeReportFileName]
+            case .sweep: [sweepRecommendationsFileName]
+            case .analyze, .extract, .confirm, .promote, .pipeline, .submit,
+                .vectorArtifact, .lensSupport, .session, .uploadStaging,
+                .shardPartial, .unknown, .notARunDirectory:
+                []
             }
         }
 
@@ -175,6 +226,7 @@ public enum WorkspaceImportPolicy {
             case .vectorArtifact: "vector artifact"
             case .lensSupport: "lens support"
             case .session: "session"
+            case .uploadStaging: "upload staging"
             case .shardPartial: "shard partial"
             case .unknown: "unknown shape"
             case .notARunDirectory: "not a run directory"
@@ -249,6 +301,10 @@ public enum WorkspaceImportPolicy {
         if rest == "session" || rest.hasPrefix("session-") {
             return Classification(
                 name: name, kind: .session, stamp: stamp, stem: rest)
+        }
+        if rest == uploadStagingDirectoryShape {
+            return Classification(
+                name: name, kind: .uploadStaging, stamp: stamp, stem: rest)
         }
 
         // A re-execution prefix (`resume-`, `resume2-`) is bookkeeping about
@@ -329,7 +385,9 @@ public enum WorkspaceImportPolicy {
         /// records — but its family's purge eligibility is decided by
         /// EVIDENCE, downstream, not by this decision.
         case skipShardPartial(shardIndex: Int?, shardCount: Int?)
-        /// Not a run directory (a library subtree, or a stray file).
+        /// Nothing to bring home: not a run directory (a library subtree, a
+        /// stray file), or a staging directory whose only content the client
+        /// that sent it still holds.
         case notApplicable(reason: String)
 
         public var transfers: Bool {
@@ -355,6 +413,12 @@ public enum WorkspaceImportPolicy {
                 : .notApplicable(
                     reason: "'\(classification.name)' carries no run stamp, "
                         + "so it is not a run directory")
+        case .uploadStaging:
+            .notApplicable(
+                reason: "'\(classification.name)' is the staging directory "
+                    + "of an uploaded bundle — it holds only the bundle the "
+                    + "client sent, which that client's workspace already "
+                    + "has; the execution it fed wrote its own stage directory")
         case .unknown:
             .importConservatively(
                 reason: "'\(classification.name)' is a stamped directory of "
@@ -364,6 +428,51 @@ public enum WorkspaceImportPolicy {
         default:
             .importAlways(kind: classification.kind)
         }
+    }
+
+    // MARK: - The in-progress gate
+
+    /// The completion artifacts a directory of `kind` is still waiting for,
+    /// judged from the remote inventory: nil when the kind declares none or
+    /// when any one of them is present at the directory's root. A report
+    /// nested deeper (a chain's `stage-1/report.json`) belongs to that stage,
+    /// not to this directory, and does not count.
+    public static func awaitedCompletionArtifacts(
+        for kind: DirectoryKind, remote: [FileStat]
+    ) -> [String]? {
+        let artifacts = kind.completionArtifacts
+        guard !artifacts.isEmpty else { return nil }
+        let rootFiles = Set(remote.map(\.relativePath).filter { !$0.contains("/") })
+        return artifacts.contains(where: rootFiles.contains) ? nil : artifacts
+    }
+
+    /// Why an in-progress directory was held back, for the human report.
+    /// Names both readings of an absent report — still running, or a job
+    /// that died before writing one — because the policy reads content, not
+    /// the scheduler, and only a human can tell those apart.
+    public static func inProgressReason(
+        directory: String, awaiting: [String], localFiles: Int
+    ) -> String {
+        let named = awaiting.joined(separator: " or ")
+        var text =
+            "'\(directory)' has no \(named) on the cluster yet, so its stage "
+            + "has not finished: skipped, because a record file still being "
+            + "written would be frozen here as-is (the transfer fills gaps and "
+            + "never rewrites) and the completed file could never replace it. "
+            + "Import again once the job completes"
+        if localFiles > 0 {
+            text +=
+                " — and note that \(localFiles) file\(localFiles == 1 ? "" : "s") "
+                + "from an earlier import already sit here; if the cluster's "
+                + "finished files differ from them, that import will refuse "
+                + "the directory as drifted, and which copy is real is a "
+                + "human's call"
+        }
+        text +=
+            ". A directory that stays in this state across imports is a job "
+            + "that died before writing its report, which no import certifies "
+            + "complete."
+        return text
     }
 
     // MARK: - What never travels, INSIDE a directory that does
@@ -649,6 +758,47 @@ public enum WorkspaceImportPolicy {
                 + "merged run anywhere in this workspace. Never purge these; "
                 + "merge the fan-out (or resume the incomplete shard) first"
         }
+    }
+
+    // MARK: - Run completeness (the engines' own contract)
+
+    /// The artifact whose presence marks a directory of this kind FINISHED,
+    /// per the engines' completion contract (`resume.completion_file_for`): a
+    /// study run is complete exactly when its `report.json` exists, and a
+    /// MERGED run's report is the last file the merge writes, after every
+    /// completeness proof. Nil for shapes whose completion this policy does
+    /// not judge.
+    public static func completionMarker(for kind: DirectoryKind) -> String? {
+        kind == .run ? reportFileName : nil
+    }
+
+    /// Whether a run directory's REMOTE inventory describes a run that has
+    /// not finished: its record stream is there, its completion marker is not.
+    ///
+    /// This is exactly what a merge parent looked like on 2026-09-05 after the
+    /// controller died between writing `generations.jsonl` and `report.json`
+    /// (three sibling merges from the same minute had their reports; this one
+    /// did not) — and it is what any run still executing looks like. Such a
+    /// directory is never CERTIFIED complete. Its bytes still come home:
+    /// over-importing is the deliberate failure direction, and a report that
+    /// arrives later is an ordinary gap the next import fills. But they come
+    /// home under their own outcome, so no report can call the directory
+    /// imported or already complete.
+    ///
+    /// Judged on the remote inventory because that is the source: a local copy
+    /// lacking the report while the cluster has it is a gap, not an incomplete
+    /// run. A directory with no record stream at all is not judged here —
+    /// there is nothing yet to be incomplete about.
+    public static func isIncomplete(
+        kind: DirectoryKind, remote: [FileStat], exclusions rules: [ExclusionRule]
+    ) -> Bool {
+        guard let marker = completionMarker(for: kind) else { return false }
+        let kept = Set(
+            remote.map(\.relativePath).filter {
+                !isExcluded(relativePath: $0, rules: rules)
+                    && !isVerificationInert(relativePath: $0)
+            })
+        return kept.contains(recordsFileName) && !kept.contains(marker)
     }
 
     // MARK: - Content verification (tightening 2)

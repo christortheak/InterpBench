@@ -43,7 +43,12 @@ EOS = 1
 
 
 def test_the_vocabulary_is_closed_and_off_is_first():
-    assert prompt_render.REASONING_EFFORTS == ("off", "low", "medium", "xhigh")
+    # `on` (thinking at the template's default, no effort variable) and
+    # `high` (a probe candidate) joined 2026-09-05 with the capability
+    # record; which LEVELS a model may declare is the pinned template's
+    # answer, not the vocabulary's.
+    assert prompt_render.REASONING_EFFORTS == (
+        "off", "on", "low", "medium", "high", "xhigh")
     assert er.REASONING_EFFORTS == prompt_render.REASONING_EFFORTS
     assert prompt_render.has_thinking_mode(QWEN) is er.has_thinking_mode(QWEN)
     assert prompt_render.has_thinking_mode(GEMMA) is er.has_thinking_mode(GEMMA)
@@ -167,7 +172,7 @@ def test_a_family_without_a_thinking_mode_refuses_a_non_off_effort(tmp_path):
     with pytest.raises(es.ExperimentStoreError) as caught:
         es.set_protocol("s", {"reasoningEffort": "low",
                               "reasoningMaxTokens": 100}, root=root)
-    assert "whose family has no thinking mode" in str(caught.value)
+    assert "whose chat template has no thinking switch" in str(caught.value)
     assert GEMMA in str(caught.value)
     # Off is always declarable.
     assert es.set_protocol("s", {"reasoningEffort": "off"},
@@ -201,7 +206,7 @@ def test_verify_applies_the_joint_rules_to_the_new_spelling_only():
                                    "reasoningEffort": "xhigh",
                                    "reasoningMaxTokens": 9}).verify(
         root="/nonexistent")
-    assert any("no thinking mode" in v for v in problems)
+    assert any("no thinking switch" in v for v in problems)
     problems = Manifest.from_dict({**base, "reasoningEffort": "nope"}).verify(
         root="/nonexistent")
     assert any("unknown reasoningEffort" in v for v in problems)
@@ -296,7 +301,7 @@ def test_a_new_stamp_spells_the_effort_and_the_family_gate_is_asked_by_attach(
         es.attach("g", ["joy"], root=root,
                   extraction_rendering='{"mode":"chatTemplate",'
                                        '"reasoningEffort":"low"}')
-    assert "no thinking mode" in str(caught.value)
+    assert "no thinking switch" in str(caught.value)
     assert "reasoningEffort" in caught.value.repair_action
 
 

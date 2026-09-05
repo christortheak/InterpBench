@@ -671,6 +671,21 @@ def _retain_worker_partial(kind: str, exc: BaseException, log) -> dict | None:
         return None
 
 
+def _capabilities_body(view) -> dict:
+    """The record as a response body: the effective view's stamp plus the
+    facts a client displays beside it."""
+    body = view.stamp()
+    body.update({
+        "modelID": view.model_id, "revision": view.revision,
+        "foldSeparator": view.fold_separator,
+        "thinkTokens": dict(view.think_tokens),
+        "architecture": dict(view.architecture) if view.architecture else None,
+        "overrideDetail": dict(view.overrides),
+        "advisories": list(view.advisories),
+    })
+    return body
+
+
 def _run_or_submit(state: ServiceState, kind: str, work, *,
                    path: str, body: dict):
     """Execution seam for the job-backed verbs that need a model in-process:
@@ -1017,6 +1032,44 @@ def build_router(state: ServiceState) -> APIRouter:
                 "seconds, a weight copy at its next phase boundary; watch "
                 "GET /api/state for the loading slot to disappear")
         return result
+
+    @router.get("/api/models/capabilities")
+    def model_capabilities(model: str, revision: str | None = None):
+        """The chat-template capability record for a model (2026-09-05):
+        the workspace record when one exists, else the id heuristic saying
+        so. Read-only — probing writes, and lives on the POST below."""
+        from ..experiment import model_capabilities as mc
+        view = mc.resolve(model, revision)
+        return _capabilities_body(view)
+
+    @router.post("/api/models/capabilities/probe")
+    def model_capabilities_probe(body: dict):
+        """Probe the pinned template through this engine's tokenizer
+        (weights-free) and write the workspace record; overrides on an
+        existing record survive. Privileged: it writes under prompts/."""
+        from ..experiment import model_capabilities as mc
+        model_id = str(body.get("modelID", "")).strip()
+        revision = body.get("revision")
+        if not model_id:
+            raise HTTPException(status_code=400, detail="modelID is required")
+        try:
+            record = mc.probe_model(model_id, revision)
+        except Exception as exc:  # noqa: BLE001 - surfaced as a readable 400
+            raise HTTPException(
+                status_code=400,
+                detail=f"could not probe the chat template of {model_id!r}: {exc}")
+        existing_path = mc.record_path(model_id, record.get("revision"))
+        if os.path.isfile(existing_path):
+            try:
+                existing = mc.read_record(existing_path)
+                record["overrides"] = dict(existing.get("overrides") or {})
+                record["recordHash"] = mc.record_hash(record)
+            except (OSError, ValueError, mc.RecordError):
+                pass
+        written = mc.write_record(record)
+        mc.forget_memo()
+        return _capabilities_body(mc.effective(
+            mc.read_record(existing_path), path=written))
 
     @router.get("/api/models/preflight")
     def model_load_preflight(model: str, revision: str | None = None):
@@ -2069,7 +2122,21 @@ def build_router(state: ServiceState) -> APIRouter:
             # install must be gated immediately, not after the TTL
             # (engineer review 2026-07-18).
             model_loader.invalidate_model_size_cache()
-            return {"modelID": model_id, "path": local_path}
+            # The chat-template capability record (2026-09-05): probed from
+            # the just-installed tokenizer, weights-free, and written into
+            # the workspace so every gate reads the template's own answers
+            # from now on. A probe failure is logged, never an install
+            # failure — the bytes are in the cache either way.
+            capability_record = None
+            try:
+                from ..experiment import model_capabilities as mc
+                record = mc.probe_model(model_id, revision)
+                capability_record = mc.write_record(record)
+                job.log(f"probed chat-template capabilities → {capability_record}")
+            except Exception as exc:  # noqa: BLE001 - never sinks an install
+                job.log(f"could not probe chat-template capabilities: {exc}")
+            return {"modelID": model_id, "path": local_path,
+                    "capabilityRecord": capability_record}
 
         job = state.jobs.submit("model:install", work)
         return {"jobId": job.id}

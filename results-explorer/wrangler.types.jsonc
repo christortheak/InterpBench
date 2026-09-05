@@ -1,0 +1,29 @@
+// Type-generation input ONLY — nothing reads this at dev, build, or deploy
+// time. The Worker's real configuration is assembled inline in
+// `vite.config.ts` (`localBindingConfig`), so there is no `wrangler.jsonc` on
+// disk for `wrangler types` to consume, and without one the standalone
+// `tsc --noEmit` had no source for `cloudflare:workers`, `Fetcher`, or
+// `D1Database` (external review, 2026-09-05). `npm run types` feeds this file
+// to `wrangler types`, which writes the ignored `worker-configuration.d.ts`
+// from the runtime declarations wrangler already bundles — no extra
+// dependency. Deliberately NOT named `wrangler.jsonc`: wrangler and the Vite
+// plugin auto-detect that name, and this must never become the runtime config.
+//
+// Keep the bindings and flags aligned with `localBindingConfig`. The runtime
+// takes the Vite plugin's default compatibility date (today's); this pins one
+// so a cold clone type-checks the same way next month.
+{
+  "name": "results-explorer",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "binding": "ASSETS", "directory": "./dist/client" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "site-creator-d1",
+      "database_id": "00000000-0000-4000-8000-000000000000"
+    }
+  ],
+  "images": { "binding": "IMAGES" }
+}

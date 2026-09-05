@@ -1,0 +1,706 @@
+{
+  "directory": "prompts/models",
+  "effortCandidates": [
+    "low",
+    "medium",
+    "high",
+    "xhigh"
+  ],
+  "effortProbeValue": "steerlab-probe-effort",
+  "families": [
+    {
+      "detected": {
+        "architecture": {
+          "hiddenSize": 8,
+          "layerCount": 4,
+          "layerTypes": [
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention"
+          ]
+        },
+        "effortLevels": {
+          "high": "rejected",
+          "low": "accepted",
+          "medium": "accepted",
+          "xhigh": "accepted"
+        },
+        "effortVariableRead": true,
+        "foldSeparator": null,
+        "systemRole": "systemTurn",
+        "systemRoleDetail": null,
+        "thinkOpenInPrompt": true,
+        "thinkTokens": {
+          "close": 12,
+          "open": 11
+        },
+        "thinkingSwitch": "supported"
+      },
+      "label": "chatml-effort",
+      "like": "Qwen/Qwen3.8-27B",
+      "specialTokens": {},
+      "template": "{% if reasoning_effort is defined %}{% if reasoning_effort not in ['low', 'medium', 'xhigh'] %}{{ raise_exception('unknown reasoning_effort: ' ~ reasoning_effort) }}{% endif %}{% set effort = reasoning_effort %}{% else %}{% set effort = 'xhigh' %}{% endif %}{% set thinking = enable_thinking is not defined or enable_thinking %}{% for message in messages %}{% if message.role == 'system' %}<|im_start|>system\n{{ message.content }}{% if thinking %}\nReasoning effort: {{ effort }}{% endif %}<|im_end|>\n{% elif message.role == 'user' %}<|im_start|>user\n{{ message.content }}<|im_end|>\n{% elif message.role == 'assistant' %}<|im_start|>assistant\n{{ message.content }}<|im_end|>\n{% endif %}{% endfor %}{% if add_generation_prompt %}<|im_start|>assistant\n{% if thinking %}<think>\n{% else %}<think>\n\n</think>\n\n{% endif %}{% endif %}",
+      "thinkTokenIDs": {
+        "</think>": 12,
+        "<think>": 11
+      }
+    },
+    {
+      "detected": {
+        "architecture": {
+          "hiddenSize": 8,
+          "layerCount": 4,
+          "layerTypes": [
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention"
+          ]
+        },
+        "effortLevels": {
+          "high": "ignored",
+          "low": "ignored",
+          "medium": "ignored",
+          "xhigh": "ignored"
+        },
+        "effortVariableRead": false,
+        "foldSeparator": null,
+        "systemRole": "systemTurn",
+        "systemRoleDetail": null,
+        "thinkOpenInPrompt": false,
+        "thinkTokens": {
+          "close": 12,
+          "open": 11
+        },
+        "thinkingSwitch": "supported"
+      },
+      "label": "chatml-switch",
+      "like": "Qwen/Qwen3-14B",
+      "specialTokens": {},
+      "template": "{% for message in messages %}{% if message.role == 'system' %}<|im_start|>system\n{{ message.content }}<|im_end|>\n{% elif message.role == 'user' %}<|im_start|>user\n{{ message.content }}<|im_end|>\n{% elif message.role == 'assistant' %}<|im_start|>assistant\n{{ message.content }}<|im_end|>\n{% endif %}{% endfor %}{% if add_generation_prompt %}<|im_start|>assistant\n{% if enable_thinking is defined and enable_thinking is false %}<think>\n\n</think>\n\n{% endif %}{% endif %}",
+      "thinkTokenIDs": {
+        "</think>": 12,
+        "<think>": 11
+      }
+    },
+    {
+      "detected": {
+        "architecture": {
+          "hiddenSize": 8,
+          "layerCount": 4,
+          "layerTypes": [
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention"
+          ]
+        },
+        "effortLevels": null,
+        "effortVariableRead": null,
+        "foldSeparator": "\n\n",
+        "systemRole": "foldedIntoUser",
+        "systemRoleDetail": null,
+        "thinkOpenInPrompt": null,
+        "thinkTokens": {
+          "close": null,
+          "open": null
+        },
+        "thinkingSwitch": "unsupported"
+      },
+      "label": "gemma-fold",
+      "like": "google/gemma-3-27b-it",
+      "specialTokens": {
+        "bos_token": "<bos>"
+      },
+      "template": "{{ bos_token }}{% if messages[0]['role'] == 'system' %}{% set first_user_prefix = messages[0]['content'] | trim + '\n\n' %}{% set loop_messages = messages[1:] %}{% else %}{% set first_user_prefix = '' %}{% set loop_messages = messages %}{% endif %}{% for message in loop_messages %}{% if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}{% endif %}{% if message['role'] == 'assistant' %}{% set role = 'model' %}{% else %}{% set role = message['role'] %}{% endif %}{{ '<start_of_turn>' + role + '\n' + (first_user_prefix if loop.first else '') }}{{ message['content'] | trim }}<end_of_turn>\n{% endfor %}{% if add_generation_prompt %}<start_of_turn>model\n{% endif %}",
+      "thinkTokenIDs": {}
+    },
+    {
+      "detected": {
+        "architecture": {
+          "hiddenSize": 8,
+          "layerCount": 4,
+          "layerTypes": [
+            "full_attention",
+            "full_attention",
+            "full_attention",
+            "full_attention"
+          ]
+        },
+        "effortLevels": null,
+        "effortVariableRead": null,
+        "foldSeparator": null,
+        "systemRole": "unsupported",
+        "systemRoleDetail": "the template raises on a system turn",
+        "thinkOpenInPrompt": null,
+        "thinkTokens": {
+          "close": null,
+          "open": null
+        },
+        "thinkingSwitch": "unsupported"
+      },
+      "label": "system-refused",
+      "like": "a template that raises on a system turn",
+      "specialTokens": {
+        "bos_token": "<bos>"
+      },
+      "template": "{{ bos_token }}{% for message in messages %}{% if message['role'] == 'system' %}{{ raise_exception('System role not supported') }}{% endif %}{{ '<start_of_turn>' + message['role'] + '\n' }}{{ message['content'] | trim }}<end_of_turn>\n{% endfor %}{% if add_generation_prompt %}<start_of_turn>model\n{% endif %}",
+      "thinkTokenIDs": {}
+    }
+  ],
+  "gates": [
+    {
+      "effort": "medium",
+      "label": "level-accepted",
+      "modelID": "Qwen/Qwen3.8-27B",
+      "record": "chatml-effort",
+      "violations": []
+    },
+    {
+      "effort": "high",
+      "label": "level-rejected",
+      "modelID": "Qwen/Qwen3.8-27B",
+      "record": "chatml-effort",
+      "violations": [
+        "reasoningEffort 'high' is rejected by the chat template of Qwen/Qwen3.8-27B (the template raises on it) \u2014 accepted levels: low, medium, xhigh; or declare reasoningEffort on"
+      ]
+    },
+    {
+      "effort": "on",
+      "label": "on-with-effort-control",
+      "modelID": "Qwen/Qwen3.8-27B",
+      "record": "chatml-effort",
+      "violations": []
+    },
+    {
+      "effort": "medium",
+      "label": "level-ignored",
+      "modelID": "Qwen/Qwen3-14B",
+      "record": "chatml-switch",
+      "violations": [
+        "reasoningEffort 'medium' declared for Qwen/Qwen3-14B, whose chat template reads enable_thinking but ignores reasoning_effort \u2014 the study would run at the template's default effort while its manifest asserts medium; declare reasoningEffort on (thinking at the template's default), or pin a model whose template reads the effort"
+      ]
+    },
+    {
+      "effort": "on",
+      "label": "on-without-effort-control",
+      "modelID": "Qwen/Qwen3-14B",
+      "record": "chatml-switch",
+      "violations": []
+    },
+    {
+      "effort": "low",
+      "label": "no-switch",
+      "modelID": "google/gemma-3-27b-it",
+      "record": "gemma-fold",
+      "violations": [
+        "reasoningEffort 'low' declared for google/gemma-3-27b-it, whose chat template has no thinking switch (enable_thinking changes nothing it renders) \u2014 the template would ignore it and the study would look as if it reasoned when it did not; declare reasoningEffort off"
+      ]
+    },
+    {
+      "effort": "medium",
+      "label": "heuristic-assumed",
+      "modelID": "Qwen/Qwen3-14B",
+      "record": "heuristic",
+      "violations": []
+    },
+    {
+      "effort": "high",
+      "label": "heuristic-unprobed",
+      "modelID": "Qwen/Qwen3-14B",
+      "record": "heuristic",
+      "violations": [
+        "reasoningEffort 'high' is not known to be accepted by the chat template of Qwen/Qwen3-14B (record source heuristic; accepted levels: none) \u2014 probe the template (model capabilities --probe) or declare a level it accepts"
+      ]
+    }
+  ],
+  "heuristics": [
+    {
+      "modelID": "Qwen/Qwen3-14B",
+      "record": {
+        "advisories": [
+          "model capabilities for Qwen/Qwen3-14B derive from the model id, not from its chat template \u2014 no probed record under prompts/models/; the declaration was gated on the old family rule (qwen \u2192 thinking switch + effort levels assumed, gemma \u2192 system text folded into the first user turn). Probe the pinned template: steerlab-server model capabilities <modelID> --probe, or on the Mac steerlab-cli model capabilities <modelID> --probe"
+        ],
+        "detected": {
+          "architecture": null,
+          "effortLevels": {
+            "low": "assumed",
+            "medium": "assumed",
+            "xhigh": "assumed"
+          },
+          "effortVariableRead": null,
+          "foldSeparator": null,
+          "systemRole": "systemTurn",
+          "systemRoleDetail": "assumed from the model id",
+          "thinkOpenInPrompt": null,
+          "thinkTokens": {
+            "close": null,
+            "open": null
+          },
+          "thinkingSwitch": "supported"
+        },
+        "modelID": "Qwen/Qwen3-14B",
+        "overrides": {},
+        "probedBy": null,
+        "recordHash": "1682f6c1f92d940807a78e37667df5936f7af7bab2a6f9c5d3c446334934e2a3",
+        "revision": null,
+        "schemaVersion": 1,
+        "source": "heuristic",
+        "template": null
+      },
+      "recordHash": "1682f6c1f92d940807a78e37667df5936f7af7bab2a6f9c5d3c446334934e2a3"
+    },
+    {
+      "modelID": "google/gemma-3-27b-it",
+      "record": {
+        "advisories": [
+          "model capabilities for google/gemma-3-27b-it derive from the model id, not from its chat template \u2014 no probed record under prompts/models/; the declaration was gated on the old family rule (qwen \u2192 thinking switch + effort levels assumed, gemma \u2192 system text folded into the first user turn). Probe the pinned template: steerlab-server model capabilities <modelID> --probe, or on the Mac steerlab-cli model capabilities <modelID> --probe"
+        ],
+        "detected": {
+          "architecture": null,
+          "effortLevels": null,
+          "effortVariableRead": null,
+          "foldSeparator": "\n\n",
+          "systemRole": "foldedIntoUser",
+          "systemRoleDetail": "assumed from the model id",
+          "thinkOpenInPrompt": null,
+          "thinkTokens": {
+            "close": null,
+            "open": null
+          },
+          "thinkingSwitch": "unsupported"
+        },
+        "modelID": "google/gemma-3-27b-it",
+        "overrides": {},
+        "probedBy": null,
+        "recordHash": "5a2434df65e508aae039f39cde67307fe6898445489dc169f3a49304e930eee0",
+        "revision": null,
+        "schemaVersion": 1,
+        "source": "heuristic",
+        "template": null
+      },
+      "recordHash": "5a2434df65e508aae039f39cde67307fe6898445489dc169f3a49304e930eee0"
+    },
+    {
+      "modelID": "meta-llama/Llama-3.1-8B-Instruct",
+      "record": {
+        "advisories": [
+          "model capabilities for meta-llama/Llama-3.1-8B-Instruct derive from the model id, not from its chat template \u2014 no probed record under prompts/models/; the declaration was gated on the old family rule (qwen \u2192 thinking switch + effort levels assumed, gemma \u2192 system text folded into the first user turn). Probe the pinned template: steerlab-server model capabilities <modelID> --probe, or on the Mac steerlab-cli model capabilities <modelID> --probe"
+        ],
+        "detected": {
+          "architecture": null,
+          "effortLevels": null,
+          "effortVariableRead": null,
+          "foldSeparator": null,
+          "systemRole": "systemTurn",
+          "systemRoleDetail": "assumed from the model id",
+          "thinkOpenInPrompt": null,
+          "thinkTokens": {
+            "close": null,
+            "open": null
+          },
+          "thinkingSwitch": "unsupported"
+        },
+        "modelID": "meta-llama/Llama-3.1-8B-Instruct",
+        "overrides": {},
+        "probedBy": null,
+        "recordHash": "96ad0388d4a132f840231f9bbac4aa317fb5970714b72ad8858d13b990707087",
+        "revision": null,
+        "schemaVersion": 1,
+        "source": "heuristic",
+        "template": null
+      },
+      "recordHash": "96ad0388d4a132f840231f9bbac4aa317fb5970714b72ad8858d13b990707087"
+    }
+  ],
+  "note": "Produced by the Python engine; asserted by the Swift one. Each family's template renders through the engine's own Jinja (jinja2 here, swift-jinja there); the probe verdicts, the record hashes, the heuristic fallback, the gate sentences and the template variables each effort becomes must agree byte for byte.",
+  "probeSystemText": "steerlab-probe-system",
+  "probeUserText": "steerlab-probe-user",
+  "reasoningEfforts": [
+    "off",
+    "on",
+    "low",
+    "medium",
+    "high",
+    "xhigh"
+  ],
+  "reasoningLevels": [
+    "low",
+    "medium",
+    "high",
+    "xhigh"
+  ],
+  "recordFilenames": [
+    {
+      "filename": "Qwen--Qwen3-14B@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+      "modelID": "Qwen/Qwen3-14B",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "filename": "mlx-community--gemma-3-4b-it-4bit@unpinned.json",
+      "modelID": "mlx-community/gemma-3-4b-it-4bit",
+      "revision": null
+    }
+  ],
+  "records": [
+    {
+      "label": "chatml-effort",
+      "record": {
+        "advisories": [],
+        "detected": {
+          "architecture": {
+            "hiddenSize": 8,
+            "layerCount": 4,
+            "layerTypes": [
+              "full_attention",
+              "full_attention",
+              "full_attention",
+              "full_attention"
+            ]
+          },
+          "effortLevels": {
+            "high": "rejected",
+            "low": "accepted",
+            "medium": "accepted",
+            "xhigh": "accepted"
+          },
+          "effortVariableRead": true,
+          "foldSeparator": null,
+          "systemRole": "systemTurn",
+          "systemRoleDetail": null,
+          "thinkOpenInPrompt": true,
+          "thinkTokens": {
+            "close": 12,
+            "open": 11
+          },
+          "thinkingSwitch": "supported"
+        },
+        "modelID": "fixture/chatml-effort",
+        "overrides": {},
+        "probedBy": {
+          "at": "2026-09-05T00:00:00Z",
+          "engine": "python-hf-transformers",
+          "version": "fixture"
+        },
+        "recordHash": "f216e64bc46cc18bb495c4c22505f9f36c88351f47ffb0c8d2c10d715d55f52d",
+        "revision": "0000000000000000000000000000000000000000",
+        "schemaVersion": 1,
+        "source": "probe",
+        "template": {
+          "sha256": "c803afd987b9546f1c786c87669b8c21c98a0864d30acb9d10b5c3b5581ff98a",
+          "tokenizerConfigSha256": null
+        }
+      },
+      "recordHash": "f216e64bc46cc18bb495c4c22505f9f36c88351f47ffb0c8d2c10d715d55f52d"
+    },
+    {
+      "label": "chatml-switch",
+      "record": {
+        "advisories": [],
+        "detected": {
+          "architecture": {
+            "hiddenSize": 8,
+            "layerCount": 4,
+            "layerTypes": [
+              "full_attention",
+              "full_attention",
+              "full_attention",
+              "full_attention"
+            ]
+          },
+          "effortLevels": {
+            "high": "ignored",
+            "low": "ignored",
+            "medium": "ignored",
+            "xhigh": "ignored"
+          },
+          "effortVariableRead": false,
+          "foldSeparator": null,
+          "systemRole": "systemTurn",
+          "systemRoleDetail": null,
+          "thinkOpenInPrompt": false,
+          "thinkTokens": {
+            "close": 12,
+            "open": 11
+          },
+          "thinkingSwitch": "supported"
+        },
+        "modelID": "fixture/chatml-switch",
+        "overrides": {},
+        "probedBy": {
+          "at": "2026-09-05T00:00:00Z",
+          "engine": "python-hf-transformers",
+          "version": "fixture"
+        },
+        "recordHash": "5e6d4df03249c2eee5e609670849bd883a8ee8a5973def690c816584332f4af1",
+        "revision": "0000000000000000000000000000000000000000",
+        "schemaVersion": 1,
+        "source": "probe",
+        "template": {
+          "sha256": "0189faa2ea92b6dfc3115670c43cceade6403bef81165b5b61d78db42f87b3a5",
+          "tokenizerConfigSha256": null
+        }
+      },
+      "recordHash": "5e6d4df03249c2eee5e609670849bd883a8ee8a5973def690c816584332f4af1"
+    },
+    {
+      "label": "gemma-fold",
+      "record": {
+        "advisories": [],
+        "detected": {
+          "architecture": {
+            "hiddenSize": 8,
+            "layerCount": 4,
+            "layerTypes": [
+              "full_attention",
+              "full_attention",
+              "full_attention",
+              "full_attention"
+            ]
+          },
+          "effortLevels": null,
+          "effortVariableRead": null,
+          "foldSeparator": "\n\n",
+          "systemRole": "foldedIntoUser",
+          "systemRoleDetail": null,
+          "thinkOpenInPrompt": null,
+          "thinkTokens": {
+            "close": null,
+            "open": null
+          },
+          "thinkingSwitch": "unsupported"
+        },
+        "modelID": "fixture/gemma-fold",
+        "overrides": {},
+        "probedBy": {
+          "at": "2026-09-05T00:00:00Z",
+          "engine": "python-hf-transformers",
+          "version": "fixture"
+        },
+        "recordHash": "eaaaeeaa5150f7f2fd806a97a065574d127c86928e25040733370880b8064382",
+        "revision": "0000000000000000000000000000000000000000",
+        "schemaVersion": 1,
+        "source": "probe",
+        "template": {
+          "sha256": "af396daad4df7bd2015fc91d3eee614c44618c1325c5a251d905b88f7ce2c880",
+          "tokenizerConfigSha256": null
+        }
+      },
+      "recordHash": "eaaaeeaa5150f7f2fd806a97a065574d127c86928e25040733370880b8064382"
+    },
+    {
+      "label": "system-refused",
+      "record": {
+        "advisories": [],
+        "detected": {
+          "architecture": {
+            "hiddenSize": 8,
+            "layerCount": 4,
+            "layerTypes": [
+              "full_attention",
+              "full_attention",
+              "full_attention",
+              "full_attention"
+            ]
+          },
+          "effortLevels": null,
+          "effortVariableRead": null,
+          "foldSeparator": null,
+          "systemRole": "unsupported",
+          "systemRoleDetail": "the template raises on a system turn",
+          "thinkOpenInPrompt": null,
+          "thinkTokens": {
+            "close": null,
+            "open": null
+          },
+          "thinkingSwitch": "unsupported"
+        },
+        "modelID": "fixture/system-refused",
+        "overrides": {},
+        "probedBy": {
+          "at": "2026-09-05T00:00:00Z",
+          "engine": "python-hf-transformers",
+          "version": "fixture"
+        },
+        "recordHash": "9713af28fdb400700cd60786b979c98e302faab8682fa2671a95f9e48e1d7e26",
+        "revision": "0000000000000000000000000000000000000000",
+        "schemaVersion": 1,
+        "source": "probe",
+        "template": {
+          "sha256": "b7111e452480548b3641908bb3a038bdeede04a75aa630f09c74653802e6c84e",
+          "tokenizerConfigSha256": null
+        }
+      },
+      "recordHash": "9713af28fdb400700cd60786b979c98e302faab8682fa2671a95f9e48e1d7e26"
+    },
+    {
+      "label": "chatml-switch-overridden",
+      "record": {
+        "advisories": [],
+        "detected": {
+          "architecture": {
+            "hiddenSize": 8,
+            "layerCount": 4,
+            "layerTypes": [
+              "full_attention",
+              "full_attention",
+              "full_attention",
+              "full_attention"
+            ]
+          },
+          "effortLevels": {
+            "high": "ignored",
+            "low": "ignored",
+            "medium": "ignored",
+            "xhigh": "ignored"
+          },
+          "effortVariableRead": false,
+          "foldSeparator": null,
+          "systemRole": "systemTurn",
+          "systemRoleDetail": null,
+          "thinkOpenInPrompt": false,
+          "thinkTokens": {
+            "close": 12,
+            "open": 11
+          },
+          "thinkingSwitch": "supported"
+        },
+        "modelID": "fixture/chatml-switch",
+        "overrides": {
+          "thinkOpenInPrompt": {
+            "reason": "the model always opens with <think> on its own",
+            "setAt": "2026-09-05T00:00:00Z",
+            "value": true
+          }
+        },
+        "probedBy": {
+          "at": "2026-09-05T00:00:00Z",
+          "engine": "python-hf-transformers",
+          "version": "fixture"
+        },
+        "recordHash": "44042c52803e005276aac6e5ef7e4a3a84d320b1b257603ca1a438d5a0525b08",
+        "revision": "0000000000000000000000000000000000000000",
+        "schemaVersion": 1,
+        "source": "probe",
+        "template": {
+          "sha256": "0189faa2ea92b6dfc3115670c43cceade6403bef81165b5b61d78db42f87b3a5",
+          "tokenizerConfigSha256": null
+        }
+      },
+      "recordHash": "44042c52803e005276aac6e5ef7e4a3a84d320b1b257603ca1a438d5a0525b08"
+    }
+  ],
+  "refusals": {
+    "effortAssumedAdvisory": "reasoningEffort 'medium' on Qwen/Qwen3-14B is ASSUMED accepted from the model id \u2014 no probed capability record; a template that ignores reasoning_effort would run at its default effort. Probe it: model capabilities --probe",
+    "effortIgnored": "reasoningEffort 'medium' declared for Qwen/Qwen3-14B, whose chat template reads enable_thinking but ignores reasoning_effort \u2014 the study would run at the template's default effort while its manifest asserts medium; declare reasoningEffort on (thinking at the template's default), or pin a model whose template reads the effort",
+    "effortRejected": "reasoningEffort 'high' is rejected by the chat template of Qwen/Qwen3.8-27B (the template raises on it) \u2014 accepted levels: low, medium, xhigh; or declare reasoningEffort on",
+    "effortUnprobed": "reasoningEffort 'high' is not known to be accepted by the chat template of Qwen/Qwen3-14B (record source heuristic; accepted levels: none) \u2014 probe the template (model capabilities --probe) or declare a level it accepts",
+    "effortWithoutThinkingMode": "reasoningEffort 'low' declared for google/gemma-3-27b-it, whose chat template has no thinking switch (enable_thinking changes nothing it renders) \u2014 the template would ignore it and the study would look as if it reasoned when it did not; declare reasoningEffort off",
+    "extractionEffortLevelPrefix": "extractionRendering: ",
+    "extractionEffortWithoutThinkingMode": "extractionRendering declares reasoningEffort 'low' for google/gemma-3-27b-it, whose chat template has no thinking switch (enable_thinking changes nothing it renders) \u2014 the template would ignore it and the recipe would look as if it rendered a reasoning scaffold when it did not \u2014 repair: declare reasoningEffort off, or pin a model with a thinking mode",
+    "heuristicAdvisory": "model capabilities for Qwen/Qwen3-14B derive from the model id, not from its chat template \u2014 no probed record under prompts/models/; the declaration was gated on the old family rule (qwen \u2192 thinking switch + effort levels assumed, gemma \u2192 system text folded into the first user turn). Probe the pinned template: steerlab-server model capabilities <modelID> --probe, or on the Mac steerlab-cli model capabilities <modelID> --probe",
+    "systemPromptUnsupported": "a system prompt is declared for fixture/system-refused, whose chat template has no way to deliver system text (it raises on, or drops, a system turn) \u2014 drop the system prompt, or write the frame into the task prompts yourself and say so in METHODS"
+  },
+  "schemaVersion": 1,
+  "summaryLines": [
+    {
+      "label": "chatml-effort",
+      "lines": [
+        "- **Model capabilities:** source probe, record `prompts/models/fixture--chatml-effort@0000000000000000000000000000000000000000.json` (hash `f216e64bc46cc18bb495c4c22505f9f36c88351f47ffb0c8d2c10d715d55f52d`)",
+        "- **System role:** systemTurn",
+        "- **Thinking switch:** supported, opening tag in prompt true",
+        "- **Reasoning effort levels:** low accepted, medium accepted, high rejected, xhigh accepted",
+        "- **Capability overrides:** none"
+      ]
+    },
+    {
+      "label": "gemma-fold",
+      "lines": [
+        "- **Model capabilities:** source probe (hash `eaaaeeaa5150f7f2fd806a97a065574d127c86928e25040733370880b8064382`)",
+        "- **System role:** foldedIntoUser (separator '\\n\\n')",
+        "- **Thinking switch:** unsupported",
+        "- **Reasoning effort levels:** none",
+        "- **Capability overrides:** none"
+      ]
+    },
+    {
+      "label": "qwen-heuristic",
+      "lines": [
+        "- **Model capabilities:** source heuristic (hash `1682f6c1f92d940807a78e37667df5936f7af7bab2a6f9c5d3c446334934e2a3`)",
+        "- **System role:** systemTurn",
+        "- **Thinking switch:** supported",
+        "- **Reasoning effort levels:** low assumed, medium assumed, xhigh assumed",
+        "- **Capability overrides:** none"
+      ]
+    },
+    {
+      "label": "chatml-switch-overridden",
+      "lines": [
+        "- **Model capabilities:** source probe (hash `44042c52803e005276aac6e5ef7e4a3a84d320b1b257603ca1a438d5a0525b08`)",
+        "- **System role:** systemTurn",
+        "- **Thinking switch:** supported, opening tag in prompt true",
+        "- **Reasoning effort levels:** low ignored, medium ignored, high ignored, xhigh ignored",
+        "- **Capability overrides:** thinkOpenInPrompt=True (the model always opens with <think> on its own)"
+      ]
+    }
+  ],
+  "templateKwargs": [
+    {
+      "effort": "off",
+      "kwargs": {
+        "enable_thinking": false
+      },
+      "label": "off",
+      "record": "chatml-effort"
+    },
+    {
+      "effort": "on",
+      "kwargs": {
+        "enable_thinking": true
+      },
+      "label": "on",
+      "record": "chatml-effort"
+    },
+    {
+      "effort": "medium",
+      "kwargs": {
+        "enable_thinking": true,
+        "reasoning_effort": "medium"
+      },
+      "label": "level",
+      "record": "chatml-effort"
+    },
+    {
+      "effort": "medium",
+      "kwargs": {
+        "enable_thinking": true
+      },
+      "label": "ignored-level-renders-as-on",
+      "record": "chatml-switch"
+    },
+    {
+      "effort": "xhigh",
+      "kwargs": {
+        "enable_thinking": true
+      },
+      "label": "legacy-xhigh-on-switch-only",
+      "record": "chatml-switch"
+    },
+    {
+      "effort": "off",
+      "kwargs": {},
+      "label": "no-switch",
+      "record": "gemma-fold"
+    },
+    {
+      "effort": "medium",
+      "kwargs": {
+        "enable_thinking": true,
+        "reasoning_effort": "medium"
+      },
+      "label": "heuristic-level",
+      "record": "heuristic"
+    }
+  ]
+}

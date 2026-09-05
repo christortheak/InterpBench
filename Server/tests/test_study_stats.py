@@ -1,11 +1,13 @@
 """Statistics module: hand-computed fixtures for the corrections, property
 tests for the bootstrap/Wilcoxon, dose-monotonicity gates."""
 
+import json
 import math
+import os
 
 import pytest
 
-from steerlab_server.experiment import study_stats
+from steerlab_server.experiment import manifest, promotion, study_stats
 
 
 def test_bh_fdr_hand_computed():
@@ -68,6 +70,90 @@ def test_dose_monotonicity():
     assert not inverted.is_monotone
     single = study_stats.dose_monotonicity([1.0], [0.4])
     assert not single.is_monotone
+    # SCI-04 (external review, 2026-09-05): a flat ladder satisfies every
+    # consecutive step trivially (0 >= -slack) but carries no dose evidence,
+    # and its rho is undefined. Nondecreasing GEOMETRY is not the ACCEPTANCE
+    # criterion — zero effect range is not monotone.
+    flat = study_stats.dose_monotonicity([0.5, 1.0, 2.0], [0.3, 0.3, 0.3])
+    assert not flat.is_monotone and math.isnan(flat.spearman_rho)
+
+
+def test_dose_monotonicity_rejects_unequal_lengths():
+    """A length mismatch is a pairing bug in the caller. ``zip`` would
+    silently truncate and score a ladder nobody measured, so the helper
+    raises (external review, 2026-09-05). The Swift twin cannot throw from
+    this position and answers (NaN, false) instead — its own suite pins that.
+    """
+    with pytest.raises(ValueError):
+        study_stats.dose_monotonicity([0.5, 1.0, 2.0], [0.1, 0.3])
+    with pytest.raises(ValueError):
+        study_stats.dose_monotonicity([0.5], [0.1, 0.3])
+
+
+# --- the cross-engine contract ----------------------------------------------
+
+#: Hand-authored (not regenerated) expectation table, replayed by the Swift
+#: twin ``StudyStatisticsTests.theDoseVerdictMatchesTheCrossEngineFixture``.
+#: See the file's own "note" for why it is not produced by
+#: scripts/regenerate-cross-engine-fixtures.py.
+DOSE_FIXTURE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "Tests", "Fixtures", "cross-engine", "dose-monotonicity.json")
+
+#: JSON carries no NaN/Infinity literal (and Foundation refuses the
+#: non-standard tokens), so the fixture spells nonfinite inputs as strings.
+_NONFINITE = {"nan": float("nan"), "inf": float("inf"), "-inf": float("-inf")}
+
+
+def _fixture_number(value) -> float:
+    return _NONFINITE[value] if isinstance(value, str) else float(value)
+
+
+def test_dose_monotonicity_matches_the_cross_engine_fixture():
+    with open(DOSE_FIXTURE, encoding="utf-8") as handle:
+        payload = json.load(handle)
+    cases = payload["cases"]
+    assert len(cases) >= 14
+    for case in cases:
+        dose = study_stats.dose_monotonicity(
+            [_fixture_number(a) for a in case["alphas"]],
+            [_fixture_number(e) for e in case["effects"]],
+            tolerance=case["tolerance"])
+        assert dose.is_monotone == case["expectMonotone"], case["name"]
+        assert (not math.isnan(dose.spearman_rho)) == case["expectRhoDefined"], \
+            case["name"]
+
+
+def test_flat_dose_response_fails_the_promotion_gate():
+    """The point of SCI-04 at the gate it protects: judged proportions tie
+    often, so an exactly flat ladder is realistic, and before the fix it
+    walked through ``dose_monotone`` while its rho was undefined."""
+    rule = manifest.PromotionRule(fdr_threshold=0.05, dose_monotone=True,
+                                  exceeds_random_floor=False,
+                                  capability_gate=None)
+
+    def candidate(effects):
+        row = study_stats.effect_row(
+            "fear-a2", "meanMonths",
+            [3.0, 4.0, 2.0, 5.0, 3.5, 2.5, 4.5, 3.0, 2.0, 4.0],
+            replicates=200, seed=0)
+        row.adjusted_p = 0.01
+        row.correction = "bh"
+        return promotion.PromotionCandidate(
+            concept="fear", condition="fear-a2", endpoint="meanMonths",
+            effect=row,
+            dose=study_stats.dose_monotonicity([0.5, 1.0, 2.0], effects))
+
+    flat = promotion.decide(candidate([0.3, 0.3, 0.3]), rule)
+    assert not flat.promoted
+    assert any("dose-response is not monotone" in r for r in flat.reasons)
+    # An undefined rho must serialize as null, never as a valid zero.
+    assert flat.as_json()["doseSpearmanRho"] is None
+    assert flat.as_json()["doseMonotone"] is False
+
+    rising = promotion.decide(candidate([0.1, 0.3, 0.7]), rule)
+    assert rising.promoted and not rising.reasons
+    assert rising.as_json()["doseSpearmanRho"] == 1.0
 
 
 def test_effect_row_and_correction():

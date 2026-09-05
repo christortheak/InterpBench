@@ -1070,12 +1070,258 @@ def concept_stats_splits() -> None:
     })
 
 
+# --- model capabilities (2026-09-05) ------------------------------------------
+
+#: The three template families the probe was built against, as SYNTHETIC
+#: templates that reproduce exactly the behaviours the real ones were
+#: verified to have (Qwen/Qwen3.8-27B, Qwen/Qwen3-14B, google/gemma-3-27b-it)
+#: plus the one family no cached model exhibits (a template that raises on a
+#: system turn). Synthetic on purpose: the fixture pins the PROBE LOGIC on
+#: both engines through their own Jinja engines, without vendoring a model's
+#: template; the real templates are pinned by the live checks in
+#: `test_model_capabilities.py` (skipped when the model is not cached).
+#: Every newline in a template below is a RENDERED byte (`{% %}`, never
+#: `{%- %}`), so the generation prompts end exactly as the real families'
+#: do: `<|im_start|>assistant\n` and `<start_of_turn>model\n`.
+_CAPABILITY_FAMILIES = [
+    {
+        "label": "chatml-effort",
+        "like": "Qwen/Qwen3.8-27B",
+        "specialTokens": {},
+        "thinkTokenIDs": {"<think>": 11, "</think>": 12},
+        "template": (
+            "{% if reasoning_effort is defined %}"
+            "{% if reasoning_effort not in ['low', 'medium', 'xhigh'] %}"
+            "{{ raise_exception('unknown reasoning_effort: ' ~ reasoning_effort) }}"
+            "{% endif %}{% set effort = reasoning_effort %}"
+            "{% else %}{% set effort = 'xhigh' %}{% endif %}"
+            "{% set thinking = enable_thinking is not defined or enable_thinking %}"
+            "{% for message in messages %}"
+            "{% if message.role == 'system' %}"
+            "<|im_start|>system\n{{ message.content }}"
+            "{% if thinking %}\nReasoning effort: {{ effort }}{% endif %}"
+            "<|im_end|>\n"
+            "{% elif message.role == 'user' %}"
+            "<|im_start|>user\n{{ message.content }}<|im_end|>\n"
+            "{% elif message.role == 'assistant' %}"
+            "<|im_start|>assistant\n{{ message.content }}<|im_end|>\n"
+            "{% endif %}{% endfor %}"
+            "{% if add_generation_prompt %}<|im_start|>assistant\n"
+            "{% if thinking %}<think>\n{% else %}<think>\n\n</think>\n\n{% endif %}"
+            "{% endif %}"),
+    },
+    {
+        "label": "chatml-switch",
+        "like": "Qwen/Qwen3-14B",
+        "specialTokens": {},
+        "thinkTokenIDs": {"<think>": 11, "</think>": 12},
+        "template": (
+            "{% for message in messages %}"
+            "{% if message.role == 'system' %}"
+            "<|im_start|>system\n{{ message.content }}<|im_end|>\n"
+            "{% elif message.role == 'user' %}"
+            "<|im_start|>user\n{{ message.content }}<|im_end|>\n"
+            "{% elif message.role == 'assistant' %}"
+            "<|im_start|>assistant\n{{ message.content }}<|im_end|>\n"
+            "{% endif %}{% endfor %}"
+            "{% if add_generation_prompt %}<|im_start|>assistant\n"
+            "{% if enable_thinking is defined and enable_thinking is false %}"
+            "<think>\n\n</think>\n\n{% endif %}{% endif %}"),
+    },
+    {
+        "label": "gemma-fold",
+        "like": "google/gemma-3-27b-it",
+        "specialTokens": {"bos_token": "<bos>"},
+        "thinkTokenIDs": {},
+        "template": (
+            "{{ bos_token }}"
+            "{% if messages[0]['role'] == 'system' %}"
+            "{% set first_user_prefix = messages[0]['content'] | trim + '\n\n' %}"
+            "{% set loop_messages = messages[1:] %}"
+            "{% else %}{% set first_user_prefix = '' %}"
+            "{% set loop_messages = messages %}{% endif %}"
+            "{% for message in loop_messages %}"
+            "{% if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}"
+            "{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}"
+            "{% endif %}"
+            "{% if message['role'] == 'assistant' %}{% set role = 'model' %}"
+            "{% else %}{% set role = message['role'] %}{% endif %}"
+            "{{ '<start_of_turn>' + role + '\n' + (first_user_prefix if loop.first else '') }}"
+            "{{ message['content'] | trim }}<end_of_turn>\n"
+            "{% endfor %}"
+            "{% if add_generation_prompt %}<start_of_turn>model\n{% endif %}"),
+    },
+    {
+        "label": "system-refused",
+        "like": "a template that raises on a system turn",
+        "specialTokens": {"bos_token": "<bos>"},
+        "thinkTokenIDs": {},
+        "template": (
+            "{{ bos_token }}"
+            "{% for message in messages %}"
+            "{% if message['role'] == 'system' %}"
+            "{{ raise_exception('System role not supported') }}{% endif %}"
+            "{{ '<start_of_turn>' + message['role'] + '\n' }}"
+            "{{ message['content'] | trim }}<end_of_turn>\n"
+            "{% endfor %}"
+            "{% if add_generation_prompt %}<start_of_turn>model\n{% endif %}"),
+    },
+]
+
+_CAPABILITY_PROBED_AT = "2026-09-05T00:00:00Z"
+
+
+def model_capabilities() -> None:
+    """The chat-template capability record: the probe's verdict on each
+    synthetic family, the record's canonical hash, the heuristic fallback,
+    and the refusal sentences — all produced here, asserted by Swift."""
+    from steerlab_server.experiment import model_capabilities as mc
+    from steerlab_server.experiment import prompt_render
+    from steerlab_server.steering import extraction_rendering as er
+
+    families = []
+    records = []
+    for family in _CAPABILITY_FAMILIES:
+        ids = family["thinkTokenIDs"]
+        record = mc.probe(
+            mc.template_renderer(family["template"], family["specialTokens"]),
+            model_id="fixture/" + family["label"], revision="0" * 40,
+            think_token_id=lambda token, ids=ids: ids.get(token),
+            architecture={"layerCount": 4, "hiddenSize": 8,
+                          "layerTypes": ["full_attention"] * 4},
+            template_sha256=mc.sha256_text(family["template"]),
+            tokenizer_config_sha256=None,
+            engine="python-hf-transformers", engine_version="fixture",
+            probed_at=_CAPABILITY_PROBED_AT)
+        families.append({
+            "label": family["label"],
+            "like": family["like"],
+            "template": family["template"],
+            "specialTokens": family["specialTokens"],
+            "thinkTokenIDs": family["thinkTokenIDs"],
+            "detected": record["detected"],
+        })
+        records.append({"label": family["label"], "record": record,
+                        "recordHash": record["recordHash"]})
+
+    # An override on the record: the effective view and its hash move, the
+    # detected block does not.
+    overridden = mc.set_override(
+        dict(records[1]["record"]), "thinkOpenInPrompt", "true",
+        "the model always opens with <think> on its own")
+    overridden["overrides"]["thinkOpenInPrompt"]["setAt"] = _CAPABILITY_PROBED_AT
+    overridden["recordHash"] = mc.record_hash(overridden)
+    records.append({"label": "chatml-switch-overridden", "record": overridden,
+                    "recordHash": overridden["recordHash"]})
+
+    heuristics = []
+    for model_id in ("Qwen/Qwen3-14B", "google/gemma-3-27b-it",
+                     "meta-llama/Llama-3.1-8B-Instruct"):
+        record = mc.heuristic(model_id, None)
+        heuristics.append({"modelID": model_id, "record": record,
+                           "recordHash": record["recordHash"]})
+
+    chatml_effort = mc.effective(records[0]["record"])
+    chatml_switch = mc.effective(records[1]["record"])
+    gemma = mc.effective(records[2]["record"])
+    qwen_heuristic = mc.effective(heuristics[0]["record"])
+    summary_lines = [
+        {"label": "chatml-effort", "lines": mc.effective(
+            records[0]["record"],
+            path="prompts/models/fixture--chatml-effort@" + "0" * 40 + ".json"
+        ).summary_lines()},
+        {"label": "gemma-fold", "lines": gemma.summary_lines()},
+        {"label": "qwen-heuristic", "lines": qwen_heuristic.summary_lines()},
+        {"label": "chatml-switch-overridden",
+         "lines": mc.effective(overridden).summary_lines()},
+    ]
+    gates = [
+        {"label": label, "effort": effort, "modelID": model_id,
+         "record": record_label,
+         "violations": prompt_render.reasoning_protocol_violations(
+             effort=effort, reasoning_max_tokens=64, model_id=model_id,
+             capabilities=view)}
+        for label, effort, model_id, record_label, view in (
+            ("level-accepted", "medium", "Qwen/Qwen3.8-27B", "chatml-effort", chatml_effort),
+            ("level-rejected", "high", "Qwen/Qwen3.8-27B", "chatml-effort", chatml_effort),
+            ("on-with-effort-control", "on", "Qwen/Qwen3.8-27B", "chatml-effort", chatml_effort),
+            ("level-ignored", "medium", "Qwen/Qwen3-14B", "chatml-switch", chatml_switch),
+            ("on-without-effort-control", "on", "Qwen/Qwen3-14B", "chatml-switch", chatml_switch),
+            ("no-switch", "low", "google/gemma-3-27b-it", "gemma-fold", gemma),
+            ("heuristic-assumed", "medium", "Qwen/Qwen3-14B", "heuristic", qwen_heuristic),
+            ("heuristic-unprobed", "high", "Qwen/Qwen3-14B", "heuristic", qwen_heuristic),
+        )
+    ]
+    kwargs = [
+        {"label": label, "effort": effort, "record": record_label,
+         "kwargs": prompt_render.thinking_template_kwargs(
+             "fixture", effort, view)}
+        for label, effort, record_label, view in (
+            ("off", "off", "chatml-effort", chatml_effort),
+            ("on", "on", "chatml-effort", chatml_effort),
+            ("level", "medium", "chatml-effort", chatml_effort),
+            ("ignored-level-renders-as-on", "medium", "chatml-switch", chatml_switch),
+            ("legacy-xhigh-on-switch-only", "xhigh", "chatml-switch", chatml_switch),
+            ("no-switch", "off", "gemma-fold", gemma),
+            ("heuristic-level", "medium", "heuristic", qwen_heuristic),
+        )
+    ]
+    _write(os.path.join(FIXTURES, "model-capabilities.json"), {
+        "note": "Produced by the Python engine; asserted by the Swift one. "
+                "Each family's template renders through the engine's own "
+                "Jinja (jinja2 here, swift-jinja there); the probe verdicts, "
+                "the record hashes, the heuristic fallback, the gate "
+                "sentences and the template variables each effort becomes "
+                "must agree byte for byte.",
+        "schemaVersion": mc.SCHEMA_VERSION,
+        "directory": mc.DIRECTORY,
+        "probeUserText": mc.PROBE_USER_TEXT,
+        "probeSystemText": mc.PROBE_SYSTEM_TEXT,
+        "effortCandidates": list(mc.EFFORT_CANDIDATES),
+        "effortProbeValue": mc.EFFORT_PROBE_VALUE,
+        "reasoningEfforts": list(prompt_render.REASONING_EFFORTS),
+        "reasoningLevels": list(prompt_render.REASONING_LEVELS),
+        "families": families,
+        "records": records,
+        "recordFilenames": [
+            {"modelID": "Qwen/Qwen3-14B", "revision": "a" * 40,
+             "filename": mc.record_filename("Qwen/Qwen3-14B", "a" * 40)},
+            {"modelID": "mlx-community/gemma-3-4b-it-4bit", "revision": None,
+             "filename": mc.record_filename("mlx-community/gemma-3-4b-it-4bit", None)},
+        ],
+        "heuristics": heuristics,
+        "summaryLines": summary_lines,
+        "gates": gates,
+        "templateKwargs": kwargs,
+        "refusals": {
+            "effortWithoutThinkingMode":
+                prompt_render.effort_without_thinking_mode_reason(
+                    "low", "google/gemma-3-27b-it"),
+            "effortIgnored": prompt_render.effort_ignored_reason(
+                "medium", "Qwen/Qwen3-14B"),
+            "effortRejected": prompt_render.effort_rejected_reason(
+                "high", "Qwen/Qwen3.8-27B", chatml_effort),
+            "effortUnprobed": prompt_render.effort_unprobed_reason(
+                "high", "Qwen/Qwen3-14B", qwen_heuristic),
+            "effortAssumedAdvisory": prompt_render.effort_assumed_advisory(
+                "medium", "Qwen/Qwen3-14B"),
+            "systemPromptUnsupported":
+                prompt_render.system_prompt_unsupported_reason("fixture/system-refused"),
+            "heuristicAdvisory": mc.heuristic_advisory("Qwen/Qwen3-14B"),
+            "extractionEffortWithoutThinkingMode":
+                er.effort_without_thinking_mode_reason("low", "google/gemma-3-27b-it"),
+            "extractionEffortLevelPrefix": er.effort_level_problem_prefix(),
+        },
+    })
+
+
 def main() -> int:
     os.makedirs(FIXTURES, exist_ok=True)
     promotion_keys()
     paired_difference_pca()
     concept_stats_splits()
     extraction_rendering_and_positions()
+    model_capabilities()
     system_prompt_composition()
     server_minted_agent()
     server_minted_adapter_agent()

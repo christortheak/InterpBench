@@ -617,6 +617,19 @@ def _check_reference_agreement(record, model, readout, layers: list[int], *,
     performs silently depends on that, so a future reference version that
     moved it would leave both paths self-consistent and both wrong.
 
+    **Both of this engine's vocabulary paths are compared, not only the
+    watchlist** (external review, 2026-09-05). ``LensReadout`` implements the
+    canonical formula twice — once folding ``g`` into a watched slice of ``U``,
+    once scaling ``z`` and projecting through the model's live output head —
+    and this check exercised only the first. The second had been dropping ``g``
+    altogether, which reorders tokens rather than rescaling them, so every
+    top-k and full-vocabulary rank taken from it read a distribution the model
+    does not compute; a green referenceAgreement said nothing about it. The
+    full path is compared restricted to the watchlist, against the same
+    reference numbers, and is armed only when top-k is configured — when it is
+    not, ``fullVocabArmed`` is False and the detail line says so, because "not
+    checked" and "checked and agreed" must not look alike.
+
     **The record carries every comparison, not only the worst one.** For each
     (source layer × fixture row) the record keeps the token the deviation is
     largest at, OUR logit, the REFERENCE logit, and the absolute difference.
@@ -700,8 +713,22 @@ def _compare_against_reference(record, readout, layers: list[int], ref_model,
         (unembedded - unnormed).abs().max() > REFERENCE_TOLERANCE)
 
     watch = list(readout.watchlist)
+    # BOTH vocabulary paths, not just the watchlist (external review,
+    # 2026-09-05). The readout has two implementations of the same formula —
+    # the watchlist slice, which folds the norm gain into its own copy of the
+    # token rows, and the full-vocabulary projection through the model's live
+    # output head, which cannot fold and must scale the residual instead — and
+    # this check used to exercise only the first. The second was dropping the
+    # gain entirely, and because a passing referenceAgreement is what a study
+    # stands on, the full path was inheriting a validity nobody had measured.
+    # It is compared restricted to the watchlist, so both paths are held to the
+    # SAME reference numbers on the same tokens. Armed only when top-k is
+    # configured, and when it is not the record says so rather than leaving
+    # "not armed" and "checked" indistinguishable.
+    full_vocab_armed = getattr(readout, "lm_head", None) is not None
     worst = 0.0
     compared = 0
+    per_path_compared: dict[str, int] = {"watchlist": 0, "fullVocab": 0}
     per_comparison: list[dict] = []
     for layer in layers:
         j = lens_store.load_layer(record, layer, root=root).to(torch.float32)
@@ -715,23 +742,32 @@ def _compare_against_reference(record, readout, layers: list[int], ref_model,
                 continue
             transported = ref_lens.transport(h, layer)
             theirs = ref_model.unembed(transported).to(torch.float32)[watch]
-            ours_cpu = ours.to(torch.float32).reshape(-1).cpu()
             theirs_cpu = theirs.to(torch.float32).reshape(-1).cpu()
-            deviation = (ours_cpu - theirs_cpu).abs()
-            at = int(deviation.argmax())
-            worst = max(worst, float(deviation[at]))
-            compared += 1
-            # The OPERANDS, not just their difference: whether 0.07 is a large
-            # deviation depends entirely on whether these are ~10 or ~96.
-            per_comparison.append({
-                "layer": int(layer),
-                "fixtureRow": int(index),
-                "tokenID": int(watch[at]) if at < len(watch) else None,
-                "watchIndex": at,
-                "ours": float(ours_cpu[at]),
-                "reference": float(theirs_cpu[at]),
-                "absDeviation": float(deviation[at]),
-            })
+            mine = [("watchlist", ours)]
+            if full_vocab_armed:
+                mine.append(
+                    ("fullVocab", readout.logits(h, layer)[watch]))
+            for path, scores in mine:
+                ours_cpu = scores.to(torch.float32).reshape(-1).cpu()
+                deviation = (ours_cpu - theirs_cpu).abs()
+                at = int(deviation.argmax())
+                worst = max(worst, float(deviation[at]))
+                compared += 1
+                per_path_compared[path] += 1
+                # The OPERANDS, not just their difference: whether 0.07 is a
+                # large deviation depends entirely on whether these are ~10 or
+                # ~96. And WHICH path produced them, or a failure cannot say
+                # which of the two implementations moved.
+                per_comparison.append({
+                    "layer": int(layer),
+                    "fixtureRow": int(index),
+                    "path": path,
+                    "tokenID": int(watch[at]) if at < len(watch) else None,
+                    "watchIndex": at,
+                    "ours": float(ours_cpu[at]),
+                    "reference": float(theirs_cpu[at]),
+                    "absDeviation": float(deviation[at]),
+                })
     recorded = per_comparison
     truncated = len(per_comparison) > REFERENCE_MAX_RECORDED_COMPARISONS
     if truncated:
@@ -741,7 +777,7 @@ def _compare_against_reference(record, readout, layers: list[int], ref_model,
         recorded = sorted(
             sorted(per_comparison, key=lambda c: -c["absDeviation"])
             [:REFERENCE_MAX_RECORDED_COMPARISONS],
-            key=lambda c: (c["layer"], c["fixtureRow"]))
+            key=lambda c: (c["layer"], c["fixtureRow"], c["path"]))
 
     problems: list[str] = []
     if not norm_applied:
@@ -760,9 +796,12 @@ def _compare_against_reference(record, readout, layers: list[int], ref_model,
             f"{REFERENCE_TOLERANCE:g}")
     worst_comparison = max(per_comparison,
                            key=lambda c: c["absDeviation"], default=None)
+    paths_read = ("both vocabulary paths" if full_vocab_armed
+                  else "the watchlist path only (the full-vocabulary path is "
+                       "not armed for this configuration)")
     detail = ("; ".join(problems)
               or (f"agrees with {backend_mod.REFERENCE_PACKAGE} within "
-                  f"{worst:.3g} over {compared} fixture(s)"))
+                  f"{worst:.3g} over {compared} fixture(s), {paths_read}"))
     if fp32_forced:
         # In the detail as well as the measurements: this is what a reader
         # sees in the CLI summary, and a passing line that does not say the
@@ -776,6 +815,14 @@ def _compare_against_reference(record, readout, layers: list[int], ref_model,
                   "tolerance": REFERENCE_TOLERANCE,
                   "comparisons": compared,
                   "finalNormApplied": norm_applied,
+                  # Which implementations were actually held to the reference.
+                  # A watchlist-only qualification is a legitimate state (the
+                  # full path is armed by top-k), but it must be readable as
+                  # one: the full path's numbers are then unverified, not
+                  # verified-and-agreeing.
+                  "fullVocabArmed": full_vocab_armed,
+                  "watchlistComparisons": per_path_compared["watchlist"],
+                  "fullVocabComparisons": per_path_compared["fullVocab"],
                   # Per-comparison operands (2026-08-24). The summary above is
                   # unchanged; these are what make a deviation's MAGNITUDE
                   # readable instead of only its size.
@@ -784,8 +831,11 @@ def _compare_against_reference(record, readout, layers: list[int], ref_model,
                   "perComparisonTruncated": truncated,
                   "perComparisonBasis": ("seeded residual fixtures; a "
                                          "comparison is (layer, fixtureRow, "
-                                         "tokenID) — no prompt or position "
-                                         "axis exists in this check"),
+                                         "path, tokenID) — no prompt or "
+                                         "position axis exists in this check. "
+                                         "'path' is which of the readout's two "
+                                         "vocabulary implementations produced "
+                                         "'ours'"),
                   "worstComparison": worst_comparison,
                   # Always stamped, in BOTH modes, so the absence of a flag can
                   # never be read as the default mode by omission.

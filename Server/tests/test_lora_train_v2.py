@@ -236,11 +236,15 @@ def test_padding_never_contributes_to_the_loss(tiny_model_path):
                                       labels=[-100, -100, 7, 8, 9, 3],
                                       row_hash="b")
     pad = tokenizer.pad_token_id
-    together = lora_train._evaluate(model, [short, long], pad_token_id=pad,
-                                    device=torch.device("cpu"), batch_size=2)
-    apart = lora_train._evaluate(model, [short, long], pad_token_id=pad,
-                                 device=torch.device("cpu"), batch_size=1)
+    together, together_tokens = lora_train._evaluate(
+        model, [short, long], pad_token_id=pad, device=torch.device("cpu"),
+        batch_size=2)
+    apart, apart_tokens = lora_train._evaluate(
+        model, [short, long], pad_token_id=pad, device=torch.device("cpu"),
+        batch_size=1)
     assert together == pytest.approx(apart, rel=1e-5)
+    # The denominator is a property of the SET, not of the batching.
+    assert together_tokens == apart_tokens == 6
 
 
 # --- best-checkpoint selection ----------------------------------------------
@@ -253,7 +257,9 @@ def _scripted_evaluation(monkeypatch, values):
     remaining = list(values)
 
     def fake(model, examples, **kwargs):
-        return remaining.pop(0) if remaining else values[-1]
+        # ``_evaluate`` answers (loss, supervisedTokens) — the denominator
+        # travels with the number (external review, 2026-09-05).
+        return (remaining.pop(0) if remaining else values[-1]), 16
 
     monkeypatch.setattr(lora_train, "_evaluate", fake)
 

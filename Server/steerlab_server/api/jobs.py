@@ -661,6 +661,13 @@ class JobManager:
         #: Serialises the shard-merge pass so the watchdog (and the reconcile
         #: endpoint) can never run it alongside the monitor thread.
         self._merge_lock = threading.Lock()
+        #: Terminal sharded parents whose merged run has been checked for its
+        #: completion marker in THIS process (``_repair_half_merged_parents``):
+        #: a parent is examined once, not stat'ed every 15 s tick for ever.
+        self._merge_verified: set[str] = set()
+        #: Target roots whose stale merge-staging residue has been swept in
+        #: this process (``_sweep_merge_staging_once``).
+        self._staging_swept: set[str] = set()
         # Per-job auto-resubmit note dedup (in-memory only): a deferred or
         # refused resubmit is logged loudly ONCE per distinct situation, not
         # once per 15 s reconcile tick — a 4 h maintenance window must not
@@ -1103,11 +1110,6 @@ class JobManager:
         rr = job.requested_resources or {}
         shard_children = rr.get("shardChildren") or []
         if shard_children:
-            job._cancel.set()
-            self.store.mark_cancel_requested(job.id)
-            job.log("cancel requested for sharded parent — cancelling every "
-                    "shard job")
-            achieved = True
             targets = [str(cid) for cid in shard_children]
             if rr.get("continuationJob"):
                 targets.append(str(rr["continuationJob"]))
@@ -1116,6 +1118,28 @@ class JobManager:
             for worker in (rr.get("judgeFanout") or {}).get("workers") or []:
                 if isinstance(worker, dict) and worker.get("jobId"):
                     targets.append(str(worker["jobId"]))
+            if self._fanout_has_finished(job, targets):
+                # Nothing is running: every shard has already succeeded and no
+                # continuation or judge worker is in flight. What remains is
+                # the merge — a deterministic fold of finished, immutable
+                # evidence that the reconciler completes in seconds. Stamping
+                # this parent "cancelled" would strand that evidence for ever
+                # (a cancelled parent is terminal, so the reconciler never
+                # merges it) while making a finished fan-out read as stopped;
+                # a controller cycle between the stamp and the merge did
+                # exactly that. So the cancel is accepted as the no-op it is,
+                # and says so.
+                job.log("cancel requested, but every shard has already "
+                        "succeeded and nothing is running — there is nothing "
+                        "to stop; the reconciler completes the merge of the "
+                        "finished shards (a fan-out that has finished cannot "
+                        "be un-finished)")
+                return True
+            job._cancel.set()
+            self.store.mark_cancel_requested(job.id)
+            job.log("cancel requested for sharded parent — cancelling every "
+                    "shard job")
+            achieved = True
             unconfirmed: list[str] = []
             for cid in targets:
                 child = self.get(cid)
@@ -1418,6 +1442,26 @@ class JobManager:
                 return current
             seen.add(child.id)
             current = child
+
+    def _fanout_has_finished(self, parent: "Job", targets: list[str]) -> bool:
+        """Whether a sharded parent has nothing left that a cancel could
+        stop: every shard child effectively succeeded (resubmit chains
+        collapsed) and no target — shard, continuation, judge worker — is
+        still non-terminal. A parent that has already lost a child record
+        answers False: the reconciler's own path fails it honestly."""
+        children = [self.get(str(cid)) for cid in
+                    (parent.requested_resources or {}).get("shardChildren")
+                    or []]
+        if not children or any(child is None for child in children):
+            return False
+        if any(self._shard_effective(child)[0] != "succeeded"
+               for child in children):
+            return False
+        for cid in targets:
+            target = self.get(cid)
+            if target is not None and target.status not in TERMINAL:
+                return False
+        return True
 
     def _shard_effective(self, child: "Job") -> tuple[str, str | None]:
         """One shard's effective ``(state, run_directory)`` with its resubmit
@@ -1743,6 +1787,7 @@ class JobManager:
         for a run-first pipeline, submit the continuation job. Returns the
         number of parents whose state changed."""
         changed = 0
+        self._sweep_merge_staging_once()
         # "pending" parents are still ATTACHING their shard children (the
         # fan-out submit loop creates the parent first, finding 3) — deriving
         # state from a partial child list would try to merge a half-submitted
@@ -1757,7 +1802,158 @@ class JobManager:
                     changed += 1
             except Exception as exc:  # noqa: BLE001 - one parent must not kill the loop
                 parent.log(f"shard reconcile error: {type(exc).__name__}: {exc}")
+        changed += self._repair_half_merged_parents()
         return changed
+
+    def _sweep_merge_staging_once(self) -> None:
+        """Once per process per target root: clear the residue of merges whose
+        controller died mid-assembly (hidden staging directories and empty
+        name reservations under ``runs/``). Loud on stderr, never a
+        monitor-health error — this is housekeeping, not a fault."""
+        from ..experiment import sharding
+        roots: set[str] = set()
+        for job in self.list():
+            rr = job.requested_resources or {}
+            if not rr.get("shardChildren"):
+                continue
+            root = (rr.get("shardMerge") or {}).get("targetRoot")
+            if isinstance(root, str) and root:
+                roots.add(root)
+        for root in sorted(roots - self._staging_swept):
+            self._staging_swept.add(root)
+            try:
+                sharding.sweep_stale_merge_staging(
+                    root, log=lambda message: print(f"[jobs] {message}",
+                                                    file=sys.stderr, flush=True))
+            except Exception as exc:  # noqa: BLE001 - housekeeping never kills the tick
+                print(f"[jobs] merge-staging sweep failed for {root}: "
+                      f"{type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+
+    def _repair_half_merged_parents(self) -> int:
+        """Finish merged parents whose run directory exists WITHOUT its
+        ``report.json``.
+
+        Such a directory is half-written: the merge that produced it died
+        between the record stream and the report (before 2026-09-05 the merge
+        wrote straight into the final directory, and a ``cluster controller
+        stop`` is a bare ``scancel`` — SIGTERM with no handler), or the
+        report was lost afterwards. Whatever the parent record says, the
+        directory is what the app and the Mac's import read, and a run with
+        records and no report is exactly what every reader took for a
+        finished run on 2026-09-05. The state derivation above only looks at
+        NON-terminal parents, so a parent already stamped ``succeeded`` was
+        never examined again — this pass is the one that looks.
+
+        The repair only ADDS the missing files (the run directory stays
+        immutable) and refuses, failing the parent loudly, when the directory
+        cannot be completed in place. Each terminal parent is examined once
+        per process — a stat per tick per historical parent would be wasted
+        Lustre metadata traffic. Returns the number of parents changed."""
+        from ..experiment import resume as resume_mod
+        repaired = 0
+        for parent in self.list():
+            rr = parent.requested_resources or {}
+            if parent.status != "succeeded" or not rr.get("shardChildren"):
+                continue
+            if parent.id in self._merge_verified or rr.get("judgeFanout"):
+                # A judge fan-out parent's runDirectory is the judged
+                # pipeline, whose completion is the continuation's story.
+                continue
+            merge_cfg = rr.get("shardMerge") or {}
+            result = parent.result or {}
+            # The merged RUN: for a run-first pipeline the parent's
+            # runDirectory is the pipeline directory; the merge's own output
+            # is mergedRunDirectory.
+            merged = (result.get("mergedRunDirectory")
+                      if merge_cfg.get("verb") == "pipeline"
+                      else result.get("runDirectory"))
+            if not isinstance(merged, str) or not merged or not os.path.isdir(merged):
+                self._merge_verified.add(parent.id)
+                continue
+            if resume_mod.is_complete(merged):
+                self._merge_verified.add(parent.id)
+                continue
+            try:
+                if self._complete_half_merged_parent(parent, merged, merge_cfg):
+                    repaired += 1
+            except Exception as exc:  # noqa: BLE001 - one parent must not kill the loop
+                parent.log(f"half-merged parent repair error: "
+                           f"{type(exc).__name__}: {exc}")
+        return repaired
+
+    def _complete_half_merged_parent(self, parent: "Job", merged: str,
+                                     merge_cfg: dict) -> bool:
+        """One report-less merged run: rebuild its derived files from the
+        shard partials (``sharding.complete_merged_run``), package the
+        evidence the merge would have packaged, and record what was added;
+        or fail the parent with the refusal's own words."""
+        from ..experiment import sharding
+        rr = parent.requested_resources or {}
+        children = [self.get(str(cid)) for cid in rr.get("shardChildren") or []]
+        if any(child is None for child in children):
+            parent.log(f"merged run {merged} has no report.json, but shard "
+                       "job record(s) are missing — it cannot be rebuilt")
+            self._merge_verified.add(parent.id)
+            return False
+        effective = [self._shard_effective(child) for child in children]
+        if not all(state == "succeeded" and run_dir for state, run_dir in effective):
+            parent.log(f"merged run {merged} has no report.json, but not "
+                       "every shard child is succeeded with a run directory — "
+                       "it cannot be rebuilt from the partials")
+            self._merge_verified.add(parent.id)
+            return False
+        parent.log(f"merged run {merged} has its records but no report.json — "
+                   "an interrupted merge left it half-written; finishing it "
+                   "from the shard partials (adding only the missing files)")
+        try:
+            added = sharding.complete_merged_run(
+                str(merge_cfg.get("experiment") or ""), merged,
+                [str(run_dir) for _, run_dir in effective],
+                root=str(merge_cfg.get("targetRoot") or ""),
+                shard_job_ids=[child.id for child in children],
+                log=parent.log)
+        except sharding.ShardMergeError as exc:
+            # The parent said succeeded over a run that never got its report
+            # and cannot be given one. That is a failed contract, reported as
+            # one (the evidence_missing precedent), with the recovery named.
+            parent.status = "failed"
+            parent.error = (
+                f"merge_incomplete: {exc}. This parent was stamped succeeded "
+                f"although its merged run {merged} never received its "
+                "report.json; the shard partials are intact — resubmit the "
+                "same study bundle to fan out and merge again, or merge the "
+                "partials by hand")
+            parent.finished_at = time.time()
+            parent.log(parent.error)
+            self.store.update(parent)
+            self._merge_verified.add(parent.id)
+            return True
+        result = dict(parent.result or {})
+        result["mergeRepaired"] = {"runDirectory": merged, "added": added,
+                                   "repairedAt": time.time()}
+        if (merge_cfg.get("verb") != "pipeline"
+                and merge_cfg.get("packageEvidence", True)
+                and not result.get("evidenceBundle")):
+            # The merge packages the evidence bundle the app imports; the
+            # interrupted one never reached that step.
+            try:
+                from ..experiment import bundles as bundles_mod
+                evidence = bundles_mod.package_evidence(merged)
+                result["evidenceBundle"] = evidence
+                parent.log(f"evidence bundle packaged for the repaired merged "
+                           f"run → {evidence.get('bundlePath')}")
+            except Exception as exc:  # noqa: BLE001 - the repair stands without it
+                parent.log(f"evidence bundle could not be packaged for the "
+                           f"repaired merged run: {type(exc).__name__}: {exc} "
+                           f"— package it by hand: `steerlab-server bundle "
+                           f"evidence {merged}`")
+        parent.result = result
+        parent.log(f"half-merged parent repaired: added "
+                   f"{', '.join(added) or 'nothing (already complete)'} to "
+                   f"{merged}")
+        self.store.update(parent)
+        self._merge_verified.add(parent.id)
+        return True
 
     def _reconcile_one_shard_parent(self, parent: "Job") -> bool:
         rr = parent.requested_resources or {}
@@ -1911,17 +2107,22 @@ class JobManager:
                     "shard merge refused: shard job(s) "
                     f"{', '.join(missing)} recorded no run directory — "
                     "reconcile their child records first")
-            merged = sharding.merge_shard_runs(
-                str(merge_cfg.get("experiment") or ""),
-                [str(d) for d in run_dirs],
-                root=str(merge_cfg.get("targetRoot") or ""),
-                shard_job_ids=[child.id for child in children],
-                # The parent record's id, explicitly: the merge runs on the
-                # controller's monitor thread, where the env fallback would
-                # stamp the CONTROLLER's own Slurm allocation into every
-                # merged run's config.json (the stale-jobId bug, 2026-08-06).
-                job_id=parent.id,
-                log=parent.log)
+            merged = self._adopt_or_finish_prior_merge(
+                parent, children, [str(d) for d in run_dirs], merge_cfg)
+            if merged is None:
+                merged = sharding.merge_shard_runs(
+                    str(merge_cfg.get("experiment") or ""),
+                    [str(d) for d in run_dirs],
+                    root=str(merge_cfg.get("targetRoot") or ""),
+                    shard_job_ids=[child.id for child in children],
+                    # The parent record's id, explicitly: the merge runs on
+                    # the controller's monitor thread, where the env fallback
+                    # would stamp the CONTROLLER's own Slurm allocation into
+                    # every merged run's config.json (the stale-jobId bug,
+                    # 2026-08-06). It is also how a later controller finds
+                    # this parent's directory again (above).
+                    job_id=parent.id,
+                    log=parent.log)
             if merge_cfg.get("verb") == "pipeline":
                 # Evidence packaging is DEFERRED for pipelines (external
                 # review 2026-07-22, finding 2): the bundle the app imports
@@ -1961,6 +2162,50 @@ class JobManager:
             parent.log(parent.error)
             self.store.update(parent)
             return True
+
+    def _adopt_or_finish_prior_merge(self, parent: "Job", children: list["Job"],
+                                     run_dirs: list[str],
+                                     merge_cfg: dict) -> str | None:
+        """A parent still non-terminal with every shard succeeded may already
+        HAVE a merged run: a controller that died after assembling it but
+        before recording it (``merging`` is what the store still says), or —
+        the 2026-09-05 case, under the pre-staging merge — one that died with
+        the records written and the report not. The merge stamps the parent's
+        id into every run it assembles, so those directories are findable.
+        Adopt a complete one; finish a half-written one in place (adding only
+        the missing files); fall back to a fresh merge only when neither is
+        possible, leaving a torn directory as it is and saying so. Returns the
+        merged run directory, or None for "merge afresh"."""
+        from ..experiment import sharding
+        name = str(merge_cfg.get("experiment") or "")
+        root = str(merge_cfg.get("targetRoot") or "")
+        candidates = sharding.find_merged_runs_for_job(name, root, parent.id)
+        for path, complete in candidates:
+            if complete:
+                parent.log(f"adopting {path}: a previous merge of this parent "
+                           "completed, but the controller died before it was "
+                           "recorded here — nothing is merged twice")
+                return path
+        for path, _complete in candidates:
+            parent.log(f"{path} is a previous merge of this parent that the "
+                       "controller died under (records written, no "
+                       "report.json) — finishing it in place rather than "
+                       "merging again beside it")
+            try:
+                added = sharding.complete_merged_run(
+                    name, path, run_dirs, root=root,
+                    shard_job_ids=[child.id for child in children],
+                    log=parent.log)
+            except sharding.ShardMergeError as exc:
+                parent.log(f"{exc} — that directory is left exactly as it is "
+                           "(it is not a run) and a fresh merge is assembled")
+                continue
+            result = dict(parent.result or {})
+            result["mergeRepaired"] = {"runDirectory": path, "added": added,
+                                       "repairedAt": time.time()}
+            parent.result = result
+            return path
+        return None
 
     def _start_pipeline_continuation(self, parent: "Job", merged: str,
                                      merge_cfg: dict) -> bool:

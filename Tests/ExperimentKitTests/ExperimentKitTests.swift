@@ -188,14 +188,52 @@ import SteeringKit
     }
 
     @Test func instructionTokenizationMasksPromptTokens() throws {
-        let tokenizer = TestFineTuneTokenizer()
         let examples = try FineTuneTrainer.tokenizeInstructionExamples(
             [.init(system: "", user: "w1 w2", assistant: "w3 w4")],
-            tokenizer: tokenizer,
+            renderer: TestFineTuneRenderer(),
             modelID: "test/qwen")
         #expect(examples.count == 1)
         #expect(examples[0].weights.first == 0)
         #expect(examples[0].weights.suffix(2).allSatisfy { $0 == 1 })
+        // The completed render must not end in a generation prompt — the
+        // defect this fake now models (external review, 2026-09-05 — SCI-03).
+        #expect(examples[0].tokens.last != TestFineTuneRenderer.assistantHeaderToken)
+    }
+}
+
+/// The instruction-render fake. Unlike `TestFineTuneTokenizer` (which is now
+/// only the document chunker's), it MODELS the assistant header: emitted
+/// before every assistant turn AND as the generation prompt, exactly as a real
+/// chat template does. That is what makes the masking test able to see a
+/// completed example rendered with a generation prompt — the old fake ignored
+/// the flag entirely and so could never have caught SCI-03 (external review,
+/// 2026-09-05). Real-template coverage lives in `FineTuneTokenizationTests`.
+private struct TestFineTuneRenderer: FineTuneInstructionRenderer {
+    static let assistantHeaderToken = 99
+
+    func chatTemplateTokens(
+        messages: [[String: any Sendable]],
+        addGenerationPrompt: Bool,
+        additionalContext: [String: any Sendable]?
+    ) throws -> [Int] {
+        var ids: [Int] = []
+        for message in messages {
+            if message["role"] as? String == "assistant" {
+                ids.append(Self.assistantHeaderToken)
+            }
+            ids.append(
+                contentsOf: encode(
+                    text: message["content"] as? String ?? "", addSpecialTokens: false))
+        }
+        if addGenerationPrompt { ids.append(Self.assistantHeaderToken) }
+        return ids
+    }
+
+    func encode(text: String, addSpecialTokens: Bool) -> [Int] {
+        text.split(whereSeparator: \.isWhitespace).compactMap { piece in
+            let digits = piece.drop { !$0.isNumber }
+            return Int(digits)
+        }
     }
 }
 
