@@ -2,6 +2,8 @@
 
 Branch: `codex/maintainability-refactor`
 Mechanical baseline: `f6f746f`
+Mechanical cleanup commit: `a7536f9`
+Sweep-judgment fix commit: `b2d0fd9`
 Main baseline: `b6949ff` (0.9.5)
 
 This follow-up removes transitional Python import conventions before landing
@@ -51,7 +53,7 @@ the entire dependency graph.
 Run with Python 3.12 from the repository root:
 
 ```sh
-python scripts/ci/audit-python-boundaries.py --candidate <mechanical-commit>
+python scripts/ci/audit-python-boundaries.py --candidate a7536f9
 ```
 
 The audit reads `f6f746f` from Git and compares executable ASTs against the
@@ -62,7 +64,7 @@ uses. It checks module executable statements, function bodies and test
 assertions; it does not claim import-time side effects are proven by ASTs.
 The import-direction tests and full suite cover that additional concern.
 
-At the mechanical boundary, **3,436 function bodies across 128 changed Python
+At the mechanical boundary, **3,436 function bodies across 129 changed Python
 paths** passed this comparison. A self-test verifies that argument swaps and a
 call redirected to a different owner fail equivalence. The bug-fix commit must
 NOT pass equivalence against the old buggy body; audit the preceding mechanical
@@ -97,8 +99,16 @@ from the launch blog, even if the version still says 0.x.
 The first full Python run identified 19 failures: indirect policy references
 and one source-inspection spelling, not changes to scientific calculations.
 Those were corrected with the original assertions retained (the source
-inspection now names the renamed function). Final suite results and the separate
-sweep regression are recorded below when complete.
+inspection now names the renamed function). The final Python suite passed:
+**5,863 passed, 9 skipped, 8 warnings** in 148.17 seconds, including all four new
+boundary/audit tests and the new sweep regression. Log:
+`/private/tmp/python-boundary-final-full.log`.
+
+The full serial Swift suite and app build passed with Xcode beta and the Metal
+toolchain: **277 SteeringKit + 4,400 ExperimentKit = 4,677 tests**.
+Log: `/private/tmp/interpbench-boundary-cleanup-swift.log`.
+The normal bridge budget check passed; explicit and automatic 1.0 checks were
+verified to reject a replacement bridge in an isolated fixture.
 
 Use the existing Python 3.12 environment from this checkout's `Server/`
 directory; `HF_HUB_OFFLINE=1` matches CI and avoids model downloads. Loopback
@@ -111,3 +121,18 @@ the refactor branch. If it advanced, integrate its fixes and rerun affected
 checks. Use `git merge --ff-only codex/maintainability-refactor` from main; never
 reset main to force the result. Landing changes source, not installed apps,
 running scientific artifacts, or server deployments.
+
+## Sweep-judgment regression
+
+`b2d0fd9` fixes the deferred-completion branch where no cell beats the baseline.
+It formerly called `_append_progress`, a closure belonging to the inline sweep
+workflow. Completion now logs the selection refusal; its existing phase B writes
+the reason into `recommendations.json` in the new judgment run. It does not
+append progress to the original immutable sweep.
+
+The new end-to-end regression first failed with the precise NameError, then
+passed after the fix. It verifies the persisted negative result, completed
+judgment artifacts, cleared awaiting list, byte-identical source sweep,
+unchanged study manifest, and idempotent retry without a second run. All 56
+sweep-objective tests passed after the fix. No gate threshold or selection rule
+was relaxed.

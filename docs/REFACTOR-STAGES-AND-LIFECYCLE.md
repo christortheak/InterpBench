@@ -14,10 +14,11 @@ main merge; the slice-specific results below remain its historical validation.
 ## Result and scope
 
 Python execution is no longer implemented in `tasks.py`. The facade keeps the
-existing entry points and import spellings, and binds the pipeline's stage/model
-capabilities. Model acquisition, vector materialization, condition execution,
-sweeps, panel runs and judging have independent owners. The facade shrank from
-9,580 lines to 348; the benefit is the dependency direction and ownership, not
+public operations and binds the pipeline's stage/model capabilities. Private
+import spellings were subsequently retired in the
+[boundary cleanup](REFACTOR-BOUNDARY-CLEANUP.md). Model acquisition, vector materialization, condition execution,
+sweeps, panel runs and judging have independent owners. At this stage the facade
+shrank from 9,580 lines to 348 (subsequently 47 after boundary cleanup); the benefit is the dependency direction and ownership, not
 the line count alone.
 
 Python and Swift save/draft admission, protocol edits, declaration rules and

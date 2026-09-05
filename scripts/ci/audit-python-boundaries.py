@@ -22,7 +22,7 @@ REVERSE = {new: old for old, new in CONFIG['renames'].items()}
 
 
 def git(*args):
-    return subprocess.check_output(['git', *args], cwd=ROOT, text=True)
+    return subprocess.check_output(['git', *args], cwd=ROOT, text=True, stderr=subprocess.PIPE)
 
 
 def source_module(path):

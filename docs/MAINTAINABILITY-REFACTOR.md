@@ -25,6 +25,11 @@ next controller/transport/UI boundary (main study view: 699 lines).
 The [remote submission/pipeline handoff](REFACTOR-REMOTE-COORDINATION.md) closes
 this study UI sequence with request/job/ledger owners and dedicated remote
 result components (main study view: 481 lines).
+The final [Python boundary cleanup](REFACTOR-BOUNDARY-CLEANUP.md) removes
+private helper re-exports and generated dependency aliases, records the AST
+preservation audit and fixes deferred no-selection completion in a separate
+commit. [Swift bridge retirement](BRIDGE-RETIREMENT.md) is the next substantive
+migration and is gated before 1.0 and launch publication.
 
 This change establishes focused owners for reusable Python task support,
 offline analysis, pipeline orchestration, Swift contracts, manifest-save policy,

@@ -37,3 +37,6 @@ Server/steerlab_server/BUILD_COMMIT
 Workspaces/
 workspaces/
 .steerlab-downloads/
+
+# Bytecode from local architecture-audit imports in the test suite.
+scripts/ci/__pycache__/

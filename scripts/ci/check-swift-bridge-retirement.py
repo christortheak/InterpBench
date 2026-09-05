@@ -61,8 +61,11 @@ def scan():
 
 def check(release=False):
     current = scan()
+    discovered = [str(path.relative_to(ROOT)) for path in (ROOT / 'Sources').rglob('*Bindings.swift')
+                  if 'extension ExperimentPanel' in path.read_text()]
     if release:
-        assert not current['bridges'], '1.0 is blocked until these compatibility bridges are retired: ' + ', '.join(current['bridges'])
+        remaining = sorted(set(discovered) | set(current['bridges']))
+        assert not remaining, '1.0 is blocked until these compatibility bridges are retired: ' + ', '.join(remaining)
         return
     baseline = json.loads(INVENTORY.read_text())
     failures = []
