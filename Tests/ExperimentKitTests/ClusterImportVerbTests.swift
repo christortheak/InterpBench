@@ -294,6 +294,44 @@ struct ClusterImportRunnerTests {
         #expect(outcome.envelope.message.contains("AUTHORING DIVERGENCE"))
     }
 
+    /// A run the cluster has not finished — records and no report.json, the
+    /// shape of a shard merge the controller died under (2026-09-05) —
+    /// degrades the verb and names the next action. Its bytes come home (the
+    /// envelope says something changed), but the summary never calls them
+    /// imported or already complete.
+    @Test func anUnfinishedRunDegradesTheVerbAndIsNeverCertified() async throws {
+        let stamp = "20260819T101500123"
+        let run = "\(stamp)-exp-alpha-run"
+        let files = [
+            WorkspaceImportPolicy.FileStat(relativePath: "config.json", size: 120),
+            WorkspaceImportPolicy.FileStat(relativePath: "generations.jsonl", size: 4096),
+        ]
+        let harness = try harness("unfinished") { _, _ in
+            WorkspaceRunImport.Engine(
+                listRemoteDirectories: { [run] },
+                remoteInventory: { _ in [run: files] },
+                transfer: { _, _ in },
+                localExists: { _ in false },
+                localInventory: { _ in files })
+        }
+        defer { try? FileManager.default.removeItem(at: harness.root) }
+
+        let outcome = await harness.runner.run(
+            ClusterCLIInvocation(verb: .importRuns, siteReference: try siteID(harness)))
+        #expect(outcome.envelope.state == "degraded")
+        #expect(outcome.exitCode == 13)
+        #expect(outcome.envelope.changed)
+        let summary = try #require(outcome.envelope.importSummary)
+        #expect(summary.imported.isEmpty)
+        #expect(summary.alreadyComplete.isEmpty)
+        #expect(summary.incompleteRuns == [run])
+        #expect(summary.violations.isEmpty)
+        #expect(outcome.envelope.nextAction?.requiresHuman == true)
+        #expect(outcome.envelope.nextAction?.detail?.contains("report.json") == true)
+        #expect(outcome.envelope.message.contains("INCOMPLETE RUNS"))
+        #expect(try outcome.envelope.jsonText().contains("incompleteRuns"))
+    }
+
     /// Byte drift is a typed failure with a stable code, and its repair action
     /// explicitly forbids re-running the verb.
     @Test func byteDriftFailsWithAStableCodeAndAHumanRepair() async throws {

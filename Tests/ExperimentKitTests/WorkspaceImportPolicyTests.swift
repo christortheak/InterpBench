@@ -317,6 +317,59 @@ struct WorkspaceImportMergeEvidenceTests {
     }
 }
 
+// MARK: - Run completeness (2026-09-05)
+
+struct WorkspaceImportRunCompletenessTests {
+
+    private func stat(_ path: String, _ size: Int64 = 1) -> WorkspaceImportPolicy.FileStat {
+        WorkspaceImportPolicy.FileStat(relativePath: path, size: size)
+    }
+
+    /// Records with no report beside them is the shape a merge parent had on
+    /// 2026-09-05 after the controller died mid-merge — and the shape of any
+    /// run still executing. Neither is complete; the report makes it so.
+    @Test func recordsWithoutAReportAreAnUnfinishedRun() {
+        let unfinished = [stat("config.json"), stat("generations.jsonl", 4096)]
+        #expect(WorkspaceImportPolicy.isIncomplete(kind: .run, remote: unfinished, exclusions: []))
+        #expect(
+            !WorkspaceImportPolicy.isIncomplete(
+                kind: .run, remote: unfinished + [stat("report.json", 300)], exclusions: []))
+    }
+
+    /// No records, nothing to be unfinished about: an empty directory and a
+    /// bare config are not judged (the empty-on-both-sides case stays
+    /// "already complete", as decided on 2026-08-24).
+    @Test func directoriesWithoutRecordsAreNotJudged() {
+        #expect(!WorkspaceImportPolicy.isIncomplete(kind: .run, remote: [], exclusions: []))
+        #expect(
+            !WorkspaceImportPolicy.isIncomplete(
+                kind: .run, remote: [stat("config.json")], exclusions: []))
+    }
+
+    /// The marker is the engines' own (`resume.completion_file_for`): a study
+    /// run finishes with report.json; other shapes are not judged here.
+    @Test func onlyRunsCarryTheCompletionMarker() {
+        #expect(WorkspaceImportPolicy.completionMarker(for: .run) == "report.json")
+        let unfinished = [stat("generations.jsonl", 4096)]
+        for kind in WorkspaceImportPolicy.DirectoryKind.allCases where kind != .run {
+            #expect(WorkspaceImportPolicy.completionMarker(for: kind) == nil, "\(kind)")
+            #expect(
+                !WorkspaceImportPolicy.isIncomplete(kind: kind, remote: unfinished, exclusions: []),
+                "\(kind)")
+        }
+    }
+
+    /// Junk beside the records changes nothing: a `.DS_Store` is not a report,
+    /// and a report is a report whatever else is in the listing.
+    @Test func inertFilesNeitherCompleteNorHideARun() {
+        let withJunk = [stat("generations.jsonl", 4096), stat(".DS_Store", 6148)]
+        #expect(WorkspaceImportPolicy.isIncomplete(kind: .run, remote: withJunk, exclusions: []))
+        #expect(
+            !WorkspaceImportPolicy.isIncomplete(
+                kind: .run, remote: withJunk + [stat("report.json")], exclusions: []))
+    }
+}
+
 // MARK: - Verification (tightening 2) and byte-drift refusal (tightening 4)
 
 struct WorkspaceImportVerificationTests {
@@ -564,7 +617,7 @@ struct WorkspaceRunImportOperationTests {
         let run = "\(stamp)-exp-alpha-run"
         fake.directories = [run]
         fake.inventories[run] = remote(files: [
-            ("config.json", 120), ("generations.jsonl", 4096),
+            ("config.json", 120), ("generations.jsonl", 4096), ("report.json", 300),
         ])
 
         let report = await WorkspaceRunImport.run(engine: fake.engine())
@@ -752,7 +805,7 @@ struct WorkspaceRunImportOperationTests {
         let run = "\(stamp)-exp-alpha-run"
         fake.directories = [run]
         fake.inventories[run] = remote(files: [
-            ("config.json", 120), ("generations.jsonl", 4096),
+            ("config.json", 120), ("generations.jsonl", 4096), ("report.json", 300),
         ])
         fake.localFiles[run] = remote(files: [("config.json", 120)])
 
@@ -760,6 +813,85 @@ struct WorkspaceRunImportOperationTests {
         #expect(fake.transferred == [run])
         #expect(report.imported.map(\.name) == [run])
         #expect(report.violations.isEmpty)
+    }
+
+    /// The 2026-09-05 directory, mirrored on both sides: records complete, no
+    /// report.json. The merge never finished, so the directory is NOT "already
+    /// complete" — and the report says so in words a reader cannot miss.
+    @Test func aMergedRunWithoutItsReportIsNeverCertifiedComplete() async {
+        let fake = FakeImportRemote()
+        let run = "\(stamp)-exp-alpha-run"
+        fake.directories = [run]
+        let files = remote(files: [("config.json", 120), ("generations.jsonl", 4096)])
+        fake.inventories[run] = files
+        fake.localFiles[run] = files
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.transferred.isEmpty)
+        #expect(report.imported.isEmpty)
+        #expect(report.violations.isEmpty)
+        #expect(report.hasIncompleteRuns)
+        #expect(report.incompleteRuns.map(\.name) == [run])
+        #expect(!report.transferredAnything)
+        guard case .incompleteRun(let count, let transferred)? = report.directories.first?.outcome
+        else {
+            Issue.record(
+                "expected incompleteRun, got \(String(describing: report.directories.first))")
+            return
+        }
+        #expect(count == 2)
+        #expect(transferred == 0)
+        let text = WorkspaceRunImport.summaryLines(report).joined(separator: "\n")
+        #expect(text.contains("INCOMPLETE"))
+        #expect(text.contains("no report.json"))
+        #expect(text.contains("NOT certified complete"))
+        #expect(!text.contains("already complete"))
+        #expect(!text.contains("imported"))
+    }
+
+    /// A fresh import of an unfinished run brings its bytes home — evidence
+    /// never stays behind on a purging filesystem — but reports them as
+    /// incomplete, never imported. Once the controller's reconciler finishes
+    /// the merge, the report is one more gap, and the re-import that fills it
+    /// is the ordinary complete import.
+    @Test func anUnfinishedRunComesHomeAsIncompleteAndCompletesOnReimport() async {
+        let fake = FakeImportRemote()
+        let run = "\(stamp)-exp-alpha-run"
+        fake.directories = [run]
+        fake.inventories[run] = remote(files: [
+            ("config.json", 120), ("generations.jsonl", 4096),
+        ])
+
+        let first = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.transferred == [run])
+        #expect(first.imported.isEmpty)
+        #expect(first.hasIncompleteRuns)
+        #expect(first.transferredAnything)
+        guard case .incompleteRun(let count, let transferred)? = first.directories.first?.outcome
+        else {
+            Issue.record(
+                "expected incompleteRun, got \(String(describing: first.directories.first))")
+            return
+        }
+        #expect(count == 2)
+        #expect(transferred == 2)
+
+        // The reconciler completed the merge on the cluster: report.json exists.
+        fake.inventories[run] = remote(files: [
+            ("config.json", 120), ("generations.jsonl", 4096), ("report.json", 300),
+        ])
+        let second = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.transferred == [run, run])
+        #expect(second.imported.map(\.name) == [run])
+        #expect(!second.hasIncompleteRuns)
+        guard case .imported(let filled, let bytes)? = second.directories.first?.outcome else {
+            Issue.record(
+                "expected the gap fill to import, got \(String(describing: second.directories.first))")
+            return
+        }
+        #expect(filled == 1)
+        #expect(bytes == 300)
+        #expect(fake.localFiles[run]?.contains { $0.relativePath == "report.json" } == true)
     }
 
     /// Tightening 4: remote bytes that DIFFER from imported local bytes refuse,

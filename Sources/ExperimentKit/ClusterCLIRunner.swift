@@ -792,13 +792,14 @@ public struct ClusterCLIRunner: Sendable {
             emit: emit)
 
         let loud = report.hasLoudPurgeFindings || report.hasAuthoringDivergences
+            || report.hasIncompleteRuns
         let broken = !report.violations.isEmpty || !report.failures.isEmpty
         let state: ClusterLifecycleState = broken ? .failed : (loud ? .degraded : .ready)
         var envelope = self.envelope(
             invocation, site: site, state: state,
             message: WorkspaceRunImport.summaryLines(report).joined(separator: "\n"),
             // A dry run changes nothing anywhere, by construction.
-            changed: !invocation.dryRun && !report.imported.isEmpty)
+            changed: !invocation.dryRun && report.transferredAnything)
         envelope.importSummary = summary(of: report)
         if broken {
             envelope.error = ClusterCLIEnvelope.Failure(
@@ -825,6 +826,16 @@ public struct ClusterCLIRunner: Sendable {
                         + "run snapshot by hand (the import never writes "
                         + "experiments/)")
             }
+            if report.hasIncompleteRuns {
+                details.append(
+                    "run directories on the cluster carry records but no "
+                        + "report.json (see INCOMPLETE RUNS) — a run still "
+                        + "executing, or a shard merge the controller died "
+                        + "under; nothing was certified complete. Let the "
+                        + "controller's reconciler finish the merge (`cluster "
+                        + "controller status --site <id>`), then import again "
+                        + "to fill the report")
+            }
             envelope.nextAction = .init(
                 verb: invocation.verb.displayName, requiresHuman: true,
                 detail: details.joined(separator: "; and "))
@@ -842,6 +853,7 @@ public struct ClusterCLIRunner: Sendable {
                 if case .alreadyComplete = directory.outcome { return directory.name }
                 return nil
             },
+            incompleteRuns: report.incompleteRuns.map(\.name),
             skippedByPolicy: report.skippedByPolicy.map(\.name),
             unknownShapes: report.unknowns,
             purgeEligible: report.purgeFamilies

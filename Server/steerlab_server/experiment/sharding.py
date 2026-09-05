@@ -23,6 +23,13 @@ Hard rules enforced here:
   resume — the merge re-runs once the incomplete shard completes.
 - Runs stay immutable: the merge writes a NEW run directory assembled from
   the partials; it never mutates a shard partial.
+- The merged run appears ATOMICALLY: it is assembled under
+  ``runs/.merge-staging/<name>/`` and renamed onto its reserved name only
+  once every file (``report.json`` last) is in place, so no reader ever sees
+  a run-shaped directory with records and no report. A merged run found in
+  that state anyway (an interrupted pre-staging merge) is COMPLETED in place
+  by the reconciler — adding only the missing files, never rewriting one
+  (``complete_merged_run``).
 
 This module is deliberately light on imports at module scope (stdlib +
 ``resume``) so tests and the job reconciler can import it without paying the
@@ -36,6 +43,7 @@ import hashlib
 import json
 import os
 import shutil
+import time
 from dataclasses import dataclass
 
 from . import resume as resume_mod
@@ -336,6 +344,57 @@ def _key_from_list(raw: list) -> tuple:
     return tuple(raw)
 
 
+#: Where the merge ASSEMBLES a run before it becomes visible: a hidden
+#: sibling of the run directories, ``runs/.merge-staging/<final name>/``. Every
+#: reader of ``runs/`` — the app's catalog, ``_latest_run``, the Mac's
+#: ``cluster import``, a researcher's ``ls`` — sees a merged run only once
+#: every one of its files is in place, because the last step of a merge is one
+#: atomic ``rename(2)`` of the finished staging directory onto its reserved
+#: name. Before 2026-09-05 the merge wrote straight into the final directory,
+#: and a controller ``scancel`` (SIGTERM, no handler) 30 s into a merge left a
+#: parent with a complete ``generations.jsonl`` and no ``report.json`` that
+#: every reader took for a run.
+#:
+#: The staging directory carries the FINAL basename (``config.json`` stamps
+#: ``runId`` from it), which is why the final name is reserved first.
+MERGE_STAGING_DIRNAME = ".merge-staging"
+
+#: A staging directory older than this is the residue of a merge whose process
+#: died mid-assembly. Generous on purpose: a live panel merge copies
+#: transcripts for minutes at most, and the sweep only ever runs from a later
+#: merge or reconcile pass — never against a merge in flight in this process,
+#: which the reconciler's merge lock serialises.
+STALE_STAGING_AGE_SECONDS = 3600.0
+
+
+@dataclass
+class _ProvenShards:
+    """A shard set that has passed every completeness proof — the only input
+    the write phase (and the in-place completion of a half-written merge) is
+    allowed to consume. Everything here is derived from the partials and the
+    live manifest; nothing is written to produce it."""
+    stamps: list[dict]
+    count: int
+    experiment_hash: str
+    #: Each shard's ``generations.jsonl`` bytes, in shard order — the merged
+    #: file is exactly their concatenation.
+    shard_blobs: list[bytes]
+    merged_records: list[dict]
+    battery_blobs: list[bytes]
+    battery_records: list[dict]
+    manifest: object
+
+    @property
+    def shard_runs(self) -> list[str]:
+        return [os.path.basename(s["_dir"].rstrip(os.sep)) for s in self.stamps]
+
+    def sharded_block(self, shard_job_ids: list[str] | None) -> dict:
+        block = {"shardCount": self.count, "shardRuns": self.shard_runs}
+        if shard_job_ids:
+            block["shardJobIDs"] = list(shard_job_ids)
+        return block
+
+
 def merge_shard_runs(name: str, shard_dirs: list[str], *, root: str,
                      shard_job_ids: list[str] | None = None,
                      job_id: str | None = None,
@@ -353,6 +412,17 @@ def merge_shard_runs(name: str, shard_dirs: list[str], *, root: str,
     merge. Shard provenance goes into ``report.json`` as the ``sharded``
     block only.
 
+    The assembly is ATOMIC from a reader's point of view: the final run name
+    is reserved (an empty directory, the same ``mkdir(2)`` exclusivity every
+    run relies on), every file is written into
+    ``runs/.merge-staging/<that name>/``, and the finished staging directory
+    is renamed onto the reservation in one step. A process that dies mid-way
+    leaves a hidden staging directory and an empty reservation — never a
+    run-shaped directory with records and no report — and a later merge or
+    reconcile pass sweeps both (:func:`sweep_stale_merge_staging`). A merge
+    that REFUSES after the reservation (a shared-artifact mismatch) discards
+    its own staging and the empty reservation itself.
+
     Shard partials are KEPT after a successful merge (deliberate): the runs
     area is immutable by contract and automated deletion of run directories
     is exactly the class of destructive act this instrument avoids — the
@@ -360,6 +430,214 @@ def merge_shard_runs(name: str, shard_dirs: list[str], *, root: str,
     archive or remove them by hand.
     """
     _log = log or (lambda *_: None)
+    proven = _prove_shards(name, shard_dirs, root=root)
+    sweep_stale_merge_staging(root, log=_log)
+
+    from . import paths
+    # Reserve the NAME first — config.json stamps ``runId`` from the
+    # directory's basename, so the staging twin must carry the final name.
+    merged_dir = paths.make_unique_run_directory(f"exp-{name}-run", root)
+    staging = _staging_path_for(merged_dir)
+    try:
+        os.makedirs(os.path.dirname(staging), exist_ok=True)
+        os.mkdir(staging)
+    except OSError:
+        _rmdir_if_empty(merged_dir)
+        raise
+    _log(f"shard merge: assembling {len(proven.merged_records)} records from "
+         f"{proven.count} shard(s) → {merged_dir}")
+    try:
+        _assemble(name, proven, staging, root=root, shard_job_ids=shard_job_ids,
+                  job_id=job_id, log=_log)
+        # One atomic step: rename(2) replaces the EMPTY reservation with the
+        # finished tree. A non-empty target would refuse (ENOTEMPTY), which
+        # is the immutability rule enforced by the kernel.
+        os.rename(staging, merged_dir)
+    except BaseException:
+        # SystemExit/KeyboardInterrupt included: whatever ends this merge
+        # must not leave a run-shaped directory behind. A SIGKILL cannot be
+        # caught; that case is the sweep's.
+        shutil.rmtree(staging, ignore_errors=True)
+        _rmdir_if_empty(merged_dir)
+        raise
+    _log(f"shard merge complete → {merged_dir} (shard partials kept: "
+         + ", ".join(proven.shard_runs) + ")")
+    return merged_dir
+
+
+def complete_merged_run(name: str, merged_dir: str, shard_dirs: list[str], *,
+                        root: str, shard_job_ids: list[str] | None = None,
+                        log=None) -> list[str]:
+    """Finish a merged run directory that an interrupted merge left without
+    its derived files — above all ``report.json``, the completion marker.
+
+    This is the repair for a directory the PRE-staging merge half-wrote
+    (records in, report never written), and for any later loss of a merged
+    run's report. It re-proves the shard set exactly as a merge does, then
+    checks that the byte streams already in the directory are EXACTLY what a
+    merge writes (``generations.jsonl`` == the shard concatenation, and
+    ``battery.jsonl`` likewise when present): completing a torn or foreign
+    record stream would certify records the shards never produced, so that
+    refuses. The derived files are rebuilt through the same writers the merge
+    uses, into a hidden staging twin, and ONLY the ones the directory lacks
+    are added — by ``link(2)``, which fails rather than replaces — with
+    ``report.json`` last, so a reader that sees the marker sees everything
+    else. Any already-present derived file must match the rebuilt bytes, or
+    the completion refuses before adding anything. Nothing in the run
+    directory is ever rewritten.
+
+    Returns the basenames added (empty when the directory was already
+    complete). Raises :class:`ShardMergeError` when it cannot be completed in
+    place; the shard partials are untouched either way.
+    """
+    _log = log or (lambda *_: None)
+    if resume_mod.is_complete(merged_dir):
+        return []
+    proven = _prove_shards(name, shard_dirs, root=root)
+    _verify_stream(os.path.join(merged_dir, "generations.jsonl"),
+                   b"".join(proven.shard_blobs), what="generations.jsonl",
+                   merged_dir=merged_dir, required=True)
+    battery_path = os.path.join(merged_dir, "battery.jsonl")
+    if proven.battery_blobs:
+        _verify_stream(battery_path, b"".join(proven.battery_blobs),
+                       what="battery.jsonl", merged_dir=merged_dir,
+                       required=False)
+    elif os.path.exists(battery_path):
+        raise ShardMergeError(
+            f"merge completion refused: {merged_dir} holds a battery.jsonl "
+            "but no shard partial carries battery records — the directory "
+            "is not the merge of these shards")
+
+    sweep_stale_merge_staging(root, log=_log)
+    staging = _staging_path_for(merged_dir)
+    os.makedirs(os.path.dirname(staging), exist_ok=True)
+    os.mkdir(staging)
+    added: list[str] = []
+    try:
+        if proven.battery_blobs and not os.path.exists(battery_path):
+            with open(os.path.join(staging, "battery.jsonl"), "wb") as handle:
+                for blob in proven.battery_blobs:
+                    handle.write(blob)
+        _write_derived_artifacts(name, proven, staging, root=root,
+                                 sharded_block=proven.sharded_block(shard_job_ids))
+        staged = sorted(
+            os.listdir(staging),
+            # The completion marker goes in LAST.
+            key=lambda entry: (entry == resume_mod.COMPLETION_FILENAME, entry))
+        # Refuse BEFORE adding anything: every derived file already present
+        # must be byte-identical to what the shards rebuild.
+        for entry in staged:
+            target = os.path.join(merged_dir, entry)
+            if os.path.exists(target) and not _same_bytes(
+                    target, os.path.join(staging, entry)):
+                raise ShardMergeError(
+                    f"merge completion refused: {merged_dir} already holds a "
+                    f"'{entry}' that differs from the one the shard partials "
+                    "rebuild — the directory is torn or foreign and cannot be "
+                    "completed in place; the shard partials are intact")
+        for entry in staged:
+            target = os.path.join(merged_dir, entry)
+            if os.path.exists(target):
+                continue
+            if _add_never_replace(os.path.join(staging, entry), target):
+                added.append(entry)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    _log(f"merge completion: added {', '.join(added) or 'nothing'} to "
+         f"{merged_dir} (rebuilt from {proven.count} shard partial(s))")
+    return added
+
+
+def sweep_stale_merge_staging(root: str, *, log=None,
+                              min_age_seconds: float | None = None) -> list[str]:
+    """Remove the residue of merges whose process died mid-assembly: entries
+    under ``runs/.merge-staging/`` older than ``min_age_seconds`` (default
+    :data:`STALE_STAGING_AGE_SECONDS`), plus the EMPTY reservation each one
+    left under ``runs/`` — ``rmdir(2)`` refuses anything but an empty
+    directory, so a populated twin is never touched. A staging directory is
+    scratch this module created and never a run; the reservation is a name
+    with nothing behind it. Returns the staging basenames swept."""
+    _log = log or (lambda *_: None)
+    age_floor = (STALE_STAGING_AGE_SECONDS if min_age_seconds is None
+                 else min_age_seconds)
+    from . import paths
+    runs_root = paths.runs_directory(root)
+    staging_root = os.path.join(runs_root, MERGE_STAGING_DIRNAME)
+    try:
+        entries = sorted(os.listdir(staging_root))
+    except OSError:
+        return []
+    now = time.time()
+    swept: list[str] = []
+    for entry in entries:
+        path = os.path.join(staging_root, entry)
+        try:
+            age = now - os.stat(path).st_mtime
+        except OSError:
+            continue
+        if age < age_floor:
+            continue
+        twin = os.path.join(runs_root, entry)
+        if not os.path.isdir(twin):
+            twin_note = "no reservation under runs/"
+        elif _rmdir_if_empty(twin):
+            twin_note = "removed its empty reservation under runs/"
+        else:
+            twin_note = f"runs/{entry} is populated and was left alone"
+        shutil.rmtree(path, ignore_errors=True)
+        swept.append(entry)
+        _log(f"swept stale merge staging '{entry}' ({int(age)} s old — an "
+             f"interrupted merge's scratch); {twin_note}")
+    return swept
+
+
+def find_merged_runs_for_job(name: str, root: str,
+                             job_id: str) -> list[tuple[str, bool]]:
+    """The merged runs a given parent record has already produced, complete or
+    not: run-shaped directories (``<stamp>-exp-<name>-run``, with or without a
+    collision suffix) under ``runs/`` whose ``config.json`` stamps ``jobId``
+    equal to ``job_id`` — the merge writes the PARENT's record id there, and
+    nothing else does. Newest first, as ``(path, is_complete)``.
+
+    The reconciler consults this before merging so a controller that died
+    after assembling a run — before recording it on the parent (the window
+    the evidence packaging widens), or, under the pre-staging merge, before
+    writing the report — adopts or finishes its own earlier directory rather
+    than merging again beside it and leaving the first as an orphan."""
+    from . import paths
+    runs_root = paths.runs_directory(root)
+    try:
+        entries = os.listdir(runs_root)
+    except OSError:
+        return []
+    suffix = f"-exp-{name}-run"
+    found: list[tuple[str, bool]] = []
+    for entry in entries:
+        if entry.startswith("."):
+            continue
+        stem = entry
+        head, dash, tail = entry.rpartition("-")
+        if dash and tail.isdigit() and head.endswith(suffix):
+            stem = head  # ``…-run-2``: a same-millisecond collision suffix
+        if not stem.endswith(suffix):
+            continue
+        path = os.path.join(runs_root, entry)
+        if not os.path.isdir(path):
+            continue
+        try:
+            with open(os.path.join(path, "config.json"), encoding="utf-8") as handle:
+                config = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(config, dict) or config.get("jobId") != job_id:
+            continue
+        found.append((path, resume_mod.is_complete(path)))
+    found.sort(key=lambda item: os.path.basename(item[0]), reverse=True)
+    return found
+
+
+def _prove_shards(name: str, shard_dirs: list[str], *, root: str) -> _ProvenShards:
+    """Every refusal a merge can make, and none of its writes."""
     stamps: list[dict] = []
     for directory in shard_dirs:
         stamp = read_shard_stamp(directory)
@@ -473,7 +751,6 @@ def merge_shard_runs(name: str, shard_dirs: list[str], *, root: str,
             "inconsistent")
 
     # Heavy imports only after the cheap refusals.
-    from . import paths, reasoning_style, tasks
     from .manifest import Manifest
 
     manifest = Manifest.load(name, root)
@@ -513,9 +790,20 @@ def merge_shard_runs(name: str, shard_dirs: list[str], *, root: str,
         battery_blobs.append(blob)
         battery_records.extend(records)
 
-    merged_dir = paths.make_unique_run_directory(f"exp-{name}-run", root)
-    _log(f"shard merge: assembling {len(merged_records)} records from "
-         f"{count} shard(s) → {merged_dir}")
+    return _ProvenShards(
+        stamps=stamps, count=count, experiment_hash=experiment_hash,
+        shard_blobs=shard_blobs, merged_records=merged_records,
+        battery_blobs=battery_blobs, battery_records=battery_records,
+        manifest=manifest)
+
+
+def _assemble(name: str, proven: _ProvenShards, into: str, *, root: str,
+              shard_job_ids: list[str] | None, job_id: str | None,
+              log) -> None:
+    """Write a complete merged run into ``into`` (a staging directory that
+    already carries the final basename). Order matters only in that the
+    derived files come last; nothing outside ``into`` is touched."""
+    from . import tasks
 
     # Canonical per-run stamps, written ONCE by the merge (config.json is the
     # closed schema-2 contract — no new keys; shard provenance never lands
@@ -525,8 +813,8 @@ def merge_shard_runs(name: str, shard_dirs: list[str], *, root: str,
     # run the same controller incarnation merged (observed 2026-08-06). The
     # per-shard Slurm ids live in report.json's `sharded` block.
     from .manifest import inert_machinery_note
-    inert_note = inert_machinery_note(manifest.raw)
-    tasks._write_config_snapshot(manifest, merged_dir, "run", job_id=job_id,
+    inert_note = inert_machinery_note(proven.manifest.raw)
+    tasks._write_config_snapshot(proven.manifest, into, "run", job_id=job_id,
                                  notes=({"inertConceptMachinery": inert_note}
                                         if inert_note is not None else None))
 
@@ -534,7 +822,7 @@ def merge_shard_runs(name: str, shard_dirs: list[str], *, root: str,
     # across shards by the determinism claim — verified byte-for-byte, then
     # copied once from shard 0. A mismatch is a real cross-shard
     # nondeterminism signal and refuses the merge.
-    _copy_invariant_artifacts(stamps, merged_dir)
+    _copy_invariant_artifacts(proven.stamps, into)
     # Per-transcript SUBDIRECTORIES (a panel's <condition>/replicate-N trees).
     # `_copy_invariant_artifacts` walks only files, so before this every
     # sharded panel merge produced a run directory with a complete
@@ -542,49 +830,114 @@ def merge_shard_runs(name: str, shard_dirs: list[str], *, root: str,
     # human-readable half of a panel silently absent, with nothing in any log
     # saying so (2026-08-20 ledger). Shards own disjoint transcripts, so
     # these are collected from EVERY partial, not just shard 0.
-    copied = _copy_shard_subdirectories(stamps, merged_dir)
+    copied = _copy_shard_subdirectories(proven.stamps, into)
     if copied:
-        _log(f"shard merge: carried {copied} transcript file(s) from the "
-             "shard partials into the merged run")
+        log(f"shard merge: carried {copied} transcript file(s) from the "
+            "shard partials into the merged run")
 
-    with open(os.path.join(merged_dir, "generations.jsonl"), "wb") as handle:
-        for blob in shard_blobs:
+    with open(os.path.join(into, "generations.jsonl"), "wb") as handle:
+        for blob in proven.shard_blobs:
             handle.write(blob)
-    if battery_blobs:
-        with open(os.path.join(merged_dir, "battery.jsonl"), "wb") as handle:
-            for blob in battery_blobs:
+    if proven.battery_blobs:
+        with open(os.path.join(into, "battery.jsonl"), "wb") as handle:
+            for blob in proven.battery_blobs:
                 handle.write(blob)
+    _write_derived_artifacts(name, proven, into, root=root,
+                             sharded_block=proven.sharded_block(shard_job_ids))
 
-    style = reasoning_style.load_pinned(manifest, root)
+
+def _write_derived_artifacts(name: str, proven: _ProvenShards, into: str, *,
+                             root: str, sharded_block: dict) -> None:
+    """Everything a merged run derives from its records — metrics, summaries,
+    the panel voice lint, and last of all ``report.json`` — through the SAME
+    writers the single-job path uses. Shared by the merge and by the in-place
+    completion of a half-written merge, so the two can never disagree about
+    what a complete merged run contains."""
+    from . import reasoning_style, tasks
+
+    style = reasoning_style.load_pinned(proven.manifest, root)
     numeric_parser = None
-    if manifest.numeric_parser:
+    if proven.manifest.numeric_parser:
         from . import parser_registry
-        numeric_parser = parser_registry.resolve(manifest.numeric_parser, root)
+        numeric_parser = parser_registry.resolve(proven.manifest.numeric_parser,
+                                                 root)
     battery_summary = (
-        _battery_summary(battery_records) if battery_records else None)
-    tasks._write_metrics_csv(merged_records, merged_dir, style=style)
-    tasks._write_summaries_csv(merged_records, merged_dir)
+        _battery_summary(proven.battery_records) if proven.battery_records
+        else None)
+    tasks._write_metrics_csv(proven.merged_records, into, style=style)
+    tasks._write_summaries_csv(proven.merged_records, into)
     # Panel voice lint over the WHOLE matrix. Each shard rolled up only its own
     # transcripts; the per (speaker × condition) rate is only meaningful once
     # every transcript is in hand. Empty (no file) for non-panel runs.
-    lint_rows = voice_lint.csv_rows(merged_records)
+    lint_rows = voice_lint.csv_rows(proven.merged_records)
     if lint_rows:
         voice_lint.write_csv(
-            os.path.join(merged_dir, voice_lint.VOICE_LINT_FILENAME), lint_rows)
-    sharded_block = {
-        "shardCount": count,
-        "shardRuns": [os.path.basename(s["_dir"].rstrip(os.sep))
-                      for s in stamps],
-    }
-    if shard_job_ids:
-        sharded_block["shardJobIDs"] = list(shard_job_ids)
-    tasks._write_report(name, manifest, merged_records, merged_dir,
+            os.path.join(into, voice_lint.VOICE_LINT_FILENAME), lint_rows)
+    tasks._write_report(name, proven.manifest, proven.merged_records, into,
                         battery=battery_summary, style=style,
                         numeric_parser=numeric_parser,
                         sharded=sharded_block)
-    _log(f"shard merge complete → {merged_dir} (shard partials kept: "
-         + ", ".join(sharded_block["shardRuns"]) + ")")
-    return merged_dir
+
+
+def _staging_path_for(merged_dir: str) -> str:
+    """``runs/.merge-staging/<basename of merged_dir>``."""
+    normalized = os.path.normpath(merged_dir)
+    return os.path.join(os.path.dirname(normalized), MERGE_STAGING_DIRNAME,
+                        os.path.basename(normalized))
+
+
+def _rmdir_if_empty(path: str) -> bool:
+    """``rmdir(2)``: removes an EMPTY directory and refuses anything else —
+    the one deletion this module performs against ``runs/`` itself, and one
+    that by construction can never take a record with it."""
+    try:
+        os.rmdir(path)
+    except OSError:
+        return False
+    return True
+
+
+def _verify_stream(path: str, expected: bytes, *, what: str, merged_dir: str,
+                   required: bool) -> None:
+    try:
+        with open(path, "rb") as handle:
+            actual = handle.read()
+    except FileNotFoundError:
+        if required:
+            raise ShardMergeError(
+                f"merge completion refused: {merged_dir} has no {what} — "
+                "there is nothing to complete; assemble a fresh merge instead")
+        return
+    if actual != expected:
+        raise ShardMergeError(
+            f"merge completion refused: {merged_dir}/{what} is not the byte "
+            f"concatenation of the shard partials ({len(actual)} B on disk vs "
+            f"{len(expected)} B rebuilt) — the stream is torn or foreign, and "
+            "completing it would certify records the shards never produced; "
+            "the shard partials are intact")
+
+
+def _same_bytes(left: str, right: str) -> bool:
+    with open(left, "rb") as a, open(right, "rb") as b:
+        return a.read() == b.read()
+
+
+def _add_never_replace(source: str, target: str) -> bool:
+    """Move ``source`` to ``target`` without ever replacing an existing file:
+    ``link(2)`` fails with EEXIST where ``rename(2)`` would silently clobber.
+    Falls back to rename (after an existence check) only on a filesystem
+    that refuses hard links. Returns whether the file was added."""
+    try:
+        os.link(source, target)
+    except FileExistsError:
+        return False
+    except OSError:
+        if os.path.exists(target):
+            return False
+        os.rename(source, target)
+        return True
+    os.unlink(source)
+    return True
 
 
 def _describe_key(key: tuple) -> str:

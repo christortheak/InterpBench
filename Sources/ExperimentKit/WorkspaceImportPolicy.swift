@@ -101,7 +101,15 @@ public enum WorkspaceImportPolicy {
     public static let shardStampFileName = "shard.json"
 
     /// The report a merged run writes; carries the merge completeness stamp.
+    /// It is also the engines' completion marker for a study run
+    /// (`resume.completion_file_for`): a run directory that lacks it has not
+    /// finished — see `isIncomplete(kind:remote:exclusions:)`.
     public static let reportFileName = "report.json"
+
+    /// The record stream a study run writes as it goes. Records present with
+    /// no `reportFileName` beside them is the shape of a run — or a shard
+    /// merge — that never finished.
+    public static let recordsFileName = "generations.jsonl"
 
     /// The final trained-adapter weight file. A submit directory containing
     /// one under `run/<name>/` is a finetune receipt whose weights the
@@ -649,6 +657,47 @@ public enum WorkspaceImportPolicy {
                 + "merged run anywhere in this workspace. Never purge these; "
                 + "merge the fan-out (or resume the incomplete shard) first"
         }
+    }
+
+    // MARK: - Run completeness (the engines' own contract)
+
+    /// The artifact whose presence marks a directory of this kind FINISHED,
+    /// per the engines' completion contract (`resume.completion_file_for`): a
+    /// study run is complete exactly when its `report.json` exists, and a
+    /// MERGED run's report is the last file the merge writes, after every
+    /// completeness proof. Nil for shapes whose completion this policy does
+    /// not judge.
+    public static func completionMarker(for kind: DirectoryKind) -> String? {
+        kind == .run ? reportFileName : nil
+    }
+
+    /// Whether a run directory's REMOTE inventory describes a run that has
+    /// not finished: its record stream is there, its completion marker is not.
+    ///
+    /// This is exactly what a merge parent looked like on 2026-09-05 after the
+    /// controller died between writing `generations.jsonl` and `report.json`
+    /// (three sibling merges from the same minute had their reports; this one
+    /// did not) — and it is what any run still executing looks like. Such a
+    /// directory is never CERTIFIED complete. Its bytes still come home:
+    /// over-importing is the deliberate failure direction, and a report that
+    /// arrives later is an ordinary gap the next import fills. But they come
+    /// home under their own outcome, so no report can call the directory
+    /// imported or already complete.
+    ///
+    /// Judged on the remote inventory because that is the source: a local copy
+    /// lacking the report while the cluster has it is a gap, not an incomplete
+    /// run. A directory with no record stream at all is not judged here —
+    /// there is nothing yet to be incomplete about.
+    public static func isIncomplete(
+        kind: DirectoryKind, remote: [FileStat], exclusions rules: [ExclusionRule]
+    ) -> Bool {
+        guard let marker = completionMarker(for: kind) else { return false }
+        let kept = Set(
+            remote.map(\.relativePath).filter {
+                !isExcluded(relativePath: $0, rules: rules)
+                    && !isVerificationInert(relativePath: $0)
+            })
+        return kept.contains(recordsFileName) && !kept.contains(marker)
     }
 
     // MARK: - Content verification (tightening 2)

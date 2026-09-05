@@ -1417,3 +1417,348 @@ def test_non_json_divergence_keeps_the_generic_refusal(tmp_path):
     assert "fear.safetensors" in message
     # No field detail for binary artifacts — the generic refusal, verbatim.
     assert "differs between shard 0 and shard 1 — cross-shard" in message
+
+
+# --- 7. half-written merges (2026-09-05) ----------------------------------------
+#
+# Field case: a `cluster controller stop` (a bare scancel — SIGTERM, no
+# handler) landed ~30 s into a merge. The merge wrote straight into the final
+# run directory, so the parent was left with a complete generations.jsonl and
+# NO report.json, which every reader took for a run; and the state derivation
+# only ever looks at non-terminal parents, so nothing came back for it. These
+# tests hold the three repairs: the merge is atomic from a reader's point of
+# view, the reconciler finishes a report-less merged parent, and a cancel can
+# no longer strand a fan-out whose shards have all finished.
+
+def _visible_merged_dirs(root, name):
+    runs = os.path.join(root, "runs")
+    return sorted(entry for entry in os.listdir(runs)
+                  if entry.endswith(f"-exp-{name}-run")
+                  and not entry.startswith("."))
+
+
+def _staging_entries(root):
+    staging = os.path.join(root, "runs", sharding.MERGE_STAGING_DIRNAME)
+    return sorted(os.listdir(staging)) if os.path.isdir(staging) else []
+
+
+def _record_fanout(jobs, tmp_path, name, root, shard_dirs, *, status="running",
+                   result=None, package_evidence=False):
+    children = [jobs.record_external(
+        "study-submit-bundle-shard", status="succeeded", executor="slurm",
+        executor_job_id=str(700 + index),
+        result={"runDirectory": directory,
+                "shard": {"index": index, "count": len(shard_dirs)}})
+        for index, directory in enumerate(shard_dirs)]
+    parent = jobs.record_external(
+        "study-submit-bundle", status=status, executor="slurm",
+        requested_resources={
+            "shardChildren": [c.id for c in children],
+            "recordsDirectory": str(tmp_path / "records"),
+            "shardMerge": {"experiment": name, "verb": "run",
+                           "targetRoot": root,
+                           "packageEvidence": package_evidence}},
+        result={"shardJobs": [c.id for c in children], **(result or {})})
+    return parent, children
+
+
+def test_a_merge_interrupted_before_its_report_leaves_no_half_parent_visible(
+        tmp_path, monkeypatch):
+    """The controller dies between the record stream and the report. A reader
+    of runs/ must see NO run-shaped directory with records in it — before,
+    during, or after — and the next reconcile pass must complete the merge
+    exactly once."""
+    root = str(tmp_path)
+    prompts = _study_fixture(root, "shardatomic")
+    shard_dirs = _run_shards(root, "shardatomic", prompts, monkeypatch, count=2)
+    jobs = _manager(tmp_path)
+    parent, _children = _record_fanout(jobs, tmp_path, "shardatomic", root,
+                                       shard_dirs)
+
+    real_write_report = tasks._write_report
+    seen_at_interrupt = {}
+
+    def dying_write_report(*args, **kwargs):
+        # The exact moment the field merge died: generations.jsonl is
+        # written, report.json is not. What does a reader see?
+        visible = _visible_merged_dirs(root, "shardatomic")
+        seen_at_interrupt["visible"] = visible
+        seen_at_interrupt["contents"] = {
+            entry: sorted(os.listdir(os.path.join(root, "runs", entry)))
+            for entry in visible}
+        seen_at_interrupt["staging"] = _staging_entries(root)
+        raise KeyboardInterrupt("controller scancelled mid-merge")
+
+    monkeypatch.setattr(tasks, "_write_report", dying_write_report)
+    with pytest.raises(KeyboardInterrupt):
+        jobs._reconcile_shard_parents()
+
+    # At the instant of death nothing run-shaped held records: the only thing
+    # under the final name was the empty reservation, and the half-written
+    # tree sat in the hidden staging area.
+    assert seen_at_interrupt["contents"], seen_at_interrupt
+    for entry, contents in seen_at_interrupt["contents"].items():
+        assert contents == [], (entry, contents)
+    assert len(seen_at_interrupt["staging"]) == 1
+    # After the interrupt the reservation and the staging are gone too.
+    assert _visible_merged_dirs(root, "shardatomic") == []
+    assert _staging_entries(root) == []
+    for directory in shard_dirs:
+        assert resume.is_complete(directory)  # partials untouched
+    # The record looks exactly like a crashed controller left it.
+    assert jobs.get(parent.id).status == "merging"
+
+    # Next controller: the merge completes, once.
+    monkeypatch.setattr(tasks, "_write_report", real_write_report)
+    assert jobs._reconcile_shard_parents() == 1
+    parent = jobs.get(parent.id)
+    assert parent.status == "succeeded"
+    merged = parent.result["runDirectory"]
+    assert _visible_merged_dirs(root, "shardatomic") == [os.path.basename(merged)]
+    assert resume.is_complete(merged)
+    assert _staging_entries(root) == []
+    # The staging twin carried the final name, so config.json's runId is the
+    # directory's real basename.
+    config = json.load(open(os.path.join(merged, "config.json")))
+    assert config["runId"] == os.path.basename(merged)
+
+
+def test_a_merge_killed_outright_leaves_scratch_the_next_pass_sweeps(
+        tmp_path, monkeypatch):
+    """SIGKILL residue, built by hand: a hidden staging tree with records in
+    it and the empty reservation under runs/. The next merge pass removes
+    both (rmdir can only ever take an empty directory) and a populated
+    directory under the same name is left alone."""
+    root = str(tmp_path)
+    prompts = _study_fixture(root, "shardsweep")
+    shard_dirs = _run_shards(root, "shardsweep", prompts, monkeypatch, count=2)
+    runs = os.path.join(root, "runs")
+    staging_root = os.path.join(runs, sharding.MERGE_STAGING_DIRNAME)
+
+    dead = "20260905T142555355-exp-shardsweep-run"
+    os.makedirs(os.path.join(staging_root, dead))
+    _write(os.path.join(staging_root, dead, "generations.jsonl"), "{}\n")
+    _write(os.path.join(staging_root, dead, "config.json"), "{}")
+    os.makedirs(os.path.join(runs, dead))  # the empty reservation
+
+    populated = "20260905T142555356-exp-shardsweep-run"
+    os.makedirs(os.path.join(staging_root, populated))
+    _write(os.path.join(staging_root, populated, "config.json"), "{}")
+    os.makedirs(os.path.join(runs, populated))
+    _write(os.path.join(runs, populated, "generations.jsonl"), "{}\n")
+
+    # Age is what separates residue from a merge in flight.
+    assert sharding.sweep_stale_merge_staging(root) == []
+    monkeypatch.setattr(sharding, "STALE_STAGING_AGE_SECONDS", 0.0)
+
+    jobs = _manager(tmp_path)
+    parent, _children = _record_fanout(jobs, tmp_path, "shardsweep", root,
+                                       shard_dirs)
+    assert jobs._reconcile_shard_parents() == 1
+    merged = jobs.get(parent.id).result["runDirectory"]
+
+    assert _staging_entries(root) == []
+    assert not os.path.exists(os.path.join(runs, dead))
+    assert os.path.isfile(os.path.join(runs, populated, "generations.jsonl"))
+    assert _visible_merged_dirs(root, "shardsweep") == sorted(
+        [populated, os.path.basename(merged)])
+
+
+def test_reconcile_finishes_a_merged_parent_that_lacks_its_report(
+        tmp_path, monkeypatch):
+    """The 2026-09-05 directory: records complete, no report.json, parent
+    stamped succeeded. The reconciler rebuilds the derived files from the
+    shard partials, ADDS only what is missing (report.json last), rewrites
+    nothing, and says what it did."""
+    root = str(tmp_path)
+    prompts = _study_fixture(root, "shardrepair")
+    shard_dirs = _run_shards(root, "shardrepair", prompts, monkeypatch, count=3)
+    jobs = _manager(tmp_path)
+
+    # A reference merge, for the bytes the repair must reproduce.
+    children_ids = []
+    parent, children = _record_fanout(jobs, tmp_path, "shardrepair", root,
+                                      shard_dirs, status="succeeded")
+    children_ids = [c.id for c in children]
+    reference = sharding.merge_shard_runs(
+        "shardrepair", shard_dirs, root=root, shard_job_ids=children_ids,
+        job_id=parent.id)
+    assert sharding.complete_merged_run(
+        "shardrepair", reference, shard_dirs, root=root,
+        shard_job_ids=children_ids) == []  # complete: nothing to do
+
+    # The half-written twin, as the pre-staging merge left it.
+    half = os.path.join(root, "runs", "20260905T142555355-exp-shardrepair-run")
+    shutil.copytree(reference, half)
+    for derived in ("report.json", "metrics.csv", "summaries.csv",
+                    "battery.jsonl"):
+        os.unlink(os.path.join(half, derived))
+    assert not resume.is_complete(half)
+    before = {entry: (_read(os.path.join(half, entry)),
+                      os.stat(os.path.join(half, entry)).st_mtime_ns)
+              for entry in os.listdir(half)
+              if os.path.isfile(os.path.join(half, entry))}
+    parent.result = {**parent.result, "runDirectory": half}
+    jobs.store.update(parent)
+
+    assert jobs._reconcile_shard_parents() == 1
+    parent = jobs.get(parent.id)
+    assert parent.status == "succeeded"
+    assert parent.result["runDirectory"] == half
+    assert resume.is_complete(half)
+    # Only added, in the order that makes report.json the last thing seen.
+    assert parent.result["mergeRepaired"]["added"] == [
+        "battery.jsonl", "metrics.csv", "summaries.csv", "report.json"]
+    for derived in ("report.json", "metrics.csv", "summaries.csv",
+                    "battery.jsonl"):
+        assert (_read(os.path.join(half, derived))
+                == _read(os.path.join(reference, derived))), derived
+    # Nothing that was there has been touched.
+    for entry, (payload, mtime) in before.items():
+        path = os.path.join(half, entry)
+        assert _read(path) == payload, entry
+        assert os.stat(path).st_mtime_ns == mtime, entry
+    assert _staging_entries(root) == []
+    logs = "\n".join(parent.all_logs())
+    assert "half-written" in logs
+    assert "half-merged parent repaired: added battery.jsonl" in logs
+    # The report carries the merge stamp naming the partials — the Mac's
+    # purge gate reads exactly this.
+    report = json.load(open(os.path.join(half, "report.json")))
+    assert report["sharded"]["shardJobIDs"] == children_ids
+    assert report["sharded"]["shardCount"] == 3
+
+    # Examined once: a second pass neither re-stats nor re-logs.
+    lines_before = len(parent.all_logs())
+    assert jobs._reconcile_shard_parents() == 0
+    assert len(jobs.get(parent.id).all_logs()) == lines_before
+
+
+def test_a_torn_half_parent_refuses_in_place_and_fails_the_parent_loudly(
+        tmp_path, monkeypatch):
+    """Records that are NOT the shard concatenation cannot be completed: a
+    report over them would certify records the shards never produced. The
+    parent's `succeeded` was a lie and becomes a loud, actionable failure;
+    the partials stay intact."""
+    root = str(tmp_path)
+    prompts = _study_fixture(root, "shardtorn")
+    shard_dirs = _run_shards(root, "shardtorn", prompts, monkeypatch, count=2)
+    jobs = _manager(tmp_path)
+    parent, children = _record_fanout(jobs, tmp_path, "shardtorn", root,
+                                      shard_dirs, status="succeeded")
+    reference = sharding.merge_shard_runs(
+        "shardtorn", shard_dirs, root=root,
+        shard_job_ids=[c.id for c in children], job_id=parent.id)
+    half = os.path.join(root, "runs", "20260905T142555355-exp-shardtorn-run")
+    shutil.copytree(reference, half)
+    os.unlink(os.path.join(half, "report.json"))
+    generations = os.path.join(half, "generations.jsonl")
+    lines = _read(generations).splitlines(keepends=True)
+    with open(generations, "wb") as handle:
+        handle.writelines(lines[:-1])  # torn at the tail
+    parent.result = {**parent.result, "runDirectory": half}
+    jobs.store.update(parent)
+
+    assert jobs._reconcile_shard_parents() == 1
+    parent = jobs.get(parent.id)
+    assert parent.status == "failed"
+    assert parent.error.startswith("merge_incomplete:")
+    assert "torn or foreign" in parent.error
+    assert "shard partials are intact" in parent.error
+    assert not os.path.exists(os.path.join(half, "report.json"))
+    assert _staging_entries(root) == []
+    for directory in shard_dirs:
+        assert resume.is_complete(directory)
+
+
+def test_cancel_of_a_finished_fanout_does_not_strand_the_merge(
+        tmp_path, monkeypatch, fake_slurm):
+    """Every shard has succeeded; a cancel arrives before (or during) the
+    merge. Stamping the parent cancelled would make it terminal and the
+    merge would never run — finished evidence stranded for ever. The cancel
+    is accepted as the no-op it is, and the next pass merges."""
+    root = str(tmp_path)
+    prompts = _study_fixture(root, "shardcancel")
+    shard_dirs = _run_shards(root, "shardcancel", prompts, monkeypatch, count=2)
+    jobs = _manager(tmp_path)
+    parent, _children = _record_fanout(jobs, tmp_path, "shardcancel", root,
+                                       shard_dirs)
+
+    assert jobs.cancel(parent.id) is True
+    parent = jobs.get(parent.id)
+    assert parent.status == "running"
+    assert not parent.cancelled
+    assert fake_slurm.calls("scancel") == []
+    assert any("nothing to stop" in line for line in parent.all_logs())
+
+    assert jobs._reconcile_shard_parents() == 1
+    parent = jobs.get(parent.id)
+    assert parent.status == "succeeded"
+    assert resume.is_complete(parent.result["runDirectory"])
+
+
+def test_a_merging_parent_finishes_its_own_half_written_directory(
+        tmp_path, monkeypatch):
+    """The most likely record for the 2026-09-05 parent: a bare scancel left
+    it `merging`, with no runDirectory stamped, beside a run-shaped directory
+    holding its records and config (jobId = the parent's id) but no report.
+    The next controller must finish THAT directory — not merge again beside
+    it and leave the first as an orphan a reader takes for a run."""
+    root = str(tmp_path)
+    prompts = _study_fixture(root, "shardown")
+    shard_dirs = _run_shards(root, "shardown", prompts, monkeypatch, count=2)
+    jobs = _manager(tmp_path)
+    parent, children = _record_fanout(jobs, tmp_path, "shardown", root,
+                                      shard_dirs, status="merging")
+    # The pre-staging merge, killed after the records and before the report.
+    half = sharding.merge_shard_runs(
+        "shardown", shard_dirs, root=root,
+        shard_job_ids=[c.id for c in children], job_id=parent.id)
+    for derived in ("report.json", "metrics.csv", "summaries.csv"):
+        os.unlink(os.path.join(half, derived))
+    assert not resume.is_complete(half)
+    assert sharding.find_merged_runs_for_job("shardown", root, parent.id) == [
+        (half, False)]
+
+    assert jobs._reconcile_shard_parents() == 1
+    parent = jobs.get(parent.id)
+    assert parent.status == "succeeded"
+    assert parent.result["runDirectory"] == half
+    assert resume.is_complete(half)
+    assert parent.result["mergeRepaired"]["added"] == [
+        "metrics.csv", "summaries.csv", "report.json"]
+    # ONE merged run, and it is the one the interrupted merge started.
+    assert _visible_merged_dirs(root, "shardown") == [os.path.basename(half)]
+    logs = "\n".join(parent.all_logs())
+    assert "finishing it in place rather than merging again" in logs
+
+
+def test_a_merging_parent_adopts_its_own_completed_directory(
+        tmp_path, monkeypatch):
+    """The other crash window: the merge finished, and the controller died
+    before the parent record said so (evidence packaging sits in that gap).
+    The next controller adopts the finished directory instead of assembling
+    a twin."""
+    root = str(tmp_path)
+    prompts = _study_fixture(root, "shardadopt")
+    shard_dirs = _run_shards(root, "shardadopt", prompts, monkeypatch, count=2)
+    jobs = _manager(tmp_path)
+    parent, children = _record_fanout(jobs, tmp_path, "shardadopt", root,
+                                      shard_dirs, status="merging")
+    done = sharding.merge_shard_runs(
+        "shardadopt", shard_dirs, root=root,
+        shard_job_ids=[c.id for c in children], job_id=parent.id)
+    assert sharding.find_merged_runs_for_job("shardadopt", root, parent.id) == [
+        (done, True)]
+    report_before = _read(os.path.join(done, "report.json"))
+
+    assert jobs._reconcile_shard_parents() == 1
+    parent = jobs.get(parent.id)
+    assert parent.status == "succeeded"
+    assert parent.result["runDirectory"] == done
+    assert "mergeRepaired" not in parent.result
+    assert _read(os.path.join(done, "report.json")) == report_before
+    assert _visible_merged_dirs(root, "shardadopt") == [os.path.basename(done)]
+    assert any("adopting" in line for line in parent.all_logs())
+    # A run this parent did not produce is never mistaken for its own.
+    assert sharding.find_merged_runs_for_job("shardadopt", root, "someone-else") == []

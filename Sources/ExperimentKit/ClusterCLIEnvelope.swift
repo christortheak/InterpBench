@@ -82,6 +82,10 @@ public struct ClusterCLIEnvelope: Encodable, Sendable, Equatable {
         /// Run directories imported (or, in a dry run, that would be).
         public var imported: [String]
         public var alreadyComplete: [String]
+        /// Run directories whose remote inventory carries records but no
+        /// `report.json`: the run, or its shard merge, has not finished on the
+        /// cluster. Bytes came home; nothing was certified complete.
+        public var incompleteRuns: [String]
         /// Skipped by the policy: shard partials, library subtrees, and
         /// directories outside `--since`.
         public var skippedByPolicy: [String]

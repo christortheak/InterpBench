@@ -39,6 +39,13 @@ public enum WorkspaceRunImport {
         case imported(files: Int, bytes: Int64)
         /// Already present and verified complete — nothing transferred.
         case alreadyComplete(files: Int)
+        /// The run has not FINISHED on the cluster: its remote inventory
+        /// carries the record stream but no `report.json` — a shard merge the
+        /// controller died under (2026-09-05), or a run still executing. Its
+        /// bytes are here (`transferred` of them landed in this pass), but the
+        /// directory is never certified complete: no summary calls it imported
+        /// or already complete, and the report arriving later is a gap.
+        case incompleteRun(files: Int, transferred: Int)
         /// A shard partial: never imported. Its family's purge eligibility is
         /// decided by the evidence gate, in the purge report.
         case skippedShardPartial(shardIndex: Int?, shardCount: Int?)
@@ -175,6 +182,29 @@ public enum WorkspaceRunImport {
 
         public var failures: [DirectoryReport] {
             directories.filter(\.outcome.isFailure)
+        }
+
+        /// Runs whose remote inventory has records but no `report.json` —
+        /// never certified complete, and never counted as imported.
+        public var incompleteRuns: [DirectoryReport] {
+            directories.filter {
+                if case .incompleteRun = $0.outcome { return true }
+                return false
+            }
+        }
+
+        public var hasIncompleteRuns: Bool { !incompleteRuns.isEmpty }
+
+        /// Whether this pass moved any bytes at all: a complete import, or a
+        /// gap fill into a run that is not yet complete.
+        public var transferredAnything: Bool {
+            if !imported.isEmpty { return true }
+            return incompleteRuns.contains {
+                if case .incompleteRun(_, let transferred) = $0.outcome {
+                    return transferred > 0
+                }
+                return false
+            }
         }
 
         /// Whether any family was surfaced loudly (orphan, unstamped merge,
@@ -490,12 +520,22 @@ public enum WorkspaceRunImport {
             !WorkspaceImportPolicy.isExcluded(relativePath: $0.relativePath, rules: rules)
         }
         let bytes = kept.reduce(Int64(0)) { $0 + $1.size }
+        // The engines' completion contract, read off the REMOTE inventory:
+        // records with no report.json beside them is a run (or a shard merge)
+        // that has not finished. Its bytes come home like any other run's, but
+        // no path below may call it imported or already complete.
+        let incomplete = WorkspaceImportPolicy.isIncomplete(
+            kind: classification.kind, remote: remote, exclusions: rules)
 
         guard engine.localExists(name) else {
             guard !options.dryRun else {
-                return .imported(files: kept.count, bytes: bytes)
+                return incomplete
+                    ? .incompleteRun(files: kept.count, transferred: kept.count)
+                    : .imported(files: kept.count, bytes: bytes)
             }
-            emit("importing \(name) — \(kept.count) files, \(formatted(bytes: bytes))")
+            emit(
+                "importing \(name) — \(kept.count) files, \(formatted(bytes: bytes))"
+                    + (incomplete ? " (INCOMPLETE: no report.json on the cluster)" : ""))
             do {
                 try await engine.transfer(name, rules)
             } catch {
@@ -506,7 +546,9 @@ public enum WorkspaceRunImport {
             guard problems.isEmpty else {
                 return .verificationFailed(findings: problems.map(describe))
             }
-            return .imported(files: kept.count, bytes: bytes)
+            return incomplete
+                ? .incompleteRun(files: kept.count, transferred: kept.count)
+                : .imported(files: kept.count, bytes: bytes)
         }
 
         // Already here. Verify BEFORE anything transfers: tightening 4 makes a
@@ -538,11 +580,18 @@ public enum WorkspaceRunImport {
             return .refusedEmptyRemoteInventory(localFiles: local.count)
         }
         guard !gaps.isEmpty else {
-            return .alreadyComplete(files: kept.count)
+            // "Already complete" is a certification. A run the cluster itself
+            // has not finished cannot earn it, however faithfully its bytes
+            // are mirrored here.
+            return incomplete
+                ? .incompleteRun(files: kept.count, transferred: 0)
+                : .alreadyComplete(files: kept.count)
         }
         guard !options.dryRun else {
-            return .imported(
-                files: gaps.count, bytes: gaps.reduce(0) { $0 + $1.size })
+            return incomplete
+                ? .incompleteRun(files: kept.count, transferred: gaps.count)
+                : .imported(
+                    files: gaps.count, bytes: gaps.reduce(0) { $0 + $1.size })
         }
         emit(
             "\(name) is partially present — filling \(gaps.count) gap"
@@ -557,7 +606,9 @@ public enum WorkspaceRunImport {
         guard remaining.isEmpty else {
             return .verificationFailed(findings: remaining.map(describe))
         }
-        return .imported(files: gaps.count, bytes: gaps.reduce(0) { $0 + $1.size })
+        return incomplete
+            ? .incompleteRun(files: kept.count, transferred: gaps.count)
+            : .imported(files: gaps.count, bytes: gaps.reduce(0) { $0 + $1.size })
     }
 
     /// The findings that indict a TRANSFER, from everything verification saw.
@@ -668,6 +719,13 @@ public enum WorkspaceRunImport {
                 lines.append(
                     "\(directory.name)  [\(label)]  already complete "
                         + "(\(files) file\(files == 1 ? "" : "s") verified)")
+            case .incompleteRun(let files, let transferred):
+                lines.append(
+                    "\(directory.name)  [\(label)]  INCOMPLETE — no report.json on "
+                        + "the cluster (\(files) file\(files == 1 ? "" : "s") there, "
+                        + "\(transferred) \(report.dryRun ? "would transfer" : "transferred")"
+                        + "); the run or its shard merge has not finished — NOT "
+                        + "certified complete")
             case .skippedShardPartial(let index, let count):
                 let which = index.map { "\($0 + 1)" } ?? "?"
                 let of = count.map { "/\($0)" } ?? ""
@@ -701,6 +759,16 @@ public enum WorkspaceRunImport {
                 lines.append(
                     "    left on the cluster by policy: \(n) path\(n == 1 ? "" : "s")")
             }
+        }
+
+        if report.hasIncompleteRuns {
+            lines.append("")
+            lines.append(
+                "INCOMPLETE RUNS (records present, no report.json — the run or its "
+                    + "shard merge has not finished on the cluster; nothing here is "
+                    + "certified complete, and the report arriving later is a gap "
+                    + "the next import fills):")
+            for directory in report.incompleteRuns { lines.append("  \(directory.name)") }
         }
 
         if !report.unknowns.isEmpty {
