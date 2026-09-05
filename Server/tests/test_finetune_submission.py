@@ -196,6 +196,39 @@ def test_submit_records_an_external_job_with_the_stamps_resubmit_needs(
     assert "kill -USR1" in script
 
 
+def test_submit_stamps_the_requested_adapter_scale_on_config_and_plan(
+        workspace, fake_slurm, jobs):
+    """A direct ``adapterScale`` (the Swift/MLX ``scale`` convention) is
+    resolved into PEFT's ``lora_alpha`` by the server, and the job directory
+    records both: the number that trains and the number that was asked for."""
+    body, plan = _confirmed(_body(hyperparameters={
+        "rank": 8, "adapterScale": 10.0, "batchSize": 2, "epochs": 1,
+        "maxSequenceTokens": 512}))
+    out = ft.submit_finetune(body, jobs=jobs, resolver=_resolver())
+    submission = out["submissionDirectory"]
+
+    stored = json.load(open(os.path.join(submission, "finetune-config.json"),
+                            encoding="utf-8"))
+    assert stored["rank"] == 8
+    assert stored["alpha"] == 80.0                       # 10.0 × 8
+    assert stored["requested_adapter_scale"] == 10.0
+    # The stored config round-trips through the execute side's loader (the
+    # consistency check in LoRAConfig accepts a stamp that agrees).
+    config, _run = ft.load_job_config(submission)
+    assert config.alpha == 80.0 and config.requested_adapter_scale == 10.0
+
+    written = json.load(open(os.path.join(submission, "plan.json"),
+                             encoding="utf-8"))
+    assert written["plan"]["adapterScale"] == {
+        "rank": 8, "alpha": 80.0,
+        "adapterScaleConvention": "peft:lora_alpha/r",
+        "effectiveAdapterScale": 10.0,
+        "requestedAdapterScale": 10.0,
+        "requestedAdapterScaleConvention": "direct",
+    }
+    assert written["planHash"] == plan["planHash"] == out["planHash"]
+
+
 def test_submit_refuses_a_stale_plan_hash(workspace, fake_slurm, jobs):
     body, _plan = _confirmed(_body())
     drifted = {**body, "hyperparameters": {**body["hyperparameters"],
@@ -306,6 +339,89 @@ def test_dry_run_prepares_without_sbatch(workspace, jobs):
                              resolver=_resolver())
     assert out["slurmJobID"] is None
     assert jobs.get(out["jobId"]).status == "prepared"
+
+
+# --- the strength knob: two conventions, one meaning --------------------------
+
+
+@pytest.mark.parametrize("alpha, adapter_scale, rank, expected", [
+    (16.0, None, 8, (16.0, None)),      # alpha declared: passes through
+    (None, 10.0, 8, (80.0, 10.0)),      # direct: resolved to lora_alpha
+    (None, 2.5, 4, (10.0, 2.5)),
+    (None, None, 8, (None, None)),      # neither: the dataclass default
+])
+def test_resolve_adapter_scale_turns_one_declared_knob_into_alpha(
+        alpha, adapter_scale, rank, expected):
+    assert ft.resolve_adapter_scale(alpha=alpha, adapter_scale=adapter_scale,
+                                    rank=rank) == expected
+
+
+def test_resolve_adapter_scale_refuses_both_conventions_at_once():
+    with pytest.raises(ft.FineTuneRequestError) as err:
+        ft.resolve_adapter_scale(alpha=16.0, adapter_scale=2.0, rank=8)
+    message = str(err.value)
+    assert "alpha" in message and "adapterScale" in message
+    assert "declare exactly one" in message
+
+
+@pytest.mark.parametrize("value", [0, -3.0, float("nan"), "ten"])
+def test_resolve_adapter_scale_refuses_a_value_that_cannot_be_a_multiplier(
+        value):
+    with pytest.raises(ft.FineTuneRequestError) as err:
+        ft.resolve_adapter_scale(alpha=None, adapter_scale=value, rank=8)
+    assert "adapterScale" in str(err.value)
+
+
+def test_adapter_sidecar_stamps_what_was_requested_beside_what_it_became():
+    """Pure: the sidecar dict, no training. With ``effectiveAdapterScale``
+    beside them, the stamps put the translation on the artifact's face."""
+    def sidecar(**settings):
+        return lora_train.adapter_sidecar_dict(
+            lora_train.LoRAConfig(base_model_id="org/m", **settings),
+            name="a", provenance=[], train_chunk_count=0, final_loss=None,
+            training_dtype_name="bfloat16")
+
+    spoke_alpha = sidecar(rank=8, alpha=16.0)
+    assert spoke_alpha["alpha"] == 16.0
+    assert spoke_alpha["adapterScaleConvention"] == "peft:lora_alpha/r"
+    assert spoke_alpha["effectiveAdapterScale"] == 2.0
+    assert spoke_alpha["requestedAdapterScale"] is None
+    assert spoke_alpha["requestedAdapterScaleConvention"] is None
+
+    spoke_direct = sidecar(rank=2, alpha=4.0, requested_adapter_scale=2.0)
+    assert spoke_direct["alpha"] == 4.0
+    assert spoke_direct["requestedAdapterScale"] == 2.0
+    assert spoke_direct["requestedAdapterScaleConvention"] == "direct"
+    # The request was honored: what it asked for is what PEFT will apply.
+    assert spoke_direct["effectiveAdapterScale"] == \
+        spoke_direct["requestedAdapterScale"]
+
+
+def test_a_stamp_that_disagrees_with_alpha_is_refused_wherever_a_config_is_built(
+        tmp_path):
+    """The stamp is provenance for ``alpha``; a config (or a hand-edited job
+    file) whose stamp cannot have produced its ``alpha`` is refused by name,
+    not carried into a sidecar that would then lie."""
+    with pytest.raises(lora_train.LoRATrainError) as err:
+        lora_train.LoRAConfig(base_model_id="org/m", rank=8, alpha=16.0,
+                              requested_adapter_scale=10.0)
+    assert "requested_adapter_scale 10.0" in str(err.value)
+    assert "alpha is 16.0" in str(err.value)
+
+    job = tmp_path / "job"
+    job.mkdir()
+    (job / "finetune-config.json").write_text(json.dumps({
+        "base_model_id": "org/m", "rank": 8, "alpha": 16.0,
+        "requested_adapter_scale": 10.0}), encoding="utf-8")
+    with pytest.raises(ft.FineTuneRequestError) as err:
+        ft.load_job_config(str(job))
+    assert "requested_adapter_scale" in str(err.value)
+
+    # An older job config carries no stamp at all and still loads.
+    (job / "finetune-config.json").write_text(json.dumps({
+        "base_model_id": "org/m", "rank": 8, "alpha": 16.0}), encoding="utf-8")
+    config, _run = ft.load_job_config(str(job))
+    assert config.requested_adapter_scale is None
 
 
 # --- preflight ---------------------------------------------------------------
@@ -662,6 +778,31 @@ def test_execute_checkpoints_with_exit_85_then_resumes_to_completion(
     assert (job / "run" / "adapter.json").is_file()
     sidecar = json.loads((job / "run" / "adapter.json").read_text(encoding="utf-8"))
     assert len(sidecar["resumeLineage"]) == 1
+
+
+def test_execute_carries_the_requested_scale_into_the_sidecar(
+        tmp_path, tiny_model_path):
+    """End to end on the execute side: a job whose config was resolved from a
+    direct ``adapterScale`` trains under PEFT's ``alpha`` and writes a sidecar
+    on which the request and the resolved multiplier agree."""
+    from steerlab_server import cli
+
+    # rank 2 (the fixture's) with alpha 4.0 = a direct scale of 2.0.
+    job = _job_directory(tmp_path, tiny_model_path, alpha=4.0,
+                         requested_adapter_scale=2.0)
+    assert cli.main(["finetune", "execute", str(job)]) == 0
+    sidecar = json.loads((job / "run" / "adapter.json").read_text(
+        encoding="utf-8"))
+    assert sidecar["rank"] == 2 and sidecar["alpha"] == 4.0
+    assert sidecar["adapterScaleConvention"] == "peft:lora_alpha/r"
+    assert sidecar["effectiveAdapterScale"] == 2.0
+    assert sidecar["requestedAdapterScale"] == 2.0
+    assert sidecar["requestedAdapterScaleConvention"] == "direct"
+    # PEFT's own adapter_config.json carries the numerator it trained with.
+    peft_config = json.loads(
+        (job / "run" / "adapter" / "adapter_config.json").read_text(
+            encoding="utf-8"))
+    assert peft_config["lora_alpha"] == 4.0 and peft_config["r"] == 2
 
 
 def test_re_executing_a_complete_job_is_idempotent(tmp_path, tiny_model_path):

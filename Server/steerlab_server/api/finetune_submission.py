@@ -62,10 +62,14 @@ _DATASET_FILE_KEYS = {"role", "path", "sha256", "content"}
 _CONTROL_ARM_KEYS = {"kind", "declaredAgainst"}
 
 #: Wire hyperparameter name → ``LoRAConfig`` field. The key SET is the
-#: contract's (exactly 20); an unknown key is a refusal, never a default.
+#: contract's (the original 20 plus ``adapterScale``); an unknown key is a
+#: refusal, never a default. ``alpha`` and ``adapterScale`` are two
+#: conventions for ONE knob — see :func:`resolve_adapter_scale`, which turns
+#: whichever was declared into the trainer's ``alpha`` and refuses both.
 _HYPERPARAMETERS = {
     "rank": ("rank", int),
     "alpha": ("alpha", float),
+    "adapterScale": ("requested_adapter_scale", float),
     "dropout": ("dropout", float),
     "learningRate": ("learning_rate", float),
     "epochs": ("epochs", int),
@@ -163,6 +167,59 @@ def _coerce(value: object, kind: type, *, key: str):
     return float(value)
 
 
+def resolve_adapter_scale(*, alpha: object, adapter_scale: object,
+                          rank: int) -> tuple[float | None, float | None]:
+    """The LoRA strength knob has two conventions, and a request may use ONE.
+
+    ``alpha`` is PEFT's ``lora_alpha`` — a numerator the trainer divides by
+    ``rank`` (:data:`lora_train.ADAPTER_SCALE_CONVENTION`). ``adapterScale``
+    is the multiplier itself — the Swift/MLX ``scale`` convention, no rank in
+    it. Returns ``(alpha, requested_adapter_scale)``: the ``alpha`` the trainer
+    will use (``None`` = neither was declared, so the dataclass default
+    applies) and the direct value it was resolved from (``None`` = the request
+    spoke ``alpha``). Both present is refused, not reconciled: two spellings
+    of one knob that could disagree are exactly the ambiguity the second
+    spelling exists to remove.
+    """
+    if alpha is not None and adapter_scale is not None:
+        raise FineTuneRequestError(
+            "hyperparameters declares both alpha and adapterScale — they are "
+            "two conventions for one knob (alpha is PEFT's lora_alpha, a "
+            "numerator the trainer divides by rank; adapterScale is the "
+            "multiplier itself, the Swift/MLX scale); declare exactly one")
+    if adapter_scale is None:
+        return alpha, None
+    try:
+        value = float(adapter_scale)
+    except (TypeError, ValueError):
+        raise FineTuneRequestError(
+            "hyperparameters.adapterScale must be a number") from None
+    if not value > 0:  # also catches NaN
+        raise FineTuneRequestError(
+            f"hyperparameters.adapterScale must be positive (got "
+            f"{adapter_scale!r}) — it is the multiplier applied to the "
+            "adapter update, and zero trains nothing")
+    return value * float(rank), value
+
+
+def adapter_scale_block(config: lora_train.LoRAConfig) -> dict:
+    """What the LoRA strength knob resolves to, on the plan's face — so the
+    researcher confirms a MULTIPLIER, not a numerator whose meaning depends on
+    knowing PEFT's convention. Same spellings as the adapter sidecar's stamps,
+    so plan and artifact read alike."""
+    requested = config.requested_adapter_scale
+    return {
+        "rank": config.rank,
+        "alpha": config.alpha,
+        "adapterScaleConvention": lora_train.ADAPTER_SCALE_CONVENTION,
+        "effectiveAdapterScale": lora_train.effective_adapter_scale(config),
+        "requestedAdapterScale": requested,
+        "requestedAdapterScaleConvention": (
+            lora_train.DIRECT_ADAPTER_SCALE_CONVENTION
+            if requested is not None else None),
+    }
+
+
 def _relative_dataset_path(path: object) -> str:
     """Dataset files are WORKSPACE-RELATIVE by contract (the Mac workspace is
     the source of truth, and a job directory has to be movable). An absolute
@@ -248,6 +305,17 @@ def parse_request(body: dict, *, allow_submit_keys: bool = False) -> ParsedReque
                 continue
             settings[field] = _coerce(hyper[wire_key], kind,
                                       key=f"hyperparameters.{wire_key}")
+    # One knob, two conventions: whichever the request declared becomes the
+    # trainer's ``alpha`` here, and the direct value (if that is what was
+    # declared) rides along as provenance the sidecar and plan stamp.
+    alpha, requested_adapter_scale = resolve_adapter_scale(
+        alpha=settings.get("alpha"),
+        adapter_scale=settings.pop("requested_adapter_scale", None),
+        rank=int(settings.get("rank", lora_train.LoRAConfig.rank)))
+    if alpha is not None:
+        settings["alpha"] = alpha
+    if requested_adapter_scale is not None:
+        settings["requested_adapter_scale"] = requested_adapter_scale
 
     dataset = _require_dict(body.get("dataset"), key="dataset")
     _refuse_unknown(dataset, _DATASET_KEYS, where="dataset")
@@ -452,6 +520,7 @@ def build_plan(parsed: ParsedRequest, *, dataset_root: str,
         "evidenceGrade": config.evidence_grade,
         "selectionMetric": config.selection_metric,
         "controlArm": config.control_arm,
+        "adapterScale": adapter_scale_block(config),
         "schedule": {
             "totalSteps": schedule.total_steps,
             "epochs": schedule.epochs,
@@ -938,7 +1007,8 @@ def is_finished(run_directory: str, config: lora_train.LoRAConfig) -> bool:
 
 __all__ = [
     "FineTuneRequestError", "JOB_KIND", "ParsedRequest", "PreflightRejection",
-    "build_plan", "canonical_plan_hash", "is_finished", "load_job_config",
-    "lora_preflight", "parse_request", "plan_response", "resolve_plan_dtype",
-    "resolve_revision", "stage_dataset", "submit_finetune",
+    "adapter_scale_block", "build_plan", "canonical_plan_hash", "is_finished",
+    "load_job_config", "lora_preflight", "parse_request", "plan_response",
+    "resolve_adapter_scale", "resolve_plan_dtype", "resolve_revision",
+    "stage_dataset", "submit_finetune",
 ]

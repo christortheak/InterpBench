@@ -96,6 +96,15 @@ from ..steering.vector_store import SUBSTRATE
 # failing weirdly. Absent stamp = legacy/unknown — attempted as today.
 ADAPTER_FORMAT = "hf-peft-lora"
 
+#: How this engine's ``alpha`` becomes the multiplier actually applied to the
+#: LoRA update. PEFT scales the adapter delta by ``lora_alpha / r``, so ``alpha``
+#: is a NUMERATOR, meaningless without the rank beside it. The Swift/MLX path's
+#: adapter ``scale`` is a DIRECT multiplier with no rank in it, so two runs whose
+#: numeric fields agree are not the same treatment. Naming the convention (and
+#: stamping the resolved multiplier) is what stops a reader equating them
+#: (external review, REM-06).
+ADAPTER_SCALE_CONVENTION = "peft:lora_alpha/r"
+
 #: Sidecar schema. v1 keys are all still written; v2 adds the provenance the
 #: plan's §2.8 requires (dataset identity, revisions, schedule, selection,
 #: package/GPU/Slurm identity, resume lineage, adapter byte hashes).
@@ -259,12 +268,32 @@ class LoRAConfig:
     selection_metric: str | None = None
     evidence_grade: bool = False
     control_arm: dict | None = None
+    #: PROVENANCE, not a setting: the direct multiplier a request declared as
+    #: ``adapterScale`` (the Swift/MLX ``scale`` convention — no rank in it),
+    #: which the wire layer resolved into ``alpha = adapter_scale × rank``
+    #: before this config was built. ``None`` = the request declared
+    #: ``alpha`` itself. Deliberately outside :meth:`fingerprint`: it changes
+    #: nothing about what trains, only records how ``alpha`` was arrived at,
+    #: so a resumed run's fingerprint is unaffected.
+    requested_adapter_scale: float | None = None
 
     def __post_init__(self) -> None:
         if self.max_sequence_tokens is None:
             self.max_sequence_tokens = self.max_chunk_tokens
         else:
             self.max_chunk_tokens = self.max_sequence_tokens
+        # A stamp that disagrees with the number it explains is a forged (or
+        # hand-edited) provenance record: refuse it wherever a config is built,
+        # including from a job directory's ``finetune-config.json``.
+        if self.requested_adapter_scale is not None:
+            resolved = float(self.requested_adapter_scale) * float(self.rank)
+            if not math.isclose(float(self.alpha), resolved,
+                                rel_tol=1e-9, abs_tol=1e-12):
+                raise LoRATrainError(
+                    f"requested_adapter_scale {self.requested_adapter_scale} "
+                    f"at rank {self.rank} resolves to alpha {resolved}, but "
+                    f"alpha is {self.alpha} — the provenance stamp and the "
+                    "number it explains disagree; declare exactly one of them")
 
     def dataset_spec(self) -> LoRADatasetSpec:
         """The frozen :mod:`lora_data` description of this run's dataset.
@@ -474,6 +503,21 @@ def epoch_order(count: int, seed: int, epoch: int) -> list[int]:
 # --- sidecar -----------------------------------------------------------------
 
 
+#: The convention a request's ``adapterScale`` speaks: the multiplier itself,
+#: no rank in it — the Swift/MLX path's ``scale``. Stamped as
+#: ``requestedAdapterScaleConvention`` beside ``requestedAdapterScale`` so a
+#: sidecar says both what was asked for and what it became.
+DIRECT_ADAPTER_SCALE_CONVENTION = "direct"
+
+
+def effective_adapter_scale(config: LoRAConfig) -> float | None:
+    """The multiplier PEFT actually applies under :data:`ADAPTER_SCALE_CONVENTION`
+    — ``alpha / rank``. ``rank`` is a positive integer in every configuration
+    PEFT will build; ``None`` rather than a raised ZeroDivisionError is the
+    honest answer if it ever is not."""
+    return float(config.alpha) / float(config.rank) if config.rank else None
+
+
 def adapter_sidecar_dict(config: LoRAConfig, *, name: str, provenance: list[dict],
                          train_chunk_count: int, final_loss: float | None,
                          training_dtype_name: str,
@@ -500,6 +544,17 @@ def adapter_sidecar_dict(config: LoRAConfig, *, name: str, provenance: list[dict
         "adapterFormat": ADAPTER_FORMAT,
         "substrate": SUBSTRATE,
         "trainingDtype": training_dtype_name,
+        # ``alpha`` above is PEFT's ``lora_alpha`` — a numerator, not the
+        # multiplier. Stamped beside it: the convention that turns it into one,
+        # and the resolved multiplier itself. Without these a reader compares
+        # this adapter's ``alpha`` to the Swift/MLX path's ``scale``, which is a
+        # DIRECT multiplier carrying no rank — equal numbers there are different
+        # treatments (external review, REM-06). ``rank`` is a positive integer
+        # in every configuration PEFT will build; ``None`` rather than a raised
+        # ZeroDivisionError is the honest answer if it ever is not.
+        "adapterScaleConvention": ADAPTER_SCALE_CONVENTION,
+        "effectiveAdapterScale": (float(config.alpha) / float(config.rank)
+                                  if config.rank else None),
         # v2 stamps that every mode carries, so "is this evidence?" is
         # answerable from the artifact alone.
         "schemaVersion": SIDECAR_SCHEMA_VERSION,
@@ -508,6 +563,16 @@ def adapter_sidecar_dict(config: LoRAConfig, *, name: str, provenance: list[dict
         "executionPath": execution_path(),
         "dropout": config.dropout,
         "device": config.device,
+        # The request's own spelling of the knob when it was not ``alpha``: a
+        # direct multiplier (the Swift/MLX ``scale`` convention) that the wire
+        # layer resolved into the ``alpha`` above. ``None`` = the request
+        # declared ``alpha`` itself. With ``effectiveAdapterScale`` beside it,
+        # the sidecar shows the translation on its face: the two agree when
+        # the request was honored.
+        "requestedAdapterScale": config.requested_adapter_scale,
+        "requestedAdapterScaleConvention": (
+            DIRECT_ADAPTER_SCALE_CONVENTION
+            if config.requested_adapter_scale is not None else None),
     }
     if extra:
         sidecar.update(extra)

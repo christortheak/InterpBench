@@ -545,12 +545,14 @@ SIDECAR_V1_KEYS = {
     "finalLoss", "documents", "adapterFormat", "substrate", "trainingDtype",
 }
 SIDECAR_V2_KEYS = {
+    "requestedAdapterScale", "requestedAdapterScaleConvention",
     "schemaVersion", "evidenceGrade", "trainingMode", "executionPath",
     "dataset", "template", "revisionRequested", "revisionResolved",
     "tokenizerSource", "tokenizerRevision", "modelClass", "modelConfigHash",
     "buildIdentity", "optimizerSettings", "schedule", "selectedCheckpoint",
     "historyFile", "packageVersions", "gpu", "slurm", "timestamps",
     "resumeLineage", "adapterBytesHash", "adapterConfigHash", "controlArm",
+    "adapterScaleConvention", "effectiveAdapterScale",
 }
 
 

@@ -53,6 +53,9 @@ public struct ClusterCapabilities: Codable, Sendable {
         public var walltimePreflight: Bool?
         public var planEndpoint: Bool?
         public var slurmSubmission: Bool?
+        /// `hyperparameters.adapterScale` is accepted and resolved server-side
+        /// (2026-09-05). Absent on older servers, which refuse the key by name.
+        public var directAdapterScale: Bool?
 
         public init(
             schemaVersion: Int? = nil,
@@ -63,7 +66,8 @@ public struct ClusterCapabilities: Codable, Sendable {
             revisionPinRequired: Bool? = nil,
             walltimePreflight: Bool? = nil,
             planEndpoint: Bool? = nil,
-            slurmSubmission: Bool? = nil
+            slurmSubmission: Bool? = nil,
+            directAdapterScale: Bool? = nil
         ) {
             self.schemaVersion = schemaVersion
             self.explicitSplits = explicitSplits
@@ -74,6 +78,7 @@ public struct ClusterCapabilities: Codable, Sendable {
             self.walltimePreflight = walltimePreflight
             self.planEndpoint = planEndpoint
             self.slurmSubmission = slurmSubmission
+            self.directAdapterScale = directAdapterScale
         }
     }
 
@@ -245,6 +250,14 @@ public struct ClusterCapabilities: Codable, Sendable {
     /// `POST /api/finetune/submit` will actually reach a Slurm executor.
     public var supportsFineTuneSlurmSubmission: Bool {
         fineTuneFlag("slurmSubmission", direct: remoteFineTune?.slurmSubmission)
+    }
+    /// `hyperparameters.adapterScale` is accepted: a DIRECT multiplier (this
+    /// engine's MLX `scale` convention) that the server resolves into PEFT's
+    /// `lora_alpha = adapterScale × rank` itself and stamps on the plan and
+    /// the adapter sidecar. Absent on older servers, which refuse the key by
+    /// name — `RemoteFineTuneRequest.AdapterScale.forServer` is the gate.
+    public var supportsFineTuneDirectAdapterScale: Bool {
+        fineTuneFlag("directAdapterScale", direct: remoteFineTune?.directAdapterScale)
     }
 
     /// The structured (unflattened, explicit-split) upload route exists at
@@ -1744,10 +1757,70 @@ public struct RemoteFineTuneRequest: Encodable, Sendable {
         }
     }
 
+    /// The LoRA strength knob, in whichever convention the caller owns —
+    /// never both. `peftAlpha` is the wire's `alpha`: PEFT's `lora_alpha`, a
+    /// NUMERATOR the server divides by `rank`. `direct` is the wire's
+    /// `adapterScale`: the multiplier itself, this engine's MLX `scale`
+    /// (`FineTuneTrainer` applies it with no rank in it). They are not the
+    /// same quantity — at rank 8, `alpha 10` is a multiplier of 1.25 and
+    /// `direct 10` is 10 — which is why copying the panel's `scale` into
+    /// `alpha` was a factor-of-rank bug. An enum, so a request naming both
+    /// is unrepresentable here (the server refuses one anyway).
+    public enum AdapterScale: Sendable, Equatable {
+        /// Wire `alpha`; effective multiplier = alpha / rank.
+        case peftAlpha(Double)
+        /// Wire `adapterScale`; the server resolves `lora_alpha = adapterScale
+        /// × rank` and stamps the translation (`requestedAdapterScale` on the
+        /// plan and the adapter sidecar).
+        case direct(Double)
+
+        /// The multiplier PEFT will actually apply, under either spelling.
+        public func effectiveMultiplier(rank: Int) -> Double {
+            switch self {
+            case .peftAlpha(let alpha): alpha / Double(rank)
+            case .direct(let scale): scale
+            }
+        }
+
+        /// How this engine's `scale` travels to a server. A server that
+        /// announces `remoteFineTune.directAdapterScale` gets the number as
+        /// it is, under its own name, and does the translation itself. An
+        /// older server would refuse the key by name, so the translation
+        /// happens HERE instead — `lora_alpha = scale × rank`, the one
+        /// convention such a server implements — and the returned `note` is
+        /// the only record of it: that server's sidecar will show `alpha`
+        /// with no requested-scale stamp. Either way the effective
+        /// multiplier is `scale` on both engines.
+        public static func forServer(
+            scale: Double, rank: Int, serverResolvesDirectScale: Bool
+        ) -> (wire: AdapterScale, note: String) {
+            let alpha = scale * Double(rank)
+            if serverResolvesDirectScale {
+                return (
+                    .direct(scale),
+                    "adapter scale \(scale) sent as a direct multiplier "
+                        + "(hyperparameters.adapterScale); the server resolves "
+                        + "lora_alpha = \(scale) × rank \(rank) = \(alpha) and "
+                        + "stamps requestedAdapterScale on the plan and the "
+                        + "adapter sidecar")
+            }
+            return (
+                .peftAlpha(alpha),
+                "server predates remoteFineTune.directAdapterScale: sent "
+                    + "lora_alpha = \(alpha) (= scale \(scale) × rank \(rank)) so "
+                    + "the effective multiplier is \(scale) on both engines; the "
+                    + "server's sidecar will show alpha \(alpha) with no "
+                    + "requested-scale stamp — this line is the record of the "
+                    + "translation")
+        }
+    }
+
     /// Contract defaults; the panel overrides what its controls own.
     public struct Hyperparameters: Encodable, Sendable {
         public var rank: Int = 8
-        public var alpha: Double = 16
+        /// Wire `alpha` OR `adapterScale` — exactly one non-null, the other
+        /// an explicit null like every unset optional in this body.
+        public var adapterScale: AdapterScale = .peftAlpha(16)
         public var dropout: Double = 0.05
         public var learningRate: Double = 1e-4
         public var epochs: Int = 1
@@ -1770,7 +1843,8 @@ public struct RemoteFineTuneRequest: Encodable, Sendable {
         public init() {}
 
         enum CodingKeys: String, CodingKey {
-            case rank, alpha, dropout, learningRate, epochs, maxSteps, batchSize
+            case rank, alpha, adapterScale, dropout, learningRate, epochs
+            case maxSteps, batchSize
             case gradientAccumulation, warmupSteps, lrSchedule, maxGradNorm
             case weightDecay, seed, maxSequenceTokens, longDocumentPolicy
             case chunkOverlapTokens, evalIntervalSteps, checkpointIntervalSteps
@@ -1780,7 +1854,14 @@ public struct RemoteFineTuneRequest: Encodable, Sendable {
         public func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(rank, forKey: .rank)
-            try container.encode(alpha, forKey: .alpha)
+            switch adapterScale {
+            case .peftAlpha(let alpha):
+                try container.encode(alpha, forKey: .alpha)
+                try container.encode(Double?.none, forKey: .adapterScale)
+            case .direct(let scale):
+                try container.encode(Double?.none, forKey: .alpha)
+                try container.encode(scale, forKey: .adapterScale)
+            }
             try container.encode(dropout, forKey: .dropout)
             try container.encode(learningRate, forKey: .learningRate)
             try container.encode(epochs, forKey: .epochs)
@@ -1935,6 +2016,19 @@ public struct RemoteFineTunePlan: Decodable, Sendable {
         }
     }
 
+    /// What the server resolves the strength knob to (the plan's
+    /// `adapterScale` block): PEFT's `alpha`, its convention, the effective
+    /// multiplier, and — when the request spoke `adapterScale` — the number
+    /// it asked for. Same spellings as the adapter sidecar's stamps.
+    public struct AdapterScale: Decodable, Sendable {
+        public var rank: Int?
+        public var alpha: Double?
+        public var adapterScaleConvention: String?
+        public var effectiveAdapterScale: Double?
+        public var requestedAdapterScale: Double?
+        public var requestedAdapterScaleConvention: String?
+    }
+
     public var resolvedRevision: String?
     public var trainingMode: String?
     public var evidenceGrade: Bool?
@@ -1943,12 +2037,13 @@ public struct RemoteFineTunePlan: Decodable, Sendable {
     public var schedule: Schedule?
     public var dataset: Dataset?
     public var controlArm: JSONValue?
+    public var adapterScale: AdapterScale?
     /// The plan verbatim, for display and for the record.
     public var raw: JSONValue
 
     enum CodingKeys: String, CodingKey {
         case resolvedRevision, trainingMode, evidenceGrade, selectionMetric
-        case dtype, schedule, dataset, controlArm
+        case dtype, schedule, dataset, controlArm, adapterScale
     }
 
     public init(from decoder: Decoder) throws {
@@ -1965,6 +2060,41 @@ public struct RemoteFineTunePlan: Decodable, Sendable {
         schedule = value(Schedule.self, .schedule)
         dataset = value(Dataset.self, .dataset)
         controlArm = value(JSONValue.self, .controlArm)
+        adapterScale = value(AdapterScale.self, .adapterScale)
+    }
+}
+
+/// Body of the v1 (inline-corpus) `POST /api/finetune/train`. The strength
+/// knob is written under ONE key — `alpha` or `adapterScale` — and the other
+/// is OMITTED rather than sent as null: a v1 server reads `alpha` with
+/// `float(body.get("alpha", 16.0))`, where an explicit null is a crash, not
+/// an absence.
+struct FineTuneLegacyTrainBody: Encodable {
+    var baseModelID: String
+    var text: String
+    var name: String?
+    var rank: Int
+    var adapterScale: RemoteFineTuneRequest.AdapterScale
+    var iterations: Int
+    var learningRate: Double
+
+    enum CodingKeys: String, CodingKey {
+        case baseModelID, text, name, rank, alpha, adapterScale, iterations
+        case learningRate
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(baseModelID, forKey: .baseModelID)
+        try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(name, forKey: .name)
+        try container.encode(rank, forKey: .rank)
+        switch adapterScale {
+        case .peftAlpha(let alpha): try container.encode(alpha, forKey: .alpha)
+        case .direct(let scale): try container.encode(scale, forKey: .adapterScale)
+        }
+        try container.encode(iterations, forKey: .iterations)
+        try container.encode(learningRate, forKey: .learningRate)
     }
 }
 
@@ -3575,25 +3705,17 @@ public struct ClusterClient: Sendable {
         text: String,
         name: String? = nil,
         rank: Int = 8,
-        alpha: Double = 16,
+        adapterScale: RemoteFineTuneRequest.AdapterScale = .peftAlpha(16),
         iterations: Int = 200,
         learningRate: Double = 1e-4
     ) async throws -> String {
-        struct Body: Encodable {
-            var baseModelID: String
-            var text: String
-            var name: String?
-            var rank: Int
-            var alpha: Double
-            var iterations: Int
-            var learningRate: Double
-        }
         struct Response: Decodable { var jobId: String }
         let response: Response = try await post(
             "/api/finetune/train",
-            body: Body(
+            body: FineTuneLegacyTrainBody(
                 baseModelID: baseModelID, text: text, name: name, rank: rank,
-                alpha: alpha, iterations: iterations, learningRate: learningRate))
+                adapterScale: adapterScale, iterations: iterations,
+                learningRate: learningRate))
         return response.jobId
     }
 
