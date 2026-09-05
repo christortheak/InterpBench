@@ -687,19 +687,42 @@ rotate? Is the trained disposition visible in prose where injection famously
 is not? This adds the persistent-vs-transient and learned-vs-injected axes to
 whatever contrast a study is already running.
 
-**Artifact discipline (mirrors vectors).** Documents → chunked, hashed
-dataset (versioned like stimulus sets); adapter = `.safetensors` + sidecar
-(base model id + revision, dataset hash, rank/learning-rate/iterations,
-final train/val loss, date); immutable run dirs; any vector extracted while
-an adapter is active records the adapter id in its sidecar; run configs pin
-adapter identity. The capability battery applies to fine-tuned models exactly
-as to steered ones.
+**Three recipes, not one (2026-09-05).** The server has two training paths
+and the app a third, and they are distinct experimental recipes rather than
+one method on three substrates: the Python *split-based* path (`trainingMode`
+with an explicit validation split, `evidenceGrade: true`, the
+`tokenMeanPerOptimizerStep` objective stamped in the sidecar) is the
+evidence-grade recipe; the Python *legacy inline* path (documents → chunked,
+hashed dataset, no evaluated validation portion) is exploratory and stays so;
+and the Swift/MLX path differs in optimizer, adapter-scale semantics,
+validation sampling and checkpointing. The supported-recipe matrix, cell by
+cell with code citations, is [TRAINING-RECIPES.md](TRAINING-RECIPES.md); it
+also states which cross-path comparisons are matched and which are only
+analogous. Two facts that page corrects in older wording here: the split-based
+path never concatenates or chunks an instruction row, and the sidecar's
+`finalLoss` is the *train* loss (the validation number lives in
+`selectedCheckpoint` and `training-history.json`).
 
-**Open design choices for study use:** continued pretraining on documents vs
-instruction-style masked completion; whether a study compares adapter-only,
-vector-only, and adapter-plus-vector variants; whether vectors are extracted
-from the base model or the adapted model; and how much held-out validation is
-needed before an adapter is evidence-grade.
+**Adapter scale is a convention, not a number.** PEFT applies
+`lora_alpha / r`; MLX's `scale` is a direct multiplier with no rank in it. The
+Python sidecar therefore stamps `adapterScaleConvention` and the resolved
+`effectiveAdapterScale` beside `alpha`, and a comparison across substrates
+must compare effective multipliers, never the raw fields. Adapter bytes do not
+transplant across substrates and the loaders refuse a foreign stamp.
+
+**Artifact discipline (mirrors vectors).** Adapter = `.safetensors` + sidecar
+(base model id + revision, dataset identity and hashes, rank / alpha /
+learning rate / iterations, objective, schedule, selection, build identity,
+date); immutable run dirs; any vector extracted while an adapter is active
+records the adapter id in its sidecar; run configs pin adapter identity. The
+capability battery applies to fine-tuned models exactly as to steered ones.
+
+**Settled and still-open choices for study use.** Settled in code: both
+document-continuation and instruction-style masked-completion modes exist, and
+an adapter is evidence-grade only with an explicit validation split and a
+declared checkpoint-selection metric. Still open per study: whether it
+compares adapter-only, vector-only, and adapter-plus-vector variants, and
+whether vectors are extracted from the base model or the adapted model.
 
 ## Portability stance
 
@@ -844,6 +867,30 @@ sidecar is a cross-engine artifact contract), and it compares
 pre-projection directions so the confound projection cannot blur the
 reading-position question. Server engine only for now; the Swift engine's
 extraction remains diagnostic-free.
+
+## Recipe, scope, and validation references (2026-09-05)
+
+The external review of 2026-09-05 separated four implementation defects (all
+fixed on main) from six limitations of interpretation, design, and validation
+that a correct implementation does not close by itself. Each of those now has
+a page of its own, written from the code with citations, and this file defers
+to them rather than restating them:
+
+| Question | Page | What it settles |
+|---|---|---|
+| What each extraction recipe actually computes, and where it departs from the paper it is modelled on | [EXTRACTION-RECIPES.md](EXTRACTION-RECIPES.md) | per-recipe contrast population, orientation, normalization, reading position, rendering, denominator; raw vs adjusted vectors; the `experiment extract-stability` resampling diagnostic |
+| Which split chose what in a RepE reader, and what its accuracies are evidence of | [REPE-IMPLEMENTATION-BRIEF.md](REPE-IMPLEMENTATION-BRIEF.md) §3–§5 | `train` / held-out / `test` roles, the stamped `evidenceRoles`, the cross-split leakage refusal |
+| Where in the token stream each intervention lands, in what units, against which control, and what a result may claim | [INTERVENTION-SCOPE.md](INTERVENTION-SCOPE.md) | per-path scope descriptors, the run's `intervention-scope.json` sidecar, ablation and dose-comparability claim limits |
+| What a J-space readout measures, and what it does not | [OPTVEC-JSPACE.md](OPTVEC-JSPACE.md) | arithmetic fidelity vs readout predictiveness vs behavioral evidence; the three-term energy partition; seeded null draws; the realized-dose precision floor |
+| Which fine-tuning recipes exist and which comparisons across them are matched | [TRAINING-RECIPES.md](TRAINING-RECIPES.md) | the split-based / legacy-inline / MLX matrix, effective adapter scale, reproducibility evidence and gaps |
+| What the fixes mean for artifacts that already exist | [IMPACT-LEDGER.md](IMPACT-LEDGER.md) | `ledger impact`: exposure by producing revision, promotion rescoring under the corrected dose rule, the researcher's dispositions |
+| What production-scale validation is declared and not yet run | [VALIDATION-MATRIX.md](VALIDATION-MATRIX.md) | pinned configuration slots, checks with pre-declared tolerances, the rows that have no runner yet |
+
+Two rulings from that review are recorded where they bite: the
+dose-monotonicity gate reads its direction off the data and is not a
+minimum-effect gate ([CONDUCTING-A-STUDY.md](CONDUCTING-A-STUDY.md) §5.5), and
+a reader's held-out accuracy is a model-selection statistic unless the dataset
+reserved `test` rows (the brief, §5).
 
 ## Where this implementation goes beyond its sources
 
