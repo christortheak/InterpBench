@@ -799,7 +799,7 @@ def _print_jlens_report(report: dict) -> None:
 
 
 def _jlens(args: list[str]) -> int:
-    """J-lens reading instruments — server-only, Gemma-only (CLAUDE.md).
+    """J-lens reading instruments — server-only; any model with a published lens.
 
     Two operations, deliberately distinct (plan §11.0.1): `acquire` puts the
     published bytes in the HF cache and needs egress; `import` converts them
@@ -814,9 +814,27 @@ def _jlens(args: list[str]) -> int:
 
     try:
         if verb == "supported":
+            # Curated rows always; `--published` also lists every lens the
+            # upstream repository carries (fetches ~40 small configs, needs
+            # egress) so a researcher can see whether THEIR model has one
+            # before acquiring gigabytes. An uncurated model's tier is
+            # "declare at import" — nothing upstream can say what this study
+            # treats as evidence.
             for model_id in importer.supported_models():
                 entry = importer.SUPPORTED[model_id]
-                print(f"{model_id}\t{entry['tier']}\t{entry['folder']}/{entry['tensor']}")
+                print(f"{model_id}\t{entry['tier']} (curated)\t"
+                      f"{entry['folder']}/{entry['tensor']}")
+            if "--published" in args:
+                published = importer.published_entries(offline=False)
+                for model_id in sorted(published):
+                    if importer.is_curated(model_id):
+                        continue
+                    entry = published[model_id]
+                    tensor = entry.get("tensor") or "(tensor named on acquire)"
+                    print(f"{model_id}\tdeclare at import (--tier)\t"
+                          f"{entry['folder']}/{tensor}\t"
+                          f"{entry.get('corpus') or '?'}\t"
+                          f"{entry.get('promptsFitted') or '?'} prompts")
             return 0
 
         if verb == "list":
@@ -846,9 +864,10 @@ def _jlens(args: list[str]) -> int:
             return 0
 
         if verb == "import" and len(args) >= 2:
-            record = importer.import_lens(args[1])
+            record = importer.import_lens(args[1], tier=_flag(args, "--tier"))
             print(json.dumps({
                 "ok": True, "lensID": record.lensID,
+                "tier": record.tier, "tierSource": record.tierSource,
                 "sourceLayers": [record.sourceLayers[0], record.sourceLayers[-1]],
                 "targetLayer": record.targetLayer, "dModel": record.dModel,
                 "converted": record.converted.path if record.converted else None,
@@ -1025,9 +1044,10 @@ def _jlens(args: list[str]) -> int:
         return 1
 
     sys.stderr.write(
-        "usage: steerlab-server jlens supported\n"
-        "       steerlab-server jlens acquire <model-id>   # bytes -> HF cache (needs egress)\n"
-        "       steerlab-server jlens import <model-id>    # convert -> workspace (offline)\n"
+        "usage: steerlab-server jlens supported [--published]   # curated rows; --published lists every upstream lens (egress)\n"
+        "       steerlab-server jlens acquire <model-id>   # bytes -> HF cache (needs egress; any model with a published lens)\n"
+        "       steerlab-server jlens import <model-id> [--tier evidence|testing]\n"
+        "                                                  # convert -> workspace (offline); --tier REQUIRED off the curated table\n"
         "       steerlab-server jlens list\n"
         "       steerlab-server jlens inspect <lens-id>\n"
         "       steerlab-server jlens support <lens-id> <runDir>/<vectorName> "

@@ -8,7 +8,7 @@ import SwiftUI
 /// vector is described in the model's own words. It applies to vectors already
 /// in the library and needs no generation run.
 ///
-/// Server-only and Gemma-only by rule (CLAUDE.md), like every other J-lens
+/// Server-only by rule, like every other J-lens
 /// surface: the atoms are PyTorch/HF-native and an MLX-extracted direction lives
 /// in a different space.
 ///

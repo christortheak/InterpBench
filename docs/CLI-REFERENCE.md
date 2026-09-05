@@ -73,7 +73,7 @@ they are not interchangeable:
 | Cluster ops (Slurm, jobs, bundles) | client only (`remote …`) | yes (server-side) |
 | Cluster *lifecycle* (auth, push, bootstrap, controller, tunnel, connect) | yes (`cluster …`, §3.9) | **no** — it is the Mac's job to reach the cluster, not the cluster's |
 | LoRA fine-tuning | **no** (adapters are a server-native `hf-peft-lora` artifact) | yes (`finetune …`, §5.5; evidence-grade training is a Slurm job) |
-| J-lens reading instruments | **no** (hard rule: server + Gemma only) | yes (`jlens …`) |
+| J-lens reading instruments | **no** (server-side by rule; the app renders lens artifacts) | yes (`jlens …`, any model with a published lens) |
 | Web server | `serve` (loopback only, no `--host`) | `serve` (host configurable) |
 
 Vectors do **not** transfer between engines: re-extract and re-validate on the
@@ -3866,12 +3866,12 @@ gap: casting a panel writes a workspace input and pins it into a manifest, and
 authoring is Mac-authority (WP0-AGENT-SURFACE-AUDIT §10.x). Cast on the Mac,
 then submit the frozen study.
 
-### 6.3 `jlens` — server-only, Gemma-only
+### 6.3 `jlens` — server-only
 
 ```
-steerlab-server jlens supported
-steerlab-server jlens acquire <model-id>          # bytes → HF cache (needs egress)
-steerlab-server jlens import  <model-id>          # convert → workspace (offline)
+steerlab-server jlens supported [--published]    # curated rows; --published lists every upstream lens (egress)
+steerlab-server jlens acquire <model-id>          # bytes → HF cache (needs egress; any model with a published lens)
+steerlab-server jlens import  <model-id> [--tier evidence|testing]   # convert → workspace (offline)
 steerlab-server jlens list
 steerlab-server jlens inspect <lens-id>
 steerlab-server jlens support <lens-id> <runDir>/<vectorName> [--layers 5,17,29] [--k 25] [--json]
@@ -3895,7 +3895,39 @@ steerlab-server jlens report <runDir> [--baseline NAME] [--band 20,26] [--bands 
 ```
 
 `acquire` and `import` are deliberately distinct: acquisition needs network
-egress, conversion is offline. `support` decomposes a vector into the
+egress, conversion is offline.
+
+**Any model with a published lens can be imported** (2026-09-05). The
+curated table (`importer.SUPPORTED`: the Gemma-3 27B, 12B and 4B instruction
+models) now fixes only the evidence TIER of the models this study has decided
+about. For every other model, `acquire` first fetches the published
+`config.yaml` files (~40, a few KB each) to learn which upstream folder names
+the model — folder names are not model ids and are never guessed — then
+fetches that folder alone; `import` reads the folder's own config and the one
+`*_jacobian_lens.pt` beside it, and **requires `--tier`**, because nothing
+upstream can say whether a study treats a model as evidence or as rehearsal.
+The declaration is stamped on the record (`tier`, `tierSource`: `curated` or
+`declared`); a curated row always wins, and `--tier` that contradicts one is
+refused. Freeze, qualify, run start and the J-space report resolve the tier
+through one helper (`importer.tier_of`), so a declared tier is honoured
+everywhere or nowhere; a lens with no tier at all cannot be frozen and the
+refusal names the re-import.
+
+The readout folds the model's final-norm gain into the token rows, and two
+parameterizations of that gain exist: **offset** (`g = 1 + weight`: Gemma
+1/2/3, Qwen3.5, Qwen3-Next, …) and **direct** (`g = weight`: Llama, Qwen2/3,
+OLMo, GPT-OSS, and — despite the name — Gemma 3n). The engine never assumes
+one from the family name: `norm_convention.observe` runs the model's own norm
+module on a seeded vector and accepts the fold it reproduces (a float32 copy,
+so a bf16 runtime cannot blur it), and the checkpoint-only paths (`derive`,
+`support`) do the same against a weightless instance of the architecture's
+norm class. A norm the fold cannot reproduce — a LayerNorm with a bias, a
+mean-centering norm — refuses the build by name. The observed convention is
+stamped as `gainConvention` on the readout, `normGainConvention` in the
+qualification's `referenceAgreement`, and `finalNormConvention` on every
+derived direction.
+
+`support` decomposes a vector into the
 vocabulary it is made of and writes a readout run directory; `--k` defaults to
 `decompose.DEFAULT_BUDGET`, `--layers` to all fitted layers. The printed
 readout shows the energy fraction only next to its matched-norm-random null,
@@ -3917,8 +3949,9 @@ per-check numbers and all, to the lens record. **Exit 3 = did not qualify**,
 and the record is written anyway: "we tested this runtime and it did not pass"
 is evidence, and losing it would leave the absence looking like an untested
 runtime. Records are appended, never replaced. Tier is read from the
-supported-lens table, so `qualify` RUNS on 4B (the cheap mechanics rehearsal)
-and its record is refused by freeze; no flag upgrades that. An unresolvable
+curated table or the lens record's import declaration, so `qualify` RUNS on
+4B (the cheap mechanics rehearsal) and its record is refused by freeze; no
+qualify flag upgrades that. An unresolvable
 dtype refuses outright — absent is not a match.
 
 `referenceAgreement` records **every comparison**, not only the worst

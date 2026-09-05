@@ -90,9 +90,159 @@ def test_target_layer_has_no_jacobian_and_refuses_clearly(tmp_path):
         lens_store.load_layer(rec, rec.targetLayer, root=root)
 
 
-def test_unsupported_model_is_refused_by_name(tmp_path):
-    with pytest.raises(schemas.JLensError, match="Gemma-only"):
+def test_an_uncurated_model_needs_a_declared_tier_before_anything_else(tmp_path):
+    """Nothing upstream can say whether THIS study treats a model as evidence
+    or rehearsal, so an import off the curated table refuses without the
+    declaration — before it even looks for the lens."""
+    with pytest.raises(schemas.JLensError, match="--tier evidence"):
         importer.import_lens("Qwen/Qwen3-4B", root=str(tmp_path))
+    with pytest.raises(schemas.JLensError, match="not a tier"):
+        importer.import_lens("Qwen/Qwen3-4B", root=str(tmp_path),
+                             tier="production")
+
+
+def test_an_uncurated_model_with_nothing_cached_names_the_acquisition(tmp_path,
+                                                                     monkeypatch):
+    import huggingface_hub
+
+    def _miss(*_a, **_kw):
+        raise OSError("not cached and local_files_only=True")
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", _miss)
+    with pytest.raises(schemas.JLensError, match="jlens acquire Qwen/Qwen3-4B"):
+        importer.import_lens("Qwen/Qwen3-4B", root=str(tmp_path),
+                             tier="testing")
+
+
+def test_a_curated_model_refuses_a_contradicting_tier_and_keeps_its_row(tmp_path):
+    """The table row is policy: a flag cannot re-tier a curated model, and a
+    matching flag is merely redundant."""
+    snap, _ = _snapshot(tmp_path)
+    with pytest.raises(schemas.JLensError, match="curated at tier 'testing'"):
+        importer.import_lens("google/gemma-3-4b-it", root=str(tmp_path / "ws"),
+                             snapshot=snap, tier="evidence")
+    rec = importer.import_lens("google/gemma-3-4b-it",
+                               root=str(tmp_path / "ws"), snapshot=snap,
+                               tier="testing")
+    assert (rec.tier, rec.tierSource) == ("testing", "curated")
+
+
+def _published_snapshot(tmp_path, model_id="Qwen/Qwen3-14B", *,
+                        folder="qwen3-14b/jlens/Salesforce-wikitext",
+                        tensor="Qwen3-14B_jacobian_lens.pt", d_model=8,
+                        layers=(0, 1, 2), extra_tensor=None):
+    """A fake HF snapshot of a PUBLISHED lens folder the curated table has
+    never heard of — laid out exactly like the repository, named by its own
+    config.yaml."""
+    snap = tmp_path / "snap"
+    dest = snap / folder
+    dest.mkdir(parents=True, exist_ok=True)
+    stub = backend.StubBackend(d_model=d_model, source_layers=list(layers))
+    stub.save_checkpoint(str(dest / tensor))
+    if extra_tensor:
+        stub.save_checkpoint(str(dest / extra_tensor))
+    (dest / "config.yaml").write_text(
+        "np_model_id: %s\nhf_model_name: %s\n"
+        "dataset:\n  name: Salesforce/wikitext\n  config: wikitext-103-raw-v1\n"
+        "fit:\n  dtype: bfloat16\n  max_seq_len: 128\n  target_layer: null\n"
+        "results:\n  prompts_fitted: 615\n"
+        % (folder.split("/")[0], model_id), encoding="utf-8")
+    return str(snap), stub
+
+
+def test_a_published_lens_is_found_by_the_model_its_config_names(tmp_path):
+    """Folder and tensor come from the folder's own contents, never from a
+    naming rule over the model id (upstream folder names are not model ids)."""
+    snap, _ = _published_snapshot(tmp_path)
+    entries = importer.published_entries(snapshot=snap)
+    assert set(entries) == {"Qwen/Qwen3-14B"}
+    entry = entries["Qwen/Qwen3-14B"]
+    assert entry["folder"] == "qwen3-14b/jlens/Salesforce-wikitext"
+    assert entry["tensor"] == "Qwen3-14B_jacobian_lens.pt"
+    assert entry["tier"] is None
+    assert entry["corpus"] == "Salesforce/wikitext:wikitext-103-raw-v1"
+    assert importer.entry_for("Qwen/Qwen3-14B", snapshot=snap) == entry
+    # Curated rows still resolve from the table, whatever is cached.
+    assert importer.entry_for("google/gemma-3-27b-it", snapshot=snap) is \
+        importer.SUPPORTED["google/gemma-3-27b-it"]
+    with pytest.raises(schemas.JLensError, match="no published lens"):
+        importer.entry_for("meta-llama/Llama-3.1-8B-Instruct", snapshot=snap)
+
+
+def test_importing_a_published_lens_stamps_the_declared_tier(tmp_path):
+    snap, _ = _published_snapshot(tmp_path)
+    root = str(tmp_path / "ws")
+    rec = importer.import_lens("Qwen/Qwen3-14B", root=root, snapshot=snap,
+                               tier="evidence")
+    assert rec.lensID == "Qwen--Qwen3-14B--jlens-wikitext"
+    assert (rec.tier, rec.tierSource) == ("evidence", "declared")
+    assert rec.source.folder == "qwen3-14b/jlens/Salesforce-wikitext"
+    assert rec.source.tensorFile == "Qwen3-14B_jacobian_lens.pt"
+    assert rec.fit.modelID == "Qwen/Qwen3-14B"
+    assert rec.converted and rec.converted.layerCount == 3
+    # And it round-trips through the store with the declaration intact.
+    again = lens_store.resolve(rec.lensID, root)
+    assert (again.tier, again.tierSource) == ("evidence", "declared")
+
+
+def test_the_lens_id_names_the_corpus_the_config_names(tmp_path):
+    """Not every published lens is wikitext (DeepSeek-V4-Flash is pile-10k);
+    the id says which, and never claims one for a config that names none."""
+    assert importer.lens_id_for("Qwen/Qwen3-14B",
+                                "Salesforce/wikitext:wikitext-103-raw-v1") == \
+        "Qwen--Qwen3-14B--jlens-wikitext"
+    assert importer.lens_id_for("deepseek-ai/DeepSeek-V4-Flash",
+                                "NeelNanda/pile-10k") == \
+        "deepseek-ai--DeepSeek-V4-Flash--jlens-pile-10k"
+    assert importer.lens_id_for("x/y", None) == "x--y--jlens-unknown-corpus"
+    assert importer.lens_id_for("google/gemma-3-4b-it") == \
+        "google--gemma-3-4b-it--jlens-wikitext"
+
+
+def test_the_default_lens_for_a_model_is_looked_up_never_named(tmp_path):
+    """g0/probe/the routes take a lens by model id when none is named; that
+    lookup reads the store, because a name rule would miss a pile-10k lens."""
+    root = str(tmp_path / "ws")
+    with pytest.raises(schemas.JLensError, match="no imported lens for 'Qwen/Qwen3-14B'"):
+        lens_store.for_model("Qwen/Qwen3-14B", root)
+    snap, _ = _published_snapshot(tmp_path)
+    importer.import_lens("Qwen/Qwen3-14B", root=root, snapshot=snap,
+                         tier="testing")
+    assert lens_store.for_model("Qwen/Qwen3-14B", root) == \
+        "Qwen--Qwen3-14B--jlens-wikitext"
+    # A second lens for the same model, on another corpus: refuse to pick.
+    snap2, _ = _published_snapshot(tmp_path / "two", folder="qwen3-14b/jlens/NeelNanda-pile-10k")
+    cfg = tmp_path / "two" / "snap" / "qwen3-14b" / "jlens" / "NeelNanda-pile-10k" / "config.yaml"
+    cfg.write_text(cfg.read_text().replace("Salesforce/wikitext", "NeelNanda/pile-10k"))
+    second = importer.import_lens("Qwen/Qwen3-14B", root=root, snapshot=snap2,
+                                  tier="testing")
+    assert second.lensID == "Qwen--Qwen3-14B--jlens-pile-10k"
+    with pytest.raises(schemas.JLensError, match="2 imported lenses"):
+        lens_store.for_model("Qwen/Qwen3-14B", root)
+
+
+def test_a_published_folder_with_two_tensors_is_refused_not_guessed(tmp_path):
+    snap, _ = _published_snapshot(tmp_path, extra_tensor="other_jacobian_lens.pt")
+    with pytest.raises(schemas.JLensError, match="exactly one"):
+        importer.import_lens("Qwen/Qwen3-14B", root=str(tmp_path / "ws"),
+                             snapshot=snap, tier="testing")
+
+
+def test_tier_of_resolves_curated_then_declared_then_unknown(tmp_path):
+    """ONE resolution for qualify, freeze, run start and the J-space report."""
+    snap, _ = _published_snapshot(tmp_path)
+    rec = importer.import_lens("Qwen/Qwen3-14B", root=str(tmp_path / "ws"),
+                               snapshot=snap, tier="testing")
+    assert importer.tier_of("google/gemma-3-27b-it") == ("evidence", "curated")
+    assert importer.tier_of("google/gemma-3-4b-it", rec) == ("testing", "curated")
+    assert importer.tier_of("Qwen/Qwen3-14B", rec) == ("testing", "declared")
+    assert importer.tier_of("Qwen/Qwen3-14B") == ("unknown", "none")
+    # A record written before 2026-09-05 carries no tier at all.
+    legacy = schemas.JLensRecord.from_dict(
+        {k: v for k, v in rec.to_dict().items()
+         if k not in ("tier", "tierSource")})
+    assert legacy.tier is None
+    assert importer.tier_of("Qwen/Qwen3-14B", legacy) == ("unknown", "none")
 
 
 def test_mislabeled_config_refuses_rather_than_importing(tmp_path):

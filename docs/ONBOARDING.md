@@ -711,6 +711,73 @@ submissions where the site caps queued jobs per user.
 [CONDUCTING-A-STUDY.md](CONDUCTING-A-STUDY.md) §7.2 has the discipline;
 [CLI-REFERENCE.md](CLI-REFERENCE.md) §5.3 has the mechanics.
 
+### Reading what the model is poised to say: J-lens
+
+A J-lens is a published measuring instrument, not a steering vector. For the
+model it was fitted on, it maps a residual at any layer into the model's
+final-layer basis, so the ordinary output head can read it out: which tokens
+the model is poised to verbalize at that layer, and how a steering vector or a
+condition changes that. SteerLab uses it three ways — as a check that an
+injection took hold, as a mechanism-level cross-check on a vector (what
+vocabulary is it made of), and as a readout recorded alongside generation in
+a study.
+
+It is server-only and lives entirely under `steerlab-server jlens`. The Mac
+app renders lens artifacts and carries a study's readout block, and never
+produces either; the Swift CLI has no lens verbs. The reference package the
+engine checks itself against is an optional extra, deliberately outside
+`[all]` because it raises the transformers floor and installs from GitHub:
+`bootstrap.sh --with-jlens` on a cluster node, or
+`pip install -e "Server[jlens]"` in a venv you have decided to change.
+
+The path, in order:
+
+```bash
+steerlab-server jlens supported --published   # what upstream carries (~40 models; needs egress)
+steerlab-server jlens acquire <model-id>      # bytes into the HF cache (needs egress)
+steerlab-server jlens import  <model-id> --tier evidence|testing   # convert into runs/jlens-lenses/ (offline)
+steerlab-server jlens qualify <lens-id> <model-id> [--token-id N] [--battery P] [--alpha-range …]
+```
+
+**Any model with a published lens can be imported.** Three of them — the
+Gemma-3 27B, 12B and 4B instruction models — have curated rows that fix
+their evidence tier for this project, and `--tier` is refused where it would
+contradict one. Every other model's tier is yours to declare at import,
+because nothing upstream can say whether a study treats a model as evidence
+or as rehearsal; the declaration is stamped on the lens record with its
+provenance, and freeze refuses a testing-tier lens and a lens with no tier
+at all.
+
+`qualify` is what makes a lens citable. It loads the model (a GPU job) and
+runs seven named checks — geometry, runtime numerics, finite Jacobians,
+agreement with the pinned reference implementation, stable readouts, a
+causal smoke test, and the capability battery at the top of the intended
+dose range — then appends the verdict to the lens record whether or not it
+passed. Exit 3 means it did not qualify; the record is still written,
+because "tested and failed" is evidence and its absence is not. Two defaults
+are worth overriding on a real model: the smoke-test token (` the` unless you
+pass `--token-id`) and the dose ladder, since the capability guard can
+collapse at the top of the default ladder on a token you never intended to
+steer.
+
+One thing the engine does for you that you should know about: the readout
+folds the model's final-norm gain into the token rows, and two
+parameterizations of that gain exist (Gemma and Qwen3.5 store it as an
+offset from one; Llama, Qwen3, OLMo and most others store it directly). The
+engine **observes** which one the model's own norm computes, on every build,
+and refuses a norm it cannot fold — a LayerNorm with a bias, for instance —
+rather than reading a wrong gain. The observed convention is stamped on
+every derived direction and qualification.
+
+After that, the instruments: `support` decomposes a vector into the
+vocabulary it is made of; `token-options` and `derive` mint a steering
+direction indexed by an exact token; `probe` reads one prompt by position and
+layer; `g0` is the feasibility gate for a model, with two separately
+verdicted arms; `report` rolls readouts up across conditions. A study opts
+in through the manifest's `jlensReadout` block, which freeze checks against
+the lens's qualification for the study's exact model, revision and dtype.
+[CLI-REFERENCE.md](CLI-REFERENCE.md) §6.3 has every flag.
+
 ---
 
 ## 9. Driving SteerLab with a coding agent

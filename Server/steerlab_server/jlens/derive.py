@@ -2,8 +2,11 @@
 
     v_l = J_l^T (g . u_t)
 
-where ``u_t`` is the token's raw output-head row and ``g = 1 + norm.weight`` is
-Gemma's final-RMSNorm gain. The gain fold is not a refinement: measured on
+where ``u_t`` is the token's raw output-head row and ``g`` is the model's
+final-RMSNorm gain — ``1 + norm.weight`` on an offset-parameterized norm
+(Gemma, Qwen3.5, …), ``norm.weight`` on a direct one (Llama, Qwen3, …), as
+OBSERVED from the architecture ``config.json`` names (:mod:`norm_convention`;
+no weights are loaded for it). The gain fold is not a refinement: measured on
 gemma-3-4b-it its weights run ~6.6-9.5, so ``g`` is ~7.6-10.5 and omitting it
 would rescale the direction by about an order of magnitude, unevenly per
 element (Stage 1a, plan §11.1).
@@ -35,6 +38,7 @@ from ..experiment import paths
 from ..steering import vector_store
 from ..steering.vector_store import ConceptVectors, SteeringVectorSidecar
 from . import lens_store
+from . import norm_convention as norm_convention_mod
 from .schemas import (CANONICAL_READOUT, DIRECTION_CONVENTION, JLensError,
                       JLensRecord)
 
@@ -99,18 +103,31 @@ def _pick(weight_map: dict, keys: tuple[str, ...]) -> str | None:
     return None
 
 
-def read_token_row_and_gain(model_id: str, token_id: int,
-                            revision: str | None = None):
-    """``(u_t, g)`` read directly from the cached snapshot — no model load.
+def observed_norm_convention(model_id: str,
+                             revision: str | None = None) -> dict:
+    """The final-norm gain convention of the cached snapshot's architecture,
+    observed without loading weights (:func:`norm_convention.from_config`)."""
+    from . import norm_convention
+
+    return norm_convention.from_config(_snapshot_dir(model_id, revision))
+
+
+def read_token_row_gain_and_convention(model_id: str, token_id: int,
+                                       revision: str | None = None):
+    """``(u_t, g, convention)`` read directly from the cached snapshot — no
+    model load.
 
     Gemma **ties** its embeddings, so the output-head row is
     ``embed_tokens.weight[t]`` and ``lm_head.weight`` may not exist as a key at
-    all. Resolve the tie explicitly rather than by a bare lookup that would
-    KeyError on exactly the family this feature targets. Gemma's sqrt(d) input
-    scaling applies to the embedding on the way IN and must not be applied here.
+    all; an untied head is read from ``lm_head.weight`` first. Resolve the tie
+    explicitly rather than by a bare lookup that would KeyError on one family
+    or the other. Gemma's sqrt(d) input scaling applies to the embedding on
+    the way IN and must not be applied here.
     """
     import torch
     from safetensors import safe_open
+
+    from . import norm_convention
 
     snapshot = _snapshot_dir(model_id, revision)
     weight_map = _weight_map(snapshot)
@@ -139,9 +156,21 @@ def read_token_row_and_gain(model_id: str, token_id: int,
                    framework="pt") as handle:
         norm_w = handle.get_tensor(norm_key).to(torch.float32)
 
-    # Gemma's RMSNorm applies (1 + weight); see Stage 1a, where this was
-    # probed against the live module rather than assumed from the class name.
-    return u_t, (1.0 + norm_w)
+    # Which fold the final norm applies is observed from the architecture the
+    # snapshot names (Stage 1a probed the live module; this does the same
+    # against a weightless instance of its class), never assumed from a name.
+    convention = norm_convention.from_config(snapshot)
+    gain = norm_convention.gain_from_weight(norm_w, convention["convention"])
+    return u_t, gain, convention
+
+
+def read_token_row_and_gain(model_id: str, token_id: int,
+                            revision: str | None = None):
+    """``(u_t, g)`` — :func:`read_token_row_gain_and_convention` without the
+    stamp, for callers that only need the numbers."""
+    u_t, gain, _ = read_token_row_gain_and_convention(model_id, token_id,
+                                                      revision)
+    return u_t, gain
 
 
 def runtime_layer_count(model_id: str, revision: str | None = None) -> int:
@@ -245,7 +274,8 @@ def derive_direction(lens_id: str, token_id: int, *, model_id: str,
             f"'{model_id}' has {n_layers} layers (target would be "
             f"{n_layers - 1}) — refusing an ambiguous layer mapping")
 
-    u_t, g = read_token_row_and_gain(model_id, token_id, revision)
+    u_t, g, gain_convention = read_token_row_gain_and_convention(
+        model_id, token_id, revision)
     if u_t.numel() != record.dModel:
         raise JLensError(
             f"token row width {u_t.numel()} != lens d_model {record.dModel}")
@@ -326,7 +356,13 @@ def derive_direction(lens_id: str, token_id: int, *, model_id: str,
         "coverage": "complete",
         "directionConvention": DIRECTION_CONVENTION,
         "readoutConvention": CANONICAL_READOUT,
-        "finalNormConvention": "gemma (1 + weight)",
+        # Observed on the architecture, stamped here so the direction says
+        # which gain it folded (an offset/direct mix-up reorders coordinates).
+        "finalNormConvention": (
+            f"{gain_convention['convention']} "
+            f"({norm_convention_mod.describe(gain_convention['convention'])}; "
+            f"observed on {gain_convention.get('architecture')})"),
+        "finalNormClass": gain_convention.get("className"),
         "referencePackage": record.referencePackage,
         "referenceCommit": record.referenceCommit,
     })
