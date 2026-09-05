@@ -388,11 +388,15 @@ struct ExperimentsPanelView: View {
                             }
                         }
                         .disabled(manifest.status != .draft
-                            || !PromptRendering.hasThinkingMode(manifest.modelID))
+                            || !PromptRendering.hasThinkingMode(
+                                manifest.modelID,
+                                capabilities: ExperimentStore.modelCapabilities(for: manifest)))
                         .help("The reasoning effort the chat template is rendered with "
-                            + "(off = no thinking block). A non-off effort needs a "
-                            + "reasoning token budget; only families with a thinking "
-                            + "mode (Qwen) can declare one.")
+                            + "(off = no thinking block; on = thinking at the template's "
+                            + "default effort). A non-off effort needs a reasoning token "
+                            + "budget, and a LEVEL only where the model's capability "
+                            + "record — probed from its chat template, shown in the "
+                            + "Compute section — says the template accepts it.")
                         if panel.qwenThinkingEnabled {
                             TextField(
                                 "Reasoning max tokens",

@@ -1205,7 +1205,21 @@ public enum ExperimentTasks {
             // must be able to see WHY from the run itself, not only from the
             // command line that started it. Additive — absent means the full
             // corpus, which is every run written before this existed.
-            structuredNotes: sampling.map { ["sampling": $0.jsonObject] } ?? [:])
+            structuredNotes: Self.runStructuredNotes(
+                experiment: experiment, task: task, sampling: sampling))
+        // The declared reasoning effort and system prompt against what the
+        // probed template actually does (2026-09-05) — an ADVISORY, never a
+        // refusal: a submitted run continues loudly and stamps. Server twin:
+        // `tasks._advise_capabilities`.
+        if task == "run" || task == "multi-agent-run" || task == "sweep",
+            let capabilities = Self.stampedCapabilities(experiment: experiment, task: task)
+        {
+            for advisory in Self.capabilityRunAdvisories(
+                experiment: experiment, capabilities: capabilities)
+            {
+                emitRunAdvisory(advisory, to: url)
+            }
+        }
         // WS7.1 loud, non-blocking study-run-start advisory: when this
         // experiment's scope-matched validate evidence came from the OTHER
         // engine, say so in the run log (stdout for headless runs) and
@@ -1219,6 +1233,65 @@ public enum ExperimentTasks {
             emitRunAdvisory(advisory, to: url)
         }
         return url
+    }
+
+    /// The structured `notes` a run directory's `config.json` carries: the
+    /// evaluate subsample stamp and, for a run type that RENDERS, the
+    /// capability record the renders read under (`notes.modelCapabilities`
+    /// — the closed key set gains nothing).
+    static func runStructuredNotes(
+        experiment: ExperimentManifest, task: String,
+        sampling: EvaluateSubsample.Stamp?
+    ) -> [String: Any] {
+        var notes: [String: Any] = [:]
+        if let sampling { notes["sampling"] = sampling.jsonObject }
+        if let capabilities = stampedCapabilities(experiment: experiment, task: task) {
+            notes["modelCapabilities"] = capabilities.stamp
+        }
+        return notes
+    }
+
+    /// The capability view a rendering run stamps: what the load registered
+    /// for this model, else the workspace record; nil for a run type that
+    /// renders nothing, and nil — never a heuristic stamp — when neither can
+    /// answer.
+    static func stampedCapabilities(
+        experiment: ExperimentManifest, task: String
+    ) -> ModelCapabilities? {
+        guard renderingRunTypes.contains(task) else { return nil }
+        return ModelCapabilities.registered(for: experiment.modelID)
+            ?? ModelCapabilitiesStore.lookup(
+                modelID: experiment.modelID, revision: experiment.modelRevision,
+                root: ExperimentStore.workspaceRoot)
+    }
+
+    /// Run-start advisories from the capability record: the declared level
+    /// against the template's verdict, the system prompt's deliverability,
+    /// and the record's own notes. Server twin: `tasks._advise_capabilities`.
+    static func capabilityRunAdvisories(
+        experiment: ExperimentManifest, capabilities: ModelCapabilities
+    ) -> [String] {
+        var lines: [String] = []
+        let effort = experiment.resolvedReasoningEffort
+        if effort.isLevel {
+            if capabilities.hasThinkingSwitch {
+                lines += ReasoningEffort.effortLevelViolations(
+                    effort, modelID: experiment.modelID, capabilities: capabilities)
+            } else {
+                lines.append(ReasoningEffort.effortWithoutThinkingModeReason(
+                    effort, modelID: experiment.modelID))
+            }
+        } else if effort == .on, !capabilities.hasThinkingSwitch {
+            lines.append(ReasoningEffort.effortWithoutThinkingModeReason(
+                effort, modelID: experiment.modelID))
+        }
+        lines += PromptRendering.systemPromptViolations(
+            systemPrompt: experiment.systemPrompt, modelID: experiment.modelID,
+            rawCompletion: experiment.promptMode == .rawCompletion,
+            capabilities: capabilities)
+        lines += ReasoningEffort.protocolAdvisories(
+            effort: effort, modelID: experiment.modelID, capabilities: capabilities)
+        return lines
     }
 
     /// Log one non-blocking advisory and APPEND it to the run directory's
@@ -1727,8 +1800,37 @@ public enum ExperimentTasks {
                         + "pinned model revision — this run used \(resolved.prefix(12))…")
             }
         }
+        // The chat-template capability record (2026-09-05): probed from the
+        // cached snapshot's tokenizer at the load, written into the
+        // workspace when absent (re-probed loudly when the template changed)
+        // and REGISTERED, so every render that follows reads what the load
+        // found rather than an id heuristic. Server twin:
+        // `tasks._model_capabilities_for_run`.
+        _ = await ensureModelCapabilities(
+            modelID: manifest.modelID, revision: manifest.modelRevision)
         return container
     }
+
+    /// `ModelCapabilitiesStore.ensure` with this engine's identity and the
+    /// active workspace — the one call every model load on this engine makes.
+    @discardableResult
+    static func ensureModelCapabilities(
+        modelID: String, revision: String?
+    ) async -> ModelCapabilities {
+        await ModelCapabilitiesStore.ensure(
+            modelID: modelID, revision: revision,
+            root: ExperimentStore.workspaceRoot,
+            engineVersion: SteerLabVersion.current,
+            log: { print($0) })
+    }
+
+    /// The run types whose directory holds RENDERED input — the ones whose
+    /// `config.json` stamps the capability record the renders read under.
+    /// analyze/evaluate/rescore render nothing and stamp nothing. Server
+    /// twin: `tasks._RENDERING_RUN_TYPES`.
+    static let renderingRunTypes: Set<String> = [
+        "extract", "validate", "sweep", "run", "multi-agent-run",
+    ]
 
     /// Loads (and pin-checks) the neutral corpus whenever the manifest pins
     /// one. The corpus is the norm-unit denominator (emotion paper: a fixed
@@ -3572,15 +3674,24 @@ public enum ExperimentTasks {
             return turn.role == "assistant" ? .assistant(text) : .user(text)
         }
         if !system.isEmpty {
-            if modelID.lowercased().contains("gemma") {
+            let capabilities = PromptRendering.capabilities(for: modelID)
+            if capabilities.hasSystemRole {
+                if messages.first?.role != .system {
+                    messages.insert(.system(system), at: 0)
+                }
+            } else if capabilities.systemPromptDeliverable {
+                // No system role: the frame folds into the FIRST user turn
+                // with the separator the probe recorded.
                 if let index = messages.firstIndex(where: { $0.role == .user }) {
-                    messages[index] = .user(system + "\n\n" + messages[index].content)
+                    messages[index] = .user(PromptRendering.foldSystemPrompt(
+                        system, into: messages[index].content, capabilities: capabilities))
                 } else {
                     messages.insert(.user(system), at: 0)
                 }
-            } else if messages.first?.role != .system {
-                messages.insert(.system(system), at: 0)
             }
+            // `unsupported`: the declaration gates refused the frame; a
+            // hand-built manifest renders without it rather than handing
+            // the template a turn it cannot place.
         }
         return messages
     }
@@ -3641,13 +3752,18 @@ public enum ExperimentTasks {
         systemPrompt: String?
     ) -> [Chat.Message] {
         let system = systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let foldSystem = modelID.lowercased().contains("gemma") && !system.isEmpty
+        let capabilities = PromptRendering.capabilities(for: modelID)
+        let foldSystem = !capabilities.hasSystemRole && capabilities.systemPromptDeliverable
+            && !system.isEmpty
         return turns.compactMap { turn in
             let text = turn.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
             switch turn.role {
             case .user:
-                return .user(foldSystem ? system + "\n\n" + text : text)
+                return .user(
+                    foldSystem
+                        ? PromptRendering.foldSystemPrompt(system, into: text, capabilities: capabilities)
+                        : text)
             case .assistant:
                 return .assistant(text)
             }
@@ -3694,7 +3810,7 @@ public enum ExperimentTasks {
         var messages = chatHistoryMessages(
             turns: turns, modelID: modelID, systemPrompt: systemPrompt)
         let system = systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !system.isEmpty, !modelID.lowercased().contains("gemma") {
+        if !system.isEmpty, PromptRendering.capabilities(for: modelID).hasSystemRole {
             messages.insert(.system(system), at: 0)
         }
         guard let last = messages.last, last.role == .assistant,

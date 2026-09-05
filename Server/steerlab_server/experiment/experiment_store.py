@@ -420,9 +420,13 @@ def attach(name: str, concepts: list[str], *, method: str = "meanDifference",
         # one — rather than rendered silently without the scaffold it claims.
         from ..steering.extraction_rendering import thinking_mode_problem
         from ..steering.extraction_rendering import from_json as _rendering_from_json
+        from . import model_capabilities as _mc
+        _pinned = load_raw(name, root)
         problem = thinking_mode_problem(
             _rendering_from_json(rendering_block),
-            str(load_raw(name, root).get("modelID") or ""))
+            str(_pinned.get("modelID") or ""),
+            _mc.resolve(str(_pinned.get("modelID") or ""),
+                        _pinned.get("modelRevision"), root))
         if problem:
             raise ExperimentStoreError(
                 problem, repair=(f"re-run attach with --extraction-rendering "
@@ -1884,17 +1888,34 @@ def set_protocol(name: str, fields: dict, root: str | None = None) -> dict:
         if (merged_effort == prompt_render.REASONING_OFF
                 and not budget_in_call):
             merged_budget = None  # the off declaration retires the budget
+        # The gate reads the model's CAPABILITY RECORD (the pinned template's
+        # probed answers; the id heuristic, saying so, when none exists):
+        # a level the template ignores or rejects is refused here, at the
+        # declaration, never rendered at the template's default under a
+        # manifest that asserts the level.
+        from . import model_capabilities as _mc
         problems = prompt_render.reasoning_protocol_violations(
             effort=merged_effort, reasoning_max_tokens=merged_budget,
-            model_id=str(d.get("modelID") or ""))
+            model_id=str(d.get("modelID") or ""),
+            capabilities=_mc.resolve(str(d.get("modelID") or ""),
+                                     d.get("modelRevision"), root))
         if problems:
             raise ExperimentStoreError(
                 "; ".join(problems),
                 repair=("re-run with --set reasoningEffort="
                         + "|".join(prompt_render.REASONING_EFFORTS)
                         + " --set reasoningMaxTokens=<n≥1> (the budget only "
-                        "beside a non-off effort, on a model with a thinking "
-                        "mode)"))
+                        "beside a non-off effort, on a model whose chat "
+                        "template has a thinking switch; a level only when "
+                        "the template accepts it — see model capabilities)"))
+    if fields.get("systemPrompt") is not None:
+        problems = _system_prompt_problems(
+            d, str(fields["systemPrompt"]), fields.get("promptMode"), root)
+        if problems:
+            raise ExperimentStoreError(
+                "; ".join(problems),
+                repair="re-run without --set systemPrompt, or pin a model "
+                       "whose chat template can deliver system text")
     if fields.get("exclusionRules") is not None:
         # The engine's own rule validation, at the moment of declaration
         # (Swift twin: `ExperimentStore.setExclusionRules`) — verify() and
@@ -2400,11 +2421,60 @@ def set_system_prompt(name: str, text: str | None,
     d = load_raw(name, root)
     trimmed = (text or "").strip()
     if trimmed:
+        # The one prompt-mode-independent refusal: a chat template the
+        # capability record marks `systemRole: unsupported` cannot deliver
+        # the frame at all (rawCompletion prepends it and is exempt).
+        problems = _system_prompt_problems(d, trimmed, None, root)
+        if problems:
+            raise ExperimentStoreError(
+                "; ".join(problems),
+                repair="drop the system prompt, or pin a model whose chat "
+                       "template can deliver system text")
         d["systemPrompt"] = trimmed
     else:
         d.pop("systemPrompt", None)
     save_raw(d, root)
     return d
+
+
+def _system_prompt_problems(d: dict, text: str, prompt_mode,
+                            root: str | None) -> list[str]:
+    """The system-prompt rule against the model's capability record
+    (:func:`prompt_render.system_prompt_violations`)."""
+    from . import model_capabilities as _mc
+    model_id = str(d.get("modelID") or "")
+    return prompt_render.system_prompt_violations(
+        system_prompt=text, model_id=model_id,
+        prompt_mode=str(prompt_mode or d.get("promptMode")
+                        or prompt_render.CHAT_ASSISTANT),
+        capabilities=_mc.resolve(model_id, d.get("modelRevision"), root))
+
+
+def capability_advisories(d: dict, root: str | None = None) -> list[str]:
+    """Non-blocking notes about a manifest's model capabilities: an effort
+    level ASSUMED from a heuristic record, the record's own advisories, and
+    — for a FROZEN manifest, which must keep verifying unchanged — every
+    record-derived rule a draft would have been refused on. Printed by the
+    declaration verbs and ``verify``, and stamped by runs."""
+    from . import model_capabilities as _mc
+    model_id = str(d.get("modelID") or "")
+    record = _mc.resolve(model_id, d.get("modelRevision"), root)
+    effort = prompt_render.read_reasoning_effort(d)
+    notes = prompt_render.reasoning_protocol_advisories(
+        effort=effort, model_id=model_id, capabilities=record)
+    # A declared system prompt is the other thing the record decides (its
+    # delivery route): say where the record came from beside it.
+    if (d.get("systemPrompt") or "").strip() and effort == prompt_render.REASONING_OFF:
+        notes += [a for a in record.advisories if a not in notes]
+    if d.get("status") != "draft":
+        if effort != prompt_render.REASONING_OFF and record.has_thinking_switch \
+                and effort != prompt_render.REASONING_ON:
+            notes += prompt_render.effort_level_violations(effort, model_id, record)
+        notes += prompt_render.system_prompt_violations(
+            system_prompt=d.get("systemPrompt"), model_id=model_id,
+            prompt_mode=str(d.get("promptMode") or prompt_render.CHAT_ASSISTANT),
+            capabilities=record)
+    return notes
 
 
 def transcript_system_turn_count(d: dict, root: str | None = None) -> tuple:
@@ -4892,6 +4962,14 @@ def _write_preregistration(d: dict, root: str | None) -> None:
         f"maxTokens {d.get('maxTokens', 512)}, "
         f"reasoningMaxTokens "
         f"{prompt_render.read_reasoning_max_tokens(d) or 'none'}",
+    ]
+    # The model's chat-template capabilities the Sampling line was gated on
+    # — what the template actually does with a system turn and the declared
+    # effort — from the workspace record (or the id heuristic, which says so).
+    from . import model_capabilities as _mc
+    lines += _mc.resolve(str(d.get("modelID") or ""), d.get("modelRevision"),
+                         root).summary_lines()
+    lines += [
         "",
         "## Conditions",
         "",

@@ -392,6 +392,28 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
              purpose="Verify a bundle and extract it into this workspace.",
              boolean_flags=frozenset({"--overwrite"}),
              value_flags=frozenset({"--target-root", "--sha256"})),
+    # The model's CHAT-TEMPLATE CAPABILITY RECORD (2026-09-05): what the
+    # pinned template does with a system turn, whether it has a thinking
+    # switch, which reasoning-effort levels it reads — probed by an engine
+    # and kept under prompts/models/. This client has no tokenizer, so it
+    # SHOWS the record (or the id heuristic, which says so) and lets a human
+    # OVERRIDE one detected field with a reason; probing is the engines'
+    # (`steerlab-server model capabilities --probe`, `steerlab-cli model
+    # capabilities --probe`). An override is authoring — it changes what
+    # every gate and render reads — which is why the family is in
+    # AUTHORING_FAMILIES.
+    VerbSpec("model", "capabilities", positional="<modelID>",
+             purpose="Show the model's chat-template capability record "
+                     "(system role, thinking switch, accepted reasoning-effort "
+                     "levels), detected values beside any overrides.",
+             value_flags=frozenset({"--revision"})),
+    VerbSpec("model", "set-capability",
+             positional="<modelID> <field> <value>",
+             purpose="Override one detected capability on the record "
+                     "(systemRole, thinkingSwitch, thinkOpenInPrompt) with a "
+                     "reason that is displayed beside the detected value and "
+                     "stamped into runs; \"\" clears the override.",
+             value_flags=frozenset({"--revision", "--reason"})),
 
     # --- runner (Phase 2) ---------------------------------------------------
     #
@@ -484,8 +506,8 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
 _SPECS_BY_LABEL = {spec.label: spec for spec in CLIENT_VERB_SPECS}
 
 #: Families this binary dispatches, in the order ``--help`` prints them.
-FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "authoring",
-                             "runner", "run")
+FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "model",
+                             "authoring", "runner", "run")
 
 #: Families whose ENTIRE surface is one verb, spelled as the family name and
 #: nothing after it: ``steerlab run <experiment>``. Maps family → the verb its
@@ -501,7 +523,8 @@ SOLO_FAMILIES: dict = {"run": "run"}
 #: ``runner`` is excluded because addressing a runner is its entire job; it is
 #: a SEPARATE family precisely so the exclusion is a line in a table rather
 #: than a judgement call about a flag name.
-AUTHORING_FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle")
+AUTHORING_FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle",
+                                       "model")
 
 #: The generation-prompt emitter. NOT in :data:`AUTHORING_FAMILIES` despite
 #: its name, and the distinction is the point: an authoring family WRITES into
@@ -668,6 +691,9 @@ REMOTE_JOB_FAILED_CODE = "remoteJobFailed"
 #: ``run --wait`` gave up watching. The remote job was deliberately NOT
 #: cancelled — this client never kills work it did not do.
 WAIT_DEADLINE_CODE = "waitDeadlineExceeded"
+#: `model set-capability` on a model whose template was never probed: an
+#: override sits beside a DETECTED value, and this client cannot detect one.
+CAPABILITY_RECORD_MISSING_CODE = "capabilityRecordMissing"
 
 
 class ClientRefusal(Exception):
@@ -1522,8 +1548,19 @@ def _experiment(invocation: Invocation) -> CLIResult:
         applied = sorted(fields)
         line = f"set {len(applied)} protocol field(s) on {name!r}"
         print(line)
+        # The capability record's non-blocking notes on what was just
+        # declared — an effort level ASSUMED from the model id because no
+        # probed record exists, for one — said at the write, not at the run.
+        advisories = []
+        if "reasoningEffort" in fields or "systemPrompt" in fields:
+            from .cli_envelope import advisory as _advisory
+            for note in store.capability_advisories(document):
+                sys.stderr.write(f"ADVISORY: {note}\n")
+                advisories.append(_advisory("modelCapabilities", note))
         return CLIResult(
             message=line, changed=bool(applied),
+            state="okWithAdvisories" if advisories else "ready",
+            advisories=advisories,
             payload={"experiment": name, "applied": applied})
 
     if verb == "set-system-prompt":
@@ -1548,14 +1585,12 @@ def _experiment(invocation: Invocation) -> CLIResult:
         # a Qwen rawCompletion study, which named a route the run never took.
         # Execution was always right; only this sentence lied. Swift twin:
         # the same three-way branch in `ExperimentCLIRunner`.
-        from .experiment import prompt_render
-        raw_completion = (document.get("promptMode")
-                          == prompt_render.RAW_COMPLETION)
-        delivery = ("promptPrepend" if raw_completion
-                    else "systemTurn"
-                    if prompt_render.has_system_role(
-                        document.get("modelID") or "")
-                    else "prependedToFirstUserTurn")
+        from .experiment import model_capabilities as _mc, prompt_render
+        delivery = prompt_render.system_prompt_delivery(
+            document.get("modelID") or "",
+            document.get("promptMode") or prompt_render.CHAT_ASSISTANT,
+            _mc.resolve(document.get("modelID") or "",
+                        document.get("modelRevision")))
         if frame:
             line = (f"declared a system prompt on {name!r} — {len(frame)} "
                     "character(s), delivered as "
@@ -1764,8 +1799,18 @@ def _experiment(invocation: Invocation) -> CLIResult:
         violations = manifest.verify(None)
         if not violations:
             print("OK — all pinned inputs verified")
+            # What the model's capability record says without blocking —
+            # for a FROZEN study, the template-derived rules it was not
+            # frozen under (an effort level the probed template ignores).
+            from .cli_envelope import advisory as _advisory
+            advisories = []
+            for note in manifest.capability_advisories(None):
+                sys.stderr.write(f"ADVISORY: {note}\n")
+                advisories.append(_advisory("modelCapabilities", note))
             return CLIResult(
                 message="OK — all pinned inputs verified",
+                state="okWithAdvisories" if advisories else "ready",
+                advisories=advisories,
                 payload={"experiment": manifest.name,
                          "status": manifest.status,
                          "verified": True, "violations": [],
@@ -1911,6 +1956,97 @@ def _concept(invocation: Invocation) -> CLIResult:
 
 
 # --- verbs: authoring ----------------------------------------------------------
+
+
+def _model(invocation: Invocation) -> CLIResult:
+    """The chat-template capability record — show it, or override one
+    detected field with a reason. No probing here: this client holds no
+    tokenizer, and a record it cannot derive it must not invent."""
+    from .experiment import model_capabilities as mc
+
+    spec = invocation.spec
+    verb = spec.verb
+    args = invocation.positionals
+    revision = invocation.one("--revision")
+
+    if verb == "capabilities":
+        _require(args, 1, spec)
+        model_id = args[0]
+        view = mc.resolve(model_id, revision)
+        for line in view.summary_lines():
+            print(line.replace("**", ""))
+        for note in view.advisories:
+            sys.stderr.write(f"ADVISORY: {note}\n")
+        from .cli_envelope import advisory as _advisory
+        advisories = [_advisory("modelCapabilities", note)
+                      for note in view.advisories]
+        return CLIResult(
+            message=(f"{model_id}: capabilities from {view.source}"
+                     + (f" ({view.path})" if view.path else "")),
+            state="okWithAdvisories" if advisories else "ready",
+            advisories=advisories,
+            payload=_capabilities_payload(view))
+
+    if verb == "set-capability":
+        _require(args, 3, spec)
+        model_id, field_name, value = args[0], args[1], args[2]
+        found = mc.lookup(model_id, revision)
+        if found is None or found.path is None:
+            raise ClientRefusal(
+                code=CAPABILITY_RECORD_MISSING_CODE, state="notFound",
+                reason=(f"no capability record for {model_id}"
+                        + (f" at revision {revision}" if revision else "")
+                        + f" under {mc.DIRECTORY}/ — an override sits beside a "
+                        "DETECTED value, so the template has to be probed first"),
+                repair_action=(f"steerlab-server model capabilities {model_id} "
+                               "--probe (or steerlab-cli model capabilities "
+                               f"{model_id} --probe on the Mac), then re-run"))
+        # The workspace `main` resolved is exported as STEERLAB_ROOT, which
+        # is what every store path reads — the same tree `mc.lookup` searched.
+        from .experiment import paths as _paths
+        path = os.path.join(_paths.project_root(), found.path)
+        record = mc.read_record(path)
+        try:
+            updated = mc.set_override(
+                record, field_name, value, invocation.one("--reason") or "")
+        except mc.RecordError as exc:
+            raise ClientRefusal(
+                code=USAGE_CODE, reason=str(exc),
+                repair_action=(f"{PROGRAM} model set-capability {model_id} "
+                               "<systemRole|thinkingSwitch|thinkOpenInPrompt> "
+                               "<value> --reason <text>; \"\" as the value "
+                               "clears the override"))
+        written = mc.write_record(updated)
+        view = mc.effective(mc.read_record(path), path=written)
+        cleared = field_name not in (updated.get("overrides") or {})
+        line = (f"cleared the {field_name} override on {model_id}" if cleared
+                else f"overrode {field_name} on {model_id}: detected "
+                     f"{(record.get('detected') or {}).get(field_name)!r} → "
+                     f"{updated['overrides'][field_name]['value']!r} "
+                     f"({updated['overrides'][field_name]['reason']})")
+        print(line)
+        return CLIResult(message=line, changed=True,
+                         payload=_capabilities_payload(view))
+
+    raise ClientRefusal(  # pragma: no cover - the parser refuses first
+        code=UNKNOWN_VERB_CODE, reason=f"model {verb!r} is not a verb",
+        repair_action=f"{PROGRAM} model --help")
+
+
+def _capabilities_payload(view) -> dict:
+    """The record as the envelope's ``result``: the effective view's stamp
+    plus the raw detected/overrides blocks, so a reader sees both."""
+    payload = view.stamp()
+    payload.update({
+        "modelID": view.model_id,
+        "revision": view.revision,
+        "foldSeparator": view.fold_separator,
+        "thinkTokens": dict(view.think_tokens),
+        "architecture": dict(view.architecture) if view.architecture else None,
+        "overrideDetail": dict(view.overrides),
+        "advisories": list(view.advisories),
+    })
+    return payload
 
 
 def _authoring_prompt(invocation: Invocation) -> CLIResult:
@@ -3934,6 +4070,7 @@ def _iso(value) -> str | None:
 
 
 HANDLERS = {"experiment": _experiment, "concept": _concept, "bundle": _bundle,
+            "model": _model,
             "authoring": _authoring_prompt, "runner": _runner, "run": _run}
 
 

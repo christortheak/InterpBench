@@ -134,7 +134,7 @@ import Testing
                     #"{"mode":"chatTemplate","reasoningEffort":"low"}"#,
                 ])
             #expect(refused.envelope.exitCode == 64)
-            #expect(refused.envelope.error?.reason.contains("no thinking mode") == true)
+            #expect(refused.envelope.error?.reason.contains("no thinking switch") == true)
         }
     }
 

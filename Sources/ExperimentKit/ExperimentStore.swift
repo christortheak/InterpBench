@@ -3685,8 +3685,79 @@ public enum ExperimentStore {
         try updateDraft(name: experimentName) { manifest in
             let trimmed = (text ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            // The one prompt-mode-independent refusal: a chat template the
+            // capability record marks `systemRole: unsupported` cannot
+            // deliver the frame at all (rawCompletion prepends it and is
+            // exempt). Server twin: `set_system_prompt`.
+            let problems = PromptRendering.systemPromptViolations(
+                systemPrompt: trimmed, modelID: manifest.modelID,
+                rawCompletion: manifest.promptMode == .rawCompletion,
+                capabilities: modelCapabilities(for: manifest))
+            guard problems.isEmpty else {
+                throw ExperimentError.malformed(
+                    problems.joined(separator: "; "),
+                    repair: "drop the system prompt, or pin a model whose chat "
+                        + "template can deliver system text")
+            }
             manifest.systemPrompt = trimmed.isEmpty ? nil : trimmed
         }
+    }
+
+    // MARK: - Model capabilities (the chat-template record)
+
+    /// The model's chat-template capability record, as every gate, echo and
+    /// preregistration reads it: the workspace record (probed) when one
+    /// exists, else the id heuristic — which says so. Server twin:
+    /// `model_capabilities.resolve`.
+    public static func modelCapabilities(for manifest: ExperimentManifest) -> ModelCapabilities {
+        ModelCapabilitiesStore.resolve(
+            modelID: manifest.modelID, revision: manifest.modelRevision,
+            root: workspaceRoot)
+    }
+
+    /// The record the declaration RULES read at `verify`: the workspace
+    /// record for a draft; the id heuristic — the rules it was frozen under
+    /// — for anything frozen, so no frozen study stops verifying over a
+    /// fact probed after its freeze. `capabilityAdvisories` says those out
+    /// loud instead. Server twin: `Manifest._capabilities_for_gates`.
+    static func capabilitiesForGates(_ manifest: ExperimentManifest) -> ModelCapabilities {
+        manifest.status == .draft
+            ? modelCapabilities(for: manifest)
+            : ModelCapabilities.heuristicView(
+                modelID: manifest.modelID, revision: manifest.modelRevision)
+    }
+
+    /// Non-blocking notes about a manifest's model capabilities: an effort
+    /// level ASSUMED from a heuristic record, the record's own advisories,
+    /// and — for a FROZEN manifest, which must keep verifying unchanged —
+    /// every record-derived rule a draft would have been refused on. Printed
+    /// by the declaration verbs and `verify`, stamped by runs. Server twin:
+    /// `experiment_store.capability_advisories`.
+    public static func capabilityAdvisories(
+        for manifest: ExperimentManifest, capabilities: ModelCapabilities? = nil
+    ) -> [String] {
+        let record = capabilities ?? modelCapabilities(for: manifest)
+        let effort = manifest.resolvedReasoningEffort
+        var notes = ReasoningEffort.protocolAdvisories(
+            effort: effort, modelID: manifest.modelID, capabilities: record)
+        // A declared system prompt is the other thing the record decides
+        // (its delivery route): say where the record came from beside it.
+        if !(manifest.systemPrompt ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !effort.isOn
+        {
+            for note in record.advisories where !notes.contains(note) { notes.append(note) }
+        }
+        if manifest.status != .draft {
+            if effort.isLevel, record.hasThinkingSwitch {
+                notes += ReasoningEffort.effortLevelViolations(
+                    effort, modelID: manifest.modelID, capabilities: record)
+            }
+            notes += PromptRendering.systemPromptViolations(
+                systemPrompt: manifest.systemPrompt, modelID: manifest.modelID,
+                rawCompletion: manifest.promptMode == .rawCompletion,
+                capabilities: record)
+        }
+        return notes
     }
 
     /// How many of a study's PINNED task items carry a scripted transcript
@@ -3765,9 +3836,16 @@ public enum ExperimentStore {
                 {
                     mergedBudget = nil  // the off declaration retires the budget
                 }
+                // The gate reads the model's CAPABILITY RECORD (the pinned
+                // template's probed answers; the id heuristic, saying so,
+                // when none exists): a level the template ignores or
+                // rejects is refused here, at the declaration, never
+                // rendered at the template's default under a manifest that
+                // asserts the level. Server twin: `set_protocol`.
                 let problems = ReasoningEffort.protocolViolations(
                     effort: mergedEffort, reasoningMaxTokens: mergedBudget,
-                    modelID: manifest.modelID)
+                    modelID: manifest.modelID,
+                    capabilities: modelCapabilities(for: manifest))
                 guard problems.isEmpty else {
                     throw ExperimentError.malformed(
                         problems.joined(separator: "; "),
@@ -3775,8 +3853,9 @@ public enum ExperimentStore {
                             + "\(experimentName) --reasoning-effort <"
                             + ReasoningEffort.vocabulary.joined(separator: "|")
                             + "> --reasoning-max-tokens <n≥1>  (the budget only "
-                            + "beside a non-off effort, on a model with a "
-                            + "thinking mode)")
+                            + "beside a non-off effort, on a model whose chat "
+                            + "template has a thinking switch; a level only when "
+                            + "the template accepts it — see model capabilities)")
                 }
                 manifest.reasoningEffort = mergedEffort
                 manifest.reasoningMaxTokens = mergedBudget
@@ -7098,7 +7177,17 @@ public enum ExperimentStore {
         // The same sentences `setSamplingProtocol` refuses with — here as
         // defence in depth for a hand-edited manifest. Server twin:
         // `Manifest.verify`.
-        violations += manifest.reasoningProtocolViolations
+        //
+        // The template-derived rules (which LEVELS the pinned template
+        // accepts, whether it can deliver a system prompt) read the model's
+        // capability record for a DRAFT and the id heuristic for anything
+        // frozen (`capabilitiesForGates`). Server twin: `Manifest.verify`.
+        let capabilityRecord = capabilitiesForGates(manifest)
+        violations += manifest.reasoningProtocolViolations(capabilities: capabilityRecord)
+        violations += PromptRendering.systemPromptViolations(
+            systemPrompt: manifest.systemPrompt, modelID: manifest.modelID,
+            rawCompletion: manifest.promptMode == .rawCompletion,
+            capabilities: capabilityRecord)
         // Ordinal-scale contract: the collapse of the ladder distribution to
         // one position is an instrument-design choice — DECLARED in the
         // manifest, never silently defaulted (workbench rule). Server twin:
@@ -9966,7 +10055,9 @@ public enum ExperimentStore {
     /// `_write_preregistration` (experiment_store.py); engines are not
     /// byte-identical (number formatting differs), but a reader of either
     /// file sees the same design. Pure and fixture-testable.
-    public static func preregistrationMarkdown(_ manifest: ExperimentManifest) -> String {
+    public static func preregistrationMarkdown(
+        _ manifest: ExperimentManifest, capabilities: ModelCapabilities? = nil
+    ) -> String {
         func formatNumber(_ value: Double) -> String {
             value == value.rounded() && abs(value) < 1e15
                 ? String(Int(value))
@@ -9989,6 +10080,13 @@ public enum ExperimentStore {
                 + "samplesPerItem \(manifest.samplesPerItem ?? 1), "
                 + "seedPolicy \(manifest.seedPolicy ?? "manifestSeeds"), "
                 + manifest.reasoningProtocolSummary,
+        ]
+        // The model's chat-template capabilities the Sampling line was gated
+        // on — what the template actually does with a system turn and the
+        // declared effort — from the workspace record (or the id heuristic,
+        // which says so). Server twin: `_write_preregistration`.
+        lines += (capabilities ?? modelCapabilities(for: manifest)).summaryLines
+        lines += [
             "",
             "## Conditions",
             "",

@@ -154,7 +154,8 @@ CHAT_TEMPLATE_KEYS = ("addGenerationPrompt", "mode", "qwenThinkingEnabled",
 #: than imported because ``steering`` may not depend on ``experiment`` at
 #: import time). Swift twin: ``ReasoningEffort.allCases``.
 REASONING_OFF = "off"
-REASONING_EFFORTS = (REASONING_OFF, "low", "medium", "xhigh")
+REASONING_ON = "on"
+REASONING_EFFORTS = (REASONING_OFF, REASONING_ON, "low", "medium", "high", "xhigh")
 #: What a legacy ``qwenThinkingEnabled: true`` declaration meant: the chat
 #: template's default effort.
 LEGACY_THINKING_EFFORT = "xhigh"
@@ -177,22 +178,32 @@ def unknown_effort_reason(value) -> str:
 
 
 def effort_without_thinking_mode_reason(effort: str, model_id: str) -> str:
-    """Refusal for a non-off effort on a family whose chat template has no
-    thinking mode, raised where the model id is known. Shared VERBATIM with
+    """Refusal for a non-off effort on a model whose chat template has no
+    thinking switch, raised where the model id is known. Shared VERBATIM with
     the Swift twin (``ExtractionRendering.effortWithoutThinkingModeReason``)."""
     return (f"extractionRendering declares reasoningEffort '{effort}' for "
-            f"{model_id}, whose family has no thinking mode — the chat "
-            "template would ignore it and the recipe would look as if it "
-            "rendered a reasoning scaffold when it did not — repair: declare "
+            f"{model_id}, whose chat template has no thinking switch "
+            "(enable_thinking changes nothing it renders) — the template "
+            "would ignore it and the recipe would look as if it rendered a "
+            "reasoning scaffold when it did not — repair: declare "
             "reasoningEffort off, or pin a model with a thinking mode")
 
 
-def has_thinking_mode(model_id: str) -> bool:
-    """Whether the pinned family's chat template has a thinking mode. The
-    one family rule, restated here so the attach path can ask it without a
-    ``steering`` → ``experiment`` import; ``prompt_render.has_thinking_mode``
-    is the renderer's own copy and the two are pinned equal by test."""
-    return "qwen" in (model_id or "").lower()
+def effort_level_problem_prefix() -> str:
+    """The prefix the study-protocol level sentences carry when the
+    declaration is a concept's ``extractionRendering``. Shared VERBATIM with
+    the Swift twin (``ExtractionRendering.effortLevelProblemPrefix``)."""
+    return "extractionRendering: "
+
+
+def has_thinking_mode(model_id: str, capabilities=None) -> bool:
+    """Whether the pinned chat template has a thinking switch — the model's
+    capability record (probed from the template; the id heuristic only when
+    no record exists, and that record says so). Imported lazily so
+    ``steering`` still does not depend on ``experiment`` at import time;
+    ``prompt_render.has_thinking_mode`` reads the same record."""
+    from ..experiment import prompt_render
+    return prompt_render.has_thinking_mode(model_id, capabilities)
 
 
 def unknown_chat_template_keys(value: dict) -> list[str]:
@@ -454,19 +465,27 @@ def from_json(value) -> ExtractionRendering:
 
 
 def thinking_mode_problem(rendering: "ExtractionRendering | None",
-                          model_id: str) -> str | None:
-    """The refusal for a non-off effort on a family without a thinking mode,
-    or None — asked wherever a declaration meets the pinned model id (attach,
+                          model_id: str, capabilities=None) -> str | None:
+    """The refusal for a non-off effort the pinned template cannot honour —
+    no thinking switch at all, or a LEVEL the template ignores or rejects —
+    or None. Asked wherever a declaration meets the pinned model id (attach,
     the extraction routes), because :func:`from_json` itself never sees one.
     Swift twin: ``ExtractionRendering.thinkingModeProblem(modelID:)``."""
     if rendering is None or rendering.is_raw:
         return None
-    if rendering.reasoning_effort == REASONING_OFF:
+    effort = rendering.reasoning_effort
+    if effort == REASONING_OFF:
         return None
-    if has_thinking_mode(model_id):
+    from ..experiment import prompt_render
+    record = prompt_render.capabilities_for(model_id, capabilities=capabilities)
+    if not record.has_thinking_switch:
+        return effort_without_thinking_mode_reason(effort, model_id)
+    if effort == REASONING_ON:
         return None
-    return effort_without_thinking_mode_reason(
-        rendering.reasoning_effort, model_id)
+    problems = prompt_render.effort_level_violations(effort, model_id, record)
+    if not problems:
+        return None
+    return effort_level_problem_prefix() + problems[0]
 
 
 def parse_declaration(value) -> ExtractionRendering | None:

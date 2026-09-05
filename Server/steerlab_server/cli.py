@@ -122,6 +122,7 @@ def _usage_text() -> str:
         "[--output-name N] [--redenominate] "
         "| site qualify [--json OUT] [--skip-model-fixtures] "
         "| site node-scratch-wrapper [--metadata-root DIR] [--print] "
+        "| model capabilities <modelID> [--revision R] [--probe] "
         "| data check optvec [--dir DIR] [--json] "
         "| data check lora [<package-manifest-or-dir>] [--json] "
         "| battery lint <path> [--json] "
@@ -158,7 +159,7 @@ def _usage_text() -> str:
 #: return exactly what they returned — including ``lint``'s historical exit 2,
 #: which ``state_for_legacy_exit`` already reads as a refusal.
 _AGENT_FAMILY_ORDER = ("experiment", "jobs", "study", "vectors", "data",
-                       "site", "battery")
+                       "site", "battery", "model")
 
 #: Every ``experiment`` verb this engine dispatches, in lifecycle order.
 #:
@@ -407,7 +408,7 @@ def _run_agent_family(family: str, args: list[str]) -> int:
 
     handlers = {"experiment": _experiment, "data": _data, "vectors": _vectors,
                 "jobs": _jobs, "study": _study, "site": _site,
-                "battery": _battery}
+                "battery": _battery, "model": _model}
     handler = handlers[family]
 
     try:
@@ -2843,6 +2844,80 @@ def _parity_could_not_compare_repair(*, incomparable: bool, path_a: str,
                 f"('{path_a}' vs '{path_b}'); {shape}")
     return (f"check both operand paths and their sidecars — '{path_a}' and "
             f"'{path_b}': {shape}")
+
+
+_MODEL_USAGE = ("usage: steerlab-server model capabilities <modelID> "
+                "[--revision R] [--probe]\n")
+
+
+def _model(args: list[str]):
+    """``model capabilities <modelID> [--revision R] [--probe]`` — the
+    chat-template capability record (Swift twin: ``steerlab-cli model
+    capabilities``). ``--probe`` renders the pinned template through this
+    engine's tokenizer (``AutoTokenizer`` + ``AutoConfig``, no weights, no
+    GPU) and writes the workspace record; without it the verb reads the
+    record, or the id heuristic and says so."""
+    if len(args) < 2 or args[0] != "capabilities":
+        sys.stderr.write(_MODEL_USAGE)
+        return 64
+    from .cli_envelope import CLIResult, advisory
+    from .experiment import model_capabilities as mc
+    model_id = args[1]
+    revision = _flag(args, "--revision")
+    probe = "--probe" in args
+    if probe:
+        try:
+            record = mc.probe_model(model_id, revision)
+        except Exception as exc:  # noqa: BLE001 - named in the envelope
+            sys.stderr.write(f"model capabilities: could not probe {model_id}: {exc}\n")
+            return CLIResult(
+                state="failed", exit_code=70, code="capabilityProbeFailed",
+                message=f"could not probe the chat template of {model_id}: {exc}",
+                repair_action=(f"install the model first (POST /api/models/"
+                               f"install, or huggingface-cli download {model_id}) "
+                               "so its tokenizer is in this machine's HF cache, "
+                               "then re-run"),
+                payload={"modelID": model_id, "revision": revision})
+        existing_path = mc.record_path(model_id, record.get("revision"))
+        diff_lines: list[str] = []
+        if os.path.isfile(existing_path):
+            try:
+                existing = mc.read_record(existing_path)
+                record["overrides"] = dict(existing.get("overrides") or {})
+                record["recordHash"] = mc.record_hash(record)
+                diff_lines = mc.diff(existing, record)
+            except (OSError, ValueError, mc.RecordError):
+                diff_lines = ["previous record unreadable; rewritten"]
+        written = mc.write_record(record)
+        view = mc.effective(mc.read_record(mc.record_path(
+            model_id, record.get("revision"))), path=written)
+        print(f"probed {model_id} @ {record.get('revision') or 'unpinned'} → {written}")
+        for line in diff_lines:
+            print(f"  changed: {line}")
+    else:
+        view = mc.resolve(model_id, revision)
+    for line in view.summary_lines():
+        print(line.replace("**", ""))
+    advisories = []
+    for note in view.advisories:
+        sys.stderr.write(f"ADVISORY: {note}\n")
+        advisories.append(advisory("modelCapabilities", note))
+    payload = view.stamp()
+    payload.update({
+        "modelID": view.model_id, "revision": view.revision,
+        "foldSeparator": view.fold_separator,
+        "thinkTokens": dict(view.think_tokens),
+        "architecture": dict(view.architecture) if view.architecture else None,
+        "overrideDetail": dict(view.overrides),
+        "advisories": list(view.advisories),
+        "probed": probe,
+    })
+    return CLIResult(
+        message=(f"{model_id}: capabilities from {view.source}"
+                 + (f" ({view.path})" if view.path else "")),
+        changed=probe,
+        state="okWithAdvisories" if advisories else "ready",
+        advisories=advisories, payload=payload)
 
 
 def _vectors(args: list[str]):

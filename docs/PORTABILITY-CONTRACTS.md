@@ -395,6 +395,7 @@ verb added without a test is still covered. Submitting to a remote runner is
 | `experiment` | `create`, `attach`, `declare-condition`, `remove-condition`, `set-protocol`, `pin-revision`, `set-style-taxonomy`, `pin-sae-candidates`, `duplicate`, `verify`, `freeze`, `list` (since v0: `detach`, `set-sweep-grid`, `set-parser`, `set-instrument-scope`, `set-system-prompt`, `set-evaluation-sampling`) |
 | `concept` | `import` |
 | `bundle` | `package`, `inspect`, `import` |
+| `model` | `capabilities`, `set-capability` (since 2026-09-05: the chat-template capability record, CLI-REFERENCE §4.4 — shown and overridden here, probed by an engine) |
 
 Plus `steerlab --version` (package version + the `client` role — one
 distribution ships two console scripts, and a caller that got the wrong one has

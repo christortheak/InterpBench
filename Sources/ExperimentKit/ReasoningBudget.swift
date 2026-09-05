@@ -121,10 +121,19 @@ extension ExperimentManifest {
     /// rule that needs no spelled effort: a budget beside no effort at all.
     /// Server twin: the reasoning block of `Manifest.verify`.
     public var reasoningProtocolViolations: [String] {
+        reasoningProtocolViolations(capabilities: nil)
+    }
+
+    /// The same rules against an explicit capability record — the workspace
+    /// record for a draft, the id heuristic for a frozen study (see
+    /// `ExperimentStore.capabilitiesForGates`).
+    public func reasoningProtocolViolations(
+        capabilities: ModelCapabilities?
+    ) -> [String] {
         if reasoningEffort != nil {
             return ReasoningEffort.protocolViolations(
                 effort: reasoningEffort, reasoningMaxTokens: reasoningMaxTokens,
-                modelID: modelID)
+                modelID: modelID, capabilities: capabilities)
         }
         // A budget beside no effort at all: meaningless unless the legacy
         // boolean already says the study reasons (then the run honours it).

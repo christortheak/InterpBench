@@ -729,11 +729,14 @@ def test_the_client_table_is_separate_from_the_engines_twin_literal():
     cannot live on an authoring client at all."""
     engine = {spec.label for spec in cli_envelope.VERB_SPECS}
     client = {spec.label for spec in client_cli.CLIENT_VERB_SPECS}
-    assert len(cli_envelope.VERB_SPECS) == 17
+    assert len(cli_envelope.VERB_SPECS) == 18
     assert "battery run" in engine and "battery run" not in client
-    # `experiment list` and `experiment verify` exist on both by design (a
-    # client reads its own workspace); everything else is disjoint.
-    assert engine & client == {"experiment list", "experiment verify"}
+    # `experiment list`, `experiment verify` and `model capabilities` exist
+    # on both by design (a client reads its own workspace — and shows the
+    # capability record it holds, while only the engine can `--probe` one);
+    # everything else is disjoint.
+    assert engine & client == {"experiment list", "experiment verify",
+                               "model capabilities"}
 
 
 def test_every_client_verb_has_a_purpose_and_a_synopsis():

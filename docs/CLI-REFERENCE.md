@@ -161,6 +161,10 @@ set-sweep-grid, set-protocol, set-system-prompt, set-parser,
 set-instrument-scope, set-evaluation-sampling, pin-revision,
 set-style-taxonomy, pin-sae-candidates, duplicate,
 verify, freeze, list), `concept import`, `bundle` (package, inspect, import),
+`model` (capabilities — show the chat-template capability record, §4.4;
+set-capability — override one detected field with a reason; this client holds
+no tokenizer, so probing is `steerlab-server model capabilities --probe` or
+`steerlab-cli model capabilities --probe`),
 `authoring prompt <kind>` (§3.12's emitter, identical bytes to the Mac's —
 its file destination is spelled `--out-file` here, because this client lifts
 `--out` before the family is chosen), `runner` (below — including `runner
@@ -787,6 +791,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   authoring prompt <kind> …                     Generation prompts for missing study data.
   docs cli-reference [--check | --write]        Regenerate the reference document.
   panel <verb> …                                Panel scenarios and seat casting.
+  model capabilities <modelID> [--probe] | set-capability …  The chat-template capability record.
   artifacts audit [--json]                      Vector-sidecar audit.
   serve [--port N]                              The loopback web front end.
   --config <path.json>                          Smoke-test / toy-concept tasks.
@@ -892,7 +897,7 @@ steerlab-cli experiment declare-condition <name> <condition> [--alpha-units <nor
 steerlab-cli experiment set-sweep-selection <name> [--capability-tolerance <ratio>] [--choice-prompts <path>] [--coherence-backstop <ratio>] [--coherence-floor <ratio>] [--coherence-ratio <ratio>] [--control-apply-to <winner|topK>] [--control-margin <margin>] [--control-top-k <k>] [--objective <metric>]
 steerlab-cli experiment set-sweep-grid <name> [--alphas <a1,a2,…>] [--battery <path>] [--dev-prompts <path>] [--layer-fractions <f1,f2,…>] [--layers <L1,L2,…>] [--max-tokens <n>]
 steerlab-cli experiment set-instruments <name> <instrument>[,…] [--ordinal-aggregation <expectedValue|argmax>]
-steerlab-cli experiment set-sampling <name> [--max-tokens <n>] [--prompt-mode <chatAssistant|rawCompletion>] [--reasoning-effort <off|low|medium|xhigh>] [--reasoning-max-tokens <n>] [--samples-per-item <n>] [--seed-policy <manifestSeeds|derivedSHA256>] [--temperature <t>]
+steerlab-cli experiment set-sampling <name> [--max-tokens <n>] [--prompt-mode <chatAssistant|rawCompletion>] [--reasoning-effort <off|on|low|medium|high|xhigh>] [--reasoning-max-tokens <n>] [--samples-per-item <n>] [--seed-policy <manifestSeeds|derivedSHA256>] [--temperature <t>]
 steerlab-cli experiment set-exclusions <name> <rule>[,…] [--endpoint <key>] [--max <x>] [--min <x>]
 steerlab-cli experiment set-system-prompt <name> <text>
 steerlab-cli experiment set-parser <name> <parser>
@@ -916,7 +921,7 @@ steerlab-cli experiment duplicate <name> <new-name>
 | `experiment set-sweep-selection` | Declare the sweep's selection criterion as manifest data. |
 | `experiment set-sweep-grid` | Declare the sweep's layer × alpha grid, its instrument files, and its per-cell token budget. |
 | `experiment set-instruments` | Declare which outcome instruments the run measures (sampledText, answerTokenLogprob, choiceProbability, repeReaderScore, ordinalScale; "" clears the declaration). |
-| `experiment set-sampling` | Declare the generation protocol: temperature, token budget, prompt mode (chatAssistant, rawCompletion), the stochastic replication policy (samples per item × seed policy: manifestSeeds, derivedSHA256), and the reasoning protocol (effort off, low, medium, xhigh × the reasoning block's own token cap; --max-tokens is then the answer budget). |
+| `experiment set-sampling` | Declare the generation protocol: temperature, token budget, prompt mode (chatAssistant, rawCompletion), the stochastic replication policy (samples per item × seed policy: manifestSeeds, derivedSHA256), and the reasoning protocol (effort off, on, low, medium, high, xhigh × the reasoning block's own token cap; --max-tokens is then the answer budget). |
 | `experiment set-exclusions` | Declare the record-exclusion rules analysis applies (failedAttentionCheck, unparseableEndpoint, outOfRange; "" clears the declaration). |
 | `experiment set-system-prompt` | Declare the study's system prompt — the deployment frame every arm is read under. Inserted as a genuine system turn where the model's chat template has a system role; prepended to the first user turn where it does not (e.g. Gemma-family); prepended to the prompt text under rawCompletion. An agent arm reads under its persona then this frame. "" clears the declaration. |
 | `experiment set-parser` | Declare the numeric-endpoint parser from prompts/parsers/parser-registry.json and pin that registry's hash ("" clears both). |
@@ -1153,6 +1158,7 @@ only the flags given move, `""` clears `--prompt-mode`/`--seed-policy`, and
 | `--prompt-mode <chatAssistant\|rawCompletion>` | Closed vocabulary. Out-of-vocabulary is refused: downstream reads are equality tests, so a typo would silently behave as the default. |
 | `--samples-per-item <n>` | Stochastic replication count. |
 | `--seed-policy <manifestSeeds\|derivedSHA256>` | How each record's seed is derived. Closed vocabulary, same reason. |
+| `--reasoning-effort <off\|on\|low\|medium\|high\|xhigh>` | The reasoning protocol (2026-09-03; `on` and `high` since 2026-09-05). `off` renders `enable_thinking=false`, byte for byte what every study always rendered; `on` is thinking at the template's default with no effort variable; a LEVEL is refused unless the model's capability record (§3.14, §4.4) says the pinned template accepts it — Qwen3-14B/-32B read the switch and IGNORE the level (declare `on`), Qwen3.8 accepts low/medium/xhigh and raises on high. A non-off effort needs `--reasoning-max-tokens`. |
 
 The **joint** stochastic rules — `samplesPerItem > 1` requires
 `temperature > 0` and `seedPolicy derivedSHA256` — stay `verify()` violations
@@ -2728,6 +2734,40 @@ clauses are the document's real value and are not derivable from a flag table.
 Each engine owns its own region ids (`swift-*` here, `server-*` in §4–§6) and
 never rewrites the other's.
 
+### 3.14 `model` — the chat-template capability record
+
+The Mac half of §4.4: the same record (`prompts/models/<owner>--<repo>@<revision>.json`),
+probed here through this Mac's swift-transformers tokenizer (weights-free,
+from the HF cache) and read by every gate `set-sampling`, `set-system-prompt`,
+`attach --extraction-rendering` and `verify` apply. A model's first load on
+this engine (`validate`, `extract`, `sweep`, `run`, the Playground) ensures the
+record the same way; `--probe` does it by hand.
+
+<!-- GENERATED:swift-model BEGIN -->
+<!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
+
+```
+steerlab-cli model capabilities <modelID> [--probe] [--revision <commit>]
+steerlab-cli model set-capability <modelID> <field> <value> [--reason <text>] [--revision <commit>]
+```
+
+| Verb | Purpose |
+|---|---|
+| `model capabilities` | Show the model's chat-template capability record — or with --probe, derive it from the pinned template (system role, thinking switch, accepted reasoning-effort levels) and write it into the workspace. |
+| `model set-capability` | Override one detected capability on the record (systemRole, thinkingSwitch, thinkOpenInPrompt) with a reason that is displayed beside the detected value and stamped into runs; "" clears the override. |
+
+Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
+<!-- GENERATED:swift-model END -->
+
+`set-capability` overrides ONE detected field — `systemRole`,
+`thinkingSwitch`, `thinkOpenInPrompt` — with a `--reason` that is displayed
+beside the detected value (the Compute section, `model capabilities`, the
+preregistration) and stamped into every run; `""` as the value clears it. An
+override sits beside a detected value, so a model whose template was never
+probed refuses (`capabilityRecordMissing`, 66) with the probe as the repair.
+The detected block is never hand-edited. Read §4.4 for what the probe records
+and what it gates; the rules are one set, on both engines.
+
 ### 3.13 `install` — the binary talking about itself
 
 <!-- GENERATED:swift-install BEGIN -->
@@ -3133,6 +3173,88 @@ reason** — `fieldAgreementAbsentReason: "single-coder design: 1 judge coded
 this run, so no inter-rater agreement statistics exist"` — because an empty
 list would read as "agreement was measured and there was none", which is a
 different and false claim.
+
+### 4.4 `model capabilities` — the chat-template capability record
+
+The family rules the renderers used to branch on were substring tests on the
+model id (`"qwen" in id` ⇒ has a thinking mode and reads `reasoning_effort`;
+`"gemma" in id` ⇒ no system role), and two of them were false in ways a frozen
+manifest could not see: Qwen3-14B/-32B's template reads `enable_thinking` but
+**ignores** `reasoning_effort` — a study declaring `medium` ran at the
+template's default while its manifest asserted medium — and a re-vendored
+template can change what it reads under the same id. Since 2026-09-05 the
+capabilities are **derived from the pinned template by render probes** and
+recorded per (model id, revision) in the workspace at
+`prompts/models/<owner>--<repo>@<revision>.json`: hashed JSON, git-tracked,
+read by both engines.
+
+<!-- GENERATED:server-model BEGIN -->
+<!-- Generated from the declarative verb table — `steerlab-server docs cli-reference --write`. Edit the table, not this block. -->
+
+```
+steerlab-server model capabilities <modelID> [--probe] [--revision <sha>]
+```
+
+| Verb | Purpose |
+|---|---|
+| `model capabilities` | Show the model's chat-template capability record — or with --probe, derive it from the pinned template (system role, thinking switch, accepted reasoning-effort levels) and write it into the workspace. |
+
+Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
+<!-- GENERATED:server-model END -->
+
+What the probe records (`detected`), each a render comparison rather than a
+regex over the template source:
+
+| Field | Probe | Values |
+|---|---|---|
+| `systemRole` | render `[user]` vs `[system, user]` | `systemTurn` (system text lands outside the user turn), `foldedIntoUser` (the second render is the first with the system text prepended inside the user turn — Gemma 3, with `foldSeparator` recorded, `"\n\n"`), `unsupported` (the template raises on, or silently drops, the turn) |
+| `thinkingSwitch` | render with `enable_thinking=true` vs `false` | `supported` iff the renders differ; `thinkOpenInPrompt` says whether the thinking-on generation prompt ends with an opening `<think>` (Qwen3.8: yes; Qwen3: no — the model writes it) |
+| `effortLevels` | thinking-on renders with `reasoning_effort=low\|medium\|high\|xhigh`, after a bogus value settles whether the variable is read at all | per level `accepted` / `rejected` (the template raises) / `ignored` (the variable is never read); a heuristic record says `assumed` |
+| `thinkTokens` | the tokenizer | single-token ids of `<think>` / `</think>`, or null |
+| `architecture` | the repo config | layer count, hidden size, per-layer attention types (`layer_types`, `text_config`-nested where the repo nests it) |
+
+The record also carries the template's sha256 and the `tokenizer_config.json`
+sha256, which engine probed and when, an optional `overrides` block
+(`{field: {value, reason, setAt}}`, set by a human through `steerlab model
+set-capability` or `steerlab-cli model set-capability`, displayed beside the
+detected value and stamped into runs — never silent, never a hand edit of the
+detected block), and its own `recordHash`.
+
+**Who writes it.** `POST /api/models/install` probes the just-installed
+tokenizer; every verb that loads the model (`validate`, `extract`, `sweep`,
+`run`) ensures the record from the loaded tokenizer — writing it when absent,
+re-probing and printing a field-by-field diff when the template's hash
+changed (overrides survive); and `model capabilities --probe` does it by hand,
+weights-free. `verify` reads it. Runs stamp the record they rendered under in
+`config.json` → `notes.modelCapabilities` (source, path, hash, the facts the
+render used); freeze prints its lines after the preregistration's Sampling
+line; the app's Compute section lists the workspace's records.
+
+**What it gates.** A non-off `reasoningEffort` is refused at declaration
+(`set-sampling` / `set-protocol`) and at `verify` of a draft unless the record
+says `thinkingSwitch: supported` AND the value is `on` — thinking at the
+template's default, the only non-off effort a template with a switch but no
+effort control can honour — or a level in `effortLevels` marked `accepted`
+(a level the template `ignored` is refused with the `on` repair; a `rejected`
+one names the accepted levels). A system prompt on a `systemRole: unsupported`
+template is refused; `foldedIntoUser` is delivered that way and the echo says
+so. Rendering passes **only** the variables the record says the template
+reads: `off` ⇒ `enable_thinking=false` (byte-identical to every study ever
+rendered), `on` ⇒ `enable_thinking=true`, an accepted level ⇒ both variables.
+
+**Frozen manifests keep verifying unchanged.** A frozen study is checked
+against the id rules it was frozen under; what the probed record would have
+refused is printed by `verify` as a `modelCapabilities` advisory, and a run of
+such a study continues loudly — the advisory lands in the run directory's
+`advisories.txt` beside the stamp — never dies (post-submit drift policy).
+The legacy `qwenThinkingEnabled` read rule is untouched.
+
+**The fallback.** With no tokenizer to probe (an authoring client, a test
+double, a gate before the model was ever installed) the old id heuristics
+still answer, as a record whose `source` is `heuristic` and whose advisory
+says so; a level such a record allows is `assumed`, and the declaration verbs
+print the assumption. A heuristic answer is never silently indistinguishable
+from a probed one.
 
 ---
 

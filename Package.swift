@@ -22,6 +22,11 @@ let package = Package(
         // and wire them via the MLXHuggingFace macros. See CLAUDE.md › Dependencies.
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
+        // The Jinja engine swift-transformers renders chat templates with —
+        // pinned directly so the chat-template capability probe can render a
+        // template SOURCE (the cross-engine fixture families) through the
+        // same engine a loaded tokenizer renders through.
+        .package(url: "https://github.com/huggingface/swift-jinja.git", from: "2.3.6"),
     ],
     targets: [
         // Concept-agnostic steering core — no UI, no experiment logic.
@@ -33,6 +38,7 @@ let package = Package(
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
                 .product(name: "HuggingFace", package: "swift-huggingface"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
+                .product(name: "Jinja", package: "swift-jinja"),
             ]
         ),
         // Experiment definitions, run configs, controls, metrics.

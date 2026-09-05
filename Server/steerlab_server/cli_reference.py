@@ -36,6 +36,7 @@ REGIONS: dict = {
     ],
     "server-study": ["study submit"],
     "server-jobs": ["jobs list"],
+    "server-model": ["model capabilities"],
     "server-vectors": ["vectors compare", "vectors mirror-poles"],
     "server-site": ["site qualify"],
     "server-data": ["data check"],
