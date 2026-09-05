@@ -119,8 +119,8 @@ was replaced or launched; interactive visual QA remains outstanding.
 
 ## Remaining work and integration
 
-Next focused slices are freeze coordination and remote submission/pipeline
-presentation. Protocol/condition/prompt authoring transactions and confirmation
+The subsequent [freeze coordination slice](REFACTOR-FREEZE-COORDINATION.md)
+is implemented. Next is remote submission/pipeline coordination and presentation. Protocol/condition/prompt authoring transactions and confirmation
 study construction still reside in the coordinator; the existing template
 instantiation table still composes with the panel. Other feature panels and
 remaining global workspace boundaries remain separate work.

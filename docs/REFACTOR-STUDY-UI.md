@@ -223,10 +223,11 @@ counts and tests above describe the authoring-editor slice.
 This is the study UI slice, not a rewrite of every app panel. The following work
 remains appropriate as separately reviewed changes:
 
-1. Decompose freeze coordination and remote submission/pipeline presentation,
+1. Decompose remaining remote submission/pipeline coordination and presentation,
    followed by remaining protocol/condition/prompt authoring commands. The
    study/design inventory and management actions have moved in the subsequent
-   slice linked above.
+   slice linked above. [Freeze coordination](REFACTOR-FREEZE-COORDINATION.md)
+   has also moved; the main view is now 699 lines and the panel 4,252 lines.
 2. Extend explicit request/workspace binding through the legacy submission and
    store/task boundaries. Those compatibility paths still use existing global
    workspace lookup; this slice does not make all model operations safe against

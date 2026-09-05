@@ -20,6 +20,8 @@ and component separation, including the subsequent authoring editor extraction
 (main study view: 2,720 → 1,300 lines). The subsequent
 [study/design management handoff](REFACTOR-STUDY-MANAGEMENT.md) records the
 command/library owners and management UI extraction (main study view: 875 lines).
+The [freeze coordination handoff](REFACTOR-FREEZE-COORDINATION.md) records the
+next controller/transport/UI boundary (main study view: 699 lines).
 
 This change establishes focused owners for reusable Python task support,
 offline analysis, pipeline orchestration, Swift contracts, manifest-save policy,
@@ -232,9 +234,9 @@ artifact authoring and freeze transaction sequencing. Remaining larger work:
 Swift offline analysis now has explicit evidence, calculation and publication
 owners; see the linked handoff for compatibility boundaries and validation.
 
-1. Decompose freeze coordination and remote submission/pipeline presentation,
+1. Decompose remaining remote submission/pipeline coordination and presentation,
    followed by remaining protocol/condition/prompt authoring transactions.
-   Study/design management now has command/library owners and UI components;
+   Study/design management and freeze coordination now have focused owners and UI components;
    see its handoff. Draft, job and result owners and the main authoring/run/result
    UI components have already moved.
 2. Extend explicit request/workspace binding through remaining legacy paths,
