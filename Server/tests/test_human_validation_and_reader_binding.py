@@ -20,6 +20,8 @@ from types import SimpleNamespace
 import pytest
 
 from steerlab_server.experiment import experiment_store as es, tasks
+import steerlab_server.experiment.condition_execution as condition_execution
+import steerlab_server.experiment.evaluation_evidence as evaluation_evidence
 from steerlab_server.experiment.manifest import Manifest
 
 
@@ -48,12 +50,12 @@ def test_wildcard_rows_cover_only_unclaimed_cells(tmp_path):
         json.dumps({"condition": "c", "promptID": "p", "outcome": "tie",
                     "sampleIndex": 1}),
     ])
-    human = tasks._load_human_validation(manifest, root)
+    human = evaluation_evidence.load_human_validation(manifest, root)
     assert set(human) == {("p", None, "c"), ("p", "1", "c")}
     judged = [("judge-1", {("p", "0", "c"): "baseline",
                            ("p", "1", "c"): "variant",
                            ("p", "2", "c"): "variant"})]
-    resolved = tasks._materialize_human_validation(human, judged)
+    resolved = evaluation_evidence.materialize_human_validation(human, judged)
     # The exact row claims cell 1; the wildcard fills 0 and 2.
     assert resolved == {("p", "0", "c"): "variant",
                         ("p", "1", "c"): "tie",
@@ -65,12 +67,12 @@ def test_duplicate_rows_refuse_exact_and_wildcard(tmp_path):
     exact = json.dumps({"condition": "c", "promptID": "p",
                         "outcome": "variant", "sampleIndex": 0})
     with pytest.raises(RuntimeError, match="duplicate"):
-        tasks._load_human_validation(
+        evaluation_evidence.load_human_validation(
             _human_manifest(root, [exact, exact]), root)
     wildcard = json.dumps({"condition": "c", "promptID": "p",
                            "outcome": "tie"})
     with pytest.raises(RuntimeError, match="duplicate"):
-        tasks._load_human_validation(
+        evaluation_evidence.load_human_validation(
             _human_manifest(root, [wildcard, wildcard]), root)
 
 
@@ -80,16 +82,16 @@ def test_sample_index_must_be_a_nonnegative_integer(tmp_path):
         line = ('{"condition": "c", "promptID": "p", "outcome": "tie", '
                 f'"sampleIndex": {bad}}}')
         with pytest.raises(RuntimeError, match="sampleIndex"):
-            tasks._load_human_validation(_human_manifest(root, [line]), root)
+            evaluation_evidence.load_human_validation(_human_manifest(root, [line]), root)
 
 
 def test_missing_identity_fields_refuse(tmp_path):
     root = str(tmp_path)
     with pytest.raises(RuntimeError, match="condition and promptID"):
-        tasks._load_human_validation(
+        evaluation_evidence.load_human_validation(
             _human_manifest(root, ['{"outcome": "tie"}']), root)
     with pytest.raises(RuntimeError, match="no labeled rows"):
-        tasks._load_human_validation(_human_manifest(root, [""]), root)
+        evaluation_evidence.load_human_validation(_human_manifest(root, [""]), root)
 
 
 def test_numeric_identity_fields_refuse(tmp_path):
@@ -98,7 +100,7 @@ def test_numeric_identity_fields_refuse(tmp_path):
     and not the other. Non-empty JSON strings, both engines."""
     root = str(tmp_path)
     with pytest.raises(RuntimeError, match="non-empty strings"):
-        tasks._load_human_validation(_human_manifest(root, [
+        evaluation_evidence.load_human_validation(_human_manifest(root, [
             '{"condition": "c", "promptID": 5, "outcome": "tie"}']), root)
 
 
@@ -198,4 +200,4 @@ def test_the_runtime_scorer_refuses_what_verify_flags(tmp_path):
             model_id="org/m", model_revision="abc",
             reader_refs=[SimpleNamespace(path=rel, concept="fair")])
         with pytest.raises(RuntimeError, match=match):
-            tasks._reader_scorers(manifest, root)
+            condition_execution.reader_scorers(manifest, root)

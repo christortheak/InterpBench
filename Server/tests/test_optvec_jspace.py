@@ -219,8 +219,9 @@ def test_the_null_is_the_same_distribution_the_study_path_controls_with():
     engine; a J-space null drawn from a different distribution would not be
     comparable with any other control in the program."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.condition_execution as condition_execution
 
-    assert optvec_jspace.NULL_ALGORITHM == tasks.RANDOM_VECTOR_ALGORITHM
+    assert optvec_jspace.NULL_ALGORITHM == condition_execution.RANDOM_VECTOR_ALGORITHM
 
 
 # ------------------------------------------------------ observation-layer rule

@@ -30,6 +30,8 @@ import pytest
 
 from steerlab_server.api.model_registry import ModelRegistry
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.judge_resources as judge_resources
+import steerlab_server.steering as steering
 from steerlab_server.experiment.manifest import JudgeRef, Manifest
 
 CODING_RUBRIC = """---
@@ -69,15 +71,15 @@ def test_still_needed_is_the_remaining_local_judges_models():
     roster = [_local("a", OTHER), _local("b", "org/third"), _claude("c")]
 
     # At the boundary before judge a: everything the panel still needs.
-    assert tasks.judge_models_still_needed(
+    assert judge_resources.judge_models_still_needed(
         roster, study_model=STUDY,
         study_model_generates_later=False) == {OTHER_ID, THIRD_ID}
     # After a's column: a's model is no longer needed by anyone.
-    assert tasks.judge_models_still_needed(
+    assert judge_resources.judge_models_still_needed(
         roster[1:], study_model=STUDY,
         study_model_generates_later=False) == {THIRD_ID}
     # External judges hold no device memory and contribute nothing.
-    assert tasks.judge_models_still_needed(
+    assert judge_resources.judge_models_still_needed(
         roster[2:], study_model=STUDY,
         study_model_generates_later=False) == set()
 
@@ -85,11 +87,11 @@ def test_still_needed_is_the_remaining_local_judges_models():
 def test_still_needed_keeps_the_study_model_when_a_later_stage_generates():
     roster = [_local("a", OTHER)]
     # Nothing later generates: the study model is releasable.
-    assert tasks.judge_models_still_needed(
+    assert judge_resources.judge_models_still_needed(
         roster, study_model=STUDY,
         study_model_generates_later=False) == {OTHER_ID}
     # A later generating stage keeps it — the conservative half of the rule.
-    assert tasks.judge_models_still_needed(
+    assert judge_resources.judge_models_still_needed(
         roster, study_model=STUDY,
         study_model_generates_later=True) == {OTHER_ID, STUDY_ID}
 
@@ -97,7 +99,7 @@ def test_still_needed_keeps_the_study_model_when_a_later_stage_generates():
 def test_a_study_model_judge_keeps_the_study_model_with_no_special_case():
     # An empty model resolves to the study model by the cross-engine rule,
     # so the still-needed set names it without the caller saying anything.
-    assert tasks.judge_models_still_needed(
+    assert judge_resources.judge_models_still_needed(
         [_local("a")], study_model=STUDY,
         study_model_generates_later=False) == {STUDY_ID}
 
@@ -112,24 +114,24 @@ def test_still_needed_tells_two_revisions_of_one_slug_apart():
     old = JudgeRef(name="a", kind="local", model=OTHER, revision="r1")
     new = JudgeRef(name="b", kind="local", model=OTHER, revision="r2")
 
-    assert tasks.judge_models_still_needed(
+    assert judge_resources.judge_models_still_needed(
         [old, new], study_model=STUDY,
         study_model_generates_later=False) == {(OTHER, "r1", None),
                                                (OTHER, "r2", None)}
     # After a's column r1 is nobody's; r2 is about to load.
-    assert tasks.judge_models_still_needed(
+    assert judge_resources.judge_models_still_needed(
         [new], study_model=STUDY,
         study_model_generates_later=False) == {(OTHER, "r2", None)}
 
 
 def test_identity_canonicalizes_dtype_and_takes_the_study_pins():
     # A dtype ALIAS is the same container as its canonical spelling.
-    assert tasks.judge_model_identity(
+    assert judge_resources.judge_model_identity(
         JudgeRef(name="a", kind="local", model=OTHER, dtype="bf16"),
         study_model=STUDY) == (OTHER, None, "bfloat16")
     # A study-model judge IS the study model: the study's pins, not its own
     # (it reuses the held weights; the loader is never asked for a copy).
-    assert tasks.judge_model_identity(
+    assert judge_resources.judge_model_identity(
         JudgeRef(name="a", kind="local"),
         study_model=STUDY, study_revision="abc123",
         study_dtype="auto") == (STUDY, "abc123", None)
@@ -141,10 +143,10 @@ def test_identity_canonicalizes_dtype_and_takes_the_study_pins():
 def test_sequential_columns_cost_one_slot_however_long_the_panel():
     roster = [_local("a", OTHER), _local("b", "org/third"),
               _local("c", "org/fourth"), _claude("d")]
-    assert tasks.judge_slots_required(
+    assert judge_resources.judge_slots_required(
         roster, study_model=STUDY, sequential=True) == 1
     # Without a release seam nothing can be dropped between columns.
-    assert tasks.judge_slots_required(
+    assert judge_resources.judge_slots_required(
         roster, study_model=STUDY, sequential=False) == 3
 
 
@@ -153,16 +155,16 @@ def test_a_returning_model_costs_the_moment_it_overlaps():
     # so ONE moment genuinely holds two containers.
     roster = [_local("a", OTHER), _local("b", "org/third"),
               _local("c", OTHER)]
-    assert tasks.judge_slots_required(
+    assert judge_resources.judge_slots_required(
         roster, study_model=STUDY, sequential=True) == 2
 
 
 def test_a_generating_later_stage_costs_the_study_slot_beside_the_column():
     roster = [_local("a", OTHER)]
-    assert tasks.judge_slots_required(
+    assert judge_resources.judge_slots_required(
         roster, study_model=STUDY, sequential=True,
         study_model_generates_later=True) == 2
-    assert tasks.judge_slots_required(
+    assert judge_resources.judge_slots_required(
         roster, study_model=STUDY, sequential=True,
         study_model_generates_later=False) == 1
 
@@ -182,7 +184,7 @@ def _seam(roster, index, *, study_model=STUDY, study_revision=None,
                  "device": "cuda:0", "bytes": 55 << 30}
                 for m, rev, dt in sorted(identities)]
 
-    tasks._release_models_for_judge(
+    judge_resources.release_models_for_judge(
         release, roster, index, study_model=study_model,
         study_revision=study_revision,
         study_model_generates_later=generates_later,
@@ -245,7 +247,7 @@ def test_a_failing_release_never_fails_the_run():
     def release(model_ids):
         raise RuntimeError("registry is wedged")
 
-    tasks._release_models_for_judge(
+    judge_resources.release_models_for_judge(
         release, [_local("a", OTHER), _local("b", "org/third")], 1,
         study_model=STUDY, study_model_generates_later=False,
         _log=lambda *p: logs.append(" ".join(str(x) for x in p)))
@@ -259,17 +261,17 @@ def test_without_a_registry_the_seam_frees_the_private_copy(monkeypatch):
     # has to be trimmed or `cuda.mem_get_info` — what the capacity gate
     # reads — still counts its blocks as used.
     freed: list = []
-    monkeypatch.setattr(tasks.model_loader, "free_device_memory",
+    monkeypatch.setattr(steering.model_loader, "free_device_memory",
                         lambda device=None: freed.append(device))
     logs: list = []
     roster = [_local("a", OTHER), _local("b", "org/third")]
 
-    tasks._release_models_for_judge(
+    judge_resources.release_models_for_judge(
         None, roster, 0, study_model=STUDY,
         study_model_generates_later=False, _log=logs.append)
     assert freed == []  # nothing has been loaded yet at the first column
 
-    tasks._release_models_for_judge(
+    judge_resources.release_models_for_judge(
         None, roster, 1, study_model=STUDY,
         study_model_generates_later=False, _log=logs.append)
     assert freed == [None]

@@ -29,6 +29,7 @@ from types import SimpleNamespace
 import pytest
 
 from steerlab_server.experiment import bundles, paired_judge, tasks
+import steerlab_server.experiment.pipeline_ledger as pipeline_ledger
 from steerlab_server.experiment.manifest import Manifest
 
 RUBRIC = "Which response expresses more dread?"
@@ -292,7 +293,7 @@ def test_pipeline_emits_fanout_request_and_adopts_completion(tmp_path):
     manifest = Manifest.load("ev", root)
     pipe_dir = os.path.join(root, "runs", "20260101T000001000-exp-ev-pipeline")
     os.makedirs(pipe_dir)
-    ledger = {"schema": tasks.PIPELINE_LEDGER_SCHEMA, "experiment": "ev",
+    ledger = {"schema": pipeline_ledger.PIPELINE_LEDGER_SCHEMA, "experiment": "ev",
               "experimentHash": manifest.content_hash(),
               "manifestStatus": "draft",
               "stages": ["run", "evaluate"],
@@ -412,7 +413,7 @@ def _fanout_setup(tmp_path, monkeypatch):
                             "20260101T000001000-exp-ev-pipeline")
     os.makedirs(pipe_dir)
     _write(os.path.join(pipe_dir, "pipeline.json"),
-           {"schema": tasks.PIPELINE_LEDGER_SCHEMA, "experiment": "ev",
+           {"schema": pipeline_ledger.PIPELINE_LEDGER_SCHEMA, "experiment": "ev",
             "experimentHash": manifest.content_hash(),
             "manifestStatus": "draft", "stages": ["run", "evaluate"],
             "stageResults": {"run": {"status": "completed",

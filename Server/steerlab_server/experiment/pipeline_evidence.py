@@ -11,7 +11,7 @@ from .pipeline_ledger import write_pipeline_ledger as _write_pipeline_ledger
 
 
 
-def _restore_self_pinned_revision(name, manifest, ledger, root, _log,
+def restore_self_pinned_revision(name, manifest, ledger, root, _log,
                                   pipeline_run_directory=None):
     """Repair the pipeline continuation's self-inflicted epoch drift.
 
@@ -65,7 +65,7 @@ def _restore_self_pinned_revision(name, manifest, ledger, root, _log,
 
 
 
-def _stamp_pipeline_drift(pipeline_run_directory, ledger, live_hash) -> None:
+def stamp_pipeline_drift(pipeline_run_directory, ledger, live_hash) -> None:
     """Durable record of a continuation that proceeded past manifest drift
     (never silent): what the ledger expected, what was live, and when.
 
@@ -171,7 +171,7 @@ def list_pipeline_runs(name: str | None = None,
 
 
 
-def _expected_promotion_identity(name: str, concept: str, root: str | None,
+def expected_promotion_identity(name: str, concept: str, root: str | None,
                                  *, chain_sweep_run: str | None = None):
     """The SELECTION identity a criterion promotion of this concept would
     stamp right now: ``(sweepRun, winningCell)`` from the same evidence
@@ -208,7 +208,7 @@ def _expected_promotion_identity(name: str, concept: str, root: str | None,
 
 
 
-def _find_minted_agent(name: str, concept: str, ledger: dict,
+def find_minted_agent(name: str, concept: str, ledger: dict,
                        root: str | None) -> str | None:
     """Crash-recovery for the promote stage (RECOVERY ONLY — the caller
     gates on the ledger's promote stage being mid-flight): a variant
@@ -220,18 +220,18 @@ def _find_minted_agent(name: str, concept: str, ledger: dict,
     must never be adopted. Returns the artifact path, or None."""
     chain_sweep = (ledger.get("stageResults", {}).get("sweep") or {}).get(
         "runDirectory")
-    expected = _expected_promotion_identity(
+    expected = expected_promotion_identity(
         name, concept, root,
         chain_sweep_run=os.path.basename(chain_sweep) if chain_sweep
         else None)
     if expected is None:
         return None
-    return _minted_agent_matching(name, concept, root, expected=expected,
+    return minted_agent_matching(name, concept, root, expected=expected,
                                   live_hash=ledger.get("experimentHash"))
 
 
 
-def _minted_agent_matching(name: str, concept: str, root: str | None, *,
+def minted_agent_matching(name: str, concept: str, root: str | None, *,
                            expected, live_hash) -> str | None:
     """The newest variant artifact whose promotion birth certificate
     matches the FULL selection identity: experiment, manifest epoch,

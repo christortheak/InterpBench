@@ -357,7 +357,7 @@ def test_lint_cli_exit_codes_and_json(tmp_path, capsys):
 
 
 def _fake_bundle():
-    return tasks.ConceptVectorBundle(
+    return _owner_vector_materialization.ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[1.0, 0.0]] * 4),
         residual_norm_per_layer=[1.0] * 4,
         residual_norm_source="test", stimulus_hash="h")
@@ -424,7 +424,7 @@ def _patch_engine(monkeypatch, generated=None, scored=None):
             selected=correct,
             probability={o: (0.8 if o == correct else 0.1) for o in options})
 
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_generate, 'generate', generate)
     monkeypatch.setattr(logprob, "score_options", score_options)

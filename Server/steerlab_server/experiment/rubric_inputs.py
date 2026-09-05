@@ -5,7 +5,7 @@ This owner never imports the task compatibility facade.
 from __future__ import annotations
 import hashlib
 from . import lifecycle_gates, paths
-from . import manifest as _dep_manifest
+from . import manifest as manifest_module
 
 
 def no_rubric_refusal(name: str) -> str:
@@ -58,7 +58,7 @@ def missing_rubric_repair(name: str, relative: str) -> str:
             f"evaluate {name}")
 
 
-def _resolve_rubric(manifest: _dep_manifest.Manifest, root, _log) -> tuple[str, str | None, str | None]:
+def resolve_rubric(manifest: manifest_module.Manifest, root, _log) -> tuple[str, str | None, str | None]:
     """The rubric text evaluate judges with: ``(text, sha256|None, file|None)``.
 
     Frozen studies MUST judge from the pinned rubric file (never an unpinned

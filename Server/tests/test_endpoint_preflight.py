@@ -29,6 +29,7 @@ import pytest
 from steerlab_server import cli
 from steerlab_server.experiment import endpoint_preflight as ep
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
 
 
 # --- fixtures --------------------------------------------------------------
@@ -317,8 +318,8 @@ def test_stratification_families_match_the_analyze_layer(tmp_path):
     items = _load(tmp_path, _aliased_items())
     records = [{"promptID": item.id, "factors": dict(item.factors)}
                for item in items]
-    theirs = tasks._stratification_families(
-        tasks._item_factor_levels(records), {item.id for item in items})
+    theirs = analysis_endpoints._stratification_families(
+        analysis_endpoints._item_factor_levels(records), {item.id for item in items})
     theirs = [(name, {label: set(ids) for label, ids in strata.items()})
               for name, strata in theirs if name != "promptID"]
     ours = [(name, {label: set(ids) for label, ids in strata.items()})

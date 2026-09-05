@@ -24,6 +24,7 @@ from steerlab_server.api.jobs import (TERMINAL, DurableJobStore, JobManager,
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import pipeline_reconcile
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.pipeline_ledger as pipeline_ledger
 
 
 def _ledger(runs_root, run_id, *, experiment="chain", schema=2,
@@ -50,7 +51,7 @@ def _ledger(runs_root, run_id, *, experiment="chain", schema=2,
 def test_schema_literal_agrees_with_ledger_authority():
     # The import-light duplicate must never drift from the real schema.
     assert (pipeline_reconcile.RESUMABLE_LEDGER_SCHEMA
-            == tasks.PIPELINE_LEDGER_SCHEMA)
+            == pipeline_ledger.PIPELINE_LEDGER_SCHEMA)
 
 
 def test_scan_finds_exactly_the_orphans(tmp_path):

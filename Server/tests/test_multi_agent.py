@@ -274,7 +274,7 @@ def test_provider_allows_multiple_base_models(tmp_path, monkeypatch):
 def test_transcript_level_diffs_aggregates_within_a_play_through():
     """Turn diffs collapse to one value per transcript, so downstream `n`
     counts transcripts rather than dependent turns."""
-    from steerlab_server.experiment.tasks import _transcript_level_diffs
+    from steerlab_server.experiment.analysis_endpoints import transcript_level_diffs
 
     # Two transcripts, three turns each. Transcript 0 mean +2, transcript 1 +8.
     values = {"t1@0": 3.0, "t2@0": 4.0, "t3@0": 5.0,
@@ -282,16 +282,16 @@ def test_transcript_level_diffs_aggregates_within_a_play_through():
     base = {"t1@0": 1.0, "t2@0": 2.0, "t3@0": 3.0,
             "t1@1": 1.0, "t2@1": 2.0, "t3@1": 3.0}
 
-    assert _transcript_level_diffs(values, base) == [2.0, 8.0]
+    assert transcript_level_diffs(values, base) == [2.0, 8.0]
 
 
 def test_replicate_keying_keeps_transcripts_apart():
     """Without the replicate in the key, the same turn id from two
     play-throughs lands in one cell and the between-transcript variation the
     estimator exists to measure is averaged away before it is ever seen."""
-    from steerlab_server.experiment.tasks import _key_records_by_transcript
+    from steerlab_server.experiment.analysis_endpoints import key_records_by_transcript
 
-    keyed = _key_records_by_transcript([
+    keyed = key_records_by_transcript([
         {"promptID": "t1", "replicateIndex": 0},
         {"promptID": "t1", "replicateIndex": 1},
         {"promptID": "t1"},  # pre-replicate record normalizes to 0
@@ -305,7 +305,7 @@ def test_clustering_does_not_understate_uncertainty():
     more than transcripts agree with each other; treating the turns as
     independent draws reports an interval the design has not earned."""
     from steerlab_server.experiment import study_stats
-    from steerlab_server.experiment.tasks import _transcript_level_diffs
+    from steerlab_server.experiment.analysis_endpoints import transcript_level_diffs
 
     # Two transcripts that disagree sharply; turns within each agree closely.
     values, base = {}, {}
@@ -316,7 +316,7 @@ def test_clustering_does_not_understate_uncertainty():
         base[f"t{turn}@1"] = 0.0
 
     naive = [values[k] - base[k] for k in sorted(values)]      # 12 "observations"
-    clustered = _transcript_level_diffs(values, base)          # 2 transcripts
+    clustered = transcript_level_diffs(values, base)          # 2 transcripts
 
     naive_row = study_stats.effect_row("configured", "wordCount", naive)
     clustered_row = study_stats.effect_row("configured", "wordCount", clustered)
@@ -456,7 +456,7 @@ def test_prose_endpoints_reach_the_analyzer():
     Without wordCount/distinct2 the endpoint set was EMPTY, so the transcript
     clustering ran on nothing and the study silently reported no effect
     sizes."""
-    from steerlab_server.experiment.tasks import _endpoint_values
+    from steerlab_server.experiment.analysis_endpoints import endpoint_values
 
     records = [
         {"condition": "baseline", "promptID": "t1", "output": "a",
@@ -464,7 +464,7 @@ def test_prose_endpoints_reach_the_analyzer():
         {"condition": "configured", "promptID": "t1", "output": "b",
          "wordCount": 20, "distinct2": 0.9},
     ]
-    endpoints = _endpoint_values(records)
+    endpoints = endpoint_values(records)
 
     assert endpoints["wordCount"]["configured"]["t1"] == 20.0
     assert endpoints["distinct2"]["baseline"]["t1"] == 0.5

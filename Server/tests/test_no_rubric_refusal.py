@@ -21,6 +21,8 @@ no ``pin-rubric`` verb to point at.
 import pytest
 
 from steerlab_server.experiment import lifecycle_gates, tasks
+import steerlab_server.experiment.rubric_inputs as rubric_inputs
+import steerlab_server.experiment.task_inputs as task_inputs
 from steerlab_server.experiment.manifest import Manifest
 
 
@@ -31,7 +33,7 @@ def _manifest(**overrides):
 
 
 def test_the_no_rubric_sentence_is_the_cross_engine_literal():
-    assert tasks.no_rubric_refusal("s") == (
+    assert rubric_inputs.no_rubric_refusal("s") == (
         "study 's' has no judge rubric — pin one: 'steerlab-cli experiment "
         "pin-rubric s prompts/rubrics/default-paired-v1.md' (any file under "
         "prompts/rubrics/; inline draft text is draft-only and cannot freeze)")
@@ -43,10 +45,10 @@ def test_an_empty_inline_rubric_refuses_instead_of_judging_on_nothing(tmp_path):
                                      "judgePrompt": ""})
     logged = []
     with pytest.raises(lifecycle_gates.LifecycleError) as caught:
-        tasks._resolve_rubric(manifest, str(tmp_path), logged.append)
+        rubric_inputs.resolve_rubric(manifest, str(tmp_path), logged.append)
     error = caught.value
     assert error.gate == lifecycle_gates.MISSING_PREREQUISITE
-    assert str(error) == tasks.no_rubric_refusal("no-rubric")
+    assert str(error) == rubric_inputs.no_rubric_refusal("no-rubric")
     assert "pin-rubric" in error.repair_action
     assert "steerlab-server experiment evaluate no-rubric" in \
         error.repair_action
@@ -59,7 +61,7 @@ def test_whitespace_is_not_a_rubric(tmp_path):
                                      "judgeModel": "claude-x",
                                      "judgePrompt": "   \n\t "})
     with pytest.raises(lifecycle_gates.LifecycleError):
-        tasks._resolve_rubric(manifest, str(tmp_path), lambda *_: None)
+        rubric_inputs.resolve_rubric(manifest, str(tmp_path), lambda *_: None)
 
 
 def test_a_pinned_rubric_file_that_is_gone_refuses_typed(tmp_path):
@@ -71,7 +73,7 @@ def test_a_pinned_rubric_file_that_is_gone_refuses_typed(tmp_path):
     manifest = _manifest(judgeRubricFile="prompts/rubrics/nope.md",
                          judgeRubricHash="a" * 64)
     with pytest.raises(lifecycle_gates.LifecycleError) as caught:
-        tasks._resolve_rubric(manifest, str(tmp_path), lambda *_: None)
+        rubric_inputs.resolve_rubric(manifest, str(tmp_path), lambda *_: None)
     error = caught.value
     assert error.gate == lifecycle_gates.MISSING_PREREQUISITE
     # The cross-engine sentence (Swift: JudgeRubricStore.missingRubricRefusal).
@@ -93,7 +95,7 @@ def test_a_task_prompt_file_that_is_gone_refuses_typed(tmp_path):
     manifest = _manifest(taskPromptsFile="prompts/tasks/nope.jsonl",
                          taskPromptsHash="b" * 64)
     with pytest.raises(lifecycle_gates.LifecycleError) as caught:
-        tasks._load_prompts(manifest, None, str(tmp_path))
+        task_inputs.load_prompts(manifest, None, str(tmp_path))
     error = caught.value
     assert error.gate == lifecycle_gates.MISSING_PREREQUISITE
     # Byte-identical to Swift's sentence for the same rule.
@@ -110,7 +112,7 @@ def test_a_real_inline_draft_rubric_still_judges_loudly(tmp_path):
                                      "judgeModel": "claude-x",
                                      "judgePrompt": "Prefer the calmer one."})
     logged = []
-    text, sha, path = tasks._resolve_rubric(
+    text, sha, path = rubric_inputs.resolve_rubric(
         manifest, str(tmp_path), logged.append)
     assert text == "Prefer the calmer one."
     assert (sha, path) == (None, None)

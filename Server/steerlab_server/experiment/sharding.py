@@ -814,7 +814,7 @@ def _assemble(name: str, proven: _ProvenShards, into: str, *, root: str,
     # per-shard Slurm ids live in report.json's `sharded` block.
     from .manifest import inert_machinery_note
     inert_note = inert_machinery_note(proven.manifest.raw)
-    run_artifacts._write_config_snapshot(proven.manifest, into, "run", job_id=job_id,
+    run_artifacts.write_config_snapshot(proven.manifest, into, "run", job_id=job_id,
                                  notes=({"inertConceptMachinery": inert_note}
                                         if inert_note is not None else None))
 
@@ -1179,7 +1179,7 @@ def seed_pipeline_directory(name: str, root: str, merged_run_dir: str,
     # is created on the controller, not inside the job that will run the
     # remaining stages, so the env fallback would stamp the controller's
     # own allocation id.
-    run_artifacts._write_config_snapshot(manifest, pipeline_dir, "pipeline",
+    run_artifacts.write_config_snapshot(manifest, pipeline_dir, "pipeline",
                                  job_id=job_id)
     remaining = list(spec.stages[1:])
     ledger = {

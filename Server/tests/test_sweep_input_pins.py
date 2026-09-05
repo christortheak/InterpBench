@@ -301,7 +301,7 @@ def _fake_model(model_id, revision):
 
 def _armed_sweep(root, name, monkeypatch):
     """Same fakes as test_sweep_objectives: no GPU, no network."""
-    bundle = tasks.ConceptVectorBundle(
+    bundle = _owner_vector_materialization.ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[1.0, 0.0]] * 4),
         residual_norm_per_layer=[1.0] * 4,
         residual_norm_source="test", stimulus_hash="h")
@@ -312,7 +312,7 @@ def _armed_sweep(root, name, monkeypatch):
         return ("dread filled the quiet town before dawn broke 2"
                 if injections else "the town woke slowly to a bright morning 2")
 
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": bundle})
     monkeypatch.setattr(_owner_generate, 'generate', generate)
     return _fake_model

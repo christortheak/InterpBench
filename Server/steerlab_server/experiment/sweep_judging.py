@@ -8,17 +8,17 @@ import json
 import os
 from ..steering import model_loader
 from . import lifecycle_gates, prompt_render
-from . import cancellation as _dep_cancellation
-from . import evaluation_evidence as _dep_evaluation_evidence
-from . import generate as _dep_generate
-from . import judge_dispatch as _dep_judge_dispatch
-from . import judge_resources as _dep_judge_resources
-from . import manifest as _dep_manifest
-from . import rubric_inputs as _dep_rubric_inputs
-from . import run_artifacts as _dep_run_artifacts
+from . import cancellation
+from . import evaluation_evidence
+from . import generate
+from . import judge_dispatch
+from . import judge_resources
+from . import manifest as manifest_module
+from . import rubric_inputs
+from . import run_artifacts
 
 
-def _judge_preference(judge_panel, rubric: str, condition: str,
+def judge_preference(judge_panel, rubric: str, condition: str,
                       cell_texts, baseline_texts, *, prompts=None,
                       should_cancel=None, log=None) -> float:
     """judgeScore objective: mean paired-judge preference of the CELL text vs
@@ -32,7 +32,7 @@ def _judge_preference(judge_panel, rubric: str, condition: str,
     scores: list[float] = []
     for _name, judge_fn, judge_model in judge_panel:
         for i, (cell_text, base_text) in enumerate(zip(cell_texts, baseline_texts)):
-            _dep_cancellation._cancel_checkpoint(should_cancel, log,
+            cancellation.cancel_checkpoint(should_cancel, log,
                                f"judge '{_name}' item {i + 1}/{len(cell_texts)}")
             baseline_is_a = paired_judge._baseline_first(f"dev-{i + 1}", condition)
             a, b = ((base_text, cell_text) if baseline_is_a
@@ -58,7 +58,7 @@ def _judge_preference(judge_panel, rubric: str, condition: str,
     return sum(scores) / len(scores) if scores else 0.5
 
 
-def _judge_preflight(manifest: _dep_manifest.Manifest, max_loaded: int | None, _log) -> None:
+def judge_preflight(manifest: manifest_module.Manifest, max_loaded: int | None, _log) -> None:
     """judgeScore judge-panel preflight, run at sweep START — before the study
     model loads, so an instrument problem aborts the sweep at start, never
     mid-grid. Logs every judge's RESOLVED model (the cross-engine rule: a
@@ -83,8 +83,8 @@ def _judge_preflight(manifest: _dep_manifest.Manifest, max_loaded: int | None, _
     # Same two announcements as evaluate, at sweep START — the sweep is
     # where a surprise costs the most, since it surfaces mid-grid after the
     # study model has loaded and cells have been generated.
-    _dep_judge_resources.log_judging_custody(manifest.judges, _log)
-    _dep_judge_dispatch._preflight_openrouter_judges(manifest.judges, _log)
+    judge_resources.log_judging_custody(manifest.judges, _log)
+    judge_dispatch.preflight_openrouter_judges(manifest.judges, _log)
     for ref in manifest.judges:
         if ref.kind == "openrouter":
             _log(f"judge '{ref.name}': openrouter model '{ref.model}' via "
@@ -184,7 +184,7 @@ def _assert_study_model_judge_matches_held(ref, manifest, model) -> None:
             "study-model judge judges with the held weights and cannot load "
             "a second revision. Drop the pin, or name a different model")
     declared_dtype = (getattr(ref, "dtype", None) or "").strip()
-    held_dtype = _dep_run_artifacts._actual_dtype(model)
+    held_dtype = run_artifacts.actual_dtype(model)
     if declared_dtype and held_dtype and \
             model_loader.normalize_dtype(declared_dtype) != \
             model_loader.normalize_dtype(held_dtype):
@@ -195,7 +195,7 @@ def _assert_study_model_judge_matches_held(ref, manifest, model) -> None:
             "precision. Drop the pin, or name a different model")
 
 
-def _sweep_judge_panel(manifest, model, model_provider, root, _log, *,
+def sweep_judge_panel(manifest, model, model_provider, root, _log, *,
                        judge_stack=None):
     """(rubric text, [(name, judge_fn, model)]) for a judgeScore sweep. The
     rubric comes from the manifest PINS (resolve_objective already required
@@ -218,7 +218,7 @@ def _sweep_judge_panel(manifest, model, model_provider, root, _log, *,
     and exited the provider itself, and `model_loader.load` has no cache — a
     12B judge across a grid of cells reloaded on every pair."""
     from . import paired_judge, response_coding, sweep_selection
-    rubric, _live_hash, _file = _dep_rubric_inputs._resolve_rubric(manifest, root, _log)
+    rubric, _live_hash, _file = rubric_inputs.resolve_rubric(manifest, root, _log)
     # A coding rubric declares no preference — the sweep's judgeScore
     # objective would force the judge to improvise a winner (2026-08-04).
     response_coding.refuse_if_coding(
@@ -243,21 +243,21 @@ def _sweep_judge_panel(manifest, model, model_provider, root, _log, *,
                     # JUDGE_MAX_TOKENS, never a smaller ad-hoc cap: the
                     # 2026-07-22 incident cap (512) truncated a legible
                     # verdict mid-reasoning and the run refused it.
-                    return _dep_generate.generate(model, prompt, model_id=manifest.model_id,
+                    return generate.generate(model, prompt, model_id=manifest.model_id,
                                     max_tokens=paired_judge.JUDGE_MAX_TOKENS,
                                     temperature=0.0,
                                     prompt_mode=prompt_render.CHAT_ASSISTANT)
                 panel.append((ref.name, paired_judge.make_local_judge(_gen),
                               resolved))
                 continue
-        judge_fn, requested_model, _holder = _dep_judge_resources._judge_callable(
+        judge_fn, requested_model, _holder = judge_resources.judge_callable(
             ref, model_provider, study_model=manifest.model_id,
             study_revision=manifest.model_revision, stack=judge_stack)
         panel.append((ref.name, judge_fn, requested_model))
     return rubric, panel
 
 
-def _emit_judging_packets(packets, packet_map, concept, kind, layer, alpha,
+def emit_judging_packets(packets, packet_map, concept, kind, layer, alpha,
                           prompts, steered_texts, baseline_texts,
                           rubric_hash) -> None:
     """One blinded comparison packet per dev item for a deferred sweep cell
@@ -284,7 +284,7 @@ def _emit_judging_packets(packets, packet_map, concept, kind, layer, alpha,
             "conditionTag": tag}
 
 
-def _write_deferred_judging(run_directory, name, manifest, criterion,
+def write_deferred_judging(run_directory, name, manifest, criterion,
                             objective, packets, packet_map, selection_ctx,
                             dev_hash, rubric_text, rubric_hash, _log) -> None:
     """The awaiting-judgment artifact set, written into the (still-being-
@@ -328,7 +328,7 @@ def _write_deferred_judging(run_directory, name, manifest, criterion,
         # across newline conventions; the judge reads the text).
         "rubricTextSha256": hashlib.sha256(
             rubric_text.encode("utf-8")).hexdigest(),
-        "judges": _dep_evaluation_evidence._normalized_judge_entries(objective.judges),
+        "judges": evaluation_evidence.normalized_judge_entries(objective.judges),
         "packetsFile": "judging-packets.jsonl",
         "packetsSha256": packets_sha,
         "mapSha256": _sha256_of(map_path),

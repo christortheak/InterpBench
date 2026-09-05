@@ -18,6 +18,7 @@ import pytest
 
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.judge_resources as judge_resources
 
 
 class _Ref:
@@ -43,20 +44,20 @@ def keyfile(tmp_path, monkeypatch):
 class TestCustodyPlan:
 
     def test_all_local_panel_has_nothing_to_defer(self, keyfile):
-        plan = tasks.judging_custody_plan(
+        plan = judge_resources.judging_custody_plan(
             [_Ref("a", "local"), _Ref("b", "local", "org/other")])
         assert plan["disposition"] == "local"
 
     def test_credentialed_external_panel_judges_inline(self, keyfile):
         keyfile("openrouter")
-        plan = tasks.judging_custody_plan(
+        plan = judge_resources.judging_custody_plan(
             [_Ref("a", "openrouter", "x/y", "deepinfra"),
              _Ref("b", "openrouter", "p/q", "anthropic")])
         assert plan["disposition"] == "inline"
         assert plan["missingKinds"] == []
 
     def test_keyless_external_panel_defers(self, keyfile):
-        plan = tasks.judging_custody_plan(
+        plan = judge_resources.judging_custody_plan(
             [_Ref("a", "openrouter", "x/y", "deepinfra")])
         assert plan["disposition"] == "deferred"
         assert plan["missingKinds"] == ["openrouter"]
@@ -66,7 +67,7 @@ class TestCustodyPlan:
         # not the claude one, so the whole panel defers — including the
         # judge this host could have run.
         keyfile("openrouter")
-        plan = tasks.judging_custody_plan(
+        plan = judge_resources.judging_custody_plan(
             [_Ref("claude-j", "claude", "claude-opus-4-8"),
              _Ref("or-j", "openrouter", "anthropic/claude-opus-4.8",
                   "anthropic")])
@@ -78,7 +79,7 @@ class TestCustodyPlan:
         assert "including any judge that IS credentialed here" in plan["reason"]
 
     def test_split_local_and_uncredentialed_external_refuses(self, keyfile):
-        plan = tasks.judging_custody_plan(
+        plan = judge_resources.judging_custody_plan(
             [_Ref("local-j", "local"),
              _Ref("or-j", "openrouter", "x/y", "deepinfra")])
         assert plan["disposition"] == "refused"
@@ -87,7 +88,7 @@ class TestCustodyPlan:
     def test_the_plan_is_logged_at_stage_start(self, keyfile):
         keyfile("openrouter")
         lines = []
-        tasks.log_judging_custody(
+        judge_resources.log_judging_custody(
             [_Ref("a", "openrouter", "x/y", "deepinfra")], lines.append)
         assert len(lines) == 1
         assert "judging custody: INLINE" in lines[0]

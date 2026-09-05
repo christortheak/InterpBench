@@ -20,6 +20,8 @@ import pytest
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import logprob as logprob_mod
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+import steerlab_server.experiment.condition_execution as condition_execution
 from steerlab_server.experiment.manifest import (
     KNOWN_ORDINAL_AGGREGATIONS, Manifest)
 from steerlab_server.steering.vector_store import ConceptVectors
@@ -99,7 +101,7 @@ def test_vocabularies_match_the_swift_literals():
     assert es.KNOWN_ORDINAL_AGGREGATIONS == ("expectedValue", "argmax")
     assert KNOWN_ORDINAL_AGGREGATIONS == ("expectedValue", "argmax")
     assert logprob_mod.ORDINAL_AGGREGATIONS == ("expectedValue", "argmax")
-    assert tasks.CHOICE_INSTRUMENTS == {
+    assert condition_execution.CHOICE_INSTRUMENTS == {
         "answerTokenLogprob", "choiceProbability", "ordinalScale"}
 
 
@@ -214,7 +216,7 @@ def _fake_score_options():
 
 def _patch(monkeypatch):
     monkeypatch.setattr(
-        _owner_vector_materialization, '_extract_all',
+        _owner_vector_materialization, 'extract_all',
         lambda model, manifest, root: {})
     monkeypatch.setattr(logprob_mod, "score_options", _fake_score_options())
 
@@ -284,7 +286,7 @@ def test_run_refuses_undeclared_aggregation(tmp_path, monkeypatch):
 # --- statistics layer: analyze's paired ordinalPosition endpoint --------------
 
 def _fake_bundle():
-    return tasks.ConceptVectorBundle(
+    return _owner_vector_materialization.ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[1.0, 0.0]] * 4),
         residual_norm_per_layer=[1.0] * 4,
         residual_norm_source="test", stimulus_hash="h")
@@ -321,7 +323,7 @@ def test_endpoint_values_extract_ordinal_position():
          "instrument": "answerTokenLogprob", "target": "1",
          "logOdds": {"1": 0.5}},
     ]
-    endpoints = tasks._endpoint_values(records)
+    endpoints = analysis_endpoints.endpoint_values(records)
     assert endpoints["ordinalPosition"]["baseline"] == {"p1": 2.3}
     assert endpoints["ordinalPosition"]["steered"] == {"p1": 2.6}
     # Open-issues #6: the ordinal record's target was synthesized, so it
@@ -340,7 +342,7 @@ def test_run_then_analyze_produces_ordinal_effect_row(tmp_path, monkeypatch):
         conditions=[{"name": "steered",
                      "slots": [{"concept": "fear", "layer": 1, "alpha": 2.0}]}])
     monkeypatch.setattr(
-        _owner_vector_materialization, '_extract_all',
+        _owner_vector_materialization, 'extract_all',
         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(
         logprob_mod, "score_options", _fake_score_options_with_shift())
@@ -427,6 +429,8 @@ def test_ordinal_records_emit_no_choice_log_odds():
     stamp) are recognized by carrying ordinalPosition; new records are
     explicit via targetSource."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     records = [
         # Historical likert record: synthesized target, ordinal stamp.
@@ -446,7 +450,7 @@ def test_ordinal_records_emit_no_choice_log_odds():
          "instrument": "answerTokenLogprob", "target": "1",
          "targetSource": None, "logOdds": {"1": 3.0}},
     ]
-    endpoints = tasks._endpoint_values(records)
+    endpoints = analysis_endpoints.endpoint_values(records)
     assert endpoints["ordinalPosition"]["baseline"] == {"p1": 2.3}
     assert endpoints["choiceLogOdds"] == {"baseline": {"p2": -0.5}}
 
@@ -475,6 +479,8 @@ def test_declared_target_map_overrides_record_heuristic():
     choice endpoint when the map says the item declared one — and a likert
     item loses it even if a record lacks the ordinal stamp."""
     from steerlab_server.experiment import tasks, choice_deltas
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     records = [
         # s4-framings shape: declared target, ordinal stamp on same record.
@@ -490,7 +496,7 @@ def test_declared_target_map_overrides_record_heuristic():
          "logOdds": {"1": 8.0}},
     ]
     declared = {"mix1": True, "lik1": False}
-    endpoints = tasks._endpoint_values(records, declared_targets=declared)
+    endpoints = analysis_endpoints.endpoint_values(records, declared_targets=declared)
     assert endpoints["choiceLogOdds"]["baseline"] == {"mix1": 2.0}
     assert endpoints["choiceLogOdds"]["steered"] == {"mix1": 1.0}
     rows, summary = choice_deltas.rows(records, declared_targets=declared)

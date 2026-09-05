@@ -10,6 +10,11 @@ import json
 import math
 
 from steerlab_server.experiment import control_matrix, tasks
+import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+import steerlab_server.experiment.condition_execution as condition_execution
+import steerlab_server.experiment.run_reporting as run_reporting
+import steerlab_server.experiment.sampling as sampling
+import steerlab_server.experiment.task_inputs as task_inputs
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.steering import vector_math as vm
 
@@ -77,19 +82,19 @@ def test_verify_flags_bad_sampling_policy(tmp_path):
 
 
 def test_derive_seed_deterministic_and_distinct():
-    a = tasks.derive_seed("hash", "fear-a2", "prompt-1", 0)
-    b = tasks.derive_seed("hash", "fear-a2", "prompt-1", 0)
-    c = tasks.derive_seed("hash", "fear-a2", "prompt-1", 1)
-    d = tasks.derive_seed("hash", "baseline", "prompt-1", 0)
+    a = sampling.derive_seed("hash", "fear-a2", "prompt-1", 0)
+    b = sampling.derive_seed("hash", "fear-a2", "prompt-1", 0)
+    c = sampling.derive_seed("hash", "fear-a2", "prompt-1", 1)
+    d = sampling.derive_seed("hash", "baseline", "prompt-1", 0)
     assert a == b
     assert len({a, c, d}) == 3
     assert 0 <= a < 2 ** 63
 
 
 def test_matched_norm_random_deterministic_and_norm_matched():
-    v1 = tasks._matched_norm_random("cond|fear|10", dimension=64, norm=7.5)
-    v2 = tasks._matched_norm_random("cond|fear|10", dimension=64, norm=7.5)
-    v3 = tasks._matched_norm_random("cond|fear|11", dimension=64, norm=7.5)
+    v1 = condition_execution._matched_norm_random("cond|fear|10", dimension=64, norm=7.5)
+    v2 = condition_execution._matched_norm_random("cond|fear|10", dimension=64, norm=7.5)
+    v3 = condition_execution._matched_norm_random("cond|fear|11", dimension=64, norm=7.5)
     assert v1 == v2
     assert v1 != v3
     # vm.l2_norm accumulates in float32; match its precision.
@@ -107,7 +112,7 @@ def test_matched_norm_random_is_gaussian_not_cube_uniform():
     bias the Gaussian recipe avoids). The Swift twin test pins the same
     contract on its own RNG (VectorMathTests)."""
     n = 4096
-    v = tasks._matched_norm_random("dist|check|0", dimension=n, norm=1.0)
+    v = condition_execution._matched_norm_random("dist|check|0", dimension=n, norm=1.0)
     mean = sum(v) / n
     assert abs(mean) < 1e-3
     variance = sum((x - mean) ** 2 for x in v) / n
@@ -128,10 +133,10 @@ def test_intervention_state_stamps_random_vector_algorithm():
         {"name": "fear-a2",
          "slots": [{"concept": "fear", "layer": 10, "alpha": 2.0}]},
     ]))
-    control_state = tasks._intervention_state(manifest.conditions[0])
+    control_state = condition_execution.intervention_state(manifest.conditions[0])
     assert control_state["randomVectorAlgorithm"] == "gaussian-isotropic-v1"
-    assert control_state["randomVectorAlgorithm"] == tasks.RANDOM_VECTOR_ALGORITHM
-    plain_state = tasks._intervention_state(manifest.conditions[1])
+    assert control_state["randomVectorAlgorithm"] == condition_execution.RANDOM_VECTOR_ALGORITHM
+    plain_state = condition_execution.intervention_state(manifest.conditions[1])
     assert "randomVectorAlgorithm" not in plain_state
 
 
@@ -174,7 +179,7 @@ def test_write_summaries_csv(tmp_path):
          "target": "A", "choiceProbability": {"A": 0.8, "B": 0.2},
          "logOdds": {"A": 1.3862943611, "B": -1.3862943611}},
     ]
-    tasks._write_summaries_csv(records, str(tmp_path))
+    run_reporting.write_summaries_csv(records, str(tmp_path))
     with open(tmp_path / "summaries.csv", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     baseline = next(r for r in rows if r["condition"] == "baseline")
@@ -202,7 +207,7 @@ def test_endpoint_values_and_pairing():
         _sample_record("fear-a2", "p2", months=20.0, sample_index=0),
         _sample_record("fear-a2", "p2", months=24.0, sample_index=1),
     ]
-    endpoints = tasks._endpoint_values(records)
+    endpoints = analysis_endpoints.endpoint_values(records)
     assert endpoints["choiceLogOdds"]["fear-a2"]["p1"] == 1.5
     assert endpoints["choiceLogOdds"]["baseline"]["p1"] == 0.0
     assert endpoints["meanMonths"]["fear-a2"]["p2"] == 22.0
@@ -228,13 +233,13 @@ def test_non_months_parser_adds_honest_parsed_value_endpoints():
         _sample_record("fear-a2", "p2", months=6.0, sample_index=0),
         _sample_record("fear-a2", "p2", months=2.0, sample_index=1),
     ]
-    endpoints = tasks._endpoint_values(records, numeric_parser_kind="number")
+    endpoints = analysis_endpoints.endpoint_values(records, numeric_parser_kind="number")
     assert endpoints["parsedValueMean"]["baseline"]["p2"] == 4.0
     assert endpoints["parsedValueMean"] == endpoints["meanMonths"]
     assert endpoints["parsedValueSpread"] == endpoints["monthsSpread"]
 
     # The months kind keeps its honest labels alone.
-    months_only = tasks._endpoint_values(
+    months_only = analysis_endpoints.endpoint_values(
         records, numeric_parser_kind="durationMonths")
     assert "parsedValueMean" not in months_only
     assert "meanMonths" in months_only
@@ -250,12 +255,12 @@ def test_write_report_handles_instrument_records(tmp_path):
          "instrument": "answerTokenLogprob", "selected": "A", "target": "A",
          "choiceProbability": {"A": 1.0}, "logOdds": {"A": 27.0}},
     ]
-    tasks._write_report("study", manifest, records, str(tmp_path))
+    run_reporting.write_report("study", manifest, records, str(tmp_path))
     report = json.loads((tmp_path / "report.json").read_text())
     assert report["conditions"]["baseline"]["generations"] == 1
     assert report["conditions"]["baseline"]["choiceReadouts"] == 1
     # metrics.csv skips the instrument record instead of writing zeros.
-    tasks._write_metrics_csv(records, str(tmp_path))
+    run_reporting.write_metrics_csv(records, str(tmp_path))
     with open(tmp_path / "metrics.csv", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 1
@@ -271,18 +276,18 @@ def test_option_length_gate():
             for i, n in enumerate(counts)])
 
     equal = Manifest.from_dict(_base_manifest())
-    tasks._check_option_lengths(result([2, 2]), equal, "p1")  # no raise
+    condition_execution.check_option_lengths(result([2, 2]), equal, "p1")  # no raise
 
     unequal = Manifest.from_dict(_base_manifest())
     try:
-        tasks._check_option_lengths(result([1, 4]), unequal, "p1")
+        condition_execution.check_option_lengths(result([1, 4]), unequal, "p1")
         raise AssertionError("expected unequal-length rejection")
     except RuntimeError as exc:
         assert "unequal token counts" in str(exc)
 
     acknowledged = Manifest.from_dict(
         _base_manifest(acknowledgeUnequalOptionLengths=True))
-    tasks._check_option_lengths(result([1, 4]), acknowledged, "p1")  # no raise
+    condition_execution.check_option_lengths(result([1, 4]), acknowledged, "p1")  # no raise
 
 
 # --- modality tag + behavioral-fingerprint table (RESULTS-ARCHITECTURE §1) ----
@@ -310,7 +315,7 @@ def test_condition_modality_derivation():
                 "systemPrompt": "You feel fear."}),
             _variant_condition("v-empty", {}),
         ]))
-    modality = tasks._condition_modalities(manifest)
+    modality = analysis_endpoints.condition_modalities(manifest)
     assert modality["baseline"] == "none"
     # Steering slots (matched-norm controls included) are injection modality.
     assert modality["fear-a2"] == "injection"
@@ -442,7 +447,7 @@ def _factor_run(tmp_path, monkeypatch):
         json.dumps({"id": "plain", "prompt": "No factors.",
                     "options": ["yes", "no"], "target": "yes"}),
     ]) + "\n")
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {})
     monkeypatch.setattr(_owner_generate, 'generate',
                         lambda model, prompt, **kw: "an answer")
@@ -522,7 +527,7 @@ def test_token_cap_truncation_parses_choice_as_failure(tmp_path, monkeypatch):
             ids.extend(range(16 if prompt == "Runs long." else 3))
         return deliberation
 
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {})
     monkeypatch.setattr(_owner_generate, 'generate', generate)
     run_dir = tasks.run("cap", prompts_path, root, model_provider=_fake_model,
@@ -538,7 +543,7 @@ def test_token_cap_truncation_parses_choice_as_failure(tmp_path, monkeypatch):
 def test_metrics_csv_without_factors_keeps_the_historical_header(tmp_path):
     records = [{"condition": "baseline", "seed": 0, "promptIndex": 0,
                 "promptID": "p1", "wordCount": 10, "distinct2": 0.8}]
-    tasks._write_metrics_csv(records, str(tmp_path))
+    run_reporting.write_metrics_csv(records, str(tmp_path))
     text = open(os.path.join(str(tmp_path), "metrics.csv"),
                 encoding="utf-8").read()
     assert text.splitlines()[0] == \
@@ -552,7 +557,7 @@ def test_load_prompts_validates_factors_shape(tmp_path):
     _write_file(os.path.join(root, "prompts", "bad.jsonl"),
                 '{"id": "bad", "prompt": "x", "factors": {"anchor": 3}}\n')
     with pytest.raises(RuntimeError) as excinfo:
-        tasks._load_prompts(manifest, "prompts/bad.jsonl", root)
+        task_inputs.load_prompts(manifest, "prompts/bad.jsonl", root)
     # The pinned cross-engine message (Swift twin
     # ``ExperimentTasks.taskPromptFactorsMessage``).
     assert str(excinfo.value) == (
@@ -562,11 +567,11 @@ def test_load_prompts_validates_factors_shape(tmp_path):
     _write_file(os.path.join(root, "prompts", "bad2.jsonl"),
                 '{"id": "bad2", "prompt": "x", "factors": "anchor=low"}\n')
     with pytest.raises(RuntimeError, match="flat string-to-string"):
-        tasks._load_prompts(manifest, "prompts/bad2.jsonl", root)
+        task_inputs.load_prompts(manifest, "prompts/bad2.jsonl", root)
     # An EMPTY factors object is treated as absent; a real one is carried.
     _write_file(os.path.join(root, "prompts", "ok.jsonl"),
                 '{"id": "e", "prompt": "x", "factors": {}}\n'
                 '{"id": "f", "prompt": "y", "factors": {"a": "b"}}\n')
-    prompts = tasks._load_prompts(manifest, "prompts/ok.jsonl", root)
+    prompts = task_inputs.load_prompts(manifest, "prompts/ok.jsonl", root)
     assert "factors" not in prompts[0]
     assert prompts[1]["factors"] == {"a": "b"}

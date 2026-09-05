@@ -4,10 +4,10 @@ This owner never imports the task compatibility facade.
 """
 from __future__ import annotations
 from . import manifest as manifest_mod
-from . import manifest as _dep_manifest
+from . import manifest as manifest_module
 
 
-def _require_uniform_depth(bundles) -> int:
+def require_uniform_depth(bundles) -> int:
     """Every bundle must report the SAME layer count, or refuse.
 
     All bundles belong to one model at one revision, so differing depths mean
@@ -29,7 +29,7 @@ def _require_uniform_depth(bundles) -> int:
     return next(iter(distinct), 0)
 
 
-def _matrix_layers(manifest, bundles) -> list[int]:
+def matrix_layers(manifest, bundles) -> list[int]:
     """The layer(s) the cross-concept cosine matrix is computed at — one
     matrix PER declared depth, each internally single-layer.
 
@@ -42,7 +42,7 @@ def _matrix_layers(manifest, bundles) -> list[int]:
 
     Swift twin: ``ExperimentTasks.matrixLayers``."""
     from . import validation_layer as vl
-    depth = _require_uniform_depth(bundles)
+    depth = require_uniform_depth(bundles)
     if depth <= 0:
         return [0]
     resolutions = vl.resolve_all(
@@ -57,7 +57,7 @@ def _matrix_layers(manifest, bundles) -> list[int]:
     return [r.layer for r in resolutions]
 
 
-def _validation_layer_resolutions(manifest: _dep_manifest.Manifest, concept_name: str,
+def validation_layer_resolutions(manifest: manifest_module.Manifest, concept_name: str,
                                   layer_count: int) -> list:
     """Every read layer AND why it is that layer (D4). The legacy rule —
     inherit from a steering condition, else mid-network — is preserved as the
@@ -87,7 +87,7 @@ def _validation_layer_resolutions(manifest: _dep_manifest.Manifest, concept_name
         layer_count=layer_count)
 
 
-def _resolution_block(resolution) -> dict:
+def resolution_block(resolution) -> dict:
     """The cross-engine ``layerResolution`` report block for one depth."""
     return {
         "layer": resolution.layer,

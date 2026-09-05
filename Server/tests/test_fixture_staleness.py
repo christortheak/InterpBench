@@ -160,6 +160,7 @@ class _FixtureTokenizer:
 
 def test_auto_prompt_ids_fixture_is_current(tmp_path):
     from steerlab_server.experiment import experiment_store as es, tasks
+    import steerlab_server.experiment.task_inputs as task_inputs
     from steerlab_server.experiment.manifest import Manifest
 
     fixture = _load("auto-prompt-ids.json")
@@ -168,7 +169,7 @@ def test_auto_prompt_ids_fixture_is_current(tmp_path):
     path = os.path.join(root, "prompts.jsonl")
     with open(path, "w", encoding="utf-8") as handle:
         handle.write("\n".join(fixture["lines"]) + "\n")
-    prompts = tasks._load_prompts(Manifest.load("ids", root), path, root)
+    prompts = task_inputs.load_prompts(Manifest.load("ids", root), path, root)
     assert [p["id"] for p in prompts] == fixture["ids"], REGENERATE
 
 

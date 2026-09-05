@@ -7,13 +7,13 @@ import hashlib
 import json
 import os
 from . import paths
-from . import condition_execution as _dep_condition_execution
-from . import evaluation_evidence as _dep_evaluation_evidence
-from . import judgment_evidence as _dep_judgment_evidence
-from . import manifest as _dep_manifest
-from . import rubric_inputs as _dep_rubric_inputs
-from . import run_artifacts as _dep_run_artifacts
-from . import study_admission as _dep_study_admission
+from . import condition_execution
+from . import evaluation_evidence
+from . import judgment_evidence
+from . import manifest as manifest_module
+from . import rubric_inputs
+from . import run_artifacts
+from . import study_admission
 
 
 def list_awaiting_judgment(name: str, root: str | None = None) -> list[dict]:
@@ -44,9 +44,9 @@ def list_awaiting_judgment(name: str, root: str | None = None) -> list[dict]:
             # Only a VERIFIED completion record suppresses "awaiting" —
             # a bare/altered marker must not hide judgable work (engineer
             # review 2026-07-18, third pass).
-            _dep_judgment_evidence._verify_judgment_marker(
+            judgment_evidence.verify_judgment_marker(
                 os.path.join(runs_root, entry), marker, name=name,
-                sweep_jm=_dep_judgment_evidence._sweep_judging_manifest(runs_root, sweep_ref))
+                sweep_jm=judgment_evidence.sweep_judging_manifest(runs_root, sweep_ref))
         except ValueError:
             continue
         completed.add(sweep_ref)
@@ -159,15 +159,15 @@ def complete_sweep_judgment(name: str, sweep_run: str, judgments: list,
     if not sweep_run or "/" in sweep_run or os.sep in sweep_run \
             or sweep_run in (".", ".."):
         raise ValueError(f"bad sweep run name {sweep_run!r}")
-    manifest = _dep_manifest.Manifest.load(name, root)
-    _dep_study_admission._verify_or_warn(manifest, root)
+    manifest = manifest_module.Manifest.load(name, root)
+    study_admission.verify_or_warn(manifest, root)
     # IDEMPOTENT: if this sweep's judgment run already exists, the judging
     # is done — re-running completion only heals the manifest PROJECTION
     # (recovery from a crash between the marker and the appends). The epoch
     # gate below is deliberately skipped here: the appends themselves
     # change the manifest hash, and the epoch was proven before the first
     # write (stamped in the marker for audit).
-    existing = _dep_judgment_evidence._find_judgment_run(name, sweep_run, root)
+    existing = judgment_evidence.find_judgment_run(name, sweep_run, root)
     if existing is not None:
         run_directory, _marker = existing
         _project_judgment_conditions(name, manifest, run_directory, root,
@@ -244,7 +244,7 @@ def complete_sweep_judgment(name: str, sweep_run: str, judgments: list,
         raise ValueError(
             "the judging manifest's rubric hash does not match the "
             "manifest's pinned judgeRubricHash — re-sweep")
-    _dep_rubric_inputs._resolve_rubric(manifest, root, lambda *_: None)  # file-drift check
+    rubric_inputs.resolve_rubric(manifest, root, lambda *_: None)  # file-drift check
     # The EMITTED panel is authoritative for models (engineer review
     # 2026-07-18, third pass): re-normalizing the live manifest here would
     # resolve empty models against the server's CURRENT env default
@@ -321,9 +321,9 @@ def complete_sweep_judgment(name: str, sweep_run: str, judgments: list,
             raise ValueError(
                 f"judge {judge!r} judged with model '{model}' but the sweep "
                 f"pinned '{pinned_model_by_judge.get(judge)}' — refusing")
-        provider = _dep_evaluation_evidence._verify_judgment_provider(
+        provider = evaluation_evidence.verify_judgment_provider(
             row, judge, pinned_provider_by_judge.get(judge))
-        confidence, verdict = _dep_evaluation_evidence._verified_judgment_payload(row, judge, winner)
+        confidence, verdict = evaluation_evidence.verified_judgment_payload(row, judge, winner)
         key = (pid, judge)
         if key in seen:
             raise ValueError(
@@ -411,7 +411,7 @@ def complete_sweep_judgment(name: str, sweep_run: str, judgments: list,
             control_info = {"type": "randomMatchedNorm",
                             "metricValue": control_metric,
                             "margin": criterion.matched_norm_random_margin,
-                            "randomVectorAlgorithm": _dep_condition_execution.RANDOM_VECTOR_ALGORITHM}
+                            "randomVectorAlgorithm": condition_execution.RANDOM_VECTOR_ALGORITHM}
             if not sel.control_passes(best.metric, control_metric,
                                       criterion.matched_norm_random_margin):
                 message = sel.control_failure_message(
@@ -455,7 +455,7 @@ def complete_sweep_judgment(name: str, sweep_run: str, judgments: list,
     for block in recommendations.values():
         if isinstance(block, dict):
             block["judgmentRun"] = judgment_run
-    _dep_run_artifacts._write_config_snapshot(manifest, run_directory, "sweep-judgment")
+    run_artifacts.write_config_snapshot(manifest, run_directory, "sweep-judgment")
     with open(os.path.join(run_directory, "judgments.jsonl"), "w",
               encoding="utf-8") as handle:
         for (pid, judge), (winner, judge_model, judge_provider,
@@ -494,7 +494,7 @@ def complete_sweep_judgment(name: str, sweep_run: str, judgments: list,
         with open(os.path.join(run_directory, filename), "rb") as handle:
             return hashlib.sha256(handle.read()).hexdigest()
 
-    marker = {"schema": _dep_judgment_evidence.JUDGMENT_MARKER_SCHEMA,
+    marker = {"schema": judgment_evidence.JUDGMENT_MARKER_SCHEMA,
               "experiment": name,
               "sweepRun": sweep_run, "packetsSha256": digest,
               "experimentHashAtJudgment": live_hash,
@@ -510,7 +510,7 @@ def complete_sweep_judgment(name: str, sweep_run: str, judgments: list,
     return run_directory
 
 
-def _sweep_progress_path(run_directory: str) -> str:
+def sweep_progress_path(run_directory: str) -> str:
     return os.path.join(run_directory, "sweep-progress.jsonl")
 
 
@@ -540,7 +540,7 @@ def _dev_generation_key(record: dict) -> tuple:
             int(record["promptIndex"]))
 
 
-def _load_dev_generation_keys(run_directory: str) -> set:
+def load_dev_generation_keys(run_directory: str) -> set:
     """Keys already durable in ``dev-generations.jsonl`` — a resumed sweep
     regenerates some texts it already recorded (a judgeScore resume even
     regenerates the baseline), and the record must not duplicate them.
@@ -564,7 +564,7 @@ def _load_dev_generation_keys(run_directory: str) -> set:
     return keys
 
 
-def _append_dev_generation(run_directory: str, *, kind: str, concept,
+def append_dev_generation(run_directory: str, *, kind: str, concept,
                            layer: int, alpha: float, prompt_index: int,
                            text: str, seen: set | None = None) -> None:
     """Durably append one dev generation (flush + fsync, like the progress
@@ -588,7 +588,7 @@ def _append_dev_generation(run_directory: str, *, kind: str, concept,
         os.fsync(handle.fileno())
 
 
-def _load_sweep_progress(run_directory: str) -> tuple[list[dict], dict]:
+def load_sweep_progress(run_directory: str) -> tuple[list[dict], dict]:
     """(completed grid rows, completed per-concept recommendation blocks)
     from a checkpointed sweep's durable progress log. Torn trailing lines
     (a kill mid-write) are dropped — every complete line was flushed before
@@ -596,7 +596,7 @@ def _load_sweep_progress(run_directory: str) -> tuple[list[dict], dict]:
     rows: list[dict] = []
     recommendations: dict = {}
     try:
-        with open(_sweep_progress_path(run_directory), encoding="utf-8") as handle:
+        with open(sweep_progress_path(run_directory), encoding="utf-8") as handle:
             for line in handle:
                 line = line.strip()
                 if not line:

@@ -31,6 +31,8 @@ because each fails for a different reason:
    bare-``experiment`` refusal listed sixteen, from two hand-maintained
    sources with nothing relating them.
 """
+from steerlab_server.experiment import freeze_policy
+
 
 import json
 
@@ -140,15 +142,15 @@ def test_the_validate_evidence_gate_repair_names_this_engine():
     run-substrate seam here, so only this engine's validate can satisfy it —
     naming `steerlab-cli` (or nothing at all, as the boilerplate did) is a
     repair that cannot work."""
-    repair = experiment_store._freeze_gate_repair("validateEvidence", "demo")
+    repair = freeze_policy.freeze_gate_repair("validateEvidence", "demo")
     assert repair.startswith("steerlab-server experiment validate demo")
     assert "python-hf-transformers" in repair
     # Authoring gates still name the Mac.
-    assert experiment_store._freeze_gate_repair(
+    assert freeze_policy.freeze_gate_repair(
         "judgeValidity", "demo").startswith("steerlab-cli experiment pin-rubric")
     # And every gate id in the closed vocabulary has one.
     for gate in experiment_store.FORCED_GATE_IDS:
-        assert experiment_store._freeze_gate_repair(gate, "demo")
+        assert freeze_policy.freeze_gate_repair(gate, "demo")
 
 
 # =============================================================================

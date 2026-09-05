@@ -33,6 +33,9 @@ import torch
 from steerlab_server.experiment import control_matrix
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import optvec_train, tasks
+import steerlab_server.experiment.condition_execution as condition_execution
+import steerlab_server.experiment.validation_workflow as validation_workflow
+import steerlab_server.experiment.vector_materialization as vector_materialization
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.experiment.optvec_train import (DatasetRef, OptVecDatasets,
                                                      OptVecTrainConfig)
@@ -590,7 +593,7 @@ def test_extract_materializes_the_optvec_vector(tmp_path, monkeypatch):
         tmp_path, monkeypatch)
     es.attach_artifact("optvec-confirm", "optvec-l2", artifact, root=root)
     manifest = Manifest.load("optvec-confirm", root)
-    bundles = tasks._extract_all(model, manifest, root)
+    bundles = vector_materialization.extract_all(model, manifest, root)
     bundle = bundles["optvec-l2"]
 
     source, sidecar = vector_store.load(
@@ -608,7 +611,7 @@ def test_extract_materializes_the_optvec_vector(tmp_path, monkeypatch):
 
     run_dir = os.path.join(root, "runs", "20260810T120000-exp-extract")
     os.makedirs(run_dir)
-    tasks._persist_vectors(bundles, manifest, model, run_dir)
+    vector_materialization.persist_vectors(bundles, manifest, model, run_dir)
     written, persisted = vector_store.load(run_dir, "optvec-l2")
     assert written.per_layer == source.per_layer
     assert persisted.extractionMethod == "pinnedArtifact"
@@ -632,7 +635,7 @@ def test_materialization_is_exempt_from_the_reading_position_check(
     # Force the disagreement the check would normally refuse.
     d["concepts"][0]["options"]["readingPosition"] = {"lastToken": {}}
     manifest = Manifest.from_dict(d)
-    bundle = tasks._extract_all(model, manifest, root)["optvec-l2"]
+    bundle = vector_materialization.extract_all(model, manifest, root)["optvec-l2"]
     assert bundle.stimulus_hash.startswith("optvec:")
 
 
@@ -644,12 +647,12 @@ def test_norm_unit_alpha_uses_the_backfilled_denominator(tmp_path,
         tmp_path, monkeypatch)
     es.attach_artifact("optvec-confirm", "optvec-l2", artifact, root=root)
     manifest = Manifest.load("optvec-confirm", root)
-    bundles = tasks._extract_all(model, manifest, root)
+    bundles = vector_materialization.extract_all(model, manifest, root)
     condition = Condition(name="c",
                           slots=[Slot(concept="optvec-l2", layer=LAYER,
                                       alpha=0.25)],
                           alpha_in_norm_units=True)
-    injections = tasks._condition_injections(condition, bundles)
+    injections = condition_execution.condition_injections(condition, bundles)
     vector = bundles["optvec-l2"].vectors.per_layer[LAYER]
     expected = vm.norm_unit_scale(
         0.25, bundles["optvec-l2"].residual_norm_per_layer[LAYER],
@@ -666,7 +669,7 @@ def test_validate_skips_an_optvec_concept(tmp_path, monkeypatch):
         tmp_path, monkeypatch)
     es.attach_artifact("optvec-confirm", "optvec-l2", artifact, root=root)
     manifest = Manifest.load("optvec-confirm", root)
-    run = tasks._validate_impl("optvec-confirm", manifest, model, root,
+    run = validation_workflow._validate_impl("optvec-confirm", manifest, model, root,
                                lambda *a: None)
     report = json.load(open(os.path.join(run, "validation-report.json")))
     assert "optvec-l2" not in report["concepts"]

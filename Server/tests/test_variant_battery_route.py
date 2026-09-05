@@ -107,7 +107,7 @@ def _app(tmp_path, monkeypatch, *, injections=("INJ",)):
 
         return generate_fn, choice_fn
 
-    monkeypatch.setattr(_owner_choice_scoring, '_battery_backends', fake_backends)
+    monkeypatch.setattr(_owner_choice_scoring, 'battery_backends', fake_backends)
     app = FastAPI()
     app.include_router(build_router(state))
     return TestClient(app), seen

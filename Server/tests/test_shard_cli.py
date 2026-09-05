@@ -298,9 +298,9 @@ def test_an_ordinary_resume_still_completes_through_the_hoisted_gate(
             flag.request()
         return "answer"
 
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {
-                            "fear": tasks.ConceptVectorBundle(
+                            "fear": _owner_vector_materialization.ConceptVectorBundle(
                                 vectors=_vectors(), residual_norm_per_layer=[1.0] * 4,
                                 residual_norm_source="test", stimulus_hash="h")})
     monkeypatch.setattr(_owner_generate, 'generate', generate)

@@ -116,6 +116,9 @@ def test_relative_source_survives_a_child_whose_cwd_is_elsewhere(
     slurm directory (what the rendered sbatch does), and a relative --source
     must still find the run under --target."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.evaluation_evidence as evaluation_evidence
+    import steerlab_server.experiment.study_admission as study_admission
+    import steerlab_server.experiment.task_inputs as task_inputs
 
     source = str(tmp_path / "source")
     target = str(tmp_path / "target")
@@ -149,6 +152,9 @@ def test_relative_prompts_already_resolve_against_the_root(tmp_path):
     — so the child's working directory never enters it. The test exists
     because "already correct" is a claim that rots silently."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.evaluation_evidence as evaluation_evidence
+    import steerlab_server.experiment.study_admission as study_admission
+    import steerlab_server.experiment.task_inputs as task_inputs
     from steerlab_server.experiment.manifest import Manifest
 
     root = str(tmp_path / "root")
@@ -164,7 +170,7 @@ def test_relative_prompts_already_resolve_against_the_root(tmp_path):
     cwd = os.getcwd()
     os.chdir(elsewhere)
     try:
-        rows = tasks._load_prompts(manifest, "prompts/tasks/t.jsonl", root)
+        rows = task_inputs.load_prompts(manifest, "prompts/tasks/t.jsonl", root)
     finally:
         os.chdir(cwd)
     assert len(rows) == 1
@@ -175,12 +181,15 @@ def test_resume_from_is_a_run_id_not_a_path(tmp_path):
     to the target root's ``runs/`` itself, so there is no relative path for a
     working directory to capture. It REFUSES a separator outright."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.evaluation_evidence as evaluation_evidence
+    import steerlab_server.experiment.study_admission as study_admission
+    import steerlab_server.experiment.task_inputs as task_inputs
 
     with pytest.raises(RuntimeError, match="invalid resume run id"):
-        tasks._load_resumable_judgments(
+        evaluation_evidence.load_resumable_judgments(
             "s", "runs/some-run", str(tmp_path), {}, lambda *a: None)
     with pytest.raises(RuntimeError, match="invalid resume run id"):
-        tasks._load_resumable_judgments(
+        evaluation_evidence.load_resumable_judgments(
             "s", "..", str(tmp_path), {}, lambda *a: None)
 
 
@@ -287,13 +296,16 @@ def test_the_missing_source_repair_is_a_path_correction():
 def test_the_task_guard_raises_the_typed_missing_prerequisite(tmp_path,
                                                               monkeypatch):
     from steerlab_server.experiment import lifecycle_gates, tasks
+    import steerlab_server.experiment.evaluation_evidence as evaluation_evidence
+    import steerlab_server.experiment.study_admission as study_admission
+    import steerlab_server.experiment.task_inputs as task_inputs
     from steerlab_server.experiment.manifest import Manifest
 
     root = str(tmp_path / "root")
     _study(root)
     manifest = Manifest.load("submit-study", root)
     with pytest.raises(Exception) as excinfo:
-        tasks._require_source_epoch(
+        study_admission.require_source_epoch(
             "analyze", "submit-study", manifest,
             str(tmp_path / "runs" / "gone"), allow_unverified_epoch=False)
     error = excinfo.value
@@ -418,6 +430,9 @@ def test_bundle_execute_resume_outranks_the_pointer(tmp_path, monkeypatch):
     pointer cannot: the pointer only remembers what THIS job record started,
     and a run parked by an EARLIER job has no pointer here at all."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.evaluation_evidence as evaluation_evidence
+    import steerlab_server.experiment.study_admission as study_admission
+    import steerlab_server.experiment.task_inputs as task_inputs
 
     source = str(tmp_path / "source")
     target = str(tmp_path / "target")

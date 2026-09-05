@@ -24,7 +24,7 @@ def test_clearing_intent_does_not_override_frozen_immutability():
 def test_draft_sync_distinguishes_omitted_and_explicitly_cleared_pins():
     old = {"modelRevision": "abc", "capabilityBatteryFile": "battery", "capabilityBatteryHash": "hash"}
     proposed = {"modelRevision": None}
-    preserved = mutation._merge_server_pins(proposed, old)
+    preserved = mutation.merge_server_pins(proposed, old)
     assert proposed["modelRevision"] is None
     assert proposed["capabilityBatteryHash"] == "hash"
     assert "modelRevision" not in preserved

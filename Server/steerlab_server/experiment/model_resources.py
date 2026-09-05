@@ -5,11 +5,11 @@ This owner never imports the task compatibility facade.
 from __future__ import annotations
 from contextlib import contextmanager
 from ..steering import model_loader
-from . import manifest as _dep_manifest
-from . import run_artifacts as _dep_run_artifacts
+from . import manifest as manifest_module
+from . import run_artifacts
 
 
-def _effective_dtype(manifest: _dep_manifest.Manifest, dtype: str) -> str:
+def _effective_dtype(manifest: manifest_module.Manifest, dtype: str) -> str:
     """The dtype a study's model should load at: the MANIFEST PIN when there
     is one, else whatever the caller asked for ("auto" by default).
 
@@ -33,7 +33,7 @@ def _effective_dtype(manifest: _dep_manifest.Manifest, dtype: str) -> str:
     return pinned
 
 
-def _load_model(manifest: _dep_manifest.Manifest, dtype: str,
+def _load_model(manifest: manifest_module.Manifest, dtype: str,
                 device: str | None = None) -> model_loader.SteeredModel:
     return model_loader.load(manifest.model_id, revision=manifest.model_revision,
                              dtype=_effective_dtype(manifest, dtype),
@@ -41,7 +41,7 @@ def _load_model(manifest: _dep_manifest.Manifest, dtype: str,
 
 
 @contextmanager
-def _acquire_model(manifest: _dep_manifest.Manifest, dtype: str, device: str | None,
+def acquire_model(manifest: manifest_module.Manifest, dtype: str, device: str | None,
                    model_provider):
     """Yield the pinned model, holding its registry slot lock when a provider is
     given (the API path — one lock authority per model). The CLI path has no
@@ -65,14 +65,14 @@ def _acquire_model(manifest: _dep_manifest.Manifest, dtype: str, device: str | N
         yield _load_model(manifest, dtype, device)
 
 
-def _assert_resident_dtype_matches(manifest: _dep_manifest.Manifest, model) -> None:
+def _assert_resident_dtype_matches(manifest: manifest_module.Manifest, model) -> None:
     """Refuse a study whose pinned dtype is not what the served model runs
     in. Only fires when the manifest pins one — an unpinned study keeps the
     historical behaviour of taking whatever the registry loaded."""
     pinned = (manifest.dtype or "").strip()
     if not pinned:
         return
-    actual = _dep_run_artifacts._actual_dtype(model)
+    actual = run_artifacts.actual_dtype(model)
     if not actual:
         return
     want = model_loader.normalize_dtype(pinned)
@@ -84,8 +84,8 @@ def _assert_resident_dtype_matches(manifest: _dep_manifest.Manifest, model) -> N
             "restart the server) so it loads at the pinned precision")
 
 
-def _pin_model_revision(name: str, manifest: _dep_manifest.Manifest, model, root,
-                        _log) -> _dep_manifest.Manifest:
+def pin_model_revision(name: str, manifest: manifest_module.Manifest, model, root,
+                        _log) -> manifest_module.Manifest:
     """Mirror Swift ``ExperimentTasks.loadContainer(pinning:)``: a DRAFT
     manifest with no pinned revision gets the revision the loaded model
     actually resolved written back BEFORE any artifacts persist.
@@ -122,4 +122,4 @@ def _pin_model_revision(name: str, manifest: _dep_manifest.Manifest, model, root
     experiment_store.pin_model_revision(name, resolved, root)
     _log(f"pinned model revision {resolved[:12]}… into '{name}' "
          "(resolved at model load)")
-    return _dep_manifest.Manifest.load(name, root)
+    return manifest_module.Manifest.load(name, root)

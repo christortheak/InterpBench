@@ -5,12 +5,12 @@ execution and model acquisition live outside this module.
 """
 from __future__ import annotations
 from .manifest import Manifest
-from .judge_dispatch import _judge_roster, evaluate_fanout_judge_models
+from .judge_dispatch import judge_roster, evaluate_fanout_judge_models
 from .judging_custody import missing_external_credentials as _missing_external_credentials
 
 
 
-def _pipeline_will_judge(manifest: Manifest, stages: list[str]) -> bool:
+def pipeline_will_judge(manifest: Manifest, stages: list[str]) -> bool:
     """Whether any REMAINING stage of the chain will call judges: evaluate
     always does; a sweep does only under the judgeScore objective."""
     if "evaluate" in stages:
@@ -27,7 +27,7 @@ def _pipeline_will_judge(manifest: Manifest, stages: list[str]) -> bool:
 
 
 
-def _pipeline_inline_judging_preflight(manifest: Manifest,
+def pipeline_inline_judging_preflight(manifest: Manifest,
                                        stages: list[str]) -> None:
     """The chain requires an IN-JOB-resolvable judging path (design contract,
     2026-07-18): deferral hands the selection/evaluation to a later Mac
@@ -103,7 +103,7 @@ def _pipeline_inline_judging_preflight(manifest: Manifest,
         spec, _source = manifest.effective_evaluation()
         if spec is None or spec.kind != "pairedJudge":
             raise RuntimeError(EVALUATE_WITHOUT_JUDGING_MESSAGE)
-        roster = _judge_roster(manifest, spec)
+        roster = judge_roster(manifest, spec)
         missing = _missing_external_credentials(roster)
         if missing:
             raise RuntimeError(
@@ -115,7 +115,7 @@ def _pipeline_inline_judging_preflight(manifest: Manifest,
 
 
 
-def _pipeline_needs_model(remaining: list[str], manifest: Manifest) -> bool:
+def pipeline_needs_model(remaining: list[str], manifest: Manifest) -> bool:
     """Whether any remaining stage holds the GPU model. ``evaluate`` needs
     it only for LOCAL judges that judge INLINE (all resolving to the study
     model) — a fan-out evaluate only EMITS packets (CPU), and its judging
@@ -129,7 +129,7 @@ def _pipeline_needs_model(remaining: list[str], manifest: Manifest) -> bool:
         from .manifest import EvaluationSpec
         if evaluate_fanout_judge_models(manifest):
             return False
-        roster = _judge_roster(manifest,
+        roster = judge_roster(manifest,
                                manifest.evaluation or EvaluationSpec())
         return any(ref.kind == "local" for ref in roster)
     return False

@@ -44,6 +44,7 @@ import pytest
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import logprob as logprob_mod
 from steerlab_server.experiment import model_variant, resume, tasks
+import steerlab_server.experiment.sampling as sampling
 from steerlab_server.experiment.generate import CellInjection
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.steering.vector_store import ConceptVectors
@@ -114,7 +115,7 @@ def _study_fixture(root, name, *, agent_a=None, agent_b=None):
 
 
 def _fake_bundle():
-    return tasks.ConceptVectorBundle(
+    return _owner_vector_materialization.ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[1.0, 0.0]] * 4),
         residual_norm_per_layer=[1.0] * 4,
         residual_norm_source="test", stimulus_hash="h")
@@ -162,7 +163,7 @@ def _fake_score_options(log=None):
 
 
 def _patch(monkeypatch, generate_fn, score_fn):
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_generate, 'generate', generate_fn)
     monkeypatch.setattr(logprob_mod, "score_options", score_fn)
@@ -251,7 +252,7 @@ def test_artifact_temperature_is_non_operative_in_resolution():
             name="agent-a", artifact_path="runs/variants/a.json",
             artifact_hash="aa" * 32,
             artifact=_artifact("agent-a", temperature=stored_temperature))
-        return tasks._effective_variant_condition(vc, manifest, model, None,
+        return _owner_condition_execution.effective_variant_condition(vc, manifest, model, None,
                                                   wants_choice=False)
 
     cold, hot = resolve(0.0), resolve(0.9)
@@ -318,7 +319,7 @@ def test_seeds_are_distinct_within_cells_and_derive_from_condition_identity(
     # run's own stamped experiment hash.
     experiment_hash = records[0]["experimentHash"]
     for (condition, prompt_id, index), seed in seeds.items():
-        assert seed == tasks.derive_seed(experiment_hash, condition,
+        assert seed == sampling.derive_seed(experiment_hash, condition,
                                          prompt_id, index)
 
 
@@ -481,14 +482,14 @@ def test_divergent_effective_policy_refuses_before_any_generation(
     prompts = _study_fixture(root, "vss-guard")
     counter = [0]
     _patch(monkeypatch, _fake_generate(counter=counter), _fake_score_options())
-    real_resolver = tasks._effective_variant_condition
+    real_resolver = _owner_condition_execution.effective_variant_condition
 
     def regressed(vc, manifest, model, r, *, wants_choice):
         eff = real_resolver(vc, manifest, model, r, wants_choice=wants_choice)
         eff.temperature = 0.0  # the historical bug, reintroduced
         return eff
 
-    monkeypatch.setattr(_owner_condition_execution, '_effective_variant_condition', regressed)
+    monkeypatch.setattr(_owner_condition_execution, 'effective_variant_condition', regressed)
     with pytest.raises(RuntimeError, match="unbalanced design"):
         tasks.run("vss-guard", prompts, root, model_provider=_fake_model,
                   log=lambda *_: None)
@@ -535,7 +536,7 @@ def test_artifact_preflight_refuses_dangling_variant_reference(tmp_path,
                      "layer": 1, "alpha": 2.0}])
     prompts = _study_fixture(root, "vss-preflight", agent_a=broken)
     acquired = []
-    monkeypatch.setattr(_owner_model_resources, '_acquire_model',
+    monkeypatch.setattr(_owner_model_resources, 'acquire_model',
                         lambda *a, **k: acquired.append(True) or (_ for _ in ()).throw(
                             AssertionError("model must not be acquired")))
     with pytest.raises(RuntimeError, match="artifact preflight"):

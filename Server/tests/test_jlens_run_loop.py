@@ -12,6 +12,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from steerlab_server.experiment import generate as gen, tasks
+import steerlab_server.experiment.condition_execution as condition_execution
 from steerlab_server.jlens import recorder as rec_mod, trace
 from steerlab_server.jlens.readout import ReadoutConfig
 
@@ -21,7 +22,7 @@ def test_the_readout_kwargs_are_only_passed_when_recording():
     call, and 36 tests whose fakes were built against the plain signature
     failed. The house pattern (transcript_kwargs) is to thread kwargs in only
     when they apply."""
-    src = inspect.getsource(tasks._execute_condition)
+    src = inspect.getsource(condition_execution.execute_condition)
     assert "readout_kwargs = {}" in src
     assert "**readout_kwargs" in src
     # The unconditional form must not come back.
@@ -90,7 +91,7 @@ def test_the_trace_row_takes_its_prompt_ids_from_the_recorder():
 
 
 def test_the_execute_condition_seam_defaults_to_no_tracing():
-    params = inspect.signature(tasks._execute_condition).parameters
+    params = inspect.signature(condition_execution.execute_condition).parameters
     assert params["jlens_trace"].default is None
 
 
@@ -168,7 +169,7 @@ def test_token_ids_are_captured_always_but_retained_only_when_declared():
     Retention is a separate question and keeps its flag: `outputTokenIDs` is
     ~7 bytes per token on every record, and it must never appear as a side
     effect of ids having been captured for some other purpose."""
-    src = inspect.getsource(tasks._execute_condition)
+    src = inspect.getsource(condition_execution.execute_condition)
     assert "if token_ids is None:" in src
     assert 'readout_kwargs["token_ids_out"] = token_ids' in src
     # Persisted only when DECLARED.

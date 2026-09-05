@@ -63,7 +63,7 @@ def evaluate(name: str, d: dict, evidence: FreezeEvidence) -> list[tuple[str, st
     return failures
 
 
-def _freeze_gate_repair(gate: str, name: str) -> str:
+def freeze_gate_repair(gate: str, name: str) -> str:
     """The RUNNABLE repair for a freeze-gate refusal on THIS engine.
 
     Gate-5 dry run #2 (P2/P3): every freeze-gate refusal here carried one
@@ -110,7 +110,7 @@ def admit_failures(name: str, failures: list[tuple[str, str]], *, force: bool) -
         raise ExperimentStoreError(
             failures[0][1], gate=failures[0][0],
             gates=tuple(g for g in FORCED_GATE_IDS if g in {gid for gid, _ in failures}),
-            repair=_freeze_gate_repair(failures[0][0], name))
+            repair=freeze_gate_repair(failures[0][0], name))
 
 
 def check_variant_validity(name: str, d: dict, *, evidence_grade_variants: set[int]) -> None:

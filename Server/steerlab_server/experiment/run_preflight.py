@@ -8,11 +8,11 @@ from ..steering import model_loader
 from . import paths
 from . import resume as resume_mod
 from . import sharding as sharding_mod
-from . import study_admission as _dep_study_admission
-from . import task_inputs as _dep_task_inputs
+from . import study_admission
+from . import task_inputs
 
 
-def _token_preflight_or_warn(manifest, prompts_file, root, _log) -> None:
+def token_preflight_or_warn(manifest, prompts_file, root, _log) -> None:
     """Refuse a study whose prompts cannot fit, naming EVERY offending item.
 
     Never drops or truncates: silently excluding items would change the
@@ -21,7 +21,7 @@ def _token_preflight_or_warn(manifest, prompts_file, root, _log) -> None:
     in-generation check rather than blocking the run."""
     from . import token_preflight
     try:
-        prompts = _dep_task_inputs.load_prompts(manifest, prompts_file, root)
+        prompts = task_inputs.load_prompts(manifest, prompts_file, root)
         report = token_preflight.preflight(
             prompts,
             model_id=manifest.model_id,
@@ -49,7 +49,7 @@ def _token_preflight_or_warn(manifest, prompts_file, root, _log) -> None:
              f"{worst} tokens, budget {report['promptBudget']} — all fit")
 
 
-def _instrument_preflight(manifest, prompts_file, root, _log) -> None:
+def instrument_preflight(manifest, prompts_file, root, _log) -> None:
     """Instrument/exclusion coherence BEFORE the model loads (2026-08-06).
 
     The same gates run again inside ``_run_impl`` (the backstop for callers
@@ -57,22 +57,22 @@ def _instrument_preflight(manifest, prompts_file, root, _log) -> None:
     wait plus a multi-minute 27B load: a declaration that can never fire —
     an option-consuming instrument declared when no in-scope item carries
     ``options`` — silently produced zero records while the sampled arm
-    burned the whole GPU allocation. Like ``_artifact_preflight`` this is a
+    burned the whole GPU allocation. Like ``artifact_preflight`` this is a
     pure file read, decidable now and unable to change mid-run, so a miss
     REFUSES rather than warns. Also logs the ladder-window advisories: a
     declared outOfRange keep-window whose bounds cannot bind the scale the
     items' options imply (min 0 / max 100 on a 1–7 ladder) is legal but
     inert, and inert-by-declaration is worth a loud line before compute."""
     from . import exclusions as _exclusions
-    prompts = _dep_task_inputs.load_prompts(manifest, prompts_file, root)
-    _dep_task_inputs.check_response_formats(manifest, prompts)
+    prompts = task_inputs.load_prompts(manifest, prompts_file, root)
+    task_inputs.check_response_formats(manifest, prompts)
     _exclusions.preflight(manifest.raw, prompts)
     for warning in _exclusions.ladder_warnings(
             list(manifest.raw.get("exclusionRules") or []), prompts):
         _log(f"warning: {warning}")
 
 
-def _response_format_preflight(manifest, prompts_file, root) -> None:
+def response_format_preflight(manifest, prompts_file, root) -> None:
     """The response-format/scope-drift gate BEFORE the model loads.
 
     The identical ``_check_response_formats`` still runs at run start inside
@@ -86,11 +86,11 @@ def _response_format_preflight(manifest, prompts_file, root) -> None:
     loader the run uses, so any error raised now (drifted scope, unreadable
     instrument, or a prompt file the loader refuses) is one the run would
     raise after the load. Refusing is strictly earlier, never new."""
-    prompts = _dep_task_inputs.load_prompts(manifest, prompts_file, root)
-    _dep_task_inputs.check_response_formats(manifest, prompts)
+    prompts = task_inputs.load_prompts(manifest, prompts_file, root)
+    task_inputs.check_response_formats(manifest, prompts)
 
 
-def _panel_load_model(manifest, root, _log):
+def panel_load_model(manifest, root, _log):
     """Which model the CLI path should LOAD for a panel, before acquiring it.
 
     Every turn runs on its seat's own base model; the manifest's ``modelID``
@@ -144,7 +144,7 @@ def _panel_load_model(manifest, root, _log):
     return manifest
 
 
-def _artifact_preflight(manifest, root, _log) -> None:
+def artifact_preflight(manifest, root, _log) -> None:
     """Refuse BEFORE the model loads when a steering-artifact reference does
     not resolve on this host — naming EVERY dangling reference, not the
     first.
@@ -219,8 +219,8 @@ def _artifact_preflight(manifest, root, _log) -> None:
             "resubmit.")
 
 
-def _scenario_preflight_or_warn(manifest, root, _log) -> None:
-    """Panel twin of ``_token_preflight_or_warn`` (plan A4).
+def scenario_preflight_or_warn(manifest, root, _log) -> None:
+    """Panel twin of ``token_preflight_or_warn`` (plan A4).
 
     Refuses only on a turn whose FLOOR — its own template plus shared
     materials, before any deliberation accumulates — already exceeds the
@@ -301,7 +301,7 @@ def _memory_preflight_or_stay_silent(scenario_report, manifest, _log) -> None:
              "the run proceeds without a peak-memory estimate")
 
 
-def _resume_admission(run_directory, *, name, manifest, shard,
+def resume_admission(run_directory, *, name, manifest, shard,
                       check_experiment_hash: bool = True) -> None:
     """Admit (or refuse) a supplied run directory for a standard study run.
 
@@ -321,7 +321,7 @@ def _resume_admission(run_directory, *, name, manifest, shard,
     """
     resume_mod.require_resumable(run_directory, verb="run")
     if check_experiment_hash:
-        stamped = _dep_study_admission._stamped_experiment_hash(run_directory)
+        stamped = study_admission.stamped_experiment_hash(run_directory)
         if stamped is not None and stamped != manifest.content_hash():
             raise resume_mod.ResumeError(
                 f"run directory {run_directory} was checkpointed by experiment "
@@ -351,9 +351,9 @@ def _resume_admission(run_directory, *, name, manifest, shard,
                 "refusing to mix shard ranges")
 
 
-def _panel_resume_admission(run_directory, *, manifest, shard,
+def panel_resume_admission(run_directory, *, manifest, shard,
                             check_experiment_hash: bool = True) -> None:
-    """The panel path's twin of :func:`_resume_admission`.
+    """The panel path's twin of :func:`resume_admission`.
 
     Same admissions, same order, different sentences (a panel refusal names
     the directory's basename and speaks of turns) — the wording is the
@@ -362,7 +362,7 @@ def _panel_resume_admission(run_directory, *, manifest, shard,
     """
     resume_mod.require_resumable(run_directory, verb="run")
     if check_experiment_hash:
-        stamped = _dep_study_admission._stamped_experiment_hash(run_directory)
+        stamped = study_admission.stamped_experiment_hash(run_directory)
         if stamped is not None and stamped != manifest.content_hash():
             raise resume_mod.ResumeError(
                 f"refusing to resume {os.path.basename(run_directory)}: it was "

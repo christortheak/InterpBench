@@ -12,6 +12,7 @@ import pytest
 
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.execution_reporting as execution_reporting
 from steerlab_server.experiment.manifest import Manifest
 
 THIS = "python-hf-transformers"
@@ -153,7 +154,7 @@ def test_run_start_advisory_logs_and_stamps_file(tmp_path):
     os.makedirs(run_dir)
 
     lines: list[str] = []
-    tasks._advise_cross_substrate(manifest, run_dir, root, lines.append,
+    execution_reporting.advise_cross_substrate(manifest, run_dir, root, lines.append,
                                   write_file=True)
     assert lines and lines[0].startswith("ADVISORY: ")
     assert OTHER in lines[0]
@@ -162,7 +163,7 @@ def test_run_start_advisory_logs_and_stamps_file(tmp_path):
 
     # Resume semantics: the log stays loud, the file is a creation stamp.
     before = open(os.path.join(run_dir, "advisories.txt"), "rb").read()
-    tasks._advise_cross_substrate(manifest, run_dir, root, lines.append,
+    execution_reporting.advise_cross_substrate(manifest, run_dir, root, lines.append,
                                   write_file=False)
     assert len(lines) == 2
     assert open(os.path.join(run_dir, "advisories.txt"), "rb").read() == before
@@ -176,7 +177,7 @@ def test_run_start_advisory_silent_when_same_engine(tmp_path):
     run_dir = os.path.join(root, "runs", "b-exp-s-run")
     os.makedirs(run_dir)
     lines: list[str] = []
-    tasks._advise_cross_substrate(manifest, run_dir, root, lines.append,
+    execution_reporting.advise_cross_substrate(manifest, run_dir, root, lines.append,
                                   write_file=True)
     assert lines == []
     assert not os.path.exists(os.path.join(run_dir, "advisories.txt"))

@@ -7,8 +7,8 @@ from contextlib import contextmanager
 from ..steering import model_loader
 from . import judging_custody
 from . import prompt_render
-from . import generate as _dep_generate
-from . import manifest as _dep_manifest
+from . import generate
+from . import manifest
 
 
 #: One resident model container, as the registry keys it minus the device it
@@ -147,7 +147,7 @@ def judge_slots_required(roster, *, study_model: str,
                for index in range(len(columns)))
 
 
-def _identity_text(identity: ModelIdentity, *, quoted: bool = True) -> str:
+def identity_text(identity: ModelIdentity, *, quoted: bool = True) -> str:
     """``'org/model'@abc123456789…`` — how a released container is named in a
     run log. The revision prefix is the point (external review round 12,
     finding 3): a same-slug panel at two revisions is two containers, and a
@@ -157,7 +157,7 @@ def _identity_text(identity: ModelIdentity, *, quoted: bool = True) -> str:
     return name + (f"@{revision[:12]}…" if revision else "")
 
 
-def _release_models_for_judge(model_release, roster, index: int, *,
+def release_models_for_judge(model_release, roster, index: int, *,
                               study_model: str,
                               study_revision: str | None = None,
                               study_dtype: str | None = None,
@@ -213,7 +213,7 @@ def _release_models_for_judge(model_release, roster, index: int, *,
     stale = sorted(candidates - keep)
     next_identity = identity_of(ref) if ref.kind == "local" else None
     need_text = (f"next judge '{ref.name}' needs "
-                 f"{_identity_text(next_identity)}"
+                 f"{identity_text(next_identity)}"
                  if next_identity else
                  f"next judge '{ref.name}' needs no local model")
     where = ("generation complete" if index == 0
@@ -223,7 +223,7 @@ def _release_models_for_judge(model_release, roster, index: int, *,
             released = model_release(stale) or []
         except Exception as exc:  # noqa: BLE001 - never fail a run on cleanup
             _log(f"WARNING: could not release model slot(s) "
-                 f"{', '.join(_identity_text(i) for i in stale)} before "
+                 f"{', '.join(identity_text(i) for i in stale)} before "
                  f"judge '{ref.name}' ({exc}) — continuing; the load "
                  "capacity gate remains the backstop")
             return
@@ -231,7 +231,7 @@ def _release_models_for_judge(model_release, roster, index: int, *,
             size = record.get("bytes")
             size_text = f" (~{size / (1 << 30):.1f} GiB)" if size else ""
             _log("released "
-                 + _identity_text((record["modelID"], record.get("revision"),
+                 + identity_text((record["modelID"], record.get("revision"),
                                    record.get("dtype")))
                  + f"{size_text} from {record.get('device')} — {where}, "
                  + need_text)
@@ -248,7 +248,7 @@ def _release_models_for_judge(model_release, roster, index: int, *,
         _log(f"released the private model copy of {where} — {need_text}")
 
 
-def _judge_callable(ref: _dep_manifest.JudgeRef, model_provider, *, study_model: str,
+def judge_callable(ref: manifest.JudgeRef, model_provider, *, study_model: str,
                     study_revision: str | None = None, stack=None):
     """(judge_fn, requested_model, actual_model_holder) for one judge. Claude
     judges call the Anthropic API; local judges acquire the served model
@@ -283,11 +283,11 @@ def _judge_callable(ref: _dep_manifest.JudgeRef, model_provider, *, study_model:
     return paired_judge.make_local_judge(gen), judge_model, holder
 
 
-def _coder_callable(ref: _dep_manifest.JudgeRef, model_provider, *, study_model: str,
+def coder_callable(ref: manifest.JudgeRef, model_provider, *, study_model: str,
                     study_revision: str | None = None, stack=None):
     """``(complete_fn, requested_model, holder)`` for one judge on the
     per-response coding path — the raw-completion sibling of
-    ``_judge_callable`` (same resolution rules, same slot machinery, same
+    ``judge_callable`` (same resolution rules, same slot machinery, same
     holder provenance); ``complete_fn(prompt) -> (text, provider|None)``."""
     from . import paired_judge
     if ref.kind == "openrouter":
@@ -317,12 +317,12 @@ def _coder_callable(ref: _dep_manifest.JudgeRef, model_provider, *, study_model:
     return _local, judge_model, holder
 
 
-def _local_judge_generation(ref: _dep_manifest.JudgeRef, model_provider, *,
+def _local_judge_generation(ref: manifest.JudgeRef, model_provider, *,
                             study_model: str,
                             study_revision: str | None = None, stack=None):
     """``(gen_fn, judge_model, holder)`` for one LOCAL judge — the shared
-    model-resolution/slot core of ``_judge_callable`` and
-    ``_coder_callable`` (extracted 2026-08-04 for the coding instrument;
+    model-resolution/slot core of ``judge_callable`` and
+    ``coder_callable`` (extracted 2026-08-04 for the coding instrument;
     behavior unchanged)."""
     from . import paired_judge, sweep_selection
     judge_model = sweep_selection.resolve_local_judge_model(
@@ -400,7 +400,7 @@ def _local_judge_generation(ref: _dep_manifest.JudgeRef, model_provider, *,
                     holder["actualDtype"] = str(actual_dtype)
                 # JUDGE_MAX_TOKENS — the one cross-engine judge cap (the
                 # 2026-07-22 incident: 512 truncated a legible verdict).
-                return _dep_generate.generate(slot, prompt, model_id=slot.model_id,
+                return generate.generate(slot, prompt, model_id=slot.model_id,
                                 max_tokens=paired_judge.JUDGE_MAX_TOKENS,
                                 temperature=0.0,
                                 prompt_mode=prompt_render.CHAT_ASSISTANT)
@@ -440,7 +440,7 @@ def _local_judge_generation(ref: _dep_manifest.JudgeRef, model_provider, *,
 #: :mod:`judging_custody` (2026-08-20) so the freeze advisory and the
 #: submission preflight can ask it without importing this module. These are
 #: the historical spellings, unchanged for every caller and test here.
-_missing_external_credentials = judging_custody.missing_external_credentials
+missing_external_credentials = judging_custody.missing_external_credentials
 
 
 judging_custody_plan = judging_custody.custody_plan

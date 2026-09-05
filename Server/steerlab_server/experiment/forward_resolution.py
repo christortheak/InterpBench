@@ -7,12 +7,12 @@ import hashlib
 import json
 import os
 from . import paths
-from . import manifest as _dep_manifest
-from . import pipeline_evidence as _dep_pipeline_evidence
+from . import manifest as manifest_module
+from . import pipeline_evidence
 
 
 def _verify_agent_concrete(vc_name: str, artifact: dict, concept: str,
-                           cell: dict | None, manifest: _dep_manifest.Manifest, *,
+                           cell: dict | None, manifest: manifest_module.Manifest, *,
                            strict: bool = False) -> None:
     """The artifact must EMBODY its claimed identity (engineer review
     2026-07-18, fourth round): the birth certificate's winningCell is a
@@ -60,9 +60,9 @@ def _verify_agent_concrete(vc_name: str, artifact: dict, concept: str,
             "certificate")
 
 
-def _concrete_from_pin(vc, concept: str, pin: dict, manifest: _dep_manifest.Manifest,
+def _concrete_from_pin(vc, concept: str, pin: dict, manifest: manifest_module.Manifest,
                        root: str | None, log,
-                       source: str) -> tuple[_dep_manifest.VariantCondition, dict]:
+                       source: str) -> tuple[manifest_module.VariantCondition, dict]:
     """A forward reference resolved from an EXACT pin — the pipeline
     ledger's promote record, or a prior run's forward-resolutions.json —
     never from ambient catalog state. Every pin field is REQUIRED (fifth
@@ -161,7 +161,7 @@ def _concrete_from_pin(vc, concept: str, pin: dict, manifest: _dep_manifest.Mani
                 if os.path.isabs(raw_path) else raw_path)
     log(f"variant '{vc.name}' ← {source}-pinned agent for '{concept}': "
         f"{relative} ({digest[:12]}…)")
-    resolved = _dep_manifest.VariantCondition(
+    resolved = manifest_module.VariantCondition(
         name=vc.name, artifact_path=relative, artifact_hash=digest,
         artifact=artifact)
     provenance = {"condition": vc.name, "concept": concept,
@@ -174,8 +174,8 @@ def _concrete_from_pin(vc, concept: str, pin: dict, manifest: _dep_manifest.Mani
     return resolved, provenance
 
 
-def _resolve_forward_variant(vc, manifest: _dep_manifest.Manifest, root: str | None,
-                             log) -> tuple[_dep_manifest.VariantCondition, dict]:
+def resolve_forward_variant(vc, manifest: manifest_module.Manifest, root: str | None,
+                             log) -> tuple[manifest_module.VariantCondition, dict]:
     """Resolve a forward-referenced variant condition — "the agent this
     experiment's sweep promotes for CONCEPT under the declared criterion"
     (stage 4) — to a concrete artifact. The promotion birth certificate is
@@ -189,7 +189,7 @@ def _resolve_forward_variant(vc, manifest: _dep_manifest.Manifest, root: str | N
     if not concept:
         raise ValueError(
             f"variant '{vc.name}' fromPromotion names no concept")
-    expected = _dep_pipeline_evidence._expected_promotion_identity(manifest.name, concept, root)
+    expected = pipeline_evidence.expected_promotion_identity(manifest.name, concept, root)
     if expected is None:
         raise ValueError(
             f"variant '{vc.name}' forward-references the promoted agent "
@@ -197,7 +197,7 @@ def _resolve_forward_variant(vc, manifest: _dep_manifest.Manifest, root: str | N
             "sweep and promote first (the pipeline's sweep/promote stages "
             "do this in-chain)")
     live_hash = manifest.content_hash()
-    artifact_path = _dep_pipeline_evidence._minted_agent_matching(
+    artifact_path = pipeline_evidence.minted_agent_matching(
         manifest.name, concept, root, expected=expected,
         live_hash=live_hash)
     if artifact_path is None:
@@ -215,7 +215,7 @@ def _resolve_forward_variant(vc, manifest: _dep_manifest.Manifest, root: str | N
     relative = os.path.relpath(artifact_path, base)
     log(f"variant '{vc.name}' ← promoted agent for '{concept}': "
         f"{relative} ({digest[:12]}…)")
-    resolved = _dep_manifest.VariantCondition(
+    resolved = manifest_module.VariantCondition(
         name=vc.name, artifact_path=relative, artifact_hash=digest,
         artifact=artifact)
     provenance = {"condition": vc.name, "concept": concept,
@@ -226,7 +226,7 @@ def _resolve_forward_variant(vc, manifest: _dep_manifest.Manifest, root: str | N
     return resolved, provenance
 
 
-def _resolve_manifest_forward_refs(manifest: _dep_manifest.Manifest, run_directory: str,
+def resolve_manifest_forward_refs(manifest: manifest_module.Manifest, run_directory: str,
                                    root: str | None, log, *,
                                    ledger_pins: dict | None = None) -> None:
     """Resolve every forward-referenced variant condition IN MEMORY at run
@@ -281,7 +281,7 @@ def _resolve_manifest_forward_refs(manifest: _dep_manifest.Manifest, run_directo
                 "forward-resolutions.json carries duplicate condition "
                 "rows — the resume evidence is inconsistent")
         by_condition = {str(r.get("condition")): r for r in rows}
-        resolved_list: list[_dep_manifest.VariantCondition] = []
+        resolved_list: list[manifest_module.VariantCondition] = []
         for vc in manifest.variant_conditions:
             if not vc.from_promotion:
                 resolved_list.append(vc)
@@ -326,7 +326,7 @@ def _resolve_manifest_forward_refs(manifest: _dep_manifest.Manifest, run_directo
             else:
                 # Standalone run: catalog resolution by the promotion
                 # birth certificate.
-                resolved, provenance = _resolve_forward_variant(
+                resolved, provenance = resolve_forward_variant(
                     vc, manifest, root, log)
             resolved_list.append(resolved)
             resolutions.append(provenance)

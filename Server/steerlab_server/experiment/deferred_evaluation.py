@@ -8,16 +8,16 @@ import json
 import os
 from ..steering import model_loader
 from . import paths, prompt_render
-from . import evaluation_evidence as _dep_evaluation_evidence
-from . import generate as _dep_generate
-from . import judgment_evidence as _dep_judgment_evidence
-from . import manifest as _dep_manifest
-from . import rubric_inputs as _dep_rubric_inputs
-from . import run_config as _dep_run_config
-from . import study_admission as _dep_study_admission
+from . import evaluation_evidence
+from . import generate
+from . import judgment_evidence
+from . import manifest as manifest_module
+from . import rubric_inputs
+from . import run_config
+from . import study_admission
 
 
-def _emit_evaluate_judging(name, manifest, spec, source_run_dir, generations,
+def emit_evaluate_judging(name, manifest, spec, source_run_dir, generations,
                            rubric, rubric_hash, rubric_file, root,
                            epoch_unverified, measurement_drift, _log, *,
                            exclusion_stamp=None,
@@ -67,7 +67,7 @@ def _emit_evaluate_judging(name, manifest, spec, source_run_dir, generations,
 
     run_directory = paths.make_unique_run_directory(
         f"exp-{name}-evaluate", root)
-    _dep_run_config.write_run_config(run_directory, "evaluate-awaiting",
+    run_config.write_run_config(run_directory, "evaluate-awaiting",
                      model_id=manifest.model_id,
                      revision=manifest.model_revision, experiment=name,
                      experiment_hash=manifest.content_hash(),
@@ -94,7 +94,7 @@ def _emit_evaluate_judging(name, manifest, spec, source_run_dir, generations,
             return hashlib.sha256(handle.read()).hexdigest()
 
     structured = (spec.structured_prompt or "").strip() or None
-    judge_entries = _dep_evaluation_evidence._normalized_judge_entries(manifest.raw.get("judges") or [],
+    judge_entries = evaluation_evidence.normalized_judge_entries(manifest.raw.get("judges") or [],
                                               study_model=manifest.model_id)
     # The agent-facing framing is an ENGINE artifact, not a per-campaign
     # hand-written prompt (Cowork judging pipeline, 2026-08-11): rendered
@@ -181,10 +181,10 @@ def judge_worker(name: str, awaiting_run: str, model: str,
     (packetID, judge, model, winner, confidence, judgment payload)."""
     from . import paired_judge, sweep_selection
     _log = log or print
-    manifest = _dep_manifest.Manifest.load(name, root)
+    manifest = manifest_module.Manifest.load(name, root)
     runs_root = paths.runs_directory(root)
     eval_dir = os.path.join(runs_root, awaiting_run)
-    jm = _dep_judgment_evidence._evaluate_judging_manifest(runs_root, awaiting_run)
+    jm = judgment_evidence.evaluate_judging_manifest(runs_root, awaiting_run)
     if jm is None:
         raise ValueError(
             f"run '{awaiting_run}' has no evaluate judging manifest — not "
@@ -225,7 +225,7 @@ def judge_worker(name: str, awaiting_run: str, model: str,
                                  device=device)
 
         def generate_fn(prompt: str) -> str:  # noqa: PLR0913 - closure
-            return _dep_generate.generate(slot, prompt, model_id=model,
+            return generate.generate(slot, prompt, model_id=model,
                             max_tokens=paired_judge.JUDGE_MAX_TOKENS,
                             temperature=0.0,
                             prompt_mode=prompt_render.CHAT_ASSISTANT)
@@ -318,9 +318,9 @@ def list_awaiting_evaluate_judgment(name: str,
             continue
         ref = str(marker.get("evaluateRun"))
         try:
-            _dep_judgment_evidence._verify_evaluate_marker(
+            judgment_evidence.verify_evaluate_marker(
                 os.path.join(runs_root, entry), marker, name=name,
-                eval_jm=_dep_judgment_evidence._evaluate_judging_manifest(runs_root, ref))
+                eval_jm=judgment_evidence.evaluate_judging_manifest(runs_root, ref))
         except ValueError:
             continue
         completed.add(ref)
@@ -429,16 +429,16 @@ def complete_evaluate_judgment(name: str, evaluate_run: str, judgments: list,
     if not evaluate_run or "/" in evaluate_run or os.sep in evaluate_run \
             or evaluate_run in (".", ".."):
         raise ValueError(f"bad evaluate run name {evaluate_run!r}")
-    manifest = _dep_manifest.Manifest.load(name, root)
-    _dep_study_admission._verify_or_warn(manifest, root)
-    existing = _dep_judgment_evidence._find_evaluate_judgment_run(name, evaluate_run, root)
+    manifest = manifest_module.Manifest.load(name, root)
+    study_admission.verify_or_warn(manifest, root)
+    existing = judgment_evidence.find_evaluate_judgment_run(name, evaluate_run, root)
     if existing is not None:
         run_directory, _marker = existing
         _log(f"evaluate judgment already completed → {run_directory}")
         return run_directory
     runs_root = paths.runs_directory(root)
     eval_dir = os.path.join(runs_root, evaluate_run)
-    jm = _dep_judgment_evidence._evaluate_judging_manifest(runs_root, evaluate_run)
+    jm = judgment_evidence.evaluate_judging_manifest(runs_root, evaluate_run)
     if jm is None:
         raise ValueError(
             f"run '{evaluate_run}' has no evaluate judging manifest — not "
@@ -535,7 +535,7 @@ def complete_evaluate_judgment(name: str, evaluate_run: str, judgments: list,
             "the judging manifest's rubric hash does not match the "
             "manifest's pinned judgeRubricHash — re-run evaluate")
     if manifest.judge_rubric_file:
-        _dep_rubric_inputs._resolve_rubric(manifest, root, lambda *_: None)  # file-drift check
+        rubric_inputs.resolve_rubric(manifest, root, lambda *_: None)  # file-drift check
     # The EMITTED panel is authoritative for models (sweep rule): compare
     # structure to the live manifest, accept emission-resolved defaults.
     live_raw = [dict(j or {}) for j in (manifest.raw.get("judges") or [])]
@@ -601,7 +601,7 @@ def complete_evaluate_judgment(name: str, evaluate_run: str, judgments: list,
                 f"judgment by '{judge}' used model '{model}' but the "
                 f"emission pinned '{pinned_model_by_judge[judge]}' — "
                 "refusing off-pin judgments")
-        provider = _dep_evaluation_evidence._verify_judgment_provider(
+        provider = evaluation_evidence.verify_judgment_provider(
             row, judge, pinned_provider_by_judge.get(judge))
         # The model the judging AGENT itself ran on (Cowork judging
         # pipeline, 2026-08-11) — provenance distinct from the pinned
@@ -620,7 +620,7 @@ def complete_evaluate_judgment(name: str, evaluate_run: str, judgments: list,
         if key in seen:
             raise ValueError(
                 f"duplicate judgment for packet '{pid[:16]}…' by '{judge}'")
-        confidence, verdict = _dep_evaluation_evidence._verified_judgment_payload(
+        confidence, verdict = evaluation_evidence.verified_judgment_payload(
             row, judge, str(winner))
         seen[key] = (str(winner), model, confidence, provider, verdict,
                      annotator.strip() if annotator else None)
@@ -685,10 +685,10 @@ def complete_evaluate_judgment(name: str, evaluate_run: str, judgments: list,
             agg["n"] += 1
             agg[{"baseline": "baselineWins", "variant": "variantWins",
                  "tie": "ties"}[outcome]] += 1
-        judge_rows.sort(key=_dep_evaluation_evidence._judgment_key)
+        judge_rows.sort(key=evaluation_evidence.judgment_key)
         all_judgments.extend(judge_rows)
         outcome_maps.append(
-            (judge, {_dep_evaluation_evidence._judgment_key(j): j["outcome"] for j in judge_rows}))
+            (judge, {evaluation_evidence.judgment_key(j): j["outcome"] for j in judge_rows}))
         kind = next((str(j.get("kind")) for j in jm_judges
                      if str(j.get("name")) == judge), "claude")
         raw_block_provider = pinned_provider_by_judge.get(judge)
@@ -703,7 +703,7 @@ def complete_evaluate_judgment(name: str, evaluate_run: str, judgments: list,
             "conditions": tally, "pairs": len(packet_map),
         })
 
-    human = (_dep_evaluation_evidence._load_human_validation(manifest, root)
+    human = (evaluation_evidence.load_human_validation(manifest, root)
              if manifest.human_validation else None)
     report: dict = {
         "experiment": name,
@@ -711,7 +711,7 @@ def complete_evaluate_judgment(name: str, evaluate_run: str, judgments: list,
         "evaluateRun": evaluate_run,
         "rubricFile": jm.get("rubricFile"), "rubricHash": jm.get("rubricHash"),
         "judges": judge_blocks,
-        "agreement": _dep_evaluation_evidence._agreement_entries(outcome_maps),
+        "agreement": evaluation_evidence.agreement_entries(outcome_maps),
         "pairs": judge_blocks[0]["pairs"] if judge_blocks else 0,
         "conditions": judge_blocks[0]["conditions"] if judge_blocks else {},
         "judgeModel": judge_blocks[0]["requestedModel"] if judge_blocks else None,
@@ -749,15 +749,15 @@ def complete_evaluate_judgment(name: str, evaluate_run: str, judgments: list,
             {"judge": entry["judges"][1], "n": entry["n"],
              "percentAgreement": entry["percentAgreement"],
              "kappa": entry["kappa"]}
-            for entry in _dep_evaluation_evidence._agreement_entries(
-                [("human", _dep_evaluation_evidence._materialize_human_validation(human, outcome_maps))]
+            for entry in evaluation_evidence.agreement_entries(
+                [("human", evaluation_evidence.materialize_human_validation(human, outcome_maps))]
                 + outcome_maps)
             if entry["judges"][0] == "human"]
 
     # PHASE B — writes, atomic marker LAST (canonical or absent).
     out = paths.make_unique_run_directory(f"exp-{name}-evaluate-judgment",
                                           root)
-    _dep_run_config.write_run_config(out, "evaluate-judgment", model_id=manifest.model_id,
+    run_config.write_run_config(out, "evaluate-judgment", model_id=manifest.model_id,
                      revision=manifest.model_revision, experiment=name,
                      experiment_hash=live_hash)
     if emission_exclusions is not None:
@@ -776,7 +776,7 @@ def complete_evaluate_judgment(name: str, evaluate_run: str, judgments: list,
         with open(os.path.join(out, filename), "rb") as handle:
             return hashlib.sha256(handle.read()).hexdigest()
 
-    marker = {"schema": _dep_judgment_evidence.JUDGMENT_MARKER_SCHEMA,
+    marker = {"schema": judgment_evidence.JUDGMENT_MARKER_SCHEMA,
               "kind": "evaluate",
               "experiment": name,
               "evaluateRun": evaluate_run,

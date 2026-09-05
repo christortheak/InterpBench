@@ -568,6 +568,7 @@ def test_the_preregistration_prints_the_record(fixture, tmp_path):
 
 def test_runs_stamp_the_record_and_advise_on_a_frozen_ignored_level(fixture, tmp_path):
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_artifacts as run_artifacts
     from types import SimpleNamespace
     root = _draft(tmp_path, QWEN)
     raw = es.load_raw("s", root)
@@ -581,7 +582,7 @@ def test_runs_stamp_the_record_and_advise_on_a_frozen_ignored_level(fixture, tmp
     run_directory = os.path.join(root, "runs", "r")
     os.makedirs(run_directory)
     lines: list = []
-    tasks._write_config_snapshot(manifest, run_directory, "run", model=model,
+    run_artifacts.write_config_snapshot(manifest, run_directory, "run", model=model,
                                  root=root, log=lines.append)
     with open(os.path.join(run_directory, "config.json"), encoding="utf-8") as handle:
         config = json.load(handle)
@@ -601,20 +602,21 @@ def test_runs_stamp_the_record_and_advise_on_a_frozen_ignored_level(fixture, tmp
     # re-probe, no diff); a changed template re-probes and says what moved.
     lines.clear()
     os.makedirs(os.path.join(root, "runs", "r2"))
-    tasks._write_config_snapshot(manifest, os.path.join(root, "runs", "r2"), "validate",
+    run_artifacts.write_config_snapshot(manifest, os.path.join(root, "runs", "r2"), "validate",
                                  model=model, root=root, log=lines.append)
     assert not any("re-probed" in line for line in lines)
     changed = SimpleNamespace(
         tokenizer=_TemplateTokenizer(_family(fixture, "chatml-effort")["template"]),
         revision="c" * 40, model=SimpleNamespace(config=None))
     os.makedirs(os.path.join(root, "runs", "r3"))
-    tasks._write_config_snapshot(manifest, os.path.join(root, "runs", "r3"), "validate",
+    run_artifacts.write_config_snapshot(manifest, os.path.join(root, "runs", "r3"), "validate",
                                  model=changed, root=root, log=lines.append)
     assert any("changed since" in line and "effortLevels" in line for line in lines)
 
 
 def test_a_run_without_a_probeable_tokenizer_stamps_the_heuristic(tmp_path):
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_artifacts as run_artifacts
     from types import SimpleNamespace
     root = _draft(tmp_path, GEMMA)
     manifest = Manifest.load("s", root=root)
@@ -625,7 +627,7 @@ def test_a_run_without_a_probeable_tokenizer_stamps_the_heuristic(tmp_path):
 
     run_directory = os.path.join(root, "runs", "r")
     os.makedirs(run_directory)
-    tasks._write_config_snapshot(
+    run_artifacts.write_config_snapshot(
         manifest, run_directory, "extract",
         model=SimpleNamespace(tokenizer=_Double(), revision=None, model=None),
         root=root, log=lambda _line: None)

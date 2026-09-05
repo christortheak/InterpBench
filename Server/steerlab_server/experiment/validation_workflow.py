@@ -10,16 +10,16 @@ from typing import Callable
 from ..steering import vector_math as vm
 from ..steering import vector_store
 from . import paths
-from . import choice_scoring as _dep_choice_scoring
-from . import forward_resolution as _dep_forward_resolution
-from . import layer_resolution as _dep_layer_resolution
-from . import manifest as _dep_manifest
-from . import model_resources as _dep_model_resources
-from ..steering import extractor as _dep_parent_steering_extractor
-from ..steering import stimulus_set as _dep_parent_steering_stimulus_set
-from . import run_artifacts as _dep_run_artifacts
-from . import study_admission as _dep_study_admission
-from . import vector_materialization as _dep_vector_materialization
+from . import choice_scoring
+from . import forward_resolution
+from . import layer_resolution
+from . import manifest as manifest_module
+from . import model_resources
+from ..steering import extractor
+from ..steering import stimulus_set
+from . import run_artifacts
+from . import study_admission
+from . import vector_materialization
 
 
 def validate(name: str, root: str | None = None, dtype: str = "auto",
@@ -31,16 +31,16 @@ def validate(name: str, root: str | None = None, dtype: str = "auto",
     Discriminant validity: distinct concepts are not collapsed into one
     direction (reported as a cosine matrix CSV).
     """
-    manifest = _dep_manifest.Manifest.load(name, root)
+    manifest = manifest_module.Manifest.load(name, root)
     manifest = _autopin_capability_battery(name, manifest, root, log or print)
-    _dep_study_admission._verify_or_warn(manifest, root)
-    with _dep_model_resources._acquire_model(manifest, dtype, device, model_provider) as model:
-        manifest = _dep_model_resources._pin_model_revision(name, manifest, model, root, log or print)
+    study_admission.verify_or_warn(manifest, root)
+    with model_resources.acquire_model(manifest, dtype, device, model_provider) as model:
+        manifest = model_resources.pin_model_revision(name, manifest, model, root, log or print)
         return _validate_impl(name, manifest, model, root, log or print)
 
 
-def _autopin_capability_battery(name: str, manifest: _dep_manifest.Manifest, root,
-                                _log) -> _dep_manifest.Manifest:
+def _autopin_capability_battery(name: str, manifest: manifest_module.Manifest, root,
+                                _log) -> manifest_module.Manifest:
     """Pin the DEFAULT battery into an unpinned variant-study DRAFT before
     validation (mirrors Swift): the validation scope hash composes the PIN,
     so evidence produced against an implicit default would never match a
@@ -61,11 +61,11 @@ def _autopin_capability_battery(name: str, manifest: _dep_manifest.Manifest, roo
                "capabilityBatteryHash": digest}, root)
     _log(f"pinned default capability battery {battery_mod.DEFAULT_BATTERY_FILE} "
          f"@ {digest[:12]}… into '{name}' (variant study, no explicit pin)")
-    return _dep_manifest.Manifest.load(name, root)
+    return manifest_module.Manifest.load(name, root)
 
 
-def _validate_impl(name: str, manifest: _dep_manifest.Manifest, model, root, _log) -> str:
-    bundles = _dep_vector_materialization._extract_all(model, manifest, root)
+def _validate_impl(name: str, manifest: manifest_module.Manifest, model, root, _log) -> str:
+    bundles = vector_materialization.extract_all(model, manifest, root)
 
     # Depth and range checks BEFORE the run directory exists. Extraction is
     # what reveals model depth, and everything after this point WRITES:
@@ -74,7 +74,7 @@ def _validate_impl(name: str, manifest: _dep_manifest.Manifest, model, root, _lo
     # freeze-acceptable (no report), but litter that looks like a validation
     # run and has to be reasoned about.
     from . import validation_layer as _vl
-    _depth = _dep_layer_resolution._require_uniform_depth(bundles)
+    _depth = layer_resolution.require_uniform_depth(bundles)
     _range_refusal = _vl.range_refusal(
         manifest.raw.get("validationLayer"), _depth)
     if _range_refusal:
@@ -89,7 +89,7 @@ def _validate_impl(name: str, manifest: _dep_manifest.Manifest, model, root, _lo
         condition_layer=None, layer_count=max(_depth, 1))
 
     run_directory = paths.make_unique_run_directory(f"exp-{name}-validate", root)
-    _dep_run_artifacts._write_config_snapshot(manifest, run_directory, "validate", model=model,
+    run_artifacts.write_config_snapshot(manifest, run_directory, "validate", model=model,
                            root=root, log=_log)
     # Validation-evidence contract (parallel to Swift ``isCompleteValidationRun``):
     # a freeze accepts this run only if validation-evidence.json names task
@@ -110,7 +110,7 @@ def _validate_impl(name: str, manifest: _dep_manifest.Manifest, model, root, _lo
     with open(os.path.join(run_directory, "validation-evidence.json"), "w",
               encoding="utf-8") as handle:
         json.dump(evidence, handle, indent=2, sort_keys=True)
-    _dep_vector_materialization._persist_vectors(bundles, manifest, model, run_directory)
+    vector_materialization.persist_vectors(bundles, manifest, model, run_directory)
 
     # Declared discriminant-validity CONTROLS (C2). The server had none at
     # all, while Swift swept in "every other concept on disk" extracted with
@@ -141,8 +141,8 @@ def _validate_impl(name: str, manifest: _dep_manifest.Manifest, model, root, _lo
     # always carries the depth it was measured at.
     # Controls can still violate the depth invariant even when the study's
     # own bundles agree (checked before the run directory was created).
-    _dep_layer_resolution._require_uniform_depth(matrix_bundles)
-    matrix_layer_list = _dep_layer_resolution._matrix_layers(manifest, matrix_bundles)
+    layer_resolution.require_uniform_depth(matrix_bundles)
+    matrix_layer_list = layer_resolution.matrix_layers(manifest, matrix_bundles)
     matrix_layer = matrix_layer_list[0]
     for index, one_layer in enumerate(matrix_layer_list):
         # One complete matrix per declared depth. The first keeps the
@@ -270,7 +270,7 @@ def _validate_impl(name: str, manifest: _dep_manifest.Manifest, model, root, _lo
         # (`test_system_prompt_composition.py` asserts this by test; Swift
         # twin: the `resolvedExtractionRendering` sites in ExperimentTasks.)
         rendering = concept.options.extraction_rendering
-        resolutions = _dep_layer_resolution._validation_layer_resolutions(
+        resolutions = layer_resolution.validation_layer_resolutions(
             manifest, concept_name, bundle.vectors.layer_count)
         # Activations are captured ONCE for all layers — extra declared
         # depths cost per-layer arithmetic, not forward passes. That is why
@@ -290,7 +290,7 @@ def _validate_impl(name: str, manifest: _dep_manifest.Manifest, model, root, _lo
                     negative=multiconcept.load_stories_texts(
                         ref_pin.get("name", ""), root))
             else:
-                stimuli = _dep_parent_steering_stimulus_set.StimulusSet.from_directory(
+                stimuli = stimulus_set.StimulusSet.from_directory(
                     paths.concept_directory(data_concept, root))
             pos = activations(model, stimuli.positive, reading, rendering).values
             neg = activations(model, stimuli.negative, reading, rendering).values
@@ -300,7 +300,7 @@ def _validate_impl(name: str, manifest: _dep_manifest.Manifest, model, root, _lo
             layer = resolution.layer
             direction = bundle.vectors.per_layer[layer]
             sub: dict = {"layer": layer,
-                         "layerResolution": _dep_layer_resolution._resolution_block(resolution)}
+                         "layerResolution": layer_resolution.resolution_block(resolution)}
             if grand_mean:
                 concept_rows = [values[i][layer]
                                 for i, c in enumerate(labels_by_row)
@@ -387,7 +387,7 @@ def _validate_impl(name: str, manifest: _dep_manifest.Manifest, model, root, _lo
     lens_report: dict = {}
     for concept_name, bundle in bundles.items():
         per_depth: list = []
-        for resolution in _dep_layer_resolution._validation_layer_resolutions(
+        for resolution in layer_resolution.validation_layer_resolutions(
                 manifest, concept_name, bundle.vectors.layer_count):
             layer = resolution.layer
             try:
@@ -440,8 +440,8 @@ def _validate_impl(name: str, manifest: _dep_manifest.Manifest, model, root, _lo
     return run_directory
 
 
-def _extract_validation_controls(model, manifest: _dep_manifest.Manifest, root, _log
-                                 ) -> dict[str, _dep_vector_materialization.ConceptVectorBundle]:
+def _extract_validation_controls(model, manifest: manifest_module.Manifest, root, _log
+                                 ) -> dict[str, vector_materialization.ConceptVectorBundle]:
     """Extract each DECLARED control with its OWN pinned recipe.
 
     A control is a complete pinned recipe reference: which concept, which
@@ -455,12 +455,12 @@ def _extract_validation_controls(model, manifest: _dep_manifest.Manifest, root, 
     neutral_texts = None
     if manifest.neutral_corpus_hash:
         try:
-            neutral_texts = _dep_parent_steering_stimulus_set.load_texts(paths.neutral_corpus_path(root)).texts
+            neutral_texts = stimulus_set.load_texts(paths.neutral_corpus_path(root)).texts
         except Exception:  # noqa: BLE001
             neutral_texts = None
     from .manifest import ExtractionOptions
 
-    out: dict[str, _dep_vector_materialization.ConceptVectorBundle] = {}
+    out: dict[str, vector_materialization.ConceptVectorBundle] = {}
     for control in controls:
         concept = (control or {}).get("concept")
         if not concept:
@@ -494,7 +494,7 @@ def _extract_validation_controls(model, manifest: _dep_manifest.Manifest, root, 
                 "defaulting one reads it at a position it was not authored for")
         directory = paths.concept_directory(concept, root)
         try:
-            stimuli = _dep_parent_steering_stimulus_set.StimulusSet.from_directory(directory)
+            stimuli = stimulus_set.StimulusSet.from_directory(directory)
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
                 f"validation control '{concept}' has no readable stimulus set "
@@ -517,15 +517,15 @@ def _extract_validation_controls(model, manifest: _dep_manifest.Manifest, root, 
                 "declare the study-wide validationLayer instead")
         options = ExtractionOptions.from_json(control.get("options") or {})
         _log(f"extracting control '{concept}' with its own recipe…")
-        result = _dep_parent_steering_extractor.extract(
+        result = extractor.extract(
             model, stimuli,
-            _dep_parent_steering_extractor.ExtractionOptions(
+            extractor.ExtractionOptions(
                 method=options.method,
                 reading_position=options.reading_position,
                 neutral_pc_count=options.neutral_pc_count,
                 extraction_rendering=options.extraction_rendering),
             neutral_texts=neutral_texts)
-        out[concept] = _dep_vector_materialization.ConceptVectorBundle(
+        out[concept] = vector_materialization.ConceptVectorBundle(
             vectors=result.vectors,
             residual_norm_per_layer=result.residual_norm_per_layer,
             residual_norm_source=result.residual_norm_source,
@@ -536,7 +536,7 @@ def _extract_validation_controls(model, manifest: _dep_manifest.Manifest, root, 
     return out
 
 
-def _undeclared_control_advisories(manifest: _dep_manifest.Manifest, root) -> list[str]:
+def _undeclared_control_advisories(manifest: manifest_module.Manifest, root) -> list[str]:
     """Name the concepts on disk that are NOT declared controls.
 
     Swift's old ambient rule folded these into the matrix silently; removing
@@ -566,7 +566,7 @@ def _undeclared_control_advisories(manifest: _dep_manifest.Manifest, root) -> li
         "stimulus hash and extraction options) to measure against them."]
 
 
-def _battery_results(manifest: _dep_manifest.Manifest, model, root, _log) -> list[dict]:
+def _battery_results(manifest: manifest_module.Manifest, model, root, _log) -> list[dict]:
     """Run the pinned capability battery under baseline + every variant
     condition (greedy, ``BATTERY_MAX_TOKENS`` — mirrors Swift
     ``VariantRobustness``), scored with the pure exact/normalized matcher.
@@ -611,7 +611,7 @@ def _battery_results(manifest: _dep_manifest.Manifest, model, root, _log) -> lis
         advisory = battery_mod.contamination_advisory(spec, arming)
         if advisory:
             _log(f"WARNING: {advisory}")
-        generate_fn, choice_fn = _dep_choice_scoring._battery_backends(
+        generate_fn, choice_fn = choice_scoring.battery_backends(
             model, manifest.model_id, injections)
         correct = 0
         for item in items:
@@ -640,7 +640,7 @@ def _battery_results(manifest: _dep_manifest.Manifest, model, root, _log) -> lis
                 # resolution raises and the row records why (the freeze
                 # battery gate exempts forward refs for exactly this
                 # reason — their battery evidence is the RUN's).
-                vc, _ = _dep_forward_resolution._resolve_forward_variant(vc, manifest, root, _log)
+                vc, _ = forward_resolution.resolve_forward_variant(vc, manifest, root, _log)
             variant = (model_variant.ModelVariant.from_dict(vc.artifact)
                        if vc.artifact else model_variant.ModelVariant.from_file(
                            paths.resolve(vc.artifact_path, root)))

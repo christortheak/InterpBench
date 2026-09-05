@@ -19,6 +19,7 @@ import re
 import pytest
 
 from steerlab_server.experiment import experiment_store as es, tasks
+import steerlab_server.experiment.run_reporting as run_reporting
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.experiment.reasoning_style import (
     PinnedStyle, Taxonomy, TaxonomyError, load_pinned, match_tokens,
@@ -397,7 +398,7 @@ def _records():
 
 
 def test_metrics_csv_gains_rs_columns_in_taxonomy_order(tmp_path):
-    tasks._write_metrics_csv(_records(), str(tmp_path), style=_style())
+    run_reporting.write_metrics_csv(_records(), str(tmp_path), style=_style())
     with open(os.path.join(str(tmp_path), "metrics.csv"), encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     assert list(rows[0].keys())[-2:] == ["rs_hedge", "rs_question"]
@@ -408,7 +409,7 @@ def test_metrics_csv_gains_rs_columns_in_taxonomy_order(tmp_path):
 
 
 def test_metrics_csv_without_style_is_unchanged(tmp_path):
-    tasks._write_metrics_csv(_records(), str(tmp_path))
+    run_reporting.write_metrics_csv(_records(), str(tmp_path))
     with open(os.path.join(str(tmp_path), "metrics.csv"), encoding="utf-8") as handle:
         header = handle.readline().strip().split(",")
     assert header == ["condition", "seed", "promptIndex", "promptID",
@@ -420,7 +421,7 @@ def test_report_gains_per_condition_reasoning_style_block(tmp_path):
     _write(os.path.join(root, "experiments", "s", "experiment.json"),
            {"name": "s", "modelID": "org/m", "concepts": []})
     manifest = Manifest.load("s", root)
-    tasks._write_report("s", manifest, _records(), root, style=_style())
+    run_reporting.write_report("s", manifest, _records(), root, style=_style())
     report = json.load(open(os.path.join(root, "report.json")))
     block = report["conditions"]["baseline"]["reasoningStyle"]
     assert block["taxonomy"] == "test-style-v1"
@@ -439,7 +440,7 @@ def test_report_gains_per_condition_reasoning_style_block(tmp_path):
         "mean": pytest.approx(2000.0 / 3), "n": 1}
     assert steered["features"]["question"] == {"mean": pytest.approx(0.0), "n": 1}
     # No style pin → no block (legacy reports unchanged).
-    tasks._write_report("s", manifest, _records(), root)
+    run_reporting.write_report("s", manifest, _records(), root)
     report = json.load(open(os.path.join(root, "report.json")))
     assert "reasoningStyle" not in report["conditions"]["baseline"]
 

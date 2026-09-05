@@ -24,6 +24,7 @@ from types import SimpleNamespace
 
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.extraction_workflow as extraction_workflow
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.steering.vector_store import ConceptVectors
 
@@ -78,7 +79,7 @@ def _blind_model(model_id, revision):
 
 
 def _bundle(stimulus_hash):
-    return tasks.ConceptVectorBundle(
+    return _owner_vector_materialization.ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[1.0, 0.0]] * 4),
         residual_norm_per_layer=[1.0] * 4,
         residual_norm_source="extraction-stimuli", stimulus_hash=stimulus_hash)
@@ -88,7 +89,7 @@ def _extract(tmp_path, monkeypatch, provider, **kwargs):
     root = str(tmp_path)
     stimulus_hash = _workspace(root, **kwargs)
     monkeypatch.setattr(
-        _owner_vector_materialization, '_extract_all',
+        _owner_vector_materialization, 'extract_all',
         lambda model, manifest, root: {"steadiness": _bundle(stimulus_hash)})
     logs = []
     run_dir = tasks.extract("lensstudy", root, model_provider=provider,
@@ -108,7 +109,7 @@ def test_every_extracted_direction_gets_a_top_ten_vocabulary_readout(
     depths = report["steadiness"]
     assert len(depths) == 1                    # one declared validation depth
     entry = depths[0]
-    assert len(entry["topPositive"]) == tasks.LOGIT_LENS_VOCABULARY_TOP_K == 10
+    assert len(entry["topPositive"]) == extraction_workflow.LOGIT_LENS_VOCABULARY_TOP_K == 10
     assert len(entry["topNegative"]) == 10
     # Highest-logit first, and the pieces are named — a reader sees the
     # vocabulary, not a row of ids.

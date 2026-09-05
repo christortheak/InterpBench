@@ -7,7 +7,7 @@ import os
 from . import paths
 
 
-def _verified_identity_for(variant, root, *, label: str) -> dict:
+def verified_identity_for(variant, root, *, label: str) -> dict:
     """The verified identity block for one agent, or a typed refusal."""
     from . import model_variant as mv
 
@@ -54,12 +54,12 @@ def _require_verified_variant_identities(manifest, root) -> dict:
             variant = mv.ModelVariant.from_file(resolved)
         else:
             continue
-        identities[getattr(vc, "name", "?")] = _verified_identity_for(
+        identities[getattr(vc, "name", "?")] = verified_identity_for(
             variant, root, label=getattr(vc, "name", "?"))
     return identities
 
 
-def _open_jlens_trace(manifest, model, root, *, run_directory, checkpoint,
+def open_jlens_trace(manifest, model, root, *, run_directory, checkpoint,
                       resuming, log, allowed_keys=None,
                       expected_generations: int | None = None,
                       generates_sampled_text: bool | None = None):

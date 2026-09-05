@@ -299,6 +299,7 @@ def test_the_light_prompt_reader_selects_what_the_run_path_selects(tmp_path):
     readers are held to the same items on the same file — blank lines, the
     `prompt-<ordinal>` id fallback and all."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.task_inputs as task_inputs
 
     root = _workspace(tmp_path)
     path = os.path.join(root, "prompts", "tasks", "mixed.jsonl")
@@ -313,7 +314,7 @@ def test_the_light_prompt_reader_selects_what_the_run_path_selects(tmp_path):
                     root=root)
     manifest = Manifest.from_dict(es.load_raw("demo", root))
     heavy = response_format.items_of(
-        tasks._load_prompts(manifest, None, root))
+        task_inputs.load_prompts(manifest, None, root))
     assert es.scope_items("prompts/tasks/mixed.jsonl", root) == heavy
     assert [i["id"] for i in heavy] == ["a", "prompt-2", "prompt-3"]
 

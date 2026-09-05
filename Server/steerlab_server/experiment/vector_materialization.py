@@ -10,15 +10,15 @@ from dataclasses import dataclass
 from ..steering import model_loader
 from ..steering import vector_store
 from . import paths, recipe_identity
-from . import manifest as _dep_manifest
-from ..steering import extractor as _dep_parent_steering_extractor
-from ..steering import stimulus_set as _dep_parent_steering_stimulus_set
-from ..steering import vector_store as _dep_parent_steering_vector_store
+from . import manifest as manifest_module
+from ..steering import extractor
+from ..steering import stimulus_set
+from ..steering import vector_store as vector_store_module
 
 
 @dataclass
 class ConceptVectorBundle:
-    vectors: _dep_parent_steering_vector_store.ConceptVectors
+    vectors: vector_store_module.ConceptVectors
     residual_norm_per_layer: list[float]
     residual_norm_source: str
     stimulus_hash: str
@@ -101,12 +101,12 @@ class ConceptVectorBundle:
     negated_from: dict | None = None
 
 
-def _extract_all(model: model_loader.SteeredModel, manifest: _dep_manifest.Manifest,
+def extract_all(model: model_loader.SteeredModel, manifest: manifest_module.Manifest,
                  root: str | None) -> dict[str, ConceptVectorBundle]:
     neutral_texts = None
     if manifest.neutral_corpus_hash:
         try:
-            neutral_texts = _dep_parent_steering_stimulus_set.load_texts(paths.neutral_corpus_path(root)).texts
+            neutral_texts = stimulus_set.load_texts(paths.neutral_corpus_path(root)).texts
         except Exception:  # noqa: BLE001
             neutral_texts = None
     bundles: dict[str, ConceptVectorBundle] = {}
@@ -124,13 +124,13 @@ def _extract_all(model: model_loader.SteeredModel, manifest: _dep_manifest.Manif
             continue
         if concept.options.method.is_grand_mean:
             continue  # grand-mean concepts extract in one corpus pass below
-        stimuli = _dep_parent_steering_stimulus_set.StimulusSet.from_directory(paths.concept_directory(concept.name, root))
-        options = _dep_parent_steering_extractor.ExtractionOptions(
+        stimuli = stimulus_set.StimulusSet.from_directory(paths.concept_directory(concept.name, root))
+        options = extractor.ExtractionOptions(
             method=concept.options.method,
             reading_position=concept.options.reading_position,
             neutral_pc_count=concept.options.neutral_pc_count,
             extraction_rendering=concept.options.extraction_rendering)
-        result = _dep_parent_steering_extractor.extract(model, stimuli, options, neutral_texts=neutral_texts)
+        result = extractor.extract(model, stimuli, options, neutral_texts=neutral_texts)
         bundles[concept.name] = ConceptVectorBundle(
             vectors=result.vectors,
             residual_norm_per_layer=result.residual_norm_per_layer,
@@ -150,7 +150,7 @@ def _sha256_file(path: str) -> str:
         return hashlib.sha256(handle.read()).hexdigest()
 
 
-def _materialize_pinned_artifact(manifest: _dep_manifest.Manifest, concept,
+def _materialize_pinned_artifact(manifest: manifest_module.Manifest, concept,
                                  root) -> ConceptVectorBundle:
     """Verify an artifact-pinned concept's bytes and load them as a bundle.
 
@@ -321,12 +321,12 @@ def _extract_designated_reference(model, concept, root,
     positive = multiconcept.load_stories_texts(concept.name, root)
     negative = multiconcept.load_stories_texts(ref_name, root)
     stimuli = SimpleNamespace(positive=positive, negative=negative)
-    options = _dep_parent_steering_extractor.ExtractionOptions(
+    options = extractor.ExtractionOptions(
         method=concept.options.method,
         reading_position=concept.options.reading_position,
         neutral_pc_count=concept.options.neutral_pc_count,
         extraction_rendering=concept.options.extraction_rendering)
-    result = _dep_parent_steering_extractor.extract(model, stimuli, options, neutral_texts=neutral_texts)
+    result = extractor.extract(model, stimuli, options, neutral_texts=neutral_texts)
     return ConceptVectorBundle(
         vectors=result.vectors,
         residual_norm_per_layer=result.residual_norm_per_layer,
@@ -340,7 +340,7 @@ def _extract_designated_reference(model, concept, root,
         designated_reference={"name": ref_name, "hash": ref.get("hash")})
 
 
-def _extract_grand_mean_bundles(model, manifest: _dep_manifest.Manifest, root,
+def _extract_grand_mean_bundles(model, manifest: manifest_module.Manifest, root,
                                 neutral_texts) -> dict[str, ConceptVectorBundle]:
     """Grand-mean concepts share one pinned population; extract every target
     that shares (reading position, projection) in a single corpus pass so the
@@ -399,12 +399,12 @@ def _extract_grand_mean_bundles(model, manifest: _dep_manifest.Manifest, root,
     return bundles
 
 
-def _persist_vectors(bundles: dict[str, ConceptVectorBundle], manifest: _dep_manifest.Manifest,
+def persist_vectors(bundles: dict[str, ConceptVectorBundle], manifest: manifest_module.Manifest,
                      model: model_loader.SteeredModel, run_directory: str) -> None:
     for name, bundle in bundles.items():
         concept = next(c for c in manifest.concepts if c.name == name)
         pc_count = concept.options.neutral_pc_count or 0
-        sidecar = _dep_parent_steering_vector_store.SteeringVectorSidecar.make(
+        sidecar = vector_store_module.SteeringVectorSidecar.make(
             model_id=manifest.model_id, revision=model.revision, concept=name,
             stimulus_set_hash=bundle.stimulus_hash, vectors=bundle.vectors,
             extraction_method=concept.options.method.value,
@@ -466,5 +466,5 @@ def _persist_vectors(bundles: dict[str, ConceptVectorBundle], manifest: _dep_man
                 f"[{', '.join(missing)}] — cannot stamp recipeIdentityHash "
                 "(writer bug)")
         sidecar.recipeIdentityHash = recipe_identity.identity_hash(components)
-        _dep_parent_steering_vector_store.save(bundle.vectors, sidecar, run_directory, name,
+        vector_store_module.save(bundle.vectors, sidecar, run_directory, name,
                      neutral_mean_per_layer=bundle.neutral_mean_per_layer)

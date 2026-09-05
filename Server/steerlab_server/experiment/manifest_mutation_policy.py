@@ -5,7 +5,7 @@ from .manifest_errors import ExperimentStoreError
 
 ARM_BEARING_KEYS: tuple[str, ...] = ("concepts", "conditions")
 
-def _clears_every_arm(existing: object, incoming: dict) -> bool:
+def clears_every_arm(existing: object, incoming: dict) -> bool:
     """True when this save would take a manifest that HOLDS a measured surface
     to one that holds none at all.
 
@@ -32,7 +32,7 @@ def admit_save(d: dict, existing: dict | None, *, freeze_transition: bool = Fals
     if existing is None or freeze_transition:
         return
     if (not clearing_arms and existing.get("status") == "draft"
-            and _clears_every_arm(existing, d)):
+            and clears_every_arm(existing, d)):
         # Frozen/complete manifests never reach here — the status check
         # below refuses them outright — so this rule is DRAFT-only by
         # construction, not by an extra condition that could drift.
@@ -102,7 +102,7 @@ def admit_draft_replacement(name: str, existing: object) -> None:
             "pushed draft (freeze firewall) — duplicate to iterate")
 
 
-def _merge_server_pins(document: dict, existing: object) -> dict:
+def merge_server_pins(document: dict, existing: object) -> dict:
     """Merge server-side auto-pins the incoming document OMITS (key absent)
     into ``document`` in place; returns the ``preserved`` report (empty =
     nothing merged). Explicit ``null`` keys are the caller clearing a pin

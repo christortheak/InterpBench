@@ -20,6 +20,9 @@ import pytest
 
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.model_resources as model_resources
+import steerlab_server.experiment.run_artifacts as run_artifacts
+import steerlab_server.experiment.sweep_judging as sweep_judging
 from steerlab_server.experiment.manifest import Manifest
 
 
@@ -113,8 +116,8 @@ def test_an_unpinned_study_is_untouched(tmp_path):
 
 def test_the_pin_wins_over_the_callers_auto_default(tmp_path):
     manifest = Manifest(name="s", model_id="org/m", dtype="float16")
-    assert tasks._effective_dtype(manifest, "auto") == "float16"
-    assert tasks._effective_dtype(manifest, "") == "float16"
+    assert model_resources._effective_dtype(manifest, "auto") == "float16"
+    assert model_resources._effective_dtype(manifest, "") == "float16"
 
 
 def test_an_explicitly_conflicting_flag_refuses_rather_than_being_overridden(
@@ -124,19 +127,19 @@ def test_an_explicitly_conflicting_flag_refuses_rather_than_being_overridden(
     own manifest. Refuse and name both."""
     manifest = Manifest(name="s", model_id="org/m", dtype="float16")
     with pytest.raises(RuntimeError, match="pins dtype 'float16'") as excinfo:
-        tasks._effective_dtype(manifest, "bfloat16")
+        model_resources._effective_dtype(manifest, "bfloat16")
     assert "frozen recipe" in str(excinfo.value)
 
 
 def test_an_alias_of_the_same_dtype_is_not_a_conflict():
     manifest = Manifest(name="s", model_id="org/m", dtype="bfloat16")
-    assert tasks._effective_dtype(manifest, "bf16") == "bfloat16"
+    assert model_resources._effective_dtype(manifest, "bf16") == "bfloat16"
 
 
 def test_an_unpinned_study_passes_the_callers_choice_through():
     manifest = Manifest(name="s", model_id="org/m")
-    assert tasks._effective_dtype(manifest, "auto") == "auto"
-    assert tasks._effective_dtype(manifest, "float32") == "float32"
+    assert model_resources._effective_dtype(manifest, "auto") == "auto"
+    assert model_resources._effective_dtype(manifest, "float32") == "float32"
 
 
 # --- the resident-model conflict -----------------------------------------------
@@ -148,7 +151,7 @@ def test_a_resident_model_at_another_precision_refuses():
     exactly the false pin this key exists to prevent."""
     manifest = Manifest(name="s", model_id="org/m", dtype="float16")
     with pytest.raises(RuntimeError, match="resident as") as excinfo:
-        tasks._assert_resident_dtype_matches(manifest, _FakeModel("bfloat16"))
+        model_resources._assert_resident_dtype_matches(manifest, _FakeModel("bfloat16"))
     message = str(excinfo.value)
     assert "cannot be changed" in message
     assert "Unload it" in message
@@ -156,16 +159,16 @@ def test_a_resident_model_at_another_precision_refuses():
 
 def test_a_matching_resident_model_is_fine():
     manifest = Manifest(name="s", model_id="org/m", dtype="bfloat16")
-    tasks._assert_resident_dtype_matches(manifest, _FakeModel("bfloat16"))
+    model_resources._assert_resident_dtype_matches(manifest, _FakeModel("bfloat16"))
     # Alias spellings compare canonically.
     manifest.dtype = "bf16"
-    tasks._assert_resident_dtype_matches(manifest, _FakeModel("bfloat16"))
+    model_resources._assert_resident_dtype_matches(manifest, _FakeModel("bfloat16"))
 
 
 def test_an_unpinned_study_takes_whatever_is_resident():
     """Historical behaviour, deliberately preserved: no pin, no opinion."""
     manifest = Manifest(name="s", model_id="org/m")
-    tasks._assert_resident_dtype_matches(manifest, _FakeModel("float32"))
+    model_resources._assert_resident_dtype_matches(manifest, _FakeModel("float32"))
 
 
 # --- the run stamp (schema 3) --------------------------------------------------
@@ -179,9 +182,9 @@ def test_the_run_stamp_records_the_actual_dtype(tmp_path):
 
 
 def test_actual_dtype_strips_the_torch_prefix():
-    assert tasks._actual_dtype(_FakeModel("torch.bfloat16")) == "bfloat16"
-    assert tasks._actual_dtype(_FakeModel("bfloat16")) == "bfloat16"
-    assert tasks._actual_dtype(None) is None
+    assert run_artifacts.actual_dtype(_FakeModel("torch.bfloat16")) == "bfloat16"
+    assert run_artifacts.actual_dtype(_FakeModel("bfloat16")) == "bfloat16"
+    assert run_artifacts.actual_dtype(None) is None
 
 
 # --- the study-model judge check against the HELD model (round 5, F1) ---------
@@ -203,15 +206,15 @@ def test_a_study_model_judge_is_checked_against_the_weights_in_hand():
     held.revision = "abc"
 
     # Agreement (and absence) pass.
-    tasks._assert_study_model_judge_matches_held(_Ref(), manifest, held)
-    tasks._assert_study_model_judge_matches_held(
+    sweep_judging._assert_study_model_judge_matches_held(_Ref(), manifest, held)
+    sweep_judging._assert_study_model_judge_matches_held(
         _Ref(revision="abc", dtype="bf16"), manifest, held)
 
     with pytest.raises(RuntimeError, match="cannot load a second revision"):
-        tasks._assert_study_model_judge_matches_held(
+        sweep_judging._assert_study_model_judge_matches_held(
             _Ref(revision="other"), manifest, held)
     with pytest.raises(RuntimeError, match="cannot load a second"):
-        tasks._assert_study_model_judge_matches_held(
+        sweep_judging._assert_study_model_judge_matches_held(
             _Ref(dtype="float32"), manifest, held)
 
 

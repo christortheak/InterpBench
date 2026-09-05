@@ -13,6 +13,7 @@ import os
 import pytest
 
 from steerlab_server.experiment import exclusions, experiment_store as es, tasks
+import steerlab_server.experiment.task_inputs as task_inputs
 from steerlab_server.experiment.manifest import Manifest
 
 
@@ -132,7 +133,7 @@ def test_load_prompts_carries_and_validates_attention_checks(tmp_path):
            '{"id": "ac-2", "prompt": "Say yes.", "attentionCheck": '
            '{"expected": "yes"}}\n')
     manifest = Manifest.from_dict({"name": "x", "modelID": "org/m"})
-    prompts = tasks._load_prompts(manifest, "prompts/t.jsonl", root)
+    prompts = task_inputs.load_prompts(manifest, "prompts/t.jsonl", root)
     assert "attentionCheck" not in prompts[0]
     assert prompts[1]["attentionCheck"] == {"expected": "7",
                                             "grading": "exact_number"}
@@ -145,7 +146,7 @@ def test_load_prompts_carries_and_validates_attention_checks(tmp_path):
            '{"id": "bad", "prompt": "x", "attentionCheck": '
            '{"expected": "7", "grading": "vibes"}}\n')
     with pytest.raises(RuntimeError) as excinfo:
-        tasks._load_prompts(manifest, "prompts/bad.jsonl", root)
+        task_inputs.load_prompts(manifest, "prompts/bad.jsonl", root)
     assert str(excinfo.value) == (
         "task prompts: item 'bad' attentionCheck grading 'vibes' is not a "
         "known grading mode — one of: exact_number, yes_no, token_exact, "
@@ -155,7 +156,7 @@ def test_load_prompts_carries_and_validates_attention_checks(tmp_path):
            '{"id": "bad2", "prompt": "x", "attentionCheck": '
            '{"expected": "  "}}\n')
     with pytest.raises(RuntimeError) as excinfo:
-        tasks._load_prompts(manifest, "prompts/bad2.jsonl", root)
+        task_inputs.load_prompts(manifest, "prompts/bad2.jsonl", root)
     assert str(excinfo.value) == (
         "task prompts: item 'bad2' declares an attentionCheck without a "
         "non-empty 'expected' string — declare the expected answer")
@@ -163,7 +164,7 @@ def test_load_prompts_carries_and_validates_attention_checks(tmp_path):
     _write(os.path.join(root, "prompts", "bad3.jsonl"),
            '{"id": "bad3", "prompt": "x", "attentionCheck": "7"}\n')
     with pytest.raises(RuntimeError) as excinfo:
-        tasks._load_prompts(manifest, "prompts/bad3.jsonl", root)
+        task_inputs.load_prompts(manifest, "prompts/bad3.jsonl", root)
     assert str(excinfo.value) == (
         "task prompts: item 'bad3' attentionCheck must be an object with an "
         "'expected' string")

@@ -35,6 +35,8 @@ import pytest
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import manifest as manifest_mod
 from steerlab_server.experiment import sae_candidates, tasks
+import steerlab_server.experiment.condition_execution as condition_execution
+import steerlab_server.experiment.vector_materialization as vector_materialization
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.steering import vector_store
 from steerlab_server.steering.vector_store import (
@@ -190,8 +192,8 @@ def test_two_sae_features_in_one_condition_sum_additively(tmp_path):
 
     manifest = Manifest.load(name, root)
     assert manifest.verify(root) == []
-    bundles = tasks._extract_all(None, manifest, root)
-    injections = tasks._condition_injections(manifest.conditions[0], bundles)
+    bundles = vector_materialization.extract_all(None, manifest, root)
+    injections = condition_execution.condition_injections(manifest.conditions[0], bundles)
 
     assert [c.concept for c in injections] == ["sae-a", "sae-b"]
     assert all(c.layer == 2 and c.mode == "add" for c in injections)
@@ -221,8 +223,8 @@ def test_an_sae_feature_mixes_with_an_ordinary_direction(tmp_path):
 
     manifest = Manifest.load(name, root)
     assert manifest.verify(root) == []
-    bundles = tasks._extract_all(None, manifest, root)
-    injections = tasks._condition_injections(manifest.conditions[0], bundles)
+    bundles = vector_materialization.extract_all(None, manifest, root)
+    injections = condition_execution.condition_injections(manifest.conditions[0], bundles)
     assert _summed_delta(injections, 2) == pytest.approx([2.0, 0.0, 1.0])
 
 
@@ -264,8 +266,8 @@ def test_norm_unit_alphas_apply_per_slot(tmp_path):
         {"concept": "sae-b", "layer": 2, "alpha": 1.0}])
     es.save_raw(raw, root)
     manifest = Manifest.load(name, root)
-    bundles = tasks._extract_all(None, manifest, root)
-    injections = tasks._condition_injections(manifest.conditions[0], bundles)
+    bundles = vector_materialization.extract_all(None, manifest, root)
+    injections = condition_execution.condition_injections(manifest.conditions[0], bundles)
     # each slot contributes a vector of residual-stream norm 8
     assert _summed_delta(injections, 2) == pytest.approx([8.0, 8.0, 0.0])
 

@@ -662,13 +662,14 @@ def test_the_run_start_guard_returns_identities_for_the_trace_to_reuse(tmp_path)
     import types
 
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_readouts as run_readouts
 
     root = str(tmp_path)
     variant = _variant(root)
     manifest = types.SimpleNamespace(variant_conditions=[
         types.SimpleNamespace(name="sympathy-arm", artifact=variant.to_dict())])
 
-    identities = tasks._require_verified_variant_identities(manifest, root)
+    identities = run_readouts._require_verified_variant_identities(manifest, root)
 
     assert set(identities) == {"sympathy-arm"}
     adapter = identities["sympathy-arm"]["adapters"][0]
@@ -735,13 +736,14 @@ def test_a_path_backed_condition_is_verified_at_preflight_too(tmp_path):
     import types
 
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_readouts as run_readouts
 
     root = str(tmp_path)
     manifest = types.SimpleNamespace(variant_conditions=[
         types.SimpleNamespace(name="arm", artifact=None,
                               artifact_path=_variant_on_disk(root))])
 
-    identities = tasks._require_verified_variant_identities(manifest, root)
+    identities = run_readouts._require_verified_variant_identities(manifest, root)
 
     assert set(identities) == {"arm"}, "path-backed condition was not verified"
     assert identities["arm"]["adapters"][0]["adapterHashVerified"] is True
@@ -751,6 +753,7 @@ def test_a_drifted_path_backed_adapter_refuses_at_preflight(tmp_path):
     import types
 
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_readouts as run_readouts
 
     root = str(tmp_path)
     path = _variant_on_disk(root)
@@ -761,7 +764,7 @@ def test_a_drifted_path_backed_adapter_refuses_at_preflight(tmp_path):
         types.SimpleNamespace(name="arm", artifact=None, artifact_path=path)])
 
     with pytest.raises(RuntimeError, match="cannot be verified"):
-        tasks._require_verified_variant_identities(manifest, root)
+        run_readouts._require_verified_variant_identities(manifest, root)
 
 
 def test_a_missing_artifact_path_is_left_to_the_run_loop(tmp_path):
@@ -770,12 +773,13 @@ def test_a_missing_artifact_path_is_left_to_the_run_loop(tmp_path):
     import types
 
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_readouts as run_readouts
 
     manifest = types.SimpleNamespace(variant_conditions=[
         types.SimpleNamespace(name="arm", artifact=None,
                               artifact_path="runs/model-variants/gone.json")])
 
-    assert tasks._require_verified_variant_identities(manifest, str(tmp_path)) == {}
+    assert run_readouts._require_verified_variant_identities(manifest, str(tmp_path)) == {}
 
 
 def test_the_identity_attached_to_the_condition_beats_the_name_cache(tmp_path):

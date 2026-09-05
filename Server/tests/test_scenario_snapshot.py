@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 from steerlab_server.experiment import multi_agent, tasks
+import steerlab_server.experiment.panel_workflow as panel_workflow
 from steerlab_server.experiment.manifest import Manifest
 
 
@@ -65,7 +66,7 @@ def _panel_workspace(tmp_path, monkeypatch, *, pinned_hash=None):
         spec["multiAgentScenarioHash"] = pinned_hash
     (root / "experiments/panel.json").write_text(json.dumps(spec))
     monkeypatch.setattr(multi_agent, "generate", lambda *a, **k: "out")
-    monkeypatch.setattr(_owner_execution_reporting, '_advise_cross_substrate', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_execution_reporting, 'advise_cross_substrate', lambda *a, **k: None)
     return root, Manifest.from_dict(spec), scenario_path
 
 
@@ -74,7 +75,7 @@ def test_run_directory_holds_the_scenario_byte_for_byte(tmp_path, monkeypatch):
     source = scenario_path.read_bytes()
     model = SimpleNamespace(model_id="m", revision="r", device="cpu")
 
-    run_dir = tasks._run_multi_agent_study(
+    run_dir = panel_workflow.run_multi_agent_study(
         "panel", manifest, model, str(root), log=lambda *_: None)
 
     snapshot = os.path.join(run_dir, "scenario.json")
@@ -98,7 +99,7 @@ def test_run_directory_holds_the_scenario_the_manifest_pinned(
     manifest.multi_agent_scenario_hash = digest
     model = SimpleNamespace(model_id="m", revision="r", device="cpu")
 
-    run_dir = tasks._run_multi_agent_study(
+    run_dir = panel_workflow.run_multi_agent_study(
         "panel", manifest, model, str(root), log=lambda *_: None)
 
     assert (hashlib.sha256(
@@ -122,7 +123,7 @@ def test_a_drifted_scenario_refuses_before_any_generation(
     model = SimpleNamespace(model_id="m", revision="r", device="cpu")
 
     with pytest.raises(RuntimeError) as excinfo:
-        tasks._run_multi_agent_study(
+        panel_workflow.run_multi_agent_study(
             "panel", manifest, model, str(root), log=lambda *_: None)
 
     message = str(excinfo.value)

@@ -116,6 +116,8 @@ def test_a_panel_loads_the_seats_model_not_the_manifests(tmp_path):
     said gemma-3-4b-it, so the run spent its load fetching a 27B nobody would
     use and died with a huggingface_hub traceback."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.model_resources as model_resources
+    import steerlab_server.experiment.run_preflight as run_preflight
     from steerlab_server.experiment.manifest import Manifest
 
     root, spec = _workspace(tmp_path)
@@ -123,7 +125,7 @@ def test_a_panel_loads_the_seats_model_not_the_manifests(tmp_path):
     manifest = Manifest.from_dict(spec)                # seats say 4b
     notes = []
 
-    resolved = tasks._panel_load_model(manifest, root, notes.append)
+    resolved = run_preflight.panel_load_model(manifest, root, notes.append)
 
     assert resolved.model_id == "google/gemma-3-4b-it"
     assert any("no turn consults it" in n for n in notes), \
@@ -135,13 +137,15 @@ def test_a_panel_loads_the_seats_model_not_the_manifests(tmp_path):
 
 def test_a_matching_manifest_is_left_alone_and_says_nothing(tmp_path):
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.model_resources as model_resources
+    import steerlab_server.experiment.run_preflight as run_preflight
     from steerlab_server.experiment.manifest import Manifest
 
     root, spec = _workspace(tmp_path)
     spec["modelID"] = "google/gemma-3-4b-it"
     notes = []
 
-    resolved = tasks._panel_load_model(Manifest.from_dict(spec), root, notes.append)
+    resolved = run_preflight.panel_load_model(Manifest.from_dict(spec), root, notes.append)
 
     assert resolved.model_id == "google/gemma-3-4b-it"
     assert notes == []
@@ -153,12 +157,14 @@ def test_nothing_refuses_a_multi_model_panel_on_any_path(tmp_path):
     second model genuinely cannot be served, run_scenario reports it at the
     turn that needs it rather than blocking the study up front."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.model_resources as model_resources
+    import steerlab_server.experiment.run_preflight as run_preflight
     from steerlab_server.experiment.manifest import Manifest
 
     root, spec = _mixed_workspace(tmp_path)
 
     # No exception, on either path.
-    assert tasks._panel_load_model(
+    assert run_preflight.panel_load_model(
         Manifest.from_dict(spec), root, lambda *_: None) is not None
 
 
@@ -192,12 +198,14 @@ def test_a_mixed_model_panel_is_not_refused(tmp_path):
     """Seats naming different models is a DESIGN, not an error — eventually one
     GPU per seat. Nothing may refuse it."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.model_resources as model_resources
+    import steerlab_server.experiment.run_preflight as run_preflight
     from steerlab_server.experiment.manifest import Manifest
 
     root, spec = _mixed_workspace(tmp_path)
     notes = []
 
-    resolved = tasks._panel_load_model(Manifest.from_dict(spec), root, notes.append)
+    resolved = run_preflight.panel_load_model(Manifest.from_dict(spec), root, notes.append)
 
     # Loads the model most TURNS need, and says what the mix is.
     assert resolved.model_id == "google/gemma-3-4b-it"
@@ -207,13 +215,15 @@ def test_a_mixed_model_panel_is_not_refused(tmp_path):
 
 def test_the_declared_default_is_never_called_a_claim_about_the_run(tmp_path):
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.model_resources as model_resources
+    import steerlab_server.experiment.run_preflight as run_preflight
     from steerlab_server.experiment.manifest import Manifest
 
     root, spec = _workspace(tmp_path)
     spec["modelID"] = "google/gemma-3-27b-it"   # declared default only
     notes = []
 
-    resolved = tasks._panel_load_model(Manifest.from_dict(spec), root, notes.append)
+    resolved = run_preflight.panel_load_model(Manifest.from_dict(spec), root, notes.append)
 
     assert resolved.model_id == "google/gemma-3-4b-it"
     assert any("no turn consults it" in n for n in notes)
@@ -225,6 +235,8 @@ def test_a_revision_is_never_pinned_onto_a_model_that_was_not_loaded(tmp_path):
     from types import SimpleNamespace
 
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.model_resources as model_resources
+    import steerlab_server.experiment.run_preflight as run_preflight
     from steerlab_server.experiment.manifest import Manifest
 
     root, spec = _workspace(tmp_path)
@@ -234,7 +246,7 @@ def test_a_revision_is_never_pinned_onto_a_model_that_was_not_loaded(tmp_path):
     loaded = SimpleNamespace(model_id="google/gemma-3-4b-it", revision="093f9f38deadbeef")
     notes = []
 
-    out = tasks._pin_model_revision("panel", manifest, loaded, root, notes.append)
+    out = model_resources.pin_model_revision("panel", manifest, loaded, root, notes.append)
 
     assert out.model_revision is None, "a foreign revision must not be pinned"
     assert any("belongs to" in n for n in notes)
@@ -245,6 +257,8 @@ def test_a_matching_model_still_pins_its_revision(tmp_path):
     from types import SimpleNamespace
 
     from steerlab_server.experiment import experiment_store, tasks
+    import steerlab_server.experiment.model_resources as model_resources
+    import steerlab_server.experiment.run_preflight as run_preflight
     from steerlab_server.experiment.manifest import Manifest
 
     root, spec = _workspace(tmp_path)
@@ -254,7 +268,7 @@ def test_a_matching_model_still_pins_its_revision(tmp_path):
     _json.dump(spec, open(os.path.join(root, "experiments", "panel.json"), "w"))
     loaded = SimpleNamespace(model_id="google/gemma-3-4b-it", revision="abc123def456")
 
-    out = tasks._pin_model_revision(
+    out = model_resources.pin_model_revision(
         "panel", Manifest.from_dict(spec), loaded, root, lambda *_: None)
 
     assert out.model_revision == "abc123def456"

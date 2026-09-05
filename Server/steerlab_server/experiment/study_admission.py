@@ -9,7 +9,7 @@ from . import lifecycle_gates, run_epoch
 from .manifest import Manifest
 
 
-def _verify_or_warn(manifest: Manifest, root: str | None) -> None:
+def verify_or_warn(manifest: Manifest, root: str | None) -> None:
     """Warn on any violation; RAISE only for a frozen manifest.
 
     KNOWN CROSS-ENGINE DIVERGENCE (characterised 2026-07-26, deliberately
@@ -51,7 +51,7 @@ def _verify_or_warn(manifest: Manifest, root: str | None) -> None:
 
 
 
-def _stamped_experiment_hash(run_directory: str) -> str | None:
+def stamped_experiment_hash(run_directory: str) -> str | None:
     """The manifest-epoch stamp of a run directory. Delegates to the shared
     :mod:`run_epoch` reader so ``promote``'s epoch guard and this one cannot
     drift apart."""
@@ -59,7 +59,7 @@ def _stamped_experiment_hash(run_directory: str) -> str | None:
 
 
 
-def _require_source_epoch(verb: str, name: str, manifest: Manifest,
+def require_source_epoch(verb: str, name: str, manifest: Manifest,
                           run_dir: str, *, allow_unverified_epoch: bool
                           ) -> tuple[bool, str | None]:
     """Epoch guard for evaluate/analyze source runs (2026-07-13): a source run
@@ -139,7 +139,7 @@ def _require_source_epoch(verb: str, name: str, manifest: Manifest,
 
 
 
-def _advise_implicit_case_family(fires: bool, run_directory: str | None, _log,
+def advise_implicit_case_family(fires: bool, run_directory: str | None, _log,
                                  *, write_file: bool) -> None:
     """The deprecated ``caseFamily == "sentencing"`` endpoint selection, said
     out loud wherever it actually fires (2026-08-18).

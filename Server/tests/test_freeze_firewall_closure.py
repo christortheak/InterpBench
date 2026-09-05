@@ -10,6 +10,7 @@ from contextlib import contextmanager
 import pytest
 
 from steerlab_server.experiment import bundles, experiment_store as es, multi_agent, tasks
+import steerlab_server.experiment.task_inputs as task_inputs
 from steerlab_server.experiment.manifest import Manifest
 
 
@@ -155,10 +156,10 @@ def _prompts_manifest(tmp_path, *, status="draft", pin=True):
 
 def test_load_prompts_detects_drift_at_run_time(tmp_path):
     manifest, prompts = _prompts_manifest(tmp_path)
-    assert tasks._load_prompts(manifest, None, str(tmp_path))
+    assert task_inputs.load_prompts(manifest, None, str(tmp_path))
     prompts.write_text('{"id": "a", "prompt": "EDITED"}\n')
     with pytest.raises(RuntimeError, match="drifted"):
-        tasks._load_prompts(manifest, None, str(tmp_path))
+        task_inputs.load_prompts(manifest, None, str(tmp_path))
 
 
 def test_load_prompts_frozen_rules(tmp_path):
@@ -166,15 +167,15 @@ def test_load_prompts_frozen_rules(tmp_path):
     # Identical override is fine; different override is refused.
     same = tmp_path / "same.jsonl"
     same.write_bytes(prompts.read_bytes())
-    assert tasks._load_prompts(manifest, str(same), str(tmp_path))
+    assert task_inputs.load_prompts(manifest, str(same), str(tmp_path))
     other = tmp_path / "other.jsonl"
     other.write_text('{"id": "b", "prompt": "different"}\n')
     with pytest.raises(RuntimeError, match="FROZEN"):
-        tasks._load_prompts(manifest, str(other), str(tmp_path))
+        task_inputs.load_prompts(manifest, str(other), str(tmp_path))
     # Frozen with no pin at all cannot run.
     unpinned, _ = _prompts_manifest(tmp_path, status="frozen", pin=False)
     with pytest.raises(RuntimeError, match="no pinned task prompts"):
-        tasks._load_prompts(unpinned, None, str(tmp_path))
+        task_inputs.load_prompts(unpinned, None, str(tmp_path))
 
 
 def test_bundle_manifest_path_guard(tmp_path):

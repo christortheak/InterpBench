@@ -7,12 +7,13 @@ process-global RNG stream around it."""
 import torch
 
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.sampling as sampling
 
 
 def _draw(seed: int, temperature: float = 0.7) -> list[float]:
     """One 'record': seed generation-locally, draw from the global RNG the
     way HF sampling does (torch.rand hits the same default CPU generator)."""
-    with tasks._seeded_generation(temperature, seed):
+    with sampling.seeded_generation(temperature, seed):
         return torch.rand(4).tolist()
 
 
@@ -52,6 +53,6 @@ def test_greedy_records_never_touch_the_rng():
     torch.manual_seed(555)
     expected = torch.rand(3).tolist()
     torch.manual_seed(555)
-    with tasks._seeded_generation(0.0, 42):
+    with sampling.seeded_generation(0.0, 42):
         pass  # greedy: no seeding, no fork
     assert torch.rand(3).tolist() == expected

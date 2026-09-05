@@ -385,6 +385,7 @@ def test_a_non_object_readout_block_refuses_by_name():
     """It reached `.get` on a string and raised AttributeError — an internal
     exception where a named refusal belongs."""
     from steerlab_server.experiment import experiment_store, tasks
+    import steerlab_server.experiment.run_readouts as run_readouts
     from steerlab_server.experiment.manifest import Manifest
 
     with pytest.raises(experiment_store.ExperimentStoreError,
@@ -396,7 +397,7 @@ def test_a_non_object_readout_block_refuses_by_name():
     manifest = Manifest.from_dict({"name": "s", "modelID": "m",
                                    "jlensReadout": "not-an-object"})
     with pytest.raises(RuntimeError, match="not an object"):
-        tasks._open_jlens_trace(manifest, object(), None, run_directory="/tmp",
+        run_readouts.open_jlens_trace(manifest, object(), None, run_directory="/tmp",
                                 checkpoint=None, resuming=False,
                                 log=lambda _m: None)
 
@@ -536,6 +537,7 @@ def test_a_drifted_adapter_refuses_at_run_start_not_after_generating(tmp_path):
     import types
 
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_readouts as run_readouts
 
     adapter = tmp_path / "runs" / "ad"
     adapter.mkdir(parents=True)
@@ -554,7 +556,7 @@ def test_a_drifted_adapter_refuses_at_run_start_not_after_generating(tmp_path):
                                     "adapterHash": declared}]})])
 
     with pytest.raises(RuntimeError, match="cannot be verified"):
-        tasks._open_jlens_trace(
+        run_readouts.open_jlens_trace(
             manifest, None, str(tmp_path), run_directory=str(tmp_path),
             checkpoint=None, resuming=False, log=lambda *_: None,
             generates_sampled_text=True)
@@ -566,6 +568,7 @@ def test_a_legacy_unpinned_agent_does_not_refuse_at_run_start(tmp_path):
     import types
 
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_readouts as run_readouts
 
     adapter = tmp_path / "runs" / "ad"
     adapter.mkdir(parents=True)
@@ -578,4 +581,4 @@ def test_a_legacy_unpinned_agent_does_not_refuse_at_run_start(tmp_path):
                       "adapters": [{"adapterDirectory": "runs/ad"}]})])
 
     # Returns without raising — the guard is silent on absent pins.
-    tasks._require_verified_variant_identities(manifest, str(tmp_path))
+    run_readouts._require_verified_variant_identities(manifest, str(tmp_path))

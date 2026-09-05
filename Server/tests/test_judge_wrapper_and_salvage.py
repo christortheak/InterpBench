@@ -35,6 +35,8 @@ from types import SimpleNamespace
 import pytest
 
 from steerlab_server.experiment import paired_judge, tasks
+import steerlab_server.experiment.judge_resources as judge_resources
+import steerlab_server.experiment.sweep_judging as sweep_judging
 from steerlab_server.experiment.manifest import JudgeRef, Manifest
 
 # The exact incident shape (cluster evaluate, 2026-07-22): fenced JSON,
@@ -272,7 +274,7 @@ def test_evaluate_local_judge_generates_with_the_unified_cap(monkeypatch):
     def provider(model_id, revision=None):
         yield SimpleNamespace(model_id=model_id)
 
-    judge_fn, _model, _holder = tasks._judge_callable(
+    judge_fn, _model, _holder = judge_resources.judge_callable(
         JudgeRef(name="j1", kind="local"), provider,
         study_model="org/study-model", study_revision="abc123")
     verdict = judge_fn("org/study-model", "rubric", "a", "b", None)
@@ -294,7 +296,7 @@ def test_sweep_local_judge_generates_with_the_unified_cap(
         "judges": [{"name": "j1", "kind": "local"}],
     })
 
-    _rubric, panel = tasks._sweep_judge_panel(
+    _rubric, panel = sweep_judging.sweep_judge_panel(
         manifest, SimpleNamespace(), None, str(tmp_path), lambda *_: None)
     name, judge_fn, judge_model = panel[0]
     assert (name, judge_model) == ("j1", "org/study-model")

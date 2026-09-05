@@ -20,6 +20,8 @@ import torch
 
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.validation_workflow as validation_workflow
+import steerlab_server.experiment.vector_materialization as vector_materialization
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.steering import vector_math as vm
 from steerlab_server.steering.hooks import HookedModel
@@ -111,7 +113,7 @@ def test_extraction_dispatch_end_to_end(tmp_path):
     es.attach("dr-study", ["courage"], method="designatedReference",
               reference="neutral", root=root)
     manifest = Manifest.load("dr-study", root)
-    bundles = tasks._extract_all(_tiny_model(), manifest, root)
+    bundles = vector_materialization.extract_all(_tiny_model(), manifest, root)
     bundle = bundles["courage"]
     assert bundle.vectors.layer_count == 2
     assert bundle.designated_reference["name"] == "neutral"
@@ -188,7 +190,7 @@ def test_lifecycle_validate_identity_and_promotion_match(tmp_path):
     assert bare is None and "designatedReference" in missing
 
     # 3. Validate runs end to end, contrastively, on the tiny model.
-    run = tasks._validate_impl("dr-study", manifest, _tiny_model(), root,
+    run = validation_workflow._validate_impl("dr-study", manifest, _tiny_model(), root,
                                lambda *a: None)
     report = json.load(open(os.path.join(run, "validation-report.json")))
     entry = report["concepts"]["courage"]
@@ -209,10 +211,10 @@ def test_persisted_sidecar_matches_through_the_production_matcher(tmp_path):
     manifest = Manifest.load("dr-study", root)
     manifest.model_revision = "abc123"
     model = _tiny_model()
-    bundles = tasks._extract_all(model, manifest, root)
+    bundles = vector_materialization.extract_all(model, manifest, root)
     run_dir = os.path.join(root, "runs", "20260731T000000-dr-extract")
     os.makedirs(run_dir)
-    tasks._persist_vectors(bundles, manifest, model, run_dir)
+    vector_materialization.persist_vectors(bundles, manifest, model, run_dir)
     artifact, identity_hash = promote._matching_vector_artifact(
         manifest, manifest.concepts[0], root)
     assert artifact is not None and identity_hash
@@ -231,7 +233,7 @@ def test_extraction_refuses_drifted_stories(tmp_path):
     _stories(root, "neutral", ["a silently different reference " * 6])
     manifest = Manifest.load("dr-study", root)
     with pytest.raises(RuntimeError, match="reference 'neutral' stories drifted"):
-        tasks._extract_all(_tiny_model(), manifest, root)
+        vector_materialization.extract_all(_tiny_model(), manifest, root)
 
 
 def test_canonical_identity_bytes_are_the_cross_engine_fixture():

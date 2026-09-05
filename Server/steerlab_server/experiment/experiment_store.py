@@ -101,7 +101,7 @@ def load_raw(name: str, root: str | None = None) -> dict:
 from .manifest_mutation_policy import ARM_BEARING_KEYS
 
 
-from .manifest_mutation_policy import _clears_every_arm
+from .manifest_mutation_policy import clears_every_arm
 
 
 def save_raw(d: dict, root: str | None = None, *, freeze_transition: bool = False,
@@ -2437,7 +2437,7 @@ def replace_draft_manifest(name: str, document: object,
             existing = None
     manifest_mutation_policy.admit_draft_replacement(name, existing)
     document = dict(document)
-    preserved = _merge_server_pins(document, existing)
+    preserved = merge_server_pins(document, existing)
     save_raw(document, root)
     canonical = json.dumps(
         document, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -2503,7 +2503,7 @@ def adopt_evidence_revision(run_directory: str,
     return {"outcome": "adopted", "experiment": name, "revision": revision}
 
 
-from .manifest_mutation_policy import _merge_server_pins
+from .manifest_mutation_policy import merge_server_pins
 
 
 def duplicate(name: str, new_name: str, root: str | None = None) -> dict:
@@ -3301,7 +3301,7 @@ def _evaluate_freeze_gates(name: str, d: dict, manifest: Manifest,
     operative = model_output_surfaces_operative(d)
     jlens = problem(_check_jlens_readout, name, d, root) if operative else None
     variant = problem(_check_variant_validity, name, d, root) if operative else None
-    judge = problem(_check_judged_evaluation, name, d)
+    judge = problem(check_judged_evaluation, name, d)
     evidence = None
     vacuous = None
     if freeze_policy.needs_validation(d):
@@ -3317,7 +3317,7 @@ def _evaluate_freeze_gates(name: str, d: dict, manifest: Manifest,
         battery=battery, git=git))
 
 
-from .freeze_policy import _freeze_gate_repair
+from .freeze_policy import freeze_gate_repair
 
 
 def freeze(name: str, *, force: bool = False, cached_revision=None,
@@ -3379,7 +3379,7 @@ def freeze(name: str, *, force: bool = False, cached_revision=None,
     # model inherits the study's pinned revision when its own is blank —
     # the judging path then loads exactly the pinned bytes. Stamped BEFORE
     # the freeze hash so the frozen manifest is self-describing.
-    _pin_local_judge_revisions(d)
+    pin_local_judge_revisions(d)
     # Measurement-side pin (cross-engine contract key "markersHash"): freeze
     # is the pin moment for the score-time markers rubric — stamp the
     # aggregate hash of every attached concept's markers.json (null when none
@@ -3648,13 +3648,13 @@ def _check_variant_validity(name: str, d: dict, root: str | None = None) -> None
     freeze_policy.check_variant_validity(name, d, evidence_grade_variants=evidence_grade)
 
 
-from .manifest_declaration_policy import _resolved_judge_identity
+from .manifest_declaration_policy import resolved_judge_identity
 
 
 from .manifest_declaration_policy import judge_panel_indistinct_problem
 
 
-from .manifest_declaration_policy import _pipeline_stage_list
+from .manifest_declaration_policy import pipeline_stage_list
 
 
 #: Canonical dtype names a judge may pin, and the aliases that resolve to
@@ -3663,13 +3663,13 @@ from .manifest_declaration_policy import _pipeline_stage_list
 #: two agree, and the Swift twin (`ExperimentStore.judgeDtypeVocabulary`)
 #: carries the same set.
 from .manifest_declaration_policy import JUDGE_DTYPE_VOCABULARY
-from .manifest_declaration_policy import _JUDGE_DTYPE_ALIASES
+from .manifest_declaration_policy import JUDGE_DTYPE_ALIASES
 
 
 from .manifest_declaration_policy import normalize_judge_dtype
 
 
-from .manifest_declaration_policy import _is_commit_like
+from .manifest_declaration_policy import is_commit_like
 
 
 from .manifest_declaration_policy import symbolic_revision_problem
@@ -3684,7 +3684,7 @@ from .manifest_declaration_policy import unloadable_study_dtype_problem
 from .manifest_declaration_policy import unpinned_foreign_local_judge_problem
 
 
-from .manifest_declaration_policy import _foreign_local_judges
+from .manifest_declaration_policy import foreign_local_judges
 
 
 from .manifest_declaration_policy import local_judge_pipeline_problem
@@ -3693,7 +3693,7 @@ from .manifest_declaration_policy import local_judge_pipeline_problem
 from .manifest_declaration_policy import local_judge_fanout_note
 
 
-from .manifest_declaration_policy import _pin_local_judge_revisions
+from .manifest_declaration_policy import pin_local_judge_revisions
 
 
 #: The single-coder advisory sentence — LOUD, never blocking. Swift twin:
@@ -3701,13 +3701,13 @@ from .manifest_declaration_policy import _pin_local_judge_revisions
 from .manifest_declaration_policy import SINGLE_JUDGE_PANEL_ADVISORY
 
 
-from .manifest_declaration_policy import _no_judge_declared_reason
+from .manifest_declaration_policy import no_judge_declared_reason
 
 
 from .manifest_declaration_policy import single_judge_panel_advisory
 
 
-from .manifest_declaration_policy import _check_judged_evaluation
+from .manifest_declaration_policy import check_judged_evaluation
 
 
 def _check_battery_evidence(name: str, d: dict, evidence: dict | None,

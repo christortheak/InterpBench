@@ -66,8 +66,8 @@ Context-manager scopes and adapter cleanup were moved with their workflows.
 
 The API's variant-battery route uses `choice_scoring`; the tokenizer preflight
 route uses `task_inputs`. Existing pipeline/API tests still replace public stage
-entry points at the facade. Tests replacing private helpers now patch their
-canonical owner; their behavioral assertions have not been removed.
+entry points at the facade. Tests replacing shared helpers now patch their
+public names at the canonical owner; their behavioral assertions have not been removed.
 
 ## Lifecycle ownership
 
@@ -148,7 +148,7 @@ the move, and passing the full existing suite does not cover this branch.
    stores. Apply fixes in their new implementation owner, and carry regression
    tests across with their original assertions.
 3. Keep facade stage injection where API/CLI tests replace an entire operation;
-   move private-helper injection to the helper's actual owner.
+   move helper injection to the public interface at the helper's actual owner.
 4. Recheck semantic conflicts even after a clean Git merge: gate ordering,
    force stamps, missing evidence, model release, adapter cleanup, checkpoints,
    artifact provenance and scientific aborts are the important contracts.

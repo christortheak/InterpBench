@@ -184,17 +184,17 @@ def evaluate_battery_with_variant(model, variant: model_variant.ModelVariant,
 
     Scoring itself is ``battery.evaluate`` — the same loader, the same arming
     resolver, the same ``score_item``, and the same two back-ends
-    (``choice_scoring._battery_backends``) ``experiment validate|run`` uses, so a
+    (``choice_scoring.battery_backends``) ``experiment validate|run`` uses, so a
     reading taken here and a reading taken inside a study run are the same
     measurement.
     """
     from ..experiment import battery as battery_mod
-    from ..experiment.choice_scoring import _battery_backends
+    from ..experiment.choice_scoring import battery_backends
 
     arming = battery_mod.resolve_arming(spec)
     with prepared_variant(model, variant,
                           strip_interventions=strip_interventions) as injections:
-        generate_fn, choice_fn = _battery_backends(model, model.model_id, injections)
+        generate_fn, choice_fn = battery_backends(model, model.model_id, injections)
         result = battery_mod.evaluate(spec, arming, generate_fn=generate_fn,
                                       choice_fn=choice_fn)
     result.update({

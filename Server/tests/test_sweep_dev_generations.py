@@ -28,6 +28,7 @@ import pytest
 
 from steerlab_server.experiment import bundles, experiment_store as es
 from steerlab_server.experiment import resume, tasks
+import steerlab_server.experiment.sweep_evidence as sweep_evidence
 from steerlab_server.steering.vector_store import ConceptVectors
 
 
@@ -68,7 +69,7 @@ CONCEPT_VECTOR = [1.0, 0.0]
 
 
 def _fake_bundle():
-    return tasks.ConceptVectorBundle(
+    return _owner_vector_materialization.ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[list(CONCEPT_VECTOR)] * 4),
         residual_norm_per_layer=[1.0] * 4,
         residual_norm_source="test", stimulus_hash="h")
@@ -85,7 +86,7 @@ def _fake_generate(model, prompt, *, injections=None, **kwargs):
 
 
 def _records(run_dir):
-    with open(os.path.join(run_dir, tasks.DEV_GENERATIONS_FILE),
+    with open(os.path.join(run_dir, sweep_evidence.DEV_GENERATIONS_FILE),
               encoding="utf-8") as handle:
         return [json.loads(line) for line in handle if line.strip()]
 
@@ -102,7 +103,7 @@ def _run_sweep(root, name, **kwargs):
 
 @pytest.fixture(autouse=True)
 def _fakes(monkeypatch):
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_generate, 'generate', _fake_generate)
 
@@ -198,7 +199,7 @@ def test_overlong_generation_is_truncated_with_a_flag(tmp_path, monkeypatch):
 
     cell = next(r for r in _records(run_dir) if r["kind"] == "cell")
     assert cell["truncated"] is True
-    assert len(cell["text"]) == tasks.DEV_GENERATION_TEXT_LIMIT
+    assert len(cell["text"]) == sweep_evidence.DEV_GENERATION_TEXT_LIMIT
     baseline = next(r for r in _records(run_dir) if r["kind"] == "baseline")
     assert "truncated" not in baseline
 
@@ -229,5 +230,5 @@ def test_evidence_bundle_carries_the_record(tmp_path):
 
     meta = bundles.package_evidence(run_dir, root=root)
     run_id = os.path.basename(run_dir)
-    assert f"runs/{run_id}/{tasks.DEV_GENERATIONS_FILE}" in [
+    assert f"runs/{run_id}/{sweep_evidence.DEV_GENERATIONS_FILE}" in [
         entry["path"] for entry in meta["entries"]]

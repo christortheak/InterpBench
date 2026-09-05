@@ -26,6 +26,7 @@ import pytest
 
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import logprob, resume, tasks
+import steerlab_server.experiment.sweep_evidence as sweep_evidence
 from steerlab_server.steering.vector_store import ConceptVectors
 
 
@@ -66,7 +67,7 @@ def _fake_model(model_id, revision):
 
 
 def _fake_bundle():
-    return tasks.ConceptVectorBundle(
+    return _owner_vector_materialization.ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[1.0, 0.0]] * 4),
         residual_norm_per_layer=[1.0] * 4,
         residual_norm_source="test", stimulus_hash="h")
@@ -91,7 +92,7 @@ def test_sweep_checkpoints_between_cells_and_resumes_without_rework(
         tmp_path, monkeypatch):
     root = str(tmp_path)
     _workspace(root, "cp")
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score)
 
@@ -119,7 +120,7 @@ def test_sweep_checkpoints_between_cells_and_resumes_without_rework(
     assert caught.value.verb == "sweep"
     # Durable state: resume-state.json + the baseline and first cell rows.
     assert resume.is_resumable(run_dir, "sweep")
-    rows, recs = tasks._load_sweep_progress(run_dir)
+    rows, recs = sweep_evidence.load_sweep_progress(run_dir)
     assert [(r["layer"], r["alpha"]) for r in rows] == [(-1, 0), (2, 0.1)]
     assert recs == {}
     assert not os.path.exists(os.path.join(run_dir, "recommendations.json"))
@@ -163,7 +164,7 @@ def test_multi_concept_draft_sweep_checkpoints_between_concepts(
     root = str(tmp_path)
     _workspace(root, "mc", concepts=("alpha", "beta"))
     monkeypatch.setattr(
-        _owner_vector_materialization, '_extract_all',
+        _owner_vector_materialization, 'extract_all',
         lambda model, manifest, root: {"alpha": _fake_bundle(),
                                        "beta": _fake_bundle()})
     monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score)
@@ -186,7 +187,7 @@ def test_multi_concept_draft_sweep_checkpoints_between_concepts(
         tasks.sweep("mc", root, model_provider=_fake_model,
                     checkpoint=flag, log=lambda *_: None)
     run_dir = caught.value.run_directory
-    rows, recs = tasks._load_sweep_progress(run_dir)
+    rows, recs = sweep_evidence.load_sweep_progress(run_dir)
     assert set(recs) == {"alpha"}
     # The heart of the fix: alpha's recommendation is durable in the
     # JOURNAL, and the manifest carries NO projected condition yet.
@@ -215,7 +216,7 @@ def test_multi_concept_draft_sweep_checkpoints_between_concepts(
 def test_resume_refuses_a_changed_manifest(tmp_path, monkeypatch):
     root = str(tmp_path)
     _workspace(root, "cpx")
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score)
     flag = resume.CheckpointFlag()
@@ -242,7 +243,7 @@ def test_cancelled_sweep_parks_and_resumes_to_completion(
     resume path finishes the grid without regenerating completed cells."""
     root = str(tmp_path)
     _workspace(root, "cn")
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score)
     calls: list = []
@@ -263,7 +264,7 @@ def test_cancelled_sweep_parks_and_resumes_to_completion(
     state = resume.read_state(run_dir)
     assert state is not None and state["reason"] == "cancel"
     assert resume.is_resumable(run_dir, "sweep")
-    rows, recs = tasks._load_sweep_progress(run_dir)
+    rows, recs = sweep_evidence.load_sweep_progress(run_dir)
     assert [(r["layer"], r["alpha"]) for r in rows] == [(-1, 0)]
     assert recs == {}
 
@@ -286,7 +287,7 @@ def test_no_completion_marker_when_projection_fails(tmp_path, monkeypatch):
     re-projects idempotently."""
     root = str(tmp_path)
     _workspace(root, "pf")
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score)
     monkeypatch.setattr(_owner_generate, 'generate', _counting_generate([]))

@@ -22,6 +22,8 @@ import httpx
 import pytest
 
 from steerlab_server.experiment import paired_judge, tasks
+import steerlab_server.experiment.judge_dispatch as judge_dispatch
+import steerlab_server.experiment.pipeline_policy as pipeline_policy
 
 
 def _catalogue(*endpoints, status_code=200):
@@ -198,14 +200,14 @@ class TestRosterPreflight:
         lines = []
         roster = [self._Ref("or-j", "openrouter", "org/m", "DeepInfra"),
                   self._Ref("local-j", "local", "org/study")]
-        tasks._preflight_openrouter_judges(
+        judge_dispatch.preflight_openrouter_judges(
             roster, lines.append, transport=_catalogue(_endpoint("DeepInfra")))
         assert any("verified against OpenRouter's catalogue" in l
                    for l in lines)
 
         bad = [self._Ref("or-j", "openrouter", "org/m", "nebius")]
         with pytest.raises(RuntimeError, match="judge 'or-j'.*does not serve"):
-            tasks._preflight_openrouter_judges(
+            judge_dispatch.preflight_openrouter_judges(
                 bad, lines.append,
                 transport=_catalogue(_endpoint("DeepInfra")))
 
@@ -214,14 +216,14 @@ class TestRosterPreflight:
         roster = [self._Ref("c", "claude", "claude-opus-4-8"),
                   self._Ref("l", "local", "org/study")]
         # _boom would raise if anything issued a request.
-        tasks._preflight_openrouter_judges(
+        judge_dispatch.preflight_openrouter_judges(
             roster, lambda *_: None, transport=_boom())
 
     def test_skip_env_is_honoured_and_logged(self, monkeypatch):
         monkeypatch.setenv("STEERLAB_SKIP_PROVIDER_PREFLIGHT", "1")
         lines = []
         roster = [self._Ref("or-j", "openrouter", "org/m", "whatever")]
-        tasks._preflight_openrouter_judges(
+        judge_dispatch.preflight_openrouter_judges(
             roster, lines.append, transport=_boom())
         # Skipping must be loud: an unverified pin should never read as a
         # verified one.
@@ -237,18 +239,18 @@ class TestPipelineWillJudge:
             self.raw = raw
 
     def test_evaluate_always_judges(self):
-        assert tasks._pipeline_will_judge(self._M({}), ["run", "evaluate"])
+        assert pipeline_policy.pipeline_will_judge(self._M({}), ["run", "evaluate"])
 
     def test_sweep_judges_only_under_judgescore(self):
         judged = self._M({"sweep": {"selection": {
             "objective": {"metric": "judgeScore"}}}})
         unjudged = self._M({"sweep": {"selection": {
             "objective": {"metric": "markerDensity"}}}})
-        assert tasks._pipeline_will_judge(judged, ["sweep", "promote"])
-        assert not tasks._pipeline_will_judge(unjudged, ["sweep", "promote"])
+        assert pipeline_policy.pipeline_will_judge(judged, ["sweep", "promote"])
+        assert not pipeline_policy.pipeline_will_judge(unjudged, ["sweep", "promote"])
 
     def test_completed_judging_stages_do_not_retrigger(self):
         # `stages` is the REMAINING list: a resumed chain past its evaluate
         # must not re-refuse for a judge that has since vanished from the
         # catalogue — the judging is already done.
-        assert not tasks._pipeline_will_judge(self._M({}), ["analyze"])
+        assert not pipeline_policy.pipeline_will_judge(self._M({}), ["analyze"])

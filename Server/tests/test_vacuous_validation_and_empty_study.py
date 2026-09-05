@@ -30,6 +30,7 @@ import pytest
 
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.validation_workflow as validation_workflow
 from steerlab_server.experiment.manifest import (
     Manifest, no_measured_conditions_problem)
 
@@ -77,9 +78,9 @@ def _run_validate(root, name, monkeypatch, *, concepts=("fear",),
                   accuracy=0.9, log=None):
     """``_validate_impl`` with extraction, activations and the lens stubbed —
     the vacuity ledger is about which probes RAN, not about numbers."""
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: _bundles(concepts))
-    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, 'persist_vectors', lambda *a, **k: None)
     from steerlab_server.steering import extractor
     monkeypatch.setattr(
         extractor, "activations",
@@ -93,7 +94,7 @@ def _run_validate(root, name, monkeypatch, *, concepts=("fear",),
     monkeypatch.setattr(concept_stats, "scenario_accuracy",
                         lambda **kw: accuracy)
     manifest = Manifest.load(name, root)
-    return tasks._validate_impl(name, manifest, object(), root,
+    return validation_workflow._validate_impl(name, manifest, object(), root,
                                 log or (lambda *a: None))
 
 
@@ -277,7 +278,7 @@ def test_run_refuses_a_concept_study_with_no_injection_conditions(
     prompts = os.path.join(root, "prompts", "tasks", "items.jsonl")
     _write(prompts, json.dumps({"id": "p0", "prompt": "Decide."}) + "\n")
     loaded = []
-    monkeypatch.setattr(_owner_model_resources, '_acquire_model',
+    monkeypatch.setattr(_owner_model_resources, 'acquire_model',
                         lambda *a, **k: loaded.append(1))
     with pytest.raises(RuntimeError, match="BASELINE only"):
         tasks.run("nostudy", prompts, root, log=lambda *_: None)

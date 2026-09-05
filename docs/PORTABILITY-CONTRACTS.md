@@ -605,11 +605,12 @@ second reading that could drift from the one that decides. Both halves must be
 present: a declaration with no rubric yet is clean, because the declaration
 legitimately precedes the rubric.
 
-The scope's pin needs the study's task prompts, and the loader of record
-(`tasks._load_prompts`) imports torch. `experiment_store.scope_items` is the
-torch-free reader that answers the same question — same blank-line handling,
+The scope's pin needs the study's task prompts. The loader of record is now
+`task_inputs.load_prompts`, which can be imported without torch.
+`experiment_store.scope_items` remains the authoring reader that answers the
+same question — same blank-line handling,
 same `prompt-<ordinal>` id fallback, same closed `responseFormat` vocabulary —
-held to `tasks._load_prompts` by test on the same file, because a pin computed
+held to `task_inputs.load_prompts` by test on the same file, because a pin computed
 under different rules would name a row set the run never selects.
 
 The engine's own *reading* of these fields is unchanged and fully mirrored:

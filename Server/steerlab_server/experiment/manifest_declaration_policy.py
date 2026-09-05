@@ -12,7 +12,7 @@ _OPTVEC_METHOD = "optvec"
 JUDGE_DTYPE_VOCABULARY = ("bfloat16", "float16", "float32")
 
 
-_JUDGE_DTYPE_ALIASES = {
+JUDGE_DTYPE_ALIASES = {
     "bfloat16": "bfloat16", "bf16": "bfloat16",
     "float16": "float16", "fp16": "float16",
     "float32": "float32", "fp32": "float32",
@@ -85,7 +85,7 @@ def optvec_exempt_from_validate_gate(d: dict) -> bool:
     return len(optvec_pinned_concepts(d)) == len(concepts)
 
 
-def _resolved_judge_identity(judge: dict, study_model: str) -> tuple[str, str, str]:
+def resolved_judge_identity(judge: dict, study_model: str) -> tuple[str, str, str]:
     """A judge's RESOLVED identity ``(kind, model, provider)`` — what will
     actually run, not what the manifest happens to spell. Cross-engine rules:
     a LOCAL judge with a blank model resolves to the STUDY model; a claude
@@ -121,7 +121,7 @@ def judge_panel_indistinct_problem(d: dict) -> str | None:
     study_model = str(d.get("modelID") or "")
     identities: dict[tuple[str, str, str], list[str]] = {}
     for judge in judges:
-        identity = _resolved_judge_identity(judge, study_model)
+        identity = resolved_judge_identity(judge, study_model)
         identities.setdefault(identity, []).append(str(judge["name"]))
     if len(identities) >= 2:
         return None
@@ -141,7 +141,7 @@ def judge_panel_indistinct_problem(d: dict) -> str | None:
             "use judges with different models, kinds, or providers")
 
 
-def _pipeline_stage_list(d: dict) -> list[str]:
+def pipeline_stage_list(d: dict) -> list[str]:
     """The declared pipeline's stage list, or [] when no pipeline is
     declared or the block is malformed (malformed blocks have their own
     verify violations)."""
@@ -157,10 +157,10 @@ def _pipeline_stage_list(d: dict) -> list[str]:
 
 def normalize_judge_dtype(value: str | None) -> str | None:
     """Canonical spelling of a judge dtype alias, or None if unrecognized."""
-    return _JUDGE_DTYPE_ALIASES.get((value or "").strip().lower())
+    return JUDGE_DTYPE_ALIASES.get((value or "").strip().lower())
 
 
-def _is_commit_like(revision: str) -> bool:
+def is_commit_like(revision: str) -> bool:
     """Whether a revision names FIXED bytes rather than a moving ref.
 
     Hexadecimal — the shape of a git commit hash, full or abbreviated.
@@ -197,7 +197,7 @@ def symbolic_revision_problem(d: dict) -> str | None:
     """
     offenders: list[str] = []
     study = str(d.get("modelRevision") or "").strip()
-    if study and not _is_commit_like(study):
+    if study and not is_commit_like(study):
         offenders.append(f"the study model pins '{study}'")
     for judge in (d.get("judges") or []):
         if not (isinstance(judge, dict) and judge.get("name")):
@@ -205,7 +205,7 @@ def symbolic_revision_problem(d: dict) -> str | None:
         if (str(judge.get("kind") or "openrouter").strip() or "openrouter") != "local":
             continue
         revision = str(judge.get("revision") or "").strip()
-        if revision and not _is_commit_like(revision):
+        if revision and not is_commit_like(revision):
             offenders.append(f"judge '{judge['name']}' pins '{revision}'")
     if not offenders:
         return None
@@ -229,7 +229,7 @@ def study_model_judge_pin_conflict(d: dict) -> str | None:
 
     Deliberately NOT a blanket rule. `evaluate` genuinely LOADS a declared
     judge revision, so judging with a different checkpoint of the study repo
-    is a legitimate design there — `_pin_local_judge_revisions` has always
+    is a legitimate design there — `pin_local_judge_revisions` has always
     preserved a declared revision for exactly that reason. The defect is the
     SWEEP path silently ignoring what evaluate honors: one manifest, two
     identities, depending on the verb.
@@ -311,7 +311,7 @@ def unpinned_foreign_local_judge_problem(d: dict) -> str | None:
     A local judge resolving to the STUDY model inherits the study's pinned
     revision, so "the same judge" across two sessions is a fact. A local
     judge naming a DIFFERENT model has no such pin to inherit — and freeze
-    deliberately leaves its revision blank (`_pin_local_judge_revisions`).
+    deliberately leaves its revision blank (`pin_local_judge_revisions`).
     That was tolerable while a judgment artifact merely RECORDED what
     loaded, but targeted retry compares recorded identities to decide
     whether verdicts from an earlier session may be REUSED: two sessions
@@ -368,7 +368,7 @@ def unpinned_foreign_local_judge_problem(d: dict) -> str | None:
             "use the study model as judge")
 
 
-def _foreign_local_judges(d: dict) -> list[str]:
+def foreign_local_judges(d: dict) -> list[str]:
     """Local judges whose declared model differs from the study model,
     rendered ``'name' (model 'id')``."""
     study_model = str(d.get("modelID") or "")
@@ -392,7 +392,7 @@ def local_judge_pipeline_problem(d: dict) -> str | None:
     no longer refuses (it routes to the post-generation judge fan-out —
     see :func:`local_judge_fanout_note`). Returns the sweep problem text,
     or None."""
-    stages = _pipeline_stage_list(d)
+    stages = pipeline_stage_list(d)
     if "sweep" not in stages:
         return None
     selection = (d.get("sweep") or {}).get("selection") \
@@ -403,7 +403,7 @@ def local_judge_pipeline_problem(d: dict) -> str | None:
         if isinstance(objective, dict) else None
     if metric != "judgeScore":
         return None
-    offenders = _foreign_local_judges(d)
+    offenders = foreign_local_judges(d)
     if not offenders:
         return None
     study_model = str(d.get("modelID") or "")
@@ -424,10 +424,10 @@ def local_judge_fanout_note(d: dict) -> str | None:
     judges them, and the merge resumes the chain. Available on Slurm
     run-first pipeline submissions; elsewhere the packets await deferred
     (Mac) judging. Returns the note, or None."""
-    stages = _pipeline_stage_list(d)
+    stages = pipeline_stage_list(d)
     if "evaluate" not in stages:
         return None
-    offenders = _foreign_local_judges(d)
+    offenders = foreign_local_judges(d)
     if not offenders:
         return None
     return ("the pipeline's evaluate stage will judge local judge(s) "
@@ -437,7 +437,7 @@ def local_judge_fanout_note(d: dict) -> str | None:
             "await deferred judging)")
 
 
-def _pin_local_judge_revisions(d: dict) -> None:
+def pin_local_judge_revisions(d: dict) -> None:
     """Freeze-time pin for LOCAL judge revisions (cross-engine contract key
     ``judges[].revision``, 2026-07-23, omit-when-nil): a local judge that
     resolves to the STUDY model inherits the study's pinned revision when
@@ -461,7 +461,7 @@ def _pin_local_judge_revisions(d: dict) -> None:
             judge["revision"] = study_revision
 
 
-def _no_judge_declared_reason(name: str) -> str:
+def no_judge_declared_reason(name: str) -> str:
     """The ``judgeValidity`` refusal for a judged study with NO judge — the
     state the panel-size rule actually protects against. Swift twin:
     ``ExperimentStore.noJudgeDeclaredReason``; the sentence is the
@@ -490,7 +490,7 @@ def single_judge_panel_advisory(d: dict) -> str | None:
     return SINGLE_JUDGE_PANEL_ADVISORY if len(judges) == 1 else None
 
 
-def _check_judged_evaluation(name: str, d: dict) -> None:
+def check_judged_evaluation(name: str, d: dict) -> None:
     """Judged studies need a versioned criterion and a real panel (evidence
     tier): a pairedJudge evaluation must pin its rubric as a hashed FILE
     (prompts/rubrics/) and declare at least ONE judge; a panel of two or
@@ -522,7 +522,7 @@ def _check_judged_evaluation(name: str, d: dict) -> None:
     # ``checkJudgeEvaluationValidity`` / ``noJudgeDeclaredReason``.
     if not judges:
         raise ExperimentStoreError(
-            f"cannot freeze '{name}': " + _no_judge_declared_reason(name))
+            f"cannot freeze '{name}': " + no_judge_declared_reason(name))
     indistinct = judge_panel_indistinct_problem(d)
     if indistinct:
         raise ExperimentStoreError(f"cannot freeze '{name}': {indistinct}")

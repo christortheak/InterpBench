@@ -7,6 +7,7 @@ import os
 from steerlab_server import __version__
 from steerlab_server.build_identity import engine_version
 from steerlab_server.experiment import model_variant, tasks
+import steerlab_server.experiment.run_artifacts as run_artifacts
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.experiment.run_config import (RUN_CONFIG_KEYS,
                                                    write_run_config)
@@ -186,7 +187,7 @@ def test_write_run_config_never_rewrites(tmp_path):
 def test_config_snapshot_writers_emit_config_json(tmp_path):
     manifest = Manifest.from_dict(
         {"name": "s", "modelID": "org/m", "modelRevision": "abc"})
-    tasks._write_config_snapshot(manifest, str(tmp_path), "sweep")
+    run_artifacts.write_config_snapshot(manifest, str(tmp_path), "sweep")
     config = json.load(open(tmp_path / "config.json"))
     assert config["runType"] == "sweep"
     assert config["experiment"] == "s"
@@ -203,7 +204,7 @@ def test_config_snapshot_stamps_sampling_policy_for_generating_tasks(tmp_path):
          "samplesPerItem": 3, "seedPolicy": "derivedSHA256"})
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    tasks._write_config_snapshot(manifest, str(run_dir), "run")
+    run_artifacts.write_config_snapshot(manifest, str(run_dir), "run")
     config = json.load(open(run_dir / "config.json"))
     assert config["temperature"] == 0.7
     assert config["samplesPerItem"] == 3
@@ -213,7 +214,7 @@ def test_config_snapshot_stamps_sampling_policy_for_generating_tasks(tmp_path):
     # manifest's policy, so the stamp must not invent one.
     validate_dir = tmp_path / "validate"
     validate_dir.mkdir()
-    tasks._write_config_snapshot(manifest, str(validate_dir), "validate")
+    run_artifacts.write_config_snapshot(manifest, str(validate_dir), "validate")
     config = json.load(open(validate_dir / "config.json"))
     assert config["temperature"] is None
     assert config["samplesPerItem"] is None

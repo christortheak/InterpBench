@@ -7,7 +7,7 @@ from .manifest import Manifest
 from .run_config import write_run_config
 
 
-def _model_dtype(model) -> str:
+def model_dtype(model) -> str:
     try:
         return str(next(model.model.parameters()).dtype)
     except (StopIteration, AttributeError):
@@ -15,7 +15,7 @@ def _model_dtype(model) -> str:
 
 
 
-def _actual_dtype(model) -> str | None:
+def actual_dtype(model) -> str | None:
     """Canonical spelling of the dtype a loaded model ACTUALLY runs in, for
     the run stamp — or None when no model was loaded.
 
@@ -28,12 +28,12 @@ def _actual_dtype(model) -> str | None:
     stamped = getattr(model, "dtype", None)
     if stamped:
         return str(stamped).removeprefix("torch.")
-    raw = _model_dtype(model)
+    raw = model_dtype(model)
     return raw.removeprefix("torch.") or None
 
 
 
-def _write_config_snapshot(manifest: Manifest, run_directory: str, task: str,
+def write_config_snapshot(manifest: Manifest, run_directory: str, task: str,
                            notes: dict | None = None, *, model=None,
                            job_id: str | None = None,
                            root: str | None = None, log=None) -> None:
@@ -76,7 +76,7 @@ def _write_config_snapshot(manifest: Manifest, run_directory: str, task: str,
                      # generation-bearing ones — extraction reads activations
                      # in that precision too, and the residual-norm
                      # denominator that alpha is expressed in comes with it.
-                     dtype=_actual_dtype(model),
+                     dtype=actual_dtype(model),
                      # Explicit for directories created OUTSIDE the producing
                      # job (shard merges, pipeline seeds, assembled on the
                      # controller): without it the env fallback stamped the
@@ -89,7 +89,7 @@ def _write_config_snapshot(manifest: Manifest, run_directory: str, task: str,
 
 
 
-def _latest_run(name: str, root: str | None) -> str | None:
+def latest_run(name: str, root: str | None) -> str | None:
     runs = paths.runs_directory(root)
     if not os.path.isdir(runs):
         return None

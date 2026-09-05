@@ -1,0 +1,689 @@
+{
+  "bridges": {
+    "Sources/ExperimentKit/StudyFreezeBindings.swift": [
+      "freezeReadiness",
+      "remoteFreezeGateFailure",
+      "remoteFreezeAdvisories",
+      "remoteFreezeIdentityWarning",
+      "remoteFreezeIdentityNote",
+      "remoteFreezeCanSyncDraft",
+      "isSyncingServerDraft",
+      "serverFreezeCrossSubstrateAdvisory",
+      "freeze",
+      "freezeOnActiveServer",
+      "pushManifestToActiveServer"
+    ],
+    "Sources/ExperimentKit/StudyManagementBindings.swift": [
+      "experiments",
+      "selectedName",
+      "selected",
+      "displayLabels",
+      "renameInvitation",
+      "templates",
+      "selectedTemplateName",
+      "templateInstantiationInvitation",
+      "templateSourceStudyName",
+      "newStudyDesign",
+      "selectedTemplate",
+      "designLineage",
+      "deleteSelectedStudyRefusal",
+      "displayName",
+      "newStudy",
+      "create",
+      "renameSelected",
+      "refreshTemplates",
+      "designSummary",
+      "newDesignFromStudy",
+      "updateTemplateDescription",
+      "editDesign",
+      "newDesignDraft",
+      "saveBackToDesignTarget",
+      "saveBackToDesignRefusal",
+      "saveSelectedStudyBackToDesign",
+      "renameTemplate",
+      "deleteTemplate",
+      "templateLineage",
+      "batchSiblings",
+      "deleteSelectedDraft",
+      "duplicateSelected"
+    ],
+    "Sources/ExperimentKit/StudyPanelBindings.swift": [
+      "newName",
+      "newDescription",
+      "newRevision",
+      "protocolDescription",
+      "taskDescription",
+      "outcomeMeasures",
+      "studyKind",
+      "studyBaseModelID",
+      "selectedVariantToAddID",
+      "selectedMultiAgentScenarioID",
+      "multiAgentIncludeBaseline",
+      "taskPromptsFile",
+      "taskPromptsText",
+      "promptMode",
+      "systemPrompt",
+      "reasoningEffort",
+      "reasoningMaxTokens",
+      "qwenThinkingEnabled",
+      "evaluationPrompt",
+      "evaluationStructuredPrompt",
+      "judgeModel",
+      "judgeRubricFile",
+      "judges",
+      "runTemperature",
+      "runMaxTokens",
+      "conditionName",
+      "conditionConcept",
+      "conditionLayerText",
+      "conditionAlphaText",
+      "conditionAlphaInNormUnits",
+      "conditionMode",
+      "attachConceptName",
+      "attachMethod",
+      "attachReferenceName",
+      "attachReadingPositionChoice",
+      "attachReadingPositionParameter",
+      "attachRendering",
+      "attachCorpusText",
+      "phaseField",
+      "caseFamilyField",
+      "samplesPerItemField",
+      "seedPolicyField",
+      "studyDtypeField",
+      "acknowledgeUnequalOptionLengthsField",
+      "humanBaselinePathField",
+      "promotionFDRText",
+      "promotionDoseMonotone",
+      "promotionExceedsRandomFloor",
+      "promotionCapabilityGateText",
+      "confirmAgentID",
+      "confirmDeltasText",
+      "confirmIncludeControl",
+      "formErrors",
+      "taskPromptsStatus",
+      "taskPromptsInstrumentSummary",
+      "taskPromptsDocument",
+      "taskPromptsDocumentFile",
+      "isValidating",
+      "isRunning",
+      "isEvaluating",
+      "isExtracting",
+      "lastExtractDirectory",
+      "isSweeping",
+      "lastValidationDirectory",
+      "lastRunDirectory",
+      "lastEvaluationDirectory",
+      "liveRunDirectory",
+      "liveEvaluationDirectory",
+      "liveActiveGeneration",
+      "liveActiveJudgment",
+      "liveGenerations",
+      "liveJudgments",
+      "resultRuns",
+      "selectedResultID",
+      "selectedResult",
+      "selectedResultBrowserItem",
+      "syncedSelection",
+      "remoteExecutor",
+      "remoteVerb",
+      "remoteDryRun",
+      "remoteGres",
+      "remoteWalltime",
+      "remoteResumePolicy",
+      "remoteParallelJobs",
+      "remoteStatus",
+      "remoteProfileSummary",
+      "remoteJobID",
+      "remoteLogLines",
+      "remoteLastUploadedBundle",
+      "remoteImportedRunDirectory",
+      "recentServerJobs",
+      "activeServerJob",
+      "activeSweepJob",
+      "sweepCancelRequested",
+      "studyRunCancelRequested",
+      "validationCancelRequested",
+      "evaluationCancelRequested",
+      "extractCancelRequested",
+      "lastServerRunDirectory",
+      "judgeKindStashes",
+      "seatCastingEdits",
+      "remoteResultsRuns",
+      "remoteResultsStatus",
+      "isLoadingRemoteResults",
+      "selectedRemoteResultsRun",
+      "selectedResultsFile",
+      "controlConcept",
+      "controlMethod",
+      "lastControlMatrixNotes"
+    ],
+    "Sources/ExperimentKit/StudyRemoteCoordinationBindings.swift": [
+      "pipelineRuns",
+      "localPipelineRuns",
+      "submitStudyRemotely",
+      "runExperimentVerbOnActiveServer",
+      "refreshPipelineRuns",
+      "savePipelineDeclaration",
+      "pipelineSubmissionAction",
+      "remoteContextIdentity"
+    ]
+  },
+  "callers": {
+    "Sources/ExperimentKit/StudyFreezeBindings.swift": {
+      "Sources/ExperimentKit/WebServer.swift": {
+        "freeze": 1
+      },
+      "Sources/SteerLabApp/ExperimentsPanelView.swift": {
+        "freeze": 1,
+        "freezeOnActiveServer": 1,
+        "pushManifestToActiveServer": 1
+      },
+      "Sources/SteerLabApp/StudyIssuesSection.swift": {
+        "freezeReadiness": 1
+      }
+    },
+    "Sources/ExperimentKit/StudyManagementBindings.swift": {
+      "Sources/ExperimentKit/ExperimentPanel+Factorial.swift": {
+        "selected": 1
+      },
+      "Sources/ExperimentKit/ExperimentPanel.swift": {
+        "experiments": 4,
+        "refreshTemplates": 1,
+        "selected": 52,
+        "selectedName": 31,
+        "templateInstantiationInvitation": 1
+      },
+      "Sources/ExperimentKit/WebServer.swift": {
+        "create": 1,
+        "duplicateSelected": 1,
+        "experiments": 1,
+        "selected": 2,
+        "selectedName": 1
+      },
+      "Sources/SteerLabApp/ExperimentsPanelView.swift": {
+        "duplicateSelected": 1,
+        "selected": 2,
+        "selectedName": 3
+      },
+      "Sources/SteerLabApp/HomeDashboardView.swift": {
+        "displayName": 1,
+        "experiments": 1,
+        "selectedName": 1
+      },
+      "Sources/SteerLabApp/ModelVariantsPanelView.swift": {
+        "selected": 2
+      },
+      "Sources/SteerLabApp/OptimizationRunsView.swift": {
+        "experiments": 6,
+        "selectedName": 1
+      },
+      "Sources/SteerLabApp/StudyManagementSection.swift": {
+        "create": 1,
+        "deleteSelectedStudyRefusal": 2,
+        "displayLabels": 1,
+        "displayName": 1,
+        "experiments": 2,
+        "newStudy": 1,
+        "newStudyDesign": 3,
+        "renameInvitation": 3,
+        "selected": 1,
+        "selectedName": 1,
+        "templateInstantiationInvitation": 3,
+        "templates": 2
+      },
+      "Sources/SteerLabApp/StudyPreparationControlsView.swift": {
+        "selectedName": 1
+      },
+      "Sources/SteerLabApp/StudyRenameWindow.swift": {
+        "renameSelected": 1
+      },
+      "Sources/SteerLabApp/StudyTypeOverviewColumn.swift": {
+        "selected": 2
+      },
+      "Sources/SteerLabApp/TemplateInstantiationSheet.swift": {
+        "selectedName": 2
+      },
+      "Sources/SteerLabApp/TemplatesPanelView.swift": {
+        "deleteTemplate": 1,
+        "designSummary": 1,
+        "displayName": 1,
+        "editDesign": 1,
+        "experiments": 1,
+        "newDesignDraft": 1,
+        "newDesignFromStudy": 1,
+        "renameTemplate": 1,
+        "selectedTemplate": 2,
+        "selectedTemplateName": 3,
+        "templateInstantiationInvitation": 1,
+        "templateSourceStudyName": 3,
+        "templates": 2,
+        "updateTemplateDescription": 1
+      },
+      "Tests/ExperimentKitTests/ConfirmationDraftShortcutTests.swift": {
+        "selectedName": 3
+      },
+      "Tests/ExperimentKitTests/EvaluationDeclarationTests.swift": {
+        "selectedName": 1
+      },
+      "Tests/ExperimentKitTests/ExtractionDeclarationPickerTests.swift": {
+        "selectedName": 1
+      },
+      "Tests/ExperimentKitTests/HeadlessProtocolSaveTests.swift": {
+        "selectedName": 1
+      },
+      "Tests/ExperimentKitTests/InstrumentActivationTests.swift": {
+        "selected": 5,
+        "selectedName": 2
+      },
+      "Tests/ExperimentKitTests/JudgeKindFieldOwnershipTests.swift": {
+        "selectedName": 1
+      },
+      "Tests/ExperimentKitTests/OptimizationLifecycleTests.swift": {
+        "selectedName": 1
+      },
+      "Tests/ExperimentKitTests/SeatCastingTests.swift": {
+        "selectedName": 1,
+        "templateInstantiationInvitation": 2
+      },
+      "Tests/ExperimentKitTests/StudyDesignRoundTripTests.swift": {
+        "designLineage": 1,
+        "editDesign": 2,
+        "experiments": 1,
+        "newDesignDraft": 1,
+        "newDesignFromStudy": 1,
+        "renameInvitation": 1,
+        "saveBackToDesignRefusal": 4,
+        "saveBackToDesignTarget": 4,
+        "saveSelectedStudyBackToDesign": 3,
+        "selectedName": 4,
+        "selectedTemplateName": 1,
+        "templateLineage": 1,
+        "templates": 7
+      },
+      "Tests/ExperimentKitTests/StudyDesignTests.swift": {
+        "deleteSelectedStudyRefusal": 3,
+        "deleteTemplate": 1,
+        "designLineage": 8,
+        "newDesignFromStudy": 2,
+        "newStudyDesign": 3,
+        "selectedName": 1,
+        "selectedTemplateName": 3,
+        "templateLineage": 6,
+        "templates": 1,
+        "updateTemplateDescription": 1
+      },
+      "Tests/ExperimentKitTests/StudyManagementOwnershipTests.swift": {
+        "selected": 1,
+        "selectedName": 2
+      },
+      "Tests/ExperimentKitTests/StudyTemplateBatchTests.swift": {
+        "batchSiblings": 1,
+        "deleteTemplate": 1,
+        "renameTemplate": 1,
+        "selectedTemplateName": 2,
+        "templateLineage": 2,
+        "templates": 2
+      },
+      "Tests/ExperimentKitTests/SweepJudgeResolutionTests.swift": {
+        "selectedName": 1
+      }
+    },
+    "Sources/ExperimentKit/StudyPanelBindings.swift": {
+      "Sources/ExperimentKit/ChatService.swift": {
+        "selectedRemoteResultsRun": 1,
+        "selectedResultsFile": 1
+      },
+      "Sources/ExperimentKit/ExperimentPanel+Factorial.swift": {
+        "taskPromptsFile": 1
+      },
+      "Sources/ExperimentKit/ExperimentPanel.swift": {
+        "acknowledgeUnequalOptionLengthsField": 1,
+        "activeSweepJob": 1,
+        "attachConceptName": 2,
+        "attachCorpusText": 1,
+        "attachMethod": 2,
+        "attachReadingPositionChoice": 1,
+        "attachReadingPositionParameter": 1,
+        "attachReferenceName": 2,
+        "attachRendering": 1,
+        "caseFamilyField": 1,
+        "conditionAlphaInNormUnits": 1,
+        "conditionAlphaText": 1,
+        "conditionConcept": 1,
+        "conditionLayerText": 1,
+        "conditionMode": 1,
+        "conditionName": 12,
+        "confirmAgentID": 3,
+        "confirmDeltasText": 1,
+        "confirmIncludeControl": 2,
+        "controlConcept": 2,
+        "controlMethod": 1,
+        "evaluationPrompt": 3,
+        "evaluationStructuredPrompt": 2,
+        "formErrors": 1,
+        "humanBaselinePathField": 3,
+        "isEvaluating": 2,
+        "isExtracting": 2,
+        "isRunning": 3,
+        "isSweeping": 1,
+        "isValidating": 3,
+        "judgeKindStashes": 2,
+        "judgeModel": 8,
+        "judgeRubricFile": 3,
+        "judges": 22,
+        "lastControlMatrixNotes": 2,
+        "multiAgentIncludeBaseline": 1,
+        "outcomeMeasures": 1,
+        "phaseField": 1,
+        "promotionCapabilityGateText": 1,
+        "promotionDoseMonotone": 1,
+        "promotionExceedsRandomFloor": 1,
+        "promotionFDRText": 1,
+        "promptMode": 2,
+        "protocolDescription": 1,
+        "qwenThinkingEnabled": 1,
+        "reasoningEffort": 2,
+        "reasoningMaxTokens": 3,
+        "remoteDryRun": 2,
+        "remoteExecutor": 2,
+        "remoteGres": 2,
+        "remoteImportedRunDirectory": 2,
+        "remoteJobID": 2,
+        "remoteProfileSummary": 1,
+        "remoteResultsStatus": 5,
+        "remoteStatus": 16,
+        "remoteVerb": 3,
+        "resultRuns": 1,
+        "runMaxTokens": 1,
+        "runTemperature": 1,
+        "samplesPerItemField": 2,
+        "seatCastingEdits": 5,
+        "seedPolicyField": 1,
+        "selectedMultiAgentScenarioID": 2,
+        "selectedResult": 2,
+        "selectedResultBrowserItem": 1,
+        "selectedResultID": 3,
+        "selectedVariantToAddID": 2,
+        "studyBaseModelID": 6,
+        "studyDtypeField": 1,
+        "studyKind": 4,
+        "systemPrompt": 2,
+        "taskDescription": 1,
+        "taskPromptsDocument": 8,
+        "taskPromptsDocumentFile": 4,
+        "taskPromptsFile": 7,
+        "taskPromptsInstrumentSummary": 3,
+        "taskPromptsStatus": 13,
+        "taskPromptsText": 4
+      },
+      "Sources/ExperimentKit/WebServer.swift": {
+        "conditionName": 2,
+        "evaluationPrompt": 3,
+        "isEvaluating": 1,
+        "isRunning": 1,
+        "isValidating": 1,
+        "judgeModel": 3,
+        "lastEvaluationDirectory": 1,
+        "lastRunDirectory": 1,
+        "lastValidationDirectory": 1,
+        "liveActiveGeneration": 1,
+        "liveActiveJudgment": 1,
+        "liveEvaluationDirectory": 1,
+        "liveGenerations": 1,
+        "liveJudgments": 1,
+        "liveRunDirectory": 1,
+        "newDescription": 1,
+        "newName": 1,
+        "outcomeMeasures": 1,
+        "promptMode": 1,
+        "protocolDescription": 1,
+        "qwenThinkingEnabled": 2,
+        "reasoningEffort": 1,
+        "reasoningMaxTokens": 1,
+        "resultRuns": 1,
+        "runMaxTokens": 1,
+        "runTemperature": 1,
+        "samplesPerItemField": 1,
+        "seedPolicyField": 1,
+        "selectedResult": 2,
+        "selectedResultID": 2,
+        "systemPrompt": 2,
+        "taskDescription": 1,
+        "taskPromptsFile": 2,
+        "taskPromptsStatus": 1,
+        "taskPromptsText": 2
+      },
+      "Sources/SteerLabApp/ActivityFeedColumn.swift": {
+        "activeServerJob": 1,
+        "isEvaluating": 1,
+        "isRunning": 1,
+        "isValidating": 1,
+        "selectedRemoteResultsRun": 2,
+        "selectedResultsFile": 3
+      },
+      "Sources/SteerLabApp/AddConditionEditor.swift": {
+        "conditionAlphaInNormUnits": 1,
+        "conditionAlphaText": 4,
+        "conditionConcept": 2,
+        "conditionLayerText": 2,
+        "conditionMode": 4,
+        "conditionName": 1,
+        "formErrors": 1,
+        "lastControlMatrixNotes": 1
+      },
+      "Sources/SteerLabApp/DataReadinessSection.swift": {
+        "humanBaselinePathField": 3
+      },
+      "Sources/SteerLabApp/DiscriminantControlsSection.swift": {
+        "controlConcept": 2,
+        "controlMethod": 1,
+        "formErrors": 1
+      },
+      "Sources/SteerLabApp/EvaluationClarityViews.swift": {
+        "caseFamilyField": 3,
+        "evaluationPrompt": 3,
+        "judgeRubricFile": 7
+      },
+      "Sources/SteerLabApp/ExperimentsPanelView.swift": {
+        "activeServerJob": 1,
+        "evaluationCancelRequested": 1,
+        "isEvaluating": 2,
+        "recentServerJobs": 1,
+        "selectedResult": 1,
+        "studyKind": 4,
+        "taskPromptsStatus": 1
+      },
+      "Sources/SteerLabApp/HomeDashboardView.swift": {
+        "activeServerJob": 1,
+        "isEvaluating": 1,
+        "isRunning": 1,
+        "isValidating": 1
+      },
+      "Sources/SteerLabApp/JudgingSectionView.swift": {
+        "evaluationStructuredPrompt": 1,
+        "judgeModel": 1,
+        "judgeRubricFile": 1,
+        "judges": 7
+      },
+      "Sources/SteerLabApp/ModelVariantsPanelView.swift": {
+        "studyBaseModelID": 1
+      },
+      "Sources/SteerLabApp/OptimizationRunsView.swift": {
+        "activeSweepJob": 2,
+        "isRunning": 1,
+        "isSweeping": 3,
+        "isValidating": 1,
+        "remoteDryRun": 1,
+        "remoteVerb": 1,
+        "sweepCancelRequested": 1
+      },
+      "Sources/SteerLabApp/RunResultsViews.swift": {
+        "selectedResultsFile": 1
+      },
+      "Sources/SteerLabApp/SectionContainers.swift": {
+        "isLoadingRemoteResults": 1,
+        "remoteResultsRuns": 1,
+        "remoteResultsStatus": 3,
+        "selectedRemoteResultsRun": 4,
+        "selectedResultsFile": 5
+      },
+      "Sources/SteerLabApp/StudyArmsSection.swift": {
+        "confirmAgentID": 2,
+        "multiAgentIncludeBaseline": 1,
+        "phaseField": 1,
+        "selectedMultiAgentScenarioID": 1,
+        "selectedVariantToAddID": 1,
+        "studyKind": 1
+      },
+      "Sources/SteerLabApp/StudyConceptsSection.swift": {
+        "attachConceptName": 4,
+        "attachMethod": 4
+      },
+      "Sources/SteerLabApp/StudyEvaluationSection.swift": {
+        "studyKind": 1
+      },
+      "Sources/SteerLabApp/StudyManagementSection.swift": {
+        "formErrors": 1,
+        "newName": 1,
+        "remoteExecutor": 1,
+        "remoteParallelJobs": 1
+      },
+      "Sources/SteerLabApp/StudyPreparationControlsView.swift": {
+        "extractCancelRequested": 1,
+        "isExtracting": 3,
+        "isRunning": 1,
+        "isSweeping": 1,
+        "isValidating": 1,
+        "lastExtractDirectory": 1,
+        "lastValidationDirectory": 1
+      },
+      "Sources/SteerLabApp/StudyRunControlsView.swift": {
+        "isExtracting": 1,
+        "isRunning": 2,
+        "lastRunDirectory": 1,
+        "lastServerRunDirectory": 1,
+        "remoteDryRun": 3,
+        "remoteExecutor": 2,
+        "remoteGres": 1,
+        "remoteImportedRunDirectory": 1,
+        "remoteJobID": 3,
+        "remoteLastUploadedBundle": 1,
+        "remoteLogLines": 3,
+        "remoteParallelJobs": 1,
+        "remoteProfileSummary": 1,
+        "remoteResumePolicy": 1,
+        "remoteStatus": 1,
+        "remoteVerb": 4,
+        "runTemperature": 1,
+        "studyRunCancelRequested": 1
+      },
+      "Sources/SteerLabApp/StudySamplingControls.swift": {
+        "runTemperature": 1,
+        "samplesPerItemField": 2,
+        "seedPolicyField": 3,
+        "studyKind": 1
+      },
+      "Sources/SteerLabApp/StudySetupSection.swift": {
+        "multiAgentIncludeBaseline": 1,
+        "qwenThinkingEnabled": 1,
+        "selectedMultiAgentScenarioID": 1,
+        "studyBaseModelID": 4,
+        "studyKind": 4
+      },
+      "Sources/SteerLabApp/StudyTaskPromptsEditor.swift": {
+        "taskPromptsInstrumentSummary": 1,
+        "taskPromptsStatus": 1,
+        "taskPromptsText": 2
+      },
+      "Sources/SteerLabApp/TemplatesPanelView.swift": {
+        "formErrors": 1
+      },
+      "Sources/SteerLabApp/ValidateStudyButtonRow.swift": {
+        "isExtracting": 1,
+        "isRunning": 1,
+        "isValidating": 3,
+        "remoteExecutor": 1,
+        "remoteGres": 1,
+        "validationCancelRequested": 1
+      },
+      "Tests/ExperimentKitTests/ConfirmationDraftShortcutTests.swift": {
+        "confirmAgentID": 1
+      },
+      "Tests/ExperimentKitTests/EvaluationDeclarationTests.swift": {
+        "judgeRubricFile": 1,
+        "judges": 2,
+        "taskPromptsFile": 1
+      },
+      "Tests/ExperimentKitTests/ExtractionDeclarationPickerTests.swift": {
+        "attachConceptName": 1,
+        "attachMethod": 1,
+        "attachReadingPositionChoice": 3,
+        "attachReadingPositionParameter": 1,
+        "attachRendering": 3
+      },
+      "Tests/ExperimentKitTests/HeadlessProtocolSaveTests.swift": {
+        "protocolDescription": 1,
+        "studyBaseModelID": 3,
+        "taskPromptsFile": 1
+      },
+      "Tests/ExperimentKitTests/JudgeKindFieldOwnershipTests.swift": {
+        "judges": 21
+      },
+      "Tests/ExperimentKitTests/JudgingCustodyAdvisoryTests.swift": {
+        "judges": 1
+      },
+      "Tests/ExperimentKitTests/OptimizationLifecycleTests.swift": {
+        "conditionAlphaText": 1,
+        "conditionConcept": 1,
+        "conditionLayerText": 1,
+        "formErrors": 5
+      },
+      "Tests/ExperimentKitTests/RemoteSubmissionLabelTests.swift": {
+        "remoteDryRun": 1,
+        "remoteResumePolicy": 2,
+        "remoteVerb": 1
+      },
+      "Tests/ExperimentKitTests/RobustnessJudgeSurfaceTests.swift": {
+        "judgeModel": 1
+      },
+      "Tests/ExperimentKitTests/SeatCastingTests.swift": {
+        "formErrors": 2,
+        "runMaxTokens": 1,
+        "runTemperature": 1,
+        "selectedMultiAgentScenarioID": 3,
+        "studyBaseModelID": 1
+      },
+      "Tests/ExperimentKitTests/StudyDesignRoundTripTests.swift": {
+        "formErrors": 5,
+        "studyBaseModelID": 1
+      },
+      "Tests/ExperimentKitTests/StudyManagementOwnershipTests.swift": {
+        "selectedResultID": 1
+      },
+      "Tests/ExperimentKitTests/StudyUIOwnershipTests.swift": {
+        "conditionMode": 1,
+        "formErrors": 2,
+        "taskDescription": 3
+      },
+      "Tests/ExperimentKitTests/WorkbenchViewerHygieneTests.swift": {
+        "selectedRemoteResultsRun": 1,
+        "selectedResultsFile": 2
+      }
+    },
+    "Sources/ExperimentKit/StudyRemoteCoordinationBindings.swift": {
+      "Sources/ExperimentKit/ExperimentPanel.swift": {
+        "refreshPipelineRuns": 3,
+        "runExperimentVerbOnActiveServer": 2,
+        "submitStudyRemotely": 2
+      },
+      "Sources/SteerLabApp/ExperimentsPanelView.swift": {
+        "pipelineSubmissionAction": 1,
+        "refreshPipelineRuns": 1
+      },
+      "Tests/ExperimentKitTests/StudyRemoteCoordinationTests.swift": {
+        "pipelineSubmissionAction": 1
+      }
+    }
+  }
+}

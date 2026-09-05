@@ -6,6 +6,8 @@ a hash manifest so local clients can import and verify results.
 """
 
 from __future__ import annotations
+from steerlab_server.experiment import manifest_mutation_policy
+
 
 import glob
 import hashlib
@@ -673,7 +675,7 @@ def _clears_every_arm(path: str, payload: bytes) -> bool:
         return False
     if existing.get("status") != "draft":
         return False
-    return experiment_store._clears_every_arm(existing, incoming)
+    return manifest_mutation_policy.clears_every_arm(existing, incoming)
 
 
 def _check_bundle_closure(meta: dict, members) -> None:

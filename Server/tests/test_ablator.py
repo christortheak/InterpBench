@@ -247,12 +247,13 @@ def test_the_record_stamp_says_ablate_and_names_the_control():
     what it always was."""
     from types import SimpleNamespace
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.condition_execution as condition_execution
     from steerlab_server.experiment.manifest import Condition, Slot
     ablation = Condition(
         name="fear-ablate-random",
         slots=[Slot(concept="fear", layer=0, alpha=1.0, mode="ablate")],
         alpha_in_norm_units=False, control_type="randomDirectionAblation")
-    state = tasks._intervention_state(ablation)
+    state = condition_execution.intervention_state(ablation)
     assert state["slots"] == [
         {"concept": "fear", "layer": 0, "alpha": 1.0, "mode": "ablate"}]
     assert state["controlType"] == "randomDirectionAblation"
@@ -260,7 +261,7 @@ def test_the_record_stamp_says_ablate_and_names_the_control():
     steering = Condition(
         name="fear-a1", slots=[Slot(concept="fear", layer=14, alpha=1.0)],
         alpha_in_norm_units=True)
-    assert tasks._intervention_state(steering)["slots"] == [
+    assert condition_execution.intervention_state(steering)["slots"] == [
         {"concept": "fear", "layer": 14, "alpha": 1.0}]
     # The variant twin reads the injection's own mode the same way.
     variant = SimpleNamespace(
@@ -269,7 +270,7 @@ def test_the_record_stamp_says_ablate_and_names_the_control():
                     {"concept": "joy", "layer": 9, "alpha": 0.5,
                      "vectorArtifactID": "runs/x/joy"}],
         band_width=1, alpha_in_norm_units=False, adapters=[])
-    twin = tasks._variant_intervention_state(SimpleNamespace(name="v"), variant)
+    twin = condition_execution._variant_intervention_state(SimpleNamespace(name="v"), variant)
     assert twin["slots"] == [
         {"concept": "fear", "layer": 0, "alpha": 1.0, "mode": "ablate"},
         {"concept": "joy", "layer": 9, "alpha": 0.5}]

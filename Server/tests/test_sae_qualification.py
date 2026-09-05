@@ -31,6 +31,7 @@ from steerlab_server.experiment import promote as promote_mod
 from steerlab_server.experiment import sae_candidates
 from steerlab_server.experiment import sae_qualification as saq
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.layer_resolution as layer_resolution
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.steering.vector_store import SUBSTRATE
 
@@ -432,7 +433,7 @@ def test_sae_sweep_materializes_and_collapses_the_layer_grid(
     _sae_study(root, "grid")
     # The declared fractions resolve to three distinct layers of the 4-layer
     # fixture; only one of them is the dictionary's.
-    assert tasks.resolve_sweep_layers(4, (0.25, 0.5, 0.75)) == [1, 2, 3]
+    assert layer_resolution.resolve_sweep_layers(4, (0.25, 0.5, 0.75)) == [1, 2, 3]
 
     logs: list[str] = []
     run_dir = _sweep(root, "grid", monkeypatch, log=logs.append)
@@ -456,7 +457,7 @@ def test_layer_grid_is_untouched_for_an_ordinary_concept():
             is_gemma_scope_sae = False
 
     vectors = ConceptVectors(per_layer=[[1.0, 0.0]] * 4)
-    assert tasks.concept_sweep_layers(_Ref(), vectors, [1, 2, 3],
+    assert layer_resolution.concept_sweep_layers(_Ref(), vectors, [1, 2, 3],
                                       lambda *_: None) == [1, 2, 3]
 
 

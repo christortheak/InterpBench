@@ -10,7 +10,7 @@ from . import paths
 
 JUDGMENT_MARKER_SCHEMA = 1
 
-def _verify_judgment_marker(run_dir: str, marker: dict, *, name: str,
+def verify_judgment_marker(run_dir: str, marker: dict, *, name: str,
                             sweep_jm: dict | None) -> None:
     """Strict verification of a completion record (engineer review
     2026-07-18, third pass): a marker is CANONICAL — it suppresses
@@ -57,7 +57,7 @@ def _verify_judgment_marker(run_dir: str, marker: dict, *, name: str,
 
 
 
-def _sweep_judging_manifest(runs_root: str, sweep_run: str) -> dict | None:
+def sweep_judging_manifest(runs_root: str, sweep_run: str) -> dict | None:
     """``sweep_run``'s judging manifest, or None when unreadable — in which
     case the marker verifier REFUSES (fail closed): a completion record
     with no recoverable sweep evidence is never canonical."""
@@ -72,7 +72,7 @@ def _sweep_judging_manifest(runs_root: str, sweep_run: str) -> dict | None:
 
 
 
-def _find_judgment_run(name: str, sweep_run: str,
+def find_judgment_run(name: str, sweep_run: str,
                        root: str | None) -> tuple[str, dict] | None:
     """``(run_dir, VERIFIED marker)`` of the completed judgment run for
     ``sweep_run``, else None. A candidate that fails verification RAISES —
@@ -101,15 +101,15 @@ def _find_judgment_run(name: str, sweep_run: str,
         if marker.get("sweepRun") != sweep_run:
             continue
         run_dir = os.path.join(runs_root, entry)
-        _verify_judgment_marker(
+        verify_judgment_marker(
             run_dir, marker, name=name,
-            sweep_jm=_sweep_judging_manifest(runs_root, sweep_run))
+            sweep_jm=sweep_judging_manifest(runs_root, sweep_run))
         return run_dir, marker
     return None
 
 
 
-def _evaluate_judging_manifest(runs_root: str,
+def evaluate_judging_manifest(runs_root: str,
                                evaluate_run: str) -> dict | None:
     """``evaluate_run``'s judging manifest, or None when unreadable — the
     verifier then REFUSES (fail closed, same rule as sweeps)."""
@@ -126,10 +126,10 @@ def _evaluate_judging_manifest(runs_root: str,
 
 
 
-def _verify_evaluate_marker(run_dir: str, marker: dict, *, name: str,
+def verify_evaluate_marker(run_dir: str, marker: dict, *, name: str,
                             eval_jm: dict | None) -> None:
     """Strict verification of an evaluate-judgment completion record —
-    the same discipline as `_verify_judgment_marker`: schema-versioned,
+    the same discipline as `verify_judgment_marker`: schema-versioned,
     bound to the experiment and the emission's packet pin + epoch, and
     hash-linked to the run's own artifacts. Raises ValueError."""
     run = os.path.basename(run_dir)
@@ -173,7 +173,7 @@ def _verify_evaluate_marker(run_dir: str, marker: dict, *, name: str,
 
 
 
-def _find_evaluate_judgment_run(name: str, evaluate_run: str,
+def find_evaluate_judgment_run(name: str, evaluate_run: str,
                                 root: str | None) -> tuple[str, dict] | None:
     """``(run_dir, VERIFIED marker)`` of the completed judgment run for
     ``evaluate_run``, else None — unreadable unrelated markers skip, a
@@ -196,8 +196,8 @@ def _find_evaluate_judgment_run(name: str, evaluate_run: str,
                 or marker.get("evaluateRun") != evaluate_run):
             continue
         run_dir = os.path.join(runs_root, entry)
-        _verify_evaluate_marker(
+        verify_evaluate_marker(
             run_dir, marker, name=name,
-            eval_jm=_evaluate_judging_manifest(runs_root, evaluate_run))
+            eval_jm=evaluate_judging_manifest(runs_root, evaluate_run))
         return run_dir, marker
     return None

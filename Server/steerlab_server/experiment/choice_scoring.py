@@ -4,9 +4,9 @@ This owner never imports the task compatibility facade.
 """
 from __future__ import annotations
 
-from . import cancellation as _dep_cancellation
-from . import condition_execution as _dep_condition_execution
-from . import generate as _dep_generate
+from . import cancellation
+from . import condition_execution
+from . import generate
 
 
 def _score_choice(model, manifest, prompt: str, options, injections):
@@ -21,14 +21,14 @@ def _score_choice(model, manifest, prompt: str, options, injections):
         qwen_thinking_enabled=manifest.qwen_thinking_enabled)
 
 
-def _battery_backends(model, model_id: str, injections, latent_edits=None):
+def battery_backends(model, model_id: str, injections, latent_edits=None):
     """Compatibility boundary for callers injecting tasks.generate."""
     from .runtime_backends import battery_backends
     return battery_backends(model, model_id, injections, latent_edits,
-                            generate_text=_dep_generate.generate)
+                            generate_text=generate.generate)
 
 
-def _choice_target_logprobs(model, manifest, choice_rows, injections, *,
+def choice_target_logprobs(model, manifest, choice_rows, injections, *,
                             should_cancel=None, log=None) -> dict[str, float]:
     """Per-row joint logprob of the TARGET option under the given injections
     (``{row id: logP(target)}``). The option-length guard runs per row — the
@@ -38,15 +38,15 @@ def _choice_target_logprobs(model, manifest, choice_rows, injections, *,
     out: dict[str, float] = {}
     total = len(choice_rows)
     for i, row in enumerate(choice_rows, start=1):
-        _dep_cancellation._cancel_checkpoint(should_cancel, log, f"choice row {i}/{total}")
+        cancellation.cancel_checkpoint(should_cancel, log, f"choice row {i}/{total}")
         choice = _score_choice(model, manifest, row.prompt, row.options, injections)
-        _dep_condition_execution._check_option_lengths(choice, manifest, row.id)
+        condition_execution.check_option_lengths(choice, manifest, row.id)
         out[row.id] = next(
             s.logprob for s in choice.options if s.option == row.target)
     return out
 
 
-def _mean_logprob_shift(cell: dict[str, float], baseline: dict[str, float]) -> float:
+def mean_logprob_shift(cell: dict[str, float], baseline: dict[str, float]) -> float:
     """logprobShift objective: mean over choice rows of
     logP(target | cell) − logP(target | baseline). 0 for the baseline cell
     by construction."""

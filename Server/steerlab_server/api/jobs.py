@@ -854,7 +854,7 @@ class JobManager:
                              "moved or the study was deleted; import the "
                              "completed stage runs if they are still needed")
             try:
-                needs_model = pipeline_policy._pipeline_needs_model(
+                needs_model = pipeline_policy.pipeline_needs_model(
                     remaining, manifest)
                 evaluate_fresh = (
                     "evaluate" in remaining

@@ -492,7 +492,7 @@ def test_battery_results_scores_baseline_and_variants(tmp_path, monkeypatch):
         return "4" if "2+2" in prompt else "Paris"
 
     monkeypatch.setattr(_owner_generate, 'generate', fake_generate)
-    results = tasks._battery_results(manifest, object(), root, lambda *a: None)
+    results = _owner_validation_workflow._battery_results(manifest, object(), root, lambda *a: None)
     by_condition = {r["condition"]: r for r in results}
     assert by_condition["baseline"]["accuracy"] == 1.0
     assert by_condition["v1"]["accuracy"] == 0.5
@@ -508,7 +508,7 @@ def test_battery_results_scores_baseline_and_variants(tmp_path, monkeypatch):
         return "4"
 
     monkeypatch.setattr(_owner_generate, 'generate', spy_generate)
-    tasks._battery_results(manifest, object(), root, lambda *a: None)
+    _owner_validation_workflow._battery_results(manifest, object(), root, lambda *a: None)
     assert seen["max_tokens"] == 24 and seen["temperature"] == 0.0
 
 
@@ -517,7 +517,7 @@ def test_battery_results_refuse_pinned_hash_drift(tmp_path, monkeypatch):
     manifest, _ = _battery_manifest(root, pin_hash="00" * 32)
     monkeypatch.setattr(_owner_generate, 'generate', lambda *a, **k: "4")
     with pytest.raises(RuntimeError, match="drifted from the pinned hash"):
-        tasks._battery_results(manifest, object(), root, lambda *a: None)
+        _owner_validation_workflow._battery_results(manifest, object(), root, lambda *a: None)
 
 
 def test_validate_impl_stamps_battery_results(tmp_path, monkeypatch):
@@ -526,11 +526,11 @@ def test_validate_impl_stamps_battery_results(tmp_path, monkeypatch):
     manifest, battery_hash = _battery_manifest(root)
     _write(os.path.join(exp_dir, "experiment.json"), manifest.raw or {
         "name": "vs", "modelID": "org/m"})
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda model, manifest, root: {})
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all', lambda model, manifest, root: {})
     monkeypatch.setattr(
         _owner_validation_workflow, '_battery_results',
         lambda manifest, model, root, log: _battery_rows(battery_hash, ("baseline", "v1")))
-    run_dir = tasks._validate_impl("vs", manifest, None, root, lambda *a: None)
+    run_dir = _owner_validation_workflow._validate_impl("vs", manifest, None, root, lambda *a: None)
     evidence = json.load(open(os.path.join(run_dir, "validation-evidence.json")))
     assert {r["condition"] for r in evidence["batteryResults"]} == {"baseline", "v1"}
     assert evidence["validationScopeHash"] == manifest.validation_scope_hash()
@@ -706,18 +706,18 @@ def test_validate_autopin_stamps_draft_and_skips_frozen(tmp_path):
     digest = _write_default_battery(root)
 
     manifest = Manifest.load(name, root=root)
-    pinned = tasks._autopin_capability_battery(name, manifest, root, lambda *_: None)
+    pinned = _owner_validation_workflow._autopin_capability_battery(name, manifest, root, lambda *_: None)
     assert pinned.capability_battery_hash == digest
     on_disk = es.load_raw(name, root)
     assert on_disk["capabilityBatteryFile"] == battery_mod.DEFAULT_BATTERY_FILE
     assert on_disk["capabilityBatteryHash"] == digest
 
     # Already-pinned and non-draft manifests are never touched.
-    already = tasks._autopin_capability_battery(name, pinned, root, lambda *_: None)
+    already = _owner_validation_workflow._autopin_capability_battery(name, pinned, root, lambda *_: None)
     assert already.capability_battery_hash == digest
     frozen_like = Manifest.from_dict(
         dict(es.load_raw(name, root), status="frozen"))
-    untouched = tasks._autopin_capability_battery(
+    untouched = _owner_validation_workflow._autopin_capability_battery(
         name, frozen_like, root, lambda *_: None)
     assert untouched is frozen_like
 

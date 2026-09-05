@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.task_inputs as task_inputs
 from steerlab_server.experiment.manifest import Manifest
 
 FIXTURE = (
@@ -47,11 +48,11 @@ def test_load_validation_matches_committed_fixture(case, tmp_path):
     _write(path, case["jsonl"])
     manifest = _manifest(taskPromptsFile=path)
     if case["expect"] is None:
-        prompts = tasks._load_prompts(manifest, None, str(tmp_path))
+        prompts = task_inputs.load_prompts(manifest, None, str(tmp_path))
         assert len(prompts) == len(case["jsonl"])
     else:
         with pytest.raises(RuntimeError) as err:
-            tasks._load_prompts(manifest, None, str(tmp_path))
+            task_inputs.load_prompts(manifest, None, str(tmp_path))
         assert str(err.value) == case["expect"], (
             f"{case['name']}: this engine's refusal diverged from the "
             "cross-engine fixture (the Swift twin replays the same file)")
@@ -76,4 +77,4 @@ def test_duplicate_refusal_is_inherited_by_the_run_entrypoint(tmp_path):
     ])
     manifest = _manifest(taskPromptsFile=path)
     with pytest.raises(RuntimeError, match="duplicate item id 'case-a'"):
-        tasks._load_prompts(manifest, None, str(tmp_path))
+        task_inputs.load_prompts(manifest, None, str(tmp_path))

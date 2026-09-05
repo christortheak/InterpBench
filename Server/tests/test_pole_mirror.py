@@ -1055,11 +1055,12 @@ def test_materialization_carries_the_mirror_stamps_and_a_matching_identity(
     from types import SimpleNamespace
 
     from steerlab_server.experiment import promote, recipe_identity, tasks
+    import steerlab_server.experiment.vector_materialization as vector_materialization
     from steerlab_server.steering import vector_store
 
     root, source_set, manifest = _promotable_workspace(tmp_path)
     model = SimpleNamespace(revision="abc")
-    bundles = tasks._extract_all(model, manifest, root)
+    bundles = vector_materialization.extract_all(model, manifest, root)
     bundle = bundles[MIRROR_CONCEPT]
     # The bundle claims exactly what the artifact claims: the PARENT's hash,
     # qualified by the swap stamp, plus the negation linkage.
@@ -1069,7 +1070,7 @@ def test_materialization_carries_the_mirror_stamps_and_a_matching_identity(
 
     run_dir = os.path.join(root, "runs", "20260828T000001000-exp-extract")
     os.makedirs(run_dir)
-    tasks._persist_vectors(bundles, manifest, model, run_dir)
+    vector_materialization.persist_vectors(bundles, manifest, model, run_dir)
     _, sidecar = vector_store.load(run_dir, MIRROR_CONCEPT)
     # The copy carries both mirror stamps — dropping them would claim the
     # mirrored concept's own files were read in their own order.
@@ -1102,6 +1103,7 @@ def test_the_minted_mirror_promotes_end_to_end_through_a_sweep(tmp_path,
 
     from steerlab_server.experiment import experiment_store as es
     from steerlab_server.experiment import promote, recipe_identity, tasks
+    import steerlab_server.experiment.vector_materialization as vector_materialization
     from steerlab_server.experiment.manifest import Manifest
 
     root, source_set, _ = _promotable_workspace(tmp_path)

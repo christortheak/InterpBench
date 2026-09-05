@@ -9,12 +9,12 @@ from . import judicial, paths
 from . import resume as resume_mod
 from . import sharding as sharding_mod
 from . import truncation_gate
-from . import execution_reporting as _dep_execution_reporting
-from . import run_artifacts as _dep_run_artifacts
-from . import run_preflight as _dep_run_preflight
-from . import run_reporting as _dep_run_reporting
-from . import scoring as _dep_scoring
-from . import study_admission as _dep_study_admission
+from . import execution_reporting
+from . import run_artifacts
+from . import run_preflight
+from . import run_reporting
+from . import scoring
+from . import study_admission
 
 
 def _panel_transcript_directory(run_directory: str, condition: str,
@@ -175,8 +175,8 @@ def _panel_records_from(sub: str, name: str, manifest, model, condition: str,
                 "turnTitle": turn.get("title"),
                 "routedAgentIDs": turn.get("routedAgentIDs"),
                 "device": turn.get("device"),
-                "wordCount": _dep_scoring.word_count(output),
-                "distinct2": _dep_scoring.distinct_bigram_ratio(output),
+                "wordCount": scoring.word_count(output),
+                "distinct2": scoring.distinct_bigram_ratio(output),
                 **({truncation_gate.RECORD_KEY: finish}
                    if isinstance(finish, str) else {}),
                 **({"endpoint": endpoint} if endpoint else {}),
@@ -205,7 +205,7 @@ def _park_panel_run(run_directory: str, records: list[dict], log,
         f"resume-state written → exit {resume_mod.CHECKPOINT_EXIT_CODE}")
 
 
-def _run_multi_agent_study(name, manifest, model, root, model_provider=None,
+def run_multi_agent_study(name, manifest, model, root, model_provider=None,
                            log=print, shard=None, run_directory=None,
                            on_run_directory=None, should_cancel=None,
                            checkpoint=None) -> str:
@@ -243,7 +243,7 @@ def _run_multi_agent_study(name, manifest, model, root, model_provider=None,
     resuming = run_directory is not None
     if not resuming:
         run_directory = paths.make_unique_run_directory(f"exp-{name}-run", root)
-        _dep_run_artifacts._write_config_snapshot(manifest, run_directory, "run", model=model,
+        run_artifacts.write_config_snapshot(manifest, run_directory, "run", model=model,
                                root=root, log=log)
     else:
         # Same admission guards the ordinary resume path enforces. Accepting
@@ -252,7 +252,7 @@ def _run_multi_agent_study(name, manifest, model, root, model_provider=None,
         # different shard range into someone else's partial. `run` runs this
         # same gate before acquiring the model (§16 repair 2); the call here
         # is what admits a direct caller identically.
-        _dep_run_preflight._panel_resume_admission(run_directory, manifest=manifest, shard=shard)
+        run_preflight.panel_resume_admission(run_directory, manifest=manifest, shard=shard)
         log(f"resuming panel run in {os.path.basename(run_directory)}")
     # Snapshot the scenario VERBATIM beside experiment.json, before a single
     # turn is generated. experiment.json only POINTS at the scenario, but the
@@ -270,15 +270,15 @@ def _run_multi_agent_study(name, manifest, model, root, model_provider=None,
     if on_run_directory is not None:
         on_run_directory(run_directory)
     # WS7.1: same study-run-start cross-substrate check as the standard path.
-    _dep_execution_reporting._advise_cross_substrate(manifest, run_directory, root, log, write_file=True)
-    _dep_execution_reporting._advise_dependency_lock_drift(run_directory, log, write_file=True)
+    execution_reporting.advise_cross_substrate(manifest, run_directory, root, log, write_file=True)
+    execution_reporting.advise_dependency_lock_drift(run_directory, log, write_file=True)
     # The panel-effects decomposition below adds a built-in "months" endpoint
     # on the DEPRECATED caseFamily trigger. `implicit_case_family_endpoint`
     # knows this path reads case_family ALONE — a declared numericParser does
     # not displace it here, as it does on the record-parse path — so the
     # advisory fires whenever the trigger does, which is the whole contract.
     from .manifest import implicit_case_family_endpoint
-    _dep_study_admission._advise_implicit_case_family(
+    study_admission.advise_implicit_case_family(
         implicit_case_family_endpoint(manifest), run_directory, log,
         write_file=True)
     # No system-prompt divergence advisory here, deliberately (2026-08-24
@@ -438,8 +438,8 @@ def _run_multi_agent_study(name, manifest, model, root, model_provider=None,
         run_directory,
         panel_transcript_completeness(run_directory, planned, replicates),
         writer_notes, log)
-    _dep_run_reporting.write_metrics_csv(records, run_directory, style=style)
-    _dep_run_reporting.write_report(name, manifest, records, run_directory, style=style)
+    run_reporting.write_metrics_csv(records, run_directory, style=style)
+    run_reporting.write_report(name, manifest, records, run_directory, style=style)
     # Voice lint, aggregated per (speaker × condition) into its OWN artifact
     # rather than into panel-effects.csv. Two reasons, both structural:
     # panel-effects.csv is one row per ENDPOINT of a paired configured/baseline
@@ -463,7 +463,7 @@ def _run_multi_agent_study(name, manifest, model, root, model_provider=None,
     # Panel-effect decomposition needs both arms of the pair.
     if manifest.multi_agent_include_baseline and replicates == 1:
         from . import panel_effects
-        endpoints: dict = {"wordCount": lambda text: float(_dep_scoring.word_count(text))}
+        endpoints: dict = {"wordCount": lambda text: float(scoring.word_count(text))}
         if manifest.case_family == "sentencing":
             endpoints["months"] = judicial.parse_months
         rows = panel_effects.write_panel_effects(run_directory, scenario,

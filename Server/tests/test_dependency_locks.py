@@ -176,6 +176,7 @@ def test_run_start_advisory_logs_and_stamps_but_never_refuses(tmp_path,
     """The whole point: drift is information, not a gate. A queued cluster job
     must not die because PyPI moved (post-submit drift policy)."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.execution_reporting as execution_reporting
     monkeypatch.setenv("STEERLAB_LOCK_FILE",
                        _lock_with(tmp_path, torch="2.13.0"))
     monkeypatch.setattr(pyenv, "package_version",
@@ -183,7 +184,7 @@ def test_run_start_advisory_logs_and_stamps_but_never_refuses(tmp_path,
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     lines: list[str] = []
-    tasks._advise_dependency_lock_drift(str(run_dir), lines.append,
+    execution_reporting.advise_dependency_lock_drift(str(run_dir), lines.append,
                                         write_file=True)
     assert any("ADVISORY" in line and "torch" in line for line in lines)
     stamped = (run_dir / "advisories.txt").read_text(encoding="utf-8")
@@ -195,6 +196,7 @@ def test_run_start_advisory_appends_beside_the_cross_substrate_one(tmp_path,
     """advisories.txt already has an owner (the WS7.1 cross-substrate check).
     Truncating it would silently delete the more important warning."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.execution_reporting as execution_reporting
     monkeypatch.setenv("STEERLAB_LOCK_FILE",
                        _lock_with(tmp_path, torch="2.13.0"))
     monkeypatch.setattr(pyenv, "package_version",
@@ -203,7 +205,7 @@ def test_run_start_advisory_appends_beside_the_cross_substrate_one(tmp_path,
     run_dir.mkdir()
     (run_dir / "advisories.txt").write_text("cross-substrate warning\n",
                                             encoding="utf-8")
-    tasks._advise_dependency_lock_drift(str(run_dir), lambda _m: None,
+    execution_reporting.advise_dependency_lock_drift(str(run_dir), lambda _m: None,
                                         write_file=True)
     text = (run_dir / "advisories.txt").read_text(encoding="utf-8")
     assert "cross-substrate warning" in text and "torch" in text
@@ -214,12 +216,13 @@ def test_a_broken_lock_reads_as_nothing_to_compare(tmp_path, monkeypatch):
     is garbage. Checked at BOTH levels: the parser degrades to "no pins", and
     the run-start hook stays silent rather than raising."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.execution_reporting as execution_reporting
     bad = tmp_path / "bad.lock"
     bad.write_bytes(b"\xff\xfe not a lock at all")
     assert pyenv.parse_lock(str(bad)) == {}
     monkeypatch.setenv("STEERLAB_LOCK_FILE", str(bad))
     assert pyenv.lock_drift("linux-x86_64") == []
-    tasks._advise_dependency_lock_drift(None, lambda _m: None, write_file=False)
+    execution_reporting.advise_dependency_lock_drift(None, lambda _m: None, write_file=False)
 
 
 # --- bootstrap wiring ------------------------------------------------------

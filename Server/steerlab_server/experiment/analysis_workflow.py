@@ -13,12 +13,12 @@ from . import choice_deltas, judicial, lifecycle_gates, paths, turn_endpoint
 from .manifest import Manifest
 from .task_inputs import load_prompts as _load_prompts
 from .run_reporting import reasoning_style_summary as _reasoning_style_block
-from .run_artifacts import _latest_run, _write_config_snapshot
-from .study_admission import (_advise_implicit_case_family, _require_source_epoch,
-                              _stamped_experiment_hash, _verify_or_warn)
-from .analysis_endpoints import (_condition_modalities, _endpoint_values,
-    _key_records_by_transcript, _promotion_decisions, _stratified_effect_rows,
-    _transcript_level_diffs)
+from .run_artifacts import latest_run, write_config_snapshot
+from .study_admission import (advise_implicit_case_family, require_source_epoch,
+                              stamped_experiment_hash, verify_or_warn)
+from .analysis_endpoints import (condition_modalities, endpoint_values,
+    key_records_by_transcript, promotion_decisions, stratified_effect_rows,
+    transcript_level_diffs)
 
 
 def analyze(name: str, root: str | None = None, source_run: str | None = None,
@@ -59,14 +59,14 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
     # each record's output through the pinned (hash-checked) taxonomy so
     # rs_<featureID> joins the same paired effect-size machinery.
     style = reasoning_style.load_pinned(manifest, root)
-    run_dir = source_run or _latest_run(name, root)
+    run_dir = source_run or latest_run(name, root)
     if not run_dir:
         raise lifecycle_gates.refusing(
             lifecycle_gates.MISSING_PREREQUISITE,
             f"no prior run with generations found for '{name}' — run it first",
             repair=(f"steerlab-server experiment run {name} && "
                     f"steerlab-server experiment analyze {name}"))
-    epoch_unverified, measurement_drift = _require_source_epoch(
+    epoch_unverified, measurement_drift = require_source_epoch(
         "analyze", name, manifest, run_dir,
         allow_unverified_epoch=allow_unverified_epoch)
     if measurement_drift:
@@ -136,7 +136,7 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
         # the analyze run directory does not exist yet at this point, and the
         # durable half of this analysis' record is `endpoint-reparse.json`,
         # which already stamps `builtin:sentencing` as the parser it used.
-        _advise_implicit_case_family(True, None, _log, write_file=False)
+        advise_implicit_case_family(True, None, _log, write_file=False)
     reparse_stamp = None
     if rescue_parse is not None:
         unparsed = [r for r in records
@@ -269,16 +269,16 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
     choice_delta_rows, choice_delta_summary = choice_deltas.rows(
         records, declared_targets=declared_targets)
     if clustered:
-        records = _key_records_by_transcript(records)
+        records = key_records_by_transcript(records)
     # Parser kind for endpoint-label honesty (see _endpoint_values), from
     # the parser already resolved for the endpoint rescue above.
     numeric_parser_kind = (numeric_parser.kind
                            if numeric_parser is not None else None)
-    endpoints = _endpoint_values(records, style=style,
+    endpoints = endpoint_values(records, style=style,
                                  numeric_parser_kind=numeric_parser_kind,
                                  declared_targets=declared_targets)
     baseline = {endpoint: cells.get("baseline", {}) for endpoint, cells in endpoints.items()}
-    modalities = _condition_modalities(manifest, root)
+    modalities = condition_modalities(manifest, root)
     rows: list[study_stats.EffectRow] = []
     diffs_index: dict[tuple[str, str], list[float]] = {}
     skipped_for_replication = False
@@ -288,7 +288,7 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
                 continue
             base = baseline.get(endpoint, {})
             if clustered:
-                diffs = _transcript_level_diffs(values, base)
+                diffs = transcript_level_diffs(values, base)
                 # One transcript per arm is a point estimate, not an interval.
                 if len(diffs) < 2:
                     skipped_for_replication = True
@@ -317,12 +317,12 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
     # transcript aggregation is the honest unit there.
     stratified_rows: list = []
     if not clustered:
-        stratified_rows = _stratified_effect_rows(
+        stratified_rows = stratified_effect_rows(
             records, endpoints, style=style, method=method,
             modalities=modalities)
 
     out = paths.make_unique_run_directory(f"exp-{name}-analyze", root)
-    _write_config_snapshot(manifest, out, "analyze",
+    write_config_snapshot(manifest, out, "analyze",
                            notes=({**({"epochUnverified": True}
                                       if epoch_unverified else {}),
                                    **({"measurementDrift": measurement_drift}
@@ -487,7 +487,7 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
         _log(f"alien residuals: {len(residual_rows)} rows")
 
     if manifest.promotion_rule is not None and manifest.phase == "screen":
-        decisions = _promotion_decisions(manifest, rows, run_dir, promotion_mod)
+        decisions = promotion_decisions(manifest, rows, run_dir, promotion_mod)
         promotion_mod.write_promoted_movers(
             os.path.join(out, "promoted-movers.json"), decisions,
             experiment=name, experiment_hash=manifest.content_hash(),
@@ -517,21 +517,21 @@ def rescore_style(name: str, root: str | None = None, source_run: str | None = N
     from . import reasoning_style
     _log = log or print
     manifest = Manifest.load(name, root)
-    _verify_or_warn(manifest, root)
+    verify_or_warn(manifest, root)
     style = reasoning_style.load_pinned(manifest, root)
     if style is None:
         raise RuntimeError(
             f"experiment '{name}' pins no reasoning-style taxonomy — pin one "
             "first (reasoningStyleTaxonomyPath + reasoningStyleTaxonomyHash; "
             "see prompts/templates/reasoning-style/)")
-    run_dir = source_run or _latest_run(name, root)
+    run_dir = source_run or latest_run(name, root)
     if not run_dir:
         raise lifecycle_gates.refusing(
             lifecycle_gates.MISSING_PREREQUISITE,
             f"no prior run with generations found for '{name}' — run it first",
             repair=(f"steerlab-server experiment run {name} && "
                     f"steerlab-server experiment rescore-style {name}"))
-    epoch_unverified, measurement_drift = _require_source_epoch(
+    epoch_unverified, measurement_drift = require_source_epoch(
         "rescore-style", name, manifest, run_dir,
         allow_unverified_epoch=allow_unverified_epoch)
     if measurement_drift:
@@ -558,7 +558,7 @@ def rescore_style(name: str, root: str | None = None, source_run: str | None = N
 
     # NEW immutable artifacts only — never a byte into the source run.
     out = paths.make_unique_run_directory(f"exp-{name}-rescore-style", root)
-    _write_config_snapshot(manifest, out, "rescore-style",
+    write_config_snapshot(manifest, out, "rescore-style",
                            notes=({**({"epochUnverified": True}
                                       if epoch_unverified else {}),
                                    **({"measurementDrift": measurement_drift}
@@ -587,7 +587,7 @@ def rescore_style(name: str, root: str | None = None, source_run: str | None = N
         "experimentHash": manifest.content_hash(),
         "sourceRun": os.path.basename(run_dir),
         # The shared reader already falls back to config.json's stamp.
-        "sourceRunExperimentHash": _stamped_experiment_hash(run_dir),
+        "sourceRunExperimentHash": stamped_experiment_hash(run_dir),
         "taxonomy": style.taxonomy.name,
         "taxonomyHash": style.hash,
         "taxonomyFile": style.path,

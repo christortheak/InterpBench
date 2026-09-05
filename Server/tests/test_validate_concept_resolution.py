@@ -31,6 +31,7 @@ import pytest
 
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.validation_workflow as validation_workflow
 from steerlab_server.experiment.manifest import (
     Manifest, held_out_probe_relpath, owes_held_out_probe,
     resolve_validation_file, validation_lookup_advisory)
@@ -227,8 +228,8 @@ def test_the_loop_skips_a_source_concept_less_direction(tmp_path, monkeypatch):
     manifest = Manifest.load("skip-only", root)
     bundles = _fake_bundles("drifting-optvec")
 
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda m, mf, r: bundles)
-    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all', lambda m, mf, r: bundles)
+    monkeypatch.setattr(_owner_vector_materialization, 'persist_vectors', lambda *a, **k: None)
     from steerlab_server.steering import extractor
     monkeypatch.setattr(
         extractor, "logit_lens",
@@ -239,7 +240,7 @@ def test_the_loop_skips_a_source_concept_less_direction(tmp_path, monkeypatch):
         extractor, "activations",
         lambda *a, **k: pytest.fail("a skipped concept must not be measured"))
 
-    run_dir = tasks._validate_impl("skip-only", manifest, object(), root,
+    run_dir = validation_workflow._validate_impl("skip-only", manifest, object(), root,
                                    lambda *a: None)
     with open(os.path.join(run_dir, "validation-report.json"),
               encoding="utf-8") as handle:

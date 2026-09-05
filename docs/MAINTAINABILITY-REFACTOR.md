@@ -117,18 +117,19 @@ the Python modules and the Swift repository instances.
 ## Compatibility and scientific contracts
 
 Existing public Python task functions and signatures remain available through
-`tasks.py`. Moved private spellings are re-exported there for the migration.
-Some shared helpers retain their original underscore names; new production
-consumers import them from the actual owner rather than from the facade.
+`tasks.py`, whose explicit `__all__` contains 15 lifecycle and deferred-judgment
+operations. Private helper re-exports have been removed. Shared helpers in the
+extracted owners now use public names; implementation-only helpers stay private.
+See [boundary cleanup and release gates](REFACTOR-BOUNDARY-CLEANUP.md).
 
-`tasks._battery_backends` now re-exports the adapter in `choice_scoring`, which
-explicitly supplies `generate.generate`. Standalone battery and qualification execution bind directly
+`choice_scoring.battery_backends` explicitly supplies `generate.generate`.
+Standalone battery and qualification execution bind directly
 through `runtime_backends.battery_backends`. The two injected callables preserve
 the battery's own rendering, token budget and latent/steering arguments.
 
-Tests that injected the old task-module RNG or battery helpers now inject their
-new owners. Existing behavioral assertions remain. Patching a private facade
-name is not a promise that it will replace an independent owner's implementation.
+Tests that injected old task-module helpers now target their actual owners.
+Existing behavioral assertions remain, verified by the normalized AST audit.
+Only public stage injection remains at the facade.
 
 `tasks.pipeline` retains its public signature and supplies `PipelineStages`
 (extract, validate, sweep, run, evaluate, analyze, promote) and `PipelineModels`

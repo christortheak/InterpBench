@@ -252,15 +252,15 @@ points at `extract_grand_mean`.
 
 | Axis | As executed |
 |---|---|
-| **Contrast population** | One pooled multi-concept corpus of `(concept, text)` rows under `prompts/emotions/<concept>/stories.jsonl`, loaded by `multiconcept.load_corpus` and driven by `tasks._extract_grand_mean_bundles` (`tasks.py:705`). The direction for concept *c* is `mean(rows of c) − mean(ALL rows)` (`vector_math.grand_mean_difference`, `vector_math.py:260-266`; called at `extractor.py:719-721`). **The comparison class is the whole corpus, including *c* itself.** |
+| **Contrast population** | One pooled multi-concept corpus of `(concept, text)` rows under `prompts/emotions/<concept>/stories.jsonl`, loaded by `multiconcept.load_corpus` and driven by `vector_materialization._extract_grand_mean_bundles`. The direction for concept *c* is `mean(rows of c) − mean(ALL rows)` (`vector_math.grand_mean_difference`, `vector_math.py:260-266`; called at `extractor.py:719-721`). **The comparison class is the whole corpus, including *c* itself.** |
 | **Pairing and orientation** | Neither exists. There are no pairs and no orientation; row order is irrelevant. |
 | **Normalization / centering** | No per-row normalization. The subtraction of the grand mean *is* a centering — of the concept mean against the population mean, not of individual rows. |
 | **Screening** | Rows too short for the reading position are dropped first, and the pass **refuses** if more than 10% would be dropped (`_screen_short`, `extractor.py:643-670`; `DEFAULT_MAX_SHORT_EXCLUSION_FRACTION = 0.10` at `extractor.py:621`). Screening counts tokens under the *same rendering* extraction will use (`extractor.py:651-653`, applied at `extractor.py:660`). |
 | **Reading position** | Declared; defaults to `mean from token 50` at attach (`experiment_store.py:481`). |
-| **Rendering** | Declared; absent ≡ raw. Concepts that render differently are grouped into **different corpus passes** (`tasks.py:726-733`), because one pass yields one denominator and pooling them would give one concept another's numbers. |
+| **Rendering** | Declared; absent ≡ raw. Concepts that render differently are grouped into **different corpus passes** (`vector_materialization._extract_grand_mean_bundles`), because one pass yields one denominator and pooling them would give one concept another's numbers. |
 | **Denominator** | Neutral corpus if pinned, else the **pooled corpus itself** (`extractor.py:727-733`). Stamp `perTextMean-v1`. |
 | **Raw vs adjusted** | Neutral-PC projection applies identically (`extractor.py:706-710`, `extractor.py:722-723`). |
-| **Population is part of the recipe** | The identity carries the FULL population as `[[conceptName, storiesSha256], …]` (`recipe_identity.py:42-44`), and the sidecar records the live population hashes (`tasks.py:754-757`). Adding one concept to the corpus changes every other concept's vector. |
+| **Population is part of the recipe** | The identity carries the FULL population as `[[conceptName, storiesSha256], …]` (`recipe_identity.py:42-44`), and the sidecar records the live population hashes (`vector_materialization._extract_grand_mean_bundles`). Adding one concept to the corpus changes every other concept's vector. |
 | **Modelled on** | The emotion-vector literature's "concept mean minus corpus grand mean" construction; the code calls it "Emotion-paper concept direction" (`vector_math.py:261`) and "Emotion-paper multi-concept extraction" (`extractor.py:680-681`). |
 | **Departures from the named source** | (i) The reading position is **declarable** and the default (`mean from token 50`) is this project's policy, chosen for paragraph-length stories (`experiment_store.py:502-507`). (ii) The short-row screen with a 10% refusal ceiling (`extractor.py:643-670`) is ours. (iii) The optional neutral-PC projection is ours. (iv) The neutral-corpus denominator, and α in residual-norm units, are ours. |
 
@@ -282,13 +282,13 @@ it is a first-class method rather than a hand-derived class directory
 
 | Axis | As executed |
 |---|---|
-| **Contrast population** | Two **story corpora**, both under `prompts/emotions/`: the concept's own `stories.jsonl` as the positive class and a **designated reference concept's** `stories.jsonl` as the negative class (`tasks._extract_designated_reference`, `tasks.py:649-701`; the two `load_stories_texts` calls at `tasks.py:683-684`). The classes need not be the same length. |
+| **Contrast population** | Two **story corpora**, both under `prompts/emotions/`: the concept's own `stories.jsonl` as the positive class and a **designated reference concept's** `stories.jsonl` as the negative class (`vector_materialization._extract_designated_reference`, including its two `load_stories_texts` calls). The classes need not be the same length. |
 | **Pairing and orientation** | None. Class means only, exactly as §1. |
 | **Normalization / centering** | None at derivation. |
-| **Drift refusal** | Both corpora's live hashes must equal the pinned ones or the extraction **refuses** (`tasks.py:665-682`) — the bundle stamps the pinned hashes, so the bytes read must be the pinned bytes. |
+| **Drift refusal** | Both corpora's live hashes must equal the pinned ones or the extraction **refuses** (`vector_materialization._extract_designated_reference`) — the bundle stamps the pinned hashes, so the bytes read must be the pinned bytes. |
 | **Reading position** | Declared; defaults to `mean from token 50` (`experiment_store.py:520`). |
 | **Rendering** | Declared; absent ≡ raw. |
-| **Denominator** | §0.4, via the same `core_extract` call (`tasks.py:691`). Note the `(p + n)/2` sub-case: with unequal class sizes this is class-balanced, not text-flat (`residual_norm_convention.py:63-69`). |
+| **Denominator** | §0.4, via the same `core_extract` call (`vector_materialization._extract_designated_reference`). Note the `(p + n)/2` sub-case: with unequal class sizes this is class-balanced, not text-flat (`residual_norm_convention.py:63-69`). |
 | **Raw vs adjusted** | Same as §1 — neutral-PC projection if declared; never mean-centered at extraction. |
 | **Reference is recipe data** | The identity's `methodParameters` carries `{"referenceHash", "referenceName"}` (`recipe_identity.py:45-51`, built at `recipe_identity.py:261-269`), so two vectors built against different references can never share an identity (external review 2026-07-31, finding 2). |
 | **Modelled on** | METHODS amendment (ii) — a deliberate variant of the grand-mean construction in which the comparison population is one **named** corpus rather than the pooled corpus (`vector_math.py:62-68`). |

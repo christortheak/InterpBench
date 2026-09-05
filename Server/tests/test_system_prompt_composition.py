@@ -47,6 +47,7 @@ from steerlab_server.experiment import battery as battery_mod
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import logprob as logprob_mod
 from steerlab_server.experiment import model_variant, promote, tasks
+import steerlab_server.experiment.execution_reporting as execution_reporting
 from steerlab_server.experiment import system_prompt as sp
 from steerlab_server.steering.vector_store import ConceptVectors
 
@@ -142,7 +143,7 @@ def test_empty_persona_plus_frame_stamps_exactly_todays_frame_only_value():
         assert sp.text_hash(sp.compose(empty, FRAME)) == todays_hash
     # …and the hash convention itself is unchanged: empty hashes to None.
     assert sp.text_hash(None) is None and sp.text_hash("") is None
-    assert tasks._sha256_text(FRAME) == todays_hash
+    assert execution_reporting.sha256_text(FRAME) == todays_hash
 
 
 def test_the_composition_stamp_always_carries_both_keys():
@@ -177,7 +178,7 @@ def test_a_level_the_composition_drops_stamps_null_in_all_three_shapes():
     # The per-condition hash convention is UNTOUCHED — one convention, shared
     # with ``tasks._sha256_text``, and the composition rule lives at the stamp.
     assert sp.text_hash(blank) == _sha(blank)
-    assert tasks._sha256_text(blank) == _sha(blank)
+    assert execution_reporting.sha256_text(blank) == _sha(blank)
 
 
 # --- 2. promote no longer inherits ------------------------------------------
@@ -228,7 +229,7 @@ def test_promote_gives_a_newborn_agent_no_system_prompt_at_all(tmp_path,
     from steerlab_server.experiment.manifest import Manifest
     stimulus_hash = Manifest.load(name, root).concepts[0].stimulus_set_hash
     monkeypatch.setattr(
-        _owner_vector_materialization, '_extract_all',
+        _owner_vector_materialization, 'extract_all',
         lambda model, manifest, root: {
             "fear": _fake_bundle(stimulus_hash=stimulus_hash,
                                  residual_norm_source="extraction-stimuli")})
@@ -301,7 +302,7 @@ def _agent_artifact(system_prompt):
 
 
 def _fake_bundle(stimulus_hash="h", residual_norm_source="test"):
-    return tasks.ConceptVectorBundle(
+    return _owner_vector_materialization.ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[1.0, 0.0]] * 4),
         residual_norm_per_layer=[1.0] * 4,
         residual_norm_source=residual_norm_source,
@@ -357,7 +358,7 @@ def _patch_engine(monkeypatch, seen):
             selected=correct,
             probability={o: (0.8 if o == correct else 0.1) for o in options})
 
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_generate, 'generate', generate)
     monkeypatch.setattr(logprob_mod, "score_options", score_options)
@@ -583,7 +584,7 @@ def _capture_validation_renderings(monkeypatch):
         return SimpleNamespace(values=[[[1.0, 0.0]] * 4 for _ in texts])
 
     monkeypatch.setattr(extractor, "activations", activations)
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     return captured
 

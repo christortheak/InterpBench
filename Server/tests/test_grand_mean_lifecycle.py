@@ -7,6 +7,7 @@ import os
 import pytest
 
 from steerlab_server.experiment import concept_stats, experiment_store as es, multiconcept, tasks
+import steerlab_server.experiment.vector_materialization as vector_materialization
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.steering import extractor, vector_math as vm
 
@@ -179,7 +180,7 @@ def test_extract_all_dispatches_grand_mean(tmp_path, monkeypatch):
             included=len(rows))
 
     monkeypatch.setattr(extractor, "extract_grand_mean", fake_extract_grand_mean)
-    bundles = tasks._extract_all(model=None, manifest=manifest, root=root)
+    bundles = vector_materialization.extract_all(model=None, manifest=manifest, root=root)
     assert set(bundles) == {"fear"}
     assert captured["targets"] == {"fear"}
     assert len(captured["rows"]) == 4  # both corpus members' stories
@@ -191,4 +192,4 @@ def test_extract_all_requires_pinned_corpus(tmp_path):
     d = _grand_mean_experiment(root)
     del d["grandMeanCorpus"]
     with pytest.raises(RuntimeError, match="grandMeanCorpus"):
-        tasks._extract_all(model=None, manifest=Manifest.from_dict(d), root=root)
+        vector_materialization.extract_all(model=None, manifest=Manifest.from_dict(d), root=root)

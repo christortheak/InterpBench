@@ -110,6 +110,7 @@ import os
 from types import SimpleNamespace
 
 from steerlab_server.experiment import multi_agent, tasks
+import steerlab_server.experiment.panel_workflow as panel_workflow
 from steerlab_server.experiment.manifest import Manifest
 
 
@@ -144,8 +145,8 @@ def _panel_workspace(tmp_path, monkeypatch, *, replicates=2):
     (root / "experiments/panel.json").write_text(json.dumps(spec))
     manifest = Manifest.from_dict(spec)
     monkeypatch.setattr(multi_agent, "generate", lambda *a, **k: "out")
-    monkeypatch.setattr(_owner_execution_reporting, '_advise_cross_substrate', lambda *a, **k: None)
-    monkeypatch.setattr(_owner_run_artifacts, '_write_config_snapshot', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_execution_reporting, 'advise_cross_substrate', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_run_artifacts, 'write_config_snapshot', lambda *a, **k: None)
     return root, manifest
 
 
@@ -163,7 +164,7 @@ def test_per_turn_lines_reach_the_TASKS_logger(tmp_path, monkeypatch):
     model = SimpleNamespace(model_id="m", revision="r", device="cpu")
 
     lines = []
-    tasks._run_multi_agent_study("panel", manifest, model, str(root),
+    panel_workflow.run_multi_agent_study("panel", manifest, model, str(root),
                                  log=lines.append)
 
     turn_lines = [l for l in lines if l.startswith("turn ")]
@@ -181,7 +182,7 @@ def test_two_shards_run_for_real_and_merge_reconciles(tmp_path, monkeypatch):
 
     dirs = []
     for index in range(2):
-        dirs.append(tasks._run_multi_agent_study(
+        dirs.append(panel_workflow.run_multi_agent_study(
             "panel", manifest, model, str(root),
             shard=sharding.ShardSpec(index=index, count=2)))
 
@@ -236,7 +237,7 @@ def test_a_checkpoint_signal_parks_the_run_and_resumes_in_place(tmp_path, monkey
     flag.request()  # as a trapped SIGUSR1/SIGTERM would
 
     with pytest.raises(resume_module.CheckpointRequested) as caught:
-        tasks._run_multi_agent_study("panel", manifest, model, str(root),
+        panel_workflow.run_multi_agent_study("panel", manifest, model, str(root),
                                      checkpoint=flag)
     parked = caught.value.run_directory
 
@@ -245,7 +246,7 @@ def test_a_checkpoint_signal_parks_the_run_and_resumes_in_place(tmp_path, monkey
     assert os.path.exists(os.path.join(parked, "generations.jsonl"))
 
     # The scheduler re-runs with the SAME directory; it must be accepted.
-    finished = tasks._run_multi_agent_study(
+    finished = panel_workflow.run_multi_agent_study(
         "panel", manifest, model, str(root), run_directory=parked)
     assert finished == parked
     assert os.path.exists(os.path.join(parked, "report.json"))
@@ -275,7 +276,7 @@ def test_a_signal_during_the_only_transcript_is_observed(tmp_path, monkeypatch):
     monkeypatch.setattr(multi_agent, "generate", signal_on_first_turn)
 
     with pytest.raises(resume_module.CheckpointRequested) as caught:
-        tasks._run_multi_agent_study("panel", manifest, model, str(root),
+        panel_workflow.run_multi_agent_study("panel", manifest, model, str(root),
                                      checkpoint=flag)
     parked = caught.value.run_directory
 
@@ -301,13 +302,13 @@ def test_an_unsharded_partial_cannot_be_resumed_under_shard(tmp_path, monkeypatc
     flag.request()
 
     with pytest.raises(resume_module.CheckpointRequested) as caught:
-        tasks._run_multi_agent_study("panel", manifest, model, str(root),
+        panel_workflow.run_multi_agent_study("panel", manifest, model, str(root),
                                      checkpoint=flag)
     unsharded = caught.value.run_directory
     assert sharding.read_shard_stamp(unsharded) is None
 
     with pytest.raises(resume_module.ResumeError, match="not a shard partial"):
-        tasks._run_multi_agent_study(
+        panel_workflow.run_multi_agent_study(
             "panel", manifest, model, str(root), run_directory=unsharded,
             shard=sharding.ShardSpec(index=0, count=2))
 
@@ -323,12 +324,12 @@ def test_a_completed_resume_clears_its_resume_pointer(tmp_path, monkeypatch):
     flag.request()
 
     with pytest.raises(resume_module.CheckpointRequested) as caught:
-        tasks._run_multi_agent_study("panel", manifest, model, str(root),
+        panel_workflow.run_multi_agent_study("panel", manifest, model, str(root),
                                      checkpoint=flag)
     parked = caught.value.run_directory
     assert os.path.exists(os.path.join(parked, "resume-state.json"))
 
-    finished = tasks._run_multi_agent_study(
+    finished = panel_workflow.run_multi_agent_study(
         "panel", manifest, model, str(root), run_directory=parked)
 
     assert os.path.exists(os.path.join(finished, "report.json"))

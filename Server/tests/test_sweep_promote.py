@@ -27,6 +27,8 @@ from steerlab_server.experiment import promote as promote_mod
 from steerlab_server.experiment import recipe_identity
 from steerlab_server.experiment import sweep_selection as sel
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.condition_execution as condition_execution
+import steerlab_server.experiment.execution_reporting as execution_reporting
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.steering.vector_store import SUBSTRATE, ConceptVectors
 
@@ -228,7 +230,7 @@ def _fake_model(model_id, revision):
 
 
 def _fake_bundle(stimulus_hash="h"):
-    return tasks.ConceptVectorBundle(
+    return _owner_vector_materialization.ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[1.0, 0.0]] * 4),
         residual_norm_per_layer=[1.0] * 4,
         # The canonical source token a neutral-corpus-less extraction records
@@ -270,7 +272,7 @@ def _fake_generate(steered=("dread filled the quiet town before dawn broke 2",),
 def test_spec_sweep_selects_and_stamps_provenance(tmp_path, monkeypatch):
     root = str(tmp_path)
     dev_hash = _sweep_workspace(root, "sw")
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
 
@@ -315,7 +317,7 @@ def test_spec_sweep_declared_criterion_overrides_defaults(tmp_path, monkeypatch)
     root = str(tmp_path)
     _sweep_workspace(root, "strict", selection={
         "constraints": {"coherenceFloor": 0.7}})
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_generate, 'generate', _fake_generate(
         steered=("dread filled the quiet town dread filled the quiet town 2",)))
@@ -338,7 +340,7 @@ def test_spec_sweep_control_margin_can_refuse(tmp_path, monkeypatch):
     root = str(tmp_path)
     _sweep_workspace(root, "ctl", selection={
         "controls": {"matchedNormRandomMargin": 0.1}})
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
 
@@ -360,7 +362,7 @@ def test_spec_sweep_control_block_stamps_random_vector_algorithm(tmp_path, monke
     root = str(tmp_path)
     _sweep_workspace(root, "ctlstamp", selection={
         "controls": {"matchedNormRandomMargin": 0.0}})
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
 
@@ -371,24 +373,24 @@ def test_spec_sweep_control_block_stamps_random_vector_algorithm(tmp_path, monke
     control = cond["selection"]["control"]
     assert control["type"] == "randomMatchedNorm"
     assert control["randomVectorAlgorithm"] == "gaussian-isotropic-v1"
-    assert control["randomVectorAlgorithm"] == tasks.RANDOM_VECTOR_ALGORITHM
+    assert control["randomVectorAlgorithm"] == condition_execution.RANDOM_VECTOR_ALGORITHM
 
 
 # --- live previews + per-generation cancellation ---------------------------------
 
 def test_preview_line_collapses_whitespace_and_truncates_unicode_safely():
-    assert tasks._preview_line("a\nb\r\n\tc") == "a b c"
-    assert tasks._preview_line("short") == "short"
+    assert execution_reporting.preview_line("a\nb\r\n\tc") == "a b c"
+    assert execution_reporting.preview_line("short") == "short"
     exactly = "x" * 160
-    assert tasks._preview_line(exactly) == exactly  # no ellipsis at the limit
+    assert execution_reporting.preview_line(exactly) == exactly  # no ellipsis at the limit
     over = "é" * 200                                # multi-byte code points
-    out = tasks._preview_line(over)
+    out = execution_reporting.preview_line(over)
     assert out == "é" * 160 + "…"
     assert len(out) == 161
     spaced = ("word " * 64).strip()                 # cut lands on a space run
-    cut = tasks._preview_line(spaced)
+    cut = execution_reporting.preview_line(spaced)
     assert cut.endswith("…") and not cut[:-1].endswith(" ")
-    assert "\n" not in tasks._preview_line("line one\nline two")
+    assert "\n" not in execution_reporting.preview_line("line one\nline two")
 
 
 def test_spec_sweep_cancel_observed_between_generations(tmp_path, monkeypatch):
@@ -402,7 +404,7 @@ def test_spec_sweep_cancel_observed_between_generations(tmp_path, monkeypatch):
     _write(os.path.join(root, "prompts", "dev", "dev.jsonl"),
            '{"text": "Write about the town."}\n'
            '{"text": "Write about the sea."}\n')
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     inner = _fake_generate()
     calls = {"n": 0}
@@ -458,7 +460,7 @@ def test_legacy_specless_sweep_keeps_old_behavior(tmp_path, monkeypatch):
     # nothing is appended to the manifest.
     root = str(tmp_path)
     _experiment_with_concept(root, "legacy")
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
 
@@ -481,7 +483,7 @@ def test_sweep_persists_vectors_and_promote_matches_them(tmp_path, monkeypatch):
     _sweep_workspace(root, "swpro")
     stimulus_hash = Manifest.load("swpro", root).concepts[0].stimulus_set_hash
     monkeypatch.setattr(
-        _owner_vector_materialization, '_extract_all',
+        _owner_vector_materialization, 'extract_all',
         lambda model, manifest, root: {"fear": _fake_bundle(stimulus_hash)})
     monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
 
@@ -538,7 +540,7 @@ def test_sweep_on_unpinned_draft_pins_revision_and_promote_matches(
     assert Manifest.load("userflow", root).model_revision is None
     stimulus_hash = Manifest.load("userflow", root).concepts[0].stimulus_set_hash
     monkeypatch.setattr(
-        _owner_vector_materialization, '_extract_all',
+        _owner_vector_materialization, 'extract_all',
         lambda model, manifest, root: {"fear": _fake_bundle(stimulus_hash)})
     monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
     logs = []
@@ -566,7 +568,7 @@ def test_extract_task_pins_unpinned_draft_revision(tmp_path, monkeypatch):
     root = str(tmp_path)
     stimulus_hash = _experiment_with_concept(root, "expin", revision=None)
     monkeypatch.setattr(
-        _owner_vector_materialization, '_extract_all',
+        _owner_vector_materialization, 'extract_all',
         lambda model, manifest, root: {"fear": _fake_bundle(stimulus_hash)})
     logs = []
     tasks.extract("expin", root, model_provider=_resolving_model,
@@ -585,7 +587,7 @@ def test_frozen_manifest_without_revision_is_never_pinned_but_warned(tmp_path,
     d["status"] = "frozen"
     es.save_raw(d, root, freeze_transition=True)
     monkeypatch.setattr(
-        _owner_vector_materialization, '_extract_all',
+        _owner_vector_materialization, 'extract_all',
         lambda model, manifest, root: {"fear": _fake_bundle(stimulus_hash)})
     logs = []
     tasks.extract("frzpin", root, model_provider=_resolving_model,
@@ -1989,7 +1991,7 @@ def test_a_relative_floor_run_refuses_a_cell_the_absolute_floor_accepts(
         root = str(tmp_path / name)
         os.makedirs(root, exist_ok=True)
         _sweep_workspace(root, name, selection=selection)
-        monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+        monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                             lambda model, manifest, root: {"fear": _fake_bundle()})
         monkeypatch.setattr(_owner_generate, 'generate',
                             _fake_generate(steered=steered, plain=plain))

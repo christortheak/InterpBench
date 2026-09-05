@@ -10,7 +10,7 @@ from .manifest import JudgeRef, Manifest
 
 JUDGE_FANOUT_REQUEST_FILE = "judge-fanout-request.json"
 
-def _judge_roster(manifest: Manifest, spec) -> list[JudgeRef]:
+def judge_roster(manifest: Manifest, spec) -> list[JudgeRef]:
     """The manifest's pinned judge panel, else the legacy single judge derived
     from ``evaluation.judgeModel`` (draft convenience — freeze requires >= 2)."""
     from . import paired_judge
@@ -22,7 +22,7 @@ def _judge_roster(manifest: Manifest, spec) -> list[JudgeRef]:
 
 
 
-def _preflight_openrouter_judges(roster, log, *, transport=None) -> None:
+def preflight_openrouter_judges(roster, log, *, transport=None) -> None:
     """Check every openrouter judge's provider pin BEFORE work starts.
 
     A wrong provider used to surface at the first judge call — after

@@ -467,7 +467,7 @@ def test_a_run_stamps_one_scope_row_per_condition(tmp_path, monkeypatch):
     prompts = _run_fixture(root, "scoped")
 
     def _bundle():
-        return tasks.ConceptVectorBundle(
+        return vector_materialization.ConceptVectorBundle(
             vectors=ConceptVectors(per_layer=[[1.0, 0.0]] * 4),
             residual_norm_per_layer=[1.0] * 4,
             residual_norm_source="test", stimulus_hash="h")
@@ -476,7 +476,7 @@ def test_a_run_stamps_one_scope_row_per_condition(tmp_path, monkeypatch):
     def _model(model_id, revision=None):
         yield SimpleNamespace(model_id=model_id, revision=revision or "abc")
 
-    monkeypatch.setattr(vector_materialization, "_extract_all",
+    monkeypatch.setattr(vector_materialization, "extract_all",
                         lambda model, manifest, root: {"fear": _bundle()})
     monkeypatch.setattr(
         generation_backend, "generate",
@@ -523,8 +523,8 @@ def test_the_run_sidecar_is_not_rewritten_by_a_resume(tmp_path, monkeypatch):
         yield SimpleNamespace(model_id=model_id, revision=revision or "abc")
 
     monkeypatch.setattr(
-        vector_materialization, "_extract_all",
-        lambda model, manifest, root: {"fear": tasks.ConceptVectorBundle(
+        vector_materialization, "extract_all",
+        lambda model, manifest, root: {"fear": vector_materialization.ConceptVectorBundle(
             vectors=ConceptVectors(per_layer=[[1.0, 0.0]] * 4),
             residual_norm_per_layer=[1.0] * 4,
             residual_norm_source="test", stimulus_hash="h")})

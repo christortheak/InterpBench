@@ -28,6 +28,7 @@ from steerlab_server import client_cli
 from steerlab_server.experiment import evaluate_subsample as subsample
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.run_artifacts as run_artifacts
 from steerlab_server.experiment.manifest import Manifest
 
 MAC = "steerlab-cli"
@@ -453,7 +454,7 @@ def test_the_declaration_lands_in_the_runs_own_snapshot(tmp_path):
     manifest = Manifest.from_dict(es.load_raw("demo", root))
     run_directory = os.path.join(root, "runs", "20260829T000000000-exp-demo-run")
     os.makedirs(run_directory)
-    tasks._write_config_snapshot(manifest, run_directory, "run")
+    run_artifacts.write_config_snapshot(manifest, run_directory, "run")
 
     with open(os.path.join(run_directory, "experiment.json"),
               encoding="utf-8") as handle:

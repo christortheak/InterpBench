@@ -49,7 +49,7 @@ inside attention or the MLP.
 | **Decode** | fires on every decode pass, at that pass's single new position |
 | **Centering** | not applicable — centering is an ablation-direction transform, and this engine refuses it on a steering injection (`api/routes.py`, `experiment/model_variant.py`) |
 | **Dose units** | α at the layer, applied here as an absolute offset. A study declaring `alphaInNormUnits` converts its α through that layer's residual-norm denominator — the study's declared denominator convention — before the vector reaches this class |
-| **Control** | `randomMatchedNorm`: the same layers at the same α with a seeded isotropic-Gaussian direction rescaled to the concept vector's L2 norm at each layer (algorithm stamp `gaussian-isotropic-v1`). Scaffolded by `experiment/control_matrix.py::control_matrix_conditions`, substituted at run time by `experiment/tasks.py::_condition_injections` |
+| **Control** | `randomMatchedNorm`: the same layers at the same α with a seeded isotropic-Gaussian direction rescaled to the concept vector's L2 norm at each layer (algorithm stamp `gaussian-isotropic-v1`). Scaffolded by `experiment/control_matrix.py::control_matrix_conditions`, substituted at run time by `experiment/condition_execution.py::condition_injections` |
 | **Pinned by** | `tests/test_injection_fires_per_token.py::test_apply_adds_alpha_v_at_last_position_only`, `::test_should_not_inject_on_mid_prompt_prefill_chunk`, `::test_injection_fires_on_every_decode_step_of_a_sampled_generation`; descriptor binding in `tests/test_intervention_scope.py::test_the_injector_moves_only_the_position_its_descriptor_names` |
 
 **The gate's state is part of the description.** Without a `prompt_token_count`
@@ -204,7 +204,7 @@ training carries the absolute number.
 
 `intervention-scope.json`, written once at run start into the run directory by
 `experiment/intervention_scope.py::stamp_run` (one call site, in the run driver
-in `experiment/tasks.py`). Shape:
+in `experiment/run_workflow.py::_run_impl`). Shape:
 
 ```json
 {

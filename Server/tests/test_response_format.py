@@ -249,6 +249,9 @@ def _write_prompts(tmp_path, rows):
 
 def test_loader_validates_and_carries_the_field(tmp_path):
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_preflight as run_preflight
+    import steerlab_server.experiment.task_inputs as task_inputs
+    import steerlab_server.experiment.validation_workflow as validation_workflow
     from steerlab_server.experiment import experiment_store as es
     from steerlab_server.experiment.manifest import Manifest
 
@@ -263,7 +266,7 @@ def test_loader_validates_and_carries_the_field(tmp_path):
         {"id": "c", "prompt": "pick", "options": ["A", "B"]},
     ])
     manifest = Manifest.load("rf", root)
-    prompts = tasks._load_prompts(manifest, prompts_file, root)
+    prompts = task_inputs.load_prompts(manifest, prompts_file, root)
     assert [p.get("responseFormat") for p in prompts] == ["label", "json", None]
 
     items = rf.items_of(prompts)
@@ -272,6 +275,9 @@ def test_loader_validates_and_carries_the_field(tmp_path):
 
 def test_loader_refuses_an_unknown_value_naming_the_item(tmp_path):
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_preflight as run_preflight
+    import steerlab_server.experiment.task_inputs as task_inputs
+    import steerlab_server.experiment.validation_workflow as validation_workflow
     from steerlab_server.experiment import experiment_store as es
     from steerlab_server.experiment.manifest import Manifest
 
@@ -284,11 +290,14 @@ def test_loader_refuses_an_unknown_value_naming_the_item(tmp_path):
     ])
     manifest = Manifest.load("rf2", root)
     with pytest.raises(RuntimeError, match="oops"):
-        tasks._load_prompts(manifest, prompts_file, root)
+        task_inputs.load_prompts(manifest, prompts_file, root)
 
 
 def test_run_start_gate_refuses_before_generation(tmp_path):
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_preflight as run_preflight
+    import steerlab_server.experiment.task_inputs as task_inputs
+    import steerlab_server.experiment.validation_workflow as validation_workflow
     from steerlab_server.experiment import experiment_store as es
     from steerlab_server.experiment.manifest import Manifest
 
@@ -303,7 +312,7 @@ def test_run_start_gate_refuses_before_generation(tmp_path):
                 "responseFormat": "json"}]
 
     with pytest.raises(RuntimeError, match="opening brace"):
-        tasks._check_response_formats(manifest, prompts)
+        task_inputs.check_response_formats(manifest, prompts)
 
     # A declared scope that excludes the json row makes it coherent —
     # provided it still selects an option-carrying row (a scope selecting
@@ -314,7 +323,7 @@ def test_run_start_gate_refuses_before_generation(tmp_path):
                     "target": "A", "responseFormat": "label"})
     d["outcomeInstrumentScope"] = rf.pin_scope(["label"], rf.items_of(prompts))
     es.save_raw(d, root)
-    tasks._check_response_formats(Manifest.load("rf3", root), prompts)
+    task_inputs.check_response_formats(Manifest.load("rf3", root), prompts)
 
 
 def test_zero_options_refusal_fires_before_model_load(tmp_path, monkeypatch):
@@ -323,6 +332,9 @@ def test_zero_options_refusal_fires_before_model_load(tmp_path, monkeypatch):
     refuses in seconds — before the model is acquired — like the artifact
     preflight, not after the GPU allocation is spent."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_preflight as run_preflight
+    import steerlab_server.experiment.task_inputs as task_inputs
+    import steerlab_server.experiment.validation_workflow as validation_workflow
     from steerlab_server.experiment import experiment_store as es
 
     root = str(tmp_path / "ws")
@@ -337,7 +349,7 @@ def test_zero_options_refusal_fires_before_model_load(tmp_path, monkeypatch):
     ])
     acquired = []
     monkeypatch.setattr(
-        _owner_model_resources, '_acquire_model',
+        _owner_model_resources, 'acquire_model',
         lambda *a, **k: acquired.append(True) or (_ for _ in ()).throw(
             AssertionError("model must not be acquired")))
     with pytest.raises(RuntimeError, match="carries options"):
@@ -353,6 +365,9 @@ def test_scope_drift_refuses_before_the_model_loader_is_invoked(
     pre-model-load preflight, next to the artifact preflight: the loader
     must never be invoked for a scope-drifted manifest."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_preflight as run_preflight
+    import steerlab_server.experiment.task_inputs as task_inputs
+    import steerlab_server.experiment.validation_workflow as validation_workflow
     from steerlab_server.experiment import experiment_store as es
     from steerlab_server.experiment import token_preflight as tp
 
@@ -432,6 +447,9 @@ def test_validate_writes_a_logit_lens_block(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_preflight as run_preflight
+    import steerlab_server.experiment.task_inputs as task_inputs
+    import steerlab_server.experiment.validation_workflow as validation_workflow
     from steerlab_server.experiment import experiment_store as es
     from steerlab_server.experiment.manifest import Manifest
     from steerlab_server.steering import extractor
@@ -442,9 +460,9 @@ def test_validate_writes_a_logit_lens_block(tmp_path, monkeypatch):
 
     vectors = SimpleNamespace(layer_count=4, per_layer=[[1.0, 0.0]] * 4)
     monkeypatch.setattr(
-        _owner_vector_materialization, '_extract_all',
+        _owner_vector_materialization, 'extract_all',
         lambda model, m, r: {"fear": SimpleNamespace(vectors=vectors)})
-    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, 'persist_vectors', lambda *a, **k: None)
 
     seen = {}
 
@@ -459,7 +477,7 @@ def test_validate_writes_a_logit_lens_block(tmp_path, monkeypatch):
                 token="calm", token_id=9, logit=-2.5)])
 
     monkeypatch.setattr(extractor, "logit_lens", fake_lens)
-    run_dir = tasks._validate_impl("ll", manifest, object(), root, lambda *a: None)
+    run_dir = validation_workflow._validate_impl("ll", manifest, object(), root, lambda *a: None)
 
     report = json.load(open(os.path.join(run_dir, "validation-report.json")))
     lens = report["logitLens"]["fear"]
@@ -474,6 +492,9 @@ def test_a_failing_lens_never_fails_the_validation_run(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_preflight as run_preflight
+    import steerlab_server.experiment.task_inputs as task_inputs
+    import steerlab_server.experiment.validation_workflow as validation_workflow
     from steerlab_server.experiment import experiment_store as es
     from steerlab_server.experiment.manifest import Manifest
     from steerlab_server.steering import extractor
@@ -483,15 +504,15 @@ def test_a_failing_lens_never_fails_the_validation_run(tmp_path, monkeypatch):
     manifest = Manifest.load("ll2", root)
     vectors = SimpleNamespace(layer_count=4, per_layer=[[1.0, 0.0]] * 4)
     monkeypatch.setattr(
-        _owner_vector_materialization, '_extract_all',
+        _owner_vector_materialization, 'extract_all',
         lambda model, m, r: {"fear": SimpleNamespace(vectors=vectors)})
-    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, 'persist_vectors', lambda *a, **k: None)
 
     def boom(*a, **k):
         raise RuntimeError("no unembedding head")
 
     monkeypatch.setattr(extractor, "logit_lens", boom)
-    run_dir = tasks._validate_impl("ll2", manifest, object(), root, lambda *a: None)
+    run_dir = validation_workflow._validate_impl("ll2", manifest, object(), root, lambda *a: None)
     report = json.load(open(os.path.join(run_dir, "validation-report.json")))
     # A diagnostic must never fail a validation run; Swift records the same
     # skip string.
@@ -626,6 +647,9 @@ def test_a_preflight_that_cannot_run_never_blocks_the_run(tmp_path, monkeypatch)
     """The in-generation ContextBudgetError remains the backstop; turning a
     diagnostic into a new way to fail would be a poor trade."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_preflight as run_preflight
+    import steerlab_server.experiment.task_inputs as task_inputs
+    import steerlab_server.experiment.validation_workflow as validation_workflow
     from steerlab_server.experiment import experiment_store as es
     from steerlab_server.experiment.manifest import Manifest
     from steerlab_server.experiment import token_preflight as tp
@@ -639,7 +663,7 @@ def test_a_preflight_that_cannot_run_never_blocks_the_run(tmp_path, monkeypatch)
 
     monkeypatch.setattr(tp, "preflight", boom)
     logs = []
-    tasks._token_preflight_or_warn(manifest, None, root, logs.append)
+    run_preflight.token_preflight_or_warn(manifest, None, root, logs.append)
     assert any("token preflight unavailable" in line for line in logs)
     assert any("backstop" in line for line in logs)
 
@@ -655,6 +679,9 @@ def test_scope_pin_ids_match_the_run_loader_vocabulary(tmp_path):
     loader's fallback)."""
     from steerlab_server.experiment.manifest import Manifest
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_preflight as run_preflight
+    import steerlab_server.experiment.task_inputs as task_inputs
+    import steerlab_server.experiment.validation_workflow as validation_workflow
 
     root = str(tmp_path)
     path = os.path.join(root, "prompts", "t.jsonl")
@@ -666,7 +693,7 @@ def test_scope_pin_ids_match_the_run_loader_vocabulary(tmp_path):
             '{"id": "c", "prompt": "p", "options": ["A", "B"], "responseFormat": "json"}\n'
             '{"prompt": "p", "options": ["A", "B"], "responseFormat": "label"}\n')
     manifest = Manifest.from_dict({"name": "x", "modelID": "org/m"})
-    prompts = tasks._load_prompts(manifest, "prompts/t.jsonl", root)
+    prompts = task_inputs.load_prompts(manifest, "prompts/t.jsonl", root)
     items = rf.items_of(prompts)
     assert [i["id"] for i in items] == ["a", "b", "c", "prompt-4"]
     scope = rf.pin_scope(["label"], items)
@@ -683,6 +710,9 @@ def test_loader_id_strictness_null_falls_back_and_empty_refuses(tmp_path):
     cross-engine contract)."""
     from steerlab_server.experiment.manifest import Manifest
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_preflight as run_preflight
+    import steerlab_server.experiment.task_inputs as task_inputs
+    import steerlab_server.experiment.validation_workflow as validation_workflow
 
     root = str(tmp_path)
     os.makedirs(os.path.join(root, "prompts"), exist_ok=True)
@@ -690,7 +720,7 @@ def test_loader_id_strictness_null_falls_back_and_empty_refuses(tmp_path):
               encoding="utf-8") as handle:
         handle.write('{"id": null, "prompt": "p"}\n{"prompt": "q"}\n')
     manifest = Manifest.from_dict({"name": "x", "modelID": "org/m"})
-    prompts = tasks._load_prompts(manifest, "prompts/ok.jsonl", root)
+    prompts = task_inputs.load_prompts(manifest, "prompts/ok.jsonl", root)
     assert [p["id"] for p in prompts] == ["prompt-1", "prompt-2"]
 
     for bad in ('{"id": "", "prompt": "p"}\n',
@@ -701,7 +731,7 @@ def test_loader_id_strictness_null_falls_back_and_empty_refuses(tmp_path):
             handle.write(bad)
         with pytest.raises(RuntimeError,
                            match="empty or non-string 'id'"):
-            tasks._load_prompts(manifest, "prompts/bad.jsonl", root)
+            task_inputs.load_prompts(manifest, "prompts/bad.jsonl", root)
 
 
 # --- Coherence-length guard (c18 lesson, 2026-08-13) --------------------------

@@ -18,6 +18,8 @@ import pytest
 
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.judge_dispatch as judge_dispatch
+import steerlab_server.experiment.pipeline_policy as pipeline_policy
 from steerlab_server.experiment.manifest import Manifest
 
 
@@ -117,7 +119,7 @@ def test_sweep_preflight_refuses_before_the_model_loads(tmp_path):
     name = _judged_study(root, sweep=_sweep_selection_raw())
     manifest = Manifest.load(name, root)
     with pytest.raises(RuntimeError, match="holds ONE model"):
-        tasks._pipeline_inline_judging_preflight(manifest, ["sweep"])
+        pipeline_policy.pipeline_inline_judging_preflight(manifest, ["sweep"])
 
 
 # --- the evaluate stage routes to the fan-out (never a gate) --------------------
@@ -142,8 +144,8 @@ def test_evaluate_preflight_no_longer_refuses_foreign_local_judges(tmp_path):
     root = str(tmp_path)
     name = _judged_study(root, pipeline={"stages": ["run", "evaluate"]})
     manifest = Manifest.load(name, root)
-    tasks._pipeline_inline_judging_preflight(manifest, ["evaluate"])
-    tasks._pipeline_inline_judging_preflight(manifest, ["analyze"])
+    pipeline_policy.pipeline_inline_judging_preflight(manifest, ["evaluate"])
+    pipeline_policy.pipeline_inline_judging_preflight(manifest, ["analyze"])
 
 
 def test_fanout_judge_models_group_by_distinct_resolved_model(tmp_path):
@@ -160,7 +162,7 @@ def test_fanout_judge_models_group_by_distinct_resolved_model(tmp_path):
                         "revision": "jr4"})
     es.save_raw(d, root)
     manifest = Manifest.load(name, root)
-    groups = tasks.evaluate_fanout_judge_models(manifest)
+    groups = judge_dispatch.evaluate_fanout_judge_models(manifest)
     by_model_rev = {(g["model"], g["revision"]): g for g in groups}
     # judge-1 (blank -> study model at the study pin) and judge-4 (study
     # model at its own pin) are DISTINCT worker loads.
@@ -172,7 +174,7 @@ def test_fanout_judge_models_group_by_distinct_resolved_model(tmp_path):
     d["judges"] = [{"name": "judge-1", "kind": "local"},
                    {"name": "claude", "kind": "claude"}]
     es.save_raw(d, root)
-    assert tasks.evaluate_fanout_judge_models(Manifest.load(name, root)) == []
+    assert judge_dispatch.evaluate_fanout_judge_models(Manifest.load(name, root)) == []
 
 
 # --- submission preflight (routing where capable, refusal where not) ------------

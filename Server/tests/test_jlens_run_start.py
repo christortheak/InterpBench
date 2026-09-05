@@ -11,6 +11,8 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.run_readouts as run_readouts
+import steerlab_server.experiment.run_workflow as run_workflow
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.jlens import backend, importer, lens_store
 
@@ -85,14 +87,14 @@ def _manifest(block):
 def _open(tmp_path, block, run_dir=None):
     run_dir = run_dir or (tmp_path / "run")
     run_dir.mkdir(parents=True, exist_ok=True)
-    return tasks._open_jlens_trace(
+    return run_readouts.open_jlens_trace(
         _manifest(block), _FakeModel(), str(tmp_path / "ws"),
         run_directory=str(run_dir), checkpoint=None, resuming=False,
         log=lambda _m: None)
 
 
 def test_no_declaration_means_no_session_and_no_cost(tmp_path):
-    assert tasks._open_jlens_trace(
+    assert run_readouts.open_jlens_trace(
         _manifest(None), _FakeModel(), str(tmp_path),
         run_directory=str(tmp_path), checkpoint=None, resuming=False,
         log=lambda _m: None) is None
@@ -155,15 +157,15 @@ def test_the_session_reaches_the_executor(tmp_path):
     """The whole point: the run loop must PASS what it opened."""
     import inspect
 
-    src = inspect.getsource(tasks._run_impl)
-    assert "_open_jlens_trace(" in src
+    src = inspect.getsource(run_workflow._run_impl)
+    assert "open_jlens_trace(" in src
     assert "jlens_trace=jlens_trace" in src
 
 
 def test_the_session_is_closed_with_the_writer(tmp_path):
     import inspect
 
-    src = inspect.getsource(tasks._run_impl)
+    src = inspect.getsource(run_workflow._run_impl)
     assert "jlens_trace.close(" in src
 
 
@@ -201,6 +203,8 @@ def _armed(record, root, block_overrides=None, *, revision=REV,
            model_id=EVIDENCE_MODEL, log=None):
     """Call the real run-start helper and return its refusal or its session."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.run_readouts as run_readouts
+    import steerlab_server.experiment.run_workflow as run_workflow
     from steerlab_server.experiment.manifest import Manifest
 
     block = {"lensID": record.lensID, "lensSHA256": record.source.tensorSHA256,
@@ -210,7 +214,7 @@ def _armed(record, root, block_overrides=None, *, revision=REV,
         {"name": "s", "modelID": model_id, "modelRevision": revision,
          "dtype": "bfloat16", "concepts": [], "maxTokens": 8,
          "jlensReadout": block})
-    return tasks._open_jlens_trace(
+    return run_readouts.open_jlens_trace(
         manifest, _runtime(revision), root,
         run_directory=str(root), checkpoint=None, resuming=False,
         log=(log or (lambda _m: None)), expected_generations=1)
@@ -269,7 +273,7 @@ def test_the_budget_prices_seeds_not_just_samplesPerItem():
     samplesPerItem)` priced it at (external review round 2). Sharding has
     always used this rule; now there is one resolver."""
     from steerlab_server.experiment.manifest import Manifest
-    from steerlab_server.experiment.tasks import effective_sample_count
+    from steerlab_server.experiment.condition_execution import effective_sample_count
 
     def m(**kw):
         return Manifest.from_dict({"name": "s", "modelID": MODEL,

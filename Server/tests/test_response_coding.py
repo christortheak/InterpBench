@@ -12,6 +12,8 @@ packets, humanValidation) refuses the rubric loudly instead of mis-running
 it. The prompt wrapper is byte-pinned by the committed goldens shared with
 the Swift twin.
 """
+from steerlab_server.experiment import manifest_declaration_policy
+
 
 import steerlab_server.experiment.generate as _owner_generate
 
@@ -739,13 +741,13 @@ def test_a_one_judge_panel_freezes_and_carries_the_single_coder_advisory(
             "evaluation": {"kind": "pairedJudge"}}
 
     with pytest.raises(es.ExperimentStoreError) as caught:
-        es._check_judged_evaluation("jg", dict(base, judges=[]))
+        manifest_declaration_policy.check_judged_evaluation("jg", dict(base, judges=[]))
     assert str(caught.value) == (
-        "cannot freeze 'jg': " + es._no_judge_declared_reason("jg"))
+        "cannot freeze 'jg': " + manifest_declaration_policy.no_judge_declared_reason("jg"))
     assert es.single_judge_panel_advisory(dict(base, judges=[])) is None
 
     solo = dict(base, judges=[{"name": "solo", "kind": "claude"}])
-    es._check_judged_evaluation("jg", solo)          # does not raise
+    manifest_declaration_policy.check_judged_evaluation("jg", solo)          # does not raise
     assert (es.single_judge_panel_advisory(solo)
             == es.SINGLE_JUDGE_PANEL_ADVISORY)
     assert es.SINGLE_JUDGE_PANEL_ADVISORY in es.freeze_advisories(solo)
@@ -754,6 +756,6 @@ def test_a_one_judge_panel_freezes_and_carries_the_single_coder_advisory(
                               {"name": "b", "kind": "local",
                                "model": "other/j", "revision": "cafe01",
                                "dtype": "bfloat16"}])
-    es._check_judged_evaluation("jg", pair)          # unchanged
+    manifest_declaration_policy.check_judged_evaluation("jg", pair)          # unchanged
     assert es.single_judge_panel_advisory(pair) is None
     assert es.SINGLE_JUDGE_PANEL_ADVISORY not in es.freeze_advisories(pair)

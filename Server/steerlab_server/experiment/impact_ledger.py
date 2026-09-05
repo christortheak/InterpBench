@@ -1334,8 +1334,9 @@ def reassess_promotions(root: str, analysis_directory: str) -> dict:
 
     from . import promotion as promotion_mod
     from . import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
 
-    decisions = tasks._promotion_decisions(manifest, rows, run_dir,
+    decisions = analysis_endpoints.promotion_decisions(manifest, rows, run_dir,
                                            promotion_mod)
     reassessed = [decision.as_json() for decision in decisions]
 

@@ -21,6 +21,8 @@ import pytest
 
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import pipeline_spec, tasks
+import steerlab_server.experiment.layer_resolution as layer_resolution
+import steerlab_server.experiment.validation_workflow as validation_workflow
 from steerlab_server.experiment.manifest import Manifest
 
 LAYER_COUNT = 62
@@ -65,8 +67,8 @@ def test_a_declared_layer_reaches_accuracy_lens_and_every_matrix_row(
     manifest = Manifest.load("pl", root)
     bundles = _fake_bundles()
 
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda m, mf, r: bundles)
-    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all', lambda m, mf, r: bundles)
+    monkeypatch.setattr(_owner_vector_materialization, 'persist_vectors', lambda *a, **k: None)
 
     seen_lens_layers = []
     from steerlab_server.steering import extractor
@@ -77,7 +79,7 @@ def test_a_declared_layer_reaches_accuracy_lens_and_every_matrix_row(
                                          top_negative=[])
 
     monkeypatch.setattr(extractor, "logit_lens", fake_lens)
-    run_dir = tasks._validate_impl("pl", manifest, object(), root,
+    run_dir = validation_workflow._validate_impl("pl", manifest, object(), root,
                                    lambda *a: None)
 
     report = json.load(open(os.path.join(run_dir, "validation-report.json")))
@@ -108,18 +110,18 @@ def test_the_matrix_layer_ignores_per_concept_conditions(tmp_path, monkeypatch):
     bundles = _fake_bundles()
 
     # Accuracy still follows the condition (legacy behaviour preserved).
-    resolutions = tasks._validation_layer_resolutions(
+    resolutions = layer_resolution.validation_layer_resolutions(
         manifest, "fear", LAYER_COUNT)
     assert [r.layer for r in resolutions] == [7]
     # The matrix does not.
-    assert tasks._matrix_layers(manifest, bundles) == [LAYER_COUNT // 2]
+    assert layer_resolution.matrix_layers(manifest, bundles) == [LAYER_COUNT // 2]
 
 
 def test_an_out_of_range_declaration_refuses_at_resolve(tmp_path):
     root = _workspace(tmp_path, declared_layer=100)
     manifest = Manifest.load("pl", root)
     with pytest.raises(RuntimeError, match="not silently clamped"):
-        tasks._validation_layer_resolutions(manifest, "fear", LAYER_COUNT)
+        layer_resolution.validation_layer_resolutions(manifest, "fear", LAYER_COUNT)
 
 
 # --- the gate parser ---------------------------------------------------------
@@ -170,11 +172,11 @@ def test_mismatched_bundle_depths_refuse_rather_than_clamp():
     bundles["anger"] = shallow
 
     with pytest.raises(RuntimeError, match="disagree about model depth"):
-        tasks._require_uniform_depth(bundles)
+        layer_resolution.require_uniform_depth(bundles)
 
 
 def test_uniform_depths_pass():
-    assert tasks._require_uniform_depth(_fake_bundles(("a", "b"))) == LAYER_COUNT
+    assert layer_resolution.require_uniform_depth(_fake_bundles(("a", "b"))) == LAYER_COUNT
 
 
 def test_the_gate_refuses_a_matrix_recording_more_than_one_layer():
@@ -208,8 +210,8 @@ def test_a_declared_depth_list_yields_per_depth_entries_and_matrices(
     manifest = Manifest.load("pl", root)
     bundles = _fake_bundles()
 
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda m, mf, r: bundles)
-    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all', lambda m, mf, r: bundles)
+    monkeypatch.setattr(_owner_vector_materialization, 'persist_vectors', lambda *a, **k: None)
     from steerlab_server.steering import extractor
 
     def fake_activations(model, texts, reading, rendering=None):
@@ -225,7 +227,7 @@ def test_a_declared_depth_list_yields_per_depth_entries_and_matrices(
                                          top_negative=[])
 
     monkeypatch.setattr(extractor, "logit_lens", fake_lens)
-    run_dir = tasks._validate_impl("pl", manifest, object(), root,
+    run_dir = validation_workflow._validate_impl("pl", manifest, object(), root,
                                    lambda *a: None)
 
     report = json.load(open(os.path.join(run_dir, "validation-report.json")))
@@ -257,9 +259,9 @@ def test_a_single_depth_report_keeps_the_flat_shape_exactly(
                            "validation.jsonl"), "w", encoding="utf-8") as h:
         h.write(json.dumps({"text": "s1", "expresses": True}) + "\n")
     manifest = Manifest.load("pl", root)
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda m, mf, r: _fake_bundles())
-    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, 'persist_vectors', lambda *a, **k: None)
     from steerlab_server.steering import extractor
     monkeypatch.setattr(
         extractor, "activations",
@@ -269,7 +271,7 @@ def test_a_single_depth_report_keeps_the_flat_shape_exactly(
         extractor, "logit_lens",
         lambda model, vectors, layer, top_k=12: extractor.LogitLensReport(
             layer=layer, top_positive=[], top_negative=[]))
-    run_dir = tasks._validate_impl("pl", manifest, object(), root,
+    run_dir = validation_workflow._validate_impl("pl", manifest, object(), root,
                                    lambda *a: None)
     report = json.load(open(os.path.join(run_dir, "validation-report.json")))
     entry = report["concepts"]["fear"]
@@ -289,11 +291,11 @@ def test_a_colliding_depth_list_leaves_no_validate_directory(
     d["validationLayerFractions"] = [0.6, 0.61]
     es.save_raw(d, root)
     manifest = Manifest.load("pl", root)
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda m, mf, r: _fake_bundles())
-    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, 'persist_vectors', lambda *a, **k: None)
     with pytest.raises(RuntimeError, match="both resolve to layer"):
-        tasks._validate_impl("pl", manifest, object(), root, lambda *a: None)
+        validation_workflow._validate_impl("pl", manifest, object(), root, lambda *a: None)
     runs = os.path.join(root, "runs")
     validate_dirs = [
         d for d in (os.listdir(runs) if os.path.isdir(runs) else [])
@@ -311,11 +313,11 @@ def test_an_out_of_range_declaration_leaves_no_validate_directory_at_all(
     what reveals depth, so the check now runs before anything is created."""
     root = _workspace(tmp_path, declared_layer=999)
     manifest = Manifest.load("pl", root)
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda m, mf, r: _fake_bundles())
-    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all', lambda m, mf, r: _fake_bundles())
+    monkeypatch.setattr(_owner_vector_materialization, 'persist_vectors', lambda *a, **k: None)
 
     with pytest.raises(RuntimeError, match="not silently clamped"):
-        tasks._validate_impl("pl", manifest, object(), root, lambda *a: None)
+        validation_workflow._validate_impl("pl", manifest, object(), root, lambda *a: None)
 
     runs = os.path.join(root, "runs")
     validate_dirs = [

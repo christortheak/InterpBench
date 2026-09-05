@@ -7,10 +7,10 @@ import hashlib
 import json
 import os
 from . import paths
-from . import manifest as _dep_manifest
+from . import manifest as manifest_module
 
 
-def _normalized_judge_entries(raw, study_model: str | None = None) -> list[dict]:
+def normalized_judge_entries(raw, study_model: str | None = None) -> list[dict]:
     """Judge entries with kind and model RESOLVED (engineer review
     2026-07-18, second pass): kind defaults to claude, and an empty model
     pins the server's DEFAULT_JUDGE_MODEL at emission — the judging client
@@ -51,7 +51,7 @@ def _normalized_judge_entries(raw, study_model: str | None = None) -> list[dict]
     return out
 
 
-def _judgment_key(row: dict) -> tuple[str, str, str]:
+def judgment_key(row: dict) -> tuple[str, str, str]:
     """Pair-cell identity for aligning outcomes across judges (and against a
     human-labeled subset): the same id-keyed shape judge output rows carry.
     Keyed on ``sampleIndex`` (absent normalizes to 0) — the pairing join key
@@ -61,7 +61,7 @@ def _judgment_key(row: dict) -> tuple[str, str, str]:
             str(row.get("condition")))
 
 
-def _verify_judgment_provider(row: dict, judge: str,
+def verify_judgment_provider(row: dict, judge: str,
                               pinned_provider: str | None) -> str | None:
     """Per-judgment provider verification for BOTH completion verbs
     (engineer review 2026-07-18, provider-evidence pass): an openrouter
@@ -92,7 +92,7 @@ def _verify_judgment_provider(row: dict, judge: str,
     return None
 
 
-def _verified_judgment_payload(row: dict, judge: str,
+def verified_judgment_payload(row: dict, judge: str,
                                winner: str) -> tuple[float | None,
                                                      dict | None]:
     """``(confidence, full verdict payload)`` from one client judgment row —
@@ -129,7 +129,7 @@ def _verified_judgment_payload(row: dict, judge: str,
     return confidence, payload
 
 
-def _agreement_entries(labeled: list[tuple[str, dict]]) -> list[dict]:
+def agreement_entries(labeled: list[tuple[str, dict]]) -> list[dict]:
     """Percent agreement + Cohen's kappa for every judge pair, over the pair
     cells both judged. ``labeled`` is ``[(judge_name, {key: outcome})]``."""
     from . import study_stats
@@ -149,8 +149,8 @@ def _agreement_entries(labeled: list[tuple[str, dict]]) -> list[dict]:
     return entries
 
 
-def _load_human_validation(
-        manifest: _dep_manifest.Manifest, root) -> dict[tuple[str, str | None, str], str]:
+def load_human_validation(
+        manifest: manifest_module.Manifest, root) -> dict[tuple[str, str | None, str], str]:
     """The pinned human-labeled subset, hash-checked then parsed through the
     ONE row parser (``human_validation.parse_rows`` — the same rules
     ``Manifest.verify`` applies, review 2026-08-02). See that module for the
@@ -169,7 +169,7 @@ def _load_human_validation(
     return human_validation.parse_rows(data, hv.path)
 
 
-def _materialize_human_validation(
+def materialize_human_validation(
         human: dict[tuple[str, str | None, str], str],
         outcome_maps: list[tuple[str, dict]]) -> dict[tuple[str, str, str], str]:
     """Resolve wildcard rows against the cells the judges actually judged,
@@ -193,7 +193,7 @@ def _materialize_human_validation(
 JUDGING_CONTEXT_FILENAME = "judging-context.json"
 
 
-def _judging_context(manifest, spec, run_dir: str, rubric_hash: str | None,
+def judging_context(manifest, spec, run_dir: str, rubric_hash: str | None,
                      rubric_file: str | None, roster) -> dict:
     """The pins a resumed evaluation must match to reuse judgments.
 
@@ -268,7 +268,7 @@ def _judging_context(manifest, spec, run_dir: str, rubric_hash: str | None,
     }
 
 
-def _load_resumable_judgments(name: str, resume_from: str, root: str | None,
+def load_resumable_judgments(name: str, resume_from: str, root: str | None,
                               context: dict, log) -> dict:
     """Judgments from a partial evaluate run, keyed ``(judge, cell)``.
 
@@ -346,7 +346,7 @@ def _load_resumable_judgments(name: str, resume_from: str, root: str | None,
                 judge = str(row.get("judge") or "")
                 if not judge:
                     continue
-                rows[(judge, _judgment_key(row))] = row
+                rows[(judge, judgment_key(row))] = row
     except FileNotFoundError:
         rows = {}
     except json.JSONDecodeError as exc:
@@ -360,7 +360,7 @@ def _load_resumable_judgments(name: str, resume_from: str, root: str | None,
     return rows
 
 
-def _judgment_stamp_judge(judgment: dict, ref) -> None:
+def judgment_stamp_judge(judgment: dict, ref) -> None:
     """Stamp a judgment with the judge that produced it, in place.
 
     Split out of the evaluate loop when judgments began being written as

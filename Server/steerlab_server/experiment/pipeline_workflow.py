@@ -13,20 +13,20 @@ from dataclasses import dataclass
 from typing import Callable
 from . import paths, resume as resume_mod
 from .manifest import Manifest
-from .cancellation import _observe_cancel
-from .study_admission import _verify_or_warn
-from .run_artifacts import _write_config_snapshot
+from .cancellation import observe_cancel
+from .study_admission import verify_or_warn
+from .run_artifacts import write_config_snapshot
 from .run_status import heal_after_completion
 from .pipeline_ledger import (PIPELINE_LEDGER_SCHEMA,
     read_pipeline_ledger as _read_pipeline_ledger,
     write_pipeline_ledger as _write_pipeline_ledger)
-from .pipeline_evidence import (_find_minted_agent,
-    _restore_self_pinned_revision, _stamp_pipeline_drift)
-from .pipeline_policy import (_pipeline_will_judge,
-    _pipeline_inline_judging_preflight, _pipeline_needs_model)
-from .judge_dispatch import (_preflight_openrouter_judges,
+from .pipeline_evidence import (find_minted_agent,
+    restore_self_pinned_revision, stamp_pipeline_drift)
+from .pipeline_policy import (pipeline_will_judge,
+    pipeline_inline_judging_preflight, pipeline_needs_model)
+from .judge_dispatch import (preflight_openrouter_judges,
     evaluate_fanout_judge_models, write_judge_fanout_request)
-from .judgment_evidence import _find_evaluate_judgment_run
+from .judgment_evidence import find_evaluate_judgment_run
 
 
 @dataclass(frozen=True)
@@ -79,7 +79,7 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
       2026-08-28) can never take it away mid-chain — that seam's work here
       is freeing containers the chain did NOT load (a leftover interactive
       model) before a judge column starts, and the generation→judging
-      question is answered by ``_pipeline_needs_model`` over the stages
+      question is answered by ``pipeline_needs_model`` over the stages
       that remain AFTER evaluate.
     - **Requeue/resume**: ``pipeline.json`` records completed stages and
       their run dirs; ``pipeline_run_directory`` reopens it, skipping
@@ -98,7 +98,7 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
     from . import promote as promote_lib
     _log = log or print
     manifest = Manifest.load(name, root)
-    _verify_or_warn(manifest, root)
+    verify_or_warn(manifest, root)
     raw_block = manifest.raw.get("pipeline")
     if raw_block is None:
         # The chain is preregistered DATA, not a default (engineer review
@@ -153,7 +153,7 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
         # missing revision pin, restore the pin and continue.
         live_hash = manifest.content_hash()
         if ledger.get("experimentHash") != live_hash:
-            manifest, live_hash, restored = _restore_self_pinned_revision(
+            manifest, live_hash, restored = restore_self_pinned_revision(
                 name, manifest, ledger, root, _log,
                 pipeline_run_directory=pipeline_run_directory)
             if not restored and ledger.get("experimentHash") != live_hash:
@@ -171,7 +171,7 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
                      "manifest; the drift is stamped epochDriftAtContinuation "
                      "in the pipeline ledger, and each remaining stage's own "
                      "epoch guard decides what it may measure")
-                _stamp_pipeline_drift(pipeline_run_directory, ledger,
+                stamp_pipeline_drift(pipeline_run_directory, ledger,
                                       live_hash)
         if ledger.pop("parked", None) is not None:
             # A parked chain that is being resumed is no longer parked —
@@ -186,7 +186,7 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
                  if (completed.get(s) or {}).get("status") != "completed"]
     # Preflight ONLY the remaining stages: a resumed chain whose judged
     # sweep already completed must not refuse for a since-cleared key.
-    _pipeline_inline_judging_preflight(manifest, remaining)
+    pipeline_inline_judging_preflight(manifest, remaining)
     # OpenRouter judge pins are checked at CHAIN start, pre-model
     # (2026-08-04): the sweep/evaluate stages preflight too, but inside the
     # chain they fire only after the model load — and evaluate's fires after
@@ -194,9 +194,9 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
     # catalogue positively does not list must refuse before stage 1
     # (`test-compare-2`: 240 records generated, then the first judge call
     # 404'd on a judge nobody could ever have reached).
-    if _pipeline_will_judge(manifest, remaining) and manifest.judges:
-        _preflight_openrouter_judges(manifest.judges, _log)
-    needs_model = _pipeline_needs_model(remaining, manifest)
+    if pipeline_will_judge(manifest, remaining) and manifest.judges:
+        preflight_openrouter_judges(manifest.judges, _log)
+    needs_model = pipeline_needs_model(remaining, manifest)
 
     from contextlib import nullcontext
     context = (models.acquire(manifest, dtype, device, model_provider)
@@ -239,7 +239,7 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
             live_hash = Manifest.load(name, root).content_hash()
             run_directory = paths.make_unique_run_directory(
                 f"exp-{name}-pipeline", root)
-            _write_config_snapshot(manifest, run_directory, "pipeline")
+            write_config_snapshot(manifest, run_directory, "pipeline")
             ledger = {"schema": PIPELINE_LEDGER_SCHEMA, "experiment": name,
                       "experimentHash": live_hash,
                       # Draft chains are legal (exploratory); the stamp
@@ -293,7 +293,7 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
                 _log(f"pipeline: '{stage}' already completed "
                      f"({prior.get('runDirectory', 'no dir')}) — skipping")
                 continue
-            if _observe_cancel(should_cancel, _log,
+            if observe_cancel(should_cancel, _log,
                                f"pipeline before '{stage}'"):
                 return run_directory
             _log(f"pipeline: stage '{stage}' starting")
@@ -370,7 +370,7 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
                     # during RECOVERY, adopt the agent whose full selection
                     # identity (epoch + sweep run + winning cell) matches
                     # what a promotion would stamp right now.
-                    existing = (_find_minted_agent(name, concept, ledger,
+                    existing = (find_minted_agent(name, concept, ledger,
                                                    root)
                                 if recovering else None)
                     if existing is not None:
@@ -492,7 +492,7 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
                     # re-emitting a second packet set.
                     if prior.get("status") == "awaitingJudgment":
                         awaiting = str(prior.get("runDirectory") or "")
-                        found = _find_evaluate_judgment_run(
+                        found = find_evaluate_judgment_run(
                             name, os.path.basename(awaiting), root)
                         if found is None:
                             raise RuntimeError(
@@ -515,7 +515,7 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
                     # the question is asked of the spec rather than assumed.
                     after_evaluate = spec.stages[
                         spec.stages.index(stage) + 1:]
-                    study_model_generates_later = _pipeline_needs_model(
+                    study_model_generates_later = pipeline_needs_model(
                         after_evaluate, manifest)
                     # Local judges needing models OTHER than the held study
                     # model: the chain cannot judge them inline (one model

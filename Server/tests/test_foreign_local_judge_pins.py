@@ -14,6 +14,8 @@ silence for study-model judges, and force provenance.
 
 Swift twin: `Tests/ExperimentKitTests/ForeignLocalJudgePinTests.swift`.
 """
+from steerlab_server.experiment import manifest_declaration_policy
+
 
 import hashlib
 import json
@@ -288,7 +290,7 @@ def test_moving_references_are_not_pins(moving):
     neither identifies the bytes a run used — the old gate only required
     non-emptiness, and the loader recorded the symbolic name it was handed
     rather than the commit it resolved to."""
-    assert not es._is_commit_like(moving)
+    assert not manifest_declaration_policy.is_commit_like(moving)
     d = {"modelID": "org/m", "modelRevision": moving}
     problem = es.symbolic_revision_problem(d)
     assert problem is not None
@@ -299,7 +301,7 @@ def test_moving_references_are_not_pins(moving):
     "abc123", "cafe01", "0" * 40, "deadbeef", "ABC123",
 ])
 def test_commit_hashes_pass(commit):
-    assert es._is_commit_like(commit)
+    assert manifest_declaration_policy.is_commit_like(commit)
     assert es.symbolic_revision_problem(
         {"modelID": "org/m", "modelRevision": commit}) is None
 

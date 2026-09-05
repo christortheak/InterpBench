@@ -21,6 +21,7 @@ import os
 import pytest
 
 from steerlab_server.experiment import paired_judge, run_status, tasks
+import steerlab_server.experiment.evaluation_evidence as evaluation_evidence
 
 from test_evaluate_deferred import _fixture
 
@@ -130,13 +131,13 @@ class TestResumeRefusals:
 
     def _context_of(self, root, run_id):
         path = os.path.join(root, "runs", run_id,
-                            tasks.JUDGING_CONTEXT_FILENAME)
+                            evaluation_evidence.JUDGING_CONTEXT_FILENAME)
         with open(path, encoding="utf-8") as handle:
             return json.load(handle)
 
     def _rewrite_context(self, root, run_id, **changes):
         path = os.path.join(root, "runs", run_id,
-                            tasks.JUDGING_CONTEXT_FILENAME)
+                            evaluation_evidence.JUDGING_CONTEXT_FILENAME)
         context = self._context_of(root, run_id)
         context.update(changes)
         with open(path, "w", encoding="utf-8") as handle:
@@ -173,7 +174,7 @@ class TestResumeRefusals:
         context = self._context_of(root, partial)
         context["judges"][0]["model"] = "some-other-model"
         path = os.path.join(root, "runs", partial,
-                            tasks.JUDGING_CONTEXT_FILENAME)
+                            evaluation_evidence.JUDGING_CONTEXT_FILENAME)
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(context, handle)
         _fail_after(999, monkeypatch)
@@ -210,7 +211,7 @@ class TestResumeRefusals:
             {"name": "local-j", "kind": "local", "model": "org/other",
              "revision": "aaaa", "dtype": "bfloat16", "provider": None})
         path = os.path.join(root, "runs", partial,
-                            tasks.JUDGING_CONTEXT_FILENAME)
+                            evaluation_evidence.JUDGING_CONTEXT_FILENAME)
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(context, handle)
         # The live manifest has no such judge, so the panels differ only in
@@ -237,7 +238,7 @@ class TestResumeRefusals:
         context["schemaVersion"] = 1
         context.pop("sourceGenerationsSha256", None)
         path = os.path.join(root, "runs", partial,
-                            tasks.JUDGING_CONTEXT_FILENAME)
+                            evaluation_evidence.JUDGING_CONTEXT_FILENAME)
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(context, handle)
         _fail_after(999, monkeypatch)
@@ -279,7 +280,7 @@ class TestResumeRefusals:
         # were judged under. Refuse rather than assume.
         root, partial = _partial(tmp_path, monkeypatch)
         os.remove(os.path.join(root, "runs", partial,
-                               tasks.JUDGING_CONTEXT_FILENAME))
+                               evaluation_evidence.JUDGING_CONTEXT_FILENAME))
         _fail_after(999, monkeypatch)
         with pytest.raises(RuntimeError, match="predates targeted retry"):
             tasks.evaluate("ev", root=root, resume_from=partial,
@@ -437,7 +438,7 @@ class TestJudgingContextSourcePin:
         run_dir.mkdir()  # exists, but has no generations.jsonl
         with pytest.raises(RuntimeError, match="generations.jsonl cannot be "
                            "read"):
-            tasks._judging_context(self._StubManifest(), object(),
+            evaluation_evidence.judging_context(self._StubManifest(), object(),
                                    str(run_dir), None, None, [])
 
     def test_a_readable_source_is_pinned_by_content(self, tmp_path):
@@ -446,7 +447,7 @@ class TestJudgingContextSourcePin:
         run_dir.mkdir()
         payload = b'{"condition":"baseline"}\n'
         (run_dir / "generations.jsonl").write_bytes(payload)
-        context = tasks._judging_context(self._StubManifest(), object(),
+        context = evaluation_evidence.judging_context(self._StubManifest(), object(),
                                          str(run_dir), None, None, [])
         assert (context["sourceGenerationsSha256"]
                 == hashlib.sha256(payload).hexdigest())

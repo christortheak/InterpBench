@@ -693,9 +693,10 @@ def _manifest_with(rendering, *, thinking=False, prompt_mode="chatAssistant",
 
 def test_raw_extraction_says_which_declarations_cannot_reach_it():
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.extraction_workflow as extraction_workflow
 
     lines = []
-    tasks._advise_inert_declarations(
+    extraction_workflow._advise_inert_declarations(
         _manifest_with(er.RAW_RENDERING, thinking=True), lines.append)
     assert len(lines) == 1, lines
     line = lines[0]
@@ -713,9 +714,10 @@ def test_raw_extraction_says_which_declarations_cannot_reach_it():
 
 def test_a_chat_template_extraction_emits_no_inert_declaration_advisory():
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.extraction_workflow as extraction_workflow
 
     lines = []
-    tasks._advise_inert_declarations(
+    extraction_workflow._advise_inert_declarations(
         _manifest_with(er.ExtractionRendering(mode=er.CHAT_TEMPLATE),
                        thinking=True, system="You are a careful assistant."),
         lines.append)
@@ -729,9 +731,10 @@ def test_a_chat_template_extraction_emits_no_inert_declaration_advisory():
 
 def test_an_ordinary_raw_recipe_stays_silent():
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.extraction_workflow as extraction_workflow
 
     lines = []
-    tasks._advise_inert_declarations(_manifest_with(er.RAW_RENDERING), lines.append)
+    extraction_workflow._advise_inert_declarations(_manifest_with(er.RAW_RENDERING), lines.append)
     assert lines == [], "an advisory channel that always speaks is unread"
     assert extractor.inert_declaration_advisory(er.RAW_RENDERING) is None
 

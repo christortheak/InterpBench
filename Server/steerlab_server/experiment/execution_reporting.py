@@ -9,11 +9,11 @@ import os
 import sys
 import torch
 from . import system_prompt as system_prompt_mod
-from . import manifest as _dep_manifest
-from . import run_artifacts as _dep_run_artifacts
+from . import manifest as manifest_module
+from . import run_artifacts
 
 
-def _sampling_metadata(model, temperature: float) -> dict:
+def sampling_metadata(model, temperature: float) -> dict:
     """Per-record sampling/substrate fields: the effective temperature/top_p/
     top_k actually used (resolved against the checkpoint), plus dtype/device.
     Stamped on every generation so a reader never has to guess the distribution."""
@@ -22,12 +22,12 @@ def _sampling_metadata(model, temperature: float) -> dict:
     return {
         "temperature": s["temperature"], "doSample": s["doSample"],
         "topP": s["topP"], "topK": s["topK"],
-        "dtype": _dep_run_artifacts._model_dtype(model), "device": str(getattr(model, "device", "")),
+        "dtype": run_artifacts.model_dtype(model), "device": str(getattr(model, "device", "")),
         "engine": "python-hf-transformers",
     }
 
 
-def _write_substrate(model, run_directory: str, sampling: dict) -> None:
+def write_substrate(model, run_directory: str, sampling: dict) -> None:
     """Write substrate.json: engine/library/GPU provenance for the run, so cross-
     engine claims can distinguish MLX from HF and pin exact versions (plan §8)."""
     import platform
@@ -51,7 +51,7 @@ def _write_substrate(model, run_directory: str, sampling: dict) -> None:
         json.dump(info, handle, indent=2, sort_keys=True)
 
 
-def _preview_line(text: str, limit: int = 160) -> str:
+def preview_line(text: str, limit: int = 160) -> str:
     """Single-line truncated preview of a generation for the live job log (so
     decoherence is visible while a sweep runs, not after the grid lands).
     Whitespace runs — newlines included — collapse to single spaces; text
@@ -64,7 +64,7 @@ def _preview_line(text: str, limit: int = 160) -> str:
     return collapsed[:limit].rstrip() + "…"
 
 
-def _advise_cross_substrate(manifest: _dep_manifest.Manifest, run_directory: str | None,
+def advise_cross_substrate(manifest: manifest_module.Manifest, run_directory: str | None,
                             root, _log, *, write_file: bool) -> None:
     """WS7.1 loud, non-blocking study-run-start advisory: when this
     experiment's scope-matched validate evidence came from the OTHER engine,
@@ -90,7 +90,7 @@ def _advise_cross_substrate(manifest: _dep_manifest.Manifest, run_directory: str
         handle.write(advisory + "\n")
 
 
-def _advise_dependency_lock_drift(run_directory: str | None, _log, *,
+def advise_dependency_lock_drift(run_directory: str | None, _log, *,
                                   write_file: bool) -> None:
     """WP6 R1 loud, non-blocking run-start advisory: the torch/transformers
     this process imported differ from what the committed platform lock pins.
@@ -125,12 +125,12 @@ def _advise_dependency_lock_drift(run_directory: str | None, _log, *,
         handle.write(advisory + "\n")
 
 
-def _advise_system_prompt_divergence(arms, run_directory: str | None, _log, *,
+def advise_system_prompt_divergence(arms, run_directory: str | None, _log, *,
                                      write_file: bool) -> None:
     """Comparability advisory (2026-08-24 ruling): the arms of THIS run are
     not all armed with the same effective system content.
 
-    Same shape as :func:`_advise_dependency_lock_drift` — an ``ADVISORY:``
+    Same shape as :func:`advise_dependency_lock_drift` — an ``ADVISORY:``
     line at the verb's start, appended to the run directory's
     ``advisories.txt``, never a refusal and never a change to the numbers.
 
@@ -160,7 +160,7 @@ def _advise_system_prompt_divergence(arms, run_directory: str | None, _log, *,
         pass
 
 
-def _sha256_text(text: str | None) -> str | None:
+def sha256_text(text: str | None) -> str | None:
     if not text:
         return None
     return hashlib.sha256(text.encode("utf-8")).hexdigest()

@@ -238,6 +238,7 @@ def test_frozen_study_fails_verification_on_markers_drift(tmp_path):
     whose pinned markers drifted — the score-time input is no longer the
     frozen one."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.study_admission as study_admission
     root = str(tmp_path)
     _concept(root)
     _write(os.path.join(root, "prompts", "concepts", "fear", "markers.json"),
@@ -248,7 +249,7 @@ def test_frozen_study_fails_verification_on_markers_drift(tmp_path):
     _write(os.path.join(root, "prompts", "concepts", "fear", "markers.json"),
            '{"words": ["EDITED"]}\n')
     with pytest.raises(RuntimeError, match="failed verification"):
-        tasks._verify_or_warn(Manifest.load("s", root=root), root)
+        study_admission.verify_or_warn(Manifest.load("s", root=root), root)
 
 
 def test_concept_validation_hash_helper_paths(tmp_path):

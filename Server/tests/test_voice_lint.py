@@ -307,6 +307,7 @@ def test_the_stamp_rides_into_the_flattened_generation_records(tmp_path):
     """The roll-up reads generations.jsonl, so the turn record's stamp has to
     survive flattening — verbatim, never re-linted."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.panel_workflow as panel_workflow
     lint = {"version": 1, "speaksForOthers": True,
             "otherSpeakerLines": {"Judge Whitfield": 2}, "thirdPersonSelf": 1}
     with open(tmp_path / "turns.jsonl", "w", encoding="utf-8") as handle:
@@ -318,7 +319,7 @@ def test_the_stamp_rides_into_the_flattened_generation_records(tmp_path):
                                  "output": "older run, no lint"}) + "\n")
     manifest = SimpleNamespace(content_hash=lambda: "h", model_id="m",
                                temperature=0.0)
-    records = tasks._panel_records_from(
+    records = panel_workflow._panel_records_from(
         str(tmp_path), "exp", manifest, SimpleNamespace(revision="r"),
         "configured", 0)
     assert records[0]["voiceLint"] == lint

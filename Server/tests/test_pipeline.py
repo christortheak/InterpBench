@@ -31,6 +31,9 @@ from steerlab_server.experiment import pipeline_spec as pspec
 from steerlab_server.experiment import promote as promote_mod
 from steerlab_server.experiment import resume as resume_mod
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.forward_resolution as forward_resolution
+import steerlab_server.experiment.model_resources as model_resources
+import steerlab_server.experiment.pipeline_evidence as pipeline_evidence
 from steerlab_server.experiment.manifest import Manifest
 
 
@@ -815,7 +818,7 @@ def test_resume_drift_stamp_survives_stage_completion(tmp_path, monkeypatch):
     assert any("continuing under the LIVE manifest" in line
                for line in logs)
     # The listing surfaces the stamp for the app.
-    row = tasks.list_pipeline_runs(name, root)[0]
+    row = pipeline_evidence.list_pipeline_runs(name, root)[0]
     assert row["epochDriftAtContinuation"] == [stamp]
 
 
@@ -828,7 +831,7 @@ def test_resume_clears_parked_stamp(tmp_path, monkeypatch):
     _heal_analyze(monkeypatch, root, calls)
     parked = pipeline_reconcile.park(pipeline_dir, reason="orphaned by test")
     assert parked is not None
-    listed = tasks.list_pipeline_runs(name, root)
+    listed = pipeline_evidence.list_pipeline_runs(name, root)
     assert listed[0]["parked"]["reason"] == "orphaned by test"
 
     with _acquire_counter([]) as provider:
@@ -838,7 +841,7 @@ def test_resume_clears_parked_stamp(tmp_path, monkeypatch):
     ledger = json.load(open(os.path.join(out, "pipeline.json")))
     assert ledger["disposition"] == "completed"
     assert "parked" not in ledger
-    assert "parked" not in tasks.list_pipeline_runs(name, root)[0]
+    assert "parked" not in pipeline_evidence.list_pipeline_runs(name, root)[0]
 
 
 def test_list_pipeline_runs_cross_experiment_listing(tmp_path, monkeypatch):
@@ -847,12 +850,12 @@ def test_list_pipeline_runs_cross_experiment_listing(tmp_path, monkeypatch):
     # awaiting-import surface.
     calls: list = []
     root, name, pipeline_dir = _incident_chain(tmp_path, monkeypatch, calls)
-    rows = tasks.list_pipeline_runs(None, root)
+    rows = pipeline_evidence.list_pipeline_runs(None, root)
     assert [r["experiment"] for r in rows] == [name]
     assert rows[0]["run"] == os.path.basename(pipeline_dir)
     # The per-experiment listing carries the same key.
-    assert tasks.list_pipeline_runs(name, root)[0]["experiment"] == name
-    assert tasks.list_pipeline_runs("other", root) == []
+    assert pipeline_evidence.list_pipeline_runs(name, root)[0]["experiment"] == name
+    assert pipeline_evidence.list_pipeline_runs("other", root) == []
 
 
 def test_checkpoint_mid_run_resumes_record_level(tmp_path, monkeypatch):
@@ -1295,7 +1298,7 @@ def test_list_pipeline_runs_summarizes_states(tmp_path, monkeypatch):
                            "status": "completed",
                            "runDirectory": "/gone/extract"}}}))
 
-    rows = tasks.list_pipeline_runs(name, root)
+    rows = pipeline_evidence.list_pipeline_runs(name, root)
     assert len(rows) == 3
     by_disposition = {}
     for row in rows:
@@ -1569,7 +1572,7 @@ def test_forward_ref_resolves_against_the_promotion_birth_certificate(
     run_dir = os.path.join(root, "runs", "20260718T000003000-exp-chain-run")
     os.makedirs(run_dir, exist_ok=True)
 
-    tasks._resolve_manifest_forward_refs(manifest, run_dir, root,
+    forward_resolution.resolve_manifest_forward_refs(manifest, run_dir, root,
                                          lambda *_: None)
     (vc,) = manifest.variant_conditions
     assert vc.from_promotion is None
@@ -1594,7 +1597,7 @@ def test_forward_ref_refuses_without_a_matching_agent(tmp_path):
     run_dir = os.path.join(root, "runs", "20260718T000003000-exp-chain-run")
     os.makedirs(run_dir, exist_ok=True)
     with pytest.raises(ValueError, match="no sweep selection evidence"):
-        tasks._resolve_manifest_forward_refs(manifest, run_dir, root,
+        forward_resolution.resolve_manifest_forward_refs(manifest, run_dir, root,
                                              lambda *_: None)
 
     # Evidence exists but the only agent was promoted from a DIFFERENT
@@ -1608,7 +1611,7 @@ def test_forward_ref_refuses_without_a_matching_agent(tmp_path):
                             "20260718T000003000-exp-chain-run")
     os.makedirs(run_dir2, exist_ok=True)
     with pytest.raises(ValueError, match="no promoted agent matches"):
-        tasks._resolve_manifest_forward_refs(manifest2, run_dir2, root2,
+        forward_resolution.resolve_manifest_forward_refs(manifest2, run_dir2, root2,
                                              lambda *_: None)
 
 
@@ -1703,7 +1706,7 @@ def test_ledger_pins_beat_ambient_catalog_state(tmp_path):
     pins = {"fear": {"path": pinned, "hash": pinned_hash,
                      "sweepRun": sweep_run,
                      "winningCell": {"layer": 2, "alpha": 4.0}}}
-    tasks._resolve_manifest_forward_refs(manifest, run_dir, root,
+    forward_resolution.resolve_manifest_forward_refs(manifest, run_dir, root,
                                          lambda *_: None, ledger_pins=pins)
     (vc,) = manifest.variant_conditions
     assert vc.artifact_hash == pinned_hash
@@ -1728,7 +1731,7 @@ def test_resume_reuses_the_recorded_resolution_never_recatalogs(tmp_path):
     runs = os.path.join(root, "runs")
     run_dir = os.path.join(runs, "20260718T000003000-exp-chain-run")
     os.makedirs(run_dir, exist_ok=True)
-    tasks._resolve_manifest_forward_refs(manifest, run_dir, root,
+    forward_resolution.resolve_manifest_forward_refs(manifest, run_dir, root,
                                          lambda *_: None)
     record = json.load(open(os.path.join(run_dir,
                                          "forward-resolutions.json")))
@@ -1743,7 +1746,7 @@ def test_resume_reuses_the_recorded_resolution_never_recatalogs(tmp_path):
                  "winningCell": {"layer": 3, "alpha": 8.0}}}))
 
     resumed = Manifest.load(name, root)
-    tasks._resolve_manifest_forward_refs(resumed, run_dir, root,
+    forward_resolution.resolve_manifest_forward_refs(resumed, run_dir, root,
                                          lambda *_: None)
     (vc,) = resumed.variant_conditions
     # The RECORDED agent, not the newer evidence's.
@@ -1755,7 +1758,7 @@ def test_resume_reuses_the_recorded_resolution_never_recatalogs(tmp_path):
         handle.write(" ")
     tampered = Manifest.load(name, root)
     with pytest.raises(ValueError, match="changed since it was pinned"):
-        tasks._resolve_manifest_forward_refs(tampered, run_dir, root,
+        forward_resolution.resolve_manifest_forward_refs(tampered, run_dir, root,
                                              lambda *_: None)
 
 
@@ -1781,7 +1784,7 @@ def test_resolution_verifies_the_agent_embodies_its_cell(tmp_path):
     run_dir = os.path.join(runs, "20260718T000003000-exp-chain-run")
     os.makedirs(run_dir, exist_ok=True)
     with pytest.raises(ValueError, match="does not embody"):
-        tasks._resolve_manifest_forward_refs(manifest, run_dir, root,
+        forward_resolution.resolve_manifest_forward_refs(manifest, run_dir, root,
                                              lambda *_: None)
     # Wrong base model refuses too.
     _write(os.path.join(variant_dir, "chain-fear-agent.json"), json.dumps({
@@ -1793,7 +1796,7 @@ def test_resolution_verifies_the_agent_embodies_its_cell(tmp_path):
                       "winningCell": {"layer": 2, "alpha": 4.0}}}))
     fresh = Manifest.load(name, root)
     with pytest.raises(ValueError, match="not the study model"):
-        tasks._resolve_manifest_forward_refs(fresh, run_dir, root,
+        forward_resolution.resolve_manifest_forward_refs(fresh, run_dir, root,
                                              lambda *_: None)
 
 
@@ -1809,11 +1812,11 @@ def test_chain_mode_refuses_missing_ledger_pins(tmp_path):
     run_dir = os.path.join(root, "runs", "20260718T000003000-exp-chain-run")
     os.makedirs(run_dir, exist_ok=True)
     with pytest.raises(ValueError, match="no promote pin"):
-        tasks._resolve_manifest_forward_refs(manifest, run_dir, root,
+        forward_resolution.resolve_manifest_forward_refs(manifest, run_dir, root,
                                              lambda *_: None, ledger_pins={})
     # Standalone (None) still resolves via the catalog.
     fresh = Manifest.load(name, root)
-    tasks._resolve_manifest_forward_refs(fresh, run_dir, root,
+    forward_resolution.resolve_manifest_forward_refs(fresh, run_dir, root,
                                          lambda *_: None, ledger_pins=None)
     assert fresh.variant_conditions[0].artifact_hash
 
@@ -1838,7 +1841,7 @@ def test_partial_pins_and_foreign_records_fail_closed(tmp_path):
     def attempt(pin, match):
         fresh = Manifest.load(name, root)
         with pytest.raises(ValueError, match=match):
-            tasks._resolve_manifest_forward_refs(
+            forward_resolution.resolve_manifest_forward_refs(
                 fresh, run_dir, root, lambda *_: None,
                 ledger_pins={"fear": pin})
 
@@ -1866,19 +1869,19 @@ def test_partial_pins_and_foreign_records_fail_closed(tmp_path):
                  "resolutions": [row]})
     fresh = Manifest.load(name, root)
     with pytest.raises(ValueError, match="belongs to experiment"):
-        tasks._resolve_manifest_forward_refs(fresh, run_dir, root,
+        forward_resolution.resolve_manifest_forward_refs(fresh, run_dir, root,
                                              lambda *_: None)
     seed_record({"schema": 1, "experiment": name,
                  "resolutions": [row, row]})
     fresh = Manifest.load(name, root)
     with pytest.raises(ValueError, match="duplicate condition"):
-        tasks._resolve_manifest_forward_refs(fresh, run_dir, root,
+        forward_resolution.resolve_manifest_forward_refs(fresh, run_dir, root,
                                              lambda *_: None)
     seed_record({"schema": 1, "experiment": name,
                  "resolutions": [{**row, "concept": "other"}]})
     fresh = Manifest.load(name, root)
     with pytest.raises(ValueError, match="resolves concept"):
-        tasks._resolve_manifest_forward_refs(fresh, run_dir, root,
+        forward_resolution.resolve_manifest_forward_refs(fresh, run_dir, root,
                                              lambda *_: None)
 
 
@@ -1948,7 +1951,7 @@ def _acquiring_stage(calls, root, label="extract"):
     model provider."""
     def stage(name, r=None, dtype="auto", device=None, **kwargs):
         manifest = Manifest.load(name, r or root)
-        with tasks._acquire_model(manifest, dtype, device,
+        with model_resources.acquire_model(manifest, dtype, device,
                                   kwargs.get("model_provider")):
             calls.append(label)
         run_dir = os.path.join(root, "runs", f"20260726T000000000-exp-{label}")
@@ -2034,10 +2037,13 @@ def _drift_fixture(tmp_path, *, live_revision=None, snapshot_revision="a" * 40):
 
 def test_continuation_restores_the_clobbered_revision_pin(tmp_path):
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.forward_resolution as forward_resolution
+    import steerlab_server.experiment.model_resources as model_resources
+    import steerlab_server.experiment.pipeline_evidence as pipeline_evidence
     from steerlab_server.experiment.manifest import Manifest
     root, live, ledger = _drift_fixture(tmp_path)
     logs = []
-    manifest, live_hash, restored = tasks._restore_self_pinned_revision(
+    manifest, live_hash, restored = pipeline_evidence.restore_self_pinned_revision(
         "drift", live, ledger, root, logs.append)
     assert restored is True
     assert live_hash == ledger["experimentHash"]
@@ -2048,8 +2054,11 @@ def test_continuation_restores_the_clobbered_revision_pin(tmp_path):
 
 def test_continuation_does_not_invent_a_pin_over_real_drift(tmp_path):
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.forward_resolution as forward_resolution
+    import steerlab_server.experiment.model_resources as model_resources
+    import steerlab_server.experiment.pipeline_evidence as pipeline_evidence
     root, live, ledger = _drift_fixture(tmp_path, live_revision="b" * 40)
-    manifest, live_hash, restored = tasks._restore_self_pinned_revision(
+    manifest, live_hash, restored = pipeline_evidence.restore_self_pinned_revision(
         "drift", live, ledger, root, lambda *_: None)
     assert restored is False
     assert live_hash != ledger["experimentHash"]
@@ -2058,10 +2067,13 @@ def test_continuation_does_not_invent_a_pin_over_real_drift(tmp_path):
 def test_drift_stamp_lands_in_the_pipeline_ledger(tmp_path):
     import json, os
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.forward_resolution as forward_resolution
+    import steerlab_server.experiment.model_resources as model_resources
+    import steerlab_server.experiment.pipeline_evidence as pipeline_evidence
     pdir = str(tmp_path)
     with open(os.path.join(pdir, "pipeline.json"), "w") as handle:
         json.dump({"experimentHash": "aaa"}, handle)
-    tasks._stamp_pipeline_drift(pdir, {"experimentHash": "aaa"}, "bbb")
+    pipeline_evidence.stamp_pipeline_drift(pdir, {"experimentHash": "aaa"}, "bbb")
     on_disk = json.load(open(os.path.join(pdir, "pipeline.json")))
     assert on_disk["epochDriftAtContinuation"] == [
         {"ledgerHash": "aaa", "liveHash": "bbb"}]

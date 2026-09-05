@@ -44,6 +44,7 @@ import torch
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import logprob as logprob_mod
 from steerlab_server.experiment import prompt_render, tasks
+import steerlab_server.experiment.task_inputs as task_inputs
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.steering.vector_store import ConceptVectors
 
@@ -187,7 +188,7 @@ def test_load_prompts_derives_display_text_and_normalizes(tmp_path):
     path = str(tmp_path / "items.jsonl")
     _write(path, json.dumps({"id": "m1", "transcript": TRANSCRIPT,
                              "options": ["yes", "no"], "target": "yes"}) + "\n")
-    prompts = tasks._load_prompts(_manifest(taskPromptsFile=path), None,
+    prompts = task_inputs.load_prompts(_manifest(taskPromptsFile=path), None,
                                   str(tmp_path))
     (prompt,) = prompts
     # Display text derives from the final user turn; text/prompt is optional.
@@ -203,14 +204,14 @@ def test_load_prompts_refuses_schema_violations_with_contract_message(tmp_path):
     bad = [{"role": "user", "content": "Q"}, {"role": "assistant", "content": "A"}]
     _write(path, json.dumps({"id": "bad-1", "transcript": bad}) + "\n")
     with pytest.raises(RuntimeError, match="assistant-prefix continuation is out of scope"):
-        tasks._load_prompts(_manifest(taskPromptsFile=path), None, str(tmp_path))
+        task_inputs.load_prompts(_manifest(taskPromptsFile=path), None, str(tmp_path))
 
 
 def test_explicit_text_wins_over_derived_display_text(tmp_path):
     path = str(tmp_path / "items.jsonl")
     _write(path, json.dumps({"id": "m1", "text": "custom display",
                              "transcript": TRANSCRIPT}) + "\n")
-    prompts = tasks._load_prompts(_manifest(taskPromptsFile=path), None,
+    prompts = task_inputs.load_prompts(_manifest(taskPromptsFile=path), None,
                                   str(tmp_path))
     assert prompts[0]["prompt"] == "custom display"
 
@@ -224,7 +225,7 @@ def test_run_start_refuses_family_incompatible_transcripts():
                     {"role": "user", "content": "Q?"}])}]
     manifest = _manifest(model_id="mlx-community/gemma-3-12b-it-8bit")
     with pytest.raises(RuntimeError) as excinfo:
-        tasks._check_transcript_prompts(manifest, prompts)
+        task_inputs.check_transcript_prompts(manifest, prompts)
     message = str(excinfo.value)
     assert "scripted transcripts are incompatible" in message
     assert "item 'g1'" in message
@@ -237,15 +238,15 @@ def test_run_start_refuses_raw_completion_with_transcripts():
     manifest = _manifest(promptMode="rawCompletion")
     with pytest.raises(RuntimeError,
                        match="render through the chat template by definition"):
-        tasks._check_transcript_prompts(manifest, prompts)
+        task_inputs.check_transcript_prompts(manifest, prompts)
 
 
 def test_run_start_gate_passes_compatible_transcripts():
     prompts = [{"id": "m1", "prompt": "d",
                 "transcript": prompt_render.normalize_transcript(TRANSCRIPT)}]
-    tasks._check_transcript_prompts(
+    task_inputs.check_transcript_prompts(
         _manifest(model_id="mlx-community/gemma-3-12b-it-8bit"), prompts)
-    tasks._check_transcript_prompts(_manifest(), prompts)
+    task_inputs.check_transcript_prompts(_manifest(), prompts)
 
 
 # --- verify()/freeze gate ------------------------------------------------------
@@ -311,7 +312,7 @@ OPTIONS = ["yes", "no"]
 
 
 def _fake_bundle():
-    return tasks.ConceptVectorBundle(
+    return _owner_vector_materialization.ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[1.0, 0.0]] * 4),
         residual_norm_per_layer=[1.0] * 4,
         residual_norm_source="test", stimulus_hash="h")
@@ -378,7 +379,7 @@ def _run_transcript_study(tmp_path, monkeypatch):
     root = str(tmp_path)
     prompts = _transcript_study(root, "meta1")
     log = []
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_generate, 'generate', _fake_generate(log))
     monkeypatch.setattr(logprob_mod, "score_options", _fake_score_options(log))
@@ -431,7 +432,7 @@ def test_raw_completion_variant_condition_refuses_transcripts(tmp_path, monkeypa
                      "alphaInNormUnits": False, "injections": [],
                      "adapters": []}}]
     es.save_raw(raw, root)
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda *a: {})
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all', lambda *a: {})
     log = []
     monkeypatch.setattr(_owner_generate, 'generate', _fake_generate(log))
     prompts = os.path.join(root, "prompts", "tasks", "items.jsonl")

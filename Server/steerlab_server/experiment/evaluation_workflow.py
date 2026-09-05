@@ -8,20 +8,20 @@ import os
 from contextlib import ExitStack
 from typing import Callable
 from . import lifecycle_gates, paths
-from . import deferred_evaluation as _dep_deferred_evaluation
-from . import evaluation_evidence as _dep_evaluation_evidence
-from . import judge_dispatch as _dep_judge_dispatch
-from . import judge_resources as _dep_judge_resources
-from . import manifest as _dep_manifest
-from . import rubric_inputs as _dep_rubric_inputs
-from . import run_artifacts as _dep_run_artifacts
-from . import run_config as _dep_run_config
-from . import run_status as _dep_run_status
-from . import study_admission as _dep_study_admission
-from . import task_inputs as _dep_task_inputs
+from . import deferred_evaluation
+from . import evaluation_evidence
+from . import judge_dispatch
+from . import judge_resources
+from . import manifest as manifest_module
+from . import rubric_inputs
+from . import run_artifacts
+from . import run_config
+from . import run_status
+from . import study_admission
+from . import task_inputs
 
 
-def _evaluate_response_coding(name: str, manifest: _dep_manifest.Manifest, schema,
+def _evaluate_response_coding(name: str, manifest: manifest_module.Manifest, schema,
                               run_dir: str, generations: list[dict],
                               rubric_hash: str | None,
                               rubric_file: str | None, roster,
@@ -76,7 +76,7 @@ def _evaluate_response_coding(name: str, manifest: _dep_manifest.Manifest, schem
         notes["epochUnverified"] = True
     if sampling is not None:
         notes["sampling"] = sampling
-    _dep_run_config.write_run_config(out, "evaluate", model_id=manifest.model_id,
+    run_config.write_run_config(out, "evaluate", model_id=manifest.model_id,
                      revision=manifest.model_revision, experiment=name,
                      experiment_hash=manifest.content_hash(),
                      notes=notes or None)
@@ -84,7 +84,7 @@ def _evaluate_response_coding(name: str, manifest: _dep_manifest.Manifest, schem
         with open(os.path.join(out, "exclusions.json"), "w",
                   encoding="utf-8") as handle:
             json.dump(exclusion_stamp, handle, indent=2, sort_keys=True)
-    status = _dep_run_status.RunStatus(out, stage="evaluate", experiment=name,
+    status = run_status.RunStatus(out, stage="evaluate", experiment=name,
                        source_run=os.path.basename(run_dir),
                        expected=[ref.name for ref in roster],
                        item_label="coding")
@@ -108,7 +108,7 @@ def _evaluate_response_coding(name: str, manifest: _dep_manifest.Manifest, schem
                 # and the release seam below frees the finished column's
                 # container BEFORE this one loads, so two judge models are
                 # never resident at once.
-                _dep_judge_resources._release_models_for_judge(
+                judge_resources.release_models_for_judge(
                     model_release, roster, index,
                     study_model=manifest.model_id,
                     study_revision=manifest.model_revision,
@@ -116,7 +116,7 @@ def _evaluate_response_coding(name: str, manifest: _dep_manifest.Manifest, schem
                     study_model_generates_later=study_model_generates_later,
                     _log=_log)
                 with ExitStack() as judge_stack:
-                    complete_fn, requested_model, holder = _dep_judge_resources._coder_callable(
+                    complete_fn, requested_model, holder = judge_resources.coder_callable(
                         ref, model_provider, study_model=manifest.model_id,
                         study_revision=manifest.model_revision,
                         stack=judge_stack)
@@ -352,7 +352,7 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
     # must refuse without touching the workspace.
     subsample = evaluate_subsample.resolve_request(
         sample_per_condition, sample_seed, program="steerlab-server")
-    manifest = _dep_manifest.Manifest.load(name, root)
+    manifest = manifest_module.Manifest.load(name, root)
     # …then the DECLARATION, which the wire fields and the flags are both
     # checked against. `program` is the CLIENT's: this engine executes a
     # design, it never authors one, so a repair that named `steerlab-server
@@ -386,22 +386,22 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
             f"experiment '{name}' has no pairedJudge evaluation configured "
             "— pin at least one judge and a rubric, or declare an "
             "evaluation block",
-            repair=_dep_rubric_inputs.no_rubric_repair(name))
+            repair=rubric_inputs.no_rubric_repair(name))
     if evaluation_source == "pinnedRubric":
         _log("evaluation: no explicit evaluation block — judging from the "
              "pinned judges + rubric file (evaluationSource: pinnedRubric)")
 
-    rubric, rubric_hash, rubric_file = _dep_rubric_inputs._resolve_rubric(manifest, root, _log)
-    human = _dep_evaluation_evidence._load_human_validation(manifest, root) if manifest.human_validation else None
+    rubric, rubric_hash, rubric_file = rubric_inputs.resolve_rubric(manifest, root, _log)
+    human = evaluation_evidence.load_human_validation(manifest, root) if manifest.human_validation else None
 
-    run_dir = source_run or _dep_run_artifacts._latest_run(name, root)
+    run_dir = source_run or run_artifacts.latest_run(name, root)
     if not run_dir:
         raise lifecycle_gates.refusing(
             lifecycle_gates.MISSING_PREREQUISITE,
             f"no prior run with generations found for '{name}' — run it first",
             repair=(f"steerlab-server experiment run {name} && "
                     f"steerlab-server experiment analyze {name}"))
-    epoch_unverified, measurement_drift = _dep_study_admission._require_source_epoch(
+    epoch_unverified, measurement_drift = study_admission.require_source_epoch(
         "evaluate", name, manifest, run_dir,
         allow_unverified_epoch=allow_unverified_epoch)
     if measurement_drift:
@@ -447,7 +447,7 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
                     exclusions_mod.PIN_REQUIRED_MESSAGE,
                     repair=exclusions_mod.PIN_REQUIRED_REPAIR)
             checks = exclusions_mod.attention_checks(
-                _dep_task_inputs.load_prompts(manifest, None, root))
+                task_inputs.load_prompts(manifest, None, root))
             if not checks:
                 raise RuntimeError(exclusions_mod.NO_CHECKS_MESSAGE)
         generations, exclusion_stamp = exclusions_mod.apply(
@@ -460,7 +460,7 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
              + ", ".join(f"{c}={n}" for c, n
                          in exclusion_stamp["survivingN"].items()))
 
-    roster = _dep_judge_dispatch._judge_roster(manifest, spec)
+    roster = judge_dispatch.judge_roster(manifest, spec)
     # Local-judge resolution, logged at evaluate START (cross-engine rule,
     # unified with the sweep 2026-07-22 — the judge's NAME is a label, never
     # a model id): empty/absent model → the study model; a different-model
@@ -497,7 +497,7 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
     # two honest arithmetics.
     sequential_custody = model_release is not None
     if not defer_local_judges and max_loaded is not None and foreign_local:
-        required = _dep_judge_resources.judge_slots_required(
+        required = judge_resources.judge_slots_required(
             roster, study_model=manifest.model_id,
             study_revision=manifest.model_revision,
             study_dtype=manifest.dtype,
@@ -506,7 +506,7 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
         if required > max_loaded:
             named = ", ".join(
                 f"'{ref.name}' ("
-                + _dep_judge_resources._identity_text(_dep_judge_resources.judge_model_identity(
+                + judge_resources.identity_text(judge_resources.judge_model_identity(
                     ref, study_model=manifest.model_id,
                     study_revision=manifest.model_revision,
                     study_dtype=manifest.dtype), quoted=False)
@@ -531,11 +531,11 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
     # the inline/deferred fork used to be discoverable only from the
     # artifacts afterwards, and a mixed panel deferring despite a pushed key
     # is the case that surprises people.
-    _dep_judge_resources.log_judging_custody(roster, _log)
+    judge_resources.log_judging_custody(roster, _log)
     # Provider pins are checked against OpenRouter's public catalogue BEFORE
     # any judging starts (2026-07-24) — a wrong provider used to surface at
     # the first judge call, after generation had already been paid for.
-    _dep_judge_dispatch._preflight_openrouter_judges(roster, _log)
+    judge_dispatch.preflight_openrouter_judges(roster, _log)
     # Per-response coding fork (2026-08-04): a rubric whose frontmatter
     # declares `mode: perResponseCoding` runs the coding instrument — every
     # sampled-text record coded individually, blinded, no pairing and no
@@ -561,7 +561,7 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
                 "per-response coding does not support --resume-from yet — "
                 "re-run the evaluation in one session")
         if (defer_local_judges and foreign_local) \
-                or _dep_judge_resources._missing_external_credentials(roster):
+                or judge_resources.missing_external_credentials(roster):
             raise RuntimeError(
                 "per-response coding judges inline only for now — deferred "
                 "judging packets for the coding instrument are not "
@@ -608,7 +608,7 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
                 "all-local panel (fans out per judge model) or an "
                 "all-external panel (judges inline/deferred), or run "
                 "evaluate outside the pipeline")
-        return _dep_deferred_evaluation._emit_evaluate_judging(
+        return deferred_evaluation.emit_evaluate_judging(
             name, manifest, spec, run_dir, generations, rubric, rubric_hash,
             rubric_file, root, epoch_unverified, measurement_drift, _log,
             exclusion_stamp=exclusion_stamp,
@@ -618,7 +618,7 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
     # blinded, hash-pinned packets the Mac judges; complete-judgment
     # verifies and aggregates. Split local/external panels refuse (two
     # evidence times for one report), exactly the sweep rule.
-    missing = _dep_judge_resources._missing_external_credentials(roster)
+    missing = judge_resources.missing_external_credentials(roster)
     if missing:
         if any(ref.kind == "local" for ref in roster):
             raise RuntimeError(
@@ -629,7 +629,7 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
                 "custody posture): a split panel cannot defer coherently. "
                 "Pin an all-local or all-external panel, or push a judge "
                 "key from the app for inline external judging")
-        return _dep_deferred_evaluation._emit_evaluate_judging(
+        return deferred_evaluation.emit_evaluate_judging(
             name, manifest, spec, run_dir, generations, rubric, rubric_hash,
             rubric_file, root, epoch_unverified, measurement_drift, _log,
             exclusion_stamp=exclusion_stamp,
@@ -642,11 +642,11 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
     # left the researcher with an error message and nothing on disk. A
     # partial directory is marked by run-status.json and the ABSENCE of
     # judge-report.json — a partial panel is never summarized as a report.
-    context = _dep_evaluation_evidence._judging_context(manifest, spec, run_dir, rubric_hash,
+    context = evaluation_evidence.judging_context(manifest, spec, run_dir, rubric_hash,
                                rubric_file, roster)
     resumable: dict = {}
     if resume_from:
-        resumable = _dep_evaluation_evidence._load_resumable_judgments(
+        resumable = evaluation_evidence.load_resumable_judgments(
             name, resume_from, root, context, _log)
         if resumable:
             # Honest about WHEN, not just what (2026-07-24). A resumed
@@ -663,13 +663,13 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
                      "stamps this as a multi-session evaluation")
 
     out = paths.make_unique_run_directory(f"exp-{name}-evaluate", root)
-    _dep_run_config.write_run_config(out, "evaluate", model_id=manifest.model_id,
+    run_config.write_run_config(out, "evaluate", model_id=manifest.model_id,
                      revision=manifest.model_revision, experiment=name,
                      experiment_hash=manifest.content_hash(),
                      notes={"epochUnverified": True} if epoch_unverified else None)
     # The pins THIS run judges under, written before the first judge call so
     # a later targeted retry can prove it is completing the same evaluation.
-    with open(os.path.join(out, _dep_evaluation_evidence.JUDGING_CONTEXT_FILENAME), "w",
+    with open(os.path.join(out, evaluation_evidence.JUDGING_CONTEXT_FILENAME), "w",
               encoding="utf-8") as handle:
         json.dump(context, handle, indent=2, sort_keys=True)
     if exclusion_stamp is not None:
@@ -678,7 +678,7 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
         with open(os.path.join(out, "exclusions.json"), "w",
                   encoding="utf-8") as handle:
             json.dump(exclusion_stamp, handle, indent=2, sort_keys=True)
-    status = _dep_run_status.RunStatus(out, stage="evaluate", experiment=name,
+    status = run_status.RunStatus(out, stage="evaluate", experiment=name,
                        source_run=os.path.basename(run_dir),
                        expected=[ref.name for ref in roster])
     status.write()
@@ -696,7 +696,7 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
                 # column's container BEFORE this one loads, so two judge
                 # models are never resident at once — the guarantee the
                 # single-slot rule used to buy by refusing instead.
-                _dep_judge_resources._release_models_for_judge(
+                judge_resources.release_models_for_judge(
                     model_release, roster, index,
                     study_model=manifest.model_id,
                     study_revision=manifest.model_revision,
@@ -704,13 +704,13 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
                     study_model_generates_later=study_model_generates_later,
                     _log=_log)
                 with ExitStack() as judge_stack:
-                    judge_fn, requested_model, holder = _dep_judge_resources._judge_callable(
+                    judge_fn, requested_model, holder = judge_resources.judge_callable(
                         ref, model_provider, study_model=manifest.model_id,
                         study_revision=manifest.model_revision,
                         stack=judge_stack)
 
                     def _persist(judgment, _ref=ref, _handle=judgments_handle):
-                        _dep_evaluation_evidence._judgment_stamp_judge(judgment, _ref)
+                        evaluation_evidence.judgment_stamp_judge(judgment, _ref)
                         # Flushed per row: a killed worker (SIGKILL, node
                         # eviction) still leaves every judgment it finished.
                         _handle.write(json.dumps(judgment) + "\n")
@@ -736,7 +736,7 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
                     all_judgments.extend(judgments)
                     outcome_maps.append(
                         (ref.name,
-                         {_dep_evaluation_evidence._judgment_key(j): j["outcome"] for j in judgments
+                         {evaluation_evidence.judgment_key(j): j["outcome"] for j in judgments
                           if not j.get("noncompliant")}))
                     status.note_judge_complete(ref.name)
                     block = {
@@ -846,7 +846,7 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
         "sourceRun": os.path.basename(run_dir),
         "rubricFile": rubric_file, "rubricHash": rubric_hash,
         "judges": judge_blocks,
-        "agreement": _dep_evaluation_evidence._agreement_entries(outcome_maps),
+        "agreement": evaluation_evidence.agreement_entries(outcome_maps),
         "pairs": judge_blocks[0]["pairs"] if judge_blocks else 0,
         # Legacy single-judge keys (first judge) so existing readers keep
         # working; per-judge truth lives in "judges".
@@ -915,8 +915,8 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
             {"judge": entry["judges"][1], "n": entry["n"],
              "percentAgreement": entry["percentAgreement"],
              "kappa": entry["kappa"]}
-            for entry in _dep_evaluation_evidence._agreement_entries(
-                [("human", _dep_evaluation_evidence._materialize_human_validation(human, outcome_maps))]
+            for entry in evaluation_evidence.agreement_entries(
+                [("human", evaluation_evidence.materialize_human_validation(human, outcome_maps))]
                 + outcome_maps)
             if entry["judges"][0] == "human"]
 

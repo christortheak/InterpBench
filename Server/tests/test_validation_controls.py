@@ -22,6 +22,8 @@ import pytest
 
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.layer_resolution as layer_resolution
+import steerlab_server.experiment.validation_workflow as validation_workflow
 from steerlab_server.experiment.manifest import Manifest
 
 
@@ -61,7 +63,7 @@ def test_undeclared_concepts_on_disk_are_named(tmp_path):
     _concept(root, "golden-gate", "bridge", "tunnel")
     _concept(root, "hungry", "starving", "full")
 
-    advisories = tasks._undeclared_control_advisories(manifest, root)
+    advisories = validation_workflow._undeclared_control_advisories(manifest, root)
     assert len(advisories) == 1
     assert "golden-gate" in advisories[0]
     assert "hungry" in advisories[0]
@@ -79,7 +81,7 @@ def test_a_declared_control_is_not_reported_as_undeclared(tmp_path):
         {"concept": "golden-gate",
          "stimulusSetHash": _stimulus_hash(root, "golden-gate"),
          "options": {"method": "meanDifference"}}])
-    assert tasks._undeclared_control_advisories(manifest, root) == []
+    assert validation_workflow._undeclared_control_advisories(manifest, root) == []
 
 
 # --- the pin is enforced -----------------------------------------------------
@@ -93,7 +95,7 @@ def test_a_drifted_control_stimulus_set_refuses(tmp_path):
          "options": {"method": "meanDifference"}}])
 
     with pytest.raises(RuntimeError, match="drifted from its pin"):
-        tasks._extract_validation_controls(
+        validation_workflow._extract_validation_controls(
             object(), manifest, root, lambda *a: None)
 
 
@@ -104,7 +106,7 @@ def test_a_missing_control_stimulus_set_refuses(tmp_path):
          "options": {"method": "meanDifference"}}])
 
     with pytest.raises(RuntimeError, match="pinned inputs, not best-effort"):
-        tasks._extract_validation_controls(
+        validation_workflow._extract_validation_controls(
             object(), manifest, root, lambda *a: None)
 
 
@@ -118,14 +120,14 @@ def test_a_control_from_a_different_revision_refuses(tmp_path):
          "modelRevision": "different"}])
 
     with pytest.raises(RuntimeError, match="not comparable"):
-        tasks._extract_validation_controls(
+        validation_workflow._extract_validation_controls(
             object(), manifest, root, lambda *a: None)
 
 
 def test_no_controls_declared_extracts_nothing(tmp_path):
     root = str(tmp_path)
     manifest = _study(root)
-    assert tasks._extract_validation_controls(
+    assert validation_workflow._extract_validation_controls(
         object(), manifest, root, lambda *a: None) == {}
 
 
@@ -164,7 +166,7 @@ def test_each_control_is_extracted_with_its_own_options(tmp_path, monkeypatch):
             reading_position_resolution=None)
 
     monkeypatch.setattr(_owner_steerlab_server_steering_extractor, 'extract', fake_extract)
-    out = tasks._extract_validation_controls(
+    out = validation_workflow._extract_validation_controls(
         object(), manifest, root, lambda *a: None)
 
     assert set(out) == {"golden-gate", "hungry"}
@@ -204,7 +206,7 @@ def test_a_control_without_a_pinned_hash_refuses(tmp_path):
     manifest = _study(root, controls=[
         {"concept": "golden-gate", "options": {"method": "meanDifference"}}])
     with pytest.raises(RuntimeError, match="no stimulusSetHash"):
-        tasks._extract_validation_controls(
+        validation_workflow._extract_validation_controls(
             object(), manifest, root, lambda *a: None)
 
 
@@ -217,7 +219,7 @@ def test_a_control_without_options_refuses(tmp_path):
         {"concept": "golden-gate",
          "stimulusSetHash": _stimulus_hash(root, "golden-gate")}])
     with pytest.raises(RuntimeError, match="no extraction options"):
-        tasks._extract_validation_controls(
+        validation_workflow._extract_validation_controls(
             object(), manifest, root, lambda *a: None)
 
 
@@ -232,7 +234,7 @@ def test_a_per_control_validation_layer_refuses(tmp_path):
          "options": {"method": "meanDifference"},
          "validationLayer": 12}])
     with pytest.raises(RuntimeError, match="nothing reads"):
-        tasks._extract_validation_controls(
+        validation_workflow._extract_validation_controls(
             object(), manifest, root, lambda *a: None)
 
 
@@ -249,7 +251,7 @@ def test_the_matrix_layer_follows_the_declared_study_layer(tmp_path):
     from steerlab_server.experiment.manifest import Manifest
     m = Manifest.from_dict({"name": "x", "modelID": "org/m",
                             "validationLayer": 41})
-    assert tasks._matrix_layers(m, _bundles()) == [41]
+    assert layer_resolution.matrix_layers(m, _bundles()) == [41]
 
 
 def test_the_matrix_layer_ignores_per_concept_condition_layers(tmp_path):
@@ -262,7 +264,7 @@ def test_the_matrix_layer_ignores_per_concept_condition_layers(tmp_path):
         "conditions": [{"name": "c", "slots": [
             {"concept": "fear", "layer": 7, "alpha": 0.1}]}]})
     # Mid-network canonical fallback, not the condition's 7.
-    assert tasks._matrix_layers(m, _bundles()) == [31]
+    assert layer_resolution.matrix_layers(m, _bundles()) == [31]
 
 
 def test_an_out_of_range_declared_layer_refuses_rather_than_clamping(tmp_path):

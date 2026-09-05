@@ -7,21 +7,21 @@ from typing import Callable
 from . import lifecycle_gates, paths
 from . import resume as resume_mod
 from . import sharding as sharding_mod
-from . import cancellation as _dep_cancellation
-from . import choice_scoring as _dep_choice_scoring
-from . import condition_execution as _dep_condition_execution
-from . import execution_reporting as _dep_execution_reporting
-from . import forward_resolution as _dep_forward_resolution
-from . import manifest as _dep_manifest
-from . import model_resources as _dep_model_resources
-from . import panel_workflow as _dep_panel_workflow
-from . import run_artifacts as _dep_run_artifacts
-from . import run_preflight as _dep_run_preflight
-from . import run_readouts as _dep_run_readouts
-from . import run_reporting as _dep_run_reporting
-from . import study_admission as _dep_study_admission
-from . import task_inputs as _dep_task_inputs
-from . import vector_materialization as _dep_vector_materialization
+from . import cancellation
+from . import choice_scoring
+from . import condition_execution
+from . import execution_reporting
+from . import forward_resolution
+from . import manifest as manifest_module
+from . import model_resources
+from . import panel_workflow
+from . import run_artifacts
+from . import run_preflight
+from . import run_readouts
+from . import run_reporting
+from . import study_admission
+from . import task_inputs
+from . import vector_materialization
 
 
 def run(name: str, prompts_file: str | None = None, root: str | None = None,
@@ -43,12 +43,12 @@ def run(name: str, prompts_file: str | None = None, root: str | None = None,
     ``on_run_directory`` is called once with the chosen run directory so the
     submitter can persist its resume pointer before generation starts."""
     _log = log or print
-    manifest = _dep_manifest.Manifest.load(name, root)
-    _dep_study_admission._verify_or_warn(manifest, root)
+    manifest = manifest_module.Manifest.load(name, root)
+    study_admission.verify_or_warn(manifest, root)
     # SAE latent conditions (proposal r2 §8 P2-9): validate the declaration and
     # refuse the study kinds whose loop cannot arm one, BEFORE the model loads.
     # The modelOutput path materializes them inside _run_impl.
-    _dep_condition_execution._sae_latent_preflight(manifest, _log)
+    condition_execution.sae_latent_preflight(manifest, _log)
 
     # API multi-agent runs can use the server's resident model registry. CLI
     # runs keep the older single-loaded-model behavior by falling through.
@@ -79,16 +79,16 @@ def run(name: str, prompts_file: str | None = None, root: str | None = None,
         # said 4B spent the load attempting to fetch a 27B nobody would use,
         # and surfaced as a huggingface_hub traceback rather than as the
         # mismatch it was.
-        manifest = _dep_run_preflight._panel_load_model(manifest, root, _log)
+        manifest = run_preflight.panel_load_model(manifest, root, _log)
         # Preflight AFTER resolving the model, not before: it used to run
         # against the manifest's declared default, which no turn uses. On a
         # study whose default was a gated 27B that produced a 401 and a
         # skipped preflight — so the one check that could have sized the run
         # never looked at the 4B that actually ran.
-        _dep_run_preflight._scenario_preflight_or_warn(manifest, root, _log)
-        _dep_run_preflight._artifact_preflight(manifest, root, _log)
+        run_preflight.scenario_preflight_or_warn(manifest, root, _log)
+        run_preflight.artifact_preflight(manifest, root, _log)
         if model_provider is not None:
-            return _dep_panel_workflow._run_multi_agent_study(
+            return panel_workflow.run_multi_agent_study(
                 name, manifest, None, root, model_provider=model_provider,
                 log=_log, shard=shard, run_directory=run_directory,
                 on_run_directory=on_run_directory,
@@ -134,10 +134,10 @@ def run(name: str, prompts_file: str | None = None, root: str | None = None,
                 repair=("steerlab-cli experiment declare-condition "
                         f"{name} <arm> --slots <concept>:<layer>:<alpha>  "
                         "(authoring is Mac-authority)"))
-        _dep_run_preflight._token_preflight_or_warn(manifest, prompts_file, root, _log)
-        _dep_run_preflight._artifact_preflight(manifest, root, _log)
-        _dep_run_preflight._instrument_preflight(manifest, prompts_file, root, _log)
-        _dep_run_preflight._response_format_preflight(manifest, prompts_file, root)
+        run_preflight.token_preflight_or_warn(manifest, prompts_file, root, _log)
+        run_preflight.artifact_preflight(manifest, root, _log)
+        run_preflight.instrument_preflight(manifest, prompts_file, root, _log)
+        run_preflight.response_format_preflight(manifest, prompts_file, root)
 
     # THE RESUME/SHARD GATE, BEFORE THE MODEL (open-issues §16 repair 2).
     # Its inputs are three file reads on the run directory, and its refusals
@@ -155,20 +155,20 @@ def run(name: str, prompts_file: str | None = None, root: str | None = None,
     if run_directory is not None:
         _epoch_stable = bool(manifest.model_revision)
         if manifest.study_kind == "multiAgent":
-            _dep_run_preflight._panel_resume_admission(run_directory, manifest=manifest,
+            run_preflight.panel_resume_admission(run_directory, manifest=manifest,
                                     shard=shard,
                                     check_experiment_hash=_epoch_stable)
         else:
-            _dep_run_preflight._resume_admission(run_directory, name=name, manifest=manifest,
+            run_preflight.resume_admission(run_directory, name=name, manifest=manifest,
                               shard=shard,
                               check_experiment_hash=_epoch_stable)
 
-    with _dep_model_resources._acquire_model(manifest, dtype, device, model_provider) as model:
-        manifest = _dep_model_resources._pin_model_revision(name, manifest, model, root, _log)
+    with model_resources.acquire_model(manifest, dtype, device, model_provider) as model:
+        manifest = model_resources.pin_model_revision(name, manifest, model, root, _log)
         # Multi-agent studies branch to the scenario runner (parallel to Swift
         # runMultiAgentStudy) — task prompts and concept generations don't apply.
         if manifest.study_kind == "multiAgent":
-            return _dep_panel_workflow._run_multi_agent_study(
+            return panel_workflow.run_multi_agent_study(
                 name, manifest, model, root, log=_log, shard=shard,
                 run_directory=run_directory, on_run_directory=on_run_directory,
                 should_cancel=should_cancel, checkpoint=checkpoint)
@@ -201,7 +201,7 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     # and it re-checks the hash under the post-pinning manifest.
     resuming = run_directory is not None
     if resuming:
-        _dep_run_preflight._resume_admission(run_directory, name=name, manifest=manifest,
+        run_preflight.resume_admission(run_directory, name=name, manifest=manifest,
                           shard=shard)
 
     # Reasoning-style scoring rides on sampled text (no model access): loaded
@@ -213,8 +213,8 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     # Prompts load + transcript gates BEFORE extraction: a schema-invalid or
     # family-incompatible transcript (or rawCompletion+transcript) must fail
     # at run START, not after minutes of vector re-derivation.
-    prompts = _dep_task_inputs.load_prompts(manifest, prompts_file, root)
-    _dep_task_inputs.check_transcript_prompts(manifest, prompts)
+    prompts = task_inputs.load_prompts(manifest, prompts_file, root)
+    task_inputs.check_transcript_prompts(manifest, prompts)
     # Exclusion-rule preflight at run START (same rule as transcripts): a
     # malformed rule declaration, or failedAttentionCheck with no checked
     # items, refuses before any generation compute — the rules are joined at
@@ -226,12 +226,12 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     # choice. That is a silently WRONG measurement rather than a failure,
     # which is why it refuses rather than warns. Swift twin:
     # ExperimentTasks.checkResponseFormats.
-    _dep_task_inputs.check_response_formats(manifest, prompts)
+    task_inputs.check_response_formats(manifest, prompts)
     # Inert concept machinery is inert at RUN time too (2026-07-19): a
     # compare-agents study never re-derives carried concepts' vectors.
     from .manifest import concept_machinery_operative, inert_machinery_note
     machinery = concept_machinery_operative(manifest.raw)
-    bundles = _dep_vector_materialization._extract_all(model, manifest, root) if machinery else {}
+    bundles = vector_materialization.extract_all(model, manifest, root) if machinery else {}
     # LOUD when inert (2026-08-11): a legal agent-comparison run that
     # carries concepts/conditions it will not execute must say so at start
     # and stamp it — a baseline-only result that looks completed and
@@ -252,8 +252,8 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     # for the same reason: the manifest pins the RECIPE, the run re-derives the
     # intervention from the pinned source. Done BEFORE the run directory is
     # stamped so the pinned SAE repository commit can ride config.json.
-    _dep_condition_execution._sae_latent_preflight(manifest, _log)
-    latent_conditions = _dep_condition_execution._materialize_sae_latent_conditions(manifest, _log)
+    condition_execution.sae_latent_preflight(manifest, _log)
+    latent_conditions = condition_execution.materialize_sae_latent_conditions(manifest, _log)
     if run_directory is None:
         # Shard partials are visibly partial by name; the merge assembles the
         # plain exp-<name>-run directory from them.
@@ -262,7 +262,7 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
         run_directory = paths.make_unique_run_directory(slug, root)
     if on_run_directory is not None:
         on_run_directory(run_directory)
-    sampling = _dep_execution_reporting._sampling_metadata(model, manifest.temperature)
+    sampling = execution_reporting.sampling_metadata(model, manifest.temperature)
     if not resuming:
         # A resumed run keeps its original stamps (config.json's createdAt is
         # the run's birth, and vectors re-derive to identical bytes anyway).
@@ -284,22 +284,22 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
         if latent_conditions:
             run_notes["saeLatentConditions"] = [
                 provenance for _spec, _edit, provenance in latent_conditions]
-        _dep_run_artifacts._write_config_snapshot(manifest, run_directory, "run", model=model,
+        run_artifacts.write_config_snapshot(manifest, run_directory, "run", model=model,
                                notes=run_notes or None, root=root, log=_log)
-        _dep_vector_materialization._persist_vectors(bundles, manifest, model, run_directory)
-        _dep_execution_reporting._write_substrate(model, run_directory, sampling)
+        vector_materialization.persist_vectors(bundles, manifest, model, run_directory)
+        execution_reporting.write_substrate(model, run_directory, sampling)
     # WS7.1: study-run-start cross-substrate check — logged every start
     # (resumes included); the durable advisories.txt is a creation stamp.
-    _dep_execution_reporting._advise_cross_substrate(manifest, run_directory, root, _log,
+    execution_reporting.advise_cross_substrate(manifest, run_directory, root, _log,
                             write_file=not resuming)
     # WP6 R1: same shape, different question — is the stack underneath us the
     # one the committed platform lock pins?
-    _dep_execution_reporting._advise_dependency_lock_drift(run_directory, _log, write_file=not resuming)
+    execution_reporting.advise_dependency_lock_drift(run_directory, _log, write_file=not resuming)
 
     # Stage 4: forward-referenced conditions resolve HERE — after the run
     # directory exists (the resolution record is run evidence), before any
     # condition executes. An unresolvable reference refuses the whole run.
-    _dep_forward_resolution._resolve_manifest_forward_refs(manifest, run_directory, root, _log,
+    forward_resolution.resolve_manifest_forward_refs(manifest, run_directory, root, _log,
                                    ledger_pins=forward_resolutions)
 
     # The SAME resolver verify() validates and sharding enumerates against —
@@ -313,12 +313,12 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     cancelled = False
     experiment_hash = manifest.content_hash()
     instruments = set(manifest.outcome_instruments)
-    wants_choice = bool(instruments & _dep_condition_execution.CHOICE_INSTRUMENTS)
+    wants_choice = bool(instruments & condition_execution.CHOICE_INSTRUMENTS)
     # Fail fast (before any model compute): an ordinalScale study must have
     # DECLARED a known aggregation — the instrument-design choice is never
     # silently defaulted. verify() reports the same violation; drafts only
     # warn there, so the run refuses here.
-    _dep_task_inputs.resolve_ordinal_aggregation(manifest)
+    task_inputs.resolve_ordinal_aggregation(manifest)
     # Declared numeric-answer parser (registry data, not code): resolved once
     # here — a missing/malformed registry or a drifted pin refuses the run at
     # START, never mid-generation. None = the historical caseFamily path.
@@ -337,7 +337,7 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     # chose this run's numeric endpoint. Said at start, where the rest of the
     # run's configuration is reported, not once per record.
     from .manifest import implicit_case_family_endpoint
-    _dep_study_admission._advise_implicit_case_family(
+    study_admission.advise_implicit_case_family(
         numeric_parser is None and implicit_case_family_endpoint(manifest),
         run_directory, _log, write_file=not resuming)
     # E1: one resolver decides what a study does; the run loop, the routing
@@ -354,7 +354,7 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
         _log(f"note: {_inert}")
     # RepE reader scoring rides on sampled text: each output is re-read through
     # every pinned reader and stamped as readerScores on the record.
-    reader_scorers = _dep_condition_execution._reader_scorers(manifest, root) \
+    reader_scorers = condition_execution.reader_scorers(manifest, root) \
         if ("repeReaderScore" in instruments and manifest.reader_refs) else []
     # Shard plan (multi-GPU fan-out): enumerate the run's FULL expected
     # record-key list in the executor's own emission order and take this
@@ -373,7 +373,7 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
         condition_names = ([c.name for c in conditions]
                            + [vc.name for vc in manifest.variant_conditions]
                            + [spec.name for spec, _e, _p in latent_conditions])
-        sample_count = _dep_condition_execution.effective_sample_count(manifest)
+        sample_count = condition_execution.effective_sample_count(manifest)
         all_keys = sharding_mod.expected_record_keys(
             condition_names=condition_names, prompts=prompts,
             wants_choice=wants_choice, wants_sampled=wants_sampled,
@@ -410,8 +410,8 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     jlens_expected_generations = (
         (len(conditions) + len(manifest.variant_conditions)
          + len(latent_conditions))
-        * len(prompts) * _dep_condition_execution.effective_sample_count(manifest))
-    jlens_trace = _dep_run_readouts._open_jlens_trace(
+        * len(prompts) * condition_execution.effective_sample_count(manifest))
+    jlens_trace = run_readouts.open_jlens_trace(
         manifest, model, root, run_directory=run_directory,
         checkpoint=checkpoint, resuming=resuming, log=_log,
         allowed_keys=(plan.allowed_keys if plan is not None else None),
@@ -427,15 +427,15 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     # Study-owned sampling guard (2026-07-21, defense in depth): refuse
     # BEFORE any generation compute if a condition would execute under a
     # sampling policy different from the manifest's declared one.
-    _dep_condition_execution._require_manifest_sampling_policy(manifest, model, root,
+    condition_execution.require_manifest_sampling_policy(manifest, model, root,
                                       wants_choice=wants_choice)
     # …and the comparability question the same resolution answers (2026-08-24):
     # are all the arms of this run armed with the SAME effective system
     # content? Advisory, never a refusal, and silent unless they diverge.
     # Computed over the FULL matrix, not this shard's slice: divergence is a
     # property of the design, and every shard should say the same thing.
-    _dep_execution_reporting._advise_system_prompt_divergence(
-        _dep_condition_execution._run_arm_system_prompts(manifest, conditions, latent_conditions, root),
+    execution_reporting.advise_system_prompt_divergence(
+        condition_execution.run_arm_system_prompts(manifest, conditions, latent_conditions, root),
         run_directory, _log, write_file=not resuming)
     # What each condition's intervention actually CHANGES — token positions,
     # prefill/decode behaviour, dose units, the matched control, the claim
@@ -451,21 +451,21 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
         _intervention_scope.stamp_run(
             run_directory, experiment=name, conditions=conditions,
             resolve_ordinary=lambda c: (
-                _dep_condition_execution._intervention_state(c),
-                _dep_condition_execution._condition_injections(c, bundles, preflight=False)),
+                condition_execution.intervention_state(c),
+                condition_execution.condition_injections(c, bundles, preflight=False)),
             variant_conditions=manifest.variant_conditions,
-            resolve_variant=lambda vc: _dep_condition_execution._effective_variant_condition(
+            resolve_variant=lambda vc: condition_execution.effective_variant_condition(
                 vc, manifest, model, root, wants_choice=wants_choice),
             latent_conditions=latent_conditions, log=_log)
     try:
         for condition in conditions:
             if plan is not None and not plan.condition_participates(condition.name):
                 continue  # another shard owns every record of this condition
-            if _dep_cancellation._observe_cancel(should_cancel, _log, f"condition={condition.name}"):
+            if cancellation.observe_cancel(should_cancel, _log, f"condition={condition.name}"):
                 cancelled = True
                 break
-            eff = _dep_condition_execution._effective_ordinary_condition(condition, bundles, manifest)
-            if _dep_condition_execution._execute_condition(model, eff, prompts, writer, **measurement):
+            eff = condition_execution.effective_ordinary_condition(condition, bundles, manifest)
+            if condition_execution.execute_condition(model, eff, prompts, writer, **measurement):
                 cancelled = True
                 break
 
@@ -480,11 +480,11 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
             for vc in manifest.variant_conditions:
                 if plan is not None and not plan.condition_participates(vc.name):
                     continue  # another shard owns every record of this condition
-                if _dep_cancellation._observe_cancel(should_cancel, _log, f"condition={vc.name}"):
+                if cancellation.observe_cancel(should_cancel, _log, f"condition={vc.name}"):
                     cancelled = True
                     break
                 try:
-                    eff = _dep_condition_execution._effective_variant_condition(
+                    eff = condition_execution.effective_variant_condition(
                         vc, manifest, model, root, wants_choice=wants_choice)
                     # Bind verification to the bytes that are ABOUT to load.
                     # The run-start preflight fails fast, but it can run long
@@ -495,7 +495,7 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
                     # (external review round 10). Scoped to armed readouts:
                     # that is where the identity becomes a claim.
                     if jlens_trace is not None:
-                        eff.verified_identity = _dep_run_readouts._verified_identity_for(
+                        eff.verified_identity = run_readouts.verified_identity_for(
                             eff.variant, root, label=vc.name)
                     # root=root, or verification and loading can resolve the
                     # same relative path in DIFFERENT workspaces: verified
@@ -515,7 +515,7 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
                                      "variantArtifactPath": vc.artifact_path})
                     continue
                 try:
-                    if _dep_condition_execution._execute_condition(model, eff, prompts, writer,
+                    if condition_execution.execute_condition(model, eff, prompts, writer,
                                           adapter_active=adapter is not None,
                                           **measurement):
                         cancelled = True
@@ -535,12 +535,12 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
             for spec, edit, provenance in latent_conditions:
                 if plan is not None and not plan.condition_participates(spec.name):
                     continue  # another shard owns every record of this condition
-                if _dep_cancellation._observe_cancel(should_cancel, _log, f"condition={spec.name}"):
+                if cancellation.observe_cancel(should_cancel, _log, f"condition={spec.name}"):
                     cancelled = True
                     break
-                eff = _dep_condition_execution._effective_sae_latent_condition(
+                eff = condition_execution.effective_sae_latent_condition(
                     spec, edit, provenance, manifest)
-                if _dep_condition_execution._execute_condition(model, eff, prompts, writer, **measurement):
+                if condition_execution.execute_condition(model, eff, prompts, writer, **measurement):
                     cancelled = True
                     break
 
@@ -583,10 +583,10 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
         if battery_cancelled:
             cancelled = True
             battery = None
-    _dep_run_reporting.write_metrics_csv(records, run_directory, style=style)
-    _dep_run_reporting.write_summaries_csv(records, run_directory)
+    run_reporting.write_metrics_csv(records, run_directory, style=style)
+    run_reporting.write_summaries_csv(records, run_directory)
     if not cancelled:
-        _dep_run_reporting.write_report(name, manifest, records, run_directory, battery=battery,
+        run_reporting.write_report(name, manifest, records, run_directory, battery=battery,
                       style=style, numeric_parser=numeric_parser)
         resume_mod.clear_state(run_directory)
     _log(f"run ({len(records)} generations"
@@ -687,10 +687,10 @@ def _run_capability_battery(model, name, manifest, bundles, conditions, root,
         if advisory and advisory not in advised:
             advised.add(advisory)
             _log(f"WARNING: {advisory}")
-        generate_fn, choice_fn = _dep_choice_scoring._battery_backends(
+        generate_fn, choice_fn = choice_scoring.battery_backends(
             model, manifest.model_id, injections, latent_edits=latent_edits)
         for index, item in enumerate(items):
-            if _dep_cancellation._observe_cancel(should_cancel, _log,
+            if cancellation.observe_cancel(should_cancel, _log,
                                f"battery condition={condition_name} item={index}"):
                 return False
             # ONE prompt id per item, used for both the resume probe and the
@@ -741,7 +741,7 @@ def _run_capability_battery(model, name, manifest, bundles, conditions, root,
             if condition_filter is not None \
                     and condition.name not in condition_filter:
                 continue  # another shard owns this condition's battery
-            injections = _dep_condition_execution._condition_injections(condition, bundles)
+            injections = condition_execution.condition_injections(condition, bundles)
             if not _score_condition(condition.name, injections,
                                     manifest.prompt_mode, manifest.system_prompt,
                                     manifest.qwen_thinking_enabled):
@@ -754,7 +754,7 @@ def _run_capability_battery(model, name, manifest, bundles, conditions, root,
                     continue  # another shard owns this condition's battery
                 try:
                     if vc.from_promotion:
-                        vc, _ = _dep_forward_resolution._resolve_forward_variant(
+                        vc, _ = forward_resolution.resolve_forward_variant(
                             vc, manifest, root, _log)
                     variant = (model_variant.ModelVariant.from_dict(vc.artifact)
                                if vc.artifact else model_variant.ModelVariant.from_file(
@@ -784,7 +784,7 @@ def _run_capability_battery(model, name, manifest, bundles, conditions, root,
                 if condition_filter is not None \
                         and spec_l.name not in condition_filter:
                     continue  # another shard owns this condition's battery
-                eff = _dep_condition_execution._effective_sae_latent_condition(
+                eff = condition_execution.effective_sae_latent_condition(
                     spec_l, edit, provenance, manifest)
                 if not _score_condition(
                         eff.name, eff.injections, eff.prompt_mode,

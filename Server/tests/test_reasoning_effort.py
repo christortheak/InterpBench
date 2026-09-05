@@ -588,7 +588,7 @@ def test_the_run_loop_threads_the_protocol_and_stamps_the_fourth_reason(
     root = str(tmp_path)
     prompts = _study(root, "reason")
     calls = []
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda model, manifest, root: {})
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all', lambda model, manifest, root: {})
     monkeypatch.setattr(_owner_generate, 'generate', _fake_generate(calls))
     run_dir = tasks.run("reason", prompts, root, model_provider=_fake_model,
                         log=lambda *_: None)
@@ -627,7 +627,7 @@ def test_a_reasoning_capped_cell_is_incomplete_and_the_refusal_names_the_cap(
         tmp_path, monkeypatch):
     root = str(tmp_path)
     prompts = _study(root, "gated", threshold=0.5)
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda model, manifest, root: {})
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all', lambda model, manifest, root: {})
     monkeypatch.setattr(_owner_generate, 'generate', _fake_generate([]))
     with pytest.raises(RuntimeError) as caught:
         tasks.run("gated", prompts, root, model_provider=_fake_model,

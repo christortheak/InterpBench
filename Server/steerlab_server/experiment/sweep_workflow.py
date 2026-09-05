@@ -11,22 +11,22 @@ from typing import Callable
 from ..steering import vector_math as vm
 from . import lifecycle_gates, paths
 from . import resume as resume_mod
-from . import cancellation as _dep_cancellation
-from . import choice_scoring as _dep_choice_scoring
-from . import condition_execution as _dep_condition_execution
-from . import execution_reporting as _dep_execution_reporting
-from . import generate as _dep_generate
-from . import layer_resolution as _dep_layer_resolution
-from . import manifest as _dep_manifest
-from . import model_resources as _dep_model_resources
-from ..steering import stimulus_set as _dep_parent_steering_stimulus_set
-from . import rubric_inputs as _dep_rubric_inputs
-from . import run_artifacts as _dep_run_artifacts
-from . import scoring as _dep_scoring
-from . import study_admission as _dep_study_admission
-from . import sweep_evidence as _dep_sweep_evidence
-from . import sweep_judging as _dep_sweep_judging
-from . import vector_materialization as _dep_vector_materialization
+from . import cancellation
+from . import choice_scoring
+from . import condition_execution
+from . import execution_reporting
+from . import generate
+from . import layer_resolution
+from . import manifest as manifest_module
+from . import model_resources
+from ..steering import stimulus_set
+from . import rubric_inputs
+from . import run_artifacts
+from . import scoring
+from . import study_admission
+from . import sweep_evidence
+from . import sweep_judging
+from . import vector_materialization
 
 
 def sweep(name: str, root: str | None = None, dtype: str = "auto",
@@ -54,9 +54,9 @@ def sweep(name: str, root: str | None = None, dtype: str = "auto",
     server. ``None`` (the CLI/bundle path, which loads private in-process
     copies with no registry) skips that capacity check."""
     from . import sweep_selection
-    manifest = _dep_manifest.Manifest.load(name, root)
-    _dep_study_admission._verify_or_warn(manifest, root)
-    _dep_condition_execution._advise_sweep_ignores_sae_latent(manifest, log or print)
+    manifest = manifest_module.Manifest.load(name, root)
+    study_admission.verify_or_warn(manifest, root)
+    condition_execution.advise_sweep_ignores_sae_latent(manifest, log or print)
     spec = manifest.raw.get("sweep")
     spec = spec if isinstance(spec, dict) else None
     # Resolve the selection criterion AND its objective's instrument config
@@ -84,15 +84,15 @@ def sweep(name: str, root: str | None = None, dtype: str = "auto",
             judge_refs=manifest.judges,
             judges_raw=(manifest.raw.get("judges") or []))
         if criterion.metric == "judgeScore":
-            _dep_sweep_judging._judge_preflight(manifest, max_loaded, log or print)
+            sweep_judging.judge_preflight(manifest, max_loaded, log or print)
     # The judge stack spans the WHOLE sweep, so a foreign local judge loads
     # once rather than once per comparison (external review round 4, finding
     # 4 — the same fix evaluate got in 10adf47d8). Nested INSIDE the study
     # model's acquire so the judge's slot is released first: it is the
     # second resident model, and it should not outlive the work it serves.
-    with _dep_model_resources._acquire_model(manifest, dtype, device, model_provider) as model, \
+    with model_resources.acquire_model(manifest, dtype, device, model_provider) as model, \
             ExitStack() as judge_stack:
-        manifest = _dep_model_resources._pin_model_revision(name, manifest, model, root, log or print)
+        manifest = model_resources.pin_model_revision(name, manifest, model, root, log or print)
         if spec is not None:
             return _sweep_with_spec(name, manifest, model, root, spec,
                                     criterion, objective, model_provider,
@@ -139,13 +139,13 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
     # dev text. See DEFAULT_SWEEP_* for the recalibration rationale; an
     # explicit grid in the spec always wins.
     layer_fractions = [float(f) for f in (spec.get("layerFractions")
-                                          or _dep_layer_resolution.DEFAULT_SWEEP_LAYER_FRACTIONS)]
-    alphas = [float(a) for a in (spec.get("alphas") or _dep_layer_resolution.DEFAULT_SWEEP_ALPHAS)]
+                                          or layer_resolution.DEFAULT_SWEEP_LAYER_FRACTIONS)]
+    alphas = [float(a) for a in (spec.get("alphas") or layer_resolution.DEFAULT_SWEEP_ALPHAS)]
     dev_prompts_file = spec.get("devPromptsFile") or "prompts/dev/dev-prompts.jsonl"
     battery_file = spec.get("batteryFile") or battery_mod.DEFAULT_BATTERY_FILE
     max_tokens = int(spec.get("maxTokens") or 80)
 
-    dev = _dep_parent_steering_stimulus_set.load_texts(paths.resolve(dev_prompts_file, root))
+    dev = stimulus_set.load_texts(paths.resolve(dev_prompts_file, root))
     if not dev.texts:
         raise RuntimeError(f"dev prompts '{dev_prompts_file}' has no rows")
     battery_spec = battery_mod.load_spec(battery_file, root)
@@ -236,7 +236,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                 continue
             _log(f"choice baseline ('{chosen.file}', "
                  f"{len(chosen.rows)} rows)…")
-            choice_baseline_by_hash[chosen.hash] = _dep_choice_scoring._choice_target_logprobs(
+            choice_baseline_by_hash[chosen.hash] = choice_scoring.choice_target_logprobs(
                 model, manifest, chosen.rows, [],
                 should_cancel=should_cancel, log=_log)
     judge_rubric, judge_panel = "", []
@@ -250,7 +250,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
             "controls.applyTo 'winner', or push a judge key so judging runs "
             "inline")
     if objective.metric == "judgeScore" and not deferred_judging:
-        judge_rubric, judge_panel = _dep_sweep_judging._sweep_judge_panel(
+        judge_rubric, judge_panel = sweep_judging.sweep_judge_panel(
             manifest, model, model_provider, root, _log,
             judge_stack=judge_stack)
     elif deferred_judging:
@@ -258,7 +258,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
         # this server has no Anthropic credential BY POLICY. The sweep still
         # resolves the pinned rubric — its TEXT rides in the judging packets
         # to the Mac verbatim, its hash pins them.
-        judge_rubric, judge_rubric_hash, _rubric_file = _dep_rubric_inputs._resolve_rubric(
+        judge_rubric, judge_rubric_hash, _rubric_file = rubric_inputs.resolve_rubric(
             manifest, root, _log)
         from . import response_coding
         response_coding.refuse_if_coding(
@@ -269,7 +269,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
              "blinded judging packets — judge them on the Mac, then "
              "complete-judgment computes the selection")
 
-    bundles = _dep_vector_materialization._extract_all(model, manifest, root)
+    bundles = vector_materialization.extract_all(model, manifest, root)
     resumed_rows: list[dict] = []
     resumed_recommendations: dict = {}
     if resume_directory is not None:
@@ -294,7 +294,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                 f"{checkpointed_hash[:12]}… → "
                 f"{manifest.content_hash()[:12]}…) — re-run the sweep fresh")
         run_directory = resume_directory
-        resumed_rows, resumed_recommendations = _dep_sweep_evidence._load_sweep_progress(
+        resumed_rows, resumed_recommendations = sweep_evidence.load_sweep_progress(
             run_directory)
         _log(f"resuming checkpointed sweep: {len(resumed_rows)} completed "
              f"cell row(s), {len(resumed_recommendations)} concept(s) "
@@ -302,24 +302,24 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
     else:
         run_directory = paths.make_unique_run_directory(
             f"exp-{name}-sweep", root)
-        _dep_run_artifacts._write_config_snapshot(manifest, run_directory, "sweep", model=model,
+        run_artifacts.write_config_snapshot(manifest, run_directory, "sweep", model=model,
                                root=root, log=_log)
         # Persist the sweep's re-derived vectors as first-class extraction
         # artifacts (same helper as extract/validate — never a parallel
         # writer): the sweep run itself then carries recipe-matching
         # sidecars, so "sweep then promote" needs no separate extract run
         # for promote's artifact matcher to find.
-        _dep_vector_materialization._persist_vectors(bundles, manifest, model, run_directory)
+        vector_materialization.persist_vectors(bundles, manifest, model, run_directory)
     if on_run_directory is not None:
         on_run_directory(run_directory)
     # Dev generations already recorded (resume dedupe) — fresh runs start
     # empty, a resumed directory seeds from its own durable record.
-    dev_generation_keys = _dep_sweep_evidence._load_dev_generation_keys(run_directory)
+    dev_generation_keys = sweep_evidence.load_dev_generation_keys(run_directory)
 
     def _append_progress(entry: dict) -> None:
         """Durably append one progress line (flush + fsync): a checkpoint
         may only count work whose record is already on disk."""
-        with open(_dep_sweep_evidence._sweep_progress_path(run_directory), "a",
+        with open(sweep_evidence.sweep_progress_path(run_directory), "a",
                   encoding="utf-8") as handle:
             handle.write(json.dumps(entry, sort_keys=True) + "\n")
             handle.flush()
@@ -344,7 +344,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
             run_directory, "sweep", completed)
 
     def _gen(prompt_text: str, injections, tokens: int) -> str:
-        return _dep_generate.generate(model, prompt_text, model_id=manifest.model_id,
+        return generate.generate(model, prompt_text, model_id=manifest.model_id,
                         max_tokens=tokens, temperature=0.0, injections=injections,
                         prompt_mode=manifest.prompt_mode,
                         system_prompt=manifest.system_prompt,
@@ -357,10 +357,10 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
         volume would drown the dev previews that matter."""
         total = len(battery_items)
         correct = 0
-        generate_fn, choice_fn = _dep_choice_scoring._battery_backends(
+        generate_fn, choice_fn = choice_scoring.battery_backends(
             model, manifest.model_id, injections)
         for i, item in enumerate(battery_items, start=1):
-            _dep_cancellation._cancel_checkpoint(should_cancel, _log,
+            cancellation.cancel_checkpoint(should_cancel, _log,
                                f"{label} battery {i}/{total}")
             if battery_mod.score_item(battery_spec, item, battery_arming,
                                       generate_fn=generate_fn,
@@ -378,12 +378,12 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
         texts: list[str] = []
         total = len(dev.texts)
         for i, prompt_text in enumerate(dev.texts, start=1):
-            _dep_cancellation._cancel_checkpoint(should_cancel, _log, f"{label} dev {i}/{total}")
+            cancellation.cancel_checkpoint(should_cancel, _log, f"{label} dev {i}/{total}")
             text = _gen(prompt_text, injections, max_tokens)
-            _log(f'{label} dev {i}/{total}: "{_dep_execution_reporting._preview_line(text)}"')
+            _log(f'{label} dev {i}/{total}: "{execution_reporting.preview_line(text)}"')
             if record is not None:
                 kind, concept, layer, alpha = record
-                _dep_sweep_evidence._append_dev_generation(
+                sweep_evidence.append_dev_generation(
                     run_directory, kind=kind, concept=concept, layer=layer,
                     alpha=alpha, prompt_index=i - 1, text=text,
                     seen=dev_generation_keys)
@@ -395,8 +395,8 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
         already-generated dev texts."""
         n = len(texts)
         return (sum(rubric.density(t) if rubric else 0.0 for t in texts) / n,
-                sum(_dep_scoring.distinct_bigram_ratio(t) for t in texts) / n,
-                sum(_dep_scoring.word_count(t) for t in texts) / n)
+                sum(scoring.distinct_bigram_ratio(t) for t in texts) / n,
+                sum(scoring.word_count(t) for t in texts) / n)
 
     def _cell_objective(concept_name, condition_tag, injections, density,
                         texts, baseline_texts) -> float:
@@ -405,15 +405,15 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
         rows are the CONCEPT's own instrument."""
         if objective.metric == "logprobShift":
             chosen = objective.choice_set_for(concept_name)
-            return _dep_choice_scoring._mean_logprob_shift(
-                _dep_choice_scoring._choice_target_logprobs(model, manifest, chosen.rows,
+            return choice_scoring.mean_logprob_shift(
+                choice_scoring.choice_target_logprobs(model, manifest, chosen.rows,
                                         injections,
                                         should_cancel=should_cancel, log=_log),
                 choice_baseline_by_hash[chosen.hash])
         if objective.metric == "judgeScore":
             if deferred_judging:
                 return None  # judged on the Mac; complete-judgment selects
-            return _dep_sweep_judging._judge_preference(judge_panel, judge_rubric, condition_tag,
+            return sweep_judging.judge_preference(judge_panel, judge_rubric, condition_tag,
                                      texts, baseline_texts, prompts=dev.texts,
                                      should_cancel=should_cancel, log=_log)
         return density
@@ -451,17 +451,17 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
             (int(r["layer"]), float(r["alpha"])): r
             for r in resumed_rows if r.get("concept") == concept_name}
         _checkpoint_if_requested(f"concept={concept_name}")
-        if _dep_cancellation._observe_cancel(should_cancel, _log, f"concept={concept_name}"):
+        if cancellation.observe_cancel(should_cancel, _log, f"concept={concept_name}"):
             cancelled = True
             break
-        rubric = _dep_scoring.MarkerRubric.from_directory(paths.concept_directory(concept_name, root))
+        rubric = scoring.MarkerRubric.from_directory(paths.concept_directory(concept_name, root))
         if rubric is None:
             _log(f"{concept_name}: no markers.json — expression scores will be 0")
         layer_count = bundle.vectors.layer_count
-        layers = _dep_layer_resolution.concept_sweep_layers(
+        layers = layer_resolution.concept_sweep_layers(
             next(c for c in manifest.concepts if c.name == concept_name),
             bundle.vectors,
-            _dep_layer_resolution.resolve_sweep_layers(layer_count, layer_fractions), _log)
+            layer_resolution.resolve_sweep_layers(layer_count, layer_fractions), _log)
         residual_norms = bundle.residual_norm_per_layer or []
         if not residual_norms:
             raise RuntimeError(
@@ -494,7 +494,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                         _dev_texts([], "baseline",
                                    record=("baseline", None, -1, 0.0)),
                         _battery_accuracy([], "baseline"))
-            except _dep_cancellation.TaskCancelled:
+            except cancellation.TaskCancelled:
                 cancelled = True
                 break
             baseline_texts, baseline_accuracy = shared_baseline
@@ -523,7 +523,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
 
         cells: list[sel.SweepCell] = []
         for layer in layers:
-            if _dep_cancellation._observe_cancel(should_cancel, _log,
+            if cancellation.observe_cancel(should_cancel, _log,
                                f"concept={concept_name} layer={layer}"):
                 cancelled = True
                 break
@@ -533,7 +533,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
             # F7/F13): a layer the denominator table does not reach refuses,
             # where this site used to clamp to the last entry and dose the
             # deepest sweep cells with a shallower layer's number.
-            residual = _dep_condition_execution._residual_norm_at(
+            residual = condition_execution.residual_norm_at(
                 residual_norms, layer, artifact=concept_name,
                 where=f"concept '{concept_name}'")
             for alpha in alphas:
@@ -556,13 +556,13 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                     continue
                 _checkpoint_if_requested(
                     f"concept={concept_name} L{layer} α{alpha:g}")
-                if _dep_cancellation._observe_cancel(should_cancel, _log,
+                if cancellation.observe_cancel(should_cancel, _log,
                                    f"concept={concept_name} layer={layer} "
                                    f"alpha={alpha:g}"):
                     cancelled = True
                     break
                 raw_alpha = vm.norm_unit_scale(alpha, residual, vector_norm)
-                cell = [_dep_generate.CellInjection(layer=layer, vector=vector, alpha=raw_alpha)]
+                cell = [generate.CellInjection(layer=layer, vector=vector, alpha=raw_alpha)]
                 try:
                     texts = _dev_texts(cell, f"L{layer} α{alpha:g}",
                                        record=("cell", concept_name, layer,
@@ -573,7 +573,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                         concept_name,
                         f"sweep:{concept_name}:L{layer}:a{alpha:g}", cell,
                         density, texts, baseline_texts)
-                except _dep_cancellation.TaskCancelled:
+                except cancellation.TaskCancelled:
                     # Mid-cell cancel: the incomplete cell is dropped; rows
                     # for completed cells keep today's partial-CSV behavior.
                     cancelled = True
@@ -595,7 +595,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                                            battery_accuracy=accuracy,
                                            words=words))
                 if deferred_judging:
-                    _dep_sweep_judging._emit_judging_packets(
+                    sweep_judging.emit_judging_packets(
                         deferred_packets, deferred_map, concept_name, "cell",
                         layer, alpha, dev.texts, texts, baseline_texts,
                         judge_rubric_hash)
@@ -611,7 +611,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                                         alpha=alpha)],
                             band_width=1, alpha_in_norm_units=True,
                             control_type="randomMatchedNorm")
-                        control_injections = _dep_condition_execution._condition_injections(
+                        control_injections = condition_execution.condition_injections(
                             control_condition, bundles)
                         try:
                             control_texts = _dev_texts(
@@ -619,10 +619,10 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                                 f"control L{layer} α{alpha:g}",
                                 record=("control", concept_name, layer,
                                         alpha))
-                        except _dep_cancellation.TaskCancelled:
+                        except cancellation.TaskCancelled:
                             cancelled = True
                             break
-                        _dep_sweep_judging._emit_judging_packets(
+                        sweep_judging.emit_judging_packets(
                             deferred_packets, deferred_map, concept_name,
                             "control", layer, alpha, dev.texts,
                             control_texts, baseline_texts, judge_rubric_hash)
@@ -698,13 +698,13 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                                 alpha=candidate.alpha)],
                     band_width=1, alpha_in_norm_units=True,
                     control_type="randomMatchedNorm")
-                control_injections = _dep_condition_execution._condition_injections(
+                control_injections = condition_execution.condition_injections(
                     control_condition, bundles)
                 try:
                     if objective.metric == "logprobShift":
                         chosen = objective.choice_set_for(concept_name)
-                        control_metric = _dep_choice_scoring._mean_logprob_shift(
-                            _dep_choice_scoring._choice_target_logprobs(
+                        control_metric = choice_scoring.mean_logprob_shift(
+                            choice_scoring.choice_target_logprobs(
                                 model, manifest, chosen.rows,
                                 control_injections,
                                 should_cancel=should_cancel, log=_log),
@@ -719,14 +719,14 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                             control_texts, rubric)
                         control_metric = control_density
                         if objective.metric == "judgeScore":
-                            control_metric = _dep_sweep_judging._judge_preference(
+                            control_metric = sweep_judging.judge_preference(
                                 judge_panel, judge_rubric,
                                 f"sweep-control:{concept_name}:"
                                 f"L{candidate.layer}:a{candidate.alpha:g}",
                                 control_texts, baseline_texts,
                                 prompts=dev.texts,
                                 should_cancel=should_cancel, log=_log)
-                except _dep_cancellation.TaskCancelled:
+                except cancellation.TaskCancelled:
                     # A winner without its verified control is incomplete
                     # evidence — no recommendation for this concept.
                     cancelled = True
@@ -750,7 +750,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
                         "margin": margin,
                         # Recipe stamp (cross-engine contract string);
                         # unstamped = legacy (see RANDOM_VECTOR_ALGORITHM).
-                        "randomVectorAlgorithm": _dep_condition_execution.RANDOM_VECTOR_ALGORITHM}
+                        "randomVectorAlgorithm": condition_execution.RANDOM_VECTOR_ALGORITHM}
                     break
             if cancelled:
                 break
@@ -856,7 +856,7 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
              + f" → {run_directory}")
         return run_directory
     if deferred_judging and deferred_packets:
-        _dep_sweep_judging._write_deferred_judging(
+        sweep_judging.write_deferred_judging(
             run_directory, name, manifest, criterion, objective,
             deferred_packets, deferred_map, deferred_selection, dev.hash,
             judge_rubric, judge_rubric_hash, _log)
@@ -910,19 +910,19 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
 
 def _sweep_impl(name, manifest, model, root, layer_fractions, alphas, prompt,
                 should_cancel, _log) -> str:
-    bundles = _dep_vector_materialization._extract_all(model, manifest, root)
+    bundles = vector_materialization.extract_all(model, manifest, root)
     run_directory = paths.make_unique_run_directory(f"exp-{name}-sweep", root)
-    _dep_run_artifacts._write_config_snapshot(manifest, run_directory, "sweep", model=model,
+    run_artifacts.write_config_snapshot(manifest, run_directory, "sweep", model=model,
                            root=root, log=_log)
     sweep_prompt = prompt or (manifest.task_description or "Write a short paragraph.")
 
     rows = []
     cancelled = False
     for concept_name, bundle in bundles.items():
-        if _dep_cancellation._observe_cancel(should_cancel, _log, f"concept={concept_name}"):
+        if cancellation.observe_cancel(should_cancel, _log, f"concept={concept_name}"):
             cancelled = True
             break
-        rubric = _dep_scoring.MarkerRubric.from_directory(paths.concept_directory(concept_name, root))
+        rubric = scoring.MarkerRubric.from_directory(paths.concept_directory(concept_name, root))
         layer_count = bundle.vectors.layer_count
         # The legacy grid carries the same zero-injection hazard as the spec'd
         # one, so it asks the same question (see concept_sweep_layers). Its own
@@ -930,25 +930,25 @@ def _sweep_impl(name, manifest, model, root, layer_fractions, alphas, prompt,
         # and all) so a non-SAE concept sweeps exactly the cells it always did.
         legacy_layers = [min(layer_count - 1, int(layer_count * fraction))
                          for fraction in layer_fractions]
-        for layer in _dep_layer_resolution.concept_sweep_layers(
+        for layer in layer_resolution.concept_sweep_layers(
                 next(c for c in manifest.concepts if c.name == concept_name),
                 bundle.vectors, legacy_layers, _log):
             for alpha in alphas:
-                cell = _dep_generate.CellInjection(layer=layer, vector=bundle.vectors.per_layer[layer], alpha=alpha)
-                text = _dep_generate.generate(model, sweep_prompt, model_id=manifest.model_id,
+                cell = generate.CellInjection(layer=layer, vector=bundle.vectors.per_layer[layer], alpha=alpha)
+                text = generate.generate(model, sweep_prompt, model_id=manifest.model_id,
                                 max_tokens=manifest.max_tokens, temperature=0.0,
                                 injections=[cell], prompt_mode=manifest.prompt_mode,
                                 system_prompt=manifest.system_prompt,
                                 qwen_thinking_enabled=manifest.qwen_thinking_enabled)
                 # Same qualitative-record rule as the spec'd sweep: the text
                 # this row was scored on is evidence, not disposable.
-                _dep_sweep_evidence._append_dev_generation(
+                sweep_evidence.append_dev_generation(
                     run_directory, kind="cell", concept=concept_name,
                     layer=layer, alpha=alpha, prompt_index=0, text=text)
                 rows.append({
                     "concept": concept_name, "layer": layer, "alpha": alpha,
                     "markerDensity": rubric.density(text) if rubric else "",
-                    "distinct2": _dep_scoring.distinct_bigram_ratio(text), "words": _dep_scoring.word_count(text),
+                    "distinct2": scoring.distinct_bigram_ratio(text), "words": scoring.word_count(text),
                 })
     csv_path = os.path.join(run_directory, "sweep.csv")
     with open(csv_path, "w", newline="", encoding="utf-8") as handle:

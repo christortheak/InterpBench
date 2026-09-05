@@ -29,6 +29,7 @@ from steerlab_server import cli, cli_envelope
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import manifest as manifest_mod
 from steerlab_server.experiment import parser_registry, tasks
+import steerlab_server.experiment.study_admission as study_admission
 from steerlab_server.experiment.manifest import (IMPLICIT_CASE_FAMILY_ADVISORY,
                                                  Manifest,
                                                  implicit_case_family_endpoint)
@@ -250,7 +251,7 @@ def test_the_advisory_stamp_appends_rather_than_overwrites(tmp_path):
     with open(os.path.join(run_dir, "advisories.txt"), "w",
               encoding="utf-8") as handle:
         handle.write("first advisory\n")
-    tasks._advise_implicit_case_family(True, run_dir, lambda *_: None,
+    study_admission.advise_implicit_case_family(True, run_dir, lambda *_: None,
                                        write_file=True)
     text = _advisories_text(run_dir)
     assert text.startswith("first advisory\n")
@@ -261,7 +262,7 @@ def test_the_emitter_is_silent_when_the_trigger_does_not_fire(tmp_path):
     run_dir = str(tmp_path / "run")
     os.makedirs(run_dir)
     lines = []
-    tasks._advise_implicit_case_family(False, run_dir, lines.append,
+    study_admission.advise_implicit_case_family(False, run_dir, lines.append,
                                        write_file=True)
     assert lines == []
     assert not os.path.exists(os.path.join(run_dir, "advisories.txt"))

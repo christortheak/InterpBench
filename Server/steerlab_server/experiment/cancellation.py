@@ -3,7 +3,7 @@ from __future__ import annotations
 
 
 
-def _observe_cancel(should_cancel, log, where: str) -> bool:
+def observe_cancel(should_cancel, log, where: str) -> bool:
     """True (and logs where) when a cancellation has been requested. Called at
     loop boundaries so a long task stops promptly instead of only at the end."""
     if should_cancel is not None and should_cancel():
@@ -22,8 +22,8 @@ class TaskCancelled(Exception):
 
 
 
-def _cancel_checkpoint(should_cancel, log, where: str) -> None:
-    """The per-generation twin of ``_observe_cancel``: called between
+def cancel_checkpoint(should_cancel, log, where: str) -> None:
+    """The per-generation twin of ``observe_cancel``: called between
     generations inside the inner loops so cancel latency is at most one
     generation, and raises ``TaskCancelled`` for the owning loop to catch."""
     if should_cancel is not None and should_cancel():

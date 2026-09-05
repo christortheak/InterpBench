@@ -28,6 +28,9 @@ import pytest
 import torch
 
 from steerlab_server.experiment import catalog, experiment_store as es, tasks
+import steerlab_server.experiment.condition_execution as condition_execution
+import steerlab_server.experiment.validation_workflow as validation_workflow
+import steerlab_server.experiment.vector_materialization as vector_materialization
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.steering import vector_math as vm
 from steerlab_server.steering import vector_store
@@ -523,7 +526,7 @@ def _attached(tmp_path):
 def test_extract_materializes_the_pinned_vector(tmp_path):
     root, artifact, manifest = _attached(tmp_path)
     model = _tiny_model()
-    bundles = tasks._extract_all(model, manifest, root)
+    bundles = vector_materialization.extract_all(model, manifest, root)
     bundle = bundles["crit-gm"]
     source, _ = vector_store.load(
         os.path.dirname(os.path.join(root, artifact)), "crit-gm")
@@ -534,7 +537,7 @@ def test_extract_materializes_the_pinned_vector(tmp_path):
 
     run_dir = os.path.join(root, "runs", "20260810T060000-exp-extract")
     os.makedirs(run_dir)
-    tasks._persist_vectors(bundles, manifest, model, run_dir)
+    vector_materialization.persist_vectors(bundles, manifest, model, run_dir)
     # It lands exactly like an extracted concept would: <concept>.safetensors
     # + sidecar, so everything downstream sees a normal artifact.
     written, sidecar = vector_store.load(run_dir, "crit-gm")
@@ -558,7 +561,7 @@ def test_drifted_bytes_refuse_materialization_naming_both_hashes(tmp_path):
     with open(tensor, "ab") as handle:
         handle.write(b"\x00")
     with pytest.raises(RuntimeError) as err:
-        tasks._extract_all(_tiny_model(), manifest, root)
+        vector_materialization.extract_all(_tiny_model(), manifest, root)
     message = str(err.value)
     assert f"{artifact}.safetensors" in message
     assert manifest.concepts[0].vector_artifact["sha256TensorHash"] in message
@@ -569,21 +572,21 @@ def test_a_missing_artifact_refuses_materialization(tmp_path):
     root, artifact, manifest = _attached(tmp_path)
     os.remove(os.path.join(root, artifact + ".safetensors"))
     with pytest.raises(RuntimeError, match="is missing"):
-        tasks._extract_all(_tiny_model(), manifest, root)
+        vector_materialization.extract_all(_tiny_model(), manifest, root)
 
 
 def test_materialization_refuses_a_model_mismatch(tmp_path):
     root, artifact, manifest = _attached(tmp_path)
     manifest.model_id = "org/other"
     with pytest.raises(RuntimeError, match="does not transfer between models"):
-        tasks._extract_all(_tiny_model(), manifest, root)
+        vector_materialization.extract_all(_tiny_model(), manifest, root)
 
 
 # --- validate -------------------------------------------------------------
 
 def test_validate_runs_the_held_out_probe_on_a_pinned_concept(tmp_path):
     root, _artifact, manifest = _attached(tmp_path)
-    run = tasks._validate_impl("gm-study", manifest, _tiny_model(), root,
+    run = validation_workflow._validate_impl("gm-study", manifest, _tiny_model(), root,
                                lambda *a: None)
     report = json.load(open(os.path.join(run, "validation-report.json")))
     entry = report["concepts"]["crit-gm"]
@@ -621,7 +624,7 @@ def test_validate_reads_at_the_artifacts_reading_position(tmp_path):
     manifest.concepts[0].options.reading_position = LAST_TOKEN
     with pytest.raises(RuntimeError,
                        match="read where the vector was read"):
-        tasks._validate_impl("gm-study", manifest, _tiny_model(), root,
+        validation_workflow._validate_impl("gm-study", manifest, _tiny_model(), root,
                              lambda *a: None)
 
 
@@ -630,10 +633,10 @@ def test_validate_reads_at_the_artifacts_reading_position(tmp_path):
 def test_the_method_token_surfaces_in_catalogs_and_reports(tmp_path):
     root, _artifact, manifest = _attached(tmp_path)
     model = _tiny_model()
-    bundles = tasks._extract_all(model, manifest, root)
+    bundles = vector_materialization.extract_all(model, manifest, root)
     run_dir = os.path.join(root, "runs", "20260810T070000-exp-extract")
     os.makedirs(run_dir)
-    tasks._persist_vectors(bundles, manifest, model, run_dir)
+    vector_materialization.persist_vectors(bundles, manifest, model, run_dir)
 
     materialized = [v for v in catalog.list_vectors(root)
                     if v.runDirectory == run_dir]
@@ -651,10 +654,10 @@ def test_the_materialized_artifact_matches_the_promotion_matcher(tmp_path):
 
     root, _artifact, manifest = _attached(tmp_path)
     model = _tiny_model()
-    bundles = tasks._extract_all(model, manifest, root)
+    bundles = vector_materialization.extract_all(model, manifest, root)
     run_dir = os.path.join(root, "runs", "20260810T080000-exp-extract")
     os.makedirs(run_dir)
-    tasks._persist_vectors(bundles, manifest, model, run_dir)
+    vector_materialization.persist_vectors(bundles, manifest, model, run_dir)
 
     required = recipe_identity.required_identity(manifest, manifest.concepts[0])
     assert required["extractionMethod"] == "pinnedArtifact"
@@ -713,11 +716,11 @@ def test_norm_unit_alpha_uses_the_artifacts_residual_norms(tmp_path):
     from steerlab_server.experiment.manifest import Condition, Slot
 
     root, _artifact, manifest = _attached(tmp_path)
-    bundles = tasks._extract_all(_tiny_model(), manifest, root)
+    bundles = vector_materialization.extract_all(_tiny_model(), manifest, root)
     condition = Condition(name="c", slots=[Slot(concept="crit-gm", layer=1,
                                                 alpha=0.25)],
                           alpha_in_norm_units=True)
-    injections = tasks._condition_injections(condition, bundles)
+    injections = condition_execution.condition_injections(condition, bundles)
     assert len(injections) == 1
     vector = bundles["crit-gm"].vectors.per_layer[1]
     expected = vm.norm_unit_scale(0.25, 100.0, vm.l2_norm(vector))

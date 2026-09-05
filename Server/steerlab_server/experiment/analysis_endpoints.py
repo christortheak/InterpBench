@@ -7,7 +7,7 @@ from .manifest import Manifest
 _STRATUM_JOIN = "×"
 _PRIMARY_ENDPOINT_ORDER = ("choiceLogOdds", "meanMonths", "choiceRate")
 
-def _condition_modalities(manifest: Manifest, root: str | None = None) -> dict[str, str]:
+def condition_modalities(manifest: Manifest, root: str | None = None) -> dict[str, str]:
     """Intervention modality per condition, derived from the manifest
     (RESULTS-ARCHITECTURE: modality is a design axis — injection / adapter /
     systemPrompt / stacked; baseline = none).
@@ -56,11 +56,11 @@ def _condition_modalities(manifest: Manifest, root: str | None = None) -> dict[s
 
 
 
-def _key_records_by_transcript(records: list[dict]) -> list[dict]:
+def key_records_by_transcript(records: list[dict]) -> list[dict]:
     """Rewrite promptID to ``<turnID>@<replicateIndex>`` so the pairing join
     distinguishes the same script position in DIFFERENT play-throughs.
 
-    Without this the sample-axis averaging in ``_endpoint_values`` pools every
+    Without this the sample-axis averaging in ``endpoint_values`` pools every
     replicate of a turn into one cell, which silently discards exactly the
     between-transcript variation the clustered estimator exists to measure."""
     out = []
@@ -73,7 +73,7 @@ def _key_records_by_transcript(records: list[dict]) -> list[dict]:
 
 
 
-def _transcript_level_diffs(values: dict[str, float],
+def transcript_level_diffs(values: dict[str, float],
                             base: dict[str, float]) -> list[float]:
     """Turn-level paired differences aggregated to ONE value per transcript.
 
@@ -93,7 +93,7 @@ def _transcript_level_diffs(values: dict[str, float],
 
 
 
-def _endpoint_values(records: list[dict], style=None,
+def endpoint_values(records: list[dict], style=None,
                      numeric_parser_kind: str | None = None,
                      declared_targets: dict[str, bool] | None = None,
                      ) -> dict[str, dict[str, dict[str, float]]]:
@@ -321,7 +321,7 @@ def _endpoint_sample_values(
 
 
 
-def _stratified_effect_rows(records: list[dict], endpoints, *, style, method,
+def stratified_effect_rows(records: list[dict], endpoints, *, style, method,
                             modalities) -> list:
     """The stratified companion rows to analyze's pooled effect rows.
 
@@ -418,7 +418,7 @@ def _stratified_effect_rows(records: list[dict], endpoints, *, style, method,
 
 
 
-def _promotion_decisions(manifest, rows, run_dir, promotion_mod):
+def promotion_decisions(manifest, rows, run_dir, promotion_mod):
     """Assemble per-concept screening evidence from single-concept conditions:
     the primary-endpoint effect, the dose-response over that concept's alpha
     grid, and the matched-norm random floor."""

@@ -260,8 +260,8 @@ def test_resolve_injections_warns_on_uncentered_mean_aligned_artifact(tmp_path):
 
 def test_condition_builder_warns_on_uncentered_mean_aligned_ablation():
     from steerlab_server.experiment.manifest import Condition, Slot
-    from steerlab_server.experiment.tasks import (
-        ConceptVectorBundle, _condition_injections)
+    from steerlab_server.experiment.vector_materialization import ConceptVectorBundle
+    from steerlab_server.experiment.condition_execution import condition_injections
     from steerlab_server.steering.vector_store import ConceptVectors
     bundle = ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[3.0, 4.0, 0.0]] * 3),
@@ -272,7 +272,7 @@ def test_condition_builder_warns_on_uncentered_mean_aligned_ablation():
         name="no-anger",
         slots=[Slot(concept="anger", layer=1, alpha=1.0, mode="ablate")])
     with pytest.warns(UserWarning, match="strongly aligned"):
-        cells = _condition_injections(condition, {"anger": bundle})
+        cells = condition_injections(condition, {"anger": bundle})
     assert sorted(c.layer for c in cells) == [0, 1, 2]
     # Diagnostic only — frozen-manifest semantics unchanged.
     assert cells[0].vector == pytest.approx([3.0, 4.0, 0.0])
@@ -280,8 +280,8 @@ def test_condition_builder_warns_on_uncentered_mean_aligned_ablation():
 
 def test_condition_builder_warns_check_impossible_without_mean():
     from steerlab_server.experiment.manifest import Condition, Slot
-    from steerlab_server.experiment.tasks import (
-        ConceptVectorBundle, _condition_injections)
+    from steerlab_server.experiment.vector_materialization import ConceptVectorBundle
+    from steerlab_server.experiment.condition_execution import condition_injections
     from steerlab_server.steering.vector_store import ConceptVectors
     bundle = ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[3.0, 4.0, 0.0]] * 3),
@@ -291,15 +291,15 @@ def test_condition_builder_warns_check_impossible_without_mean():
         name="no-anger",
         slots=[Slot(concept="anger", layer=1, alpha=1.0, mode="ablate")])
     with pytest.warns(UserWarning, match="preflight impossible"):
-        _condition_injections(condition, {"anger": bundle})
+        condition_injections(condition, {"anger": bundle})
 
 
 def test_random_direction_ablation_control_is_exempt_from_the_preflight():
     """The control's whole point is an arbitrary direction — warning about
     its alignment would train researchers to ignore the warning."""
     from steerlab_server.experiment.manifest import Condition, Slot
-    from steerlab_server.experiment.tasks import (
-        ConceptVectorBundle, _condition_injections)
+    from steerlab_server.experiment.vector_materialization import ConceptVectorBundle
+    from steerlab_server.experiment.condition_execution import condition_injections
     from steerlab_server.steering.vector_store import ConceptVectors
     bundle = ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[3.0, 4.0, 0.0]] * 3),
@@ -311,4 +311,4 @@ def test_random_direction_ablation_control_is_exempt_from_the_preflight():
         slots=[Slot(concept="anger", layer=1, alpha=1.0, mode="ablate")])
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        _condition_injections(condition, {"anger": bundle})
+        condition_injections(condition, {"anger": bundle})

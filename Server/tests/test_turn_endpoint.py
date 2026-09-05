@@ -25,6 +25,7 @@ from types import SimpleNamespace
 import pytest
 
 from steerlab_server.experiment import multi_agent, tasks, turn_endpoint
+import steerlab_server.experiment.panel_workflow as panel_workflow
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.experiment.turn_endpoint import EndpointError, TurnEndpoint
 
@@ -238,7 +239,7 @@ def _panel_workspace(tmp_path, monkeypatch, *, declare=True, outputs=None):
         return text
 
     monkeypatch.setattr(multi_agent, "generate", _generate)
-    monkeypatch.setattr(_owner_execution_reporting, '_advise_cross_substrate', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_execution_reporting, 'advise_cross_substrate', lambda *a, **k: None)
     return root, Manifest.from_dict(spec)
 
 
@@ -253,7 +254,7 @@ def test_the_runner_stamps_each_declared_turn_at_write_time(
     root, manifest = _panel_workspace(tmp_path, monkeypatch)
     model = SimpleNamespace(model_id="m", revision="r", device="cpu")
 
-    run_dir = tasks._run_multi_agent_study(
+    run_dir = panel_workflow.run_multi_agent_study(
         "panel", manifest, model, str(root), log=lambda *_: None)
 
     turns = _turn_records(run_dir)
@@ -278,7 +279,7 @@ def test_a_turn_declaring_nothing_carries_no_endpoint_key(
     root, manifest = _panel_workspace(tmp_path, monkeypatch, declare=False)
     model = SimpleNamespace(model_id="m", revision="r", device="cpu")
 
-    run_dir = tasks._run_multi_agent_study(
+    run_dir = panel_workflow.run_multi_agent_study(
         "panel", manifest, model, str(root), log=lambda *_: None)
 
     assert all("endpoint" not in t for t in _turn_records(run_dir))
@@ -297,7 +298,7 @@ def test_analyze_writes_panel_endpoints(tmp_path, monkeypatch):
                  "Vote: affirm — the judgment stands.",
                  "I never labelled my line this time."])
     model = SimpleNamespace(model_id="m", revision="r", device="cpu")
-    run_dir = tasks._run_multi_agent_study(
+    run_dir = panel_workflow.run_multi_agent_study(
         "panel", manifest, model, str(root), log=lambda *_: None)
 
     out = tasks.analyze("panel", str(root), source_run=run_dir,
@@ -326,7 +327,7 @@ def test_analyze_writes_panel_endpoints(tmp_path, monkeypatch):
 def test_analyze_invents_no_section_without_stamps(tmp_path, monkeypatch):
     root, manifest = _panel_workspace(tmp_path, monkeypatch, declare=False)
     model = SimpleNamespace(model_id="m", revision="r", device="cpu")
-    run_dir = tasks._run_multi_agent_study(
+    run_dir = panel_workflow.run_multi_agent_study(
         "panel", manifest, model, str(root), log=lambda *_: None)
 
     out = tasks.analyze("panel", str(root), source_run=run_dir,

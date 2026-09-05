@@ -25,6 +25,8 @@ import pytest
 from safetensors.numpy import save_file
 
 from steerlab_server.experiment import model_variant, tasks
+import steerlab_server.experiment.condition_execution as condition_execution
+import steerlab_server.experiment.vector_materialization as vector_materialization
 from steerlab_server.experiment.manifest import Condition, Slot
 from steerlab_server.steering import residual_norm_convention as convention
 from steerlab_server.steering import vector_store
@@ -112,8 +114,8 @@ def test_loading_a_norms_less_or_full_artifact_still_works(tmp_path):
 
 # --- the condition path -----------------------------------------------------
 
-def _bundle(norms) -> tasks.ConceptVectorBundle:
-    return tasks.ConceptVectorBundle(
+def _bundle(norms) -> vector_materialization.ConceptVectorBundle:
+    return vector_materialization.ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[1.0, 0.0, 0.0]] * LAYERS),
         residual_norm_per_layer=list(norms),
         residual_norm_source="neutral-corpus", stimulus_hash="h")
@@ -126,7 +128,7 @@ def _condition(layer: int) -> Condition:
 
 
 def test_a_condition_at_a_covered_layer_still_doses(tmp_path):
-    cells = tasks._condition_injections(
+    cells = condition_execution.condition_injections(
         _condition(1), {"fear": _bundle([2.0, 4.0, 6.0, 8.0])})
     assert [c.layer for c in cells] == [1]
     assert cells[0].alpha == pytest.approx(4.0)
@@ -134,7 +136,7 @@ def test_a_condition_at_a_covered_layer_still_doses(tmp_path):
 
 def test_a_condition_past_a_truncated_table_refuses():
     with pytest.raises(RuntimeError) as exc:
-        tasks._condition_injections(_condition(3), {"fear": _bundle([2.0, 4.0])})
+        condition_execution.condition_injections(_condition(3), {"fear": _bundle([2.0, 4.0])})
     assert str(exc.value) == (
         "condition 'steered': 'fear' has no residual norm at layer 3 — its "
         "denominator table covers 2 layer(s), so an α in residual-norm units "
@@ -148,7 +150,7 @@ def test_a_condition_against_an_empty_table_refuses():
     an absent denominator, which sends the reader to re-extract the concept
     instead of measuring its norms."""
     with pytest.raises(RuntimeError, match="covers 0 layer\\(s\\)"):
-        tasks._condition_injections(_condition(0), {"fear": _bundle([])})
+        condition_execution.condition_injections(_condition(0), {"fear": _bundle([])})
 
 
 def test_a_condition_naming_an_unextracted_concept_refuses():
@@ -156,7 +158,7 @@ def test_a_condition_naming_an_unextracted_concept_refuses():
     with one slot, as an unlabelled baseline — under a steered arm's name.
     Byte-identical to the Swift twin's ``ExperimentError.reason``."""
     with pytest.raises(RuntimeError) as exc:
-        tasks._condition_injections(_condition(0), {})
+        condition_execution.condition_injections(_condition(0), {})
     assert str(exc.value) == (
         "condition 'steered' references unextracted concept 'fear'")
 
@@ -170,10 +172,10 @@ def test_the_sweep_site_speaks_the_same_sentence_under_its_own_subject():
     layer sweep were dosed with a shallower layer's number — and, because a
     sweep's whole job is to compare layers, that is the one verb where a
     clamped denominator corrupts the comparison it exists to make."""
-    assert tasks._residual_norm_at(
+    assert condition_execution.residual_norm_at(
         [2.0, 4.0, 6.0, 8.0], 3, artifact="fear", where="concept 'fear'") == 8.0
     with pytest.raises(RuntimeError) as exc:
-        tasks._residual_norm_at([2.0, 4.0], 3, artifact="fear",
+        condition_execution.residual_norm_at([2.0, 4.0], 3, artifact="fear",
                                 where="concept 'fear'")
     assert str(exc.value) == (
         "concept 'fear': 'fear' has no residual norm at layer 3 — its "
@@ -181,7 +183,7 @@ def test_the_sweep_site_speaks_the_same_sentence_under_its_own_subject():
         "cannot be denominated there; re-measure the norms (vectors "
         "backfill-norms), or switch α to raw units")
     with pytest.raises(RuntimeError, match="covers 0 layer\\(s\\)"):
-        tasks._residual_norm_at([], 0, artifact="fear", where="concept 'fear'")
+        condition_execution.residual_norm_at([], 0, artifact="fear", where="concept 'fear'")
 
 
 # --- the variant path -------------------------------------------------------

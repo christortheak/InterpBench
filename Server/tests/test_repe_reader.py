@@ -13,6 +13,8 @@ from types import SimpleNamespace
 import pytest
 
 from steerlab_server.experiment import catalog, tasks
+import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+import steerlab_server.experiment.condition_execution as condition_execution
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.experiment.prompt_render import (
     READER_CHAT_TEMPLATE_RENDERING_CONVENTION, READER_RENDERING_CONVENTION,
@@ -429,16 +431,16 @@ def test_manifest_verify_flags_drift_missing_refs_and_model(tmp_path):
 
 def test_reader_scorers_load_and_reject_foreign(tmp_path, monkeypatch):
     root, _, _, d = _reader_tree(tmp_path)
-    scorers = tasks._reader_scorers(Manifest.from_dict(d), root)
+    scorers = condition_execution.reader_scorers(Manifest.from_dict(d), root)
     assert [concept for concept, _ in scorers] == ["fear"]
     assert scorers[0][1].layer == 0
     monkeypatch.setattr(repe_reader, "score_text",
                         lambda model, reader, text: 0.25)
-    assert tasks._reader_scores(None, scorers, "any text") == {"fear": 0.25}
+    assert condition_execution._reader_scores(None, scorers, "any text") == {"fear": 0.25}
 
     root2, _, _, d2 = _reader_tree(tmp_path / "f", substrate="swift-mlx")
     with pytest.raises(RuntimeError, match="swift-mlx"):
-        tasks._reader_scorers(Manifest.from_dict(d2), root2)
+        condition_execution.reader_scorers(Manifest.from_dict(d2), root2)
 
 
 def test_endpoint_values_pick_up_reader_scores():
@@ -451,7 +453,7 @@ def test_endpoint_values_pick_up_reader_scores():
          "readerScores": {"fear": 5.0}},
         {"condition": "steered", "promptID": "p1", "error": "boom"},
     ]
-    endpoints = tasks._endpoint_values(records)
+    endpoints = analysis_endpoints.endpoint_values(records)
     # Endpoint per concept, mean over the sample axis, paired by promptID.
     assert endpoints["readerScore:fear"]["baseline"]["p1"] == pytest.approx(2.0)
     assert endpoints["readerScore:fear"]["steered"]["p1"] == pytest.approx(5.0)

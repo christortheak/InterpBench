@@ -20,6 +20,7 @@ import test_sweep_promote as harness
 
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import tasks
+import steerlab_server.experiment.layer_resolution as layer_resolution
 
 
 def test_default_grid_matches_swift_declare_default():
@@ -27,25 +28,25 @@ def test_default_grid_matches_swift_declare_default():
     # routinely push models into wasteful incoherence, and the live optimum
     # sits late in the network (L28/α0.08 on gemma-3-4b, ≈0.82 depth, inside
     # this grid). Twin assertion lives in Swift's OptimizationLifecycleTests.
-    assert tasks.DEFAULT_SWEEP_LAYER_FRACTIONS == (0.5, 0.7, 0.85)
-    assert tasks.DEFAULT_SWEEP_ALPHAS == (0.05, 0.08, 0.1, 0.13)
+    assert layer_resolution.DEFAULT_SWEEP_LAYER_FRACTIONS == (0.5, 0.7, 0.85)
+    assert layer_resolution.DEFAULT_SWEEP_ALPHAS == (0.05, 0.08, 0.1, 0.13)
 
 
 def test_default_fractions_resolve_against_model_depth():
     # gemma-3-4b depth: 34 blocks. 0.85·34 = 28.9 → L28, the live optimum.
-    assert tasks.resolve_sweep_layers(
-        34, tasks.DEFAULT_SWEEP_LAYER_FRACTIONS) == [17, 23, 28]
+    assert layer_resolution.resolve_sweep_layers(
+        34, layer_resolution.DEFAULT_SWEEP_LAYER_FRACTIONS) == [17, 23, 28]
     # A 40-block model.
-    assert tasks.resolve_sweep_layers(
-        40, tasks.DEFAULT_SWEEP_LAYER_FRACTIONS) == [20, 28, 34]
+    assert layer_resolution.resolve_sweep_layers(
+        40, layer_resolution.DEFAULT_SWEEP_LAYER_FRACTIONS) == [20, 28, 34]
 
 
 def test_fraction_resolution_clamps_and_dedups():
     # 1.0 would name layer_count — clamps to the last valid block; 0 stays
     # the first block; near-duplicates collapse to one cell; output sorted.
-    assert tasks.resolve_sweep_layers(10, [0.0, 1.0, 0.5, 0.51]) == [0, 5, 9]
+    assert layer_resolution.resolve_sweep_layers(10, [0.0, 1.0, 0.5, 0.51]) == [0, 5, 9]
     # Out-of-range garbage still lands on a valid block.
-    assert tasks.resolve_sweep_layers(4, [-0.5, 2.0]) == [0, 3]
+    assert layer_resolution.resolve_sweep_layers(4, [-0.5, 2.0]) == [0, 3]
 
 
 def test_spec_without_grid_falls_back_to_defaults(tmp_path, monkeypatch):
@@ -60,7 +61,7 @@ def test_spec_without_grid_falls_back_to_defaults(tmp_path, monkeypatch):
                   "maxTokens": 16}
     es.save_raw(d, root)
     monkeypatch.setattr(
-        _owner_vector_materialization, '_extract_all',
+        _owner_vector_materialization, 'extract_all',
         lambda model, manifest, root: {"fear": harness._fake_bundle()})
     monkeypatch.setattr(_owner_generate, 'generate', harness._fake_generate())
 
@@ -72,14 +73,14 @@ def test_spec_without_grid_falls_back_to_defaults(tmp_path, monkeypatch):
     steered = [r for r in rows if int(r["layer"]) >= 0]
     assert sorted({int(r["layer"]) for r in steered}) == [2, 3]
     assert sorted({float(r["alpha"]) for r in steered}) == sorted(
-        tasks.DEFAULT_SWEEP_ALPHAS)
-    assert len(steered) == 2 * len(tasks.DEFAULT_SWEEP_ALPHAS)
+        layer_resolution.DEFAULT_SWEEP_ALPHAS)
+    assert len(steered) == 2 * len(layer_resolution.DEFAULT_SWEEP_ALPHAS)
     # The recommended condition's cell comes from the default grid.
     d = es.load_raw("swdef", root)
     cond = next(c for c in d["conditions"] if c["name"] == "fear-recommended")
     slot = cond["slots"][0]
     assert slot["layer"] in (2, 3)
-    assert slot["alpha"] in tasks.DEFAULT_SWEEP_ALPHAS
+    assert slot["alpha"] in layer_resolution.DEFAULT_SWEEP_ALPHAS
 
 
 def test_explicit_grid_overrides_defaults(tmp_path, monkeypatch):
@@ -93,7 +94,7 @@ def test_explicit_grid_overrides_defaults(tmp_path, monkeypatch):
     d["sweep"]["alphas"] = [0.04, 0.12]
     es.save_raw(d, root)
     monkeypatch.setattr(
-        _owner_vector_materialization, '_extract_all',
+        _owner_vector_materialization, 'extract_all',
         lambda model, manifest, root: {"fear": harness._fake_bundle()})
     monkeypatch.setattr(_owner_generate, 'generate', harness._fake_generate())
 

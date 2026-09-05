@@ -38,6 +38,7 @@ import pytest
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import logprob as logprob_mod
 from steerlab_server.experiment import model_variant, resume, tasks
+import steerlab_server.experiment.run_reporting as run_reporting
 from steerlab_server.experiment.generate import CellInjection
 from steerlab_server.steering.vector_store import ConceptVectors
 
@@ -97,7 +98,7 @@ def _study_fixture(root, name, *, artifact=None, variant_name="v-plain"):
 
 
 def _fake_bundle():
-    return tasks.ConceptVectorBundle(
+    return _owner_vector_materialization.ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[1.0, 0.0]] * 4),
         residual_norm_per_layer=[1.0] * 4,
         residual_norm_source="test", stimulus_hash="h")
@@ -147,7 +148,7 @@ def _fake_score_options(log=None):
 
 
 def _patch(monkeypatch, generate_fn, score_fn):
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(_owner_generate, 'generate', generate_fn)
     monkeypatch.setattr(logprob_mod, "score_options", score_fn)
@@ -371,7 +372,7 @@ def test_agreement_with_baseline_counts_disagreements_and_skips_null_parses():
     ]
     import tempfile
     with tempfile.TemporaryDirectory() as out:
-        tasks._write_report("s", manifest, records, out)
+        run_reporting.write_report("s", manifest, records, out)
         report = json.loads(open(os.path.join(out, "report.json")).read())
     parity = report["conditions"]["steered"]["agreementWithBaseline"]
     assert parity == {"n": 2, "agreement": 0.5}

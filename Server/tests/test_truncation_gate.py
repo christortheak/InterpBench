@@ -35,6 +35,7 @@ import pytest
 from steerlab_server.experiment import battery as battery_mod
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import lifecycle_gates, tasks, truncation_gate
+import steerlab_server.experiment.panel_workflow as panel_workflow
 from steerlab_server.experiment.manifest import Manifest
 
 MAX_TOKENS = 8
@@ -93,7 +94,7 @@ def _fake_generate(capped_items=()):
 
 
 def _patch(monkeypatch, generate_fn):
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda model, manifest, root: {})
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all', lambda model, manifest, root: {})
     monkeypatch.setattr(_owner_generate, 'generate', generate_fn)
 
 
@@ -242,7 +243,7 @@ def test_a_panel_turn_is_classified_against_its_own_budget(tmp_path, monkeypatch
     assert [t[truncation_gate.RECORD_KEY] for t in turns] == [
         truncation_gate.FINISH_LENGTH, truncation_gate.FINISH_STOP]
 
-    flattened = tasks._panel_records_from(
+    flattened = panel_workflow._panel_records_from(
         str(tmp_path), "p", SimpleNamespace(
             content_hash=lambda: "h", model_id="m", temperature=0.0),
         None, "configured", 0)

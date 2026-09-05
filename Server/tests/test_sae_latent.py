@@ -677,11 +677,13 @@ def test_the_manifest_exposes_declared_latent_conditions():
 
 def test_an_invalid_latent_declaration_refuses_before_the_model_loads():
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     manifest = manifest_with(
         saeLatentConditions=[valid_entry(mode="scale")])
     with pytest.raises(RuntimeError, match="invalid SAE latent conditions"):
-        tasks._sae_latent_preflight(manifest, lambda *_: None)
+        condition_execution.sae_latent_preflight(manifest, lambda *_: None)
 
 
 def test_a_multi_agent_study_refuses_a_latent_condition():
@@ -689,17 +691,21 @@ def test_a_multi_agent_study_refuses_a_latent_condition():
     a study-level residual-stream edit, so the arm would never execute while
     the run completed normally."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     manifest = manifest_with(studyKind="multiAgent",
                              saeLatentConditions=[valid_entry()])
     with pytest.raises(RuntimeError, match="multi-agent study"):
-        tasks._sae_latent_preflight(manifest, lambda *_: None)
+        condition_execution.sae_latent_preflight(manifest, lambda *_: None)
 
 
 def test_a_manifest_without_latent_conditions_is_untouched():
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
-    assert tasks._sae_latent_preflight(manifest_with(), lambda *_: None) == []
+    assert condition_execution.sae_latent_preflight(manifest_with(), lambda *_: None) == []
 
 
 def test_a_sweep_says_out_loud_that_it_does_not_cover_latent_conditions():
@@ -707,13 +713,15 @@ def test_a_sweep_says_out_loud_that_it_does_not_cover_latent_conditions():
     layer×alpha grid, so it drops nothing declared — but a researcher must not
     assume the ladder they just swept covered a latent β."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     lines: list[str] = []
-    tasks._advise_sweep_ignores_sae_latent(
+    condition_execution.advise_sweep_ignores_sae_latent(
         manifest_with(saeLatentConditions=[valid_entry()]), lines.append)
     assert any("NOT part of this sweep" in line for line in lines)
     lines.clear()
-    tasks._advise_sweep_ignores_sae_latent(manifest_with(), lines.append)
+    condition_execution.advise_sweep_ignores_sae_latent(manifest_with(), lines.append)
     assert lines == []
 
 
@@ -722,12 +730,14 @@ def test_analyze_gives_latent_conditions_their_own_modality():
     so pooling it with vector additions would invite comparing doses that are
     not comparable."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     manifest = manifest_with(
         conditions=[{"name": "fear-a4", "slots": [
             {"concept": "fear", "layer": 3, "alpha": 4.0}]}],
         saeLatentConditions=[valid_entry()])
-    modalities = tasks._condition_modalities(manifest, None)
+    modalities = analysis_endpoints.condition_modalities(manifest, None)
     assert modalities["baseline"] == "none"
     assert modalities["fear-a4"] == "injection"
     assert modalities["sympathy-clamp-10"] == "saeLatent"
@@ -818,9 +828,11 @@ def _pin_battery(root, name, lines=BATTERY_V2):
 
 def _fake_bundle():
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
     from steerlab_server.steering.vector_store import ConceptVectors
 
-    return tasks.ConceptVectorBundle(
+    return _owner_vector_materialization.ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[1.0, 0.0]] * 4),
         residual_norm_per_layer=[1.0] * 4,
         residual_norm_source="test", stimulus_hash="h")
@@ -844,8 +856,10 @@ def _patch_run(monkeypatch, log, counts=None):
     from steerlab_server.experiment import gemma_scope
     from steerlab_server.experiment import logprob as logprob_mod
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
-    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
+    monkeypatch.setattr(_owner_vector_materialization, 'extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(gemma_scope, "load_sae_latent_feature",
                         fake_loader())
@@ -892,6 +906,8 @@ def test_a_latent_condition_runs_as_its_own_arm_with_stamped_provenance(
     SAME per-item executor as every other arm, producing a distinct condition
     in the matrix whose records say which mechanism ran."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     root = str(tmp_path)
     prompts = latent_study_fixture(root, "latent1")
@@ -935,6 +951,8 @@ def test_the_run_stamps_the_pinned_sae_repository_commit_in_config_notes(
     `notes`. A run that steers on a published dictionary must record which
     published bytes it read, or the arm cannot be reproduced from its record."""
     from steerlab_server.experiment import run_config, tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     root = str(tmp_path)
     prompts = latent_study_fixture(root, "latent2")
@@ -960,6 +978,8 @@ def test_the_latent_edit_reaches_generation_and_the_answer_token_instrument(
     """Both measurement paths of a latent condition are armed, and no other
     condition is: the mechanism travels with the condition, not the run."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     root = str(tmp_path)
     prompts = latent_study_fixture(root, "latent3")
@@ -985,6 +1005,8 @@ def test_a_latent_condition_takes_its_place_in_the_shard_key_order(
     """Sharding slices a contiguous range of the run's expected record keys, so
     the plan's condition order must match the executor's emission order."""
     from steerlab_server.experiment import sharding, tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     root = str(tmp_path)
     prompts = latent_study_fixture(root, "latent4")
@@ -1006,6 +1028,8 @@ def test_a_latent_condition_takes_its_place_in_the_shard_key_order(
 
 def test_two_latent_conditions_are_two_arms(tmp_path, monkeypatch):
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     root = str(tmp_path)
     prompts = latent_study_fixture(root, "latent5", entries=[
@@ -1056,6 +1080,8 @@ def test_the_capability_battery_scores_the_latent_arm_under_its_intervention(
     scored like every other arm — and armed, on BOTH scoring back-ends, with
     its own latent edit rather than with nothing."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     root = str(tmp_path)
     prompts = latent_study_fixture(root, "lbat1")
@@ -1103,6 +1129,8 @@ def test_the_latent_battery_row_carries_the_intervention_provenance(
     interventionState block generations.jsonl carries, so one reader parses
     both files."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     root = str(tmp_path)
     prompts = latent_study_fixture(root, "lbat2")
@@ -1134,6 +1162,8 @@ def test_non_latent_battery_rows_are_unchanged_by_the_latent_plumbing(
     declared, in BOTH battery formats — so a legacy pinned hash keeps meaning
     exactly what it meant, and only the latent rows carry the new key."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     root = str(tmp_path)
     with_latent = latent_study_fixture(root, "lbat3")
@@ -1175,6 +1205,8 @@ def test_a_cancel_inside_the_latent_battery_resumes_without_rescoring(
     merely deduplicated, and the resumed run ends with one row per
     (condition, item)."""
     from steerlab_server.experiment import tasks
+    import steerlab_server.experiment.analysis_endpoints as analysis_endpoints
+    import steerlab_server.experiment.condition_execution as condition_execution
 
     root = str(tmp_path)
     prompts = latent_study_fixture(root, "lbat5")

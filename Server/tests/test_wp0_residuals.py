@@ -22,6 +22,9 @@ import pytest
 
 from steerlab_server.experiment import (experiment_store as es,
                                         lifecycle_gates, tasks)
+import steerlab_server.experiment.run_preflight as run_preflight
+import steerlab_server.experiment.study_admission as study_admission
+import steerlab_server.experiment.task_inputs as task_inputs
 from steerlab_server.experiment.manifest import Manifest
 
 REFERENCE_DOC = os.path.join(
@@ -57,7 +60,7 @@ def test_the_near_miss_typo_refuses_at_run_start():
     manifest = _manifest(outcomeInstruments=["sampledTxt"])
     assert es.unknown_outcome_instruments(manifest.raw) == ["sampledTxt"]
     with pytest.raises(RuntimeError) as excinfo:
-        tasks._check_response_formats(
+        task_inputs.check_response_formats(
             manifest, [{"id": "i1", "prompt": "hello"}])
     exc = excinfo.value
     assert str(exc) == UNKNOWN_INSTRUMENT_SENTENCE
@@ -107,7 +110,7 @@ def test_the_preflight_refuses_before_the_model_loads(tmp_path):
     manifest = _manifest(outcomeInstruments=["sampledTxt"],
                          taskPromptsFile="prompts/tasks/items.jsonl")
     with pytest.raises(RuntimeError) as excinfo:
-        tasks._response_format_preflight(manifest, None, root)
+        run_preflight.response_format_preflight(manifest, None, root)
     assert lifecycle_gates.gate_of(excinfo.value) == \
         lifecycle_gates.RESPONSE_FORMAT
 
@@ -210,7 +213,7 @@ def test_foreign_substrate_repair_names_an_engine_that_has_the_verb(tmp_path):
 
     for verb in ("analyze", "evaluate", "rescore-style"):
         with pytest.raises(RuntimeError) as excinfo:
-            tasks._require_source_epoch(
+            study_admission.require_source_epoch(
                 verb, "study", manifest, run_dir, allow_unverified_epoch=False)
         assert lifecycle_gates.gate_of(excinfo.value) == \
             lifecycle_gates.MANIFEST_EPOCH

@@ -67,10 +67,10 @@ def _workspace(tmp_path, monkeypatch, *, replicates=2):
         "temperature": 0.0, "seeds": [0]}
     (root / "experiments/panel-a.json").write_text(json.dumps(spec))
     monkeypatch.setattr(multi_agent, "generate", lambda *a, **k: "text")
-    monkeypatch.setattr(_owner_execution_reporting, '_advise_cross_substrate', lambda *a, **k: None)
-    monkeypatch.setattr(_owner_execution_reporting, '_advise_dependency_lock_drift',
+    monkeypatch.setattr(_owner_execution_reporting, 'advise_cross_substrate', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_execution_reporting, 'advise_dependency_lock_drift',
                         lambda *a, **k: None)
-    monkeypatch.setattr(_owner_run_artifacts, '_write_config_snapshot', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_run_artifacts, 'write_config_snapshot', lambda *a, **k: None)
     return root, Manifest.from_dict(spec)
 
 
@@ -102,7 +102,7 @@ def test_a_condition_whose_tree_vanishes_is_named_in_a_loud_advisory(
     left behind and empty. Before the check, that run reported success with
     nothing anywhere saying the transcript layer was half missing."""
     root, manifest = _workspace(tmp_path, monkeypatch, replicates=2)
-    real_flatten = tasks._panel_records_from
+    real_flatten = _owner_panel_workflow._panel_records_from
 
     def flatten_then_erase(sub, name, manifest_, model, condition, replicate):
         records = real_flatten(sub, name, manifest_, model, condition,
@@ -114,7 +114,7 @@ def test_a_condition_whose_tree_vanishes_is_named_in_a_loud_advisory(
     monkeypatch.setattr(_owner_panel_workflow, '_panel_records_from', flatten_then_erase)
 
     lines = []
-    run_directory = tasks._run_multi_agent_study(
+    run_directory = _owner_panel_workflow.run_multi_agent_study(
         "panel-a", manifest, _model(), str(root), log=lines.append)
 
     # The run FINISHED — the advisory changes nothing about the run's fate.
@@ -138,7 +138,7 @@ def test_a_complete_panel_run_draws_no_transcript_advisory(tmp_path,
     absent is an advisory nobody reads."""
     root, manifest = _workspace(tmp_path, monkeypatch, replicates=2)
     lines = []
-    run_directory = tasks._run_multi_agent_study(
+    run_directory = _owner_panel_workflow.run_multi_agent_study(
         "panel-a", manifest, _model(), str(root), log=lines.append)
 
     for condition in ("configured", "baseline"):
@@ -157,7 +157,7 @@ def test_a_single_replicate_run_is_checked_in_its_own_layout(tmp_path,
     check that assumed replicate-N would report every such run as missing
     everything — the classic way a completeness gate gets switched off."""
     root, manifest = _workspace(tmp_path, monkeypatch, replicates=1)
-    run_directory = tasks._run_multi_agent_study(
+    run_directory = _owner_panel_workflow.run_multi_agent_study(
         "panel-a", manifest, _model(), str(root))
 
     assert os.path.isfile(
@@ -171,7 +171,7 @@ def test_a_shard_is_not_faulted_for_transcripts_another_shard_owns(
     is over the transcripts THIS run admitted, not over the study's whole
     condition list, or every sharded panel run would cry wolf."""
     root, manifest = _workspace(tmp_path, monkeypatch, replicates=2)
-    run_directory = tasks._run_multi_agent_study(
+    run_directory = _owner_panel_workflow.run_multi_agent_study(
         "panel-a", manifest, _model(), str(root),
         shard=sharding.ShardSpec(index=0, count=2))
 
@@ -191,7 +191,7 @@ def test_a_cancelled_run_is_not_faulted_for_the_arm_it_never_reached(
         seen["n"] += 1
         return seen["n"] > 1
 
-    run_directory = tasks._run_multi_agent_study(
+    run_directory = _owner_panel_workflow.run_multi_agent_study(
         "panel-a", manifest, _model(), str(root),
         should_cancel=cancel_after_one_transcript)
 
@@ -215,7 +215,7 @@ def test_a_transcript_write_failure_is_recorded_with_its_exception_text(
     monkeypatch.setattr(multi_agent, "_transcript", refuse_to_render)
 
     lines = []
-    run_directory = tasks._run_multi_agent_study(
+    run_directory = _owner_panel_workflow.run_multi_agent_study(
         "panel-a", manifest, _model(), str(root), log=lines.append)
 
     # The run still completed and still has its authoritative record.
@@ -262,7 +262,7 @@ def test_a_sharded_panel_merge_carries_every_shard_s_transcript_tree(
     root, manifest = _workspace(tmp_path, monkeypatch, replicates=2)
     model = _model()
 
-    partials = [tasks._run_multi_agent_study(
+    partials = [_owner_panel_workflow.run_multi_agent_study(
         "panel-a", manifest, model, str(root),
         shard=sharding.ShardSpec(index=index, count=2)) for index in range(2)]
     # The premise: the two shards between them hold the whole matrix, one
@@ -296,7 +296,7 @@ def test_two_shards_claiming_one_transcript_refuse_rather_than_pick(
     be inventing a matrix nobody ran."""
     root, manifest = _workspace(tmp_path, monkeypatch, replicates=2)
     model = _model()
-    partials = [tasks._run_multi_agent_study(
+    partials = [_owner_panel_workflow.run_multi_agent_study(
         "panel-a", manifest, model, str(root),
         shard=sharding.ShardSpec(index=index, count=2)) for index in range(2)]
 

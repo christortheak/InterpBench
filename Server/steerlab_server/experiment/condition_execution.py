@@ -15,17 +15,17 @@ from . import response_format
 from . import resume as resume_mod
 from . import system_prompt as system_prompt_mod
 from . import truncation_gate
-from . import cancellation as _dep_cancellation
-from . import execution_reporting as _dep_execution_reporting
-from . import generate as _dep_generate
-from . import manifest as _dep_manifest
-from . import sampling as _dep_sampling
-from . import scoring as _dep_scoring
-from . import task_inputs as _dep_task_inputs
-from . import vector_materialization as _dep_vector_materialization
+from . import cancellation
+from . import execution_reporting
+from . import generate
+from . import manifest as manifest_module
+from . import sampling as sampling_module
+from . import scoring
+from . import task_inputs
+from . import vector_materialization
 
 
-def _residual_norm_at(norms, layer: int, *, artifact: str, where: str) -> float:
+def residual_norm_at(norms, layer: int, *, artifact: str, where: str) -> float:
     """The α denominator at ``layer``, or the ONE typed refusal every verb
     shares (2026-08-28 audit, F7/F13).
 
@@ -43,8 +43,8 @@ def _residual_norm_at(norms, layer: int, *, artifact: str, where: str) -> float:
     return float(norms[layer])
 
 
-def _condition_injections(condition, bundles: dict[str, _dep_vector_materialization.ConceptVectorBundle],
-                          *, preflight: bool = True) -> list[_dep_generate.CellInjection]:
+def condition_injections(condition, bundles: dict[str, vector_materialization.ConceptVectorBundle],
+                          *, preflight: bool = True) -> list[generate.CellInjection]:
     """Resolve a condition's slots to per-layer injection cells, applying the
     layer band and norm-unit alpha conversion (parallel to
     ChatService.currentInjections).
@@ -55,7 +55,7 @@ def _condition_injections(condition, bundles: dict[str, _dep_vector_materializat
     whole matrix a second time purely to describe it: the advisory belongs to
     the condition loop that executes the arm, and a provenance stamp must
     neither duplicate it nor pre-empt the log line it belongs next to."""
-    injections: list[_dep_generate.CellInjection] = []
+    injections: list[generate.CellInjection] = []
     for slot in condition.slots:
         bundle = bundles.get(slot.concept)
         if bundle is None:
@@ -126,12 +126,12 @@ def _condition_injections(condition, bundles: dict[str, _dep_vector_materializat
                 # the table did not reach and refuse as `degenerateData` — a
                 # typed refusal, but one that named the wrong defect — while
                 # the sweep and variant paths clamped silently.
-                residual = _residual_norm_at(
+                residual = residual_norm_at(
                     bundle.residual_norm_per_layer, layer,
                     artifact=slot.concept,
                     where=f"condition '{condition.name}'")
                 alpha = vm.norm_unit_scale(slot.alpha, residual, vector_norm)
-            injections.append(_dep_generate.CellInjection(
+            injections.append(generate.CellInjection(
                 layer=layer, vector=vector, alpha=alpha,
                 mode=slot.effective_mode, concept=slot.concept))
     return injections
@@ -198,7 +198,7 @@ def _matched_norm_random(seed_text: str, dimension: int, norm: float) -> list[fl
     return [value * scale for value in direction]
 
 
-def _check_option_lengths(choice, manifest: _dep_manifest.Manifest, prompt_id: str) -> None:
+def check_option_lengths(choice, manifest: manifest_module.Manifest, prompt_id: str) -> None:
     """Study-path guard: joint logprobs favor shorter options, so unequal
     scored-option token counts silently bias `selected`. Refuse unless the
     manifest explicitly acknowledges the imbalance. Best practice is short
@@ -213,7 +213,7 @@ def _check_option_lengths(choice, manifest: _dep_manifest.Manifest, prompt_id: s
             "in the manifest to accept the bias knowingly")
 
 
-def _sae_latent_preflight(manifest: _dep_manifest.Manifest, log) -> list[dict]:
+def sae_latent_preflight(manifest: manifest_module.Manifest, log) -> list[dict]:
     """Validate declared SAE latent conditions, and refuse the paths that
     cannot execute them. Returns the raw entries (possibly empty).
 
@@ -256,7 +256,7 @@ def _sae_latent_preflight(manifest: _dep_manifest.Manifest, log) -> list[dict]:
     return list(entries)
 
 
-def _advise_sweep_ignores_sae_latent(manifest: _dep_manifest.Manifest, log) -> None:
+def advise_sweep_ignores_sae_latent(manifest: manifest_module.Manifest, log) -> None:
     """Say out loud that a sweep does not cover SAE latent conditions.
 
     Deliberately an ADVISORY, not a refusal — and the distinction is the point.
@@ -283,7 +283,7 @@ def _advise_sweep_ignores_sae_latent(manifest: _dep_manifest.Manifest, log) -> N
         "nothing here selects, tunes or qualifies them.")
 
 
-def _materialize_sae_latent_conditions(manifest: _dep_manifest.Manifest, log):
+def materialize_sae_latent_conditions(manifest: manifest_module.Manifest, log):
     """Load every declared latent condition's SAE tensors through the loader
     seam. Returns ``[(spec, edit, provenance)]``.
 
@@ -308,7 +308,7 @@ def _materialize_sae_latent_conditions(manifest: _dep_manifest.Manifest, log):
     return resolved
 
 
-def _effective_sae_latent_condition(spec, edit, provenance,
+def effective_sae_latent_condition(spec, edit, provenance,
                                     manifest) -> EffectiveCondition:
     """A latent condition's resolved execution configuration.
 
@@ -318,7 +318,7 @@ def _effective_sae_latent_condition(spec, edit, provenance,
     all, and the latent edit carried in its own field.
 
     A latent arm carries no agent identity, so the system-prompt composition
-    degrades to the study frame itself (:func:`_effective_ordinary_condition`
+    degrades to the study frame itself (:func:`effective_ordinary_condition`
     twin) — byte-identical to what it always rendered.
     """
     from . import sae_latent as _sae_latent
@@ -338,7 +338,7 @@ def _effective_sae_latent_condition(spec, edit, provenance,
         study_system_prompt=manifest.system_prompt)
 
 
-def _intervention_state(condition) -> dict:
+def intervention_state(condition) -> dict:
     """JSON-safe provenance for what was injected under this condition —
     stamped on every record so a reader never reconstructs it from the name."""
     # `mode` is stamped only on an ablating slot (absent means add, the
@@ -362,7 +362,7 @@ def _intervention_state(condition) -> dict:
     return state
 
 
-def _reader_scorers(manifest: _dep_manifest.Manifest, root: str | None) -> list[tuple[str, object]]:
+def reader_scorers(manifest: manifest_module.Manifest, root: str | None) -> list[tuple[str, object]]:
     """Load the manifest's pinned RepE reader artifacts for the
     ``repeReaderScore`` outcome instrument: ``[(concept, ReaderArtifact)]``.
     The FULL binding is enforced here as well as in verify() — substrate,
@@ -423,7 +423,7 @@ class EffectiveCondition:
     Every condition of the run matrix — implicit baseline, steered/control
     concept conditions, and ModelVariant-backed variant conditions — reduces
     to this shape, and ONE shared per-item executor
-    (:func:`_execute_condition`) performs the same requested measurements for
+    (:func:`execute_condition`) performs the same requested measurements for
     all of them. Condition-specific code (the resolvers below) configures the
     model; it never redefines how outcomes are measured. This closes the
     2026-07-13 measurement-asymmetry finding: variant conditions previously
@@ -433,7 +433,7 @@ class EffectiveCondition:
     whose raw outputs were identical to baseline."""
 
     name: str
-    injections: list[_dep_generate.CellInjection]
+    injections: list[generate.CellInjection]
     intervention_state: dict
     prompt_mode: str
     #: The EFFECTIVE system prompt this arm generates under — the composition
@@ -485,7 +485,7 @@ class EffectiveCondition:
     verified_identity: dict | None = None
 
 
-def _effective_ordinary_condition(condition, bundles, manifest) -> EffectiveCondition:
+def effective_ordinary_condition(condition, bundles, manifest) -> EffectiveCondition:
     """Baseline and concept conditions execute under the manifest's own
     prompt/sampling configuration; injections and intervention provenance
     resolve from the condition's slots exactly as before (matched-norm random
@@ -497,8 +497,8 @@ def _effective_ordinary_condition(condition, bundles, manifest) -> EffectiveCond
     stamped."""
     return EffectiveCondition(
         name=condition.name,
-        injections=_condition_injections(condition, bundles),
-        intervention_state=_intervention_state(condition),
+        injections=condition_injections(condition, bundles),
+        intervention_state=intervention_state(condition),
         prompt_mode=manifest.prompt_mode,
         system_prompt=system_prompt_mod.compose(None, manifest.system_prompt),
         qwen_thinking_enabled=manifest.qwen_thinking_enabled,
@@ -510,7 +510,7 @@ def _effective_ordinary_condition(condition, bundles, manifest) -> EffectiveCond
 
 
 def _variant_intervention_state(vc, variant) -> dict:
-    """The variant twin of :func:`_intervention_state`: the SAME cross-engine
+    """The variant twin of :func:`intervention_state`: the SAME cross-engine
     keys (slots/bandWidth/alphaInNormUnits/controlType) so readers parse one
     shape for every condition, plus the variant identity and its non-injection
     components — a reader never reconstructs what a variant condition applied
@@ -532,7 +532,7 @@ def _variant_intervention_state(vc, variant) -> dict:
     }
 
 
-def _effective_variant_condition(vc, manifest, model, root, *,
+def effective_variant_condition(vc, manifest, model, root, *,
                                  wants_choice: bool) -> EffectiveCondition:
     """Resolve a variant condition to its effective configuration: the stored
     artifact's injections + prompt settings, plus provenance stamped on every
@@ -617,7 +617,7 @@ def _effective_variant_condition(vc, manifest, model, root, *,
         variant=variant)
 
 
-def _run_arm_system_prompts(manifest, conditions, latent_conditions,
+def run_arm_system_prompts(manifest, conditions, latent_conditions,
                             root) -> list:
     """``(arm name, effective system prompt)`` for every arm of the run
     matrix, in the executor's own emission order (ordinary, then variants,
@@ -654,12 +654,12 @@ def _run_arm_system_prompts(manifest, conditions, latent_conditions,
     return arms
 
 
-def _require_manifest_sampling_policy(manifest, model, root, *,
+def require_manifest_sampling_policy(manifest, model, root, *,
                                       wants_choice: bool) -> None:
     """Defense in depth for study-owned sampling (2026-07-21): every
     condition of the run matrix must execute under the MANIFEST's sampling
     policy. Ordinary conditions take the manifest temperature structurally
-    (:func:`_effective_ordinary_condition` copies it), so the check resolves
+    (:func:`effective_ordinary_condition` copies it), so the check resolves
     the variant conditions — the resolver that historically diverged (agent
     artifact temperature, forced to 0) and produced an unbalanced design:
     one greedy path per agent against a samplesPerItem-draw baseline.
@@ -670,7 +670,7 @@ def _require_manifest_sampling_policy(manifest, model, root, *,
     record and keeps measuring the other conditions."""
     for vc in manifest.variant_conditions:
         try:
-            eff = _effective_variant_condition(vc, manifest, model, root,
+            eff = effective_variant_condition(vc, manifest, model, root,
                                                wants_choice=wants_choice)
         except (OSError, KeyError, ValueError, RuntimeError):
             continue  # surfaces as the loop's per-condition error record
@@ -718,7 +718,7 @@ def effective_sample_count(manifest) -> int:
     return max(1, len(manifest.seeds))
 
 
-def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
+def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                        name, manifest, experiment_hash, wants_choice,
                        wants_sampled, reader_scorers, should_cancel, log,
                        numeric_parser=None, adapter_active: bool = False,
@@ -752,7 +752,7 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
             "transcripts but the condition's promptMode is rawCompletion — "
             "transcript items render through the chat template by "
             "definition; use chatAssistant")
-    sampling = _dep_execution_reporting._sampling_metadata(model, eff.temperature)
+    sampling = execution_reporting.sampling_metadata(model, eff.temperature)
     # Stop-reason machinery, resolved ONCE per condition. `stop_ids` is what
     # lets a generation that emits EOS on its very last budgeted step be
     # recorded as the natural ending it is instead of as a cap; `tally` is
@@ -783,7 +783,7 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
         "experiment": name, "experimentHash": experiment_hash,
         "modelID": manifest.model_id, "modelRevision": model.revision,
         "promptMode": eff.prompt_mode,
-        "systemPromptHash": _dep_execution_reporting._sha256_text(eff.system_prompt),
+        "systemPromptHash": execution_reporting.sha256_text(eff.system_prompt),
         # …and WHICH LEVELS produced that effective hash (2026-08-24 ruling).
         # Additive provenance beside the effective hash, always present with
         # explicit nulls: the effective hash alone cannot tell a reader
@@ -795,7 +795,7 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
         **eff.provenance,
     }
     for prompt_index, prompt in enumerate(prompts):
-        if _dep_cancellation._observe_cancel(should_cancel, log,
+        if cancellation.observe_cancel(should_cancel, log,
                            f"condition={eff.name} prompt={prompt_index}"):
             return True
         prompt_meta = {k: prompt[k] for k in _PROMPT_META_KEYS if k in prompt}
@@ -833,7 +833,7 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                 system_prompt=eff.system_prompt,
                 qwen_thinking_enabled=eff.qwen_thinking_enabled,
                 **transcript_kwargs)
-            _check_option_lengths(choice, manifest, prompt["id"])
+            check_option_lengths(choice, manifest, prompt["id"])
             # Ordinal-scale fields (cross-engine contract keys
             # "ordinalPosition"/"ordinalDistribution"): the option
             # probabilities renormalized over the item's declared ladder (in
@@ -841,7 +841,7 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
             # declared aggregation. Keys absent when ordinalScale is not
             # declared (Swift ChoiceRecord twin).
             ordinal_fields = {}
-            aggregation = _dep_task_inputs.resolve_ordinal_aggregation(manifest)
+            aggregation = task_inputs.resolve_ordinal_aggregation(manifest)
             if aggregation is not None:
                 distribution = logprob.ordinal_distribution(
                     choice.ordered_probabilities)
@@ -879,7 +879,7 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
         if not wants_sampled:
             continue
         if manifest.samples_per_item > 1 and eff.temperature > 0:
-            samples = [(i, _dep_sampling.derive_seed(experiment_hash, eff.name,
+            samples = [(i, sampling_module.derive_seed(experiment_hash, eff.name,
                                        prompt["id"], i))
                        for i in range(manifest.samples_per_item)]
             seed_policy = "derivedSHA256"
@@ -936,8 +936,8 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
             if token_ids is None:
                 token_ids = []
                 readout_kwargs["token_ids_out"] = token_ids
-            with _dep_sampling.seeded_generation(eff.temperature, seed):
-                text = _dep_generate.generate(
+            with sampling_module.seeded_generation(eff.temperature, seed):
+                text = generate.generate(
                     model, prompt["prompt"], model_id=manifest.model_id,
                     max_tokens=manifest.max_tokens, temperature=eff.temperature,
                     injections=eff.injections, **latent_kwargs,
@@ -956,8 +956,8 @@ def _execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                 "interventionState": eff.intervention_state,
                 **prompt_meta,
                 **transcript_fields,
-                "output": text, "wordCount": _dep_scoring.word_count(text),
-                "distinct2": _dep_scoring.distinct_bigram_ratio(text),
+                "output": text, "wordCount": scoring.word_count(text),
+                "distinct2": scoring.distinct_bigram_ratio(text),
                 # The third thing every record says about its text, and the
                 # only one the text itself cannot express: WHY generation
                 # ended. Stamped unconditionally, so a record without the key

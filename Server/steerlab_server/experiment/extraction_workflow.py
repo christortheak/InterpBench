@@ -7,28 +7,28 @@ import json
 import os
 from typing import Callable
 from . import paths
-from . import layer_resolution as _dep_layer_resolution
-from . import manifest as _dep_manifest
-from . import model_resources as _dep_model_resources
-from . import run_artifacts as _dep_run_artifacts
-from . import study_admission as _dep_study_admission
-from . import vector_materialization as _dep_vector_materialization
+from . import layer_resolution
+from . import manifest as manifest_module
+from . import model_resources
+from . import run_artifacts
+from . import study_admission
+from . import vector_materialization
 
 
 def extract(name: str, root: str | None = None, dtype: str = "auto",
             device: str | None = None, *, model_provider=None,
             should_cancel: Callable[[], bool] | None = None, log=None) -> str:
     _log = log or print
-    manifest = _dep_manifest.Manifest.load(name, root)
-    _dep_study_admission._verify_or_warn(manifest, root)
+    manifest = manifest_module.Manifest.load(name, root)
+    study_admission.verify_or_warn(manifest, root)
     _advise_inert_declarations(manifest, _log)
-    with _dep_model_resources._acquire_model(manifest, dtype, device, model_provider) as model:
-        manifest = _dep_model_resources._pin_model_revision(name, manifest, model, root, _log)
-        bundles = _dep_vector_materialization._extract_all(model, manifest, root)
+    with model_resources.acquire_model(manifest, dtype, device, model_provider) as model:
+        manifest = model_resources.pin_model_revision(name, manifest, model, root, _log)
+        bundles = vector_materialization.extract_all(model, manifest, root)
         run_directory = paths.make_unique_run_directory(f"exp-{name}-extract", root)
-        _dep_run_artifacts._write_config_snapshot(manifest, run_directory, "extract", model=model,
+        run_artifacts.write_config_snapshot(manifest, run_directory, "extract", model=model,
                                root=root, log=_log)
-        _dep_vector_materialization._persist_vectors(bundles, manifest, model, run_directory)
+        vector_materialization.persist_vectors(bundles, manifest, model, run_directory)
         _write_reading_position_diagnostics(bundles, run_directory, _log)
         _write_logit_lens_vocabulary(bundles, manifest, model,
                                      run_directory, _log)
@@ -36,7 +36,7 @@ def extract(name: str, root: str | None = None, dtype: str = "auto",
     return run_directory
 
 
-def _advise_inert_declarations(manifest: _dep_manifest.Manifest, _log) -> None:
+def _advise_inert_declarations(manifest: manifest_module.Manifest, _log) -> None:
     """Loud, non-blocking extract-time advisory (2026-08-24 field finding):
     say when this manifest's chat-context declarations cannot reach the
     extraction that is about to run.
@@ -110,7 +110,7 @@ def _write_reading_position_diagnostics(bundles, run_directory: str, _log) -> No
 LOGIT_LENS_VOCABULARY_TOP_K = 10
 
 
-def _write_logit_lens_vocabulary(bundles, manifest: _dep_manifest.Manifest, model,
+def _write_logit_lens_vocabulary(bundles, manifest: manifest_module.Manifest, model,
                                  run_directory: str, _log) -> None:
     """Per-direction logit-lens vocabulary, written at EXTRACT time.
 
@@ -145,7 +145,7 @@ def _write_logit_lens_vocabulary(bundles, manifest: _dep_manifest.Manifest, mode
         if not layer_count:
             continue
         try:
-            resolutions = _dep_layer_resolution._validation_layer_resolutions(
+            resolutions = layer_resolution.validation_layer_resolutions(
                 manifest, concept_name, layer_count)
         except Exception as exc:  # noqa: BLE001 — a diagnostic never gates
             report[concept_name] = f"logit-lens vocabulary skipped: {exc}"
@@ -160,7 +160,7 @@ def _write_logit_lens_vocabulary(bundles, manifest: _dep_manifest.Manifest, mode
                 continue
             depths.append({
                 "layer": lens.layer,
-                "layerResolution": _dep_layer_resolution._resolution_block(resolution),
+                "layerResolution": layer_resolution.resolution_block(resolution),
                 "topPositive": [{"tokenID": t.token_id, "token": t.token,
                                  "logit": t.logit} for t in lens.top_positive],
                 "topNegative": [{"tokenID": t.token_id, "token": t.token,
