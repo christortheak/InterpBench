@@ -395,9 +395,11 @@ def complete_sweep_judgment(name: str, sweep_run: str, judgments: list,
             # never binding.
             recommendations[concept_name] = sel.no_selection_reason(
                 cells, baseline, criterion)
-            _append_progress({"kind": "recommendation",
-                              "concept": concept_name,
-                              "block": recommendations[concept_name]})
+            # Phase A only validates and derives the result. The inline
+            # sweep's progress writer is not in scope here, and its source
+            # run is immutable. Phase B persists this refusal alongside
+            # every other recommendation in the new judgment run.
+            _log(f"{concept_name}: {recommendations[concept_name]}")
             continue
         control_info = None
         if criterion.matched_norm_random_margin is not None:

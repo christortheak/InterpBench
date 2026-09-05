@@ -1763,3 +1763,43 @@ def test_promote_inherits_logprob_shift_criterion(tmp_path, monkeypatch):
     out = promote_mod.promote("lppro", "fear", root=root, log=lambda *_: None)
     assert (out["variant"]["promotion"]["criterion"]["objective"]["metric"]
             == "logprobShift")
+
+
+def test_deferred_no_selection_completes_without_mutating_source_sweep(
+        tmp_path, monkeypatch):
+    """A valid judgment set preferring baseline is a completed negative result.
+
+    Completion must record the scientific refusal, rather than calling the
+    inline sweep's out-of-scope progress closure or appending to its artifacts.
+    """
+    from pathlib import Path
+
+    root = str(tmp_path)
+    run_dir, _ = _deferred_sweep(root, "js-no-selection", monkeypatch)
+    sweep = Path(run_dir)
+    source_bytes = {str(p.relative_to(sweep)): p.read_bytes()
+                    for p in sweep.rglob('*') if p.is_file()}
+    original_manifest = es.load_raw("js-no-selection", root)
+    judgments = _judgments_from_map(run_dir, cell_winner="baseline")
+    logs = []
+    completed = tasks.complete_sweep_judgment(
+        "js-no-selection", sweep.name, judgments, root, log=logs.append)
+
+    recommendations = json.loads((Path(completed) / 'recommendations.json').read_text())
+    reason = recommendations['fear']
+    assert isinstance(reason, str) and reason
+    assert f'fear: {reason}' in logs
+    assert (Path(completed) / 'judgments.jsonl').is_file()
+    assert (Path(completed) / 'judgment-source.json').is_file()
+    assert es.load_raw("js-no-selection", root) == original_manifest
+    assert tasks.list_awaiting_judgment("js-no-selection", root) == []
+    assert {str(p.relative_to(sweep)): p.read_bytes()
+            for p in sweep.rglob('*') if p.is_file()} == source_bytes
+
+    # A verified negative result has the same idempotent completion contract
+    # as a selected cell. No second judgment run or recommendation is minted.
+    before_retry = sorted(p.name for p in (tmp_path / 'runs').iterdir())
+    assert tasks.complete_sweep_judgment(
+        "js-no-selection", sweep.name, judgments, root, log=logs.append) == completed
+    assert sorted(p.name for p in (tmp_path / 'runs').iterdir()) == before_retry
+    assert es.load_raw("js-no-selection", root) == original_manifest
