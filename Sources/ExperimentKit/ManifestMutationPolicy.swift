@@ -67,4 +67,30 @@ enum ManifestMutationPolicy {
             + "steerlab-cli experiment <the verb you just ran> \(name)-v2 …  "
             + "(frozen studies are immutable; the duplicate is a draft again)"
     }
+
+    static func admitDraftEdit(_ manifest: ExperimentManifest) throws {
+        let name = manifest.name
+        guard manifest.status == .draft else {
+            throw ExperimentError.refusing(
+                .statusImmutable,
+                "experiment '\(name)' is \(manifest.status.rawValue) — "
+                    + "duplicate it to iterate",
+                repair: duplicateToIterateRepair(name))
+        }
+    }
+
+    static func admitFreeze(_ manifest: ExperimentManifest) throws {
+        let name = manifest.name
+        guard manifest.status == .draft else {
+            // Typed since gate-5 dry run #2 (P3): `freeze` was the last
+            // manifest-WRITING verb whose immutability refusal arrived as an
+            // untyped `verbFailed`/70 — an operational failure, to an agent —
+            // while every other writer already answered `statusImmutable`/65
+            // with a runnable duplicate-to-iterate repair. Prose unchanged.
+            throw ExperimentError.refusing(
+                .statusImmutable,
+                "'\(name)' is already \(manifest.status.rawValue)",
+                repair: duplicateToIterateRepair(name))
+        }
+    }
 }

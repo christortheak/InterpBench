@@ -324,10 +324,7 @@ public enum ExperimentStore {
     }
 
     /// The canonical chain stage order (server `pipeline_spec.VALID_STAGES`).
-    static let pipelineValidStages = [
-        "extract", "validate", "sweep", "promote", "run", "evaluate",
-        "analyze",
-    ]
+    static let pipelineValidStages = ManifestDeclarationPolicy.pipelineValidStages
 
     /// Pure mirror of the server resolver's refusals over the passthrough
     /// `pipeline` block (stage 5): unknown/out-of-order/duplicate stages,
@@ -399,139 +396,11 @@ public enum ExperimentStore {
     }
 
     public static func pipelineBlockViolations(_ block: JSONValue?) -> [String] {
-        guard let block else { return [] }
-        guard case .object(let pipeline) = block else {
-            return ["pipeline block invalid: must be an object"]
-        }
-        var violations: [String] = []
-        for key in pipeline.keys where key != "stages" && key != "gates" {
-            violations.append(
-                "pipeline block invalid: unknown pipeline key '\(key)' — a "
-                    + "typo'd key silently ignored would un-declare a gate")
-        }
-        // The effective stage list (absent/empty = the default chain) — the
-        // gate-membership check below needs it.
-        var stages = ["extract", "validate", "sweep", "promote", "run"]
-        if let rawStages = pipeline["stages"], !isNull(rawStages) {
-            guard case .array(let items) = rawStages else {
-                return violations
-                    + ["pipeline block invalid: 'stages' must be a list of stage names"]
-            }
-            var names: [String] = []
-            for item in items {
-                guard case .string(let name) = item else {
-                    return violations
-                        + ["pipeline block invalid: 'stages' must be a list of stage names"]
-                }
-                names.append(name)
-            }
-            if !names.isEmpty {
-                let order = Dictionary(
-                    uniqueKeysWithValues: pipelineValidStages.enumerated()
-                        .map { ($1, $0) })
-                let unknown = names.filter { order[$0] == nil }
-                if !unknown.isEmpty {
-                    violations.append(
-                        "pipeline block invalid: unknown stage(s) "
-                            + unknown.joined(separator: ", "))
-                }
-                if Set(names).count != names.count {
-                    violations.append(
-                        "pipeline block invalid: 'stages' contains duplicates")
-                }
-                let indices = names.compactMap { order[$0] }
-                if indices != indices.sorted() {
-                    violations.append(
-                        "pipeline block invalid: 'stages' must follow the "
-                            + "canonical order "
-                            + pipelineValidStages.joined(separator: ", "))
-                }
-                if (names.contains("evaluate") || names.contains("analyze")),
-                    !names.contains("run")
-                {
-                    violations.append(
-                        "pipeline block invalid: evaluate/analyze require "
-                            + "'run' in the same chain")
-                }
-                stages = names
-            }
-        }
-        if let rawGates = pipeline["gates"], !isNull(rawGates) {
-            guard case .object(let gates) = rawGates else {
-                return violations + ["pipeline block invalid: 'gates' must be an object"]
-            }
-            let knownKeys: [String: Set<String>] = [
-                "validate": [
-                    "minScenarioAccuracy", "maxCrossConceptCosine",
-                    "accuracyFloor",
-                ],
-                "sweep": ["requireSelectionForEveryConcept"],
-            ]
-            for (gateName, gate) in gates {
-                guard let keys = knownKeys[gateName] else {
-                    violations.append(
-                        "pipeline block invalid: no gate is defined for "
-                            + "stage '\(gateName)'")
-                    continue
-                }
-                if !stages.contains(gateName) {
-                    violations.append(
-                        "pipeline block invalid: gate '\(gateName)' names a "
-                            + "stage that is not in the stage list")
-                }
-                guard case .object(let fields) = gate else {
-                    if !isNull(gate) {
-                        violations.append(
-                            "pipeline block invalid: gate '\(gateName)' must "
-                                + "be an object")
-                    }
-                    continue
-                }
-                for (key, value) in fields {
-                    guard keys.contains(key) else {
-                        violations.append(
-                            "pipeline block invalid: unknown \(gateName)-gate "
-                                + "key '\(key)'")
-                        continue
-                    }
-                    if gateName == "validate", key == "accuracyFloor",
-                        !isNull(value)
-                    {
-                        violations += accuracyFloorViolations(value)
-                        continue
-                    }
-                    if gateName == "validate", !isNull(value) {
-                        guard case .number(let threshold) = value,
-                            threshold >= 0, threshold <= 1
-                        else {
-                            violations.append(
-                                "pipeline block invalid: gate "
-                                    + "'\(gateName).\(key)' must be a number "
-                                    + "in [0, 1]")
-                            continue
-                        }
-                    }
-                }
-                // The legacy key IS the transferAccuracy floor — declaring
-                // it beside an accuracyFloor is one ambiguity, refused on
-                // both engines (server resolver twin).
-                if gateName == "validate",
-                    let legacy = fields["minScenarioAccuracy"], !isNull(legacy),
-                    let declared = fields["accuracyFloor"], !isNull(declared)
-                {
-                    violations.append(
-                        "pipeline block invalid: both minScenarioAccuracy "
-                            + "and accuracyFloor are declared — declare "
-                            + "exactly one")
-                }
-            }
-        }
-        return violations
+        ManifestDeclarationPolicy.pipelineBlockViolations(block)
     }
 
     private static func isNull(_ value: JSONValue) -> Bool {
-        if case .null = value { return true }
-        return false
+        ManifestDeclarationPolicy.isNull(value)
     }
 
     /// The COMPLETE reader↔study binding, in one place (review 2026-08-02:
@@ -590,45 +459,12 @@ public enum ExperimentStore {
     /// twin `pipeline_spec.ACCURACY_FLOOR_METRICS`). Each name reads ONE
     /// place in the validation report; an entry that cannot produce the
     /// declared metric FAILS the gate — never a fallback.
-    public static let pipelineAccuracyFloorMetrics = [
-        "transferAccuracy", "calibratedAccuracy",
-        "calibratedBalancedAccuracy", "auc",
-    ]
+    public static let pipelineAccuracyFloorMetrics = ManifestDeclarationPolicy.pipelineAccuracyFloorMetrics
 
     /// Shape/vocabulary check for `gates.validate.accuracyFloor` — the
     /// server resolver's refusals, mirrored.
     private static func accuracyFloorViolations(_ value: JSONValue) -> [String] {
-        guard case .object(let floor) = value,
-            Set(floor.keys) == ["metric", "minimum"]
-        else {
-            return [
-                "pipeline block invalid: 'validate.accuracyFloor' must be "
-                    + "an object {\"metric\": …, \"minimum\": …}"
-            ]
-        }
-        var violations: [String] = []
-        if case .string(let metric)? = floor["metric"] {
-            if !pipelineAccuracyFloorMetrics.contains(metric) {
-                violations.append(
-                    "pipeline block invalid: unknown accuracyFloor metric "
-                        + "'\(metric)' — declare one of "
-                        + pipelineAccuracyFloorMetrics.joined(separator: ", "))
-            }
-        } else {
-            violations.append(
-                "pipeline block invalid: accuracyFloor metric must be one of "
-                    + pipelineAccuracyFloorMetrics.joined(separator: ", "))
-        }
-        if case .number(let minimum)? = floor["minimum"],
-            minimum >= 0, minimum <= 1
-        {
-            // In range — fine.
-        } else {
-            violations.append(
-                "pipeline block invalid: gate 'validate.accuracyFloor.minimum' "
-                    + "must be a number in [0, 1]")
-        }
-        return violations
+        ManifestDeclarationPolicy.accuracyFloorViolations(value)
     }
 
     /// Freeze-time sweep-input pinning (see the call site in `freeze` for
@@ -883,16 +719,12 @@ public enum ExperimentStore {
     public static let knownCaseFamilies = [
         "siliconFormalism", "katzZamir", "sentencing",
     ]
-    public static let knownSeedPolicies = ["manifestSeeds", "derivedSHA256"]
+    public static let knownSeedPolicies = ManifestDraftEdits.knownSeedPolicies
     /// The closed `promptMode` vocabulary, derived from the manifest's own
     /// enum so `--help`, the refusal, and the decoder cannot name different
     /// values (server twin: `experiment_store.KNOWN_PROMPT_MODES`).
-    public static let knownPromptModes =
-        ExperimentManifest.PromptMode.allCases.map(\.rawValue)
-    public static let knownOutcomeInstruments = [
-        "sampledText", "answerTokenLogprob", "choiceProbability",
-        "repeReaderScore", "ordinalScale",
-    ]
+    public static let knownPromptModes = ManifestDraftEdits.knownPromptModes
+    public static let knownOutcomeInstruments = ManifestDraftEdits.knownOutcomeInstruments
     /// The closed `responseFormat` vocabulary an `outcomeInstrumentScope`
     /// may select over, derived from the type that owns it so `--help`, the
     /// refusal, and the decoder cannot name different values (server twin:
@@ -949,7 +781,7 @@ public enum ExperimentStore {
     /// The closed `ordinalAggregation` vocabulary (server
     /// `manifest.KNOWN_ORDINAL_AGGREGATIONS` twin) — the declared collapse
     /// of the ladder distribution for the `ordinalScale` instrument.
-    public static let knownOrdinalAggregations = ["expectedValue", "argmax"]
+    public static let knownOrdinalAggregations = ManifestDraftEdits.knownOrdinalAggregations
     /// The closed judge-`kind` vocabulary verify() enforces (server twin:
     /// the same three strings). Named here so an AUTHORING path can refuse a
     /// typo at the point of writing instead of at the next verify.
@@ -968,13 +800,7 @@ public enum ExperimentStore {
         _ mutate: (inout ExperimentManifest) throws -> Void
     ) throws -> ExperimentManifest {
         var manifest = try load(name: name)
-        guard manifest.status == .draft else {
-            throw ExperimentError.refusing(
-                .statusImmutable,
-                "experiment '\(name)' is \(manifest.status.rawValue) — "
-                    + "duplicate it to iterate",
-                repair: duplicateToIterateRepair(name))
-        }
+        try ManifestMutationPolicy.admitDraftEdit(manifest)
         try mutate(&manifest)
         try save(manifest, mayClearArms: mayClearArms)
         return manifest
@@ -1005,8 +831,7 @@ public enum ExperimentStore {
         _ type: StudyIntent, experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            manifest.studyType = type.rawValue
-            manifest.studyKind = type.mappedKind
+            try ManifestDraftEdits.setStudyType(type, experimentName: experimentName, manifest: &manifest)
         }
     }
 
@@ -1022,8 +847,7 @@ public enum ExperimentStore {
         _ revision: String?, experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            let trimmed = revision?.trimmingCharacters(in: .whitespacesAndNewlines)
-            manifest.modelRevision = trimmed?.isEmpty == false ? trimmed : nil
+            try ManifestDraftEdits.setModelRevision(revision, experimentName: experimentName, manifest: &manifest)
         }
     }
 
@@ -1033,8 +857,7 @@ public enum ExperimentStore {
         _ phase: String?, experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            let trimmed = phase?.trimmingCharacters(in: .whitespacesAndNewlines)
-            manifest.phase = trimmed?.isEmpty == false ? trimmed : nil
+            try ManifestDraftEdits.setPhase(phase, experimentName: experimentName, manifest: &manifest)
         }
     }
 
@@ -1043,8 +866,7 @@ public enum ExperimentStore {
         _ caseFamily: String?, experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            let trimmed = caseFamily?.trimmingCharacters(in: .whitespacesAndNewlines)
-            manifest.caseFamily = trimmed?.isEmpty == false ? trimmed : nil
+            try ManifestDraftEdits.setCaseFamily(caseFamily, experimentName: experimentName, manifest: &manifest)
         }
     }
 
@@ -1465,20 +1287,7 @@ public enum ExperimentStore {
         _ instruments: [String]?, experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            let cleaned = (instruments ?? [])
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            if let unknown = cleaned.first(where: {
-                !knownOutcomeInstruments.contains($0)
-            }) {
-                throw ExperimentError.malformed(
-                    "unknown outcome instrument '\(unknown)' — known: "
-                        + knownOutcomeInstruments.joined(separator: ", "),
-                    repair: "steerlab-cli experiment set-instruments "
-                        + "\(experimentName) <"
-                        + knownOutcomeInstruments.joined(separator: "|") + ">[,…]")
-            }
-            manifest.outcomeInstruments = cleaned.isEmpty ? nil : cleaned
+            try ManifestDraftEdits.setOutcomeInstruments(instruments, experimentName: experimentName, manifest: &manifest)
         }
     }
 
@@ -1492,20 +1301,7 @@ public enum ExperimentStore {
         _ aggregation: String?, experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            let trimmed = aggregation?.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let value = trimmed, !value.isEmpty else {
-                manifest.ordinalAggregation = nil
-                return
-            }
-            guard knownOrdinalAggregations.contains(value) else {
-                throw ExperimentError.malformed(
-                    "unknown ordinalAggregation '\(value)' — known: "
-                        + knownOrdinalAggregations.joined(separator: ", "),
-                    repair: "steerlab-cli experiment set-instruments "
-                        + "\(experimentName) ordinalScale --ordinal-aggregation <"
-                        + knownOrdinalAggregations.joined(separator: "|") + ">")
-            }
-            manifest.ordinalAggregation = value
+            try ManifestDraftEdits.setOrdinalAggregation(aggregation, experimentName: experimentName, manifest: &manifest)
         }
     }
 
@@ -1517,7 +1313,7 @@ public enum ExperimentStore {
         _ acknowledged: Bool, experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            manifest.acknowledgeUnequalOptionLengths = acknowledged ? true : nil
+            try ManifestDraftEdits.setAcknowledgeUnequalOptionLengths(acknowledged, experimentName: experimentName, manifest: &manifest)
         }
     }
 
@@ -1532,11 +1328,7 @@ public enum ExperimentStore {
         samplesPerItem: Int?, seedPolicy: String?, experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            try applySamplesPerItem(
-                samplesPerItem ?? 1, to: &manifest,
-                experimentName: experimentName)
-            try applySeedPolicy(
-                seedPolicy ?? "", to: &manifest, experimentName: experimentName)
+            try ManifestDraftEdits.setSamplingPolicy(samplesPerItem: samplesPerItem, seedPolicy: seedPolicy, experimentName: experimentName, manifest: &manifest)
         }
     }
 
@@ -1550,30 +1342,14 @@ public enum ExperimentStore {
         _ samples: Int, to manifest: inout ExperimentManifest,
         experimentName: String
     ) throws {
-        guard samples >= 1 else {
-            throw ExperimentError.malformed(
-                "samplesPerItem must be ≥ 1 — got \(samples)",
-                repair: "steerlab-cli experiment set-sampling \(experimentName) "
-                    + "--samples-per-item <n≥1>  (1 clears to the "
-                    + "deterministic default)")
-        }
-        manifest.samplesPerItem = samples > 1 ? samples : nil
+        try ManifestDraftEdits.applySamplesPerItem(samples, to: &manifest, experimentName: experimentName)
     }
 
     private static func applySeedPolicy(
         _ policy: String, to manifest: inout ExperimentManifest,
         experimentName: String
     ) throws {
-        let trimmed = policy.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.isEmpty || knownSeedPolicies.contains(trimmed) else {
-            throw ExperimentError.malformed(
-                "unknown seedPolicy '\(trimmed)' — known: "
-                    + knownSeedPolicies.joined(separator: ", "),
-                repair: "steerlab-cli experiment set-sampling \(experimentName) "
-                    + "--seed-policy <"
-                    + knownSeedPolicies.joined(separator: "|") + ">")
-        }
-        manifest.seedPolicy = trimmed.isEmpty ? nil : trimmed
+        try ManifestDraftEdits.applySeedPolicy(policy, to: &manifest, experimentName: experimentName)
     }
 
     /// The study's SYSTEM PROMPT — the deployment frame every arm of the
@@ -1617,23 +1393,9 @@ public enum ExperimentStore {
         _ text: String?, experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            let trimmed = (text ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            // The one prompt-mode-independent refusal: a chat template the
-            // capability record marks `systemRole: unsupported` cannot
-            // deliver the frame at all (rawCompletion prepends it and is
-            // exempt). Server twin: `set_system_prompt`.
-            let problems = PromptRendering.systemPromptViolations(
-                systemPrompt: trimmed, modelID: manifest.modelID,
-                rawCompletion: manifest.promptMode == .rawCompletion,
-                capabilities: modelCapabilities(for: manifest))
-            guard problems.isEmpty else {
-                throw ExperimentError.malformed(
-                    problems.joined(separator: "; "),
-                    repair: "drop the system prompt, or pin a model whose chat "
-                        + "template can deliver system text")
-            }
-            manifest.systemPrompt = trimmed.isEmpty ? nil : trimmed
+            let capabilities = (!(text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                ? modelCapabilities(for: manifest) : nil
+            try ManifestDraftEdits.setSystemPrompt(text, experimentName: experimentName, manifest: &manifest, capabilities: capabilities)
         }
     }
 
@@ -1761,85 +1523,9 @@ public enum ExperimentStore {
         reasoningMaxTokens: Int? = nil, experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            if reasoningEffort != nil || reasoningMaxTokens != nil {
-                let mergedEffort =
-                    reasoningEffort ?? manifest.resolvedReasoningEffort.rawValue
-                var mergedBudget = reasoningMaxTokens ?? manifest.reasoningMaxTokens
-                if mergedEffort == ReasoningEffort.off.rawValue,
-                    reasoningMaxTokens == nil
-                {
-                    mergedBudget = nil  // the off declaration retires the budget
-                }
-                // The gate reads the model's CAPABILITY RECORD (the pinned
-                // template's probed answers; the id heuristic, saying so,
-                // when none exists): a level the template ignores or
-                // rejects is refused here, at the declaration, never
-                // rendered at the template's default under a manifest that
-                // asserts the level. Server twin: `set_protocol`.
-                let problems = ReasoningEffort.protocolViolations(
-                    effort: mergedEffort, reasoningMaxTokens: mergedBudget,
-                    modelID: manifest.modelID,
-                    capabilities: modelCapabilities(for: manifest))
-                guard problems.isEmpty else {
-                    throw ExperimentError.malformed(
-                        problems.joined(separator: "; "),
-                        repair: "steerlab-cli experiment set-sampling "
-                            + "\(experimentName) --reasoning-effort <"
-                            + ReasoningEffort.vocabulary.joined(separator: "|")
-                            + "> --reasoning-max-tokens <n≥1>  (the budget only "
-                            + "beside a non-off effort, on a model whose chat "
-                            + "template has a thinking switch; a level only when "
-                            + "the template accepts it — see model capabilities)")
-                }
-                manifest.reasoningEffort = mergedEffort
-                manifest.reasoningMaxTokens = mergedBudget
-                manifest.qwenThinkingEnabled = nil
-            }
-            if let temperature {
-                guard temperature.isFinite, temperature >= 0 else {
-                    throw ExperimentError.malformed(
-                        "temperature must be a non-negative number — got "
-                            + "\(temperature)",
-                        repair: "steerlab-cli experiment set-sampling "
-                            + "\(experimentName) --temperature <t≥0>")
-                }
-                manifest.temperature = temperature
-            }
-            if let maxTokens {
-                guard maxTokens >= 1 else {
-                    throw ExperimentError.malformed(
-                        "maxTokens must be a positive integer — got \(maxTokens)",
-                        repair: "steerlab-cli experiment set-sampling "
-                            + "\(experimentName) --max-tokens <n≥1>")
-                }
-                manifest.maxTokens = maxTokens
-            }
-            if let promptMode {
-                let trimmed = promptMode
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.isEmpty {
-                    manifest.promptMode = nil
-                } else if let mode =
-                    ExperimentManifest.PromptMode(rawValue: trimmed)
-                {
-                    manifest.promptMode = mode
-                } else {
-                    throw ExperimentError.malformed(
-                        "unknown promptMode '\(trimmed)' — known: "
-                            + knownPromptModes.joined(separator: ", "),
-                        repair: "steerlab-cli experiment set-sampling "
-                            + "\(experimentName) --prompt-mode <"
-                            + knownPromptModes.joined(separator: "|") + ">")
-                }
-            }
-            if let samplesPerItem {
-                try applySamplesPerItem(
-                    samplesPerItem, to: &manifest, experimentName: experimentName)
-            }
-            if let seedPolicy {
-                try applySeedPolicy(
-                    seedPolicy, to: &manifest, experimentName: experimentName)
-            }
+            let capabilities = (reasoningEffort != nil || reasoningMaxTokens != nil)
+                ? modelCapabilities(for: manifest) : nil
+            try ManifestDraftEdits.setSamplingProtocol(temperature: temperature, maxTokens: maxTokens, promptMode: promptMode, samplesPerItem: samplesPerItem, seedPolicy: seedPolicy, reasoningEffort: reasoningEffort, reasoningMaxTokens: reasoningMaxTokens, experimentName: experimentName, manifest: &manifest, capabilities: capabilities)
         }
     }
 
@@ -1860,18 +1546,7 @@ public enum ExperimentStore {
         experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            if let problem = ValidationLayerRule.violation(
-                declaredLayer: layer, declaredFraction: fraction,
-                declaredLayers: layers, declaredFractions: fractions)
-            {
-                throw ExperimentError(reason: problem)
-            }
-            manifest.validationLayer = layers?.count == 1 ? layers?.first : layer
-            manifest.validationLayerFraction =
-                fractions?.count == 1 ? fractions?.first : fraction
-            manifest.validationLayers = (layers?.count ?? 0) > 1 ? layers : nil
-            manifest.validationLayerFractions =
-                (fractions?.count ?? 0) > 1 ? fractions : nil
+            try ManifestDraftEdits.setValidationReadDepth(layer: layer, fraction: fraction, layers: layers, fractions: fractions, experimentName: experimentName, manifest: &manifest)
         }
     }
 
@@ -1885,18 +1560,7 @@ public enum ExperimentStore {
         _ seeds: [UInt64], experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            guard !seeds.isEmpty else {
-                throw ExperimentError(
-                    reason: "the seed list cannot be empty — the fixed-list "
-                        + "seed policy indexes into it")
-            }
-            guard Set(seeds).count == seeds.count else {
-                throw ExperimentError(
-                    reason: "duplicate seeds — two identical seeds generate "
-                        + "two identical records that would masquerade as "
-                        + "independent samples")
-            }
-            manifest.seeds = seeds
+            try ManifestDraftEdits.setSeeds(seeds, experimentName: experimentName, manifest: &manifest)
         }
     }
 
@@ -1906,21 +1570,7 @@ public enum ExperimentStore {
         _ rule: ExperimentManifest.PromotionRule?, experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            guard let rule else {
-                manifest.promotionRule = nil
-                return
-            }
-            if let threshold = rule.fdrThreshold,
-                !(threshold.isFinite && threshold > 0 && threshold < 1)
-            {
-                throw ExperimentError(
-                    reason: "promotionRule fdrThreshold must be in (0, 1) — "
-                        + "got \(threshold)")
-            }
-            let empty = rule.fdrThreshold == nil && rule.doseMonotone == nil
-                && rule.exceedsRandomFloor == nil
-                && (rule.capabilityGate?.isEmpty ?? true)
-            manifest.promotionRule = empty ? nil : rule
+            try ManifestDraftEdits.setPromotionRule(rule, experimentName: experimentName, manifest: &manifest)
         }
     }
 
@@ -6109,8 +5759,7 @@ public enum ExperimentStore {
     /// which is a repair that cannot work. A repair must name the engine that
     /// can satisfy the gate it repairs.
     static func validateCLI(forRunSubstrate substrate: String) -> String {
-        substrate == WorkspaceScoping.serverSubstrate
-            ? "steerlab-server" : "steerlab-cli"
+        ManifestDeclarationPolicy.validateCLI(forRunSubstrate: substrate)
     }
 
     /// The battery a variant study validates against: the manifest's pin, or
@@ -6363,9 +6012,7 @@ public enum ExperimentStore {
     /// Strips freeze's error preamble ("cannot freeze '<name>': ") so gate
     /// reasons read as plain words in a readiness caption. Pure; testable.
     static func plainGateReason(_ reason: String, experimentName: String) -> String {
-        let prefix = "cannot freeze '\(experimentName)': "
-        guard reason.hasPrefix(prefix) else { return reason }
-        return String(reason.dropFirst(prefix.count))
+        ManifestDeclarationPolicy.plainGateReason(reason, experimentName: experimentName)
     }
 
     /// Computes `FreezeReadiness` for a manifest by running `verify` plus
@@ -6388,7 +6035,7 @@ public enum ExperimentStore {
     public static func modelOutputSurfacesOperative(
         _ manifest: ExperimentManifest
     ) -> Bool {
-        manifest.studyKind == .modelOutput
+        ManifestDeclarationPolicy.modelOutputSurfacesOperative(manifest)
     }
 
     public static func freezeReadiness(
@@ -6489,13 +6136,7 @@ public enum ExperimentStore {
     static func optvecPinnedConcepts(
         _ manifest: ExperimentManifest
     ) -> [(name: String, pin: ExperimentManifest.ConceptRef.VectorArtifactPin)] {
-        manifest.concepts.compactMap { ref in
-            guard ref.options.method == .pinnedArtifact,
-                let pin = ref.vectorArtifact,
-                pin.sourceMethod == ExtractionMethod.optvec.rawValue
-            else { return nil }
-            return (ref.name, pin)
-        }
+        ManifestDeclarationPolicy.optvecPinnedConcepts(manifest)
     }
 
     /// Whether the validate-evidence freeze gate has nothing to ask of this
@@ -6518,9 +6159,7 @@ public enum ExperimentStore {
     static func optvecExemptFromValidateGate(
         _ manifest: ExperimentManifest
     ) -> Bool {
-        guard !manifest.concepts.isEmpty, manifest.variantConditions.isEmpty
-        else { return false }
-        return optvecPinnedConcepts(manifest).count == manifest.concepts.count
+        ManifestDeclarationPolicy.optvecExemptFromValidateGate(manifest)
     }
 
     /// Non-blocking advisories about MISFILED held-out sets (2026-08-19).
@@ -7289,20 +6928,11 @@ public enum ExperimentStore {
     /// step 2); `underlying` is set only when the check threw something
     /// other than an `ExperimentError`, so the refusal path can rethrow that
     /// error verbatim rather than re-wrapping it.
-    struct FreezeGateOutcome {
-        let gate: FreezeGate
-        let refusal: String
-        let forced: String
-        let repairAction: String
-        var underlying: Error?
-    }
+
 
     /// One freeze gate: its closed-vocabulary id, and the check that reports
     /// how it would decline (nil = the gate passes).
-    struct FreezeGateEntry {
-        let gate: FreezeGate
-        let evaluate: (ExperimentManifest) -> FreezeGateOutcome?
-    }
+
 
     /// Wraps a throwing gate check as a table entry. The refusal keeps the
     /// check's own prose verbatim; the forced rendering is the same string
@@ -7313,19 +6943,9 @@ public enum ExperimentStore {
         _ check: @escaping (ExperimentManifest) throws -> Void
     ) -> FreezeGateEntry {
         FreezeGateEntry(gate: gate) { manifest in
-            do {
-                try check(manifest)
-                return nil
-            } catch let error as ExperimentError {
-                return FreezeGateOutcome(
-                    gate: gate, refusal: error.reason,
-                    forced: plainGateReason(error.reason, experimentName: name),
-                    repairAction: repairAction)
-            } catch {
-                return FreezeGateOutcome(
-                    gate: gate, refusal: "\(error)", forced: "\(error)",
-                    repairAction: repairAction, underlying: error)
-            }
+            FreezePolicy.checkedOutcome(
+                gate, name: name, repairAction: repairAction,
+                result: Result { try check(manifest) })
         }
     }
 
@@ -7367,24 +6987,12 @@ public enum ExperimentStore {
     ) -> [FreezeGateEntry] {
         var table: [FreezeGateEntry] = []
         table.append(
-            FreezeGateEntry(gate: .revision) { manifest in
-                guard manifest.modelRevision == nil else { return nil }
-                let forced = "model revision is not pinned and \(manifest.modelID) is not in "
-                    + "the local HF cache"
-                let repair = "create with --revision, load the model once, or freeze --force"
-                return FreezeGateOutcome(
-                    gate: .revision,
-                    refusal: "cannot freeze '\(name)': \(forced) — \(repair)",
-                    forced: forced, repairAction: repair)
+            FreezeGateEntry(gate: .revision) { value in
+                FreezePolicy.revision(value, name: name)
             })
         table.append(
             FreezeGateEntry(gate: .revision) { manifest in
-                guard let symbolic = symbolicRevisionProblem(manifest) else { return nil }
-                return FreezeGateOutcome(
-                    gate: .revision, refusal: "cannot freeze '\(name)': \(symbolic)",
-                    forced: symbolic,
-                    repairAction: "pin the immutable commit the symbolic revision "
-                        + "resolves to, or freeze --force")
+                FreezePolicy.symbolicRevision(manifest, name: name)
             })
         // "measurementPins": measurement-pin DRIFT stays an unskippable
         // verify() violation and unpinned legacy inputs stay advisory, so
@@ -7393,12 +7001,7 @@ public enum ExperimentStore {
         // gets measured rather than what gets loaded.
         table.append(
             FreezeGateEntry(gate: .measurementPins) { manifest in
-                guard let badDtype = unloadableStudyDtypeProblem(manifest) else { return nil }
-                return FreezeGateOutcome(
-                    gate: .measurementPins, refusal: "cannot freeze '\(name)': \(badDtype)",
-                    forced: badDtype,
-                    repairAction: "repoint the study dtype at a loadable value, "
-                        + "or freeze --force")
+                FreezePolicy.dtype(manifest, name: name)
             })
         // Model-output surfaces: gated on the study kind that USES them. A
         // panel carrying these from a kind switch executes none of them, and
@@ -7408,50 +7011,26 @@ public enum ExperimentStore {
         // vocabulary and only its answers depend on the manifest.
         table.append(
             FreezeGateEntry(gate: .validateEvidence) { manifest in
-                guard modelOutputSurfacesOperative(manifest) else { return nil }
-                let usesLegacyConceptVectors =
-                    !manifest.concepts.isEmpty || !manifest.conditions.isEmpty
-                guard usesLegacyConceptVectors,
+                guard modelOutputSurfacesOperative(manifest),
+                    !manifest.concepts.isEmpty || !manifest.conditions.isEmpty,
                     !optvecExemptFromValidateGate(manifest)
                 else { return nil }
-                guard
-                    validationEvidence(for: manifest, runSubstrate: runSubstrate) != nil
-                else {
-                    let forced = "no validate run matches its exact pins (model+revision, "
-                        + "concepts, neutral corpus) on the run substrate " + runSubstrate
-                    // The engine named is the one whose evidence this gate
-                    // reads — `steerlab-cli` cannot satisfy a server-substrate
-                    // gate (gate-5 dry run #2, P2). Sentence structure is
-                    // unchanged; only the binary moves.
-                    let repair = "Run '\(validateCLI(forRunSubstrate: runSubstrate)) "
-                        + "experiment validate \(name)' first, or "
-                        + "freeze --force to record an unvalidated experiment"
-                    return FreezeGateOutcome(
-                        gate: .validateEvidence,
-                        refusal: "cannot freeze '\(name)': \(forced). \(repair)",
-                        forced: forced, repairAction: repair)
-                }
-                // Evidence EXISTS but probed nothing: same gate id, a remedy
-                // naming the missing files (2026-08-17).
-                guard
-                    let vacuous = vacuousValidationEvidenceProblem(
+                var facts = FreezePolicy.ValidationFacts(
+                    hasMatchingEvidence: validationEvidence(
+                        for: manifest, runSubstrate: runSubstrate) != nil)
+                if facts.hasMatchingEvidence {
+                    facts.vacuousProblem = vacuousValidationEvidenceProblem(
                         for: manifest, runSubstrate: runSubstrate)
-                else { return nil }
-                // P5 (dry run #1): the gate's own repair FAILED as given.
-                // Authoring the named validation.jsonl makes it appear after
-                // an attach that pinned it absent, which is a verify()
-                // violation — so the very next `validate` refuses. The
-                // machine repair now carries the re-attach that re-pins it;
-                // the composed PROSE is unchanged (it is the cross-engine
-                // refusal string, asserted whole by VacuousValidationTests).
-                let vacuousConcepts = vacuousValidationEvidence(
-                    for: manifest, runSubstrate: runSubstrate)
-                let repair = vacuousValidationMachineRepair(
-                    for: manifest, vacuousConcepts: vacuousConcepts,
-                    runSubstrate: runSubstrate) ?? vacuous
-                return FreezeGateOutcome(
-                    gate: .validateEvidence, refusal: "cannot freeze '\(name)': \(vacuous)",
-                    forced: vacuous, repairAction: repair)
+                    if facts.vacuousProblem != nil {
+                        let concepts = vacuousValidationEvidence(
+                            for: manifest, runSubstrate: runSubstrate)
+                        facts.vacuousRepair = vacuousValidationMachineRepair(
+                            for: manifest, vacuousConcepts: concepts,
+                            runSubstrate: runSubstrate)
+                    }
+                }
+                return FreezePolicy.validation(
+                    manifest, name: name, runSubstrate: runSubstrate, facts: facts)
             })
         let variantValidity = freezeGateEntry(
             .variantValidity, name: name,
@@ -7505,14 +7084,7 @@ public enum ExperimentStore {
     /// `gates` is every failure in vocabulary order — the same order and the
     /// same ids the `forcedGatesSkipped` stamp uses.
     private static func freezeRefusal(_ failures: [FreezeGateOutcome]) -> Error? {
-        guard let first = failures.first else { return nil }
-        if let underlying = first.underlying { return underlying }
-        let failed = Set(failures.map(\.gate))
-        return ExperimentError(
-            refusal: FreezeRefusal(
-                gate: first.gate,
-                gates: FreezeGate.allCases.filter(failed.contains),
-                reason: first.refusal, repairAction: first.repairAction))
+        FreezePolicy.freezeRefusal(failures)
     }
 
     /// `git add -A . && git commit -m "freeze <name>"` on the workspace root.
@@ -7574,17 +7146,7 @@ public enum ExperimentStore {
         runSubstrate: String = ExperimentStore.evidenceSubstrate
     ) throws -> ExperimentManifest {
         var manifest = try load(name: name)
-        guard manifest.status == .draft else {
-            // Typed since gate-5 dry run #2 (P3): `freeze` was the last
-            // manifest-WRITING verb whose immutability refusal arrived as an
-            // untyped `verbFailed`/70 — an operational failure, to an agent —
-            // while every other writer already answered `statusImmutable`/65
-            // with a runnable duplicate-to-iterate repair. Prose unchanged.
-            throw ExperimentError.refusing(
-                .statusImmutable,
-                "'\(name)' is already \(manifest.status.rawValue)",
-                repair: duplicateToIterateRepair(name))
-        }
+        try ManifestMutationPolicy.admitFreeze(manifest)
         // Pin the revision the local cache would actually run, if not set.
         if manifest.modelRevision == nil {
             manifest.modelRevision = SteeredContainerLoader.cachedRevision(
@@ -8317,64 +7879,12 @@ public enum ExperimentStore {
     /// loudly, like the other evidence gates; the always-run verify() of the
     /// artifact-file hash is never skippable.
     private static func checkVariantValidity(_ manifest: ExperimentManifest) throws {
-        let name = manifest.name
-        for variant in manifest.variantConditions {
-            if variant.fromPromotion != nil {
-                // Forward-referenced (stage 4): the artifact does not exist
-                // at freeze time BY DESIGN — its pins land at run time on
-                // the server and are recorded in the run directory.
-                // verify() enforces the declaration shape.
-                continue
-            }
-            if variant.artifactHash.isEmpty {
-                throw ExperimentError(
-                    reason: "cannot freeze '\(name)': variant '\(variant.name)' has no "
-                        + "pinned artifactHash")
-            }
-            for adapter in variant.artifact.adapters
-            where (adapter.adapterHash ?? "").isEmpty {
-                throw ExperimentError(
-                    reason: "cannot freeze '\(name)': variant '\(variant.name)' adapter "
-                        + "'\(adapter.name)' has no adapterHash — re-save the variant "
-                        + "with hashed adapter weights, or freeze --force")
-            }
-            let systemPrompt = (variant.artifact.systemPrompt ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !systemPrompt.isEmpty,
-                (variant.artifact.systemPromptHash ?? "").isEmpty
-            {
-                throw ExperimentError(
-                    reason: "cannot freeze '\(name)': variant '\(variant.name)' has a "
-                        + "system prompt but no systemPromptHash — re-save the variant, "
-                        + "or freeze --force")
-            }
-            for injection in variant.artifact.injections
-            where injection.vectorArtifactID.isEmpty {
-                throw ExperimentError(
-                    reason: "cannot freeze '\(name)': variant '\(variant.name)' has an "
-                        + "injection for '\(injection.concept)' without a "
-                        + "vectorArtifactID pin")
-            }
-            // Trained-adapter arms owe the same story about their TRAINING
-            // DATA (LoRA readiness §0 amendment 1). An evidence-grade adapter
-            // whose dataset is not pinned into the manifest is unverifiable
-            // the moment it freezes: the training files could change
-            // afterwards with nothing to flag the drift. Exploratory adapters
-            // are legal and produce an advisory instead, never a refusal.
-            if !variant.artifact.adapters.isEmpty,
-                variantIsEvidenceGrade(variant),
-                (variant.trainingProvenance?.datasetManifestHash ?? "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
-                throw ExperimentError(
-                    reason: "cannot freeze '\(name)': variant '\(variant.name)' uses an "
-                        + "evidence-grade adapter but carries no "
-                        + "trainingProvenance.datasetManifestHash — its training data "
-                        + "would stay outside the freeze pin surface. Re-attach the "
-                        + "variant so freeze can pin the dataset manifest from the "
-                        + "adapter's sidecar, or freeze --force")
-            }
-        }
+        let evidenceGrade = Set(manifest.variantConditions.indices.filter { index in
+            let variant = manifest.variantConditions[index]
+            return variant.fromPromotion == nil && !variant.artifact.adapters.isEmpty
+                && variantIsEvidenceGrade(variant)
+        })
+        try FreezePolicy.checkVariantValidity(manifest, evidenceGradeVariants: evidenceGrade)
     }
 
     /// Capability-battery-as-evidence gate (server `experiment_store` twin):
@@ -8388,51 +7898,13 @@ public enum ExperimentStore {
         runSubstrate: String = ExperimentStore.evidenceSubstrate
     ) throws {
         guard !manifest.variantConditions.isEmpty else { return }
-        let name = manifest.name
-        guard
-            let evidenceDirectory = validationEvidence(
-                for: manifest, runSubstrate: runSubstrate)
-        else {
-            throw ExperimentError(
-                reason: "cannot freeze '\(name)': no validate run matches its exact pins "
-                    + "(model+revision, variant capability battery). Variant studies "
-                    + "validate the pinned battery per condition — run 'steerlab-cli "
-                    + "experiment validate \(name)' first, or freeze --force")
-        }
-        let results = Dictionary(
-            (validationEvidenceBatteryResults(at: evidenceDirectory) ?? [])
-                .map { ($0.condition, $0) },
-            uniquingKeysWith: { first, _ in first })
-        // Forward-referenced conditions (stage 4) are exempt: their agent
-        // does not exist at validate time — their battery evidence is the
-        // RUN's per-condition battery, produced after server-side
-        // resolution.
-        let required = ["baseline"] + manifest.variantConditions
-            .filter { $0.fromPromotion == nil }
-            .map(\.name)
-        let missing = required.filter { results[$0] == nil }
-        guard missing.isEmpty else {
-            throw ExperimentError(
-                reason: "cannot freeze '\(name)': matching validate evidence has no "
-                    + "capability-battery results for condition(s): "
-                    + missing.joined(separator: ", ")
-                    + " — re-run 'steerlab-cli experiment validate \(name)' (each "
-                    + "variant condition runs the pinned battery), or freeze --force")
-        }
-        if let expected = manifest.capabilityBatteryHash
-            ?? effectiveCapabilityBattery(for: manifest)?.hash
-        {
-            let drifted = required
-                .filter { results[$0]?.batteryHash != expected }
-                .sorted()
-            guard drifted.isEmpty else {
-                throw ExperimentError(
-                    reason: "cannot freeze '\(name)': capability battery drifted since "
-                        + "validation for condition(s): " + drifted.joined(separator: ", ")
-                        + " — re-run 'steerlab-cli experiment validate \(name)', or "
-                        + "freeze --force")
-            }
-        }
+        let directory = validationEvidence(for: manifest, runSubstrate: runSubstrate)
+        let facts = FreezePolicy.BatteryFacts(
+            hasMatchingEvidence: directory != nil,
+            results: directory.flatMap { validationEvidenceBatteryResults(at: $0) } ?? [],
+            expectedHash: manifest.capabilityBatteryHash
+                ?? effectiveCapabilityBattery(for: manifest)?.hash)
+        try FreezePolicy.checkVariantBatteryEvidence(manifest, facts: facts)
     }
 
     /// Judge-rubric gate: a judge-evaluated study (paired-judge evaluation
@@ -8441,51 +7913,14 @@ public enum ExperimentStore {
     /// agreement statistics. `freeze --force` skips loudly, never silently;
     /// the rubric-hash drift check in verify() is never skippable.
     private static func checkJudgeEvaluationValidity(_ manifest: ExperimentManifest) throws {
-        let judgeEvaluated =
-            manifest.evaluation?.kind == .pairedJudge || !(manifest.judges ?? []).isEmpty
-        guard judgeEvaluated else { return }
-        let name = manifest.name
-        guard manifest.judgeRubricFile != nil, manifest.judgeRubricHash != nil else {
-            throw ExperimentError(
-                reason: "cannot freeze '\(name)': judge-evaluated study has no pinned "
-                    + "judge rubric file — pin one: 'steerlab-cli experiment "
-                    + "pin-rubric \(name) \(JudgeRubricStore.defaultRubricFile)'; "
-                    + "inline rubric text is draft-only. Or freeze --force")
-        }
-        // ONE judge is a legal design (maintainer ruling, 2026-08-28): a
-        // single-coder study is a real methodology, and the gate's job is to
-        // refuse the INVALID state — a judged instrument with no judge —
-        // not to legislate the panel size. What the ≥2 rule was protecting
-        // (inter-rater agreement) survives as the non-blocking
-        // `singleJudgePanelAdvisory`, said at freeze and at declaration.
-        let judgeCount = (manifest.judges ?? []).count
-        guard judgeCount >= 1 else {
-            throw ExperimentError(
-                reason: "cannot freeze '\(name)': "
-                    + Self.noJudgeDeclaredReason(experimentName: name))
-        }
-        if let indistinct = judgePanelIndistinctProblem(manifest) {
-            throw ExperimentError(reason: "cannot freeze '\(name)': \(indistinct)")
-        }
-        if let pipelineProblem = localJudgePipelineProblem(manifest) {
-            throw ExperimentError(reason: "cannot freeze '\(name)': \(pipelineProblem)")
-        }
-        if let unpinned = unpinnedForeignLocalJudgeProblem(manifest) {
-            throw ExperimentError(reason: "cannot freeze '\(name)': \(unpinned)")
-        }
-        if let conflict = studyModelJudgePinConflict(manifest) {
-            throw ExperimentError(reason: "cannot freeze '\(name)': \(conflict)")
-        }
+        try ManifestDeclarationPolicy.checkJudgeEvaluationValidity(manifest)
     }
 
     /// The `judgeValidity` refusal for a judged study with no judge at all —
     /// the state the panel-size rule actually protects against. Cross-engine
     /// twin: `experiment_store._no_judge_declared_reason`.
     static func noJudgeDeclaredReason(experimentName name: String) -> String {
-        "judge-evaluated study pins no judge — a judged instrument with no "
-            + "judge codes nothing; pin a panel: 'steerlab-cli experiment "
-            + "pin-rubric \(name) <rubric> --judges <name>:<kind>[,…]'. Or "
-            + "freeze --force"
+        ManifestDeclarationPolicy.noJudgeDeclaredReason(experimentName: name)
     }
 
     /// The single-coder advisory: LOUD, never blocking.
@@ -8506,20 +7941,12 @@ public enum ExperimentStore {
     public static func singleJudgePanelAdvisory(
         _ manifest: ExperimentManifest
     ) -> String? {
-        let judges = (manifest.judges ?? []).filter { !$0.name.isEmpty }
-        let judgeEvaluated =
-            manifest.evaluation?.kind == .pairedJudge || !judges.isEmpty
-        guard judgeEvaluated, judges.count == 1 else { return nil }
-        return singleJudgePanelAdvisoryText
+        ManifestDeclarationPolicy.singleJudgePanelAdvisory(manifest)
     }
 
     /// The sentence itself, so declaration-time surfaces (which have a panel
     /// but not yet a manifest to hand) say exactly what freeze says.
-    public static let singleJudgePanelAdvisoryText =
-        "single-coder design: this study pins 1 judge, so no inter-rater "
-        + "agreement statistics (percent agreement, Cohen's kappa) will exist "
-        + "for its codings — the coding report records fieldAgreement as "
-        + "absent with that reason rather than empty"
+    public static let singleJudgePanelAdvisoryText = ManifestDeclarationPolicy.singleJudgePanelAdvisoryText
 
     /// Why a coding report carries no `fieldAgreement` block. Written into
     /// the report as `fieldAgreementAbsentReason`; twin literal on both
@@ -8532,17 +7959,7 @@ public enum ExperimentStore {
     /// rendered `'name' (model 'id')` — the server's
     /// `_foreign_local_judges` twin.
     private static func foreignLocalJudges(_ manifest: ExperimentManifest) -> [String] {
-        (manifest.judges ?? []).compactMap { judge -> String? in
-            guard !judge.name.isEmpty else { return nil }
-            let kind = judge.kind.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard kind == "local" else { return nil }
-            let declared = (judge.model ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !declared.isEmpty, declared != manifest.modelID else {
-                return nil
-            }
-            return "'\(judge.name)' (model '\(declared)')"
-        }
+        ManifestDeclarationPolicy.foreignLocalJudges(manifest)
     }
 
     /// Finding 1 gate, fan-out era (2026-07-23; live incident 2026-07-22:
@@ -8556,20 +7973,7 @@ public enum ExperimentStore {
     /// (`localJudgeFanoutNote`). Wording matches the server's
     /// `local_judge_pipeline_problem`.
     static func localJudgePipelineProblem(_ manifest: ExperimentManifest) -> String? {
-        guard pipelineBlockViolations(manifest.pipeline).isEmpty,
-            let draft = PipelineDraft.parse(manifest.pipeline),
-            draft.stages.contains("sweep"),
-            manifest.sweep?.selection?.objective?.metric == "judgeScore"
-        else { return nil }
-        let offenders = foreignLocalJudges(manifest)
-        guard !offenders.isEmpty else { return nil }
-        return "the declared pipeline's sweep stage holds ONE model — "
-            + "the study model '\(manifest.modelID)' — but local judge(s) "
-            + offenders.joined(separator: ", ")
-            + " resolve to a different model, which cannot load inside the "
-            + "chain (the judge fan-out covers the evaluate stage only). "
-            + "Leave a local judge's model empty to judge with the study "
-            + "model, pin claude/openrouter judges, or select on logprobShift"
+        ManifestDeclarationPolicy.localJudgePipelineProblem(manifest)
     }
 
     /// Routing information (never a gate, 2026-07-23): a declared pipeline
@@ -8595,19 +7999,13 @@ public enum ExperimentStore {
     /// `experiment_store.JUDGE_DTYPE_VOCABULARY`; the server's loader
     /// (`model_loader.DTYPE_VOCABULARY`) is the same set, and a test on that
     /// engine asserts the two agree.
-    public static let judgeDtypeVocabulary = ["bfloat16", "float16", "float32"]
+    public static let judgeDtypeVocabulary = ManifestDeclarationPolicy.judgeDtypeVocabulary
 
-    private static let judgeDtypeAliases = [
-        "bfloat16": "bfloat16", "bf16": "bfloat16",
-        "float16": "float16", "fp16": "float16",
-        "float32": "float32", "fp32": "float32",
-    ]
+    private static let judgeDtypeAliases = ManifestDeclarationPolicy.judgeDtypeAliases
 
     /// Canonical spelling of a judge dtype alias, or nil if unrecognized.
     public static func normalizeJudgeDtype(_ value: String?) -> String? {
-        judgeDtypeAliases[
-            (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()]
+        ManifestDeclarationPolicy.normalizeJudgeDtype(value)
     }
 
     /// The pins to prefill for a local judge row, so a researcher is not
@@ -8671,9 +8069,7 @@ public enum ExperimentStore {
     /// pass. No format check can distinguish that from a short hash — only
     /// asking the hub could — and it is not a shape anyone tags in practice.
     static func isCommitLike(_ revision: String) -> Bool {
-        let stripped = revision.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !stripped.isEmpty else { return false }
-        return stripped.allSatisfy(\.isHexDigit)
+        ManifestDeclarationPolicy.isCommitLike(revision)
     }
 
     /// Revision pins that name a moving ref instead of a commit.
@@ -8689,27 +8085,7 @@ public enum ExperimentStore {
     static func symbolicRevisionProblem(
         _ manifest: ExperimentManifest
     ) -> String? {
-        var offenders: [String] = []
-        let study = (manifest.modelRevision ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !study.isEmpty, !isCommitLike(study) {
-            offenders.append("the study model pins '\(study)'")
-        }
-        for judge in manifest.judges ?? [] where judge.kind == "local" {
-            let revision = (judge.revision ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !revision.isEmpty, !isCommitLike(revision) {
-                offenders.append("judge '\(judge.name)' pins '\(revision)'")
-            }
-        }
-        guard !offenders.isEmpty else { return nil }
-        return "revision pin(s) name a moving reference rather than a commit: "
-            + offenders.joined(separator: "; ")
-            + ". A branch or tag is re-pointed by definition, so it cannot "
-            + "identify the weights a run used — two runs a week apart would "
-            + "record the same pin having loaded different bytes. Use the "
-            + "commit hash (the Resolve button reads it from whichever "
-            + "substrate will run the model)"
+        ManifestDeclarationPolicy.symbolicRevisionProblem(manifest)
     }
 
     /// A study-model local judge declaring pins that differ from the study's.
@@ -8736,51 +8112,7 @@ public enum ExperimentStore {
     static func studyModelJudgePinConflict(
         _ manifest: ExperimentManifest
     ) -> String? {
-        guard manifest.sweep?.selection?.objective?.metric == "judgeScore" else {
-            return nil
-        }
-        let studyRevision = (manifest.modelRevision ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let studyDtype = (manifest.dtype ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        var offenders: [String] = []
-        for judge in manifest.judges ?? [] where judge.kind == "local" {
-            let declared = (judge.model ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            // Blank model AND explicit study model both resolve to the
-            // study model.
-            guard declared.isEmpty || declared == manifest.modelID else {
-                continue
-            }
-            let revision = (judge.revision ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !revision.isEmpty, revision != studyRevision {
-                offenders.append(
-                    "'\(judge.name)' pins revision '\(revision)' but the study "
-                        + (studyRevision.isEmpty
-                            ? "has no revision pinned"
-                            : "is pinned at '\(studyRevision)'"))
-            }
-            let dtype = (judge.dtype ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !dtype.isEmpty,
-                normalizeJudgeDtype(dtype) != normalizeJudgeDtype(studyDtype)
-            {
-                offenders.append(
-                    "'\(judge.name)' pins dtype '\(dtype)' but the study "
-                        + (studyDtype.isEmpty
-                            ? "pins none (the device decides)"
-                            : "is pinned at '\(studyDtype)'"))
-            }
-        }
-        guard !offenders.isEmpty else { return nil }
-        return "this study selects on judgeScore, and local judge(s) "
-            + "resolving to the STUDY model cannot pin a different identity: " + offenders.joined(separator: "; ")
-            + ". Such a judge IS the study model — a sweep judges with the "
-            + "already-held weights and never loads anything else, so the "
-            + "divergent pin would be silently ignored. Drop the pin to "
-            + "inherit the study's, or name a different model to make it a "
-            + "genuinely separate judge"
+        ManifestDeclarationPolicy.studyModelJudgePinConflict(manifest)
     }
 
     /// A study-level `dtype` outside the closed vocabulary.
@@ -8793,69 +8125,13 @@ public enum ExperimentStore {
     static func unloadableStudyDtypeProblem(
         _ manifest: ExperimentManifest
     ) -> String? {
-        let spelled = (manifest.dtype ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !spelled.isEmpty, normalizeJudgeDtype(spelled) == nil else {
-            return nil
-        }
-        return "study dtype '\(spelled)' is not one this engine can load — "
-            + "the loader accepts only "
-            + judgeDtypeVocabulary.joined(separator: ", ")
-            + " (aliases bf16/fp16/fp32). Leave it unset to let the device "
-            + "decide, which is what every study did before this pin existed"
+        ManifestDeclarationPolicy.unloadableStudyDtypeProblem(manifest)
     }
 
     static func unpinnedForeignLocalJudgeProblem(
         _ manifest: ExperimentManifest
     ) -> String? {
-        var offenders: [String] = []
-        var unknown: [String] = []
-        for judge in manifest.judges ?? [] where judge.kind == "local" {
-            // A dtype OUTSIDE the closed vocabulary is checked for every
-            // local judge, pinned or not: the server's loader refuses it at
-            // run time, and discovering that on a compute node after a queue
-            // wait is exactly the failure this firewall exists to move
-            // forward in time (external review round 4, finding 2).
-            let spelled = (judge.dtype ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !spelled.isEmpty, normalizeJudgeDtype(spelled) == nil {
-                unknown.append("'\(judge.name)' declares dtype '\(spelled)'")
-            }
-            let declared = (judge.model ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !declared.isEmpty, declared != manifest.modelID else { continue }
-            var missing: [String] = []
-            if (judge.revision ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                missing.append("revision")
-            }
-            if (judge.dtype ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                missing.append("dtype")
-            }
-            if !missing.isEmpty {
-                offenders.append(
-                    "'\(judge.name)' (model '\(declared)') is missing "
-                        + missing.joined(separator: " and "))
-            }
-        }
-        if !unknown.isEmpty {
-            return "local judge(s) declare a dtype this engine cannot load: "
-                + unknown.joined(separator: "; ")
-                + ". The loader accepts only "
-                + judgeDtypeVocabulary.joined(separator: ", ")
-                + " (aliases bf16/fp16/fp32). An unrecognized value used to "
-                + "load float32 silently, so the pin would be a false claim"
-        }
-        guard !offenders.isEmpty else { return nil }
-        return "local judge(s) naming a model other than the study model "
-            + "must pin the exact bytes that will judge: "
-            + offenders.joined(separator: "; ")
-            + ". Without a revision pin two judging sessions can load "
-            + "different defaults while both records say 'none', so a "
-            + "resumed evaluation cannot prove its reused verdicts came "
-            + "from the same judge. Pin judges[].revision and "
-            + "judges[].dtype, or use the study model as judge"
+        ManifestDeclarationPolicy.unpinnedForeignLocalJudgeProblem(manifest)
     }
 
     /// Plain-language note about WHERE this panel's judging would run on
@@ -8948,18 +8224,7 @@ public enum ExperimentStore {
     }
 
     static func localJudgeFanoutNote(_ manifest: ExperimentManifest) -> String? {
-        guard pipelineBlockViolations(manifest.pipeline).isEmpty,
-            let draft = PipelineDraft.parse(manifest.pipeline),
-            draft.stages.contains("evaluate")
-        else { return nil }
-        let offenders = foreignLocalJudges(manifest)
-        guard !offenders.isEmpty else { return nil }
-        return "the pipeline's evaluate stage will judge local judge(s) "
-            + offenders.joined(separator: ", ")
-            + " as a post-generation judge fan-out (one worker job per "
-            + "distinct judge model; available on Slurm run-first pipeline "
-            + "submissions — elsewhere the emitted packets await deferred "
-            + "judging)"
+        ManifestDeclarationPolicy.localJudgeFanoutNote(manifest)
     }
 
     /// A judge's RESOLVED identity — what will actually run, not what the
@@ -8967,31 +8232,12 @@ public enum ExperimentStore {
     /// blank model resolves to the STUDY model; a claude judge with a blank
     /// model resolves to the default Claude judge model; openrouter judges
     /// have no defaults (their own verify rules apply).
-    struct ResolvedJudgeIdentity: Hashable {
-        let kind: String
-        let model: String
-        let provider: String
-    }
+    typealias ResolvedJudgeIdentity = ManifestDeclarationPolicy.ResolvedJudgeIdentity
 
     static func resolvedJudgeIdentity(
         _ judge: ExperimentManifest.JudgeRef, studyModelID: String
     ) -> ResolvedJudgeIdentity {
-        let rawKind = judge.kind.trimmingCharacters(in: .whitespacesAndNewlines)
-        let kind = rawKind.isEmpty ? "claude" : rawKind
-        var model = (judge.model ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let rawProvider = (judge.provider ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let provider =
-            kind == "openrouter"
-            ? OpenRouterProviderIdentity.canonical(rawProvider)
-            : rawProvider
-        if kind == "local", model.isEmpty {
-            model = studyModelID
-        } else if kind == "claude", model.isEmpty {
-            model = ClaudePairedJudge.defaultModel
-        }
-        return ResolvedJudgeIdentity(kind: kind, model: model, provider: provider)
+        ManifestDeclarationPolicy.resolvedJudgeIdentity(judge, studyModelID: studyModelID)
     }
 
     /// External review 2026-07-22 (finding 4): two blank-model local judges
@@ -9004,38 +8250,7 @@ public enum ExperimentStore {
     /// the freeze gate (judgeValidity), the freeze advisories, and the
     /// data-check judge-panel row.
     static func judgePanelIndistinctProblem(_ manifest: ExperimentManifest) -> String? {
-        let judges = (manifest.judges ?? []).filter { !$0.name.isEmpty }
-        guard judges.count >= 2 else { return nil }
-        var identities: [ResolvedJudgeIdentity: [String]] = [:]
-        var order: [ResolvedJudgeIdentity] = []
-        for judge in judges {
-            let identity = resolvedJudgeIdentity(
-                judge, studyModelID: manifest.modelID)
-            if identities[identity] == nil { order.append(identity) }
-            identities[identity, default: []].append(judge.name)
-        }
-        guard identities.count < 2, let identity = order.first else { return nil }
-        let names = identities[identity] ?? []
-        let quoted = names.map { "'\($0)'" }
-        let joined =
-            quoted.count == 2
-            ? quoted.joined(separator: " and ")
-            : quoted.dropLast().joined(separator: ", ") + " and "
-                + (quoted.last ?? "")
-        let quantifier = quoted.count == 2 ? "both" : "all"
-        let what: String
-        if identity.kind == "local", identity.model == manifest.modelID {
-            what = "the study model at temperature 0"
-        } else if !identity.provider.isEmpty {
-            what = "the \(identity.kind) judge '\(identity.model)' via "
-                + "'\(identity.provider)'"
-        } else {
-            what = "the \(identity.kind) judge '\(identity.model)'"
-        }
-        return "judges \(joined) \(quantifier) resolve to the same "
-            + "deterministic judge (\(what)) — they would agree perfectly by "
-            + "construction; use judges with different models, kinds, or "
-            + "providers"
+        ManifestDeclarationPolicy.judgePanelIndistinctProblem(manifest)
     }
 
     /// Full pinned snapshot (freeze, after `pinExternalInputs`): byte-copies
