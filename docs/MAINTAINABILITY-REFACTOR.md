@@ -16,7 +16,8 @@ in [stage and lifecycle handoff](REFACTOR-STAGES-AND-LIFECYCLE.md). That record
 contains its ownership map, validation and integration instructions. The next
 slice is recorded in the [Swift offline analysis handoff](REFACTOR-SWIFT-ANALYSIS.md).
 The [study UI handoff](REFACTOR-STUDY-UI.md) records the subsequent state/controller
-and component separation.
+and component separation, including the subsequent authoring editor extraction
+(main study view: 2,720 → 1,300 lines).
 
 This change establishes focused owners for reusable Python task support,
 offline analysis, pipeline orchestration, Swift contracts, manifest-save policy,
@@ -230,8 +231,10 @@ Swift offline analysis now has explicit evidence, calculation and publication
 owners; see the linked handoff for compatibility boundaries and validation.
 
 1. Finish decomposing study authoring/template/freeze/import commands and the
-   protocol/condition/seat editor sections. Draft, job and result owners and the
-   main run/result UI components have moved; see the study UI handoff.
+   parent view's inventory/design actions, freeze controls and remote pipeline
+   evidence. Draft, job and result owners, run/result UI, and the protocol,
+   condition, seat, prompt and evaluation editors have moved; see the study UI
+   handoff for the component map and full Swift validation.
 2. Extend explicit request/workspace binding through remaining legacy paths,
    apply the ownership pattern to other large feature views, and retire
    compatibility bridges after their callers migrate.

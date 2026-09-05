@@ -4,7 +4,9 @@ Branch: `codex/maintainability-refactor`
 
 Date: 2026-09-05
 
-Starting commit: `22daaca`.
+State/controller slice starting commit: `22daaca`.
+
+Authoring-component continuation starting commit: `d494826`.
 
 Latest integrated main baseline: `5309b5f2efc8f70dfb7b1a444feb5312b27c7704`.
 
@@ -24,12 +26,14 @@ the displayed substrate label are captured before network suspension. Editing
 the remote controls during upload cannot change the executor, verb, resources,
 resume policy or parallel-job count already being submitted.
 
-`ExperimentsPanelView.swift` decreased from 4,501 to 2,720 lines. Run controls,
+`ExperimentsPanelView.swift` decreased from 4,501 to 2,720 lines in the first
+UI slice, then to 1,300 lines in the authoring continuation. Run controls,
 preparation controls, live progress, local results, recent jobs, notices and
 review/import/rename windows have their own components. Live progress and result
 selection read their owners directly. Draft and compute-option bindings in the
-extracted UI address their field owners. Study authoring still calls the
-coordinator's admitted store operations.
+extracted UI address their field owners. The authoring sections now have focused
+view components too. Study authoring still calls the coordinator's admitted
+store operations.
 
 `ExperimentPanel.swift` decreased from 6,295 to 5,214 lines; 551 lines of old
 binding spellings are isolated in `StudyPanelBindings.swift`. That bridge is not
@@ -86,11 +90,47 @@ Paths are under `Sources/SteerLabApp/`.
 | `StudyRenameWindow.swift` | Existing canonical-name/display-label editor |
 | `NoticesViews.swift` | Notice bell and feed |
 | `StudyControlCopy.swift` | Shared existing help/caption strings |
+| `StudySetupSection.swift` | Question/purpose, baseline model and revision/precision, prompt rendering, reasoning/token settings, scenario/baseline selection, funnel phase and Save Study Setup |
+| `StudySamplingControls.swift` | Samples/play-throughs, seed policy/list and existing stochastic-design advisories |
+| `StudyConceptsSection.swift` | Pinned recipes, method/rendering/reading-position/reference/corpus attachment controls and detach action |
+| `StudyInjectionConditionsSection.swift` | Native conditions, baseline display, sign/random controls and removal; composes the existing AddConditionEditor |
+| `StudyArmsSection.swift` | Saved/forward-referenced agent arms, confirmation policy and non-blocking evidence notes over supplied evidence/library values |
+| `StudySeatsSection.swift` | Seat pickers, casting status/advisories and save/permutation actions |
+| `StudyTaskPromptsEditor.swift` | Prompt loading/editing/pinning, import entry points and instrument-field preservation warnings |
+| `StudyEvaluationSection.swift` | Instrument activation, supplied judging controls, analysis declarations and evaluation save action |
 
 The view hierarchy retains the existing control order, labels, help text,
 confirmation dialogs, GPU warning gate and report contents. Run/preflight state
 now belongs to its component; review-sheet presentation belongs to the results
 component. No installed application was replaced or launched for this refactor.
+
+## Authoring-component continuation
+
+Eight focused SwiftUI components replace the protocol/condition/seat/prompt and
+evaluation sections formerly implemented inside `ExperimentsPanelView`. The
+largest new file is 323 lines. These are separate View types, not extensions
+that retain the original view's entire state and service access.
+
+The editors receive the selected manifest and the existing coordinator. Editable
+bindings continue to target `StudyDraftState`; commands still use the admitted
+`ExperimentPanel` operations. This slice does not move authoring transactions out
+of that coordinator. Setup receives a substrate label value rather than the chat
+service. The arms view receives robustness reports, the substrate and available
+variants; it performs no directory scan or library refresh. The parent retains
+the existing asynchronous evidence-loading task. Evaluation receives a judging
+view builder, so only its host needs to supply the service-dependent judging UI.
+
+Import-sheet visibility and text remain in the parent and reach the prompt
+editor as bindings. The parent still presents the import sheet and resolves its
+destination/action through the selected study. This preserves the existing
+presentation lifetime when the prompt disclosure is collapsed. Template/rename,
+GPU warning, freeze confirmation and result dialogs keep their existing owners.
+
+No control order, label/help text, frozen-study enablement, seed-policy legacy
+value, confirmation condition, pin command or save path intentionally changed.
+The scientific decisions still belong to ExperimentKit and its store/policy
+owners. In particular, this is UI organization, not a new implementation of
+extraction, control generation, reasoning budgets or instrument scoring.
 
 ## Behavior preserved and focused transition corrections
 
@@ -122,10 +162,23 @@ artifact schema changed.
 ## Validation
 
 Full serial Swift validation passed: **277 SteeringKit + 4,369 ExperimentKit
-tests (4,646 total)**, with `TEST SUCCEEDED`. Final build/test log:
-`/private/tmp/interpbench-ui-swift-final.log`.
+tests (4,646 total)**, with `TEST SUCCEEDED`. The first UI slice log is
+`/private/tmp/interpbench-ui-swift-final.log`. The authoring continuation also
+passed the full serial suite, including compilation of all eight components in
+`SteerLabApp-product`; log: `/private/tmp/interpbench-ui-authoring-swift.log`.
 
-Eight new tests in `Tests/ExperimentKitTests/StudyUIOwnershipTests.swift` cover:
+A mechanical preservation audit accounted for all **51 existing helper function
+bodies** and the two inline Study Setup/Evaluation sections. They match after
+whitespace normalization and the four explicit composition substitutions:
+substrate label input, supplied variant library, judging view builder and
+sampling component. Twenty-six helpers moved to the new components. The rest
+remain in the parent. No new tests were added for this structural move;
+existing authoring, seat casting, prompt preservation, instrument, draft-state
+and scientific regression tests remain in the full suite. Interactive visual QA
+was not performed; the installed application was not launched or replaced.
+
+Eight tests added in the state/controller slice in
+`Tests/ExperimentKitTests/StudyUIOwnershipTests.swift` cover:
 
 1. Unsaved editor values survive ordinary refresh; forced/changed selection and
    workspace-specific defaults synchronize explicitly.
@@ -159,8 +212,10 @@ No Python files changed in this slice.
 This is the study UI slice, not a rewrite of every app panel. The following work
 remains appropriate as separately reviewed changes:
 
-1. Decompose remaining study authoring/template/freeze/import commands and the
-   protocol/condition/seat editor sections still in the main panel/view.
+1. Decompose remaining study authoring/template/freeze/import commands in
+   `ExperimentPanel`, plus the parent view's study inventory/design actions,
+   freeze controls and remote pipeline/evidence presentation. The protocol,
+   condition, seat, prompt and evaluation editors have now moved.
 2. Extend explicit request/workspace binding through the legacy submission and
    store/task boundaries. Those compatibility paths still use existing global
    workspace lookup; this slice does not make all model operations safe against
