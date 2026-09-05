@@ -320,15 +320,11 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
                     job.log(f"could not release resident models ({exc}); "
                             "continuing")
             job.log(f"running local study {experiment}:{verb}")
-            proc = LocalExecutor().run(command, log=job.log)
+            proc = LocalExecutor().run(command, log=job.log,
+                                       should_cancel=lambda: job.cancelled)
             if proc.stdout:
                 job.log(proc.stdout.strip()[-4000:])
-            if proc.returncode != 0:
-                raise RuntimeError(
-                    (proc.stderr or "").strip() or f"study exited with {proc.returncode}")
-            result = dict(base_result)
-            result.update(_read_child_record(record_path))
-            return result
+            return _local_child_outcome(job, proc, base_result, record_path)
 
         job = jobs.submit("study-submit", _run_local,
                           requested_resources=local_resources)
@@ -506,15 +502,11 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
         def _run_local(job):
             from .executors import LocalExecutor
             job.log(f"running bundled study {experiment}:{verb}")
-            proc = LocalExecutor().run(command, log=job.log)
+            proc = LocalExecutor().run(command, log=job.log,
+                                       should_cancel=lambda: job.cancelled)
             if proc.stdout:
                 job.log(proc.stdout.strip()[-4000:])
-            if proc.returncode != 0:
-                raise RuntimeError(
-                    (proc.stderr or "").strip() or f"study exited with {proc.returncode}")
-            result = dict(base_result)
-            result.update(_read_child_record(record_path))
-            return result
+            return _local_child_outcome(job, proc, base_result, record_path)
 
         job = jobs.submit("study-submit-bundle", _run_local,
                           requested_resources=local_resources)
@@ -917,20 +909,139 @@ def _read_child_record(record_path: str) -> dict:
             data = json.load(handle)
     except (OSError, ValueError):
         return {}
+    if not isinstance(data, dict):
+        return {}
     out: dict = {}
     if isinstance(data.get("result"), dict):
         out["runResult"] = data["result"]
-    if data.get("outputArtifacts"):
+    if isinstance(data.get("outputArtifacts"), list) and data["outputArtifacts"]:
         out["outputArtifacts"] = data["outputArtifacts"]
-    if data.get("runDirectory"):
+    # SHAPE-CHECKED, not merely truthy (external review, 2026-09-05). This is
+    # now read from a FAILED child too, and a half-written record is exactly
+    # what a child that died mid-write leaves behind: a `runDirectory` that is
+    # a number reached the job result verbatim, where the next reader
+    # (`_resumable_directory_in`, the app's retrieval row) has to defend
+    # against it. A malformed field contributes nothing instead.
+    if isinstance(data.get("runDirectory"), str) and data["runDirectory"]:
         out["runDirectory"] = data["runDirectory"]
     # Throughput stamps (WS2/WS3): surfaced for local jobs the same way the
     # Slurm reconciler folds them, so the housekeeping throughput table can
     # learn from both executors.
     for key in ("elapsedSeconds", "recordCount"):
-        if key in data:
+        if isinstance(data.get(key), (int, float)) \
+                and not isinstance(data[key], bool):
             out[key] = data[key]
     return out
+
+
+#: The pointers ``jobs._retain_partial_evidence`` writes at the RESULT ROOT
+#: when an IN-PROCESS job fails. A local child carries the same facts inside
+#: its own document, and every client — the Mac's "Retrieve partial data" row
+#: included — reads them from the root. Lifting them is what makes the two
+#: executors say the same thing about the same failure.
+_CHILD_EVIDENCE_POINTERS = ("evidenceBundle", "partialEvidence", "runDirectory",
+                            "experiment", "verb", "partialRunID")
+
+#: Per-key shape, applied to the lift below. Same discipline as
+#: ``_read_child_record``: a record that says something impossible contributes
+#: NOTHING rather than a value a client would then have to defend against.
+_CHILD_EVIDENCE_SHAPES = {
+    "evidenceBundle": dict,
+    "partialEvidence": bool,
+    "runDirectory": str,
+    "experiment": str,
+    "verb": str,
+    "partialRunID": str,
+}
+
+
+def _lift_child_evidence(result: dict) -> None:
+    """Copy the child's evidence pointers to the result root, inventing none.
+
+    A locally-executed study's outputs were reachable only at
+    ``result.runResult.…`` — one level deeper than every consumer of a failed
+    job looks (external review, 2026-09-05). Nothing here overwrites a key the
+    submission or the record already set at the root.
+    """
+    child = result.get("runResult")
+    if not isinstance(child, dict):
+        return
+    for key in _CHILD_EVIDENCE_POINTERS:
+        if key in result or key not in child:
+            continue
+        value = child[key]
+        if not isinstance(value, _CHILD_EVIDENCE_SHAPES[key]):
+            continue
+        if isinstance(value, str) and not value:
+            continue
+        result[key] = value
+    # A child that FAILED names its directory only inside the bundle it
+    # packaged: `bundles.execute_run_bundle`'s failure path stamps
+    # `partialRunID` (a basename) and the bundle, never the path. The bundle's
+    # own `runDirectory` is therefore the only absolute pointer on that path.
+    if not isinstance(result.get("runDirectory"), str):
+        bundle = result.get("evidenceBundle")
+        directory = bundle.get("runDirectory") if isinstance(bundle, dict) else None
+        if isinstance(directory, str) and directory:
+            result["runDirectory"] = directory
+
+
+def _local_child_outcome(job, proc, base_result: dict, record_path: str) -> dict:
+    """Fold a local child's durable record into the job result on EVERY
+    outcome, and decide what the job becomes.
+
+    **ENG-02 (external review, 2026-09-05).** The fold used to happen only
+    after the returncode check, so a child that died holding hours of
+    generations left the job with ``result: null``: the evidence sat on disk
+    and no client could name it — the same "the data exists somewhere" policy
+    the bundled path stopped having on 2026-07-24. A failure still FAILS, with
+    the child's own diagnostics as the error; what changes is that the run
+    directory and the partial status come home with it.
+
+    Two mechanisms, both honoured by the durable-job runner (``api/jobs.py``):
+
+    * the folded result is stamped onto ``job.result`` BEFORE the raise, and
+      the runner's ``finally`` writes the job to the store — so what is set
+      here reaches sqlite even when nothing can be packaged, and
+      ``_retain_partial_evidence`` (which builds on ``job.result``) adds to it
+      rather than replacing it;
+    * the child's run directory is attached to the exception under
+      ``run_status.PARTIAL_RUN_ATTR``, which is exactly what
+      ``_retain_partial_evidence`` reads — so a child that could not package
+      its own evidence still gets a bundle, from the same code path in-process
+      jobs use. Attached ONLY when the child packaged nothing: re-packaging a
+      bundle the child already wrote would spend the same gigabytes twice and
+      overwrite the better copy (the child's carries its diagnostics and, for
+      a pipeline, its failed stage).
+
+    **ENG-03.** A cancelled child RETURNS rather than raises — the shape an
+    in-process task takes when it observes ``should_cancel`` — so the runner
+    stamps "cancelled" (or "cancelledResumable", from the run directory lifted
+    above) and keeps the result, instead of the "failed" a raise would produce
+    for a child we killed on purpose.
+    """
+    result = dict(base_result)
+    result.update(_read_child_record(record_path))
+    _lift_child_evidence(result)
+    if proc.returncode == 0 and not job.cancelled:
+        return result
+    # Terminal either way from here: stamp the result where the store will
+    # find it before anything can raise.
+    job.result = result
+    if job.cancelled:
+        job.log("cancellation observed — the child was stopped; whatever it "
+                "had already written is retained"
+                + (f" at {result['runDirectory']}"
+                   if isinstance(result.get("runDirectory"), str) else ""))
+        return result
+    failure = RuntimeError(
+        (proc.stderr or "").strip() or f"study exited with {proc.returncode}")
+    directory = result.get("runDirectory")
+    if (isinstance(directory, str) and not result.get("evidenceBundle")
+            and os.path.isdir(directory)):
+        from ..experiment.run_status import PARTIAL_RUN_ATTR
+        setattr(failure, PARTIAL_RUN_ATTR, directory)
+    raise failure
 
 
 class SubmissionRefusal(ValueError):

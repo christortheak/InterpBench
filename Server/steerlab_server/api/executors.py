@@ -6,12 +6,13 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 from ..experiment.resume import CHECKPOINT_EXIT_CODE
 from .profile import ServerProfile
@@ -439,9 +440,29 @@ class JobBundle:
         return data
 
 
+#: How often a cancellable local child is checked, and how long its process
+#: group is given to honour a SIGTERM before the group is killed. Parameters
+#: (not constants) because the right grace depends on the work: a study child
+#: mid-write of a large JSONL should be allowed to finish the line, a test
+#: should not wait ten seconds to prove an escalation happened.
+DEFAULT_CANCEL_POLL_SECONDS = 0.25
+DEFAULT_CANCEL_GRACE_SECONDS = 10.0
+
+#: Bound on joining the drain threads. Draining must never be able to hold
+#: cancellation hostage — a descendant outside our group could hold the write
+#: end of the pipe open forever — so the join is bounded and the threads are
+#: daemons. Output collected after the bound is simply lost, which is a far
+#: better outcome than a cancel that never returns.
+_DRAIN_JOIN_SECONDS = 5.0
+
+
 class LocalExecutor:
     def run(self, command: list[str], *, cwd: str | None = None,
-            env: dict[str, str] | None = None, log=None) -> subprocess.CompletedProcess:
+            env: dict[str, str] | None = None, log=None,
+            should_cancel: Callable[[], bool] | None = None,
+            cancel_poll_seconds: float = DEFAULT_CANCEL_POLL_SECONDS,
+            cancel_grace_seconds: float = DEFAULT_CANCEL_GRACE_SECONDS,
+            ) -> subprocess.CompletedProcess:
         """Run a child, STREAMING its stdout to ``log`` as it arrives.
 
         This used subprocess.run(capture_output=True), which blocks until the
@@ -452,9 +473,20 @@ class LocalExecutor:
         invisible for exactly the period a researcher wants them. Streaming
         makes a local run as legible as a Slurm one.
 
+        ``should_cancel`` makes the child STOPPABLE (ENG-03, external review
+        2026-09-05). Without it this method had no cancellation signal at all:
+        a cancel accepted by the job layer set a flag nobody here read, so the
+        run continued to completion — the researcher watched a job they had
+        stopped write its output — and the job turned "cancelled" only once
+        the child had finished on its own. The callable is polled between
+        waits, exactly as the in-process tasks poll theirs
+        (``jobs.py`` → ``tasks._observe_cancel``).
+
         Contract is unchanged — a CompletedProcess with stdout, stderr and
         returncode — so callers that read proc.stdout for the record, or
-        proc.stderr for a failure message, are unaffected.
+        proc.stderr for a failure message, are unaffected. A child stopped by
+        this method reports the SIGNAL as a negative returncode, the way
+        ``Popen.wait`` always has.
         """
         if log:
             log("$ " + " ".join(shlex.quote(c) for c in command))
@@ -468,7 +500,20 @@ class LocalExecutor:
         child_env.pop("SLURM_JOB_ID", None)
         process = subprocess.Popen(
             command, cwd=cwd, env=child_env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=1)
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=1,
+            # ITS OWN SESSION (ENG-03, external review 2026-09-05). A study
+            # child is a launcher: `bundle execute` spawns the work that holds
+            # the model, and signalling only the process we spawned would leave
+            # those descendants running — a cancelled study still occupying the
+            # GPU. `start_new_session` makes the child the leader of a brand-new
+            # process group, so "everything it started" is a group we own
+            # outright and a signal to that group can reach nothing else on this
+            # machine. The cost is that the child no longer shares the server's
+            # controlling terminal, so a Ctrl-C at the server does not reach it
+            # any more; cancelling the JOB is the supported stop, and as of this
+            # change that stop actually works. POSIX only — Windows is out of
+            # scope for this engine (AGENTS.md).
+            start_new_session=(os.name == "posix"))
 
         collected: dict[str, list[str]] = {"out": [], "err": []}
 
@@ -494,12 +539,119 @@ class LocalExecutor:
         ]
         for thread in threads:
             thread.start()
-        returncode = process.wait()
+        if should_cancel is None:
+            returncode = process.wait()
+        else:
+            returncode = self._wait_or_cancel(
+                process, should_cancel=should_cancel, log=log,
+                poll_seconds=cancel_poll_seconds,
+                grace_seconds=cancel_grace_seconds)
         for thread in threads:
-            thread.join(timeout=5)
+            thread.join(timeout=_DRAIN_JOIN_SECONDS)
+            if thread.is_alive() and log:
+                # Said out loud rather than swallowed: output is still being
+                # held somewhere (a descendant that outlived its group, a
+                # wedged filesystem), and the record below is short by
+                # whatever it holds.
+                log("a child output stream was still open "
+                    f"{_DRAIN_JOIN_SECONDS:.0f}s after the child exited — "
+                    "the captured output may be incomplete")
         return subprocess.CompletedProcess(
+            # Snapshotted, because a drain thread that outlived the join above
+            # may still be appending.
             command, returncode,
-            stdout="".join(collected["out"]), stderr="".join(collected["err"]))
+            stdout="".join(list(collected["out"])),
+            stderr="".join(list(collected["err"])))
+
+    def _wait_or_cancel(self, process: subprocess.Popen, *,
+                        should_cancel, log, poll_seconds: float,
+                        grace_seconds: float) -> int:
+        """Wait for the child, watching for a cancellation between polls.
+
+        **The race, defined** (ENG-03, external review 2026-09-05). Each round
+        WAITS FIRST and only then reads the flag, so a child that finished on
+        its own is reaped and its own status returned — a cancellation observed
+        after the fact signals nothing. The remaining window is a child that
+        exits between a timed-out wait and the signal below: this process has
+        not reaped it yet, so its pid is still ours and cannot have been
+        recycled by the kernel; the signal therefore reaches either the
+        surviving members of our group or nothing at all, never a stranger.
+        In that case the child's own exit status is what comes back and the log
+        says a cancellation was observed — the returncode is left to say
+        honestly that it is not what stopped the child.
+        """
+        while True:
+            try:
+                return process.wait(timeout=max(0.01, poll_seconds))
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                cancelled = should_cancel()
+            except Exception:  # noqa: BLE001
+                # A predicate that cannot answer must never let the exception
+                # out of this loop: that would abandon a running child with
+                # nobody left to wait for or signal it — the orphan this whole
+                # method exists to prevent. Falling back to "not cancelled" is
+                # exactly the behaviour of a run with no predicate at all.
+                cancelled = False
+            if cancelled:
+                return self._stop_child(process, log=log,
+                                        grace_seconds=grace_seconds)
+
+    def _stop_child(self, process: subprocess.Popen, *, log,
+                    grace_seconds: float) -> int:
+        """SIGTERM the child's own process group, then SIGKILL it, then reap.
+
+        Only ever the group this executor created (``start_new_session`` above
+        makes the child its own group leader, so the group id IS the child's
+        pid): nothing outside the tree we spawned can be signalled from here,
+        by construction rather than by care.
+        """
+        def _say(message: str) -> None:
+            if log:
+                log(message)
+
+        group = process.pid if (os.name == "posix" and process.pid > 1) else None
+        target = f"process group {group}" if group else f"process {process.pid}"
+        _say(f"cancellation observed — sending SIGTERM to {target}")
+        if not self._signal_owned(process, group, signal.SIGTERM):
+            _say("the child had already exited; nothing was signalled")
+        try:
+            return process.wait(timeout=max(0.0, grace_seconds))
+        except subprocess.TimeoutExpired:
+            pass
+        _say(f"still alive {grace_seconds:g}s after SIGTERM — "
+             f"escalating to SIGKILL on {target}")
+        self._signal_owned(process, group, signal.SIGKILL)
+        try:
+            # SIGKILL is not refusable, so this bound only has to cover the
+            # kernel's own teardown; it is generous on purpose.
+            return process.wait(timeout=max(2.0, grace_seconds))
+        except subprocess.TimeoutExpired:
+            # Unreapable (an uninterruptible wait, typically a wedged mount).
+            # Reported, never waited on forever: a cancel that cannot return
+            # is worse than one that says what it could not finish.
+            _say(f"{target} did not exit even after SIGKILL — it is no longer "
+                 "being waited on; check for a stuck process by hand")
+            return -int(signal.SIGKILL)
+
+    @staticmethod
+    def _signal_owned(process: subprocess.Popen, group: int | None,
+                      sig: int) -> bool:
+        """Signal the child's OWN group (or, with no group, the child alone).
+        False when there was nothing left to signal."""
+        try:
+            if group is not None:
+                os.killpg(group, sig)
+            elif process.poll() is None:
+                process.send_signal(sig)
+            else:
+                return False
+        except (ProcessLookupError, PermissionError):
+            # Empty group / already reaped by the OS. Not an error: the child
+            # exiting on its own is one of the outcomes this method exists for.
+            return False
+        return True
 
 
 class SlurmExecutor:
