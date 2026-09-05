@@ -238,6 +238,43 @@ def test_an_ablation_slot_parses():
     assert manifest.conditions[0].slots[0].is_ablation
 
 
+def test_the_record_stamp_says_ablate_and_names_the_control():
+    """``interventionState`` is stamped on every record so a reader never
+    reconstructs the intervention from the condition name — but until
+    2026-09-05 it stamped {concept, layer, alpha} only, so an ablation record
+    read as a steering record at α = λ. ``mode`` now rides on an ablating
+    slot, and only there: a steering record's stamp is byte-identical to
+    what it always was."""
+    from types import SimpleNamespace
+    from steerlab_server.experiment import tasks
+    from steerlab_server.experiment.manifest import Condition, Slot
+    ablation = Condition(
+        name="fear-ablate-random",
+        slots=[Slot(concept="fear", layer=0, alpha=1.0, mode="ablate")],
+        alpha_in_norm_units=False, control_type="randomDirectionAblation")
+    state = tasks._intervention_state(ablation)
+    assert state["slots"] == [
+        {"concept": "fear", "layer": 0, "alpha": 1.0, "mode": "ablate"}]
+    assert state["controlType"] == "randomDirectionAblation"
+    assert "randomVectorAlgorithm" not in state
+    steering = Condition(
+        name="fear-a1", slots=[Slot(concept="fear", layer=14, alpha=1.0)],
+        alpha_in_norm_units=True)
+    assert tasks._intervention_state(steering)["slots"] == [
+        {"concept": "fear", "layer": 14, "alpha": 1.0}]
+    # The variant twin reads the injection's own mode the same way.
+    variant = SimpleNamespace(
+        injections=[{"concept": "fear", "layer": 0, "alpha": 1.0,
+                     "mode": "ablate", "vectorArtifactID": "runs/x/fear"},
+                    {"concept": "joy", "layer": 9, "alpha": 0.5,
+                     "vectorArtifactID": "runs/x/joy"}],
+        band_width=1, alpha_in_norm_units=False, adapters=[])
+    twin = tasks._variant_intervention_state(SimpleNamespace(name="v"), variant)
+    assert twin["slots"] == [
+        {"concept": "fear", "layer": 0, "alpha": 1.0, "mode": "ablate"},
+        {"concept": "joy", "layer": 9, "alpha": 0.5}]
+
+
 def test_the_ablation_control_matrix_is_not_the_steering_one():
     """No layer, no norm units, no negative cell — λ=2 reflects, whereas a
     negative λ would simply add the concept back — and a random DIRECTION

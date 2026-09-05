@@ -537,3 +537,158 @@ def test_duplicate_makes_draft(tmp_path):
     assert "freezeHash" not in copy and "frozenBy" not in copy
     # editing the duplicate is allowed
     es.set_protocol("orig-v2", {"temperature": 0.5}, root=root)
+
+
+# --- the projection carries mode and controlType (2026-09-05) ----------------
+
+def _legacy_conditions():
+    """Conditions in the shape the projection has ALWAYS stored for an
+    add-by-omission arm: exactly {concept, layer, alpha} per slot, no
+    controlType key. Hand-written, so the test cannot follow the code."""
+    return [
+        {"name": "french-a1", "bandWidth": 1, "alphaInNormUnits": True,
+         "slots": [{"concept": "french", "layer": 5, "alpha": 1.0}]},
+        {"name": "french-a2", "bandWidth": 3, "alphaInNormUnits": True,
+         "slots": [{"concept": "french", "layer": 5, "alpha": 2.0}]},
+        {"name": "baseline", "bandWidth": 1, "alphaInNormUnits": True,
+         "slots": []},
+    ]
+
+
+def test_an_ablation_condition_and_its_control_round_trip_through_add_conditions(tmp_path):
+    """The 2026-09-05 drop: ``_condition_entry`` projected exactly
+    {concept, layer, alpha} per slot and no controlType, so an ablation
+    authored through add_conditions (the POST …/condition route, and
+    ``control_matrix.ablation_control_conditions()`` fed to it) was stored as
+    a STEERING condition at α = λ, and its random-direction control as an
+    ordinary treatment cell. Same failure class as the 2026-07-27 variant-wire
+    bug: the wire spells add by omission, so a dropped mode is
+    indistinguishable from steering. The Swift ``ExperimentStore.Slot`` always
+    round-tripped ``mode``, so the two engines' authoring verbs disagreed."""
+    from steerlab_server.experiment.control_matrix import (
+        ablation_control_conditions, control_matrix_conditions)
+    root = str(tmp_path)
+    _concept(root)
+    es.create("s", model_id="org/m", root=root)
+    es.attach("s", ["french"], root=root)
+    declared = (ablation_control_conditions("french")
+                + control_matrix_conditions("french", 5, 2.0))
+    stored = es.add_conditions("s", declared, root=root)
+    by_name = {c["name"]: c for c in stored["conditions"]}
+    # Stored bytes: mode rides on every ablating slot, controlType on the
+    # two control cells, and NOTHING else grew a key.
+    for name in ("french-ablate-l0p5", "french-ablate-l1", "french-ablate-random"):
+        assert by_name[name]["slots"] == [
+            {"concept": "french", "layer": 0,
+             "alpha": by_name[name]["slots"][0]["alpha"], "mode": "ablate"}]
+    assert by_name["french-ablate-random"]["controlType"] == "randomDirectionAblation"
+    assert by_name["french-randomMatchedNorm-a2"]["controlType"] == "randomMatchedNorm"
+    assert by_name["french-randomMatchedNorm-a2"]["slots"] == [
+        {"concept": "french", "layer": 5, "alpha": 2.0}]
+    for name in ("french-ablate-l0p5", "french-ablate-l1", "french-a1",
+                 "french-a2", "french-neg-a2"):
+        assert "controlType" not in by_name[name]
+    # Read back through the manifest model — what the run path executes.
+    manifest = Manifest.from_dict(es.load_raw("s", root))
+    conditions = {c.name: c for c in manifest.conditions}
+    assert conditions["french-ablate-l1"].slots[0].is_ablation
+    assert conditions["french-ablate-l1"].slots[0].alpha == 1.0
+    assert conditions["french-ablate-l1"].control_type is None
+    assert conditions["french-ablate-random"].slots[0].is_ablation
+    assert conditions["french-ablate-random"].control_type == "randomDirectionAblation"
+    assert conditions["french-randomMatchedNorm-a2"].control_type == "randomMatchedNorm"
+    assert not conditions["french-randomMatchedNorm-a2"].slots[0].is_ablation
+    assert not conditions["french-a2"].slots[0].is_ablation
+    assert conditions["french-a2"].control_type is None
+    # Re-projecting what was stored is a fixed point: add_conditions replaces
+    # by name (sweep re-projection relies on it), and a second pass must not
+    # lose what the first wrote.
+    again = es.add_conditions("s", list(stored["conditions"]), root=root)
+    assert again["conditions"] == stored["conditions"]
+
+
+def test_a_mode_less_condition_projects_to_its_legacy_bytes():
+    """The manifest hash is the study identity, so an arm that never declared
+    a mode must project to exactly what it always did — no ``mode`` key, no
+    ``controlType`` key — and an EXPLICIT ``add`` is normalised to omission,
+    as the Swift encoder does (``Slot.encode`` skips ``.add``)."""
+    for legacy in _legacy_conditions():
+        assert es._condition_entry(legacy) == legacy
+        assert es._condition_entry(dict(legacy, controlType=None)) == legacy
+    explicit_add = {"name": "french-a2", "bandWidth": 3, "alphaInNormUnits": True,
+                    "slots": [{"concept": "french", "layer": 5, "alpha": 2.0,
+                               "mode": "add"}]}
+    assert es._condition_entry(explicit_add) == _legacy_conditions()[1]
+    # Same document, same content hash, whichever spelling authored it.
+    def _doc(conditions):
+        return {"name": "s", "modelID": "org/m", "concepts": [],
+                "conditions": conditions}
+    authored = [es._condition_entry(c) for c in (
+        _legacy_conditions()[:1] + [explicit_add] + _legacy_conditions()[2:])]
+    assert (Manifest.from_dict(_doc(authored)).content_hash()
+            == Manifest.from_dict(_doc(_legacy_conditions())).content_hash())
+
+
+def test_a_frozen_study_of_add_by_omission_conditions_keeps_its_freeze_hash(tmp_path):
+    """End to end through the store: author legacy-shaped arms, freeze, and
+    check the stamped freezeHash against a document whose conditions are
+    HAND-WRITTEN in the pre-2026-09-05 shape. A key the projection had grown
+    on every add-by-omission arm would show up here as a different hash."""
+    root = str(tmp_path)
+    _concept(root)
+    es.create("s", model_id="org/m", revision="abc", root=root)
+    es.attach("s", ["french"], root=root)
+    es.add_conditions("s", _legacy_conditions(), root=root)
+    frozen = es.freeze("s", force=True, root=root)
+    stored = es.load_raw("s", root)
+    assert stored["conditions"] == _legacy_conditions()
+    assert all("mode" not in slot for c in stored["conditions"]
+               for slot in c["slots"])
+    assert all("controlType" not in c for c in stored["conditions"])
+    expected = dict(stored)
+    expected["conditions"] = _legacy_conditions()
+    assert Manifest.from_dict(expected).content_hash() == frozen["freezeHash"]
+    assert stored["freezeHash"] == frozen["freezeHash"]
+
+
+def test_condition_projection_refuses_what_neither_engine_can_run():
+    """Closed vocabularies, typed refusals with a repair, nothing written:
+    an unknown ``mode`` would make the Mac engine unable to decode the
+    manifest (``InterventionPlan.Mode`` is a closed enum); an unknown
+    ``controlType`` runs as an ordinary treatment (Swift
+    ``knownControlTypes`` twin); a control with no slots has nothing to
+    substitute into; and a control paired with the wrong slot mode is a cell
+    that duplicates the treatment on one engine or the other."""
+    base = {"name": "arm", "bandWidth": 1, "alphaInNormUnits": False}
+    steer = [{"concept": "french", "layer": 5, "alpha": 1.0}]
+    ablate = [{"concept": "french", "layer": 0, "alpha": 1.0, "mode": "ablate"}]
+
+    def refusal(condition):
+        with pytest.raises(es.ExperimentStoreError) as excinfo:
+            es._condition_entry(condition)
+        assert excinfo.value.repair_action
+        return str(excinfo.value)
+
+    detail = refusal(dict(base, slots=[dict(steer[0], mode="remove")]))
+    assert "'remove'" in detail and "add | ablate" in detail
+    detail = refusal(dict(base, slots=steer, controlType="shuffledLabels"))
+    assert "'shuffledLabels'" in detail
+    assert "randomMatchedNorm | randomDirectionAblation" in detail
+    detail = refusal(dict(base, slots=[], controlType="randomMatchedNorm"))
+    assert "no slots" in detail
+    detail = refusal(dict(base, slots=ablate, controlType="randomMatchedNorm"))
+    assert "randomDirectionAblation" in detail
+    detail = refusal(dict(base, slots=steer, controlType="randomDirectionAblation"))
+    assert "randomMatchedNorm" in detail
+    # The matched pairs are accepted, and only the declared keys appear.
+    assert es._condition_entry(
+        dict(base, slots=ablate, controlType="randomDirectionAblation")) == {
+        "name": "arm", "bandWidth": 1, "alphaInNormUnits": False,
+        "slots": [{"concept": "french", "layer": 0, "alpha": 1.0,
+                   "mode": "ablate"}],
+        "controlType": "randomDirectionAblation"}
+    assert es._condition_entry(
+        dict(base, slots=steer, controlType="randomMatchedNorm")) == {
+        "name": "arm", "bandWidth": 1, "alphaInNormUnits": False,
+        "slots": [{"concept": "french", "layer": 5, "alpha": 1.0}],
+        "controlType": "randomMatchedNorm"}
