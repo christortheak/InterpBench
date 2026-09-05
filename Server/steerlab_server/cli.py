@@ -92,6 +92,8 @@ def main(argv: list[str] | None = None) -> int:
         return _sae(args[1:])
     if args and args[0] == "gemmascope":
         return _gemmascope(args[1:])
+    if args and args[0] == "ledger":
+        return _ledger(args[1:])
     if len(args) >= 2 and args[0] == "--config":
         return _run_config(args[1])
 
@@ -143,6 +145,8 @@ def _usage_text() -> str:
         "| sae qualification show <path> [--json]\n"
         "| gemmascope import-id --model M --release R --sae-id S --feature N "
         "--label L --residual-norm-artifact <runDir/name>\n"
+        "| ledger impact [--code-checkout <git checkout>] [--json] "
+        "[--out <file>]\n"
         "| docs cli-reference [--check|--write] [--path <file>]\n"
         "(--root DIR sets the artifact root — STEERLAB_ROOT — for any verb)\n"
         "(`steerlab-server <family> --help` lists a family's agent-path verbs; "
@@ -4422,6 +4426,129 @@ def _gemmascope(args: list[str]) -> int:
         "gemmascopeSource": sidecar.get("gemmascopeSource"),
     }, indent=2, sort_keys=True))
     return 0
+
+
+_LEDGER_USAGE = (
+    "usage: steerlab-server [--root DIR] ledger impact "
+    "[--code-checkout <path>] [--json] [--out <file>]\n"
+    "  Scan this workspace for artifacts the 2026-09-05 science fixes\n"
+    "  (SCI-01..04) could have reached, and write an evidence-backed\n"
+    "  ledger into diagnostics/impact-ledger-<stamp>/.\n"
+    "  --code-checkout <path>  a git checkout, so a stamped build commit can\n"
+    "                          be tested for ancestry against the fixes;\n"
+    "                          without it the revision-dependent findings\n"
+    "                          answer 'unknown'.\n")
+
+#: The flags ``ledger impact`` accepts, as ``{flag: takes-a-value}``. Declared
+#: as data for the same reason ``_EXPERIMENT_PASSTHROUGH_FLAGS`` is: a leftover
+#: ``--…`` token must refuse at 64 rather than be silently dropped, and the
+#: refusal has to be able to say what the verb DOES accept.
+_LEDGER_IMPACT_FLAGS: dict = {"--code-checkout": True, "--json": False,
+                              "--out": True, "--help": False}
+
+
+def _ledger(args: list[str]) -> int:
+    """``ledger impact`` — the REM-01 impact ledger (docs/IMPACT-LEDGER.md).
+
+    Hand-parsed like ``jlens``/``sae``/``gemmascope`` rather than joining
+    ``cli_envelope.VERB_SPECS``: the declared-verb table is the CROSS-ENGINE
+    agent surface, twin-tested against Swift, and this is a Python-engine
+    diagnostic with no Swift twin and no place in that contract. It still
+    answers in the shared envelope, because the ground rule is about the
+    DOCUMENT an agent parses, not about which table a verb is listed in.
+
+    Exit codes are the envelope's: 0 written (an exposed artifact is the
+    PRODUCT, not a failure), 64 malformed invocation, 66 the root is not a
+    workspace, 70 the scan itself broke.
+    """
+    from . import cli_envelope as envelope
+    from .experiment import impact_ledger
+
+    if not args or args[0] != "impact":
+        sys.stderr.write(_LEDGER_USAGE)
+        return 64
+    rest = args[1:]
+    json_mode = "--json" in rest
+    if "--help" in rest:
+        sys.stdout.write(_LEDGER_USAGE)
+        return 0
+
+    repair = ("ledger impact accepts: "
+              + " ".join(sorted(_LEDGER_IMPACT_FLAGS)))
+    index = 0
+    while index < len(rest):
+        token = rest[index]
+        takes_value = _LEDGER_IMPACT_FLAGS.get(token)
+        if takes_value is None:
+            reason = f"ledger impact does not accept {token}"
+        elif takes_value and index + 1 >= len(rest):
+            reason = f"ledger impact's {token} needs a value"
+        else:
+            index += 2 if takes_value else 1
+            continue
+        sys.stderr.write(f"steerlab-server ledger: {reason}\n  {repair}\n")
+        envelope.emit(
+            envelope.refusal("ledger impact", code="unknownFlag",
+                             reason=reason, repair_action=repair,
+                             state="blocked"),
+            json_mode=json_mode, out_path=None)
+        return 64
+
+    out_path = _flag(rest, "--out")
+    checkout = _flag(rest, "--code-checkout")
+
+    document_stream = sys.stdout
+    try:
+        if json_mode:
+            sys.stdout = sys.stderr
+        try:
+            ancestry = impact_ledger.open_checkout(checkout)
+            root = impact_ledger.require_workspace()
+            summary = impact_ledger.build(root, ancestry=ancestry)
+        except impact_ledger.LedgerRefusal as refusal:
+            sys.stderr.write(f"steerlab-server ledger impact: "
+                             f"{refusal.reason}\n  {refusal.repair_action}\n")
+            document = envelope.refusal(
+                "ledger impact", code=refusal.code, reason=refusal.reason,
+                repair_action=refusal.repair_action, state=refusal.state)
+            return envelope.emit(document, json_mode=json_mode,
+                                 out_path=out_path, stream=document_stream)
+        except (OSError, ValueError) as exc:
+            sys.stderr.write(f"steerlab-server ledger impact: {exc}\n")
+            document = envelope.failure(
+                "ledger impact", code="ledgerFailed", reason=str(exc),
+                repair_action="fix the reported problem and re-run "
+                              "`steerlab-server ledger impact`")
+            return envelope.emit(document, json_mode=json_mode,
+                                 out_path=out_path, stream=document_stream)
+    finally:
+        sys.stdout = document_stream
+
+    exposed = sum(block[impact_ledger.EXPOSED]
+                  for block in summary["counts"].values())
+    unknown = sum(block[impact_ledger.UNKNOWN]
+                  for block in summary["counts"].values())
+    message = (f"impact ledger: {summary['entryCount']} candidate artifact(s), "
+               f"{exposed} exposed, {unknown} unknown → "
+               f"{summary['outputDirectory']}")
+    if not json_mode:
+        print(message)
+        for finding in impact_ledger.FINDINGS:
+            block = summary["counts"][finding.id]
+            print(f"  {finding.id}  {block['total']:>3d} candidate(s): "
+                  f"{block[impact_ledger.EXPOSED]} exposed, "
+                  f"{block[impact_ledger.UNKNOWN]} unknown, "
+                  f"{block[impact_ledger.UNAFFECTED]} unaffected")
+        for item in summary["reassessments"]:
+            print(f"  reassessed {item['sourceAnalysis']} → {item['path']} "
+                  f"({item['changedVerdicts']} changed verdict(s))")
+        if summary["revisionDating"] != "codeCheckout":
+            print("  no --code-checkout: the revision-dependent findings "
+                  "(SCI-01, SCI-03) answer 'unknown'")
+    document = envelope.success("ledger impact", message, changed=True,
+                                result=summary)
+    return envelope.emit(document, json_mode=json_mode, out_path=out_path,
+                         stream=document_stream)
 
 
 def _flag(args: list[str], name: str) -> str | None:

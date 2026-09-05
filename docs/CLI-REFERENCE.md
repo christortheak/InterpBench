@@ -5030,6 +5030,33 @@ MLX-vs-CUDA fixture pairs remain an open item. The check says so in its own
 
 ---
 
+### 6.13 `ledger impact` — what the 2026-09-05 science fixes mean for existing artifacts (server-only)
+
+```
+steerlab-server [--root DIR] ledger impact [--code-checkout <git checkout>] [--json] [--out <file>]
+```
+
+Server-only, offline, no model. Scans a workspace for every artifact one of
+the four 2026-09-05 scientific fixes could have reached (SCI-01 J-lens
+full-vocabulary gain, SCI-02 Python LoRA accumulation, SCI-03 MLX
+completed-answer render, SCI-04 flat and single-dose ladders) and writes an
+evidence-backed ledger under `diagnostics/impact-ledger-<stamp>/`: one entry
+per artifact with its producing revision, the pins it carries, the finding,
+an exposure of `exposed` / `unaffected` / `unknown`, the concrete facts read,
+and a required action. Promotions whose analysis retained `effect-sizes.csv`
+and the run's manifest snapshot are re-scored under the current
+dose-monotonicity rule into `reassessed/<run>/promoted-movers.reassessed.json`,
+beside a verbatim copy of the original. Nothing under `runs/` is touched.
+
+`--code-checkout` names a git checkout so a stamped build commit can be tested
+for ancestry against each fix; without it every revision-dependent finding
+answers `unknown` and the ledger says how to resolve it. Missing metadata is
+never read as non-exposure. Exit `0` when the ledger is written (exposed
+artifacts are the product), `64` on a bad flag, `66` when `--root` is not a
+workspace. The rules, finding by finding, and the researcher's remaining job
+(dispositions, replacement links) are in
+[IMPACT-LEDGER.md](IMPACT-LEDGER.md).
+
 ## 7. Known gaps and traps
 
 Documentation-only observations from reading the dispatch code. **Nothing here
