@@ -7,6 +7,10 @@ expected residual state can be written down in closed form, and the loader seam
 is substituted. No model loads, no HuggingFace, no ``sae_lens``.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import hashlib
 import json
 import math
@@ -841,7 +845,7 @@ def _patch_run(monkeypatch, log, counts=None):
     from steerlab_server.experiment import logprob as logprob_mod
     from steerlab_server.experiment import tasks
 
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(gemma_scope, "load_sae_latent_feature",
                         fake_loader())
@@ -873,7 +877,7 @@ def _patch_run(monkeypatch, log, counts=None):
         return lp.ChoiceResult(options=scores, prompt_token_count=5,
                                prompt_text=prompt)
 
-    monkeypatch.setattr(tasks, "generate", generate)
+    monkeypatch.setattr(_owner_generate, 'generate', generate)
     monkeypatch.setattr(logprob_mod, "score_options", score_options)
 
 

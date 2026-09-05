@@ -2,6 +2,11 @@
 judge panel, agreement stats, human-validation subset) and the capability
 battery as validate evidence consumed by freeze's variant gate."""
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.validation_workflow as _owner_validation_workflow
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import hashlib
 import json
 import os
@@ -486,7 +491,7 @@ def test_battery_results_scores_baseline_and_variants(tmp_path, monkeypatch):
             return "5" if "2+2" in prompt else "The capital is Paris."
         return "4" if "2+2" in prompt else "Paris"
 
-    monkeypatch.setattr(tasks, "generate", fake_generate)
+    monkeypatch.setattr(_owner_generate, 'generate', fake_generate)
     results = tasks._battery_results(manifest, object(), root, lambda *a: None)
     by_condition = {r["condition"]: r for r in results}
     assert by_condition["baseline"]["accuracy"] == 1.0
@@ -502,7 +507,7 @@ def test_battery_results_scores_baseline_and_variants(tmp_path, monkeypatch):
         seen["temperature"] = kwargs.get("temperature")
         return "4"
 
-    monkeypatch.setattr(tasks, "generate", spy_generate)
+    monkeypatch.setattr(_owner_generate, 'generate', spy_generate)
     tasks._battery_results(manifest, object(), root, lambda *a: None)
     assert seen["max_tokens"] == 24 and seen["temperature"] == 0.0
 
@@ -510,7 +515,7 @@ def test_battery_results_scores_baseline_and_variants(tmp_path, monkeypatch):
 def test_battery_results_refuse_pinned_hash_drift(tmp_path, monkeypatch):
     root = str(tmp_path)
     manifest, _ = _battery_manifest(root, pin_hash="00" * 32)
-    monkeypatch.setattr(tasks, "generate", lambda *a, **k: "4")
+    monkeypatch.setattr(_owner_generate, 'generate', lambda *a, **k: "4")
     with pytest.raises(RuntimeError, match="drifted from the pinned hash"):
         tasks._battery_results(manifest, object(), root, lambda *a: None)
 
@@ -521,9 +526,9 @@ def test_validate_impl_stamps_battery_results(tmp_path, monkeypatch):
     manifest, battery_hash = _battery_manifest(root)
     _write(os.path.join(exp_dir, "experiment.json"), manifest.raw or {
         "name": "vs", "modelID": "org/m"})
-    monkeypatch.setattr(tasks, "_extract_all", lambda model, manifest, root: {})
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda model, manifest, root: {})
     monkeypatch.setattr(
-        tasks, "_battery_results",
+        _owner_validation_workflow, '_battery_results',
         lambda manifest, model, root, log: _battery_rows(battery_hash, ("baseline", "v1")))
     run_dir = tasks._validate_impl("vs", manifest, None, root, lambda *a: None)
     evidence = json.load(open(os.path.join(run_dir, "validation-evidence.json")))

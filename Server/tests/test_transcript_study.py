@@ -27,6 +27,10 @@ mouth"), pinned as hashed stimulus data through the ordinary
    condition gate (a rawCompletion variant).
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import hashlib
 import json
 import os
@@ -374,9 +378,9 @@ def _run_transcript_study(tmp_path, monkeypatch):
     root = str(tmp_path)
     prompts = _transcript_study(root, "meta1")
     log = []
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate(log))
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate(log))
     monkeypatch.setattr(logprob_mod, "score_options", _fake_score_options(log))
     run_dir = tasks.run("meta1", prompts, root, model_provider=_fake_model,
                         log=lambda *_: None)
@@ -427,9 +431,9 @@ def test_raw_completion_variant_condition_refuses_transcripts(tmp_path, monkeypa
                      "alphaInNormUnits": False, "injections": [],
                      "adapters": []}}]
     es.save_raw(raw, root)
-    monkeypatch.setattr(tasks, "_extract_all", lambda *a: {})
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda *a: {})
     log = []
-    monkeypatch.setattr(tasks, "generate", _fake_generate(log))
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate(log))
     prompts = os.path.join(root, "prompts", "tasks", "items.jsonl")
     with pytest.raises(RuntimeError, match="condition 'v-raw'"):
         tasks.run("meta2", prompts, root, model_provider=_fake_model,

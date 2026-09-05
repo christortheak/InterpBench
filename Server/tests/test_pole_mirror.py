@@ -18,6 +18,9 @@ What has to be true for a mirrored artifact to be citable:
 Model-free: nothing here loads or measures anything.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+
+
 import json
 import os
 
@@ -1131,7 +1134,7 @@ def test_the_minted_mirror_promotes_end_to_end_through_a_sweep(tmp_path,
                 if injections else
                 "the town woke slowly to a bright morning 2")
 
-    monkeypatch.setattr(tasks, "generate", fake_generate)
+    monkeypatch.setattr(_owner_generate, 'generate', fake_generate)
     run_dir = tasks.sweep("mirror-study", root, model_provider=fake_model,
                           log=lambda *_: None)
 

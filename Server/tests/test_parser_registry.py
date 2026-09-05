@@ -6,6 +6,9 @@ byte-identical-to-legacy assertion runs against the SHIPPED default registry
 entry on both.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+
+
 import hashlib
 import json
 import os
@@ -352,7 +355,7 @@ def test_run_uses_declared_parser_and_stamps_report(tmp_path, monkeypatch):
     root = str(tmp_path)
     digest = _install_registry(root)
     prompts = _numeric_study(root, "npr", numeric_parser="sentencing-months")
-    monkeypatch.setattr(tasks, "generate",
+    monkeypatch.setattr(_owner_generate, 'generate',
                         _fake_generate("I impose 8 years and 3 months."))
     run_dir = tasks.run("npr", prompts, root, model_provider=_fake_model,
                         log=lambda *_: None)
@@ -369,7 +372,7 @@ def test_run_uses_declared_parser_and_stamps_report(tmp_path, monkeypatch):
 def test_run_without_parser_keeps_legacy_sentencing_path(tmp_path, monkeypatch):
     root = str(tmp_path)
     prompts = _numeric_study(root, "leg", case_family="sentencing")
-    monkeypatch.setattr(tasks, "generate",
+    monkeypatch.setattr(_owner_generate, 'generate',
                         _fake_generate("I impose 8 years and 3 months."))
     run_dir = tasks.run("leg", prompts, root, model_provider=_fake_model,
                         log=lambda *_: None)
@@ -387,7 +390,7 @@ def test_run_refuses_on_drifted_registry_pin(tmp_path, monkeypatch):
     d = es.load_raw("drift", root)
     d["parserRegistryHash"] = "00" * 32
     es.save_raw(d, root)
-    monkeypatch.setattr(tasks, "generate", _fake_generate("18 months"))
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate("18 months"))
     with pytest.raises(RuntimeError, match="drifted"):
         tasks.run("drift", prompts, root, model_provider=_fake_model,
                   log=lambda *_: None)

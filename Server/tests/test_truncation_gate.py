@@ -19,6 +19,10 @@ These tests pin the three answers:
    counted.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import ast
 import csv
 import json
@@ -89,8 +93,8 @@ def _fake_generate(capped_items=()):
 
 
 def _patch(monkeypatch, generate_fn):
-    monkeypatch.setattr(tasks, "_extract_all", lambda model, manifest, root: {})
-    monkeypatch.setattr(tasks, "generate", generate_fn)
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda model, manifest, root: {})
+    monkeypatch.setattr(_owner_generate, 'generate', generate_fn)
 
 
 def _records(run_dir):

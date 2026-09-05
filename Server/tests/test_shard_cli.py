@@ -21,6 +21,10 @@ What is pinned here:
    their declared surfaces cover exactly the verbs the envelope does not.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import json
 import os
 from contextlib import contextmanager
@@ -294,12 +298,12 @@ def test_an_ordinary_resume_still_completes_through_the_hoisted_gate(
             flag.request()
         return "answer"
 
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {
                             "fear": tasks.ConceptVectorBundle(
                                 vectors=_vectors(), residual_norm_per_layer=[1.0] * 4,
                                 residual_norm_source="test", stimulus_hash="h")})
-    monkeypatch.setattr(tasks, "generate", generate)
+    monkeypatch.setattr(_owner_generate, 'generate', generate)
     seen = {}
     with pytest.raises(resume.CheckpointRequested):
         tasks.run("shardcli", prompts, root, model_provider=_fake_model,

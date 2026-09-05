@@ -14,6 +14,9 @@ ENGINE ASYMMETRY, deliberate: swift-mlx writes no extract-time equivalent (it
 runs the same lens inside ``validate``); the grid this serves runs here.
 """
 
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import json
 import os
 from contextlib import contextmanager
@@ -85,7 +88,7 @@ def _extract(tmp_path, monkeypatch, provider, **kwargs):
     root = str(tmp_path)
     stimulus_hash = _workspace(root, **kwargs)
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, manifest, root: {"steadiness": _bundle(stimulus_hash)})
     logs = []
     run_dir = tasks.extract("lensstudy", root, model_provider=provider,

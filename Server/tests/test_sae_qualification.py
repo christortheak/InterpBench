@@ -15,6 +15,9 @@ pinned here:
 Fully OFFLINE: fake sidecars, fake decoder-row hashes, no model, no HF.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+
+
 import csv
 import hashlib
 import json
@@ -415,7 +418,7 @@ def test_an_imported_sae_feature_attaches_as_a_concept(tmp_path):
 
 
 def _sweep(root, name, monkeypatch, log=None):
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
     return tasks.sweep(name, root, model_provider=_fake_model,
                        log=log if log is not None else (lambda *_: None))
 

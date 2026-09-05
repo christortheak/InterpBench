@@ -10,6 +10,12 @@ provenance pins the instrument's data. No GPU, no network: judges are faked,
 the logprob scoring boundary is faked, generation is faked.
 """
 
+import steerlab_server.experiment.choice_scoring as _owner_choice_scoring
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.judge_resources as _owner_judge_resources
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import hashlib
 import json
 import os
@@ -325,9 +331,9 @@ def test_top_k_control_promotes_the_first_cell_beating_its_own_control(
     d["sweep"]["alphas"] = [0.1, 0.25]
     es.save_raw(d, root)
     _write(os.path.join(root, CHOICES_FILE), CHOICES_JSONL)
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
 
     concept_vector = _fake_bundle().vectors.per_layer[0]
 
@@ -345,7 +351,7 @@ def test_top_k_control_promotes_the_first_cell_beating_its_own_control(
                 option=option, token_ids=[7],
                 token_logprobs=[(-1.0 + gain) if i == 0 else -3.0])
             for i, option in enumerate(options)])
-    monkeypatch.setattr(tasks, "_score_choice", score)
+    monkeypatch.setattr(_owner_choice_scoring, '_score_choice', score)
 
     tasks.sweep("topk", root, model_provider=_fake_model,
                 log=lambda *_: None)
@@ -374,9 +380,9 @@ def test_top_k_where_every_candidate_fails_names_them_all(
     d["sweep"]["alphas"] = [0.1, 0.25]
     es.save_raw(d, root)
     _write(os.path.join(root, CHOICES_FILE), CHOICES_JSONL)
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
     concept_vector = _fake_bundle().vectors.per_layer[0]
 
     def score(model, manifest, prompt, options, injections):
@@ -389,7 +395,7 @@ def test_top_k_where_every_candidate_fails_names_them_all(
                 option=option, token_ids=[7],
                 token_logprobs=[(-1.0 + gain) if i == 0 else -3.0])
             for i, option in enumerate(options)])
-    monkeypatch.setattr(tasks, "_score_choice", score)
+    monkeypatch.setattr(_owner_choice_scoring, '_score_choice', score)
 
     run_dir = tasks.sweep("topkfail", root, model_provider=_fake_model,
                           log=lambda *_: None)
@@ -657,10 +663,10 @@ def test_judge_score_sweep_selects_and_pins_judge_config(tmp_path, monkeypatch):
     dev_hash = _sweep_workspace(
         root, "js", selection={"objective": {"metric": "judgeScore"}})
     rubric_hash = _pin_judges(root, "js")
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
-    monkeypatch.setattr(tasks, "_judge_callable", _fake_judge_callable)
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
+    monkeypatch.setattr(_owner_judge_resources, '_judge_callable', _fake_judge_callable)
 
     run_dir = tasks.sweep("js", root, model_provider=_fake_model,
                           log=lambda *_: None)
@@ -704,10 +710,10 @@ def test_a_foreign_local_judge_holds_its_model_for_the_whole_sweep(
     _sweep_workspace(root, "jstack",
                      selection={"objective": {"metric": "judgeScore"}})
     _pin_judges(root, "jstack")
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
-    monkeypatch.setattr(tasks, "_judge_callable", _fake_judge_callable)
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
+    monkeypatch.setattr(_owner_judge_resources, '_judge_callable', _fake_judge_callable)
     _judge_stacks_seen.clear()
 
     tasks.sweep("jstack", root, model_provider=_fake_model,
@@ -729,11 +735,11 @@ def test_judge_score_objective_never_bypasses_the_coherence_gate(tmp_path, monke
         "objective": {"metric": "judgeScore"},
         "constraints": {"coherenceFloor": 0.7}})
     _pin_judges(root, "jsgate")
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate(
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate(
         steered="dread filled the quiet town dread filled the quiet town 2"))
-    monkeypatch.setattr(tasks, "_judge_callable", _fake_judge_callable)
+    monkeypatch.setattr(_owner_judge_resources, '_judge_callable', _fake_judge_callable)
 
     run_dir = tasks.sweep("jsgate", root, model_provider=_fake_model,
                           log=lambda *_: None)
@@ -761,9 +767,9 @@ def _deferred_sweep(root, name, monkeypatch, *, margin=None):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("STEERLAB_JUDGE_KEY_FILE",
                        os.path.join(root, "no-such-judge-key"))
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
     run_dir = tasks.sweep(name, root, model_provider=_fake_model,
                           log=lambda *_: None)
     return run_dir, dev_hash
@@ -1179,9 +1185,9 @@ def test_openrouter_completion_verifies_the_provider_stamp(
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("STEERLAB_JUDGE_KEY_FILE",
                        os.path.join(root, "no-such-judge-key"))
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
     run_dir = tasks.sweep("jsor", root, model_provider=_fake_model,
                           log=lambda *_: None)
     run = os.path.basename(run_dir)
@@ -1258,9 +1264,9 @@ def test_modelless_local_judges_use_the_held_study_model(tmp_path, monkeypatch):
                      selection={"objective": {"metric": "judgeScore"}})
     _pin_judges(root, "jsheld", judges=[{"name": "A", "kind": "local"},
                                         {"name": "B", "kind": "local"}])
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _judging_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _judging_generate())
     calls, logs = [], []
 
     run_dir = tasks.sweep("jsheld", root,
@@ -1293,9 +1299,9 @@ def test_study_model_judge_declared_explicitly_also_reuses_held_model(
                      selection={"objective": {"metric": "judgeScore"}})
     _pin_judges(root, "jssame",
                 judges=[{"name": "j1", "kind": "local", "model": "org/m"}])
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _judging_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _judging_generate())
     calls, logs = [], []
 
     tasks.sweep("jssame", root, model_provider=_counting_provider(calls),
@@ -1318,7 +1324,7 @@ def test_different_model_judge_on_one_slot_server_refuses_at_start(
 
     def exploding_generate(*args, **kwargs):  # pragma: no cover - must not run
         raise AssertionError("the refusal must fire before any generation")
-    monkeypatch.setattr(tasks, "generate", exploding_generate)
+    monkeypatch.setattr(_owner_generate, 'generate', exploding_generate)
 
     def exploding_provider(model_id, revision=None):  # pragma: no cover
         raise AssertionError("the refusal must fire before the model loads")
@@ -1386,9 +1392,9 @@ def test_different_model_judge_with_capacity_two_goes_through_provider(
                      selection={"objective": {"metric": "judgeScore"}})
     _pin_judges(root, "jscap2",
                 judges=[{"name": "j1", "kind": "local", "model": "org/judge2"}])
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _judging_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _judging_generate())
     calls, logs = [], []
 
     tasks.sweep("jscap2", root, model_provider=_counting_provider(calls),
@@ -1411,9 +1417,9 @@ def test_cli_path_skips_the_capacity_check(tmp_path, monkeypatch):
                      selection={"objective": {"metric": "judgeScore"}})
     _pin_judges(root, "jscli",
                 judges=[{"name": "j1", "kind": "local", "model": "org/judge2"}])
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _judging_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _judging_generate())
     calls = []
 
     tasks.sweep("jscli", root, model_provider=_counting_provider(calls),
@@ -1451,10 +1457,10 @@ def _logprob_workspace(root, name):
 def test_logprob_shift_sweep_selects_and_pins_choice_file(tmp_path, monkeypatch):
     root = str(tmp_path)
     _, choices_hash = _logprob_workspace(root, "lp")
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
-    monkeypatch.setattr(tasks, "_score_choice", _fake_score_choice())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
+    monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score_choice())
 
     run_dir = tasks.sweep("lp", root, model_provider=_fake_model,
                           log=lambda *_: None)
@@ -1504,10 +1510,10 @@ def test_per_concept_choice_files_score_each_concept_on_its_own_rows(
             "hope": "prompts/dev/hope-choices.jsonl"}}})
     es.save_raw(d, root)
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, manifest, root: {"fear": _fake_bundle(),
                                        "hope": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
 
     def score(model, manifest, prompt, options, injections):
         # The file identifies itself through its prompt text: fear rows
@@ -1519,7 +1525,7 @@ def test_per_concept_choice_files_score_each_concept_on_its_own_rows(
                 token_logprobs=[(-1.0 + (gain if injections else 0.0))
                                 if i == 0 else -3.0])
             for i, option in enumerate(options)])
-    monkeypatch.setattr(tasks, "_score_choice", score)
+    monkeypatch.setattr(_owner_choice_scoring, '_score_choice', score)
 
     tasks.sweep("lpmap", root, model_provider=_fake_model,
                 log=lambda *_: None)
@@ -1633,10 +1639,10 @@ def test_a_pinned_choice_instrument_refuses_drift_at_sweep_start(
     d = es.load_raw("lppin", root)
     d["sweep"]["selection"]["objective"]["choicePromptsHash"] = "00" * 32
     es.save_raw(d, root)
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
-    monkeypatch.setattr(tasks, "_score_choice", _fake_score_choice())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
+    monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score_choice())
     with pytest.raises(RuntimeError,
                        match="sweep choice prompts .* pinned hash"):
         tasks.sweep("lppin", root, model_provider=_fake_model,
@@ -1664,7 +1670,7 @@ def test_baseline_generations_run_once_for_a_multi_concept_sweep(
                                       "choicePromptsFile": CHOICES_FILE}})
     es.save_raw(d, root)
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, manifest, root: {"fear": _fake_bundle(),
                                        "hope": _fake_bundle()})
     baseline_generations = {"dev": 0, "battery": 0}
@@ -1675,8 +1681,8 @@ def test_baseline_generations_run_once_for_a_multi_concept_sweep(
             key = "battery" if "1+1" in prompt else "dev"
             baseline_generations[key] += 1
         return inner(model, prompt, injections=injections, **kwargs)
-    monkeypatch.setattr(tasks, "generate", counting_generate)
-    monkeypatch.setattr(tasks, "_score_choice", _fake_score_choice())
+    monkeypatch.setattr(_owner_generate, 'generate', counting_generate)
+    monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score_choice())
 
     tasks.sweep("lpbase", root, model_provider=_fake_model,
                 log=lambda *_: None)
@@ -1695,10 +1701,10 @@ def test_logprob_shift_control_cell_evaluates_the_same_objective(tmp_path, monke
                       "choicePromptsFile": CHOICES_FILE},
         "controls": {"matchedNormRandomMargin": 0.1}})
     _write(os.path.join(root, CHOICES_FILE), CHOICES_JSONL)
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
-    monkeypatch.setattr(tasks, "_score_choice", _fake_score_choice())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
+    monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score_choice())
 
     run_dir = tasks.sweep("lpctl", root, model_provider=_fake_model,
                           log=lambda *_: None)
@@ -1712,13 +1718,13 @@ def test_logprob_shift_control_cell_evaluates_the_same_objective(tmp_path, monke
 def test_logprob_shift_option_length_guard_fires_before_any_generation(tmp_path, monkeypatch):
     root = str(tmp_path)
     _logprob_workspace(root, "lpguard")
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "_score_choice", _fake_score_choice(unequal=True))
+    monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score_choice(unequal=True))
 
     def exploding_generate(*args, **kwargs):  # pragma: no cover - must not run
         raise AssertionError("the guard must fire before any dev generation")
-    monkeypatch.setattr(tasks, "generate", exploding_generate)
+    monkeypatch.setattr(_owner_generate, 'generate', exploding_generate)
 
     with pytest.raises(RuntimeError, match="unequal token counts"):
         tasks.sweep("lpguard", root, model_provider=_fake_model,
@@ -1746,10 +1752,10 @@ def test_promote_inherits_logprob_shift_criterion(tmp_path, monkeypatch):
     _logprob_workspace(root, "lppro")
     stimulus_hash = Manifest.load("lppro", root).concepts[0].stimulus_set_hash
     _vector_artifact(root, stimulus_hash=stimulus_hash)
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
-    monkeypatch.setattr(tasks, "_score_choice", _fake_score_choice())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
+    monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score_choice())
     tasks.sweep("lppro", root, model_provider=_fake_model, log=lambda *_: None)
 
     out = promote_mod.promote("lppro", "fear", root=root, log=lambda *_: None)

@@ -13,6 +13,9 @@ it. The prompt wrapper is byte-pinned by the committed goldens shared with
 the Swift twin.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+
+
 import hashlib
 import json
 import os
@@ -369,7 +372,7 @@ def _coding_generate(monkeypatch, per_call):
         response = per_call[min(calls["n"], len(per_call) - 1)]
         calls["n"] += 1
         return response
-    monkeypatch.setattr(tasks, "generate", generate)
+    monkeypatch.setattr(_owner_generate, 'generate', generate)
     return calls
 
 

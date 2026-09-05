@@ -18,6 +18,10 @@ pointer-based resume across a simulated requeue, idempotent already-complete
 re-execution, and the child-record contract fields.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import glob
 import json
 import os
@@ -332,9 +336,9 @@ class _FakeChoice:
 
 def _patch_study_fakes(monkeypatch, generate_fn):
     from steerlab_server.experiment import logprob as logprob_mod
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", generate_fn)
+    monkeypatch.setattr(_owner_generate, 'generate', generate_fn)
     monkeypatch.setattr(logprob_mod, "score_options",
                         lambda model, prompt, options, **kw: _FakeChoice(options))
 

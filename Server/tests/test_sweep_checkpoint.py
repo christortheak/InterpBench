@@ -12,6 +12,11 @@ to ``sweep-progress.jsonl`` as they happen, a checkpoint writes
 pointer.
 """
 
+import steerlab_server.experiment.choice_scoring as _owner_choice_scoring
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import json
 import os
 from types import SimpleNamespace
@@ -86,9 +91,9 @@ def test_sweep_checkpoints_between_cells_and_resumes_without_rework(
         tmp_path, monkeypatch):
     root = str(tmp_path)
     _workspace(root, "cp")
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "_score_choice", _fake_score)
+    monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score)
 
     # Phase 1: request the checkpoint after the FIRST cell finishes — the
     # trigger fires from inside generate, the poll observes it at the next
@@ -102,7 +107,7 @@ def test_sweep_checkpoints_between_cells_and_resumes_without_rework(
         if len(calls) == 4:
             flag.request()
         return "the town woke slowly 2"
-    monkeypatch.setattr(tasks, "generate", tripping_generate)
+    monkeypatch.setattr(_owner_generate, 'generate', tripping_generate)
 
     pointed: list = []
     with pytest.raises(resume.CheckpointRequested) as caught:
@@ -122,7 +127,7 @@ def test_sweep_checkpoints_between_cells_and_resumes_without_rework(
     # Phase 2: resume. Only the SECOND cell generates (1 dev + 1 battery);
     # the baseline and first cell come from the durable rows.
     resumed_calls: list = []
-    monkeypatch.setattr(tasks, "generate", _counting_generate(resumed_calls))
+    monkeypatch.setattr(_owner_generate, 'generate', _counting_generate(resumed_calls))
     out_dir = tasks.sweep("cp", root, model_provider=_fake_model,
                           run_directory=run_dir, log=lambda *_: None)
     assert out_dir == run_dir
@@ -158,10 +163,10 @@ def test_multi_concept_draft_sweep_checkpoints_between_concepts(
     root = str(tmp_path)
     _workspace(root, "mc", concepts=("alpha", "beta"))
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, manifest, root: {"alpha": _fake_bundle(),
                                        "beta": _fake_bundle()})
-    monkeypatch.setattr(tasks, "_score_choice", _fake_score)
+    monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score)
 
     # Trip after concept alpha's grid: shared baseline (1 dev + 1 battery)
     # + two cells (2 × (1 dev + 1 battery)) = 6 generations. The poll
@@ -175,7 +180,7 @@ def test_multi_concept_draft_sweep_checkpoints_between_concepts(
         if len(calls) == 6:
             flag.request()
         return "the town woke slowly 2"
-    monkeypatch.setattr(tasks, "generate", tripping_generate)
+    monkeypatch.setattr(_owner_generate, 'generate', tripping_generate)
 
     with pytest.raises(resume.CheckpointRequested) as caught:
         tasks.sweep("mc", root, model_provider=_fake_model,
@@ -190,7 +195,7 @@ def test_multi_concept_draft_sweep_checkpoints_between_concepts(
 
     # Resume completes concept beta only, then projects BOTH conditions.
     resumed_calls: list = []
-    monkeypatch.setattr(tasks, "generate", _counting_generate(resumed_calls))
+    monkeypatch.setattr(_owner_generate, 'generate', _counting_generate(resumed_calls))
     out_dir = tasks.sweep("mc", root, model_provider=_fake_model,
                           run_directory=run_dir, log=lambda *_: None)
     assert out_dir == run_dir
@@ -210,12 +215,12 @@ def test_multi_concept_draft_sweep_checkpoints_between_concepts(
 def test_resume_refuses_a_changed_manifest(tmp_path, monkeypatch):
     root = str(tmp_path)
     _workspace(root, "cpx")
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "_score_choice", _fake_score)
+    monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score)
     flag = resume.CheckpointFlag()
     flag.request()  # park immediately, before any cell
-    monkeypatch.setattr(tasks, "generate",
+    monkeypatch.setattr(_owner_generate, 'generate',
                         _counting_generate([]))
     with pytest.raises(resume.CheckpointRequested) as caught:
         tasks.sweep("cpx", root, model_provider=_fake_model,
@@ -237,15 +242,15 @@ def test_cancelled_sweep_parks_and_resumes_to_completion(
     resume path finishes the grid without regenerating completed cells."""
     root = str(tmp_path)
     _workspace(root, "cn")
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "_score_choice", _fake_score)
+    monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score)
     calls: list = []
 
     def counting(model, prompt, *, injections=None, **kwargs):
         calls.append(prompt)
         return "the town woke slowly 2"
-    monkeypatch.setattr(tasks, "generate", counting)
+    monkeypatch.setattr(_owner_generate, 'generate', counting)
 
     # Cancel observable after cell 1's generations (baseline 2 + cell 2 = 4
     # calls): it is observed inside cell 1's choice scoring, so the
@@ -265,7 +270,7 @@ def test_cancelled_sweep_parks_and_resumes_to_completion(
     # Resume: the baseline comes from the journal; both grid cells
     # regenerate (2 × (1 dev + 1 battery)) and the run completes durably.
     resumed: list = []
-    monkeypatch.setattr(tasks, "generate", _counting_generate(resumed))
+    monkeypatch.setattr(_owner_generate, 'generate', _counting_generate(resumed))
     out_dir = tasks.sweep("cn", root, model_provider=_fake_model,
                           run_directory=run_dir, log=lambda *_: None)
     assert out_dir == run_dir
@@ -281,10 +286,10 @@ def test_no_completion_marker_when_projection_fails(tmp_path, monkeypatch):
     re-projects idempotently."""
     root = str(tmp_path)
     _workspace(root, "pf")
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "_score_choice", _fake_score)
-    monkeypatch.setattr(tasks, "generate", _counting_generate([]))
+    monkeypatch.setattr(_owner_choice_scoring, '_score_choice', _fake_score)
+    monkeypatch.setattr(_owner_generate, 'generate', _counting_generate([]))
 
     def exploding_add_conditions(name, conditions, root=None):
         raise OSError("disk full")

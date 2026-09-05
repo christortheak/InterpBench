@@ -6,6 +6,10 @@ mismatch with the merge both shipped. These exercise the contract the merge
 actually enforces.
 """
 
+import steerlab_server.experiment.execution_reporting as _owner_execution_reporting
+import steerlab_server.experiment.run_artifacts as _owner_run_artifacts
+
+
 import pytest
 
 from steerlab_server.experiment import resume as resume_mod
@@ -140,8 +144,8 @@ def _panel_workspace(tmp_path, monkeypatch, *, replicates=2):
     (root / "experiments/panel.json").write_text(json.dumps(spec))
     manifest = Manifest.from_dict(spec)
     monkeypatch.setattr(multi_agent, "generate", lambda *a, **k: "out")
-    monkeypatch.setattr(tasks, "_advise_cross_substrate", lambda *a, **k: None)
-    monkeypatch.setattr(tasks, "_write_config_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(_owner_execution_reporting, '_advise_cross_substrate', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_run_artifacts, '_write_config_snapshot', lambda *a, **k: None)
     return root, manifest
 
 

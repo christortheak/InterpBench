@@ -3136,7 +3136,7 @@ def build_router(state: ServiceState) -> APIRouter:
         POST under /api/experiment/ so the auth middleware treats it as
         privileged (it reads caller-named workspace files).
         """
-        from ..experiment import token_preflight, tasks as tasks_mod
+        from ..experiment import token_preflight, task_inputs
         _safe_name(name)
         body = body or {}
         try:
@@ -3144,7 +3144,7 @@ def build_router(state: ServiceState) -> APIRouter:
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail=f"no experiment {name!r}")
         try:
-            prompts = tasks_mod._load_prompts(
+            prompts = task_inputs.load_prompts(
                 manifest, body.get("promptsFile"), None)
             report = token_preflight.preflight(
                 prompts,

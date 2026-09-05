@@ -10,6 +10,9 @@ divergence found since has been in the wiring around them. This asserts over
 the wiring.
 """
 
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import json
 import os
 from types import SimpleNamespace
@@ -62,8 +65,8 @@ def test_a_declared_layer_reaches_accuracy_lens_and_every_matrix_row(
     manifest = Manifest.load("pl", root)
     bundles = _fake_bundles()
 
-    monkeypatch.setattr(tasks, "_extract_all", lambda m, mf, r: bundles)
-    monkeypatch.setattr(tasks, "_persist_vectors", lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda m, mf, r: bundles)
+    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
 
     seen_lens_layers = []
     from steerlab_server.steering import extractor
@@ -205,8 +208,8 @@ def test_a_declared_depth_list_yields_per_depth_entries_and_matrices(
     manifest = Manifest.load("pl", root)
     bundles = _fake_bundles()
 
-    monkeypatch.setattr(tasks, "_extract_all", lambda m, mf, r: bundles)
-    monkeypatch.setattr(tasks, "_persist_vectors", lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda m, mf, r: bundles)
+    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
     from steerlab_server.steering import extractor
 
     def fake_activations(model, texts, reading, rendering=None):
@@ -254,9 +257,9 @@ def test_a_single_depth_report_keeps_the_flat_shape_exactly(
                            "validation.jsonl"), "w", encoding="utf-8") as h:
         h.write(json.dumps({"text": "s1", "expresses": True}) + "\n")
     manifest = Manifest.load("pl", root)
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda m, mf, r: _fake_bundles())
-    monkeypatch.setattr(tasks, "_persist_vectors", lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
     from steerlab_server.steering import extractor
     monkeypatch.setattr(
         extractor, "activations",
@@ -286,9 +289,9 @@ def test_a_colliding_depth_list_leaves_no_validate_directory(
     d["validationLayerFractions"] = [0.6, 0.61]
     es.save_raw(d, root)
     manifest = Manifest.load("pl", root)
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda m, mf, r: _fake_bundles())
-    monkeypatch.setattr(tasks, "_persist_vectors", lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
     with pytest.raises(RuntimeError, match="both resolve to layer"):
         tasks._validate_impl("pl", manifest, object(), root, lambda *a: None)
     runs = os.path.join(root, "runs")
@@ -308,8 +311,8 @@ def test_an_out_of_range_declaration_leaves_no_validate_directory_at_all(
     what reveals depth, so the check now runs before anything is created."""
     root = _workspace(tmp_path, declared_layer=999)
     manifest = Manifest.load("pl", root)
-    monkeypatch.setattr(tasks, "_extract_all", lambda m, mf, r: _fake_bundles())
-    monkeypatch.setattr(tasks, "_persist_vectors", lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda m, mf, r: _fake_bundles())
+    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
 
     with pytest.raises(RuntimeError, match="not silently clamped"):
         tasks._validate_impl("pl", manifest, object(), root, lambda *a: None)

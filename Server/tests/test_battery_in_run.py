@@ -6,6 +6,10 @@ cross-engine key ``capabilityBattery`` = {"accuracy", "itemCount",
 "batteryHash"}. Battery generations are gate evidence, not outcomes: they go
 to battery.jsonl, never generations.jsonl, and are resume-skippable."""
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import hashlib
 import json
 import os
@@ -85,9 +89,9 @@ def _battery_aware_generate(counter=None, cancel_flag=None):
 
 
 def _patch(monkeypatch, generate_fn):
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", generate_fn)
+    monkeypatch.setattr(_owner_generate, 'generate', generate_fn)
 
 
 def test_run_scores_pinned_battery_per_condition(tmp_path, monkeypatch):

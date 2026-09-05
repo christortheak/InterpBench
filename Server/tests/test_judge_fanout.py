@@ -15,6 +15,9 @@ INLINE evaluate path; completeness refusals; a resumed judge worker
 completing the merge; and the model-free pipeline emit/adopt resume cycle.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+
+
 import hashlib
 import json
 import os
@@ -205,7 +208,7 @@ def test_fanout_outcomes_match_the_inline_two_model_path(
         yield SimpleNamespace(model_id=model_id)
 
     monkeypatch.setattr(
-        tasks, "generate",
+        _owner_generate, 'generate',
         lambda slot, prompt, **kw: _verdict_text(kw.get("model_id"), prompt))
     inline_out = tasks.evaluate("ev", root=inline_root, log=lambda *_: None,
                                 model_provider=provider)

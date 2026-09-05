@@ -31,6 +31,10 @@ What is pinned here:
 Swift twin: ``Tests/ExperimentKitTests/SystemPromptCompositionTests.swift``.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import hashlib
 import json
 import os
@@ -224,11 +228,11 @@ def test_promote_gives_a_newborn_agent_no_system_prompt_at_all(tmp_path,
     from steerlab_server.experiment.manifest import Manifest
     stimulus_hash = Manifest.load(name, root).concepts[0].stimulus_set_hash
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, manifest, root: {
             "fear": _fake_bundle(stimulus_hash=stimulus_hash,
                                  residual_norm_source="extraction-stimuli")})
-    monkeypatch.setattr(tasks, "generate", generate)
+    monkeypatch.setattr(_owner_generate, 'generate', generate)
     tasks.sweep(name, root, model_provider=_fake_model, log=lambda *_: None)
 
     artifact = promote.promote(name, "fear", root=root,
@@ -353,9 +357,9 @@ def _patch_engine(monkeypatch, seen):
             selected=correct,
             probability={o: (0.8 if o == correct else 0.1) for o in options})
 
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", generate)
+    monkeypatch.setattr(_owner_generate, 'generate', generate)
     monkeypatch.setattr(logprob_mod, "score_options", score_options)
 
 
@@ -579,7 +583,7 @@ def _capture_validation_renderings(monkeypatch):
         return SimpleNamespace(values=[[[1.0, 0.0]] * 4 for _ in texts])
 
     monkeypatch.setattr(extractor, "activations", activations)
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     return captured
 

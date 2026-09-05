@@ -16,6 +16,9 @@ the legacy single-judge roster synthesis (name = model = a model id) still
 resolves as a model.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+
+
 import hashlib
 import json
 import os
@@ -92,7 +95,7 @@ def _fake_generate(monkeypatch):
                  temperature=0.0, injections=None, prompt_mode=None,
                  system_prompt=None, qwen_thinking_enabled=False):
         return VERDICT
-    monkeypatch.setattr(tasks, "generate", generate)
+    monkeypatch.setattr(_owner_generate, 'generate', generate)
 
 
 # --- the researcher's exact shape ------------------------------------------------

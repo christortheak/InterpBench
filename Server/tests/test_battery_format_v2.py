@@ -19,6 +19,10 @@ Two properties are pinned here:
   condition.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import hashlib
 import json
 import os
@@ -420,9 +424,9 @@ def _patch_engine(monkeypatch, generated=None, scored=None):
             selected=correct,
             probability={o: (0.8 if o == correct else 0.1) for o in options})
 
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", generate)
+    monkeypatch.setattr(_owner_generate, 'generate', generate)
     monkeypatch.setattr(logprob, "score_options", score_options)
 
 

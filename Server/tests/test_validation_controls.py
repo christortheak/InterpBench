@@ -12,6 +12,9 @@ engines disagreed about what validate measures.
 Mirror of Swift ``ValidationControlTests``.
 """
 
+import steerlab_server.steering.extractor as _owner_steerlab_server_steering_extractor
+
+
 import json
 import os
 
@@ -160,7 +163,7 @@ def test_each_control_is_extracted_with_its_own_options(tmp_path, monkeypatch):
             residual_norm_rendering="raw",
             reading_position_resolution=None)
 
-    monkeypatch.setattr(tasks, "core_extract", fake_extract)
+    monkeypatch.setattr(_owner_steerlab_server_steering_extractor, 'extract', fake_extract)
     out = tasks._extract_validation_controls(
         object(), manifest, root, lambda *a: None)
 

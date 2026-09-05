@@ -15,6 +15,10 @@ No GPU, no network: extraction and generation are faked (the
 ``test_sweep_checkpoint`` harness).
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import json
 import os
 from contextlib import contextmanager
@@ -98,9 +102,9 @@ def _run_sweep(root, name, **kwargs):
 
 @pytest.fixture(autouse=True)
 def _fakes(monkeypatch):
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate)
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate)
 
 
 def test_every_dev_generation_is_persisted_per_cell(tmp_path):
@@ -162,7 +166,7 @@ def test_resumed_sweep_does_not_duplicate_records(tmp_path, monkeypatch):
         if len(calls) == 6:
             flag.request()
         return _fake_generate(model, prompt, injections=injections, **kwargs)
-    monkeypatch.setattr(tasks, "generate", tripping_generate)
+    monkeypatch.setattr(_owner_generate, 'generate', tripping_generate)
 
     with pytest.raises(resume.CheckpointRequested) as caught:
         _run_sweep(root, "dgr", checkpoint=flag)
@@ -172,7 +176,7 @@ def test_resumed_sweep_does_not_duplicate_records(tmp_path, monkeypatch):
         ("baseline", None, -1, 0.0, 0), ("baseline", None, -1, 0.0, 1),
         ("cell", "fear", 2, 0.1, 0), ("cell", "fear", 2, 0.1, 1)]
 
-    monkeypatch.setattr(tasks, "generate", _fake_generate)
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate)
     out_dir = _run_sweep(root, "dgr", run_directory=run_dir)
     assert out_dir == run_dir
     records = _records(run_dir)
@@ -187,7 +191,7 @@ def test_overlong_generation_is_truncated_with_a_flag(tmp_path, monkeypatch):
     _workspace(root, "dgt", alphas=(0.1,),
                dev_prompts='{"text": "Write about the town."}\n')
     monkeypatch.setattr(
-        tasks, "generate",
+        _owner_generate, 'generate',
         lambda model, prompt, *, injections=None, **kwargs:
         "dread " * 8000 if injections else "the town woke slowly 2")
     run_dir = _run_sweep(root, "dgt")

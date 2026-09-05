@@ -5,6 +5,9 @@ vocabularies, and the statistics layer (analyze's paired ``ordinalPosition``
 endpoint). The math fixtures are cross-engine twins of Swift's
 ``OrdinalScaleInstrumentTests`` — SAME numbers asserted on both engines."""
 
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import csv
 import json
 import math
@@ -211,7 +214,7 @@ def _fake_score_options():
 
 def _patch(monkeypatch):
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, manifest, root: {})
     monkeypatch.setattr(logprob_mod, "score_options", _fake_score_options())
 
@@ -337,7 +340,7 @@ def test_run_then_analyze_produces_ordinal_effect_row(tmp_path, monkeypatch):
         conditions=[{"name": "steered",
                      "slots": [{"concept": "fear", "layer": 1, "alpha": 2.0}]}])
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, manifest, root: {"fear": _fake_bundle()})
     monkeypatch.setattr(
         logprob_mod, "score_options", _fake_score_options_with_shift())

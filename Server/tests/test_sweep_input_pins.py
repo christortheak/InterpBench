@@ -10,6 +10,10 @@ fallback open to later-created bytes); carried-inert sweeps neither pin nor
 block. The ex-post provenance stamp (``selection.devPromptsHash``) is kept —
 the start refusal is what makes pin and provenance agree."""
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import hashlib
 import json
 import os
@@ -308,9 +312,9 @@ def _armed_sweep(root, name, monkeypatch):
         return ("dread filled the quiet town before dawn broke 2"
                 if injections else "the town woke slowly to a bright morning 2")
 
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": bundle})
-    monkeypatch.setattr(tasks, "generate", generate)
+    monkeypatch.setattr(_owner_generate, 'generate', generate)
     return _fake_model
 
 

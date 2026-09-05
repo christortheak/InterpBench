@@ -12,6 +12,9 @@ different question, and merging it in would fold two experiments into one
 table without saying so.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+
+
 import json
 import os
 
@@ -365,7 +368,7 @@ class TestJudgeModelLoadedOncePerColumn:
             yield _Slot()
 
         monkeypatch.setattr(
-            tasks, "generate",
+            _owner_generate, 'generate',
             lambda *a, **k: '{"winner": "tie", "confidence": 0.5}')
         out = tasks.evaluate("ev", root=root, model_provider=counting_provider,
                              log=lambda *_: None)
@@ -403,7 +406,7 @@ class TestJudgeModelLoadedOncePerColumn:
                 events.append(f"close:{model_id}")
 
         monkeypatch.setattr(
-            tasks, "generate",
+            _owner_generate, 'generate',
             lambda *a, **k: '{"winner": "tie", "confidence": 0.5}')
         tasks.evaluate("ev", root=root, model_provider=tracking_provider,
                        log=lambda *_: None)

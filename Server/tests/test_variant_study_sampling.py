@@ -28,6 +28,12 @@ policy), intervention persistence under sampling, adapter parity, instrument
 invariance, resume parity, and the sampling-policy guard.
 """
 
+import steerlab_server.experiment.condition_execution as _owner_condition_execution
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.model_resources as _owner_model_resources
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import json
 import os
 from contextlib import contextmanager
@@ -156,9 +162,9 @@ def _fake_score_options(log=None):
 
 
 def _patch(monkeypatch, generate_fn, score_fn):
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", generate_fn)
+    monkeypatch.setattr(_owner_generate, 'generate', generate_fn)
     monkeypatch.setattr(logprob_mod, "score_options", score_fn)
 
 
@@ -482,7 +488,7 @@ def test_divergent_effective_policy_refuses_before_any_generation(
         eff.temperature = 0.0  # the historical bug, reintroduced
         return eff
 
-    monkeypatch.setattr(tasks, "_effective_variant_condition", regressed)
+    monkeypatch.setattr(_owner_condition_execution, '_effective_variant_condition', regressed)
     with pytest.raises(RuntimeError, match="unbalanced design"):
         tasks.run("vss-guard", prompts, root, model_provider=_fake_model,
                   log=lambda *_: None)
@@ -529,7 +535,7 @@ def test_artifact_preflight_refuses_dangling_variant_reference(tmp_path,
                      "layer": 1, "alpha": 2.0}])
     prompts = _study_fixture(root, "vss-preflight", agent_a=broken)
     acquired = []
-    monkeypatch.setattr(tasks, "_acquire_model",
+    monkeypatch.setattr(_owner_model_resources, '_acquire_model',
                         lambda *a, **k: acquired.append(True) or (_ for _ in ()).throw(
                             AssertionError("model must not be acquired")))
     with pytest.raises(RuntimeError, match="artifact preflight"):

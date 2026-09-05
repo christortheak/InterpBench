@@ -1,6 +1,10 @@
 """Science-layer manifest fields, seed derivation, matched-norm random
 controls, control-matrix generation, and the run-artifact writers."""
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import csv
 import json
 import math
@@ -438,9 +442,9 @@ def _factor_run(tmp_path, monkeypatch):
         json.dumps({"id": "plain", "prompt": "No factors.",
                     "options": ["yes", "no"], "target": "yes"}),
     ]) + "\n")
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {})
-    monkeypatch.setattr(tasks, "generate",
+    monkeypatch.setattr(_owner_generate, 'generate',
                         lambda model, prompt, **kw: "an answer")
 
     def score_options(model, prompt, options, **kw):
@@ -518,9 +522,9 @@ def test_token_cap_truncation_parses_choice_as_failure(tmp_path, monkeypatch):
             ids.extend(range(16 if prompt == "Runs long." else 3))
         return deliberation
 
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {})
-    monkeypatch.setattr(tasks, "generate", generate)
+    monkeypatch.setattr(_owner_generate, 'generate', generate)
     run_dir = tasks.run("cap", prompts_path, root, model_provider=_fake_model,
                         log=lambda *_: None)
     with open(os.path.join(run_dir, "generations.jsonl"),

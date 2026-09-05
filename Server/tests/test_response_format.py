@@ -9,6 +9,10 @@ label; on a JSON-response row the scored position holds the opening brace.
 Mirror of Swift ``ResponseFormatTests``.
 """
 
+import steerlab_server.experiment.model_resources as _owner_model_resources
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import json
 import os
 
@@ -333,7 +337,7 @@ def test_zero_options_refusal_fires_before_model_load(tmp_path, monkeypatch):
     ])
     acquired = []
     monkeypatch.setattr(
-        tasks, "_acquire_model",
+        _owner_model_resources, '_acquire_model',
         lambda *a, **k: acquired.append(True) or (_ for _ in ()).throw(
             AssertionError("model must not be acquired")))
     with pytest.raises(RuntimeError, match="carries options"):
@@ -379,7 +383,7 @@ def test_scope_drift_refuses_before_the_model_loader_is_invoked(
             "model loader invoked — the scope-drift refusal must fire "
             "before any staging/GPU cost")
 
-    monkeypatch.setattr(tasks, "_load_model", loaded_anyway)
+    monkeypatch.setattr(_owner_model_resources, '_load_model', loaded_anyway)
     # Keep the token preflight offline; it warns and defers, as on a node
     # with no cached tokenizer.
     def no_tokenizer(*a, **k):
@@ -438,9 +442,9 @@ def test_validate_writes_a_logit_lens_block(tmp_path, monkeypatch):
 
     vectors = SimpleNamespace(layer_count=4, per_layer=[[1.0, 0.0]] * 4)
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, m, r: {"fear": SimpleNamespace(vectors=vectors)})
-    monkeypatch.setattr(tasks, "_persist_vectors", lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
 
     seen = {}
 
@@ -479,9 +483,9 @@ def test_a_failing_lens_never_fails_the_validation_run(tmp_path, monkeypatch):
     manifest = Manifest.load("ll2", root)
     vectors = SimpleNamespace(layer_count=4, per_layer=[[1.0, 0.0]] * 4)
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, m, r: {"fear": SimpleNamespace(vectors=vectors)})
-    monkeypatch.setattr(tasks, "_persist_vectors", lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
 
     def boom(*a, **k):
         raise RuntimeError("no unembedding head")

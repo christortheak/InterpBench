@@ -8,6 +8,10 @@ the decision rule is a pure function, and the sweep integration test fakes
 extraction + generation.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import hashlib
 import csv
 import json
@@ -266,9 +270,9 @@ def _fake_generate(steered=("dread filled the quiet town before dawn broke 2",),
 def test_spec_sweep_selects_and_stamps_provenance(tmp_path, monkeypatch):
     root = str(tmp_path)
     dev_hash = _sweep_workspace(root, "sw")
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
 
     run_dir = tasks.sweep("sw", root, model_provider=_fake_model, log=lambda *_: None)
 
@@ -311,9 +315,9 @@ def test_spec_sweep_declared_criterion_overrides_defaults(tmp_path, monkeypatch)
     root = str(tmp_path)
     _sweep_workspace(root, "strict", selection={
         "constraints": {"coherenceFloor": 0.7}})
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate(
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate(
         steered=("dread filled the quiet town dread filled the quiet town 2",)))
 
     run_dir = tasks.sweep("strict", root, model_provider=_fake_model,
@@ -334,9 +338,9 @@ def test_spec_sweep_control_margin_can_refuse(tmp_path, monkeypatch):
     root = str(tmp_path)
     _sweep_workspace(root, "ctl", selection={
         "controls": {"matchedNormRandomMargin": 0.1}})
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
 
     run_dir = tasks.sweep("ctl", root, model_provider=_fake_model,
                           log=lambda *_: None)
@@ -356,9 +360,9 @@ def test_spec_sweep_control_block_stamps_random_vector_algorithm(tmp_path, monke
     root = str(tmp_path)
     _sweep_workspace(root, "ctlstamp", selection={
         "controls": {"matchedNormRandomMargin": 0.0}})
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
 
     tasks.sweep("ctlstamp", root, model_provider=_fake_model, log=lambda *_: None)
 
@@ -398,7 +402,7 @@ def test_spec_sweep_cancel_observed_between_generations(tmp_path, monkeypatch):
     _write(os.path.join(root, "prompts", "dev", "dev.jsonl"),
            '{"text": "Write about the town."}\n'
            '{"text": "Write about the sea."}\n')
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
     inner = _fake_generate()
     calls = {"n": 0}
@@ -407,7 +411,7 @@ def test_spec_sweep_cancel_observed_between_generations(tmp_path, monkeypatch):
         calls["n"] += 1
         return inner(*args, **kwargs)
 
-    monkeypatch.setattr(tasks, "generate", counting_generate)
+    monkeypatch.setattr(_owner_generate, 'generate', counting_generate)
     logs = []
     # Baseline = 2 dev + 1 battery generations; the cancel arrives after the
     # grid cell's FIRST dev generation (call 4) and must stop right there.
@@ -454,9 +458,9 @@ def test_legacy_specless_sweep_keeps_old_behavior(tmp_path, monkeypatch):
     # nothing is appended to the manifest.
     root = str(tmp_path)
     _experiment_with_concept(root, "legacy")
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
 
     run_dir = tasks.sweep("legacy", root, model_provider=_fake_model,
                           log=lambda *_: None)
@@ -477,9 +481,9 @@ def test_sweep_persists_vectors_and_promote_matches_them(tmp_path, monkeypatch):
     _sweep_workspace(root, "swpro")
     stimulus_hash = Manifest.load("swpro", root).concepts[0].stimulus_set_hash
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, manifest, root: {"fear": _fake_bundle(stimulus_hash)})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
 
     run_dir = tasks.sweep("swpro", root, model_provider=_fake_model,
                           log=lambda *_: None)
@@ -534,9 +538,9 @@ def test_sweep_on_unpinned_draft_pins_revision_and_promote_matches(
     assert Manifest.load("userflow", root).model_revision is None
     stimulus_hash = Manifest.load("userflow", root).concepts[0].stimulus_set_hash
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, manifest, root: {"fear": _fake_bundle(stimulus_hash)})
-    monkeypatch.setattr(tasks, "generate", _fake_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate())
     logs = []
 
     run_dir = tasks.sweep("userflow", root, model_provider=_resolving_model,
@@ -562,7 +566,7 @@ def test_extract_task_pins_unpinned_draft_revision(tmp_path, monkeypatch):
     root = str(tmp_path)
     stimulus_hash = _experiment_with_concept(root, "expin", revision=None)
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, manifest, root: {"fear": _fake_bundle(stimulus_hash)})
     logs = []
     tasks.extract("expin", root, model_provider=_resolving_model,
@@ -581,7 +585,7 @@ def test_frozen_manifest_without_revision_is_never_pinned_but_warned(tmp_path,
     d["status"] = "frozen"
     es.save_raw(d, root, freeze_transition=True)
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, manifest, root: {"fear": _fake_bundle(stimulus_hash)})
     logs = []
     tasks.extract("frzpin", root, model_provider=_resolving_model,
@@ -1985,9 +1989,9 @@ def test_a_relative_floor_run_refuses_a_cell_the_absolute_floor_accepts(
         root = str(tmp_path / name)
         os.makedirs(root, exist_ok=True)
         _sweep_workspace(root, name, selection=selection)
-        monkeypatch.setattr(tasks, "_extract_all",
+        monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                             lambda model, manifest, root: {"fear": _fake_bundle()})
-        monkeypatch.setattr(tasks, "generate",
+        monkeypatch.setattr(_owner_generate, 'generate',
                             _fake_generate(steered=steered, plain=plain))
         run_dir = tasks.sweep(name, root, model_provider=_fake_model,
                               log=lambda *_: None)

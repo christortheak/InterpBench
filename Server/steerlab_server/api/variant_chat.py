@@ -184,12 +184,12 @@ def evaluate_battery_with_variant(model, variant: model_variant.ModelVariant,
 
     Scoring itself is ``battery.evaluate`` — the same loader, the same arming
     resolver, the same ``score_item``, and the same two back-ends
-    (``tasks._battery_backends``) ``experiment validate|run`` uses, so a
+    (``choice_scoring._battery_backends``) ``experiment validate|run`` uses, so a
     reading taken here and a reading taken inside a study run are the same
     measurement.
     """
     from ..experiment import battery as battery_mod
-    from ..experiment.tasks import _battery_backends
+    from ..experiment.choice_scoring import _battery_backends
 
     arming = battery_mod.resolve_arming(spec)
     with prepared_variant(model, variant,

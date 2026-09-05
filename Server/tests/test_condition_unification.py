@@ -23,6 +23,10 @@ uniformity over unified records, and the historical variant error-record
 shape.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import csv
 import json
 import os
@@ -143,9 +147,9 @@ def _fake_score_options(log=None):
 
 
 def _patch(monkeypatch, generate_fn, score_fn):
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", generate_fn)
+    monkeypatch.setattr(_owner_generate, 'generate', generate_fn)
     monkeypatch.setattr(logprob_mod, "score_options", score_fn)
 
 

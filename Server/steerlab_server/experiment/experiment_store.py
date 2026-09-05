@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from . import lifecycle_gates, paths, prompt_render
+from . import manifest_mutation_policy, freeze_policy
 from ..build_identity import engine_version
 from .manifest import KNOWN_ORDINAL_AGGREGATIONS as KNOWN_ORDINAL_AGGREGATIONS  # noqa: F401
 from .manifest import Manifest
@@ -39,20 +40,18 @@ from .manifest import variant_is_evidence_grade
 # are pinned identical by tests on both engines). The explicit re-export of
 # ``KNOWN_ORDINAL_AGGREGATIONS`` above keeps both authoring vocabularies
 # addressable from one module.
-KNOWN_OUTCOME_INSTRUMENTS = (
-    "sampledText", "answerTokenLogprob", "choiceProbability",
-    "repeReaderScore", "ordinalScale")
+from .draft_protocol_policy import KNOWN_OUTCOME_INSTRUMENTS
 #: The closed ``seedPolicy`` vocabulary (Swift twin:
 #: ``ExperimentStore.knownSeedPolicies``). The run loop RE-DERIVES the
 #: effective policy per run, so an out-of-vocabulary declaration is read by
 #: nothing — the silent-loss class :func:`set_protocol` gates against.
-KNOWN_SEED_POLICIES = ("manifestSeeds", "derivedSHA256")
+from .draft_protocol_policy import KNOWN_SEED_POLICIES
 #: The closed ``promptMode`` vocabulary (Swift twin: the
 #: ``ExperimentManifest.PromptMode`` enum, via
 #: ``ExperimentStore.knownPromptModes``). Readers are equality tests against
 #: ``rawCompletion``, so an unrecognised value silently behaves as
 #: ``chatAssistant`` — same loss class.
-KNOWN_PROMPT_MODES = ("chatAssistant", "rawCompletion")
+from .draft_protocol_policy import KNOWN_PROMPT_MODES
 from ..steering.stimulus_set import StimulusSet, load_texts
 from ..steering.vector_math import ExtractionMethod
 from ..steering.vector_store import SUBSTRATE as _THIS_SUBSTRATE
@@ -66,81 +65,16 @@ _OPTVEC_METHOD = "optvec"
 _GEMMA_SCOPE_METHOD = "gemmaScopeSAE"
 
 
-def unknown_outcome_instruments(d: dict) -> list[str]:
-    """The declared instruments no engine implements, in declaration order.
-
-    The constant above had ZERO production readers until 2026-08-18: Swift
-    enforced the vocabulary at DECLARATION (``set-instruments`` refuses at
-    64), which protects only manifests authored through that verb. Authoring
-    is Mac-authority, so every manifest arriving HERE arrives as bytes — a
-    bundle, an rsync, a hand edit — and every downstream reader is a SET
-    MEMBERSHIP test (:data:`tasks.CHOICE_INSTRUMENTS`,
-    ``"ordinalScale" in ...``, ``execution_plan.resolve``). An unrecognised
-    value therefore dispatches nothing, raises nothing, and the study
-    completes having measured only the default sampled text. ``sampledTxt``
-    for ``sampledText`` is the whole failure.
-
-    Swift twin: ``ExperimentStore.unknownOutcomeInstruments``.
-    """
-    return [str(i) for i in (d.get("outcomeInstruments") or [])
-            if str(i) not in KNOWN_OUTCOME_INSTRUMENTS]
+from .draft_protocol_policy import unknown_outcome_instruments
 
 
-def unknown_outcome_instrument_problem(d: dict) -> str | None:
-    """The plain-language problem for a run-start refusal, or None.
-
-    One rule, both engines (Swift twin:
-    ``ExperimentStore.unknownOutcomeInstrumentProblem``) — the sentence is the
-    cross-engine contract because the claim is the same claim."""
-    unknown = unknown_outcome_instruments(d)
-    if not unknown:
-        return None
-    named = ", ".join(f"'{i}'" for i in unknown)
-    return (f"outcomeInstruments declares {named}, which this engine does not "
-            "implement — the declared instruments are read by set membership, "
-            "so an unrecognised value dispatches nothing and the study would "
-            "complete having measured only the default sampled text. Known "
-            "instruments: " + ", ".join(KNOWN_OUTCOME_INSTRUMENTS))
+from .draft_protocol_policy import unknown_outcome_instrument_problem
 
 
-def unknown_outcome_instrument_repair(name: str) -> str:
-    """THE repair, on both engines: ``set-instruments`` is authoring, and
-    authoring is Mac-authority (audit §10.x), so this engine's copy of the
-    refusal names the Mac binary too — exactly like the no-rubric sentence."""
-    return (f"steerlab-cli experiment set-instruments {name} <"
-            + "|".join(KNOWN_OUTCOME_INSTRUMENTS) + ">[,…]")
+from .draft_protocol_policy import unknown_outcome_instrument_repair
 
 
-class ExperimentStoreError(Exception):
-    """Authoring/lifecycle refusal.
-
-    Carries an optional GATE id (WP0 step 3). The freeze path computed a
-    closed-vocabulary id for every gate and then dropped it on the refusal
-    path — ``raise ExperimentStoreError(gate_failures[0][1])`` — so only the
-    ``forcedGatesSkipped`` stamp ever named a gate, and only the FIRST of N
-    failures survived a refusal at all
-    (``docs/WP0-AGENT-SURFACE-AUDIT.md`` §2.4). ``gate`` is the gate the
-    message describes; ``gates`` is every gate that failed, in
-    :data:`FORCED_GATE_IDS` order — the same order the stamp uses.
-
-    Strictly additive: this class is caught broadly (CLI, HTTP routes,
-    tasks), and ``str(exc)`` renders exactly the message it always did, so
-    no refusal's human-visible prose or exit code changes. Swift twin:
-    ``ExperimentError.freezeRefusal`` / ``FreezeRefusal``.
-    """
-
-    def __init__(self, message: str, *, gate: str | None = None,
-                 gates: tuple[str, ...] | list[str] | None = None,
-                 repair: str = ""):
-        super().__init__(message)
-        self.gate = gate
-        #: The runnable repair (WP0 step 8). Read by the CLI's envelope
-        #: builder through ``lifecycle_gates.repair_of``, so a refusal that
-        #: knows its own remedy stops handing an agent boilerplate.
-        self.repair_action = repair
-        #: Every failing gate in vocabulary order; always contains ``gate``.
-        self.gates: tuple[str, ...] = tuple(gates) if gates is not None else (
-            (gate,) if gate else ())
+from .manifest_errors import ExperimentStoreError
 
 
 def _dir(name: str, root: str | None) -> str:
@@ -164,28 +98,10 @@ def load_raw(name: str, root: str | None = None) -> dict:
 #: is the narrow non-empty → BOTH-empty transition on `concepts`+`conditions`
 #: that open-issues §8 describes, and widening it would refuse a legitimate
 #: "clear the variant arms" edit that has never gone wrong.
-ARM_BEARING_KEYS: tuple[str, ...] = ("concepts", "conditions")
+from .manifest_mutation_policy import ARM_BEARING_KEYS
 
 
-def _clears_every_arm(existing: object, incoming: dict) -> bool:
-    """True when this save would take a manifest that HOLDS a measured surface
-    to one that holds none at all.
-
-    Not "the document is empty" — a manifest legitimately starts that way and
-    stays that way until the first attach. The refusable event is the
-    TRANSITION: something on disk had concepts and/or conditions, and what is
-    about to replace it has neither."""
-    if not isinstance(existing, dict):
-        return False
-    had = any(existing.get(key) for key in ARM_BEARING_KEYS)
-    # The INCOMING side also counts variantConditions: an agentComparison-
-    # style save whose whole surface lives in variant conditions is not a
-    # disarm — that study type's arms LIVE there. (The guard's first false
-    # positive, test_transcript_study, caught at landing 2026-08-20.) Swift
-    # twin: `ExperimentStore.holdsAnySurface`.
-    clears = not any(
-        incoming.get(key) for key in (*ARM_BEARING_KEYS, "variantConditions"))
-    return had and clears
+from .manifest_mutation_policy import _clears_every_arm
 
 
 def save_raw(d: dict, root: str | None = None, *, freeze_transition: bool = False,
@@ -202,40 +118,9 @@ def save_raw(d: dict, root: str | None = None, *, freeze_transition: bool = Fals
     """
     name = d["name"]
     path = _path(name, root)
-    if os.path.exists(path) and not freeze_transition:
-        existing = load_raw(name, root)
-        if (not clearing_arms and existing.get("status") == "draft"
-                and _clears_every_arm(existing, d)):
-            # Frozen/complete manifests never reach here — the status check
-            # below refuses them outright — so this rule is DRAFT-only by
-            # construction, not by an extra condition that could drift.
-            raise ExperimentStoreError(
-                f"refusing to save '{name}' with no concepts and no "
-                f"conditions over a draft that has "
-                f"{len(existing.get('concepts') or [])} concept(s) and "
-                f"{len(existing.get('conditions') or [])} condition(s) — a "
-                "manifest does not lose its whole measured surface in one "
-                "write by accident",
-                gate=lifecycle_gates.ARMS_CLEARED,
-                repair=(
-                    f"steerlab-cli experiment verify {name}  "
-                    "# the manifest on disk still holds its arms; re-attach "
-                    "what the caller dropped (steerlab-cli experiment attach "
-                    f"{name} <concept>… ; steerlab-cli experiment "
-                    f"declare-condition {name} …), or author the cleared "
-                    "study as its own draft with steerlab-cli experiment "
-                    f"create {name}-v2 --model <id>"))
-        if existing.get("status") == "frozen":
-            # WP0 step 8: typed `statusImmutable`. `gate` here names a
-            # LIFECYCLE gate, not a freeze gate — the two vocabularies are
-            # disjoint by test, so the CLI's classifier reads it correctly and
-            # an agent's `switch` over freeze gates cannot absorb it.
-            raise ExperimentStoreError(
-                f"'{name}' is frozen and read-only — duplicate it to iterate",
-                gate=lifecycle_gates.STATUS_IMMUTABLE,
-                repair=(f"steerlab-cli experiment duplicate {name} {name}-v2 "
-                        "&& re-apply the change to the duplicate  "
-                        "(authoring is Mac-authority)"))
+    existing = load_raw(name, root) if os.path.exists(path) and not freeze_transition else None
+    manifest_mutation_policy.admit_save(
+        d, existing, freeze_transition=freeze_transition, clearing_arms=clearing_arms)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     # ATOMIC (engineer review 2026-07-18): a kill mid-write must never leave
     # experiment.json as invalid JSON — everything downstream (including the
@@ -1734,228 +1619,20 @@ def set_sweep_grid(name: str, *, layer_fractions=None, layers=None,
 #: ``set-exclusions``. Here they are protocol fields,
 #: because ``PORTABILITY-CONTRACTS.md`` §"authoring" promises exactly that
 #: reachability to the client.
-PROTOCOL_FIELDS: tuple[str, ...] = (
-    "experimentDescription", "taskDescription", "outcomeMeasures", "promptMode",
-    # `reasoningEffort` (off | low | medium | xhigh) replaced the Qwen-specific
-    # boolean `qwenThinkingEnabled` (2026-09-03); `reasoningMaxTokens` is the
-    # reasoning block's own cap, required beside a non-off effort. Both are
-    # `set-sampling` flags on the Mac. The old boolean is not a writable field
-    # any more — a manifest that still carries it is READ as off/xhigh — and
-    # writing the effort into a draft that carries it drops it, so a draft
-    # never spells the same parameter twice.
-    "systemPrompt", "reasoningEffort", "temperature", "maxTokens",
-    "reasoningMaxTokens", "seeds",
-    # The stochastic replication policy (field-discovered gap: a replication
-    # arm of N samples × temperature × token budget could not be authored
-    # headlessly on either engine). The Mac's verb for the whole sampling
-    # protocol is `set-sampling`; here they are protocol fields like the
-    # rest, validated below with the same sentences that verb refuses with.
-    "samplesPerItem", "seedPolicy",
-    # studyType: the researcher's declared study type (authoring
-    # vocabulary: conceptStudy | agentComparison | confirmAgent |
-    # multiAgent) — persisted verbatim; studyKind stays the
-    # engine-facing run-path switch.
-    "taskPromptsFile", "taskPromptsHash", "studyKind", "studyType",
-    "multiAgentScenarioPath",
-    "multiAgentScenarioHash", "multiAgentIncludeBaseline", "evaluation",
-    "judgeRubricFile", "judgeRubricHash", "judges", "humanValidation",
-    "capabilityBatteryFile", "capabilityBatteryHash",
-    "reasoningStyleTaxonomyPath", "reasoningStyleTaxonomyHash",
-    # Declared record-exclusion rules (closed vocabulary, validated at
-    # declaration below and re-checked by verify(); joined at analyze) —
-    # measurement declarations, so draft-editable like the other protocol
-    # fields and frozen with the manifest. Mac verb: `set-exclusions`.
-    "exclusionRules",
-    # The two Mac VERBS the contract makes protocol FIELDS on this engine:
-    # the declared instrument list (validated against
-    # KNOWN_OUTCOME_INSTRUMENTS below, exactly where Swift
-    # `setOutcomeInstruments` validates) and the sweep block whose
-    # `selection` is the promotion criterion (semantics checked by verify()
-    # / freeze, like every other declaration).
-    "outcomeInstruments", "sweep",
-)
+from .draft_protocol_policy import PROTOCOL_FIELDS
 
 
 def set_protocol(name: str, fields: dict, root: str | None = None) -> dict:
+    from . import draft_protocol_policy, model_capabilities
     d = load_raw(name, root)
-    unknown = sorted(key for key in fields if key not in PROTOCOL_FIELDS)
-    if unknown:
-        # Refuse, never drop: a key outside the vocabulary used to write
-        # nothing while the verb reported success — a study measuring
-        # something other than what the caller declared, the same silent
-        # loss `armsCleared` and `conceptInUse` exist to refuse.
-        named = ", ".join(f"'{key}'" for key in unknown)
-        raise ExperimentStoreError(
-            f"unknown protocol field(s) {named} — known: "
-            + ", ".join(PROTOCOL_FIELDS),
-            repair=("re-run set-protocol with keys from the declared "
-                    "vocabulary; nothing was written"))
-    if "outcomeInstruments" in fields:
-        # Same declaration-time gate as Swift `setOutcomeInstruments`
-        # (ExperimentError.malformed at 64): the downstream readers are set
-        # membership tests, so an unknown instrument dispatches nothing and
-        # the study completes having measured only the default sampled text.
-        problem = unknown_outcome_instrument_problem(
-            {"outcomeInstruments": fields["outcomeInstruments"]})
-        if problem:
-            raise ExperimentStoreError(
-                problem, repair=unknown_outcome_instrument_repair(name))
-    if fields.get("sweep") is not None and not isinstance(fields["sweep"], dict):
-        # Every reader guards with `isinstance(d.get("sweep"), dict)`, so a
-        # non-dict sweep silently disables the whole block — the same loss
-        # class as an unknown key.
-        #
-        # `fields.get(...) is not None`, not `"sweep" in fields` (review round
-        # 11, finding 4): this was the ONE gate here that fired on an explicit
-        # JSON null, so `--set sweep=null` refused with "sweep must be an
-        # object, got NoneType" instead of clearing — while the null-clears
-        # loop below promises every field in this vocabulary clears that way,
-        # and every other gate spells the test exactly like this. A declared
-        # grid was therefore removable only by hand-editing the manifest. The
-        # non-dict, non-null refusal is unchanged: a string or a list still
-        # cannot be a sweep block.
-        raise ExperimentStoreError(
-            f"sweep must be an object, got {type(fields['sweep']).__name__} "
-            "— the declared shape is {\"selection\": {…}} "
-            "(docs/CLI-REFERENCE.md, set-sweep-selection)",
-            repair="re-run with --set sweep='{\"selection\": {…}}'")
-    # Per-field value gates for the sampling-protocol fields (Swift twin:
-    # `ExperimentStore.setSamplingProtocol` — the refusal sentences are the
-    # cross-engine contract). Two loss classes motivate gating HERE rather
-    # than at the next verify: an out-of-vocabulary promptMode/seedPolicy is
-    # read downstream by equality tests, so it silently behaves as the
-    # default; and a non-numeric temperature/maxTokens/samplesPerItem BRICKS
-    # the manifest — `Manifest.from_dict` raises on the next load, so every
-    # later verb (verify included, the one that would have named the
-    # problem) fails before it can. A JSON null clears like an absent key on
-    # decode, so None passes every gate — and the persistence loop below
-    # makes that claim true by POPPING the key rather than writing the null.
-    if fields.get("temperature") is not None:
-        value = fields["temperature"]
-        if (isinstance(value, bool) or not isinstance(value, (int, float))
-                or not math.isfinite(float(value)) or value < 0):
-            raise ExperimentStoreError(
-                f"temperature must be a non-negative number — got {value!r}",
-                repair="re-run with --set temperature=<t≥0>")
-    if fields.get("maxTokens") is not None:
-        value = fields["maxTokens"]
-        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-            raise ExperimentStoreError(
-                f"maxTokens must be a positive integer — got {value!r}",
-                repair="re-run with --set maxTokens=<n≥1>")
-    if fields.get("promptMode") is not None:
-        value = fields["promptMode"]
-        if not isinstance(value, str) or value not in KNOWN_PROMPT_MODES:
-            raise ExperimentStoreError(
-                f"unknown promptMode {value!r} — known: "
-                + ", ".join(KNOWN_PROMPT_MODES),
-                repair="re-run with --set promptMode="
-                       + "|".join(KNOWN_PROMPT_MODES))
-    if fields.get("samplesPerItem") is not None:
-        value = fields["samplesPerItem"]
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise ExperimentStoreError(
-                f"samplesPerItem must be an integer — got {value!r}",
-                repair="re-run with --set samplesPerItem=<n≥1>")
-        if value < 1:
-            raise ExperimentStoreError(
-                f"samplesPerItem must be ≥ 1 — got {value}",
-                repair="re-run with --set samplesPerItem=<n≥1>")
-    if fields.get("seedPolicy") is not None:
-        value = fields["seedPolicy"]
-        if not isinstance(value, str) or value not in KNOWN_SEED_POLICIES:
-            raise ExperimentStoreError(
-                f"unknown seedPolicy {value!r} — known: "
-                + ", ".join(KNOWN_SEED_POLICIES),
-                repair="re-run with --set seedPolicy="
-                       + "|".join(KNOWN_SEED_POLICIES))
-    # The reasoning protocol, gated on the MERGED document (Swift twin:
-    # `ExperimentStore.setSamplingProtocol`, same sentences): the effort is
-    # closed-vocabulary; a non-off effort needs a family with a thinking mode
-    # AND a declared reasoning budget (declared, never defaulted — the
-    # workbench rule); an off effort takes no budget. Declaring the effort
-    # off drops a budget the draft already carried, because the budget was
-    # only ever meaningful beside the effort; declaring a budget IN THE SAME
-    # CALL as an off effort is refused, because that call says two things.
-    if (fields.get("reasoningEffort") is not None
-            or fields.get("reasoningMaxTokens") is not None):
-        merged_effort = (fields["reasoningEffort"]
-                         if fields.get("reasoningEffort") is not None
-                         else prompt_render.read_reasoning_effort(d))
-        budget_in_call = fields.get("reasoningMaxTokens") is not None
-        merged_budget = (fields["reasoningMaxTokens"] if budget_in_call
-                         else d.get("reasoningMaxTokens"))
-        if (merged_effort == prompt_render.REASONING_OFF
-                and not budget_in_call):
-            merged_budget = None  # the off declaration retires the budget
-        # The gate reads the model's CAPABILITY RECORD (the pinned template's
-        # probed answers; the id heuristic, saying so, when none exists):
-        # a level the template ignores or rejects is refused here, at the
-        # declaration, never rendered at the template's default under a
-        # manifest that asserts the level.
-        from . import model_capabilities as _mc
-        problems = prompt_render.reasoning_protocol_violations(
-            effort=merged_effort, reasoning_max_tokens=merged_budget,
-            model_id=str(d.get("modelID") or ""),
-            capabilities=_mc.resolve(str(d.get("modelID") or ""),
-                                     d.get("modelRevision"), root))
-        if problems:
-            raise ExperimentStoreError(
-                "; ".join(problems),
-                repair=("re-run with --set reasoningEffort="
-                        + "|".join(prompt_render.REASONING_EFFORTS)
-                        + " --set reasoningMaxTokens=<n≥1> (the budget only "
-                        "beside a non-off effort, on a model whose chat "
-                        "template has a thinking switch; a level only when "
-                        "the template accepts it — see model capabilities)"))
-    if fields.get("systemPrompt") is not None:
-        problems = _system_prompt_problems(
-            d, str(fields["systemPrompt"]), fields.get("promptMode"), root)
-        if problems:
-            raise ExperimentStoreError(
-                "; ".join(problems),
-                repair="re-run without --set systemPrompt, or pin a model "
-                       "whose chat template can deliver system text")
-    if fields.get("exclusionRules") is not None:
-        # The engine's own rule validation, at the moment of declaration
-        # (Swift twin: `ExperimentStore.setExclusionRules`) — verify() and
-        # analyze re-check the same sentences, but feedback belongs at the
-        # write. Imported lazily: `exclusions` pulls the scoring/battery
-        # modules, which the torch-free authoring path must not pay for
-        # unless rules are actually declared.
-        from . import exclusions
-        violations = exclusions.rule_violations(
-            {"exclusionRules": fields["exclusionRules"]})
-        if violations:
-            raise ExperimentStoreError(
-                "; ".join(violations),
-                repair=f"steerlab-cli experiment set-exclusions {name} <"
-                       + "|".join(exclusions.RULE_IDS)
-                       + ">[,…] [--endpoint <key>] [--min <x>] [--max <x>], "
-                       "or re-run with a --set exclusionRules=<json> the "
-                       "sentences above accept")
-    for key, value in fields.items():
-        if value is None:
-            # An explicit JSON null CLEARS the field — it does not persist as
-            # a null. This is what makes the gates above sound: every gate
-            # spells `fields.get(k) is not None`, so a null reaches here
-            # ungated, and writing it would brick the manifest
-            # (`Manifest.from_dict` raises TypeError on a null temperature,
-            # and every later verb — verify included — dies before it can
-            # name the problem). Popping is also the symmetric affordance:
-            # the Swift writers clear with `""`, the client clears with
-            # `--set temperature=null`, and both land on a key that is
-            # simply absent.
-            d.pop(key, None)
-        else:
-            d[key] = value
-    if fields.get("reasoningEffort") is not None:
-        # One spelling per draft: the effort supersedes the legacy boolean it
-        # replaced, and an off effort retires the budget (gated above).
-        d.pop(prompt_render.LEGACY_THINKING_KEY, None)
-        if (fields["reasoningEffort"] == prompt_render.REASONING_OFF
-                and fields.get("reasoningMaxTokens") is None):
-            d.pop("reasoningMaxTokens", None)
+    # Only edits that consume a capability record read it. Pin/hash resolution
+    # belongs to this boundary, not to the declaration policy.
+    needs_capabilities = any(fields.get(key) is not None for key in (
+        "reasoningEffort", "reasoningMaxTokens", "systemPrompt"))
+    capabilities = (model_capabilities.resolve(
+        str(d.get("modelID") or ""), d.get("modelRevision"), root)
+        if needs_capabilities else None)
+    draft_protocol_policy.apply_protocol(name, d, fields, capabilities=capabilities)
     save_raw(d, root)
     return d
 
@@ -2654,17 +2331,7 @@ def replace_draft_manifest(name: str, document: object,
     engine's canonical body hash (sha256 of the sorted-key compact JSON of
     the MERGED document, informational: the app re-fetches and compares
     documents itself)."""
-    if not isinstance(document, dict) or not document:
-        raise ExperimentStoreError("manifest body must be a JSON object")
-    if document.get("name") != name:
-        raise ExperimentStoreError(
-            f"manifest body names {document.get('name')!r} but the route "
-            f"names '{name}' — refusing an ambiguous sync")
-    if document.get("status") != "draft":
-        raise ExperimentStoreError(
-            "only a DRAFT manifest can be pushed as the server's copy — "
-            "frozen manifests are stamped by the server's own gated freeze, "
-            "never installed by upload (duplicate to iterate)")
+    manifest_mutation_policy.admit_draft_document(name, document)
     path = _path(name, root)
     existing = None
     if os.path.exists(path):
@@ -2672,10 +2339,7 @@ def replace_draft_manifest(name: str, document: object,
             existing = load_raw(name, root)
         except (OSError, ValueError):
             existing = None
-        if isinstance(existing, dict) and existing.get("status") == "frozen":
-            raise ExperimentStoreError(
-                f"refusing to overwrite frozen manifest '{name}' with a "
-                "pushed draft (freeze firewall) — duplicate to iterate")
+    manifest_mutation_policy.admit_draft_replacement(name, existing)
     document = dict(document)
     preserved = _merge_server_pins(document, existing)
     save_raw(document, root)
@@ -2743,44 +2407,7 @@ def adopt_evidence_revision(run_directory: str,
     return {"outcome": "adopted", "experiment": name, "revision": revision}
 
 
-def _merge_server_pins(document: dict, existing: object) -> dict:
-    """Merge server-side auto-pins the incoming document OMITS (key absent)
-    into ``document`` in place; returns the ``preserved`` report (empty =
-    nothing merged). Explicit ``null`` keys are the caller clearing a pin
-    on purpose and are honored."""
-    if not isinstance(existing, dict):
-        return {}
-    preserved: dict = {}
-    if existing.get("modelRevision") and "modelRevision" not in document:
-        document["modelRevision"] = existing["modelRevision"]
-        preserved["modelRevision"] = existing["modelRevision"]
-    if (existing.get("capabilityBatteryFile")
-            and existing.get("capabilityBatteryHash")
-            and "capabilityBatteryFile" not in document
-            and "capabilityBatteryHash" not in document):
-        document["capabilityBatteryFile"] = existing["capabilityBatteryFile"]
-        document["capabilityBatteryHash"] = existing["capabilityBatteryHash"]
-        preserved["capabilityBattery"] = {
-            "file": existing["capabilityBatteryFile"],
-            "hash": existing["capabilityBatteryHash"]}
-    incoming_conditions = document.get("conditions")
-    if incoming_conditions is not None \
-            and not isinstance(incoming_conditions, list):
-        return preserved  # malformed conditions: let validation refuse it
-    incoming_names = {c.get("name") for c in incoming_conditions or []
-                      if isinstance(c, dict)}
-    restored: list[str] = []
-    for condition in existing.get("conditions") or []:
-        if not (isinstance(condition, dict)
-                and isinstance(condition.get("selection"), dict)
-                and str(condition.get("name") or "").endswith("-recommended")
-                and condition.get("name") not in incoming_names):
-            continue
-        document.setdefault("conditions", []).append(condition)
-        restored.append(condition["name"])
-    if restored:
-        preserved["conditions"] = restored
-    return preserved
+from .manifest_mutation_policy import _merge_server_pins
 
 
 def duplicate(name: str, new_name: str, root: str | None = None) -> dict:
@@ -2994,48 +2621,10 @@ def judging_custody_advisory(d: dict) -> str | None:
         "external judge.")
 
 
-def optvec_pinned_concepts(d: dict) -> list[tuple[str, dict]]:
-    """``[(concept name, vectorArtifact block)]`` for every concept pinned to
-    an OptVec artifact. Pure manifest reading (no filesystem, no torch), so
-    the freeze gates and advisories can both ask it."""
-    out: list[tuple[str, dict]] = []
-    for concept in d.get("concepts") or []:
-        if not isinstance(concept, dict) or not concept.get("name"):
-            continue
-        if ((concept.get("options") or {}).get("method")
-                != ExtractionMethod.PINNED_ARTIFACT.value):
-            continue
-        block = concept.get("vectorArtifact")
-        if isinstance(block, dict) and block.get("sourceMethod") == _OPTVEC_METHOD:
-            out.append((str(concept["name"]), block))
-    return out
+from .manifest_declaration_policy import optvec_pinned_concepts
 
 
-def optvec_exempt_from_validate_gate(d: dict) -> bool:
-    """Whether the validate-evidence freeze gate has nothing to ask of this
-    manifest because every concept it declares is an OptVec direction.
-
-    THE RULE (OptVec plan §6, decided here): an optvec concept has nothing to
-    validate. ``validate`` scores a held-out probe against the recipe's class
-    means; an optvec vector has no stimuli, no classes and no
-    validation.jsonl, so there is no probe to run and a validate run could
-    never exist — gating on one would make an optvec confirm study
-    freezable only under ``--force``, i.e. permanently non-citable, which
-    would be a stamp about the FIREWALL rather than about the science. The
-    evidence that certifies the direction is the OptVec eval run's
-    ``eval.json`` (test split, untouched by gradients and by checkpoint
-    selection), surfaced by :func:`freeze_advisories`.
-
-    Deliberately narrow. It applies only when concepts exist and EVERY one is
-    optvec-pinned: a mixed study still owes a validate run for its ordinary
-    concepts, and a variant study still owes per-condition battery evidence
-    (which is joined to the validate run), so both keep the gate.
-    """
-    concepts = [c for c in (d.get("concepts") or [])
-                if isinstance(c, dict) and c.get("name")]
-    if not concepts or d.get("variantConditions"):
-        return False
-    return len(optvec_pinned_concepts(d)) == len(concepts)
+from .manifest_declaration_policy import optvec_exempt_from_validate_gate
 
 
 def _adapter_variant_advisories(d: dict, root: str | None = None) -> list[str]:
@@ -3464,9 +3053,7 @@ def _adapter_config_pin_advisories(variant_configs, root=None) -> list:
 #: comment that claimed it was never emitted was stale — audit §2.4). Pin
 #: DRIFT remains a verify() violation on both engines, never skippable, and
 #: unpinned legacy inputs remain a non-blocking advisory.
-FORCED_GATE_IDS = ("revision", "validateEvidence", "batteryEvidence",
-                   "judgeValidity", "variantValidity", "gitClean",
-                   "measurementPins")
+from .freeze_policy import FORCED_GATE_IDS
 
 
 def _check_jlens_readout(name: str, d: dict, root: str | None) -> None:
@@ -3595,140 +3182,39 @@ def _check_jlens_readout(name: str, d: dict, root: str | None) -> None:
 
 
 
-def model_output_surfaces_operative(d: dict) -> bool:
-    """Whether the MODEL-OUTPUT freeze surfaces apply to this manifest.
-
-    The one decision shared by readiness and freeze, so they cannot give
-    opposite answers about the same manifest (external review round 13).
-
-    A multi-agent study runs a SCENARIO. Under the app's never-delete rule it
-    may carry concepts, injection conditions, agents, and a J-lens readout
-    from before a kind switch — none of which it executes. `freeze_advisories`
-    already tells the researcher that carried configuration is "preserved, but
-    NOT verified, snapshotted, or bundled for this study kind"; the gates then
-    verified it anyway and refused the freeze. Both statements came out of the
-    same function.
-
-    So carried model-output state may ADVISE, and may not block. What still
-    applies to every kind — a panel loads a model and is judged like any other
-    study — is deliberately outside this: pinned revision, loadable dtype,
-    judge validity, and git cleanliness.
-    """
-    return (d.get("studyKind") or "modelOutput") == "modelOutput"
+from .manifest_declaration_policy import model_output_surfaces_operative
 
 
 def _evaluate_freeze_gates(name: str, d: dict, manifest: Manifest,
                            root: str | None) -> list[tuple[str, str]]:
-    """Evaluate EVERY freeze gate, returning ``[(gate_id, message)]`` for each
-    that would refuse — in the historical refusal order, so a non-force freeze
-    raises the same first error it always did, and a forced freeze can name
-    everything it skipped. Read-only: no gate mutates the manifest."""
-    failures: list[tuple[str, str]] = []
-    if not d.get("modelRevision"):
-        failures.append((
-            "revision",
-            f"cannot freeze '{name}': model revision not pinned and "
-            f"{d['modelID']} not in the local HF cache — load it once or "
-            "freeze --force"))
-    # `measurementPins` was RESERVED in the cross-engine gate vocabulary for
-    # exactly this: an input that determines what gets measured rather than
-    # what gets loaded. A study dtype is the first one to use it.
-    symbolic = symbolic_revision_problem(d)
-    if symbolic:
-        failures.append((
-            "revision", f"cannot freeze '{name}': {symbolic}"))
-    bad_dtype = unloadable_study_dtype_problem(d)
-    if bad_dtype:
-        failures.append(("measurementPins", f"cannot freeze '{name}': {bad_dtype}"))
-    # Model-output surfaces: gated on the study kind that USES them. A panel
-    # carrying these from a kind switch executes none of them, and refusing
-    # its freeze over them contradicts the advisory this same module emits.
+    """Gather live evidence in historical order, then apply value-only policy."""
+    def problem(check, *args):
+        try:
+            check(*args)
+        except ExperimentStoreError as exc:
+            return str(exc)
+        return None
+
     operative = model_output_surfaces_operative(d)
-    if operative:
-        try:
-            _check_jlens_readout(name, d, root)
-        except ExperimentStoreError as exc:
-            failures.append(("measurementPins", str(exc)))
-        try:
-            _check_variant_validity(name, d, root)
-        except ExperimentStoreError as exc:
-            failures.append(("variantValidity", str(exc)))
-    # Judge validity is NOT model-output-only: a panel's turns are flattened
-    # into generations and judged like any other study's output.
-    try:
-        _check_judged_evaluation(name, d)
-    except ExperimentStoreError as exc:
-        failures.append(("judgeValidity", str(exc)))
+    jlens = problem(_check_jlens_readout, name, d, root) if operative else None
+    variant = problem(_check_variant_validity, name, d, root) if operative else None
+    judge = problem(_check_judged_evaluation, name, d)
     evidence = None
-    if (operative
-            and (d.get("concepts") or d.get("conditions")
-                 or d.get("variantConditions"))
-            and not optvec_exempt_from_validate_gate(d)):
+    vacuous = None
+    if freeze_policy.needs_validation(d):
         evidence = _matching_validate_evidence(manifest.validation_scope_hash(), root)
-        if evidence is None:
-            failures.append((
-                "validateEvidence",
-                f"cannot freeze '{name}': no validate run matches its exact "
-                f"pins — run 'steerlab-server experiment validate {name}' "
-                "first, or force-freeze"))
-        else:
-            # Evidence EXISTS but probed nothing: same gate id, a remedy
-            # naming the missing files (2026-08-17).
+        if evidence is not None:
             vacuous = vacuous_validate_evidence_problem(name, manifest, evidence)
-            if vacuous:
-                failures.append(("validateEvidence", vacuous))
-    if operative and d.get("variantConditions"):
-        try:
-            _check_battery_evidence(name, d, evidence, root)
-        except ExperimentStoreError as exc:
-            failures.append(("batteryEvidence", str(exc)))
-    try:
-        _check_git_pin_cleanliness(name, d, root)
-    except ExperimentStoreError as exc:
-        failures.append(("gitClean", str(exc)))
-    return failures
+    battery = (problem(_check_battery_evidence, name, d, evidence, root)
+               if operative and d.get("variantConditions") else None)
+    git = problem(_check_git_pin_cleanliness, name, d, root)
+    return freeze_policy.evaluate(name, d, freeze_policy.FreezeEvidence(
+        jlens=jlens, variant=variant, judge=judge,
+        validation_present=evidence is not None, vacuous_validation=vacuous,
+        battery=battery, git=git))
 
 
-def _freeze_gate_repair(gate: str, name: str) -> str:
-    """The RUNNABLE repair for a freeze-gate refusal on THIS engine.
-
-    Gate-5 dry run #2 (P2/P3): every freeze-gate refusal here carried one
-    boilerplate string — "satisfy the named gate, or freeze --force to record
-    an explicitly non-citable experiment" — which names no command, and whose
-    only concrete token (`freeze --force`) is a verb this CLI does not have.
-
-    Each repair below names the engine that can actually satisfy its gate.
-    The evidence gates name THIS one: ``_matching_validate_evidence`` accepts
-    only evidence stamped ``python-hf-transformers`` and there is no
-    run-substrate seam here, so evidence from the other engine can never
-    satisfy them. Everything else is an authoring act, which is Mac-authority.
-    """
-    freeze_again = (f"steerlab-cli experiment freeze {name}  "
-                    "(authoring is Mac-authority)")
-    repairs = {
-        "revision": f"steerlab-cli experiment create {name} --model <id> "
-                    "--revision <commit> on the Mac, or load the model once "
-                    f"here so it is cached, then {freeze_again}",
-        "measurementPins": "repoint the invalid measurement pin at a loadable "
-                           f"value on the Mac, then {freeze_again}",
-        "validateEvidence": f"steerlab-server experiment validate {name}  "
-                            "(this gate reads evidence stamped "
-                            "python-hf-transformers; evidence from the other "
-                            f"engine will not satisfy it), then {freeze_again}",
-        "variantValidity": "re-save the variant with hashed adapter weights "
-                           "and re-attach it on the Mac, then "
-                           f"{freeze_again}",
-        "batteryEvidence": f"steerlab-server experiment validate {name}  "
-                           "(each variant condition runs the pinned battery), "
-                           f"then {freeze_again}",
-        "judgeValidity": f"steerlab-cli experiment pin-rubric {name} "
-                         "prompts/rubrics/default-paired-v1.md --judges "
-                         f"a:local[,b:claude] on the Mac, then {freeze_again}",
-        "gitClean": "commit the pinned inputs in the workspace git repo, then "
-                    f"{freeze_again}",
-    }
-    return repairs.get(
-        gate, f"satisfy the '{gate}' gate, then {freeze_again}")
+from .freeze_policy import _freeze_gate_repair
 
 
 def freeze(name: str, *, force: bool = False, cached_revision=None,
@@ -3764,19 +3250,7 @@ def freeze(name: str, *, force: bool = False, cached_revision=None,
     contains the pinned bytes it vouches for.
     """
     d = load_raw(name, root)
-    if d.get("status") != "draft":
-        # Typed since gate-5 dry run #2 (P3): this was the last status guard
-        # in the module left untyped, so re-freezing — the commonest possible
-        # retry — answered `verbFailed`/70, indistinguishable from a crash,
-        # while `save_raw` and `confirmation.attach_perturbations` already
-        # said `statusImmutable`/65 with a runnable repair. Prose unchanged.
-        raise ExperimentStoreError(
-            f"'{name}' is already {d.get('status')}",
-            gate=lifecycle_gates.STATUS_IMMUTABLE,
-            repair=(f"steerlab-cli experiment duplicate {name} {name}-v2 && "
-                    f"steerlab-cli experiment freeze {name}-v2  "
-                    "(a frozen study is immutable; the duplicate is a draft "
-                    "again, and authoring is Mac-authority)"))
+    manifest_mutation_policy.admit_freeze(name, d)
     if not d.get("modelRevision") and cached_revision is not None:
         d["modelRevision"] = cached_revision(d["modelID"])
     # A frozen variant study must NAME the battery it relied on: an unpinned
@@ -3927,19 +3401,7 @@ def freeze(name: str, *, force: bool = False, cached_revision=None,
         for gate_id, message in gate_failures:
             print(f"freeze '{name}' FORCE WARNING: skipping failing gate "
                   f"'{gate_id}' — {message}", file=sys.stderr)
-    elif gate_failures:
-        # The MESSAGE stays the first failure's, byte-for-byte: a refusal's
-        # prose and exit code are unchanged by WP0 step 3. What was
-        # unrecoverable without parsing prose — WHICH gate declined, and how
-        # many did — now rides the structured fields, so a forced freeze no
-        # longer tells the researcher more than a refusal does (§2.4
-        # divergence 4).
-        raise ExperimentStoreError(
-            gate_failures[0][1],
-            gate=gate_failures[0][0],
-            gates=tuple(g for g in FORCED_GATE_IDS
-                        if g in {gid for gid, _ in gate_failures}),
-            repair=_freeze_gate_repair(gate_failures[0][0], name))
+    freeze_policy.admit_failures(name, gate_failures, force=force)
 
     # Frozen studies must be self-contained: pinned scenario/variant inputs
     # that live under gitignored runs/ are copied into the experiment
@@ -4074,131 +3536,22 @@ def _pin_training_provenance(d: dict, root: str | None) -> None:
 
 
 def _check_variant_validity(name: str, d: dict, root: str | None = None) -> None:
-    """Modality arms need a validity story (WORK-PLAN Phase E, promoted by the
-    modality-axis decision): a variant condition's interventions must be fully
-    pinned — adapter content hashes, system-prompt hash, vector artifact ids —
-    or the condition is unverifiable the moment it freezes. ``freeze --force``
-    skips this loudly, like the other evidence gates; the always-run verify()
-    of the artifact-file hash is never skippable."""
-    for vc in d.get("variantConditions") or []:
-        label = vc.get("name", "?")
-        if isinstance(vc.get("fromPromotion"), dict):
-            # Forward-referenced (stage 4): the artifact does not exist at
-            # freeze time BY DESIGN — its pins land at run time and are
-            # recorded in the run directory (forward-resolutions.json).
-            # verify() enforces the declaration shape (attached concept,
-            # exactly one identity).
-            continue
-        artifact = vc.get("artifact") or {}
-        if not vc.get("artifactHash"):
-            raise ExperimentStoreError(
-                f"cannot freeze '{name}': variant '{label}' has no pinned "
-                "artifactHash")
-        for adapter in artifact.get("adapters") or []:
-            if not adapter.get("adapterHash"):
-                raise ExperimentStoreError(
-                    f"cannot freeze '{name}': variant '{label}' adapter "
-                    f"'{adapter.get('name', '?')}' has no adapterHash — re-save "
-                    "the variant with hashed adapter weights, or freeze --force")
-        if (artifact.get("systemPrompt") or "").strip() and \
-                not artifact.get("systemPromptHash"):
-            raise ExperimentStoreError(
-                f"cannot freeze '{name}': variant '{label}' has a system prompt "
-                "but no systemPromptHash — re-save the variant, or freeze --force")
-        for injection in artifact.get("injections") or []:
-            if not injection.get("vectorArtifactID"):
-                raise ExperimentStoreError(
-                    f"cannot freeze '{name}': variant '{label}' has an injection "
-                    f"for '{injection.get('concept', '?')}' without a "
-                    "vectorArtifactID pin")
-        # Trained-adapter arms owe the same story about their TRAINING DATA
-        # (LoRA readiness §0 amendment 1). An evidence-grade adapter whose
-        # dataset is not pinned into the manifest is unverifiable the moment
-        # it freezes: the training files could change afterwards with nothing
-        # to flag the drift. Exploratory adapters are legal and produce an
-        # advisory instead (freeze_advisories), never a refusal.
-        if artifact.get("adapters") and variant_is_evidence_grade(vc, root):
-            block = vc.get("trainingProvenance")
-            has_pin = isinstance(block, dict) and \
-                str(block.get("datasetManifestHash") or "").strip()
-            if not has_pin:
-                raise ExperimentStoreError(
-                    f"cannot freeze '{name}': variant '{label}' uses an "
-                    "evidence-grade adapter but carries no "
-                    "trainingProvenance.datasetManifestHash — its training "
-                    "data would stay outside the freeze pin surface. Re-attach "
-                    "the variant so freeze can pin the dataset manifest from "
-                    "the adapter's sidecar, or freeze --force")
+    evidence_grade = {
+        index for index, vc in enumerate(d.get("variantConditions") or [])
+        if not isinstance(vc.get("fromPromotion"), dict)
+        and (vc.get("artifact") or {}).get("adapters")
+        and variant_is_evidence_grade(vc, root)
+    }
+    freeze_policy.check_variant_validity(name, d, evidence_grade_variants=evidence_grade)
 
 
-def _resolved_judge_identity(judge: dict, study_model: str) -> tuple[str, str, str]:
-    """A judge's RESOLVED identity ``(kind, model, provider)`` — what will
-    actually run, not what the manifest happens to spell. Cross-engine rules:
-    a LOCAL judge with a blank model resolves to the STUDY model; a claude
-    judge with a blank model resolves to the default Claude judge model;
-    openrouter judges have no defaults (their own verify rules apply)."""
-    kind = str(judge.get("kind") or "claude").strip() or "claude"
-    model = str(judge.get("model") or "").strip()
-    provider = str(judge.get("provider") or "").strip()
-    if kind == "openrouter":
-        from . import paired_judge
-        provider = paired_judge.canonical_openrouter_provider(provider)
-    if kind == "local" and not model:
-        model = study_model
-    elif kind == "claude" and not model:
-        from . import paired_judge
-        model = paired_judge.DEFAULT_JUDGE_MODEL
-    return (kind, model, provider)
+from .manifest_declaration_policy import _resolved_judge_identity
 
 
-def judge_panel_indistinct_problem(d: dict) -> str | None:
-    """External review 2026-07-22 (finding 4): two blank-model local judges
-    both resolve to the study model at temperature 0 — identical
-    deterministic judges whose perfect agreement is guaranteed by
-    construction, satisfying a count-only panel gate while providing zero
-    independence. Returns the plain-language problem (identical wording on
-    both engines) when a panel of >= 2 named judges collapses to fewer than
-    2 DISTINCT resolved identities, else None. Shared by the freeze gate
-    (judgeValidity) and the pre-freeze advisories/data check."""
-    judges = [j for j in (d.get("judges") or [])
-              if isinstance(j, dict) and j.get("name")]
-    if len(judges) < 2:
-        return None
-    study_model = str(d.get("modelID") or "")
-    identities: dict[tuple[str, str, str], list[str]] = {}
-    for judge in judges:
-        identity = _resolved_judge_identity(judge, study_model)
-        identities.setdefault(identity, []).append(str(judge["name"]))
-    if len(identities) >= 2:
-        return None
-    (kind, model, provider), names = next(iter(identities.items()))
-    quoted = [f"'{n}'" for n in names]
-    joined = (" and ".join(quoted) if len(quoted) == 2
-              else ", ".join(quoted[:-1]) + " and " + quoted[-1])
-    quantifier = "both" if len(quoted) == 2 else "all"
-    if kind == "local" and model == study_model:
-        what = "the study model at temperature 0"
-    elif provider:
-        what = f"the {kind} judge '{model}' via '{provider}'"
-    else:
-        what = f"the {kind} judge '{model}'"
-    return (f"judges {joined} {quantifier} resolve to the same deterministic "
-            f"judge ({what}) — they would agree perfectly by construction; "
-            "use judges with different models, kinds, or providers")
+from .manifest_declaration_policy import judge_panel_indistinct_problem
 
 
-def _pipeline_stage_list(d: dict) -> list[str]:
-    """The declared pipeline's stage list, or [] when no pipeline is
-    declared or the block is malformed (malformed blocks have their own
-    verify violations)."""
-    block = d.get("pipeline")
-    if not isinstance(block, dict):
-        return []
-    try:
-        from .pipeline_spec import resolve_pipeline
-        return list(resolve_pipeline(block).stages)
-    except Exception:  # noqa: BLE001 - malformed pipeline refuses elsewhere
-        return []
+from .manifest_declaration_policy import _pipeline_stage_list
 
 
 #: Canonical dtype names a judge may pin, and the aliases that resolve to
@@ -4206,441 +3559,60 @@ def _pipeline_stage_list(d: dict) -> list[str]:
 #: firewall must not import torch to validate a manifest. A test asserts the
 #: two agree, and the Swift twin (`ExperimentStore.judgeDtypeVocabulary`)
 #: carries the same set.
-JUDGE_DTYPE_VOCABULARY = ("bfloat16", "float16", "float32")
-_JUDGE_DTYPE_ALIASES = {
-    "bfloat16": "bfloat16", "bf16": "bfloat16",
-    "float16": "float16", "fp16": "float16",
-    "float32": "float32", "fp32": "float32",
-}
+from .manifest_declaration_policy import JUDGE_DTYPE_VOCABULARY
+from .manifest_declaration_policy import _JUDGE_DTYPE_ALIASES
 
 
-def normalize_judge_dtype(value: str | None) -> str | None:
-    """Canonical spelling of a judge dtype alias, or None if unrecognized."""
-    return _JUDGE_DTYPE_ALIASES.get((value or "").strip().lower())
+from .manifest_declaration_policy import normalize_judge_dtype
 
 
-def _is_commit_like(revision: str) -> bool:
-    """Whether a revision names FIXED bytes rather than a moving ref.
-
-    Hexadecimal — the shape of a git commit hash, full or abbreviated.
-    Branch names (`main`, `master`), `HEAD`, `refs/...` paths, and
-    conventional tags (`v1.0`, `latest`) all fail it, which is the point: a
-    branch is re-pointed by definition, and a tag can be moved, so neither
-    identifies the bytes a run used (external review round 5, finding 4).
-
-    Honest residual: a tag whose name happens to be hexadecimal would pass.
-    No format check can distinguish that from a short hash — only asking the
-    hub could — and it is not a shape anyone tags in practice.
-    """
-    stripped = revision.strip()
-    if not stripped:
-        return False
-    try:
-        int(stripped, 16)
-    except ValueError:
-        return False
-    return True
+from .manifest_declaration_policy import _is_commit_like
 
 
-def symbolic_revision_problem(d: dict) -> str | None:
-    """Revision pins that name a moving ref instead of a commit.
-
-    Applies to the STUDY revision and to every local judge's. `"main"`
-    passed the old gate — it only required non-emptiness — and the loader
-    then recorded the symbolic name it was handed rather than the commit it
-    resolved to, so two runs a week apart could record the same "pin" and
-    have run different weights.
-
-    Cross-engine wording (Swift twin:
-    `ExperimentStore.symbolicRevisionProblem`).
-    """
-    offenders: list[str] = []
-    study = str(d.get("modelRevision") or "").strip()
-    if study and not _is_commit_like(study):
-        offenders.append(f"the study model pins '{study}'")
-    for judge in (d.get("judges") or []):
-        if not (isinstance(judge, dict) and judge.get("name")):
-            continue
-        if (str(judge.get("kind") or "openrouter").strip() or "openrouter") != "local":
-            continue
-        revision = str(judge.get("revision") or "").strip()
-        if revision and not _is_commit_like(revision):
-            offenders.append(f"judge '{judge['name']}' pins '{revision}'")
-    if not offenders:
-        return None
-    return ("revision pin(s) name a moving reference rather than a commit: "
-            + "; ".join(offenders)
-            + ". A branch or tag is re-pointed by definition, so it cannot "
-            "identify the weights a run used — two runs a week apart would "
-            "record the same pin having loaded different bytes. Use the "
-            "commit hash (the app's Resolve button reads it from whichever "
-            "substrate will run the model)")
+from .manifest_declaration_policy import symbolic_revision_problem
 
 
-def study_model_judge_pin_conflict(d: dict) -> str | None:
-    """A study-model local judge declaring pins that differ from the study's.
-
-    Scoped to studies declaring a **judgeScore sweep** (external review
-    round 5, finding 1). There, such a judge has no independent identity:
-    the sweep judges with the already-HELD study model rather than loading
-    anything, so a divergent `revision`/`dtype` is silently ignored while
-    remaining in the criterion provenance.
-
-    Deliberately NOT a blanket rule. `evaluate` genuinely LOADS a declared
-    judge revision, so judging with a different checkpoint of the study repo
-    is a legitimate design there — `_pin_local_judge_revisions` has always
-    preserved a declared revision for exactly that reason. The defect is the
-    SWEEP path silently ignoring what evaluate honors: one manifest, two
-    identities, depending on the verb.
-
-    Forbidding divergence is preferred over verify-and-stamp: it is
-    checkable while authoring, rather than producing an artifact merely
-    honest about having judged with something else. Pins that AGREE with the
-    study stay legal — redundant, not wrong.
-
-    Cross-engine wording (Swift twin:
-    `ExperimentStore.studyModelJudgePinConflict`).
-    """
-    selection = (d.get("sweep") or {}).get("selection") \
-        if isinstance(d.get("sweep"), dict) else None
-    objective = (selection or {}).get("objective") \
-        if isinstance(selection, dict) else None
-    if ((objective or {}).get("metric")
-            if isinstance(objective, dict) else None) != "judgeScore":
-        return None
-    study_model = str(d.get("modelID") or "")
-    study_revision = str(d.get("modelRevision") or "").strip()
-    study_dtype = str(d.get("dtype") or "").strip()
-    offenders: list[str] = []
-    for judge in (d.get("judges") or []):
-        if not (isinstance(judge, dict) and judge.get("name")):
-            continue
-        if (str(judge.get("kind") or "openrouter").strip() or "openrouter") != "local":
-            continue
-        declared = str(judge.get("model") or "").strip()
-        # Blank model AND explicit study model both resolve to the study
-        # model (`sweep_selection.resolve_local_judge_model`).
-        if declared and declared != study_model:
-            continue
-        revision = str(judge.get("revision") or "").strip()
-        if revision and revision != study_revision:
-            offenders.append(
-                f"'{judge['name']}' pins revision '{revision}' but the study "
-                + (f"is pinned at '{study_revision}'" if study_revision
-                   else "has no revision pinned"))
-        dtype = str(judge.get("dtype") or "").strip()
-        if dtype and normalize_judge_dtype(dtype) != \
-                normalize_judge_dtype(study_dtype):
-            offenders.append(
-                f"'{judge['name']}' pins dtype '{dtype}' but the study "
-                + (f"is pinned at '{study_dtype}'" if study_dtype
-                   else "pins none (the device decides)"))
-    if not offenders:
-        return None
-    return ("this study selects on judgeScore, and local judge(s) resolving "
-            "to the STUDY model cannot pin a different identity: " + "; ".join(offenders)
-            + ". Such a judge IS the study model — a sweep judges with the "
-            "already-held weights and never loads anything else, so the "
-            "divergent pin would be silently ignored. Drop the pin to "
-            "inherit the study's, or name a different model to make it a "
-            "genuinely separate judge")
+from .manifest_declaration_policy import study_model_judge_pin_conflict
 
 
-def unloadable_study_dtype_problem(d: dict) -> str | None:
-    """A study-level `dtype` outside the closed vocabulary.
-
-    The Mac is the AUTHORING surface and the cluster is the measurement one,
-    so this is validated here even though only the server consumes the key —
-    a manifest must not reach the cluster carrying a dtype that refuses at load
-    after a queue wait. Cross-engine wording (Swift twin:
-    `ExperimentStore.unloadableStudyDtypeProblem`).
-    """
-    spelled = str(d.get("dtype") or "").strip()
-    if not spelled or normalize_judge_dtype(spelled) is not None:
-        return None
-    return (f"study dtype '{spelled}' is not one this engine can load — the "
-            "loader accepts only " + ", ".join(JUDGE_DTYPE_VOCABULARY)
-            + " (aliases bf16/fp16/fp32). Leave it unset to let the device "
-            "decide, which is what every study did before this pin existed")
+from .manifest_declaration_policy import unloadable_study_dtype_problem
 
 
-def unpinned_foreign_local_judge_problem(d: dict) -> str | None:
-    """Foreign local judges whose model bytes are not pinned.
-
-    A local judge resolving to the STUDY model inherits the study's pinned
-    revision, so "the same judge" across two sessions is a fact. A local
-    judge naming a DIFFERENT model has no such pin to inherit — and freeze
-    deliberately leaves its revision blank (`_pin_local_judge_revisions`).
-    That was tolerable while a judgment artifact merely RECORDED what
-    loaded, but targeted retry compares recorded identities to decide
-    whether verdicts from an earlier session may be REUSED: two sessions
-    can each load a different default revision while both records say
-    ``null``, and null == null passes (external review round 2, finding 3).
-
-    Requiring the pin is the cheaper of the two fixes and matches the
-    pin-everything discipline everywhere else. `dtype` is required with it
-    on this engine because the loader takes one and a bf16-vs-fp16 judge is
-    a different judge.
-
-    Returns the plain-language problem, or None when every foreign local
-    judge is pinned. Cross-engine wording.
-    """
-    study_model = str(d.get("modelID") or "")
-    offenders: list[str] = []
-    unknown: list[str] = []
-    for judge in (d.get("judges") or []):
-        if not (isinstance(judge, dict) and judge.get("name")):
-            continue
-        if (str(judge.get("kind") or "openrouter").strip() or "openrouter") != "local":
-            continue
-        # A dtype OUTSIDE the closed vocabulary is checked for every local
-        # judge, pinned or not: the loader refuses it at run time, and
-        # discovering that on a compute node after a queue wait is exactly
-        # the failure this firewall exists to move forward in time
-        # (external review round 4, finding 2).
-        spelled = str(judge.get("dtype") or "").strip()
-        if spelled and normalize_judge_dtype(spelled) is None:
-            unknown.append(f"'{judge['name']}' declares dtype '{spelled}'")
-        declared = str(judge.get("model") or "").strip()
-        if not declared or declared == study_model:
-            continue
-        missing = [field for field in ("revision", "dtype")
-                   if not str(judge.get(field) or "").strip()]
-        if missing:
-            offenders.append(
-                f"'{judge['name']}' (model '{declared}') is missing "
-                + " and ".join(missing))
-    if unknown:
-        return ("local judge(s) declare a dtype this engine cannot load: "
-                + "; ".join(unknown) + ". The loader accepts only "
-                + ", ".join(JUDGE_DTYPE_VOCABULARY)
-                + " (aliases bf16/fp16/fp32). An unrecognized value used to "
-                "load float32 silently, so the pin would be a false claim")
-    if not offenders:
-        return None
-    return ("local judge(s) naming a model other than the study model must "
-            "pin the exact bytes that will judge: " + "; ".join(offenders)
-            + ". Without a revision pin two judging sessions can load "
-            "different defaults while both records say 'none', so a "
-            "resumed evaluation cannot prove its reused verdicts came from "
-            "the same judge. Pin judges[].revision and judges[].dtype, or "
-            "use the study model as judge")
+from .manifest_declaration_policy import unpinned_foreign_local_judge_problem
 
 
-def _foreign_local_judges(d: dict) -> list[str]:
-    """Local judges whose declared model differs from the study model,
-    rendered ``'name' (model 'id')``."""
-    study_model = str(d.get("modelID") or "")
-    offenders: list[str] = []
-    for judge in (d.get("judges") or []):
-        if not (isinstance(judge, dict) and judge.get("name")):
-            continue
-        if (str(judge.get("kind") or "claude").strip() or "claude") != "local":
-            continue
-        declared = str(judge.get("model") or "").strip()
-        if declared and declared != study_model:
-            offenders.append(f"'{judge['name']}' (model '{declared}')")
-    return offenders
+from .manifest_declaration_policy import _foreign_local_judges
 
 
-def local_judge_pipeline_problem(d: dict) -> str | None:
-    """Finding 1 gate, fan-out era (2026-07-23): a judged SWEEP inside the
-    chain still cannot use a local judge whose model differs from the study
-    model — sweep judging is interleaved with the selection, not a
-    separable post-stage, so no fan-out exists for it. The EVALUATE stage
-    no longer refuses (it routes to the post-generation judge fan-out —
-    see :func:`local_judge_fanout_note`). Returns the sweep problem text,
-    or None."""
-    stages = _pipeline_stage_list(d)
-    if "sweep" not in stages:
-        return None
-    selection = (d.get("sweep") or {}).get("selection") \
-        if isinstance(d.get("sweep"), dict) else None
-    objective = (selection or {}).get("objective") \
-        if isinstance(selection, dict) else None
-    metric = (objective or {}).get("metric") \
-        if isinstance(objective, dict) else None
-    if metric != "judgeScore":
-        return None
-    offenders = _foreign_local_judges(d)
-    if not offenders:
-        return None
-    study_model = str(d.get("modelID") or "")
-    return ("the declared pipeline's sweep stage holds ONE model — the "
-            f"study model '{study_model}' — but local judge(s) "
-            + ", ".join(offenders) + " resolve to a different model, which "
-            "cannot load inside the chain (the judge fan-out covers the "
-            "evaluate stage only). Leave a local judge's model empty to "
-            "judge with the study model, pin claude/openrouter judges, or "
-            "select on logprobShift")
+from .manifest_declaration_policy import local_judge_pipeline_problem
 
 
-def local_judge_fanout_note(d: dict) -> str | None:
-    """Routing information (never a gate, 2026-07-23): a declared pipeline
-    whose EVALUATE stage pins local judges resolving to models other than
-    the study model will judge them as a post-generation fan-out — the
-    chain emits blinded packets, one worker job per distinct judge model
-    judges them, and the merge resumes the chain. Available on Slurm
-    run-first pipeline submissions; elsewhere the packets await deferred
-    (Mac) judging. Returns the note, or None."""
-    stages = _pipeline_stage_list(d)
-    if "evaluate" not in stages:
-        return None
-    offenders = _foreign_local_judges(d)
-    if not offenders:
-        return None
-    return ("the pipeline's evaluate stage will judge local judge(s) "
-            + ", ".join(offenders) + " as a post-generation judge fan-out "
-            "(one worker job per distinct judge model; available on Slurm "
-            "run-first pipeline submissions — elsewhere the emitted packets "
-            "await deferred judging)")
+from .manifest_declaration_policy import local_judge_fanout_note
 
 
-def _pin_local_judge_revisions(d: dict) -> None:
-    """Freeze-time pin for LOCAL judge revisions (cross-engine contract key
-    ``judges[].revision``, 2026-07-23, omit-when-nil): a local judge that
-    resolves to the STUDY model inherits the study's pinned revision when
-    its own is blank — the judging path then loads exactly the pinned
-    bytes. A local judge declaring a DIFFERENT model keeps its blank
-    revision (there is no study pin to inherit; the judgment artifact
-    stamps what actually loaded). Never overwrites a declared revision."""
-    study_revision = d.get("modelRevision")
-    if not study_revision:
-        return
-    study_model = str(d.get("modelID") or "")
-    for judge in (d.get("judges") or []):
-        if not isinstance(judge, dict):
-            continue
-        if (str(judge.get("kind") or "claude").strip() or "claude") != "local":
-            continue
-        if judge.get("revision"):
-            continue
-        declared = str(judge.get("model") or "").strip()
-        if not declared or declared == study_model:
-            judge["revision"] = study_revision
+from .manifest_declaration_policy import _pin_local_judge_revisions
 
 
 #: The single-coder advisory sentence — LOUD, never blocking. Swift twin:
 #: ``ExperimentStore.singleJudgePanelAdvisoryText``.
-SINGLE_JUDGE_PANEL_ADVISORY = (
-    "single-coder design: this study pins 1 judge, so no inter-rater "
-    "agreement statistics (percent agreement, Cohen's kappa) will exist for "
-    "its codings — the coding report records fieldAgreement as absent with "
-    "that reason rather than empty")
+from .manifest_declaration_policy import SINGLE_JUDGE_PANEL_ADVISORY
 
 
-def _no_judge_declared_reason(name: str) -> str:
-    """The ``judgeValidity`` refusal for a judged study with NO judge — the
-    state the panel-size rule actually protects against. Swift twin:
-    ``ExperimentStore.noJudgeDeclaredReason``; the sentence is the
-    contract."""
-    return ("judge-evaluated study pins no judge — a judged instrument with "
-            "no judge codes nothing; pin a panel: 'steerlab-cli experiment "
-            f"pin-rubric {name} <rubric> --judges <name>:<kind>[,…]'. Or "
-            "freeze --force")
+from .manifest_declaration_policy import _no_judge_declared_reason
 
 
-def single_judge_panel_advisory(d: dict) -> str | None:
-    """The consequence of a one-judge panel, stated rather than forbidden.
-
-    A one-judge panel used to be refused at freeze (``judgeValidity``
-    required >= 2 so the report could carry agreement statistics). The
-    maintainer's ruling is that a researcher may declare any number of
-    judges including exactly one, so freeze accepts it and this says what it
-    costs. None for a panel of two or more, and for a study that is not
-    judged at all. Swift twin:
-    ``ExperimentStore.singleJudgePanelAdvisory``."""
-    judges = [j for j in (d.get("judges") or [])
-              if isinstance(j, dict) and j.get("name")]
-    evaluation = d.get("evaluation") or {}
-    if evaluation.get("kind") != "pairedJudge" and not judges:
-        return None
-    return SINGLE_JUDGE_PANEL_ADVISORY if len(judges) == 1 else None
+from .manifest_declaration_policy import single_judge_panel_advisory
 
 
-def _check_judged_evaluation(name: str, d: dict) -> None:
-    """Judged studies need a versioned criterion and a real panel (evidence
-    tier): a pairedJudge evaluation must pin its rubric as a hashed FILE
-    (prompts/rubrics/) and declare at least ONE judge; a panel of two or
-    more must have DISTINCT resolved identities, or inter-judge agreement —
-    the check that the criterion measures anything — is trivially perfect.
-    A one-judge panel freezes cleanly and carries
-    ``single_judge_panel_advisory`` instead (maintainer ruling, 2026-08-28).
-    ``freeze --force`` skips this loudly, like the other evidence gates."""
-    evaluation = d.get("evaluation") or {}
-    # Judge-evaluated = a pairedJudge evaluation OR an explicit judges panel
-    # (Swift's rule exactly — declaring judges intends judged evaluation, and
-    # the two engines' gates must agree or a manifest freezes on one engine
-    # and not the other).
-    if evaluation.get("kind") != "pairedJudge" and not d.get("judges"):
-        return
-    if not (d.get("judgeRubricFile") and d.get("judgeRubricHash")):
-        raise ExperimentStoreError(
-            f"cannot freeze '{name}': evaluation uses pairedJudge but no judge "
-            "rubric is pinned — set judgeRubricFile + judgeRubricHash "
-            "(rubrics live in prompts/rubrics/), or freeze --force")
-    judges = [j for j in (d.get("judges") or [])
-              if isinstance(j, dict) and j.get("name")]
-    # ONE judge is a legal design (maintainer ruling, 2026-08-28): a
-    # single-coder study is a real methodology, and the gate's job is to
-    # refuse the INVALID state — a judged instrument with no judge — not to
-    # legislate the panel size. What the >= 2 rule protected (inter-rater
-    # agreement) survives as the non-blocking
-    # ``single_judge_panel_advisory``. Swift twin:
-    # ``checkJudgeEvaluationValidity`` / ``noJudgeDeclaredReason``.
-    if not judges:
-        raise ExperimentStoreError(
-            f"cannot freeze '{name}': " + _no_judge_declared_reason(name))
-    indistinct = judge_panel_indistinct_problem(d)
-    if indistinct:
-        raise ExperimentStoreError(f"cannot freeze '{name}': {indistinct}")
-    pipeline_problem = local_judge_pipeline_problem(d)
-    if pipeline_problem:
-        raise ExperimentStoreError(f"cannot freeze '{name}': {pipeline_problem}")
-    unpinned = unpinned_foreign_local_judge_problem(d)
-    if unpinned:
-        raise ExperimentStoreError(f"cannot freeze '{name}': {unpinned}")
-    study_model_conflict = study_model_judge_pin_conflict(d)
-    if study_model_conflict:
-        raise ExperimentStoreError(
-            f"cannot freeze '{name}': {study_model_conflict}")
+from .manifest_declaration_policy import _check_judged_evaluation
 
 
 def _check_battery_evidence(name: str, d: dict, evidence: dict | None,
                             root: str | None) -> None:
-    """Variant freeze gate, evidence half: the scope-matched validate evidence
-    must contain capability-battery results for the baseline and EVERY variant
-    condition, produced from the battery the manifest pins (or the live
-    default battery when unpinned). Hash pins alone say the artifact bytes are
-    stable; this says the variant still answers concept-unrelated probes."""
     from . import battery as battery_mod
-    results = {r.get("condition"): r
-               for r in (evidence or {}).get("batteryResults") or []
-               if isinstance(r, dict)}
-    # Forward-referenced conditions (stage 4) are exempt: their agent does
-    # not exist at validate time, so their battery evidence is produced by
-    # the RUN's per-condition battery, not by freeze-time validation.
-    required = ["baseline"] + [
-        vc.get("name", "?") for vc in d.get("variantConditions") or []
-        if not isinstance(vc.get("fromPromotion"), dict)]
-    missing = [c for c in required
-               if c not in results or results[c].get("accuracy") is None]
-    if missing:
-        raise ExperimentStoreError(
-            f"cannot freeze '{name}': validate evidence has no capability-"
-            f"battery results for condition(s) {', '.join(missing)} — run "
-            f"'experiment validate {name}' (each variant condition runs the "
-            "pinned battery), or freeze --force")
     expected = d.get("capabilityBatteryHash") or battery_mod.live_hash(
         battery_mod.DEFAULT_BATTERY_FILE, root)
-    if expected:
-        drifted = sorted(c for c in required
-                         if results[c].get("batteryHash") != expected)
-        if drifted:
-            raise ExperimentStoreError(
-                f"cannot freeze '{name}': capability battery drifted since "
-                f"validation for condition(s) {', '.join(drifted)} — "
-                f"re-run 'experiment validate {name}', or freeze --force")
+    freeze_policy.check_battery_evidence(name, d, evidence, expected_hash=expected)
 
 
 def _slugify(name: str) -> str:

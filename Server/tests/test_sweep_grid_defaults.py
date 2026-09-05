@@ -9,6 +9,10 @@ count at sweep time with the same truncating/clamp/dedup/sort rule as Swift's
 never touched by a default recalibration.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import csv
 import os
 
@@ -56,9 +60,9 @@ def test_spec_without_grid_falls_back_to_defaults(tmp_path, monkeypatch):
                   "maxTokens": 16}
     es.save_raw(d, root)
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, manifest, root: {"fear": harness._fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", harness._fake_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', harness._fake_generate())
 
     run_dir = tasks.sweep("swdef", root, model_provider=harness._fake_model,
                           log=lambda *_: None)
@@ -89,9 +93,9 @@ def test_explicit_grid_overrides_defaults(tmp_path, monkeypatch):
     d["sweep"]["alphas"] = [0.04, 0.12]
     es.save_raw(d, root)
     monkeypatch.setattr(
-        tasks, "_extract_all",
+        _owner_vector_materialization, '_extract_all',
         lambda model, manifest, root: {"fear": harness._fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", harness._fake_generate())
+    monkeypatch.setattr(_owner_generate, 'generate', harness._fake_generate())
 
     run_dir = tasks.sweep("swexp", root, model_provider=harness._fake_model,
                           log=lambda *_: None)

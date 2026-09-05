@@ -15,6 +15,9 @@ Two claims, and they pull in opposite directions on purpose:
 Swift twin: ``Tests/ExperimentKitTests/DeprecatedCaseFamilySelectionTests.swift``.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+
+
 import hashlib
 import json
 import os
@@ -109,7 +112,7 @@ def test_the_trigger_still_selects_the_built_in_duration_endpoint(
         tmp_path, monkeypatch):
     root = str(tmp_path)
     prompts = _study(root, "legacy", case_family="sentencing")
-    monkeypatch.setattr(tasks, "generate",
+    monkeypatch.setattr(_owner_generate, 'generate',
                         _fake_generate("I impose 8 years and 3 months."))
     run_dir = tasks.run("legacy", prompts, root, model_provider=_fake_model,
                         log=lambda *_: None)
@@ -120,7 +123,7 @@ def test_the_trigger_still_selects_the_built_in_duration_endpoint(
 def test_any_other_label_selects_nothing(tmp_path, monkeypatch):
     root = str(tmp_path)
     prompts = _study(root, "other", case_family="katzZamir")
-    monkeypatch.setattr(tasks, "generate",
+    monkeypatch.setattr(_owner_generate, 'generate',
                         _fake_generate("I impose 8 years and 3 months."))
     run_dir = tasks.run("other", prompts, root, model_provider=_fake_model,
                         log=lambda *_: None)
@@ -187,7 +190,7 @@ def test_the_advisory_sentence_names_the_trigger_and_the_replacement():
 def test_run_start_logs_and_stamps_the_advisory(tmp_path, monkeypatch):
     root = str(tmp_path)
     prompts = _study(root, "legacy", case_family="sentencing")
-    monkeypatch.setattr(tasks, "generate", _fake_generate("18 months."))
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate("18 months."))
     lines = []
     run_dir = tasks.run("legacy", prompts, root, model_provider=_fake_model,
                         log=lines.append)
@@ -203,7 +206,7 @@ def test_a_declared_parser_produces_no_advisory_anywhere(tmp_path, monkeypatch):
     _install_registry(root)
     prompts = _study(root, "declared", case_family="sentencing",
                      numeric_parser="sentencing-months")
-    monkeypatch.setattr(tasks, "generate", _fake_generate("18 months."))
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate("18 months."))
     lines = []
     run_dir = tasks.run("declared", prompts, root, model_provider=_fake_model,
                         log=lines.append)
@@ -216,7 +219,7 @@ def test_a_declared_parser_produces_no_advisory_anywhere(tmp_path, monkeypatch):
 def test_no_case_family_produces_no_advisory(tmp_path, monkeypatch):
     root = str(tmp_path)
     prompts = _study(root, "plain")
-    monkeypatch.setattr(tasks, "generate", _fake_generate("18 months."))
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate("18 months."))
     lines = []
     run_dir = tasks.run("plain", prompts, root, model_provider=_fake_model,
                         log=lines.append)
@@ -230,7 +233,7 @@ def test_analyze_advises_when_the_trigger_picks_the_rescue_grammar(
     deprecated trigger."""
     root = str(tmp_path)
     prompts = _study(root, "legacy", case_family="sentencing")
-    monkeypatch.setattr(tasks, "generate", _fake_generate("18 months."))
+    monkeypatch.setattr(_owner_generate, 'generate', _fake_generate("18 months."))
     tasks.run("legacy", prompts, root, model_provider=_fake_model,
               log=lambda *_: None)
     lines = []

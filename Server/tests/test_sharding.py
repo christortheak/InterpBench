@@ -25,6 +25,10 @@ tests genuinely exercise the per-record seeding (fork_rng + derived seed) —
 not just record ordering.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import json
 import os
 import shutil
@@ -229,9 +233,9 @@ def _seed_sensitive_generate(counter=None, arm_flag_at=None, flag=None):
 
 def _patch_study_fakes(monkeypatch, generate_fn):
     from steerlab_server.experiment import logprob as logprob_mod
-    monkeypatch.setattr(tasks, "_extract_all",
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all',
                         lambda model, manifest, root: {"fear": _fake_bundle()})
-    monkeypatch.setattr(tasks, "generate", generate_fn)
+    monkeypatch.setattr(_owner_generate, 'generate', generate_fn)
     monkeypatch.setattr(logprob_mod, "score_options",
                         lambda model, prompt, options, **kw: _FakeChoice(options))
 
@@ -366,7 +370,7 @@ def test_sharded_plan_covers_every_slot_condition_times_prompt(
     for k in range(3):
         _patch_study_fakes(monkeypatch, _seed_sensitive_generate())
         monkeypatch.setattr(
-            tasks, "_extract_all",
+            _owner_vector_materialization, '_extract_all',
             lambda model, manifest, root: {c: _fake_bundle()
                                            for c in ("fear", "calm")})
         directory = tasks.run(name, prompts_path, root,

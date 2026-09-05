@@ -21,6 +21,11 @@ Fixtures are deliberately neutral (``panel-a``, ``agent-a``, ``turn-a``): the
 only study vocabulary here is the engine's own condition literals.
 """
 
+import steerlab_server.experiment.execution_reporting as _owner_execution_reporting
+import steerlab_server.experiment.panel_workflow as _owner_panel_workflow
+import steerlab_server.experiment.run_artifacts as _owner_run_artifacts
+
+
 import json
 import os
 import shutil
@@ -62,10 +67,10 @@ def _workspace(tmp_path, monkeypatch, *, replicates=2):
         "temperature": 0.0, "seeds": [0]}
     (root / "experiments/panel-a.json").write_text(json.dumps(spec))
     monkeypatch.setattr(multi_agent, "generate", lambda *a, **k: "text")
-    monkeypatch.setattr(tasks, "_advise_cross_substrate", lambda *a, **k: None)
-    monkeypatch.setattr(tasks, "_advise_dependency_lock_drift",
+    monkeypatch.setattr(_owner_execution_reporting, '_advise_cross_substrate', lambda *a, **k: None)
+    monkeypatch.setattr(_owner_execution_reporting, '_advise_dependency_lock_drift',
                         lambda *a, **k: None)
-    monkeypatch.setattr(tasks, "_write_config_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(_owner_run_artifacts, '_write_config_snapshot', lambda *a, **k: None)
     return root, Manifest.from_dict(spec)
 
 
@@ -106,7 +111,7 @@ def test_a_condition_whose_tree_vanishes_is_named_in_a_loud_advisory(
             shutil.rmtree(sub)  # the silent skip, whatever produced it
         return records
 
-    monkeypatch.setattr(tasks, "_panel_records_from", flatten_then_erase)
+    monkeypatch.setattr(_owner_panel_workflow, '_panel_records_from', flatten_then_erase)
 
     lines = []
     run_directory = tasks._run_multi_agent_study(

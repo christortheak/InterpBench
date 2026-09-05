@@ -8,6 +8,9 @@ reader that sees only the run directory (the Results Explorer's bridge serves
 fix, and it is only evidence if the bytes are the pinned bytes.
 """
 
+import steerlab_server.experiment.execution_reporting as _owner_execution_reporting
+
+
 import hashlib
 import json
 import os
@@ -62,7 +65,7 @@ def _panel_workspace(tmp_path, monkeypatch, *, pinned_hash=None):
         spec["multiAgentScenarioHash"] = pinned_hash
     (root / "experiments/panel.json").write_text(json.dumps(spec))
     monkeypatch.setattr(multi_agent, "generate", lambda *a, **k: "out")
-    monkeypatch.setattr(tasks, "_advise_cross_substrate", lambda *a, **k: None)
+    monkeypatch.setattr(_owner_execution_reporting, '_advise_cross_substrate', lambda *a, **k: None)
     return root, Manifest.from_dict(spec), scenario_path
 
 

@@ -23,6 +23,9 @@ was refused. Contract under test here:
 Swift twin: Tests/ExperimentKitTests/PairedJudgeWrapperAndSalvageTests.swift.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+
+
 import json
 import sys
 from contextlib import contextmanager
@@ -258,7 +261,7 @@ def _capture_generate(monkeypatch, captured):
                  system_prompt=None, qwen_thinking_enabled=False):
         captured.append(max_tokens)
         return '{"winner": "A", "confidence": 0.9, "brief_reason": "r"}'
-    monkeypatch.setattr(tasks, "generate", generate)
+    monkeypatch.setattr(_owner_generate, 'generate', generate)
 
 
 def test_evaluate_local_judge_generates_with_the_unified_cap(monkeypatch):

@@ -13,6 +13,9 @@ data, and a typo'd declaration that silently parsed nothing would be
 indistinguishable from a panel that never answered.
 """
 
+import steerlab_server.experiment.execution_reporting as _owner_execution_reporting
+
+
 import csv
 import hashlib
 import json
@@ -235,7 +238,7 @@ def _panel_workspace(tmp_path, monkeypatch, *, declare=True, outputs=None):
         return text
 
     monkeypatch.setattr(multi_agent, "generate", _generate)
-    monkeypatch.setattr(tasks, "_advise_cross_substrate", lambda *a, **k: None)
+    monkeypatch.setattr(_owner_execution_reporting, '_advise_cross_substrate', lambda *a, **k: None)
     return root, Manifest.from_dict(spec)
 
 

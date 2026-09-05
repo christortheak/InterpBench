@@ -19,6 +19,9 @@ drift in either engine trips a test. Swift twin:
 ``Tests/ExperimentKitTests/ValidateConceptResolutionTests.swift``.
 """
 
+import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
+
+
 import hashlib
 import json
 import os
@@ -224,8 +227,8 @@ def test_the_loop_skips_a_source_concept_less_direction(tmp_path, monkeypatch):
     manifest = Manifest.load("skip-only", root)
     bundles = _fake_bundles("drifting-optvec")
 
-    monkeypatch.setattr(tasks, "_extract_all", lambda m, mf, r: bundles)
-    monkeypatch.setattr(tasks, "_persist_vectors", lambda *a, **k: None)
+    monkeypatch.setattr(_owner_vector_materialization, '_extract_all', lambda m, mf, r: bundles)
+    monkeypatch.setattr(_owner_vector_materialization, '_persist_vectors', lambda *a, **k: None)
     from steerlab_server.steering import extractor
     monkeypatch.setattr(
         extractor, "logit_lens",

@@ -17,6 +17,9 @@ Everything here uses fake providers and fake containers — no model is ever
 loaded.
 """
 
+import steerlab_server.experiment.generate as _owner_generate
+
+
 import hashlib
 import json
 import os
@@ -515,7 +518,7 @@ def _coding_generate(monkeypatch, residency, per_call):
         response = per_call[min(calls["n"], len(per_call) - 1)]
         calls["n"] += 1
         return response
-    monkeypatch.setattr(tasks, "generate", generate)
+    monkeypatch.setattr(_owner_generate, 'generate', generate)
 
 
 def test_two_local_judges_code_one_column_at_a_time_on_one_device(
@@ -592,7 +595,7 @@ def test_two_local_judges_pair_one_column_at_a_time_on_one_device(
                  system_prompt=None, qwen_thinking_enabled=False):
         residency.order.append(f"judge {model_id}")
         return VERDICT
-    monkeypatch.setattr(tasks, "generate", generate)
+    monkeypatch.setattr(_owner_generate, 'generate', generate)
 
     out = tasks.evaluate(
         "tj", root=root, model_provider=residency.provider,
