@@ -442,6 +442,387 @@ def test_the_null_is_deterministic_under_its_seed(tmp_path, monkeypatch):
             pytest.approx(vector["appliedNorm"])
 
 
+# ------------------------------------------------------------ multiple draws
+
+
+def test_null_draws_refuses_anything_that_is_not_a_count(tmp_path):
+    """A draw count is a number of forward passes, so a typo is refused rather
+    than rounded: 2.7 draws and "3" draws are not requests this verb can honor,
+    and coercing either would put unrequested compute on a cluster job."""
+    probe = _write_probe(tmp_path / "probe.jsonl").to_dict()
+    base = {"vectorArtifacts": ["runs/x/toy"], "lensID": LENS_ID,
+            "probeItems": probe}
+    assert OptVecJSpaceConfig.from_dict(base).null_draws == 1
+
+    for bad in (0, -1, 2.7, "3", True, None):
+        with pytest.raises(OptVecJSpaceConfigError) as exc:
+            OptVecJSpaceConfig.from_dict({**base, "nullDraws": bad})
+        assert "nullDraws" in str(exc.value)
+
+    config = OptVecJSpaceConfig.from_dict({**base, "nullDraws": 4})
+    assert config.null_draws == 4
+    assert config.to_dict()["nullDraws"] == 4
+
+
+def test_three_null_draws_stamp_three_seeds_and_carry_spread(tmp_path,
+                                                              monkeypatch):
+    """Three draws are three INDEPENDENT comparator passes: three distinct
+    seeds, three per-draw energies, a spread across them, and a count of how
+    many met or exceeded the observed energy — the rank statistic that is the
+    only thing k draws can support (NULL_INFERENCE_NOTE)."""
+    out = _run(tmp_path, monkeypatch, null_draws=3)
+    report, records = out["report"], out["records"]
+
+    null = report["vectors"][0]["null"]
+    assert null["drawCount"] == 3
+    seeds = [draw["seed"] for draw in null["draws"]]
+    assert [draw["draw"] for draw in null["draws"]] == [0, 1, 2]
+    assert len(set(seeds)) == 3
+    # Draw 0 keeps the historical seed; the others are strided off it.
+    assert seeds[0] == optvec_jspace.NULL_SEED == null["seed"]
+    assert seeds == [optvec_jspace.NULL_SEED + k * optvec_jspace.NULL_DRAW_STRIDE
+                     for k in range(3)]
+    assert report["null"]["drawCount"] == 3
+
+    entry = report["vectors"][0]["layers"][0]
+    assert entry["nullDrawCount"] == 3
+    for name in ("meanDeltaEnergy", "directEnergy", "meanEmergentEnergy"):
+        draws = entry[name + "NullDraws"]
+        assert len(draws) == 3
+        # Three different random directions, so three different energies.
+        assert len(set(draws)) == 3
+        assert entry[name + "Null"] == pytest.approx(sum(draws) / 3, rel=1e-12)
+        assert entry[name + "NullSD"] > 0.0
+        assert entry[name + "NullExceedanceCount"] == sum(
+            1 for value in draws if value >= entry[name])
+
+    # Per item: the mean over draws, with the draws beside it and no spread —
+    # a three-draw SD on one item would read as that item's error bar.
+    for record in records:
+        assert record["nullDrawCount"] == 3
+        assert record["nullSeeds"] == seeds
+        assert record["nullSeed"] == seeds[0]
+        assert len(record["deltaEnergyNullDraws"]) == 3
+        assert record["deltaEnergyNull"] == pytest.approx(
+            sum(record["deltaEnergyNullDraws"]) / 3, rel=1e-12)
+        assert "deltaEnergyNullSD" not in record
+
+    # Still a comparator, and the artifact says so in its own words.
+    assert report["null"]["inferenceNote"] == optvec_jspace.NULL_INFERENCE_NOTE
+    assert "1/(k+1)" in optvec_jspace.NULL_INFERENCE_NOTE
+    assert report["null"]["seedRule"] == optvec_jspace.NULL_DRAW_SEED_RULE
+    assert str(optvec_jspace.NULL_DRAW_STRIDE) in \
+        optvec_jspace.NULL_DRAW_SEED_RULE
+
+
+def _without_root(payload, root):
+    """The payload with one workspace root spelled ``ROOT``, so two runs in two
+    workspaces can be compared value by value."""
+    return json.loads(json.dumps(payload, sort_keys=True).replace(root, "ROOT"))
+
+
+def test_one_null_draw_reproduces_the_report_that_had_no_draws_option(
+        tmp_path, monkeypatch):
+    """The compatibility guarantee behind the seed derivation: asking for one
+    draw is the default, and the default is what this verb has always done. Not
+    "the same shape" — the same VALUES, key for key, including the null note,
+    which stays the sentence it was for a single-draw run because that sentence
+    is still true of it."""
+    default = _run(tmp_path / "a", monkeypatch)
+    explicit = _run(tmp_path / "b", monkeypatch, null_draws=1)
+
+    left = _without_root(default["report"], str(tmp_path / "a"))
+    right = _without_root(explicit["report"], str(tmp_path / "b"))
+    for report in (left, right):
+        # The run id is a timestamp; everything else must match.
+        report.pop("runID")
+    assert left == right
+    assert _without_root(default["records"], str(tmp_path / "a")) == \
+        _without_root(explicit["records"], str(tmp_path / "b"))
+
+    assert left["null"]["drawCount"] == 1
+    assert left["null"]["note"] == (
+        "one independent matched-norm random direction per artifact (seedBase "
+        "+ artifact ordinal), pushed through the identical pipeline; every "
+        "energy is reported only beside its null")
+    entry = left["vectors"][0]["layers"][0]
+    # One draw has no spread, and 0.0 would read as "measured, and it was zero".
+    assert entry["meanDeltaEnergyNullSD"] is None
+    assert entry["meanDeltaEnergyNullDraws"] == [entry["meanDeltaEnergyNull"]]
+
+
+# --------------------------------------------------------- energy partition
+
+
+def test_the_energy_partition_is_three_termed_and_stamped_verbatim(tmp_path,
+                                                                    monkeypatch):
+    """A squared norm is not additive over a sum, so directEnergy and
+    emergentEnergy do not add to deltaEnergy — the cross term is the difference
+    and is reported, precisely so ``directEnergy / deltaEnergy`` is not read as
+    the share of the effect the vector accounts for."""
+    assert optvec_jspace.ENERGY_PARTITION == (
+        "deltaEnergy = directEnergy + emergentEnergy + crossTerm, where "
+        "crossTerm = 2*<J_l(direct), J_l(emergent)> and may be NEGATIVE (so it "
+        "carries no null ratio). The three terms are an arithmetic partition "
+        "of one squared norm: directEnergy/deltaEnergy is NOT a causal share, "
+        "not a percentage of the effect, and not comparable across doses")
+
+    # Observed ABOVE the injection layer: at ℓ = L the emergent term is zero
+    # and the identity holds however the cross term is computed.
+    out = _run(tmp_path, monkeypatch, injection_layer=1)
+    report, records = out["report"], out["records"]
+    assert report["observationLayers"] == [1, 2]
+    assert report["instrument"]["energyPartition"] == \
+        optvec_jspace.ENERGY_PARTITION
+
+    material = 0
+    for vector in report["vectors"]:
+        for entry in vector["layers"]:
+            total = (entry["directEnergy"] + entry["meanEmergentEnergy"]
+                     + entry["meanDeltaEnergyCrossTerm"])
+            assert entry["meanDeltaEnergy"] == pytest.approx(total, rel=1e-6,
+                                                             abs=1e-9)
+            null_total = (entry["directEnergyNull"]
+                          + entry["meanEmergentEnergyNull"]
+                          + entry["meanDeltaEnergyCrossTermNull"])
+            assert entry["meanDeltaEnergyNull"] == pytest.approx(
+                null_total, rel=1e-6, abs=1e-9)
+            if abs(entry["meanDeltaEnergyCrossTerm"]) > 1e-3:
+                material += 1
+    # Not vacuous: at least one layer's cross term is far from zero, so the
+    # identity is testing an addend rather than confirming that 0 == 0.
+    assert material >= 1
+    material_rows = 0
+    for record in records:
+        total = (record["directEnergy"] + record["emergentEnergy"]
+                 + record["deltaEnergyCrossTerm"])
+        assert record["deltaEnergy"] == pytest.approx(total, rel=1e-6,
+                                                      abs=1e-9)
+        if abs(record["deltaEnergyCrossTerm"]) > 1e-3:
+            material_rows += 1
+    assert material_rows >= 1
+
+    # A cross term is signed, so it takes a null but never a ratio: a quotient
+    # of two quantities either side of zero compares nothing.
+    keys = _all_keys(report) | _all_keys(records)
+    assert "meanDeltaEnergyCrossTermNull" in keys
+    assert not [k for k in keys if k.endswith("CrossTermNullRatio")]
+    optvec_jspace.validate_energy_pairing(report)
+
+
+def test_the_cross_term_is_twice_the_inner_product_of_the_transported_terms(
+        tmp_path, monkeypatch):
+    """The reported cross term is computed as the residual of the partition;
+    this checks it against its closed form, ``2<J(direct), J(emergent)>``,
+    through the production readout with a DENSE Jacobian and at a layer where
+    the emergent term is not zero."""
+    from steerlab_server.jlens.readout import LensReadout, ReadoutConfig
+    from steerlab_server.steering import vector_math as vm
+
+    tmp = str(tmp_path)
+    monkeypatch.setenv("STEERLAB_ROOT", tmp)
+    generator = torch.Generator().manual_seed(17)
+    raw = torch.randn(HIDDEN, generator=generator)
+    direction = [float(x) for x in raw / raw.norm() * 6.0]
+    reference = write_optvec_artifact(os.path.join(tmp, "runs", "train"), "v0",
+                                      layer=1, direction=direction)
+    record, _ = _write_lens(tmp_path, source=_RandomLensSource(), root=tmp)
+    model = _tiny_steered_model()
+    readout = LensReadout.build(
+        record=record,
+        config=ReadoutConfig(layers=[1, 2], topK=3, topKLayers=[1, 2],
+                             logitLensCompanion=False),
+        model=model, root=tmp)
+    items = _probe_items(model, tmp_path)
+
+    norm = 6.0
+    dosed = torch.tensor(direction, dtype=torch.float32)
+    dosed = dosed * (norm / float(dosed.norm()))
+    null_direction = vm.random_vector(HIDDEN, norm, seed=3)
+    baseline, steered = _capture_pair(model, items, layers=[1, 2],
+                                      direction=direction, norm=norm, layer=1)
+    steered_null = optvec_jspace.capture_answer_residuals(
+        model, items, layers=[1, 2],
+        injector=optvec_jspace.injector_for(model, 1, null_direction, norm),
+        microbatch_size=2)
+
+    passes = optvec_jspace.VectorPass(
+        target=optvec_jspace._resolve_targets([reference])[0], direct=dosed,
+        null_direct=torch.tensor(null_direction, dtype=torch.float32),
+        null_seed=3, steered=steered, steered_null=steered_null)
+    aggregates, records, _ = optvec_jspace.decompose_vector(
+        readout, model.tokenizer, passes=passes, baseline=baseline,
+        items=items, layers=[1, 2], top_k=3)
+
+    direct_t = optvec_jspace._transport(readout, dosed, 2)
+    deep = [r for r in records if r["layer"] == 2]
+    assert len(deep) == len(items)
+    nonzero = 0
+    for record_row, item in zip(deep, items):
+        delta = steered[item.id][2] - baseline[item.id][2]
+        emergent_t = optvec_jspace._transport(readout, delta - dosed, 2)
+        closed_form = 2.0 * float(direct_t.dot(emergent_t))
+        assert record_row["deltaEnergyCrossTerm"] == pytest.approx(
+            closed_form, rel=1e-3, abs=1e-4)
+        if abs(closed_form) > 1e-3:
+            nonzero += 1
+    # Not vacuous: at ℓ > L the model has computed something, and the cross
+    # term of two aligned-but-not-parallel vectors is not zero.
+    assert nonzero == len(items)
+
+    entry = {a["layer"]: a for a in aggregates}[2]
+    assert entry["meanDeltaEnergy"] == pytest.approx(
+        entry["directEnergy"] + entry["meanEmergentEnergy"]
+        + entry["meanDeltaEnergyCrossTerm"], rel=1e-6)
+
+
+# -------------------------------------------------------- realized dose
+
+
+def test_dtype_epsilon_is_none_unless_the_dtype_is_a_known_float():
+    """An unrecognized dtype gets no epsilon rather than float32's: silently
+    reporting 1.2e-7 for a bf16 or quantized runtime would understate the noise
+    floor by three orders of magnitude."""
+    assert optvec_jspace.dtype_epsilon("float32") == \
+        pytest.approx(float(torch.finfo(torch.float32).eps))
+    assert optvec_jspace.dtype_epsilon("bfloat16") == \
+        pytest.approx(float(torch.finfo(torch.bfloat16).eps))
+    assert optvec_jspace.dtype_epsilon("bfloat16") > \
+        optvec_jspace.dtype_epsilon("float32")
+    for unknown in (None, "", "int8", "nf4", "auto"):
+        assert optvec_jspace.dtype_epsilon(unknown) is None
+
+
+def test_the_realized_dose_block_reports_the_noise_floor_at_the_injection_layer(
+        tmp_path, monkeypatch):
+    """Converting a capture to float32 does not recover precision the runtime
+    already discarded, so the nominal dose and the change the model actually
+    realized are reported side by side. On this fp32 fixture the gap is at the
+    fp32 floor — the point of the block is that the number is MEASURED, not
+    that it is small; a bf16 runtime is where it stops being."""
+    report = _run(tmp_path, monkeypatch)["report"]
+    vector = report["vectors"][0]
+    block = vector["realizedDose"]
+
+    assert block["layer"] == report["injectionLayer"]
+    assert block["captureDtype"] == "float32"
+    assert block["dtypeEpsilon"] == pytest.approx(
+        float(torch.finfo(torch.float32).eps))
+    assert block["nominalDirectNorm"] == pytest.approx(vector["appliedNorm"])
+    # At ℓ = L the delta IS the dosed vector, so the realized norm matches and
+    # the residue is realization noise.
+    assert block["meanRealizedDeltaNorm"] == pytest.approx(
+        block["nominalDirectNorm"], rel=1e-5)
+    assert 0.0 <= block["meanRealizationErrorNorm"] < 1e-4
+    assert block["realizationErrorToDoseRatio"] == pytest.approx(
+        block["meanRealizationErrorNorm"] / block["nominalDirectNorm"])
+    # The dose is only interpretable against the stream it is added to.
+    assert block["meanBaselineResidualNorm"] > 0.0
+    assert block["note"] == optvec_jspace.PRECISION_NOTE
+    assert report["instrument"]["precision"] == optvec_jspace.PRECISION_NOTE
+    assert optvec_jspace.PRECISION_NOTE == (
+        "residual rows are captured at the runtime dtype (captureDtype) and "
+        "cast to float32 inside the pass; the cast does not recover precision "
+        "the runtime dtype already discarded. meanRealizationErrorNorm is the "
+        "mean ||delta_L - direct|| AT THE INJECTION LAYER, where the delta is "
+        "the dosed vector by construction and any difference is realization "
+        "noise: it is the empirical noise floor for THIS dose and THIS dtype, "
+        "and a low-dose result must be read against it rather than against "
+        "zero")
+
+
+def test_the_injection_layer_is_captured_even_when_it_is_not_observed(
+        tmp_path, monkeypatch):
+    """The realized-dose block is only meaningful at L, so L is captured even
+    when the declared observation layers skip it — without adding a row to
+    observationLayers, which stays exactly what was asked for."""
+    tmp = str(tmp_path)
+    monkeypatch.setenv("STEERLAB_ROOT", tmp)
+    generator = torch.Generator().manual_seed(11)
+    raw = torch.randn(HIDDEN, generator=generator)
+    reference = write_optvec_artifact(
+        os.path.join(tmp, "runs", "train"), "v0", layer=1,
+        direction=[float(x) for x in raw / raw.norm() * 6.0])
+    _write_lens(tmp_path, source=_RandomLensSource(source_layers=(0, 1, 2)),
+                root=tmp)
+    config = _config(tmp_path, [reference], observation_layers=[2])
+    result = optvec_jspace.analyze(config, model=_tiny_steered_model(),
+                                   root=tmp)
+
+    assert result["observationLayers"] == [2]
+    assert [entry["layer"] for entry in result["vectors"][0]["layers"]] == [2]
+    block = result["vectors"][0]["realizedDose"]
+    assert block["layer"] == 1
+    assert block["meanRealizedDeltaNorm"] == pytest.approx(
+        block["nominalDirectNorm"], rel=1e-5)
+
+
+# ------------------------------------------------------- what the numbers are
+
+
+def test_the_quantities_block_is_stamped_verbatim(tmp_path, monkeypatch):
+    """The separation the review asked for, in the artifact rather than in a
+    reviewer's memory: what each table is, and what it is not."""
+    report = _run(tmp_path, monkeypatch)["report"]
+    assert report["quantities"] == optvec_jspace.QUANTITIES
+    assert optvec_jspace.QUANTITIES == {
+        "topKDelta": (
+            "the lens's NORMALIZED readout of the MEAN over items of the "
+            "(steered - baseline) residual at the answer position: a readout "
+            "of a DIFFERENCE vector. It is not the difference between the "
+            "normalized readouts of the two states (normalization does not "
+            "distribute over a subtraction), and it is not an observed change "
+            "in the model's logits"),
+        "topKEmergent": (
+            "the same normalized readout applied to the mean of (delta - "
+            "direct): a readout of a DIFFERENCE vector, not the difference "
+            "between two readouts, and not an observed change in the model's "
+            "logits"),
+        "cosineDeltaDirect": (
+            "cosine between J_l(delta) and J_l(direct) in the lens's output "
+            "basis -- an angle between two transported vectors, per item and "
+            "averaged over items; it says how aligned the propagated delta "
+            "stayed with the dosed vector, not how much of the delta the "
+            "vector caused"),
+        "energies": (optvec_jspace.ENERGY_DEFINITION + ". "
+                     + optvec_jspace.ENERGY_PARTITION),
+        "linearityResidualL2": (
+            "||J_l(delta) - [J_l(direct) + J_l(emergent)]||_2: an ARITHMETIC "
+            "identity check. J(x+y) = J(x) + J(y) holds for any linear map and "
+            "any split of the delta, so a low residual confirms the transport "
+            "was computed correctly and is NOT evidence that the lens explains "
+            "the model's behavior"),
+        "lens": (
+            "J_l is an AVERAGED JACOBIAN ESTIMATOR fitted on the lens's own "
+            "prompts; whether it transfers to this probe set's prompt "
+            "distribution at this dose is an empirical question, answered by "
+            "jlens qualify and by nothing in this report"),
+        "scope": (
+            "no field in this report measures the intervention's effect on "
+            "the model's OUTPUTS -- token probabilities, choices, or generated "
+            "text. That is a separate behavioral run; this verb reads residual "
+            "streams"),
+    }
+
+
+def test_the_producing_revision_is_stamped_in_the_report_and_the_notes(
+        tmp_path, monkeypatch):
+    """A future impact ledger has to classify this artifact by the code that
+    produced it, and the only place that can come from is the artifact."""
+    from steerlab_server import build_identity
+
+    out = _run(tmp_path, monkeypatch)
+    expected = {"version": build_identity.engine_version(),
+                "buildCommit": build_identity.build_commit()}
+    assert out["report"]["engine"] == expected
+    assert expected["version"].startswith("steerlab-server ")
+
+    notes = json.load(open(os.path.join(out["runDirectory"],
+                                        "config.json")))["notes"]
+    assert notes["engine"] == expected
+    assert notes["nullDraws"] == 1
+
+
 # ---------------------------------------------------------------- family mode
 
 
@@ -507,8 +888,15 @@ def test_artifacts_at_different_layers_refuse(tmp_path, monkeypatch):
 # ----------------------------------------------------------------- end to end
 
 
-def _run(tmp_path, monkeypatch, *, artifacts=1, **overrides):
-    """One full analyze() on the tiny model, in its own workspace root."""
+def _run(tmp_path, monkeypatch, *, artifacts=1, injection_layer=OPTVEC_LAYER,
+         **overrides):
+    """One full analyze() on the tiny model, in its own workspace root.
+
+    ``injection_layer`` exists so a test can ask for a run that OBSERVES above
+    the injection: at ℓ = L the emergent term is zero by construction and every
+    identity involving it is trivially satisfied, which is exactly the shape a
+    test must not settle for.
+    """
     root = str(tmp_path)
     os.makedirs(root, exist_ok=True)
     monkeypatch.setenv("STEERLAB_ROOT", root)
@@ -519,7 +907,7 @@ def _run(tmp_path, monkeypatch, *, artifacts=1, **overrides):
         direction = [float(x) for x in raw / raw.norm() * 6.0]
         references.append(write_optvec_artifact(
             os.path.join(root, "runs", f"train-{index}"), f"v{index}",
-            direction=direction))
+            layer=injection_layer, direction=direction))
     _write_lens(tmp_path, source=_RandomLensSource(), root=root)
     config = _config(tmp_path, references, **overrides)
     result = optvec_jspace.analyze(config, model=_tiny_steered_model(),

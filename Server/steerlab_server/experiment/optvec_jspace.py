@@ -42,6 +42,48 @@ its matched-norm-random sibling and their ratio, and
 :func:`validate_energy_pairing` refuses to write a report where any energy key
 lacks its null — the schema cannot express one without the other.
 
+**The partition is three-termed, not two** (:data:`ENERGY_PARTITION`). Energy
+is a squared norm and squared norms are not additive over a sum: for
+``d = J_ℓ(direct)`` and ``e = J_ℓ(emergent)``,
+``‖d+e‖² = ‖d‖² + ‖e‖² + 2⟨d,e⟩``. The cross term is reported (it can be
+negative, so it carries no ratio) precisely so nobody reads
+``directEnergy / deltaEnergy`` as "the fraction of the effect the vector
+itself accounts for". It is not a causal share of anything; it is one of three
+addends in an arithmetic identity.
+
+**One null draw is a comparator, not a test** (:data:`NULL_INFERENCE_NOTE`).
+``nullDraws`` buys *k* independent matched-norm directions per artifact, each
+with its own stamped seed and its own steered pass; the reported
+``…EnergyNull`` is their MEAN, beside the per-draw list, their SD, and the
+count of draws that met or exceeded the observed energy. With *k* draws the
+smallest one-sided exceedance fraction that can be resolved at all is
+``1/(k+1)``, and the count must be chosen before the results are looked at.
+Draw 0 keeps the historical seed, so a single-draw run reproduces every number
+an older run produced.
+
+What these numbers are and are not (:data:`QUANTITIES`)
+-------------------------------------------------------
+(The reader's version of this section is ``docs/OPTVEC-JSPACE.md``.)
+Three questions are separated on purpose and must not be run together. (1)
+ARITHMETIC FIDELITY — ``linearityResidualL2`` and the energy partition. These
+hold for ANY linear map and ANY split of the delta; a small residual says the
+bookkeeping is right and says nothing about whether the lens explains the
+model. (2) READOUT PREDICTIVENESS — the top-k tables and cosines, which are the
+lens's *normalized* readout of a DIFFERENCE vector, not the difference between
+the readouts of two states and not an observed logit change; ``J_ℓ`` is an
+averaged Jacobian estimator whose transfer to this prompt distribution at this
+dose is an empirical question this verb does not answer. (3) BEHAVIORAL /
+CAUSAL EVIDENCE — absent here entirely: no field in this report measures what
+the intervention did to the model's OUTPUTS. That is a separate behavioral run.
+
+Precision floor (:data:`PRECISION_NOTE`)
+----------------------------------------
+Rows are captured at the runtime dtype and cast to float32 inside the pass; the
+cast does not recover what bf16 already rounded away. So each vector reports,
+at the injection layer, the nominal dose against the realized change — the
+empirical noise floor for that dose and dtype, which is what a small-dose
+result has to be read against.
+
 Multiplicity: shallow vs deep (family mode)
 -------------------------------------------
 With ≥2 vectors at the same layer, the family is described twice per
@@ -106,6 +148,37 @@ NULL_SEED = 20260810
 #: (``tasks.RANDOM_VECTOR_ALGORITHM``); a test pins the two strings equal.
 NULL_ALGORITHM = "gaussian-isotropic-v1"
 
+#: Seed spacing between null DRAWS of the same artifact. Draw 0 keeps the
+#: historical ``nullSeed + artifact ordinal`` so every single-draw run
+#: reproduces exactly what it reproduced before this option existed; draw *k*
+#: adds ``k · NULL_DRAW_STRIDE``. The stride is far larger than any plausible
+#: artifact count, so draw *k* of artifact *i* can never collide with draw 0 of
+#: artifact *j* — two "independent" nulls that were the same direction would be
+#: the quietest possible way to fake a null distribution.
+NULL_DRAW_STRIDE = 1000003
+
+#: Verbatim in the artifact (a test pins it): how draw seeds are derived, so a
+#: reader can regenerate any draw from the report alone.
+NULL_DRAW_SEED_RULE = (
+    "draw k of artifact i uses seed nullSeed + i + k * "
+    f"{NULL_DRAW_STRIDE}; draw 0 is therefore nullSeed + i, the seed a "
+    "single-draw run has always used")
+
+#: Mandatory beside every null in this readout, verbatim (a test pins it).
+#:
+#: Added 2026-09-05 after an external review: the module reported ONE
+#: matched-norm random direction and readers were treating the resulting ratio
+#: as if it carried a p-value. It does not. Even at k draws this is a
+#: comparator with a coarse floor, and the floor is stated in the artifact
+#: rather than left to the reader's statistics.
+NULL_INFERENCE_NOTE = (
+    "the matched-norm random pass is a COMPARATOR, not a null distribution and "
+    "not a significance test: with k draws the smallest one-sided exceedance "
+    "fraction that can be resolved is 1/(k+1) (one draw resolves nothing finer "
+    "than 1/2), the draws share one pipeline and one probe set so they are not "
+    "independent replications of the experiment, and nullDraws must be chosen "
+    "BEFORE any result is inspected")
+
 #: Spacing of the default observation-layer ladder above the injection layer.
 DEFAULT_LAYER_STRIDE = 4
 
@@ -139,7 +212,72 @@ LAYER_RULE = (
 #: artifact because "energy" is otherwise ambiguous between ‖x‖ and ‖x‖².
 ENERGY_DEFINITION = "energy = ||J_l(x)||_2^2 (squared L2 of the transported vector)"
 
+#: Verbatim in the artifact (a test pins it). The whole reason the cross term
+#: is reported: a squared norm is not additive over a sum, so the two "shares"
+#: a reader wants to compute do not add to one, and their quotient is not a
+#: causal quantity in any case — nothing here measures what the intervention
+#: did to the model's outputs.
+ENERGY_PARTITION = (
+    "deltaEnergy = directEnergy + emergentEnergy + crossTerm, where crossTerm "
+    "= 2*<J_l(direct), J_l(emergent)> and may be NEGATIVE (so it carries no "
+    "null ratio). The three terms are an arithmetic partition of one squared "
+    "norm: directEnergy/deltaEnergy is NOT a causal share, not a percentage "
+    "of the effect, and not comparable across doses")
+
+#: Verbatim in the artifact (a test pins it). Added 2026-09-05 after an
+#: external review asked what a small-dose delta means when the residual it is
+#: measured in was rounded to bf16 before anyone subtracted anything.
+PRECISION_NOTE = (
+    "residual rows are captured at the runtime dtype (captureDtype) and cast "
+    "to float32 inside the pass; the cast does not recover precision the "
+    "runtime dtype already discarded. meanRealizationErrorNorm is the mean "
+    "||delta_L - direct|| AT THE INJECTION LAYER, where the delta is the dosed "
+    "vector by construction and any difference is realization noise: it is the "
+    "empirical noise floor for THIS dose and THIS dtype, and a low-dose result "
+    "must be read against it rather than against zero")
+
 OBSERVATION_CONVENTION = "postInterventionBlockOutput at the item's answer position"
+
+#: What each table in the report IS, verbatim (a test pins the whole dict).
+#:
+#: Written because the same three numbers were being read as three different
+#: kinds of claim. A readout of a difference vector is not a difference of
+#: readouts; an identity check of a linear map is not evidence about the model;
+#: and none of it is behavior. Each entry says what the field is AND what it is
+#: not, in the artifact, where a reader who never opens this module will see it.
+QUANTITIES = {
+    "topKDelta": (
+        "the lens's NORMALIZED readout of the MEAN over items of the "
+        "(steered - baseline) residual at the answer position: a readout of a "
+        "DIFFERENCE vector. It is not the difference between the normalized "
+        "readouts of the two states (normalization does not distribute over a "
+        "subtraction), and it is not an observed change in the model's logits"),
+    "topKEmergent": (
+        "the same normalized readout applied to the mean of (delta - direct): "
+        "a readout of a DIFFERENCE vector, not the difference between two "
+        "readouts, and not an observed change in the model's logits"),
+    "cosineDeltaDirect": (
+        "cosine between J_l(delta) and J_l(direct) in the lens's output basis "
+        "-- an angle between two transported vectors, per item and averaged "
+        "over items; it says how aligned the propagated delta stayed with the "
+        "dosed vector, not how much of the delta the vector caused"),
+    "energies": ENERGY_DEFINITION + ". " + ENERGY_PARTITION,
+    "linearityResidualL2": (
+        "||J_l(delta) - [J_l(direct) + J_l(emergent)]||_2: an ARITHMETIC "
+        "identity check. J(x+y) = J(x) + J(y) holds for any linear map and any "
+        "split of the delta, so a low residual confirms the transport was "
+        "computed correctly and is NOT evidence that the lens explains the "
+        "model's behavior"),
+    "lens": (
+        "J_l is an AVERAGED JACOBIAN ESTIMATOR fitted on the lens's own "
+        "prompts; whether it transfers to this probe set's prompt "
+        "distribution at this dose is an empirical question, answered by "
+        "jlens qualify and by nothing in this report"),
+    "scope": (
+        "no field in this report measures the intervention's effect on the "
+        "model's OUTPUTS -- token probabilities, choices, or generated text. "
+        "That is a separate behavioral run; this verb reads residual streams"),
+}
 
 
 class OptVecJSpaceConfigError(ValueError):
@@ -159,6 +297,7 @@ _CONFIG_KEYS = {
     "observationLayers": "observation_layers",
     "alphaMultiple": "alpha_multiple",
     "nullSeed": "null_seed",
+    "nullDraws": "null_draws",
     "seed": "seed",
     "topK": "top_k",
     "microbatchSize": "microbatch_size",
@@ -181,6 +320,12 @@ class OptVecJSpaceConfig:
     observation_layers: list[int] | None = None
     alpha_multiple: float = 1.0
     null_seed: int = NULL_SEED
+    #: How many independent matched-norm random directions each artifact is
+    #: compared against. Default 1 — the historical behaviour, byte-for-byte —
+    #: because raising it costs one more full steered pass per draw per
+    #: artifact, and because a number chosen after seeing the results is not
+    #: a null (see :data:`NULL_INFERENCE_NOTE`).
+    null_draws: int = 1
     seed: int = 0
     top_k: int = DEFAULT_TOP_K
     microbatch_size: int = 4
@@ -240,6 +385,20 @@ class OptVecJSpaceConfig:
                 "topK must be at least 1 — the token readout is what makes a "
                 "transported delta readable")
         self.null_seed = int(self.null_seed)
+        # NOT coerced with int(): 2.7 draws and "3" draws are typos, and
+        # silently rounding one of them would put an unrequested number of
+        # extra forward passes on a cluster job (and a draw count in the
+        # artifact that the config file does not say).
+        if isinstance(self.null_draws, bool) or not isinstance(self.null_draws,
+                                                               int):
+            raise OptVecJSpaceConfigError(
+                "'nullDraws' must be an integer — it is a count of independent "
+                "matched-norm random draws, one extra steered pass each")
+        if self.null_draws < 1:
+            raise OptVecJSpaceConfigError(
+                "'nullDraws' must be at least 1 — every energy in this readout "
+                "is reported beside its matched-norm-random comparator, and "
+                "there is no way to write one without it")
         self.seed = int(self.seed)
 
     @classmethod
@@ -607,16 +766,55 @@ def _mean_energy(values: list[float]) -> float:
     return float(sum(values) / len(values))
 
 
-def energy_block(name: str, value: float, null_value: float) -> dict:
+def _sample_sd(values: list[float]) -> float | None:
+    """Sample standard deviation (ddof=1), or ``None`` for fewer than two
+    values — a single draw has no spread, and 0.0 would read as "we measured
+    the spread and it was zero"."""
+    if len(values) < 2:
+        return None
+    mean = sum(values) / len(values)
+    variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
+    return float(variance ** 0.5)
+
+
+def energy_block(name: str, value: float, null_value: float,
+                 nulls: list[float] | None = None) -> dict:
     """One energy and its matched-norm-random sibling.
 
     ``null_value`` is a REQUIRED argument for the same reason
     ``jlens/decompose._layer_report`` requires ``nullEnergyFraction``: the
     schema must have no way to express an energy without its control.
+
+    ``nulls`` is the per-DRAW list behind that sibling (absent means the caller
+    is reporting a single comparator and nothing about spread — the shape every
+    block had before ``nullDraws`` existed). When present, ``null_value`` must
+    BE their mean: the summary and the draws it summarizes cannot be allowed to
+    disagree, so a mismatch refuses rather than being reconciled. The draws
+    bring their spread and their exceedance count with them —
+    ``…NullExceedanceCount`` counts draws whose null energy MET OR EXCEEDED the
+    observed one, and is a rank statistic with the resolution
+    :data:`NULL_INFERENCE_NOTE` states, not a p-value.
     """
-    return {f"{name}Energy": float(value),
-            f"{name}EnergyNull": float(null_value),
-            f"{name}EnergyNullRatio": _ratio(float(value), float(null_value))}
+    block = {f"{name}Energy": float(value),
+             f"{name}EnergyNull": float(null_value),
+             f"{name}EnergyNullRatio": _ratio(float(value), float(null_value))}
+    if nulls is None:
+        return block
+    draws = [float(x) for x in nulls]
+    if not draws:
+        raise OptVecJSpaceError(
+            f"'{name}Energy' was given an empty draw list — a null with no "
+            "draws is not a comparator")
+    mean = sum(draws) / len(draws)
+    if abs(mean - float(null_value)) > 1e-9 * max(1.0, abs(mean)):
+        raise OptVecJSpaceError(
+            f"'{name}EnergyNull' ({null_value}) is not the mean of its draws "
+            f"({mean}) — the reported null must be the mean over draws")
+    block[f"{name}EnergyNullDraws"] = draws
+    block[f"{name}EnergyNullSD"] = _sample_sd(draws)
+    block[f"{name}EnergyNullExceedanceCount"] = sum(
+        1 for draw in draws if draw >= float(value))
+    return block
 
 
 def validate_energy_pairing(payload) -> None:
@@ -676,9 +874,36 @@ def _topk_table(readout, tokenizer, vector: torch.Tensor, layer: int,
                                            [float(v) for v in values.cpu()])]
 
 
+@dataclass(frozen=True)
+class NullDraw:
+    """One seeded matched-norm random direction and the pass it produced.
+
+    A draw carries its own seed because a comparator whose seed is not in the
+    artifact cannot be redrawn by anyone checking the report — and with several
+    draws, "the null seed" stops being a single number.
+    """
+
+    draw: int
+    seed: int
+    direct: torch.Tensor                    # matched-norm random, dosed norm
+    steered: dict = field(default_factory=dict)
+
+    def identity(self) -> dict:
+        """The stamp that goes in the artifact (never the tensors)."""
+        return {"draw": self.draw, "seed": self.seed}
+
+
 @dataclass
 class VectorPass:
-    """One artifact's captured conditions plus the direct term it was dosed at."""
+    """One artifact's captured conditions plus the direct term it was dosed at.
+
+    ``nulls`` is the list of matched-norm random draws, in draw order.
+    ``null_direct`` / ``null_seed`` / ``steered_null`` are draw 0 under the
+    names they have always had — absent ``nulls`` means "one draw, described by
+    those three fields", which is exactly what every caller meant before
+    ``nullDraws`` existed. The two views are reconciled here rather than by
+    each reader, so they cannot disagree.
+    """
 
     target: OptVecTarget
     direct: torch.Tensor                    # α·v in residual space (float32 CPU)
@@ -686,6 +911,18 @@ class VectorPass:
     null_seed: int
     steered: dict = field(default_factory=dict)
     steered_null: dict = field(default_factory=dict)
+    nulls: list[NullDraw] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.nulls:
+            self.nulls = [NullDraw(draw=0, seed=self.null_seed,
+                                   direct=self.null_direct,
+                                   steered=self.steered_null)]
+            return
+        first = self.nulls[0]
+        self.null_direct = first.direct
+        self.null_seed = first.seed
+        self.steered_null = first.steered
 
 
 @torch.no_grad()
@@ -696,24 +933,45 @@ def decompose_vector(readout, tokenizer, *, passes: VectorPass,
 
     Returns ``(per-layer aggregates, per-item records, {layer: mean propagated
     delta})`` — the third is what the family tables cluster on.
+
+    Every energy is partitioned three ways (:data:`ENERGY_PARTITION`): the
+    cross term is carried explicitly so that ``directEnergy`` and
+    ``emergentEnergy`` are never mistaken for two halves that add to the whole.
+
+    Draw semantics. Each of ``passes.nulls`` is a full independent comparator
+    pass. Per-ITEM null values are the MEAN over draws for that item, with the
+    per-draw list beside them and no spread statistic: a two- or three-draw SD
+    on a single item invites reading it as that item's error bar, which it is
+    not. Per-LAYER aggregates carry the mean, the per-draw list (each entry the
+    draw's own mean over items), the sample SD across draws and the exceedance
+    count — the only level at which the draws are a comparison of like with
+    like.
     """
     aggregates: list[dict] = []
     records: list[dict] = []
     mean_propagated: dict[int, torch.Tensor] = {}
     alpha_absolute = float(passes.direct.norm())
+    draw_count = len(passes.nulls)
 
     for layer in layers:
         direct_t = _transport(readout, passes.direct, layer)
-        null_direct_t = _transport(readout, passes.null_direct, layer)
         direct_energy = energy(direct_t)
-        null_direct_energy = energy(null_direct_t)
+        null_direct_t = [_transport(readout, draw.direct, layer)
+                         for draw in passes.nulls]
+        null_direct_energies = [energy(t) for t in null_direct_t]
 
         delta_energies: list[float] = []
         emergent_energies: list[float] = []
-        null_delta_energies: list[float] = []
-        null_emergent_energies: list[float] = []
+        cross_terms: list[float] = []
+        # Indexed by draw: each inner list is that draw's per-item values, so
+        # the aggregate can report a per-draw mean (like compared with like)
+        # rather than one pooled number that hides which draw moved.
+        null_delta_by_draw: list[list[float]] = [[] for _ in passes.nulls]
+        null_emergent_by_draw: list[list[float]] = [[] for _ in passes.nulls]
+        null_cross_by_draw: list[list[float]] = [[] for _ in passes.nulls]
         cosines: list[float] = []
         null_cosines: list[float] = []
+        null_cosines_by_draw: list[list[float]] = [[] for _ in passes.nulls]
         linearity: list[float] = []
         delta_sum: torch.Tensor | None = None
         emergent_sum: torch.Tensor | None = None
@@ -725,30 +983,52 @@ def decompose_vector(readout, tokenizer, *, passes: VectorPass,
             emergent = delta - passes.direct
             delta_t = _transport(readout, delta, layer)
             emergent_t = _transport(readout, emergent, layer)
-            null_delta = passes.steered_null[item.id][layer] - base_row
-            null_emergent = null_delta - passes.null_direct
-            null_delta_t = _transport(readout, null_delta, layer)
-            null_emergent_t = _transport(readout, null_emergent, layer)
 
             item_delta_energy = energy(delta_t)
             item_emergent_energy = energy(emergent_t)
-            item_null_delta_energy = energy(null_delta_t)
-            item_null_emergent_energy = energy(null_emergent_t)
+            # 2<J(direct), J(emergent)> by the identity; computed as the
+            # residual of the partition so the three reported numbers add up
+            # exactly as reported (a test checks it against the inner product).
+            item_cross = (item_delta_energy - direct_energy
+                          - item_emergent_energy)
             item_cosine = cosine(delta_t, direct_t)
-            item_null_cosine = cosine(null_delta_t, null_direct_t)
             # The identity the whole decomposition rests on, measured rather
             # than asserted: J(delta) − [J(direct) + J(emergent)] is zero to
-            # float tolerance because J is linear.
+            # float tolerance because J is linear. It is an arithmetic check of
+            # THIS transport, not evidence about the model (QUANTITIES).
             residual = float((delta_t - (direct_t + emergent_t)).norm())
+
+            item_null_delta: list[float] = []
+            item_null_emergent: list[float] = []
+            item_null_cross: list[float] = []
+            item_null_cosines: list[float | None] = []
+            for index, draw in enumerate(passes.nulls):
+                null_delta = draw.steered[item.id][layer] - base_row
+                null_emergent = null_delta - draw.direct
+                null_delta_t = _transport(readout, null_delta, layer)
+                null_emergent_t = _transport(readout, null_emergent, layer)
+                null_delta_energy = energy(null_delta_t)
+                null_emergent_energy = energy(null_emergent_t)
+                null_cross = (null_delta_energy - null_direct_energies[index]
+                              - null_emergent_energy)
+                null_cosine = cosine(null_delta_t, null_direct_t[index])
+
+                item_null_delta.append(null_delta_energy)
+                item_null_emergent.append(null_emergent_energy)
+                item_null_cross.append(null_cross)
+                item_null_cosines.append(null_cosine)
+                null_delta_by_draw[index].append(null_delta_energy)
+                null_emergent_by_draw[index].append(null_emergent_energy)
+                null_cross_by_draw[index].append(null_cross)
+                if null_cosine is not None:
+                    null_cosines.append(null_cosine)
+                    null_cosines_by_draw[index].append(null_cosine)
 
             delta_energies.append(item_delta_energy)
             emergent_energies.append(item_emergent_energy)
-            null_delta_energies.append(item_null_delta_energy)
-            null_emergent_energies.append(item_null_emergent_energy)
+            cross_terms.append(item_cross)
             if item_cosine is not None:
                 cosines.append(item_cosine)
-            if item_null_cosine is not None:
-                null_cosines.append(item_null_cosine)
             linearity.append(residual)
 
             delta_sum = delta if delta_sum is None else delta_sum + delta
@@ -764,13 +1044,23 @@ def decompose_vector(readout, tokenizer, *, passes: VectorPass,
                 "injectionLayer": passes.target.layer,
                 "alphaAbsolute": alpha_absolute,
                 "nullSeed": passes.null_seed,
+                "nullSeeds": [draw.seed for draw in passes.nulls],
+                "nullDrawCount": draw_count,
                 **energy_block("delta", item_delta_energy,
-                               item_null_delta_energy),
-                **energy_block("direct", direct_energy, null_direct_energy),
+                               _mean_energy(item_null_delta)),
+                "deltaEnergyNullDraws": list(item_null_delta),
+                **energy_block("direct", direct_energy,
+                               _mean_energy(null_direct_energies)),
+                "directEnergyNullDraws": list(null_direct_energies),
                 **energy_block("emergent", item_emergent_energy,
-                               item_null_emergent_energy),
+                               _mean_energy(item_null_emergent)),
+                "emergentEnergyNullDraws": list(item_null_emergent),
+                "deltaEnergyCrossTerm": item_cross,
+                "deltaEnergyCrossTermNull": _mean(item_null_cross),
+                "deltaEnergyCrossTermNullDraws": list(item_null_cross),
                 "cosineDeltaDirect": item_cosine,
-                "cosineDeltaDirectNull": item_null_cosine,
+                "cosineDeltaDirectNull": _mean(item_null_cosines),
+                "cosineDeltaDirectNullDraws": list(item_null_cosines),
                 "linearityResidualL2": residual,
             }
             records.append(record)
@@ -783,17 +1073,36 @@ def decompose_vector(readout, tokenizer, *, passes: VectorPass,
                                   if propagated_sum is not None
                                   else torch.zeros_like(direct_t.cpu()))
 
+        # One number per draw: that draw's mean over items. With a single draw
+        # this is the flat per-item mean the report has always carried.
+        null_delta_means = [_mean_energy(v) for v in null_delta_by_draw]
+        null_emergent_means = [_mean_energy(v) for v in null_emergent_by_draw]
+        null_cross_means = [_mean(v) for v in null_cross_by_draw]
         aggregate = {
             "layer": layer,
             "itemCount": len(items),
             "isInjectionLayer": layer == passes.target.layer,
+            "nullDrawCount": draw_count,
             **energy_block("meanDelta", _mean_energy(delta_energies),
-                           _mean_energy(null_delta_energies)),
-            **energy_block("direct", direct_energy, null_direct_energy),
+                           _mean_energy(null_delta_means),
+                           nulls=null_delta_means),
+            **energy_block("direct", direct_energy,
+                           _mean_energy(null_direct_energies),
+                           nulls=null_direct_energies),
             **energy_block("meanEmergent", _mean_energy(emergent_energies),
-                           _mean_energy(null_emergent_energies)),
+                           _mean_energy(null_emergent_means),
+                           nulls=null_emergent_means),
+            # No ratio: the cross term is signed, and a ratio of two signed
+            # quantities either side of zero is not a comparison of anything.
+            "meanDeltaEnergyCrossTerm": _mean(cross_terms),
+            "meanDeltaEnergyCrossTermNull": _mean(null_cross_means),
+            "meanDeltaEnergyCrossTermNullDraws": list(null_cross_means),
+            "meanDeltaEnergyCrossTermNullSD": _sample_sd(
+                [v for v in null_cross_means if v is not None]),
             "meanCosineDeltaDirect": _mean(cosines),
             "meanCosineDeltaDirectNull": _mean(null_cosines),
+            "meanCosineDeltaDirectNullDraws": [_mean(v) for v in
+                                               null_cosines_by_draw],
             "maxLinearityResidualL2": max(linearity) if linearity else 0.0,
             "topKDelta": ([] if mean_delta is None else
                           _topk_table(readout, tokenizer, mean_delta, layer,
@@ -804,6 +1113,73 @@ def decompose_vector(readout, tokenizer, *, passes: VectorPass,
         }
         aggregates.append(aggregate)
     return aggregates, records, mean_propagated
+
+
+# ------------------------------------------------------- realized dose
+
+
+#: Runtime dtype name → torch dtype, for the precision block only. Deliberately
+#: NOT a fallback map: a name this engine does not recognize yields ``None``
+#: (no epsilon) rather than being reported as float32's, which would understate
+#: the noise floor by three orders of magnitude on a bf16 run.
+_TORCH_FLOAT_DTYPES = {
+    "bfloat16": torch.bfloat16, "bf16": torch.bfloat16,
+    "float16": torch.float16, "fp16": torch.float16, "half": torch.float16,
+    "float32": torch.float32, "fp32": torch.float32, "float": torch.float32,
+    "float64": torch.float64, "fp64": torch.float64, "double": torch.float64,
+}
+
+
+def dtype_epsilon(dtype_name: str | None) -> float | None:
+    """``torch.finfo(dtype).eps`` for a runtime dtype name, else ``None``.
+
+    ``None`` means "this engine cannot say" — an unrecognized name, or a
+    non-float dtype (a quantized runtime has no single machine epsilon). It
+    never means "no rounding happens".
+    """
+    resolved = _TORCH_FLOAT_DTYPES.get((dtype_name or "").strip().lower())
+    if resolved is None:
+        return None
+    return float(torch.finfo(resolved).eps)
+
+
+def realized_dose(passes: VectorPass, baseline: dict, items: list[ProbeItem],
+                  *, layer: int, capture_dtype: str | None) -> dict:
+    """Nominal dose vs the change the model actually realized, at layer ``L``.
+
+    At the injection layer the delta IS the dosed vector by construction, so
+    every bit of ``||delta_L − direct||`` is realization noise: the runtime
+    dtype's rounding of the residual before the subtraction, plus whatever the
+    injector's own arithmetic contributed. That is the floor a small dose has
+    to clear, and it is reported next to the dose rather than left for a reader
+    to assume is zero (:data:`PRECISION_NOTE`).
+    """
+    if not items:
+        raise OptVecJSpaceError(
+            "the realized-dose block needs at least one probe item")
+    nominal = float(passes.direct.norm())
+    realized: list[float] = []
+    error: list[float] = []
+    baseline_norms: list[float] = []
+    for item in items:
+        base_row = baseline[item.id][layer]
+        delta = passes.steered[item.id][layer] - base_row
+        realized.append(float(delta.norm()))
+        error.append(float((delta - passes.direct).norm()))
+        baseline_norms.append(float(base_row.norm()))
+    mean_error = _mean(error)
+    return {
+        "layer": layer,
+        "nominalDirectNorm": nominal,
+        "meanRealizedDeltaNorm": _mean(realized),
+        "meanRealizationErrorNorm": mean_error,
+        "realizationErrorToDoseRatio": (None if nominal <= 0.0
+                                        else float(mean_error / nominal)),
+        "meanBaselineResidualNorm": _mean(baseline_norms),
+        "captureDtype": capture_dtype,
+        "dtypeEpsilon": dtype_epsilon(capture_dtype),
+        "note": PRECISION_NOTE,
+    }
 
 
 # ------------------------------------------------------------------- family
@@ -901,6 +1277,35 @@ def _lens_compatibility(record, model) -> dict:
     return report
 
 
+def _engine_identity() -> dict:
+    """``{"version", "buildCommit"}`` for the code producing this readout.
+
+    ``buildCommit`` is ``None`` when no identity source resolves (no env
+    override, no git checkout, no deployed ``BUILD_COMMIT`` file) — a null that
+    reads as "this copy could not say", never as a commit.
+    """
+    from ..build_identity import build_commit, engine_version
+
+    return {"version": engine_version(), "buildCommit": build_commit()}
+
+
+def _null_note(draws: int) -> str:
+    """The ``null.note`` sentence, which has to stay TRUE of the run it
+    describes: the single-draw wording is preserved verbatim (an unchanged
+    default reproduces an unchanged report), and a multi-draw run gets a
+    sentence that says what actually happened."""
+    if draws == 1:
+        return ("one independent matched-norm random direction "
+                "per artifact (seedBase + artifact ordinal), "
+                "pushed through the identical pipeline; every "
+                "energy is reported only beside its null")
+    return (f"{draws} independent matched-norm random directions per artifact "
+            f"({NULL_DRAW_SEED_RULE}), each pushed through the identical "
+            "pipeline; every energy is reported beside the MEAN over draws of "
+            "its null, with the per-draw values, their sample SD and the "
+            "count of draws that met or exceeded the observed energy")
+
+
 def analyze(config: OptVecJSpaceConfig, *, model=None, root: str | None = None,
             log: Callable[[str], None] | None = None) -> dict:
     """Run the propagated J-space decomposition and write its own run directory."""
@@ -935,6 +1340,10 @@ def analyze(config: OptVecJSpaceConfig, *, model=None, root: str | None = None,
         "probeItems": config.probe_items.to_dict(),
         "alphaMultiple": config.alpha_multiple,
         "nullSeed": config.null_seed,
+        "nullDraws": config.null_draws,
+        # The producing revision, so a future impact ledger can classify this
+        # artifact by the code that made it rather than by its date.
+        "engine": _engine_identity(),
     }
     dtype_name: str | None = None
 
@@ -972,10 +1381,16 @@ def analyze(config: OptVecJSpaceConfig, *, model=None, root: str | None = None,
 
         notes["stage"] = "capture"
         items = prepare_probe_items(model, eval_items, config)
+        # The injection layer is captured even when the declared observation
+        # layers skip it: the realized-dose block is only meaningful at L,
+        # where the delta is the dosed vector by construction. It is captured,
+        # not reported as an observation layer — `observationLayers` stays
+        # exactly what was asked for.
+        capture_layers = sorted(set(layers) | {layer})
         emit(f"capturing baseline over {len(items)} probe item(s) at layers "
              f"{layers}")
         baseline = capture_answer_residuals(
-            model, items, layers=layers, injector=None,
+            model, items, layers=capture_layers, injector=None,
             microbatch_size=config.microbatch_size)
 
         vector_reports: list[dict] = []
@@ -987,29 +1402,42 @@ def analyze(config: OptVecJSpaceConfig, *, model=None, root: str | None = None,
         for index, target in enumerate(targets):
             direction = target.direction
             dosed_norm = config.alpha_multiple * vm.l2_norm(direction)
-            # Independent draws per artifact (base seed + ordinal), so a family
-            # of eight solutions is not compared against one shared null
-            # direction that would make every null row identical.
-            null_seed = config.null_seed + index
-            null_direction = vm.random_vector(len(direction), dosed_norm,
-                                              seed=null_seed)
             direct = torch.tensor(direction, dtype=torch.float32)
             direct = direct * (dosed_norm / float(direct.norm()))
-            null_direct = torch.tensor(null_direction, dtype=torch.float32)
 
-            emit(f"capturing steered + null for {target.artifact.reference}")
+            emit(f"capturing steered + {config.null_draws} null draw(s) for "
+                 f"{target.artifact.reference}")
             steered = capture_answer_residuals(
-                model, items, layers=layers,
+                model, items, layers=capture_layers,
                 injector=injector_for(model, layer, direction, dosed_norm),
                 microbatch_size=config.microbatch_size)
-            steered_null = capture_answer_residuals(
-                model, items, layers=layers,
-                injector=injector_for(model, layer, null_direction, dosed_norm),
-                microbatch_size=config.microbatch_size)
+
+            # Independent draws per artifact (base seed + ordinal), so a family
+            # of eight solutions is not compared against one shared null
+            # direction that would make every null row identical; and
+            # independent draws per DRAW ordinal (+ k·stride), so a k-draw run
+            # is k comparators rather than one repeated. Draw 0 keeps the
+            # historical seed — a single-draw run reproduces old numbers.
+            draws: list[NullDraw] = []
+            for draw_index in range(config.null_draws):
+                null_seed = (config.null_seed + index
+                             + draw_index * NULL_DRAW_STRIDE)
+                null_direction = vm.random_vector(len(direction), dosed_norm,
+                                                  seed=null_seed)
+                draws.append(NullDraw(
+                    draw=draw_index, seed=null_seed,
+                    direct=torch.tensor(null_direction, dtype=torch.float32),
+                    steered=capture_answer_residuals(
+                        model, items, layers=capture_layers,
+                        injector=injector_for(model, layer, null_direction,
+                                              dosed_norm),
+                        microbatch_size=config.microbatch_size)))
 
             passes = VectorPass(target=target, direct=direct,
-                                null_direct=null_direct, null_seed=null_seed,
-                                steered=steered, steered_null=steered_null)
+                                null_direct=draws[0].direct,
+                                null_seed=draws[0].seed,
+                                steered=steered,
+                                steered_null=draws[0].steered, nulls=draws)
             aggregates, item_records, mean_propagated = decompose_vector(
                 readout, model.tokenizer, passes=passes, baseline=baseline,
                 items=items, layers=layers, top_k=config.top_k)
@@ -1020,8 +1448,18 @@ def analyze(config: OptVecJSpaceConfig, *, model=None, root: str | None = None,
                            "alphaAbsolute": target.alpha_absolute},
                 "alphaMultiple": config.alpha_multiple,
                 "appliedNorm": dosed_norm,
-                "null": {"seed": null_seed, "algorithm": NULL_ALGORITHM,
-                         "matchedNorm": dosed_norm},
+                # `seed` stays draw 0's seed under the name it has always had;
+                # `draws` is the full list, so any draw can be redrawn from the
+                # artifact alone.
+                "null": {"seed": draws[0].seed, "algorithm": NULL_ALGORITHM,
+                         "matchedNorm": dosed_norm,
+                         "draws": [draw.identity() for draw in draws],
+                         "drawCount": len(draws),
+                         "seedRule": NULL_DRAW_SEED_RULE,
+                         "inferenceNote": NULL_INFERENCE_NOTE},
+                "realizedDose": realized_dose(
+                    passes, baseline, items, layer=layer,
+                    capture_dtype=dtype_name),
                 "layers": aggregates,
             })
             raw_rows.append(list(direction))
@@ -1048,6 +1486,10 @@ def analyze(config: OptVecJSpaceConfig, *, model=None, root: str | None = None,
             "evidenceTier": tier,
             "qualification": notes["qualification"],
             "claim": claim,
+            # The producing revision. An impact ledger that has to decide
+            # whether a finding predates a fix can only do that from the
+            # artifact's own record of the code that wrote it.
+            "engine": _engine_identity(),
             "lens": {
                 "lensID": record.lensID,
                 "fitModelID": record.fit.modelID,
@@ -1075,6 +1517,8 @@ def analyze(config: OptVecJSpaceConfig, *, model=None, root: str | None = None,
                              "position",
                 "observation": OBSERVATION_CONVENTION,
                 "energy": ENERGY_DEFINITION,
+                "energyPartition": ENERGY_PARTITION,
+                "precision": PRECISION_NOTE,
                 "decomposition": "J_l(h_steered - h_base) = J_l(alpha.v) + "
                                  "J_l(delta_computed); direct is the first "
                                  "term, emergent the second",
@@ -1100,10 +1544,13 @@ def analyze(config: OptVecJSpaceConfig, *, model=None, root: str | None = None,
                            "itemCount": len(items)},
             "null": {"seedBase": config.null_seed,
                      "algorithm": NULL_ALGORITHM,
-                     "note": "one independent matched-norm random direction "
-                             "per artifact (seedBase + artifact ordinal), "
-                             "pushed through the identical pipeline; every "
-                             "energy is reported only beside its null"},
+                     "drawCount": config.null_draws,
+                     "seedRule": NULL_DRAW_SEED_RULE,
+                     "inferenceNote": NULL_INFERENCE_NOTE,
+                     "note": _null_note(config.null_draws)},
+            # What each table IS, and is not. Stamped rather than documented
+            # elsewhere: the reading happens in front of this file.
+            "quantities": dict(QUANTITIES),
             "vectors": vector_reports,
             "family": family,
         }
@@ -1155,19 +1602,27 @@ def _summary(vector_reports: list[dict]) -> list[dict]:
                 "meanEmergentEnergyNull": entry["meanEmergentEnergyNull"],
                 "meanEmergentEnergyNullRatio":
                     entry["meanEmergentEnergyNullRatio"],
+                # The third addend, in the summary too: two of three terms is
+                # exactly the reading the cross term exists to prevent.
+                "meanDeltaEnergyCrossTerm": entry["meanDeltaEnergyCrossTerm"],
+                "nullDrawCount": entry["nullDrawCount"],
+                "meanDeltaEnergyNullExceedanceCount":
+                    entry["meanDeltaEnergyNullExceedanceCount"],
                 "meanCosineDeltaDirect": entry["meanCosineDeltaDirect"],
             })
     return out
 
 
 __all__ = [
-    "AnswerPositionCapture", "ENERGY_DEFINITION", "JSPACE_JSON",
-    "JSPACE_RECORDS", "LAYER_RULE", "NULL_ALGORITHM", "NULL_SEED",
-    "OptVecJSpaceConfig", "OptVecJSpaceConfigError", "OptVecJSpaceError",
-    "OptVecArtifactError", "QUALIFICATION_STAMP", "RUN_TYPE", "ProbeItem",
+    "AnswerPositionCapture", "ENERGY_DEFINITION", "ENERGY_PARTITION",
+    "JSPACE_JSON", "JSPACE_RECORDS", "LAYER_RULE", "NULL_ALGORITHM",
+    "NULL_DRAW_SEED_RULE", "NULL_DRAW_STRIDE", "NULL_INFERENCE_NOTE",
+    "NULL_SEED", "NullDraw", "OptVecJSpaceConfig", "OptVecJSpaceConfigError",
+    "OptVecJSpaceError", "OptVecArtifactError", "PRECISION_NOTE", "QUANTITIES",
+    "QUALIFICATION_STAMP", "RUN_TYPE", "ProbeItem",
     "VectorPass", "analyze", "capture_answer_residuals", "cosine",
-    "decompose_vector", "energy", "energy_block", "evidence_tier_for",
-    "family_tables", "injector_for", "load_config", "observation_layers",
-    "prepare_probe_items", "qualification_state", "resolve_lens",
-    "validate_energy_pairing",
+    "decompose_vector", "dtype_epsilon", "energy", "energy_block",
+    "evidence_tier_for", "family_tables", "injector_for", "load_config",
+    "observation_layers", "prepare_probe_items", "qualification_state",
+    "realized_dose", "resolve_lens", "validate_energy_pairing",
 ]
