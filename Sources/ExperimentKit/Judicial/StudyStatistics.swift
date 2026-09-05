@@ -262,6 +262,15 @@ public enum StudyStatistics {
     /// effect size — an increase of 1e-9 still passes, and this helper must
     /// not quietly become an effect-size gate.
     ///
+    /// The mirror image is refused too: a ZERO DOSE range — every alpha the
+    /// same — is not monotone either (owner's ruling, 2026-09-05). With no
+    /// dose variation the (alpha, effect) tie-break sorts the effects by
+    /// themselves, so any "ladder" the step check then sees was manufactured
+    /// by the sort, and rho is undefined for the same zero-rank-variance
+    /// reason. `EffectNarrative.doseResponse` already refused to build a
+    /// ladder from fewer than two distinct strengths; the server's promote
+    /// verb had no such guard, and this is where it now lives for both.
+    ///
     /// DIRECTION IS OBSERVED, NOT PRESPECIFIED. The sign comes from the
     /// sorted endpoints (last vs first), so a consistently DOWNWARD ladder is
     /// monotone here, and the random-floor criterion in the server's
@@ -283,12 +292,13 @@ public enum StudyStatistics {
     ///   BEFORE the sort. NaN is not orderable — sorting on it is not a
     ///   strict weak ordering — and every comparison against it is false, so
     ///   an unguarded NaN can smuggle a true verdict out;
-    /// - repeated doses (ties in `alphas`) are kept, not merged —
-    ///   deliberately unchanged behaviour, pinned by the cross-engine
-    ///   fixture. Pairs sort by (alpha, effect), so rows sharing a dose are
-    ///   ordered by their own effect and a repeat never manufactures a step
-    ///   violation; Spearman gives the tied doses their average rank, which
-    ///   holds |rho| below 1 even for a perfect ladder.
+    /// - PARTIAL ties in `alphas` (some doses repeated, at least two
+    ///   distinct) are kept, not merged — deliberately unchanged behaviour,
+    ///   pinned by the cross-engine fixture. Pairs sort by (alpha, effect),
+    ///   so rows sharing a dose are ordered by their own effect and a repeat
+    ///   never manufactures a step violation; Spearman gives the tied doses
+    ///   their average rank, which holds |rho| below 1 even for a perfect
+    ///   ladder. ALL doses tied is the zero-dose-range refusal above.
     public static func doseMonotonicity(
         alphas: [Double], effects: [Double], tolerance: Double = 0
     ) -> DoseResponse {
@@ -305,6 +315,15 @@ public enum StudyStatistics {
         let rho = spearman(pairs.map(\.0), ordered)
         guard let first = ordered.first, let last = ordered.last,
             ordered.count >= 2, let low = ordered.min(), let high = ordered.max()
+        else {
+            return DoseResponse(spearmanRho: rho, isMonotone: false)
+        }
+        // Zero DOSE range (pairs are sorted by alpha, so equal ends mean every
+        // alpha is equal): the effects were ordered by the tie-break, not by
+        // dose, so the step check below would grade a ladder the sort built.
+        // rho is NaN here too — zero rank variance in alpha.
+        guard let lowDose = pairs.first?.0, let highDose = pairs.last?.0,
+            highDose != lowDose
         else {
             return DoseResponse(spearmanRho: rho, isMonotone: false)
         }

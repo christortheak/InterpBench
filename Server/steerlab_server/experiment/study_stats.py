@@ -198,6 +198,15 @@ def dose_monotonicity(alphas: list[float], effects: list[float], *,
     size — an increase of 1e-9 still passes, and this helper must not
     quietly become an effect-size gate.
 
+    The mirror image is refused too: a ZERO DOSE range — every alpha the
+    same — is not monotone either (owner's ruling, 2026-09-05). With no dose
+    variation the (alpha, effect) tie-break sorts the effects by themselves,
+    so any "ladder" the step check then sees was manufactured by the sort,
+    and rho is undefined for the same zero-rank-variance reason. The Swift
+    narrative already refused to build a ladder from fewer than two distinct
+    strengths; the promote verb had no such guard, and this is where it now
+    lives for both.
+
     DIRECTION IS OBSERVED, NOT PRESPECIFIED. The sign comes from the sorted
     endpoints (last vs first), so a consistently DOWNWARD ladder is monotone
     here, and the random-floor criterion in ``promotion.decide`` compares
@@ -216,12 +225,13 @@ def dose_monotonicity(alphas: list[float], effects: list[float], *,
     * any nonfinite alpha or effect → not monotone, rho NaN, decided BEFORE
       the sort. NaN is not orderable, and every comparison against it is
       false, so an unguarded NaN can smuggle a true verdict out;
-    * repeated doses (ties in ``alphas``) are kept, not merged — deliberately
-      unchanged behaviour, pinned by the cross-engine fixture. Pairs sort by
-      (alpha, effect), so rows sharing a dose are ordered by their own effect
-      and a repeat never manufactures a step violation; Spearman gives the
-      tied doses their average rank, which holds |rho| below 1 even for a
-      perfect ladder.
+    * PARTIAL ties in ``alphas`` (some doses repeated, at least two distinct)
+      are kept, not merged — deliberately unchanged behaviour, pinned by the
+      cross-engine fixture. Pairs sort by (alpha, effect), so rows sharing a
+      dose are ordered by their own effect and a repeat never manufactures a
+      step violation; Spearman gives the tied doses their average rank, which
+      holds |rho| below 1 even for a perfect ladder. ALL doses tied is the
+      zero-dose-range refusal above.
     """
     if len(alphas) != len(effects):
         raise ValueError(
@@ -234,6 +244,12 @@ def dose_monotonicity(alphas: list[float], effects: list[float], *,
     ordered = [effect for _, effect in pairs]
     rho = _spearman([a for a, _ in pairs], ordered)
     if len(ordered) < 2:
+        return DoseResponse(spearman_rho=rho, is_monotone=False)
+    if pairs[-1][0] == pairs[0][0]:
+        # Zero DOSE range (pairs are sorted by alpha, so equal ends mean every
+        # alpha is equal): the effects were ordered by the tie-break, not by
+        # dose, so the step check below would grade a ladder the sort built.
+        # rho is NaN here too — zero rank variance in alpha.
         return DoseResponse(spearman_rho=rho, is_monotone=False)
     effect_range = max(ordered) - min(ordered)
     if effect_range == 0:

@@ -69,16 +69,16 @@
       "expectMonotone": true,
       "expectRhoDefined": true,
       "name": "repeated-doses",
-      "note": "PINS the tie behaviour, deliberately unchanged: pairs sort by (alpha, effect), so the two rows at alpha 1.0 are ordered 0.1 then 0.3 and the repeat never manufactures a step violation. Spearman gives the tied doses their average rank, so rho is 0.866..., not 1.",
+      "note": "PINS the PARTIAL-tie behaviour (at least two distinct doses), deliberately unchanged: pairs sort by (alpha, effect), so the two rows at alpha 1.0 are ordered 0.1 then 0.3 and the repeat never manufactures a step violation. Spearman gives the tied doses their average rank, so rho is 0.866..., not 1.",
       "tolerance": 0.0
     },
     {
       "alphas": [1.0, 1.0, 1.0],
       "effects": [0.1, 0.3, 0.7],
-      "expectMonotone": true,
+      "expectMonotone": false,
       "expectRhoDefined": false,
       "name": "all-doses-tied",
-      "note": "PINS current behaviour on both engines, NOT an endorsement: with no dose variation the effects still order into a rising ladder, so the step check passes while rho is undefined (zero rank variance in alpha). Flagged in the SCI-04 report as an open question for the project owner; changing it is a policy ruling, not a bug fix.",
+      "note": "Zero DOSE range (owner's ruling, 2026-09-05): every alpha is the same, so the (alpha, effect) tie-break sorted the effects by themselves and the rising 'ladder' the step check used to pass was manufactured by the sort. Mirror of 'flat' — zero variation on the dose axis instead of the effect axis — and rho is undefined for the same zero-rank-variance reason. Both engines answer (NaN, false). Partial ties ('repeated-doses') are unchanged.",
       "tolerance": 0.0
     },
     {
