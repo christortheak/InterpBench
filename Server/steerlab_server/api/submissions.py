@@ -428,7 +428,15 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     meta = bundles.inspect_bundle(bundle_path)
     if meta.get("kind") != "runBundle":
         raise ValueError("submit-bundle requires a runBundle")
-    experiment = str(meta.get("experiment") or "study")
+    # The name is baked into the submission slug, the Slurm job name, and the
+    # manifest lookup inside the bundle: one safe path segment, or nothing is
+    # submitted (external review, 2026-09-05). Spoken as ValueError — the
+    # refusal type this function already uses, which the route turns into a
+    # 400 rather than a 500.
+    try:
+        experiment = bundles.experiment_name(meta, default="study")
+    except bundles.BundleError as exc:
+        raise ValueError(str(exc)) from exc
     profile = ServerProfile.from_env()
     executor = executor or profile.executor
     if executor not in {"local", "slurm"}:

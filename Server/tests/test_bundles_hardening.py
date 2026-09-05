@@ -444,3 +444,67 @@ def test_a_malformed_outer_pin_is_refused_as_malformed_not_as_a_mismatch(
                               expected_sha256=b"\x00" * 64)
     assert not (target / "runs").exists()
     _no_leftovers(target)
+
+
+# ==========================================================================
+# ENG-01's twin — the experiment NAME is derived into paths as well
+# ==========================================================================
+#
+# ``meta["experiment"]`` names the manifest a verb loads
+# (``experiments/<name>/experiment.json``), the submission slug, and the
+# Slurm job name — and was read straight out of the metadata. The rule is
+# the ``runID`` rule: one safe segment, decided BEFORE anything is imported.
+
+
+def _manager(tmp_path):
+    from steerlab_server.api.jobs import DurableJobStore, JobManager
+    return JobManager(DurableJobStore(str(tmp_path / "jobs.sqlite")),
+                      capability_provider=lambda: {})
+
+
+@pytest.mark.parametrize("name", [
+    "../../outside", "/absolute/elsewhere", "..", ".", "", "   ",
+    "a/b", "a\\b", "nul\0byte"])
+def test_an_unsafe_experiment_name_is_refused_before_execute_imports(
+        tmp_path, name):
+    target = _target_with_runs(tmp_path)
+    bundle = str(tmp_path / "hostile-name.tar.gz")
+    _bundle_with_members(bundle, [("experiments/x/experiment.json", b"{}")],
+                         extra={"experiment": name})
+
+    with pytest.raises(bundles.BundleError, match="'experiment'"):
+        bundles.execute_run_bundle(bundle, verb="verify",
+                                   target_root=str(target))
+
+    assert not (target / "experiments").exists(), \
+        "the import landed before the name was checked"
+    _no_leftovers(target)
+
+
+def test_a_bundle_submission_refuses_the_same_name_as_a_value_error(tmp_path):
+    """The submission path speaks ValueError (the route's 400), so a hostile
+    name is a refusal there too — not a 500 from an uncaught BundleError."""
+    from steerlab_server.api.submissions import submit_run_bundle
+
+    bundle = str(tmp_path / "hostile-submit.tar.gz")
+    _bundle_with_members(bundle, [("experiments/x/experiment.json", b"{}")],
+                         extra={"experiment": "../../outside"})
+    target = tmp_path / "target"
+
+    with pytest.raises(ValueError, match="'experiment'"):
+        submit_run_bundle(bundle, verb="verify", jobs=_manager(tmp_path),
+                          executor="local", target_root=str(target),
+                          dry_run=True)
+    assert not target.exists() or list(target.iterdir()) == []
+
+
+def test_experiment_name_keeps_an_absent_default_but_never_an_unsafe_name():
+    assert bundles.experiment_name({}, default="study") == "study"
+    assert bundles.experiment_name({"experiment": "ladder-12week"}) \
+        == "ladder-12week"
+    with pytest.raises(bundles.BundleError, match="'experiment'"):
+        bundles.experiment_name({})
+    with pytest.raises(bundles.BundleError, match="'experiment'"):
+        bundles.experiment_name({"experiment": ""}, default="study")
+    with pytest.raises(bundles.BundleError, match="'experiment'"):
+        bundles.experiment_name({"experiment": "../x"}, default="study")

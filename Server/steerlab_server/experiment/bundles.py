@@ -807,6 +807,28 @@ def _require_safe_segment(value, *, field: str) -> str:
     return value
 
 
+def experiment_name(meta: dict, *, default: str | None = None) -> str:
+    """The experiment a bundle's METADATA names, held to the member rule.
+
+    Every verb that runs a bundle derives paths from this one string — the
+    ``experiments/<name>/experiment.json`` it loads, a run-directory slug, a
+    Slurm job name — and none of them asked whether it was a single path
+    segment (external review, 2026-09-05; the ``runID`` finding's twin). A
+    validly pinned bundle whose ``experiment`` was ``../../elsewhere``
+    therefore loaded, and executed, a manifest from OUTSIDE the target root.
+    Same rule as ``runID``: one segment, never absolute, never ``.`` or
+    ``..``, checked before anything is imported.
+
+    ``default`` is for the one caller (bundle submission) that historically
+    tolerated an ABSENT name; a name that is present but unsafe is refused
+    whatever the default.
+    """
+    raw = meta.get("experiment") if isinstance(meta, dict) else None
+    if raw is None and default is not None:
+        return default
+    return _require_safe_segment(raw, field="experiment")
+
+
 def _contained_destination(target: str, *parts: str, what: str) -> str:
     """A DERIVED destination, canonicalized and held to the member rule.
 
@@ -1783,6 +1805,9 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
     meta = inspect_bundle(bundle_path)
     if meta.get("kind") != "runBundle":
         raise BundleError("bundle execute requires a runBundle")
+    # The experiment name is DERIVED INTO paths below (the manifest to load,
+    # the run slug): one safe segment, decided before the import lands.
+    name = experiment_name(meta)
     # Shard filter (multi-GPU fan-out): only the run verb has the
     # per-record-independent record set the shard partition is defined over.
     shard_spec = None
@@ -1813,7 +1838,6 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
     source_path = resolve_against_target(source_path, target)
     resume_directory = resolve_against_target(resume_directory, target)
     imported = import_bundle(bundle_path, target_root=target, allow_overwrite=True)
-    name = meta["experiment"]
 
     from . import tasks
     from .manifest import Manifest
