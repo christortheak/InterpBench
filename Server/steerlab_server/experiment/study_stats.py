@@ -188,14 +188,61 @@ def dose_monotonicity(alphas: list[float], effects: list[float], *,
     effects never move against the overall direction by more than
     ``tolerance × effect range``. A flat or inverted dose-response fails
     promotion no matter how large a single-alpha effect looks.
+
+    Nondecreasing GEOMETRY is not the ACCEPTANCE criterion, and conflating
+    the two is what let a flat ladder through (external review, 2026-09-05,
+    SCI-04): identical effects satisfy every consecutive step trivially
+    (0 ≥ -slack) while carrying no dose information at all, and their
+    Spearman rho is undefined. So a ZERO effect range (max == min) is not
+    monotone. The refusal is exactly zero variation, not a minimum effect
+    size — an increase of 1e-9 still passes, and this helper must not
+    quietly become an effect-size gate.
+
+    DIRECTION IS OBSERVED, NOT PRESPECIFIED. The sign comes from the sorted
+    endpoints (last vs first), so a consistently DOWNWARD ladder is monotone
+    here, and the random-floor criterion in ``promotion.decide`` compares
+    magnitudes (``abs``) by the same design. A study that wants to reject
+    effects running opposite its hypothesis needs a declared expected
+    direction, which this helper does not take.
+
+    Input policy, matched on the Swift twin except where noted:
+
+    * fewer than two points → not monotone (rho needs two ranks anyway);
+    * unequal input lengths → ``ValueError``. A mismatch is a pairing bug in
+      the caller, and ``zip`` would silently truncate and score a ladder
+      nobody measured. (``StudyStatistics.doseMonotonicity`` cannot throw
+      from this position and answers (NaN, false) instead, the refusal shape
+      that file already uses for a mismatched pairing.)
+    * any nonfinite alpha or effect → not monotone, rho NaN, decided BEFORE
+      the sort. NaN is not orderable, and every comparison against it is
+      false, so an unguarded NaN can smuggle a true verdict out;
+    * repeated doses (ties in ``alphas``) are kept, not merged — deliberately
+      unchanged behaviour, pinned by the cross-engine fixture. Pairs sort by
+      (alpha, effect), so rows sharing a dose are ordered by their own effect
+      and a repeat never manufactures a step violation; Spearman gives the
+      tied doses their average rank, which holds |rho| below 1 even for a
+      perfect ladder.
     """
+    if len(alphas) != len(effects):
+        raise ValueError(
+            "dose monotonicity needs one effect per alpha (got "
+            f"{len(alphas)} alphas and {len(effects)} effects)")
+    if not all(math.isfinite(value) for value in alphas) \
+            or not all(math.isfinite(value) for value in effects):
+        return DoseResponse(spearman_rho=float("nan"), is_monotone=False)
     pairs = sorted(zip(alphas, effects))
     ordered = [effect for _, effect in pairs]
     rho = _spearman([a for a, _ in pairs], ordered)
     if len(ordered) < 2:
         return DoseResponse(spearman_rho=rho, is_monotone=False)
+    effect_range = max(ordered) - min(ordered)
+    if effect_range == 0:
+        # SCI-04: flat is not monotone. rho is already NaN here (zero rank
+        # variance), so the verdict and the correlation agree that there is
+        # nothing to see.
+        return DoseResponse(spearman_rho=rho, is_monotone=False)
     direction = 1.0 if ordered[-1] >= ordered[0] else -1.0
-    slack = tolerance * (max(ordered) - min(ordered))
+    slack = tolerance * effect_range
     monotone = all(
         direction * (ordered[i + 1] - ordered[i]) >= -slack
         for i in range(len(ordered) - 1))

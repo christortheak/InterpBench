@@ -252,20 +252,71 @@ public enum StudyStatistics {
     /// `tolerance × effect range`. A flat or inverted dose-response fails
     /// promotion no matter how large a single-alpha effect looks. Fewer than
     /// two points is never monotone.
+    ///
+    /// Nondecreasing GEOMETRY is not the ACCEPTANCE criterion, and conflating
+    /// the two is what let a flat ladder through (external review,
+    /// 2026-09-05, SCI-04): identical effects satisfy every consecutive step
+    /// trivially (0 ≥ -slack) while carrying no dose information at all, and
+    /// their Spearman rho is undefined. So a ZERO effect range (max == min)
+    /// is not monotone. The refusal is exactly zero variation, not a minimum
+    /// effect size — an increase of 1e-9 still passes, and this helper must
+    /// not quietly become an effect-size gate.
+    ///
+    /// DIRECTION IS OBSERVED, NOT PRESPECIFIED. The sign comes from the
+    /// sorted endpoints (last vs first), so a consistently DOWNWARD ladder is
+    /// monotone here, and the random-floor criterion in the server's
+    /// `promotion.decide` compares magnitudes (`abs`) by the same design. A
+    /// study that wants to reject effects running opposite its hypothesis
+    /// needs a declared expected direction, which this helper does not take.
+    ///
+    /// Input policy, matched on the Python twin except where noted:
+    ///
+    /// - fewer than two points → not monotone (rho needs two ranks anyway);
+    /// - unequal input lengths → (NaN, false), the refusal shape
+    ///   `percentAgreement` and `cohensKappa` already use in this file for a
+    ///   mismatched pairing. A mismatch is a pairing bug in the caller, and
+    ///   `zip` would silently truncate and score a ladder nobody measured.
+    ///   (`study_stats.dose_monotonicity` raises `ValueError` from this
+    ///   position instead; report assembly there is allowed to fail loudly,
+    ///   which is why the shared fixture carries no mismatch case.)
+    /// - any nonfinite alpha or effect → not monotone, rho NaN, decided
+    ///   BEFORE the sort. NaN is not orderable — sorting on it is not a
+    ///   strict weak ordering — and every comparison against it is false, so
+    ///   an unguarded NaN can smuggle a true verdict out;
+    /// - repeated doses (ties in `alphas`) are kept, not merged —
+    ///   deliberately unchanged behaviour, pinned by the cross-engine
+    ///   fixture. Pairs sort by (alpha, effect), so rows sharing a dose are
+    ///   ordered by their own effect and a repeat never manufactures a step
+    ///   violation; Spearman gives the tied doses their average rank, which
+    ///   holds |rho| below 1 even for a perfect ladder.
     public static func doseMonotonicity(
         alphas: [Double], effects: [Double], tolerance: Double = 0
     ) -> DoseResponse {
+        guard alphas.count == effects.count else {
+            return DoseResponse(spearmanRho: .nan, isMonotone: false)
+        }
+        guard alphas.allSatisfy(\.isFinite), effects.allSatisfy(\.isFinite)
+        else {
+            return DoseResponse(spearmanRho: .nan, isMonotone: false)
+        }
         let pairs = zip(alphas, effects)
             .sorted { $0.0 == $1.0 ? $0.1 < $1.1 : $0.0 < $1.0 }
         let ordered = pairs.map(\.1)
         let rho = spearman(pairs.map(\.0), ordered)
         guard let first = ordered.first, let last = ordered.last,
-            ordered.count >= 2
+            ordered.count >= 2, let low = ordered.min(), let high = ordered.max()
         else {
             return DoseResponse(spearmanRho: rho, isMonotone: false)
         }
+        let effectRange = high - low
+        guard effectRange != 0 else {
+            // SCI-04: flat is not monotone. rho is already NaN here (zero
+            // rank variance), so the verdict and the correlation agree that
+            // there is nothing to see.
+            return DoseResponse(spearmanRho: rho, isMonotone: false)
+        }
         let direction: Double = last >= first ? 1 : -1
-        let slack = tolerance * ((ordered.max() ?? 0) - (ordered.min() ?? 0))
+        let slack = tolerance * effectRange
         let monotone = (0 ..< ordered.count - 1).allSatisfy { i in
             direction * (ordered[i + 1] - ordered[i]) >= -slack
         }

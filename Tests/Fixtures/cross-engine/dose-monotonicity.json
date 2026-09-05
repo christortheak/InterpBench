@@ -1,0 +1,132 @@
+{
+  "cases": [
+    {
+      "alphas": [0.5, 1.0, 2.0],
+      "effects": [0.3, 0.3, 0.3],
+      "expectMonotone": false,
+      "expectRhoDefined": false,
+      "name": "flat",
+      "note": "SCI-04. Every consecutive step is 0 >= -slack, so the old geometry test said monotone; the ladder carries no dose information at all and Spearman is undefined. Insufficient variation is not monotone.",
+      "tolerance": 0.0
+    },
+    {
+      "alphas": [0.5, 1.0, 2.0],
+      "effects": [0.1, 0.3, 0.7],
+      "expectMonotone": true,
+      "expectRhoDefined": true,
+      "name": "increasing",
+      "note": "The ordinary pass: rho = +1.",
+      "tolerance": 0.0
+    },
+    {
+      "alphas": [0.5, 1.0, 2.0],
+      "effects": [-0.1, -0.3, -0.7],
+      "expectMonotone": true,
+      "expectRhoDefined": true,
+      "name": "decreasing",
+      "note": "Direction is OBSERVED, not prespecified: a consistently downward ladder is monotone here (rho = -1). See the direction contract in both docstrings.",
+      "tolerance": 0.0
+    },
+    {
+      "alphas": [0.5, 1.0, 2.0],
+      "effects": [0.5, 0.7, 0.1],
+      "expectMonotone": false,
+      "expectRhoDefined": true,
+      "name": "inverted",
+      "note": "Rises then collapses: a real step violation, rho = -0.5 and defined.",
+      "tolerance": 0.0
+    },
+    {
+      "alphas": [0.5, 1.0],
+      "effects": [0.3, 0.3],
+      "expectMonotone": false,
+      "expectRhoDefined": false,
+      "name": "two-points-equal",
+      "note": "The two-point form of flat.",
+      "tolerance": 0.0
+    },
+    {
+      "alphas": [0.5, 1.0],
+      "effects": [0.2, 0.5],
+      "expectMonotone": true,
+      "expectRhoDefined": true,
+      "name": "two-points-unequal",
+      "note": "Two points are enough when they differ.",
+      "tolerance": 0.0
+    },
+    {
+      "alphas": [1.0],
+      "effects": [0.4],
+      "expectMonotone": false,
+      "expectRhoDefined": false,
+      "name": "single-point",
+      "note": "Fewer than two points is never monotone; rho needs two.",
+      "tolerance": 0.0
+    },
+    {
+      "alphas": [1.0, 1.0, 2.0],
+      "effects": [0.3, 0.1, 0.7],
+      "expectMonotone": true,
+      "expectRhoDefined": true,
+      "name": "repeated-doses",
+      "note": "PINS the tie behaviour, deliberately unchanged: pairs sort by (alpha, effect), so the two rows at alpha 1.0 are ordered 0.1 then 0.3 and the repeat never manufactures a step violation. Spearman gives the tied doses their average rank, so rho is 0.866..., not 1.",
+      "tolerance": 0.0
+    },
+    {
+      "alphas": [1.0, 1.0, 1.0],
+      "effects": [0.1, 0.3, 0.7],
+      "expectMonotone": true,
+      "expectRhoDefined": false,
+      "name": "all-doses-tied",
+      "note": "PINS current behaviour on both engines, NOT an endorsement: with no dose variation the effects still order into a rising ladder, so the step check passes while rho is undefined (zero rank variance in alpha). Flagged in the SCI-04 report as an open question for the project owner; changing it is a policy ruling, not a bug fix.",
+      "tolerance": 0.0
+    },
+    {
+      "alphas": [0.5, 1.0, 2.0],
+      "effects": [0.1, "nan", 0.7],
+      "expectMonotone": false,
+      "expectRhoDefined": false,
+      "name": "nonfinite-effect",
+      "note": "A NaN effect is refused BEFORE the sort: comparing NaN is not a strict weak ordering, and a NaN comparison is false, which could otherwise smuggle a true verdict out.",
+      "tolerance": 0.0
+    },
+    {
+      "alphas": [0.5, "inf", 2.0],
+      "effects": [0.1, 0.3, 0.7],
+      "expectMonotone": false,
+      "expectRhoDefined": false,
+      "name": "nonfinite-alpha",
+      "note": "Same refusal on the dose side.",
+      "tolerance": 0.0
+    },
+    {
+      "alphas": [0.5, 1.0, 1.5, 2.0],
+      "effects": [0.0, 0.3, 0.28, 0.5],
+      "expectMonotone": true,
+      "expectRhoDefined": true,
+      "name": "tolerance-just-inside",
+      "note": "Range 0.5, so slack = 0.05 * 0.5 = 0.025; the single backward step is -0.02 and is forgiven.",
+      "tolerance": 0.05
+    },
+    {
+      "alphas": [0.5, 1.0, 1.5, 2.0],
+      "effects": [0.0, 0.3, 0.28, 0.5],
+      "expectMonotone": false,
+      "expectRhoDefined": true,
+      "name": "tolerance-just-outside",
+      "note": "Same ladder, slack = 0.03 * 0.5 = 0.015 < 0.02, so the same step is a violation. The tolerance arithmetic is unchanged by SCI-04.",
+      "tolerance": 0.03
+    },
+    {
+      "alphas": [0.5, 1.0, 2.0],
+      "effects": [0.3, 0.3, 0.300000001],
+      "expectMonotone": true,
+      "expectRhoDefined": true,
+      "name": "tiny-but-nonzero-increase",
+      "note": "PINS the edge of the SCI-04 fix: the range is 1e-9, not 0, so this still passes. The fix refuses ZERO variation only — it is not a minimum-effect-size gate, and must not silently become one.",
+      "tolerance": 0.0
+    }
+  ],
+  "nonfiniteEncoding": "JSON has no NaN or Infinity literal and Foundation's JSONSerialization refuses the non-standard tokens, so a nonfinite alpha or effect is written as one of the strings \"nan\", \"inf\", \"-inf\". Both loaders map those strings back to Double values.",
+  "note": "Cross-engine contract for dose-response monotonicity: Python steerlab_server.experiment.study_stats.dose_monotonicity and Swift StudyStatistics.doseMonotonicity must return the same verdict for every case here. Unlike most files in this directory, this one is HAND-AUTHORED and is not produced by scripts/regenerate-cross-engine-fixtures.py: it states the INTENDED contract (external review, 2026-09-05, SCI-04) rather than dumping one engine's current output, so both engines are measured against it rather than against each other's drift. Unequal-length inputs are deliberately absent — the two engines answer differently there by design (Python raises, Swift returns a NaN refusal) and each suite pins its own behaviour."
+}
