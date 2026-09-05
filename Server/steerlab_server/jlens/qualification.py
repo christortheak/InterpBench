@@ -92,30 +92,52 @@ BLOCKING = ("geometry", "runtimeNumerics", "jacobianFinite",
             "capabilityGuard")
 
 #: Max absolute logit difference tolerated between this engine's canonical
-#: readout and the pinned reference implementation on identical residuals.
-#: Loose enough for a bf16/fp16 output head (the two paths cast differently on
-#: the way into the matmul), tight enough that a missing RMSNorm gain — which
-#: rescales by ~an order of magnitude on Gemma (plan §11.1) — cannot hide under
-#: it. Pinned by test.
+#: readout and the pinned reference implementation on identical residuals,
+#: compared with the reference's output head promoted to float32 (the default
+#: mode since the ruling below). So it bounds the MATH: a missing RMSNorm gain
+#: rescales by ~an order of magnitude on Gemma (plan §11.1) and cannot hide
+#: under it, while two correct float32 implementations sit near 1e-6 apart.
+#: Pinned by test.
 #:
-#: Whether this ABSOLUTE number is the right shape is an open METHODS question,
-#: not a CLI default anyone may quietly retune (the 27B run reads 0.07059 on a
-#: fixture logit of ~96, i.e. a relative deviation of ~7e-4). The two
-#: instruments that produce the evidence for that ruling live in
-#: :func:`_check_reference_agreement` and change nothing about this number:
-#: ``measured["perComparison"]`` records the raw (layer, fixture row, token)
-#: logit PAIR behind every comparison, so the max is no longer the only thing
-#: a reader gets; and :data:`REFERENCE_FP32_ENV` forces the reference path to
-#: float32 for one diagnostic run, so "it is the dtype-cast asymmetry" becomes
-#: a measurement instead of a hypothesis. Both are stamped in the record.
+#: RULING (2026-09-05): the comparison runs in float32 by default. The
+#: reference computes at the model's runtime dtype, so every bf16 reference
+#: logit lies on the bf16 grid, whose spacing exceeds this tolerance once
+#: |logit| >= 8 (one ulp is 0.0625 there). Measured on the 4B testing lens:
+#: 0.0837 at the runtime dtype against 1.9e-6 under promotion, both vocabulary
+#: paths, so the deviation was the reference's rounding and nothing else; the
+#: 27B run's 0.07059 on a fixture logit of ~96 is the same phenomenon. An
+#: absolute tolerance below the reference's own resolution could never pass,
+#: and scaling it with magnitude would have made the number a function of the
+#: fixtures rather than of the math. Promotion touches only the output head
+#: the comparison reads (:data:`REFERENCE_OUTPUT_HEAD`), never the decoder
+#: stack, so it costs a second copy of the head and nothing more. The
+#: instruments stay: ``measured["perComparison"]`` records the raw (layer,
+#: fixture row, token) logit PAIR behind every comparison, and
+#: :data:`REFERENCE_FP32_ENV` set to ``0`` runs the runtime-dtype comparison
+#: as a diagnostic. The record stamps which mode produced it either way.
 REFERENCE_TOLERANCE = 5e-2
 
-#: Opt-in diagnostic: force the REFERENCE path's own float tensors to float32
-#: for the agreement check (this engine's path is float32 already). Off by
-#: default, and the record stamps which mode produced it, so a run that passed
-#: only because both paths were promoted can never be read as a default-mode
-#: acceptance. See :func:`_promote_reference_to_fp32`.
+#: The reference path's dtype mode for the agreement check. Unset (or
+#: ``1``/``true``/``yes``/``on``): the reference's output head is promoted to
+#: float32 for the comparison — this engine's path is float32 already — and
+#: restored afterwards. That is the DEFAULT. ``0``/``false``/``no``/``off``:
+#: the reference keeps its runtime dtype, a diagnostic for one question — how
+#: far the runtime-dtype reference sits from the float32 math — whose failures
+#: above the tolerance at |logit| >= 8 are the expected reading. Any other
+#: value is refused, not guessed. The record stamps the mode AND where it came
+#: from in every case, so a diagnostic run can never be read as the default by
+#: omission. See :func:`_promote_reference_to_fp32`.
 REFERENCE_FP32_ENV = "STEERLAB_JLENS_REFERENCE_FP32"
+
+#: The reference attributes the comparison reads through ``unembed``: the
+#: final norm and the output head. ``_embed_tokens`` is the tied twin of
+#: ``_lm_head`` on Gemma and is listed so an untied head is promoted at both
+#: ends; ``layers`` is deliberately absent — the comparison transports through
+#: OUR float32 Jacobian, never through the reference's decoder blocks, and
+#: promoting the whole stack would double a 27B model's weight memory for
+#: nothing. (The walk over every module that preceded this list did exactly
+#: that, which is why promotion could only ever have been opt-in.)
+REFERENCE_OUTPUT_HEAD = ("_final_norm", "_lm_head", "_embed_tokens")
 
 #: How many per-comparison rows the record keeps. The check runs
 #: ``len(layers) × REFERENCE_FIXTURE_ROWS`` comparisons, so this bites only on
@@ -371,25 +393,53 @@ def _reference_residuals(d_model: int, count: int = REFERENCE_FIXTURE_ROWS):
     return rows * (REFERENCE_FIXTURE_SCALE / rows.norm(dim=-1, keepdim=True))
 
 
-def _reference_fp32_requested() -> bool:
-    """Is the fp32-forced comparison mode switched on for this process?"""
-    return (os.environ.get(REFERENCE_FP32_ENV) or "").strip().lower() in {
-        "1", "true", "yes", "on"}
+_REFERENCE_FP32_ON = frozenset({"1", "true", "yes", "on"})
+_REFERENCE_FP32_OFF = frozenset({"0", "false", "no", "off"})
 
 
-def _promote_reference_to_fp32(ref_model):
-    """Promote the reference model's own float tensors to float32.
+def _reference_fp32_mode() -> tuple[bool, str]:
+    """Which dtype mode the reference path runs in, and where that came from.
 
-    Returns ``(promoted_names, restore)``. The caller MUST call ``restore`` in
-    a ``finally``: the reference wraps the study model's live modules, so this
-    is a temporary promotion of shared objects, not a copy.
+    Returns ``(promote, source)``: ``promote`` is whether the reference's
+    output head is promoted to float32 for the comparison, ``source`` is
+    ``"default"`` when the environment said nothing and ``"env"`` when it
+    chose. A value this function cannot read is refused rather than mapped to
+    either mode, because a check whose mode nobody can name is not a check
+    anyone can cite.
+    """
+    raw = os.environ.get(REFERENCE_FP32_ENV)
+    if raw is None or not raw.strip():
+        return True, "default"
+    text = raw.strip().lower()
+    if text in _REFERENCE_FP32_ON:
+        return True, "env"
+    if text in _REFERENCE_FP32_OFF:
+        return False, "env"
+    raise JLensError(
+        f"{REFERENCE_FP32_ENV}={raw!r} is not a mode this check can read: "
+        f"1/true/yes/on promotes the reference's output head to float32 (the "
+        f"default when unset), 0/false/no/off keeps its runtime dtype (a "
+        f"diagnostic). Nothing was compared.")
+
+
+def _promote_reference_to_fp32(ref_model, names):
+    """Promote the named float tensors of the reference model to float32.
+
+    ``names`` are attributes of ``ref_model`` (:data:`REFERENCE_OUTPUT_HEAD`
+    for the agreement check); one that is absent is skipped, and one that is
+    already float32 is skipped and NOT listed as promoted. Returns
+    ``(promoted_names, restore)``. The caller MUST call ``restore`` in a
+    ``finally``: the reference wraps the study model's live modules, so this
+    is a temporary promotion of shared objects, not a copy — and a module tied
+    to one already promoted (Gemma's embedding and head share their weight) is
+    found already float32 and left to the first one's undo.
 
     ALL OR NOTHING (external review, 2026-08-26). The promotion mutates those
     shared modules as it walks them, and ``restore`` used to be handed over
     only once the whole walk had succeeded — so a promotion that died part way
-    (OOM is the plausible way in: a 27B output head is several GiB, which is
-    precisely why this mode is opt-in) left the modules it had already reached
-    in float32 with nobody holding an undo for them. The rest of the
+    (OOM is the plausible way in: a 27B output head is several GiB) left the
+    modules it had already reached in float32 with nobody holding an undo
+    for them. The rest of the
     qualification would then run against a model in a dtype nobody chose. Any
     exception now unwinds what this call did, in reverse, before it propagates:
     either the reference is fully promoted or it is exactly as it was found.
@@ -399,22 +449,30 @@ def _promote_reference_to_fp32(ref_model):
     the identical bits; tensor attributes are restored by putting the ORIGINAL
     object back, which does not even round-trip.
 
-    This costs a second copy of the output head while the check runs, which is
-    why it is opt-in: at 27B that is several GiB. It is a diagnosis instrument
-    for one question — whether the reference-agreement deviation is the
-    documented dtype-cast asymmetry between the two paths — and not something
-    a qualification run should be paying for by default.
+    This costs a second copy of the output head while the check runs — at 27B
+    a few GiB, which the default mode pays because the alternative was a
+    tolerance the reference's own rounding could never meet (see
+    :data:`REFERENCE_TOLERANCE`). It is bounded by ``names``: the decoder
+    stack is never touched, so the cost does not scale with the model's depth.
 
-    Note what it does NOT touch: this engine's side of the comparison reads
-    ``readout.watched_rows``, which was materialized in float32 at build time,
-    so promoting the reference cannot move our operand.
+    Note what it does NOT touch: this engine's watchlist path reads
+    ``readout.watched_rows``, materialized in float32 at build time, so
+    promoting the reference cannot move that operand. The full-vocabulary path
+    projects through the model's LIVE output head, which IS the promoted
+    module — so under promotion that path is compared float32 against
+    float32, which is the math question this check asks; how that path behaves
+    at the runtime dtype is ``runtimeNumerics``' subject, not this check's.
     """
     import torch
 
+    attrs = vars(ref_model)
     promoted: list[str] = []
     undo: list = []
     try:
-        for name, value in list(vars(ref_model).items()):
+        for name in names:
+            if name not in attrs:
+                continue
+            value = attrs[name]
             if isinstance(value, torch.nn.Module):
                 dtypes = {t.dtype for t in
                           list(value.parameters()) + list(value.buffers())
@@ -642,16 +700,28 @@ def _check_reference_agreement(record, model, readout, layers: list[int], *,
     seeded residual ROWS (:func:`_reference_residuals`), so a comparison is
     identified by ``(layer, fixtureRow, tokenID)``.
 
-    :data:`REFERENCE_FP32_ENV` forces the reference path to float32 for the
-    comparison, and the record stamps whether it was on. The two paths cast
-    differently on the way into the output head; if the deviation collapses
-    under fp32, that asymmetry is the whole story, which is evidence a
-    tolerance ruling can stand on rather than an argument it has to take on
-    faith. The tolerance itself is untouched by the mode.
+    The reference's output head is promoted to float32 for the comparison BY
+    DEFAULT (ruling 2026-09-05, see :data:`REFERENCE_TOLERANCE`): the two
+    paths used to cast differently on the way into the output head, and the
+    deviation that produced was the reference's bf16 rounding, which the
+    tolerance sits below once logits reach |8|. :data:`REFERENCE_FP32_ENV` set
+    to ``0`` keeps the reference at its runtime dtype as a diagnostic; a value
+    nobody can read FAILS the check. The record stamps the mode, its source
+    and the head's dtype in every case. The tolerance itself is untouched by
+    the mode.
     """
     from . import backend as backend_mod
 
-    fp32_forced = _reference_fp32_requested()
+    try:
+        fp32_forced, fp32_source = _reference_fp32_mode()
+    except JLensError as exc:
+        return CheckResult(
+            name="referenceAgreement", passed=False, detail=str(exc),
+            measured={"referencePackage": backend_mod.REFERENCE_PACKAGE,
+                      "referenceCommit": backend_mod.REFERENCE_COMMIT,
+                      "referenceFP32Forced": None,
+                      "referenceFP32ModeSource": "invalid",
+                      "referenceFP32EnvVar": REFERENCE_FP32_ENV})
     try:
         backend_mod.require_reference()
         import jlens as reference
@@ -662,6 +732,7 @@ def _check_reference_agreement(record, model, readout, layers: list[int], *,
             measured={"referencePackage": backend_mod.REFERENCE_PACKAGE,
                       "referenceCommit": backend_mod.REFERENCE_COMMIT,
                       "referenceFP32Forced": fp32_forced,
+                      "referenceFP32ModeSource": fp32_source,
                       "referenceFP32EnvVar": REFERENCE_FP32_ENV})
 
     inner = model.model
@@ -678,10 +749,12 @@ def _check_reference_agreement(record, model, readout, layers: list[int], *,
     # check that to see that the mutation and its restoration are one region.
     try:
         if fp32_forced:
-            promoted, restore = _promote_reference_to_fp32(ref_model)
+            promoted, restore = _promote_reference_to_fp32(
+                ref_model, REFERENCE_OUTPUT_HEAD)
         result = _compare_against_reference(
             record, readout, layers, ref_model, reference, backend_mod,
-            root=root, fp32_forced=fp32_forced, promoted=promoted)
+            root=root, fp32_forced=fp32_forced, fp32_source=fp32_source,
+            promoted=promoted)
     finally:
         if restore is not None:
             restore()
@@ -690,7 +763,7 @@ def _check_reference_agreement(record, model, readout, layers: list[int], *,
 
 def _compare_against_reference(record, readout, layers: list[int], ref_model,
                                reference, backend_mod, *, root: str | None,
-                               fp32_forced: bool,
+                               fp32_forced: bool, fp32_source: str,
                                promoted: list[str]) -> CheckResult:
     """The comparison itself, with the reference model already in whatever
     numeric mode the caller established. Split out so the fp32 promotion can be
@@ -711,6 +784,9 @@ def _compare_against_reference(record, readout, layers: list[int], ref_model,
         probe.to(ref_model._lm_head.weight.dtype)).to(torch.float32)
     norm_applied = bool(
         (unembedded - unnormed).abs().max() > REFERENCE_TOLERANCE)
+    # The dtype the comparison actually ran against, read off the head AFTER
+    # any promotion: this is what makes "promoted nothing" visible.
+    head_dtype = str(ref_model._lm_head.weight.dtype)
 
     watch = list(readout.watchlist)
     # BOTH vocabulary paths, not just the watchlist (external review,
@@ -786,6 +862,16 @@ def _compare_against_reference(record, readout, layers: list[int], ref_model,
             "norm — this engine folds g = 1 + norm.weight into the token rows "
             "on the assumption that it does, so both paths would now be "
             "self-consistently wrong")
+    if fp32_forced and ref_model._lm_head.weight.dtype != torch.float32:
+        # The mode says float32 and the head is not: the promotion skipped it
+        # (mixed float widths, or a reference whose head is not where this
+        # engine expects). A comparison at the runtime dtype under a float32
+        # stamp is the one record this check must never write as a pass.
+        problems.append(
+            f"the reference's output head is {head_dtype}, not float32, after "
+            f"promotion (promoted: {', '.join(promoted) or 'nothing'}) — the "
+            "comparison ran at the runtime dtype and cannot be read as the "
+            "float32 agreement the mode claims")
     if not compared:
         problems.append(
             "no residual/layer pair was comparable — the watchlist is empty, "
@@ -802,12 +888,22 @@ def _compare_against_reference(record, readout, layers: list[int], ref_model,
     detail = ("; ".join(problems)
               or (f"agrees with {backend_mod.REFERENCE_PACKAGE} within "
                   f"{worst:.3g} over {compared} fixture(s), {paths_read}"))
+    # In the detail as well as the measurements: this is what a reader sees
+    # in the CLI summary, and the mode must be legible there in BOTH
+    # directions — a diagnostic line that did not say so would read as the
+    # default-mode agreement.
     if fp32_forced:
-        # In the detail as well as the measurements: this is what a reader
-        # sees in the CLI summary, and a passing line that does not say the
-        # reference was promoted would read as a default-mode acceptance.
-        detail += (f"; REFERENCE PATH FORCED TO float32 ({REFERENCE_FP32_ENV}) "
-                   f"— diagnostic mode, not a default-mode agreement")
+        origin = ("default mode" if fp32_source == "default"
+                  else f"{REFERENCE_FP32_ENV} set")
+        detail += (f"; reference output head compared in float32 ({origin}; "
+                   f"promoted: "
+                   f"{', '.join(promoted) or 'nothing, already float32'})")
+    else:
+        detail += (f"; REFERENCE PATH AT ITS RUNTIME DTYPE ({head_dtype}; "
+                   f"{REFERENCE_FP32_ENV} off) — diagnostic mode, not the "
+                   "default-mode agreement: a deviation within one ulp of the "
+                   "reference logit at that dtype is the reference's rounding, "
+                   "not a disagreement")
     return CheckResult(
         name="referenceAgreement", passed=not problems,
         detail=detail,
@@ -838,10 +934,14 @@ def _compare_against_reference(record, readout, layers: list[int], ref_model,
                                          "'ours'"),
                   "worstComparison": worst_comparison,
                   # Always stamped, in BOTH modes, so the absence of a flag can
-                  # never be read as the default mode by omission.
+                  # never be read as the default mode by omission — and WHERE
+                  # the mode came from, so a default-mode record and an
+                  # explicitly requested one stay distinguishable.
                   "referenceFP32Forced": fp32_forced,
+                  "referenceFP32ModeSource": fp32_source,
                   "referenceFP32EnvVar": REFERENCE_FP32_ENV,
                   "referenceFP32Promoted": promoted,
+                  "referenceHeadDtype": head_dtype,
                   "referencePackage": backend_mod.REFERENCE_PACKAGE,
                   "referenceVersion": backend_mod.reference_version(),
                   "referenceCommit": backend_mod.REFERENCE_COMMIT})

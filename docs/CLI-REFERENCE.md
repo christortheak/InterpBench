@@ -751,7 +751,7 @@ never read by Python: `STEERLAB_MODULES`, `STEERLAB_CONDA_SH`,
 | `STEERLAB_JUDGE_KEY_FILE` | a `~/.steerlab-judge-key`-style path, mode 600 | A **path, never a secret**, which is why it is allowed through the secret-env filter and inherited into Slurm children. |
 | `STEERLAB_SKIP_PROVIDER_PREFLIGHT` | unset | Disables the provider catalogue lookup for air-gapped sites. **Skipping is logged** — an unverified pin must never look like a verified one. |
 | `STEERLAB_PREFILL_CHUNK` | `1024` | MPS-only; `0` disables chunking. CUDA and CPU never read it. |
-| `STEERLAB_JLENS_REFERENCE_FP32` | unset | `1`/`true`/`yes`/`on`: run `jlens qualify`'s `referenceAgreement` check with the REFERENCE path's own tensors promoted to float32 (ours is float32 already), then restored. A diagnostic for one question — whether a deviation is the two paths' dtype-cast asymmetry — at the cost of a second copy of the output head. The check stamps `referenceFP32Forced` in **both** modes and says so in its detail line, so a run that agreed only under promotion can never be read as a default-mode acceptance. It does not touch the tolerance. |
+| `STEERLAB_JLENS_REFERENCE_FP32` | unset (= on) | The dtype mode of `jlens qualify`'s `referenceAgreement` check. Unset, `1`/`true`/`yes`/`on`: the REFERENCE path's output head (final norm + `lm_head`, never the decoder stack) is promoted to float32 for the comparison — ours is float32 already — then restored. This is the **default** (ruling 2026-09-05): the reference computes at the runtime dtype, and a bf16 logit's grid spacing exceeds the 0.05 tolerance once the logit's magnitude reaches 8, so the runtime-dtype comparison was failing on the reference's own rounding (4B testing lens: 0.0837 at bf16 against 1.9e-6 promoted, both vocabulary paths). `0`/`false`/`no`/`off`: the reference keeps its runtime dtype — a diagnostic for how far the runtime-dtype reference sits from the float32 math, whose failures at large logits are the expected reading. Any other value FAILS the check rather than guessing a mode. The check stamps `referenceFP32Forced`, `referenceFP32ModeSource` (`default` / `env` / `invalid`) and `referenceHeadDtype` in every mode and says which mode ran in its detail line, so a diagnostic run can never be read as the default-mode agreement. It does not touch the tolerance; the cost is a second copy of the output head while the check runs. |
 | `STEERLAB_MEMORY_HEADROOM_GIB` | `16.0` | Floored at 0; a bad value is swallowed. |
 
 ### 2.8 Hugging Face
@@ -3926,8 +3926,22 @@ absolute deviation, plus `worstComparison` and a `perComparisonTruncated` flag
 for the bounded-record case. `maxAbsLogitDeviation` is unchanged and is still
 what the tolerance is compared against — the breakdown exists because a max
 alone cannot say whether a deviation is large *relative to its operands*, which
-is the whole question when one fires. `STEERLAB_JLENS_REFERENCE_FP32=1` (§2.7)
-is the paired instrument.
+is the whole question when one fires. `STEERLAB_JLENS_REFERENCE_FP32` (§2.7) is
+the paired instrument.
+
+Since the 2026-09-05 ruling the comparison runs with the reference's output
+head promoted to float32 **by default**: the reference computes at the runtime
+dtype, and a bf16 logit's grid spacing already exceeds the 0.05 tolerance at
+magnitudes of 8 and above, so the runtime-dtype comparison was failing on the
+reference's own rounding (4B testing lens: 0.0837 at bf16, 1.9e-6 promoted,
+both vocabulary paths; the 27B run's 0.07059 on a fixture logit of ~96 is the
+same phenomenon). Only the output head is promoted, never the decoder stack,
+so the cost is one extra copy of the head. Setting the variable to `0` keeps
+the reference at its runtime dtype as a diagnostic; the record stamps the
+mode, its source and the head's dtype either way, and the detail line of a
+diagnostic run says it is not the default-mode agreement. A head the
+promotion could not reach (mixed float widths) fails the check by name
+rather than passing at a dtype the stamp does not show.
 
 `g0` is the feasibility gate, and its output is **two independent
 arm verdicts**: the STEERING arm (derive → inject → use in a study) and the
