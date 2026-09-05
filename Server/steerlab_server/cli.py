@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import time
+import traceback
 
 
 class RootFlagError(Exception):
@@ -3870,9 +3871,20 @@ def _optvec(args: list[str]) -> int:
     top-up-submits the Slurm grid (WP6); ``interpret``/``family`` read what a
     solution (and the solution family) contains (WP7); ``jspace`` reads what
     the model computes FROM it through an imported lens (WP8, exploratory
-    tier). Each prints its run's JSON. Exit codes: 0 = done; 2 = bad
-    config/dataset/artifact; 3 = campaign submit had failed sbatches;
-    64 = usage."""
+    tier). Each prints its run's JSON.
+
+    Exit codes are the shared vocabulary (``cli_envelope.STATE_EXIT_CODES``,
+    the table every agent-path verb answers in — until 2026-09-05 this family
+    answered every typed error with a 2 and let the untyped ones escape as
+    tracebacks): 0 = done; 64 = usage, or a config that breaks its own
+    contract; 65 = a typed refusal by an input (a missing choice-row
+    dataset is the shared loader's gate refusal, so it is 65 here as under
+    ``experiment sweep``); 66 = a named config, artifact, lens, text file,
+    survey or campaign directory that does not exist; 70 = an operational
+    failure. ``campaign submit`` additionally exits 3 when any
+    sbatch failed — a success document carrying failures, never buried in a
+    zero. :func:`_optvec_exception_envelope` is the one place the mapping
+    lives."""
     if not args:
         sys.stderr.write(_OPTVEC_USAGE)
         return 64
@@ -3898,12 +3910,162 @@ def _optvec(args: list[str]) -> int:
     return 64
 
 
+def _optvec_error_classes() -> tuple[tuple, tuple]:
+    """The optvec family's typed exceptions, split the way the exit vocabulary
+    splits them: ``(malformed-config classes, typed-refusal classes)``.
+
+    A CONFIG error is the config's own contract declined as written — an
+    unknown key, a wrong type, a value outside its range, a selection split
+    the verb must not see, too few artifacts to be a statistic. The
+    invocation is malformed (``blocked``, 64) and the repair is to edit the
+    config. A REFUSAL is a well-formed request that an INPUT declined — hash
+    drift, a multi-token option, an artifact with no ``optvec`` block, mixed
+    layers, a lens with no Jacobian at the injection layer, a drifted
+    campaign (``refused``, 65). A missing input is neither; see
+    :func:`_missing_file_in_chain`.
+
+    Imported lazily and all at once: every optvec module already pulls torch
+    through ``optvec_eval``, so by the time an optvec exception exists the
+    cost has been paid, and ONE table beats the seven per-handler tuples that
+    had drifted apart (``family`` never caught ``OptVecFamilyError``;
+    ``train`` let a missing dataset's lifecycle refusal escape as a
+    traceback). ``test_cli_optvec_exit_codes.py`` asserts that every
+    exception class the optvec modules define lands in one of the two.
+    """
+    from .experiment import (optvec_campaign, optvec_eval, optvec_geometry,
+                             optvec_gradient, optvec_interpret, optvec_jspace,
+                             optvec_train)
+    malformed = (
+        optvec_train.OptVecConfigError,
+        optvec_eval.OptVecEvalConfigError,
+        optvec_geometry.OptVecGeometryConfigError,
+        optvec_campaign.CampaignConfigError,
+        optvec_interpret.OptVecInterpretConfigError,
+        optvec_interpret.OptVecFamilyConfigError,
+        optvec_jspace.OptVecJSpaceConfigError,
+        optvec_gradient.OptVecGradientConfigError,
+        # A config file that is not JSON at all.
+        json.JSONDecodeError,
+    )
+    refusals = (
+        optvec_train.OptVecDataError,
+        optvec_eval.OptVecEvalDataError,      # and OptVecInterpretDataError
+        optvec_eval.OptVecArtifactError,
+        optvec_geometry.OptVecGeometryError,
+        optvec_campaign.CampaignError,
+        optvec_interpret.OptVecFamilyError,
+        optvec_jspace.OptVecJSpaceError,
+        optvec_gradient.OptVecGradientDataError,
+    )
+    return malformed, refusals
+
+
+def _missing_file_in_chain(exc: BaseException) -> FileNotFoundError | None:
+    """The ``FileNotFoundError`` an exception carries — itself, or anywhere
+    down its cause chain — or ``None``.
+
+    The optvec modules wrap what they cannot read into ONE typed error per
+    module, chained ``from`` the underlying failure, and the loaders that test
+    for existence themselves chain an explicit ``FileNotFoundError`` for the
+    same reason. Either way a missing config, artifact, lens, gradient file,
+    survey or campaign directory answers ``notFound`` (66) — the commonest
+    agent mistake, which used to be indistinguishable from a refusal. The walk
+    follows the rule the interpreter uses to print a traceback: the explicit
+    cause, else the implicit context unless it was suppressed.
+    """
+    seen: set = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, FileNotFoundError):
+            return current
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif not current.__suppress_context__:
+            current = current.__context__
+        else:
+            break
+    return None
+
+
+def _optvec_exception_envelope(label: str, exc: BaseException, *,
+                               config_path: str | None = None):
+    """The envelope for what an optvec verb raised — the ONE place the
+    family's exceptions meet the shared state vocabulary, so the process exit
+    code and a document's ``state`` cannot disagree.
+
+    Precedence, deliberately the agent path's (:func:`_exception_envelope`):
+    a LIFECYCLE gate first — the dataset loaders' typed refusal carries its
+    gate id and executable repair, and the same exception must read the same
+    way here as under ``experiment sweep``; then a missing file anywhere down
+    the chain (``notFound``); then the config's own contract (``blocked``);
+    then an input that declined (``refused``); everything else is an
+    operational failure (``failed``), whose traceback the caller prints
+    because the reason is then all there is.
+    """
+    from . import cli_envelope as envelope
+    from .experiment import lifecycle_gates
+
+    reason = str(exc)
+    gate = lifecycle_gates.gate_of(exc)
+    if gate:
+        return envelope.refusal(
+            label, code=gate, gate=gate, reason=reason,
+            repair_action=lifecycle_gates.repair_of(exc) or _UNTYPED_REPAIR)
+    missing = _missing_file_in_chain(exc)
+    if missing is not None:
+        filename = getattr(missing, "filename", None)
+        return envelope.refusal(
+            label, code="notFound", state="notFound", reason=reason,
+            repair_action=(
+                f"no file at {filename} — check the path the config or the "
+                "command line names" if filename else
+                "the reason names what is missing — create or import it, or "
+                "correct the path"))
+    malformed, refusals = _optvec_error_classes()
+    if isinstance(exc, malformed):
+        subject = (f"the config at {config_path}" if config_path
+                   else "the invocation")
+        return envelope.refusal(
+            label, code="malformedConfig", state="blocked", reason=reason,
+            repair_action=f"fix {subject} — the reason names the key, value, "
+                          "or rule")
+    if isinstance(exc, refusals):
+        return envelope.refusal(
+            label, code=type(exc).__name__, reason=reason,
+            repair_action=("the request was well formed and an input declined "
+                           "it — repair the input the reason names (re-pin a "
+                           "drifted file deliberately, never silently), then "
+                           "re-run"))
+    return envelope.failure(label, code="verbFailed", reason=reason,
+                            repair_action=_UNTYPED_REPAIR)
+
+
+def _optvec_exit(label: str, exc: BaseException, *,
+                 config_path: str | None = None) -> int:
+    """Report an optvec verb's raised outcome on stderr and return its exit
+    code — derived from the envelope's state, never written as a literal.
+
+    The first line keeps its historical shape (``optvec <verb>: <reason>``);
+    the repair follows it, indented, the way the agent path prints one. An
+    operational failure (70) also prints the traceback: that is the one case
+    in which the reason is not the whole diagnosis, and swallowing it would
+    turn a bug into a mystery.
+    """
+    document = _optvec_exception_envelope(label, exc, config_path=config_path)
+    sys.stderr.write(f"{label}: {exc}\n  {document.error['repairAction']}\n")
+    if document.state == "failed":
+        sys.stderr.write("".join(traceback.format_exception(exc)))
+    return document.exit_code
+
+
 def _optvec_gradient_verb(args: list[str]) -> int:
     """``gradient --config <json>`` runs the per-item α→0 survey (S4: one
     forward+backward per item plus the dose-ladder linearity check);
     ``gradient mint <survey-run-dir> <item-id> [--name N]`` exports one item's
     direction as a standard lifecycle-compatible artifact."""
     from .experiment import optvec_gradient
+    config_path = None
     try:
         if args and args[0] == "mint":
             if len(args) < 3:
@@ -3919,10 +4081,8 @@ def _optvec_gradient_verb(args: list[str]) -> int:
             config = optvec_gradient.load_config(config_path)
             result = optvec_gradient.survey(
                 config, log=lambda m: print(m, file=sys.stderr, flush=True))
-    except (OSError, optvec_gradient.OptVecGradientConfigError,
-            optvec_gradient.OptVecGradientDataError) as exc:
-        sys.stderr.write(f"optvec gradient: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec gradient", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -3936,9 +4096,8 @@ def _optvec_fracture(args: list[str]) -> int:
     try:
         config = optvec_geometry.load_fracture_config(config_path)
         result = optvec_geometry.fracture(config)
-    except (OSError, optvec_geometry.OptVecGeometryError) as exc:
-        sys.stderr.write(f"optvec fracture: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec fracture", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -3949,6 +4108,7 @@ def _optvec_campaign(args: list[str]) -> int:
     sbatch failed (the report is on stdout either way — this verb never buries
     a fan-out failure in a zero exit); ``status`` is read-only."""
     from .experiment import optvec_campaign
+    config_path = None
     try:
         if args and args[0] == "materialize":
             config_path = _flag(args, "--config")
@@ -3970,10 +4130,8 @@ def _optvec_campaign(args: list[str]) -> int:
             print(json.dumps(optvec_campaign.status(args[1]),
                              indent=2, sort_keys=True))
             return 0
-    except (OSError, optvec_campaign.CampaignConfigError,
-            optvec_campaign.CampaignError) as exc:
-        sys.stderr.write(f"optvec campaign: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec campaign", exc, config_path=config_path)
     sys.stderr.write(_OPTVEC_USAGE)
     return 64
 
@@ -3988,10 +4146,8 @@ def _optvec_interpret(args: list[str]) -> int:
         config = optvec_interpret.load_config(config_path)
         result = optvec_interpret.interpret(
             config, log=lambda m: print(m, file=sys.stderr, flush=True))
-    except (OSError, optvec_interpret.OptVecInterpretConfigError,
-            optvec_interpret.OptVecInterpretDataError) as exc:
-        sys.stderr.write(f"optvec interpret: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec interpret", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -4008,10 +4164,8 @@ def _optvec_family(args: list[str]) -> int:
                 json.load(handle))
         result = optvec_interpret.family_summary(
             config, log=lambda m: print(m, file=sys.stderr, flush=True))
-    except (OSError, optvec_interpret.OptVecInterpretConfigError,
-            optvec_interpret.OptVecInterpretDataError) as exc:
-        sys.stderr.write(f"optvec family: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec family", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -4026,10 +4180,8 @@ def _optvec_jspace(args: list[str]) -> int:
         config = optvec_jspace.load_config(config_path)
         result = optvec_jspace.analyze(
             config, log=lambda m: print(m, file=sys.stderr, flush=True))
-    except (OSError, optvec_jspace.OptVecJSpaceConfigError,
-            optvec_jspace.OptVecJSpaceError) as exc:
-        sys.stderr.write(f"optvec jspace: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec jspace", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -4044,10 +4196,8 @@ def _optvec_train(args: list[str]) -> int:
         config = optvec_train.load_config(config_path)
         result = optvec_train.train(
             config, log=lambda m: print(m, file=sys.stderr, flush=True))
-    except (OSError, optvec_train.OptVecConfigError,
-            optvec_train.OptVecDataError) as exc:
-        sys.stderr.write(f"optvec train: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec train", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -4062,11 +4212,8 @@ def _optvec_eval(args: list[str]) -> int:
         config = optvec_eval.load_config(config_path)
         result = optvec_eval.evaluate(
             config, log=lambda m: print(m, file=sys.stderr, flush=True))
-    except (OSError, optvec_eval.OptVecEvalConfigError,
-            optvec_eval.OptVecEvalDataError,
-            optvec_eval.OptVecArtifactError) as exc:
-        sys.stderr.write(f"optvec eval: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec eval", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -4103,15 +4250,11 @@ def _optvec_geometry(args: list[str]) -> int:
                 artifacts=positional, name=_flag(args, "--out-name"),
                 layer=layer)
         result = optvec_geometry.geometry(config)
-    except ValueError as exc:
-        # OptVecGeometryError and OptVecArtifactError are both ValueErrors,
-        # and both are the same "this cannot be computed as asked" for the
-        # caller.
-        sys.stderr.write(f"optvec geometry: {exc}\n")
-        return 2
-    except OSError as exc:
-        sys.stderr.write(f"optvec geometry: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        # OptVecGeometryError and OptVecArtifactError are both ValueErrors;
+        # the classifier tells a malformed set (64) from one the artifacts
+        # declined (65) from one that names a missing artifact (66).
+        return _optvec_exit("optvec geometry", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 

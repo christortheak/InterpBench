@@ -950,7 +950,9 @@ def read_campaign(campaign_dir: str) -> dict:
     if not os.path.exists(path):
         raise CampaignError(
             f"{campaign_dir} is not a materialized campaign "
-            f"(no {CAMPAIGN_FILENAME})")
+            f"(no {CAMPAIGN_FILENAME})"
+        ) from FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+                                 path)  # a CLI reads this as notFound
     with open(path, encoding="utf-8") as handle:
         return json.load(handle)
 
