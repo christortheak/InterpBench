@@ -1124,11 +1124,14 @@ def _alpha_in_norm_units(invocation: Invocation) -> bool | None:
 def _parse_slots(spec_text: str) -> list:
     """``<concept>:<layer>:<alpha>[,…]`` — the manifest's own spelling.
 
-    Deliberately NOT the Mac verb's four-field form
-    (``…:<alpha>[:add|ablate]``): ``experiment_store._condition_entry``
-    projects exactly ``{concept, layer, alpha}`` and drops anything else, so
-    accepting a mode here would silently discard it. Transcribe what the store
-    stores.
+    Not (yet) the Mac verb's four-field form (``…:<alpha>[:add|ablate]``),
+    and this client has no ``--control``: an ablation or a control cell is
+    declared on the Mac, or through the manifest document itself
+    (``POST /api/authoring/{name}/condition``), and ``experiment_store.
+    _condition_entry`` carries the slot's ``mode`` and the condition's
+    ``controlType`` since 2026-09-05. A fourth field here is REFUSED (usage),
+    never silently dropped — extending the grammar is a client change with
+    its own reference-doc regeneration, not a projection fix.
     """
     slots = []
     for chunk in spec_text.split(","):

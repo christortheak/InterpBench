@@ -562,9 +562,17 @@ def experiment_detail(manifest: Manifest) -> dict:
                       if isinstance(c, dict)}
     conditions = []
     for cond in manifest.conditions:
+        # `mode` rides only on an ablating slot — absent means add, the same
+        # add-by-omission spelling the manifest uses — so a reader of this
+        # summary can tell λ from α instead of seeing every arm as steering
+        # (2026-09-05: the summary dropped it like `_condition_entry` did).
         entry = {"name": cond.name, "bandWidth": cond.band_width,
                  "normUnits": cond.alpha_in_norm_units,
-                 "slots": [{"concept": s.concept, "layer": s.layer, "alpha": s.alpha}
+                 "slots": [({"concept": s.concept, "layer": s.layer,
+                             "alpha": s.alpha, "mode": "ablate"}
+                            if s.is_ablation else
+                            {"concept": s.concept, "layer": s.layer,
+                             "alpha": s.alpha})
                            for s in cond.slots]}
         if cond.control_type is not None:
             entry["controlType"] = cond.control_type

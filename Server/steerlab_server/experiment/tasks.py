@@ -1148,8 +1148,14 @@ def _effective_sae_latent_condition(spec, edit, provenance,
 def _intervention_state(condition) -> dict:
     """JSON-safe provenance for what was injected under this condition —
     stamped on every record so a reader never reconstructs it from the name."""
+    # `mode` is stamped only on an ablating slot (absent means add, the
+    # manifest's own spelling): a record whose slot says α=1.0 with no mode
+    # is a steering record, and an ablation record must not read as one
+    # (2026-09-05 — the stamp dropped the mode like `_condition_entry` did).
     state = {
-        "slots": [{"concept": s.concept, "layer": s.layer, "alpha": s.alpha}
+        "slots": [({"concept": s.concept, "layer": s.layer, "alpha": s.alpha,
+                    "mode": "ablate"} if s.is_ablation else
+                   {"concept": s.concept, "layer": s.layer, "alpha": s.alpha})
                   for s in condition.slots],
         "bandWidth": condition.band_width,
         "alphaInNormUnits": condition.alpha_in_norm_units,
@@ -6440,8 +6446,12 @@ def _variant_intervention_state(vc, variant) -> dict:
     components — a reader never reconstructs what a variant condition applied
     from its artifact path."""
     return {
-        "slots": [{"concept": inj.get("concept"), "layer": inj.get("layer"),
-                   "alpha": inj.get("alpha")} for inj in variant.injections],
+        "slots": [({"concept": inj.get("concept"), "layer": inj.get("layer"),
+                    "alpha": inj.get("alpha"), "mode": "ablate"}
+                   if str(inj.get("mode") or "add") == "ablate" else
+                   {"concept": inj.get("concept"), "layer": inj.get("layer"),
+                    "alpha": inj.get("alpha")})
+                  for inj in variant.injections],
         "bandWidth": variant.band_width,
         "alphaInNormUnits": variant.alpha_in_norm_units,
         "controlType": None,
