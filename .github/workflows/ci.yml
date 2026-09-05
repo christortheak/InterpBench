@@ -73,6 +73,13 @@ jobs:
       - name: Lint
         working-directory: results-explorer
         run: npm run lint
+      - name: Type check (wrangler runtime declarations + tsc --noEmit)
+        # The Worker config is inline in vite.config.ts, so `tsc` alone had no
+        # source for the Cloudflare runtime types and failed on a cold clone
+        # (external review, 2026-09-05). `npm run typecheck` generates them
+        # from wrangler.types.jsonc first.
+        working-directory: results-explorer
+        run: npm run typecheck
       - name: Unit suite
         working-directory: results-explorer
         run: npm test
