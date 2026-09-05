@@ -12,8 +12,128 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.5] — 2026-09-05
+
 ### Added
 
+- **A reasoning protocol on the manifest, replacing the Qwen-specific
+  boolean (both engines).** `experiment set-sampling --reasoning-effort
+  off|on|low|medium|high|xhigh --reasoning-max-tokens N` declares whether the
+  chat template renders in thinking mode and gives the reasoning block a
+  budget of its own, counted up to `</think>`; `--max-tokens` is then the
+  answer budget, counted from the token after it. A LEVEL is refused unless
+  the model's capability record (below) says the template accepts one
+  (Qwen3-14B/-32B ignore the level: declare `on`). A manifest frozen under the
+  old `qwenThinkingEnabled` still reads (`true` meant the template's default
+  effort) and is never rewritten. An orphan leading `</think>` — a template
+  that opens no reasoning block but the model closes one anyway — now
+  terminates the reasoning preamble instead of being carried into the answer.
+  The reasoning effort, the reasoning budget and the answer budget all land in
+  every run's manifest snapshot and in the frozen preregistration's Sampling
+  line.
+- **Chat-template capability records, probed rather than assumed.**
+  `steerlab-cli model capabilities <modelID> --probe` (and the server's twin)
+  renders probes against the PINNED template and writes
+  `prompts/models/<owner>--<repo>@<revision>.json`: whether the template has a
+  system role, a thinking switch, effort levels. The declarations that depend
+  on those facts — a system prompt delivered as a system turn, a reasoning
+  level — are gated on the record; a model without one falls back to the old
+  family rule and every gated verb says so with an advisory. The vocabulary
+  gains `on` and `high`; a heuristic fallback is stamped as such; frozen
+  manifests read the record as advisory only.
+- **A J-lens may be imported for any model that has a published one.** The
+  curated table (the Gemma-3 27B, 12B and 4B instruction models) now fixes
+  only the evidence TIER of the models this study has decided about. The
+  published repository carries lenses for some forty models — Gemma 2/3/4,
+  Llama 3, Qwen 2.5/3/3.5, OLMo 3, GPT-OSS, DeepSeek — and `jlens supported
+  --published` lists them. Acquisition for an uncurated model is two scoped
+  pulls (the published `config.yaml` files say which folder names the model;
+  then that folder alone); `jlens import <model> --tier evidence|testing` is
+  REQUIRED off the table, because nothing upstream can say whether a study
+  treats a model as evidence or rehearsal, and the declaration is stamped
+  with its provenance. Freeze, qualify, run start and the J-space report
+  resolve the tier through one helper; a lens with no tier cannot be frozen.
+  The lens id names the corpus the config declares (DeepSeek's is pile-10k).
+- **The final-norm gain convention is observed, never assumed from a family
+  name.** The readout folds the final RMSNorm's gain into the token rows, and
+  two parameterizations exist: `1 + weight` (Gemma 1/2/3, Qwen3.5,
+  Qwen3-Next, …) and `weight` (Llama, Qwen2/3, OLMo, GPT-OSS, and — despite
+  the name — Gemma 3n). Reading the wrong one shifts every gain entry by one,
+  which reorders the vocabulary rather than rescaling it. The engine now runs
+  a float32 copy of the model's own norm on a seeded vector and accepts the
+  fold it reproduces; the checkpoint-only paths (`derive`, `support`) do the
+  same against a weightless instance of the architecture's norm class built
+  from `config.json`. A norm the fold cannot reproduce (a LayerNorm with a
+  bias, a mean-centering norm) refuses by name. The observed convention is
+  stamped on the readout, the qualification, the G0 check and every derived
+  direction.
+- **Every intervention path describes its own scope, and a run stamps it.**
+  The additive path edits the final prompt position and each decode step's
+  last position; ablation edits every position; the trainable injector edits
+  an item's answer position (or every non-pad one) in a single teacher-forced
+  pass; an SAE latent edit decodes only the induced delta. Each class now
+  returns an `InterventionScope` — site, layers, positions, prefill and decode
+  behaviour, centering, dose units, the matched control the codebase actually
+  builds for that path, and a verbatim claim limit — and the run driver
+  writes `intervention-scope.json` beside the run's other provenance, one row
+  per condition, identical on every shard (never into `config.json`'s closed
+  key set). `docs/INTERVENTION-SCOPE.md` is the reader's version.
+- **`experiment extract-stability <name> <concept>`.** Captures one concept's
+  rows once through the extractor's own seam and re-derives the direction
+  under seeded subsamples (paired rows kept paired, the same subsets at every
+  layer) and order shuffles, writing a diagnostic under `diagnostics/` stamped
+  with seeds, hashes, recipe identity and build commit — and with a verbatim
+  note that this is stability under resampling of the direction's own
+  contrast, not evidence the direction is the concept and not behavioural
+  validation. `docs/EXTRACTION-RECIPES.md` describes every recipe as executed,
+  with code citations and where each departs from its source.
+- **`steerlab-server ledger impact`.** An evidence-backed exposure ledger for
+  the artifacts the 2026-09-05 fixes (below) could have reached: one entry per
+  candidate run, adapter or promotion under `diagnostics/impact-ledger-<stamp>/`
+  with its producing revision, the pins it carries, the finding, an exposure
+  of exposed / unaffected / unknown, the facts read, and a required action.
+  Missing metadata is never read as non-exposure; `--code-checkout` resolves a
+  stamped build commit's ancestry against each fix. Promotions whose analysis
+  retained its effect sizes are re-scored under the current dose rule into a
+  reassessed file beside a verbatim copy; nothing under `runs/` is touched.
+  `docs/IMPACT-LEDGER.md`.
+- **The J-space readout's arithmetic is stated honestly.** Energy is a
+  squared norm and squared norms are not additive over a sum, so
+  `directEnergy + emergentEnergy` never equalled `deltaEnergy`; the partition
+  is now three-termed with the signed cross term reported at every level and
+  a stamped note that no share here is causal. `nullDraws` (default 1,
+  byte-identical to before) buys k independent seeded matched-norm draws per
+  artifact, reported as a mean beside the per-draw list, the sample SD, the
+  exceedance count and the resolution floor `1/(k+1)`. Each vector reports the
+  nominal dose against the realized change at the injection layer — the
+  empirical noise floor at that dtype — and the report stamps the producing
+  engine and a `quantities` block saying which of three questions each table
+  answers. `docs/OPTVEC-JSPACE.md`.
+- **A RepE reader says which split chose what.** Every reader stamps an
+  `evidenceRoles` block — which split signed the direction, which ranked the
+  layers, the role of each accuracy — because `heldOutAccuracy` is the score
+  of the winner of two selections made on the very rows it is computed over.
+  A third split role, `finalTest`, is read by nothing that fits or selects and
+  is scored once as `finalTestAccuracy`; `test` keeps meaning held out. A
+  held-out or final-test row whose text repeats a train row's is a leak and
+  refuses at parse and at fit. A vector derived from a reader carries the
+  roles in its sidecar. Swift parity is owed (below).
+- **The three training recipes, published side by side, and a named adapter
+  scale convention.** PEFT applies `lora_alpha / r`; the MLX adapter `scale`
+  is a direct multiplier with no rank in it. The Python adapter sidecar stamps
+  `adapterScaleConvention` and the resolved `effectiveAdapterScale`, and the
+  fine-tune wire gains `hyperparameters.adapterScale` — the multiplier itself
+  — which the server resolves into PEFT's alpha and stamps on the plan and
+  the sidecar (declaring both spellings is a typed refusal). The Mac panel's
+  scale therefore trains at the same strength on both engines; at rank 8 it
+  used to differ by a factor of eight. `docs/TRAINING-RECIPES.md` is the
+  supported-recipe matrix, cell by cell.
+- **The production validation matrix, pre-declared.** `docs/VALIDATION-MATRIX.md`
+  lists fifteen checks with their runner, the comparison each makes, the
+  tolerance it is held to, and what a pass licenses — explicitly unexecuted.
+  `CONDUCTING-A-STUDY.md` §5.5 states the dose gate's observed-direction
+  policy where it bites; `METHODS.md` points at the recipe, scope and
+  validation pages; `ONBOARDING.md` gains a J-lens section.
 - **`finishReason` on every generation record, and an optional per-cell
   truncation gate (`maxLengthStoppedFraction`).** Field incident 2026-08-30: a
   run capped at a token budget produced outputs where a large fraction never
@@ -62,6 +182,49 @@ migration that rewrites frozen bytes.
 
 ### Changed
 
+- **A shard merge appears atomically, and an import never certifies a
+  report-less run.** The merge assembles in a staging directory and lands by
+  rename; the reconciler adopts, finishes or repairs a parent a dead
+  controller left half-written; cancel is a no-op on a finished fan-out; and
+  `cluster import` holds back a directory whose stage has not finished — by
+  content, never by asking the scheduler — under its own summary key
+  (`skippedInProgress`), because the transfer fills gaps and never rewrites,
+  so a record file copied mid-write would be frozen locally for good.
+- **The J-lens reference agreement compares in float32 by default.** The
+  reference computes at the runtime dtype, and a bf16 logit's grid spacing
+  exceeds the 0.05 tolerance once a logit reaches magnitude 8, so the
+  runtime-dtype comparison was failing on the reference's own rounding (4B
+  testing lens: 0.0837 at bf16 against 1.9e-6 promoted). Only the reference's
+  output head is promoted, never the decoder stack. `STEERLAB_JLENS_REFERENCE_FP32=0`
+  is the runtime-dtype diagnostic; any other value fails the check; the record
+  stamps the mode, its source and the head's dtype every time.
+- **An SAE qualification's dose-response claim is checked against its own
+  rows.** A declared `monotone` or `signSymmetric` must be borne out by the
+  construct-probe rows through the shared `dose_monotonicity` helper (one
+  way: a record may claim less, never more), enforced at `record` and at
+  citation and reported by `show` with the computed geometry.
+- **Dose response needs two distinct doses, and flat is not monotone, on
+  both engines.** A single-dose ladder and a flat one no longer satisfy
+  `promotionRule.doseMonotone`; the rule reads its direction off the sorted
+  endpoints, so a consistently decreasing response passes, and a confirmatory
+  study that needs an expected direction enforced requires a declared,
+  versioned rule — never a silent positive-only default.
+- **Bundle metadata is held to the member rule everywhere.** A
+  metadata-derived destination (the experiment name, an artifact path) must
+  be one path segment — never absolute, never `.`/`..`, no separators — before
+  anything is imported, executed or submitted; the client refuses an
+  unverifiable download, an explicit digest pin it cannot check
+  (`malformedDigestPin`), and a mismatched digest, instead of treating any of
+  them as absent.
+- **A condition authored on the server keeps its slot mode and its control
+  type.** `experiment_store._condition_entry` used to project a declared
+  condition to `{concept, layer, alpha}` and drop `mode` and `controlType`,
+  so a server-authored ablation was stored — and frozen and run — as a
+  steering arm at α = λ, and a random control as a duplicate treatment cell.
+  `mode` is written only when it is `ablate` and `controlType` only when
+  declared, so every existing manifest keeps its content hash; both are
+  checked against closed vocabularies, and a control paired with the wrong
+  slot mode is refused.
 - **`steerlab-server optvec` exits in the shared vocabulary.** Every
   `optvec` verb (train, eval, geometry, campaign, interpret, family, jspace,
   gradient, fracture) answered every typed error with exit 2 and let untyped
@@ -86,6 +249,43 @@ migration that rewrites frozen bytes.
   `FileNotFoundError` cause (`lens_store.resolve` included, so a J-space run
   against a never-imported lens is a 66, not a 65). A caller that branched on
   `== 2` for these verbs must branch on 64/65/66 instead.
+
+### Fixed
+
+- **The J-lens full-vocabulary readout applied no final-norm gain.** The
+  watchlist path folded the gain into its token rows; the full-vocabulary
+  path dropped it, and because the gain varies per coordinate that reorders
+  tokens rather than rescaling them — every top-k table, emergent-token table
+  and full-vocabulary rank taken from that path before this release read a
+  distribution the model does not compute. Qualification now holds BOTH paths
+  to the reference. Artifacts from the broken path must be re-run, not
+  recomputed (producers keep no residuals); `ledger impact` finds them.
+- **LoRA gradient accumulation optimized a micro-batch-dependent objective.**
+  It now optimizes the token-average objective it claimed to, independent of
+  where the micro-batch cut falls.
+- **The MLX instruction trainer rendered the completed answer with a
+  generation prompt.** It now renders the answer without one, and refuses a
+  template whose prompt render is not a prefix of the completed render.
+- **A cancelled local job now stops its child, and a failed local child's
+  partial evidence comes home with the failure** instead of being lost.
+- **The results explorer's standalone type check** has a source for the
+  Cloudflare runtime declarations, and CI runs it.
+
+### Known limitations
+
+- **Swift parity owed** for this release's Python-only descriptors: the RepE
+  reader's `finalTest` role and `evidenceRoles` block (a dataset using
+  `finalTest` must be fitted on the Python engine until then, since the Swift
+  reader would read those rows as held out), the `InterventionScope`
+  descriptors (a Swift-executed run stamps no `intervention-scope.json`),
+  `directionStability` in `SteeringVectorMath`, and the `readerEvidenceRoles`
+  sidecar key (a Swift round trip drops it).
+- The Python client's `experiment declare-condition` still takes the
+  three-field `--slots` grammar and has no `--control`; a fourth field is
+  refused as usage, never dropped, and an ablation or a control is declared on
+  the Mac or through the manifest document.
+- `docs/VALIDATION-MATRIX.md` is a pre-registration of checks, not a record
+  of executed ones, and says so.
 
 ## [0.9.4] — 2026-08-29
 
