@@ -22,7 +22,8 @@ class NoRuntime(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, NoRuntime())
 from steerlab_server.experiment import (analysis_workflow, analysis_endpoints,
     study_admission, run_artifacts, task_inputs, sampling, run_reporting,
-    pipeline_ledger, runtime_backends)
+    pipeline_ledger, runtime_backends, cancellation, judge_dispatch,
+    judgment_evidence, pipeline_evidence, pipeline_policy, pipeline_workflow)
 from pathlib import Path
 assert Path(analysis_workflow.__file__).resolve().is_relative_to(Path.cwd().resolve())
 """], cwd=server, env={**os.environ, "PYTHONPATH": str(server)},

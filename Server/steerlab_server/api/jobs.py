@@ -828,7 +828,7 @@ class JobManager:
         remaining = list(orphan.remaining)
 
         def work(job: Job) -> dict:
-            from ..experiment import pipeline_reconcile
+            from ..experiment import pipeline_reconcile, pipeline_policy, judge_dispatch
             from ..experiment import tasks as tasks_mod
             from ..experiment.manifest import Manifest
 
@@ -854,7 +854,7 @@ class JobManager:
                              "moved or the study was deleted; import the "
                              "completed stage runs if they are still needed")
             try:
-                needs_model = tasks_mod._pipeline_needs_model(
+                needs_model = pipeline_policy._pipeline_needs_model(
                     remaining, manifest)
                 evaluate_fresh = (
                     "evaluate" in remaining
@@ -862,7 +862,7 @@ class JobManager:
                     != "awaitingJudgment")
                 needs_fanout = bool(
                     evaluate_fresh
-                    and tasks_mod.evaluate_fanout_judge_models(manifest))
+                    and judge_dispatch.evaluate_fanout_judge_models(manifest))
             except Exception as exc:  # noqa: BLE001
                 return _park("could not classify the remaining stages "
                              f"({type(exc).__name__}: {exc})")

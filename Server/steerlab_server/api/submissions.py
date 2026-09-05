@@ -618,7 +618,7 @@ def _check_local_judge_deliverability(manifest: Manifest | None, verb: str,
     problem = local_judge_pipeline_problem(manifest.raw)
     if problem:
         raise ValueError(f"submission refused: {problem}")
-    from ..experiment.tasks import evaluate_fanout_judge_models
+    from ..experiment.judge_dispatch import evaluate_fanout_judge_models
     fanout = evaluate_fanout_judge_models(manifest)
     if not fanout:
         return None

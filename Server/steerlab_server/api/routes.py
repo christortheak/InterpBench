@@ -26,7 +26,7 @@ from fastapi.responses import (FileResponse, JSONResponse, Response,
                                StreamingResponse)
 
 from .. import build_identity
-from ..experiment import catalog, paths, tasks
+from ..experiment import catalog, paths, pipeline_evidence, tasks
 from ..experiment import resume as resume_mod
 from ..experiment.generate import CellInjection, stream_generate
 from ..experiment.manifest import Manifest
@@ -1260,7 +1260,7 @@ def build_router(state: ServiceState) -> APIRouter:
         disposition, the abort record with gate details, and the
         promoted-agent pins."""
         _safe_name(name)
-        return {"pipelines": tasks.list_pipeline_runs(name)}
+        return {"pipelines": pipeline_evidence.list_pipeline_runs(name)}
 
     @router.get("/api/pipelines")
     def all_pipeline_runs():
@@ -1269,7 +1269,7 @@ def build_router(state: ServiceState) -> APIRouter:
         ``experiment``, per-stage status, disposition, and the ``parked``
         stamp when the startup reconcile parked a dead chain. Read-only,
         same tolerance as the per-experiment route."""
-        return {"pipelines": tasks.list_pipeline_runs(None)}
+        return {"pipelines": pipeline_evidence.list_pipeline_runs(None)}
 
     @router.get("/api/experiment/{name}/evaluate/awaiting")
     def evaluate_awaiting(name: str):
