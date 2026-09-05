@@ -842,8 +842,8 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
     of letting them sink the run — see the narrow ``except OSError`` at the
     end of this function.
     """
-    # Local import: tasks imports this module lazily, so keep the edge one-way.
-    from .tasks import derive_seed, _seeded_generation
+    # Shared sampling has no dependency on task orchestration.
+    from .sampling import derive_seed, seeded_generation as _seeded_generation
 
     validate(scenario)
     effective_temperature = (scenario.temperature if temperature is None

@@ -815,7 +815,7 @@ def health_seed(spec, item_id: str, sample_index: int) -> int:
     replicates. (The study path deliberately does the opposite, including
     condition identity, because its design is paired at the prompt level.)
     """
-    from .tasks import derive_seed
+    from .sampling import derive_seed
     return derive_seed(spec.digest, "", item_id, sample_index)
 
 
@@ -1074,9 +1074,9 @@ def _read_both_regimes(spec, agent: ResolvedAgent, model, records, injections,
     so the whole reading sits inside the adapter's ``try/finally``: an early
     return or a raised generation must not leave the adapter armed for the
     next agent on this container."""
-    from .tasks import _battery_backends
+    from .runtime_backends import battery_backends
 
-    generate_fn, choice_fn = _battery_backends(model, agent.model_id,
+    generate_fn, choice_fn = battery_backends(model, agent.model_id,
                                                injections)
     graded: list[dict] = []
     health: list[dict] = []
@@ -1116,7 +1116,7 @@ def _health_readings(spec, item, prompt_id, model, agent, injections, arming):
     exact substitution the two-regime format exists to prevent.
     """
     from .generate import generate
-    from .tasks import _seeded_generation
+    from .sampling import seeded_generation as _seeded_generation
 
     protocol = spec.generative or battery_mod.GenerativeProtocol()
     for sample_index in range(protocol.samples_per_item):

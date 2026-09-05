@@ -539,10 +539,10 @@ def _defaulted_selection_advisory(manifest, root: str | None) -> str | None:
     sweep itself will report properly — an advisory must never be the thing
     that fails a verb.
     """
-    from .experiment import sweep_selection, tasks
+    from .experiment import sweep_selection, task_inputs
     spec = (manifest.raw.get("sweep") or {}).get("selection")
     try:
-        prompts = tasks._load_prompts(manifest, None, root)
+        prompts = task_inputs.load_prompts(manifest, None, root)
     except Exception:   # noqa: BLE001 - see the docstring
         return None
     choice = sum(1 for prompt in prompts if prompt.get("options"))

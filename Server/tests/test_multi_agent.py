@@ -141,7 +141,7 @@ def test_warm_turns_generate_inside_the_seeded_fork(tmp_path, monkeypatch):
     """The seed must be APPLIED, not merely derived and stamped. Asserts the
     generate call happens inside _seeded_generation's RNG fork, carrying the
     same seed the turn record reports."""
-    from steerlab_server.experiment import tasks as tasks_mod
+    from steerlab_server.experiment import sampling as sampling_mod
 
     active, wrapped = [], []
 
@@ -156,7 +156,7 @@ def test_warm_turns_generate_inside_the_seeded_fork(tmp_path, monkeypatch):
         wrapped.append(active[-1] if active else None)
         return "out"
 
-    monkeypatch.setattr(tasks_mod, "_seeded_generation", spy_seeded)
+    monkeypatch.setattr(sampling_mod, "seeded_generation", spy_seeded)
     monkeypatch.setattr(multi_agent, "generate", stub_generate)
     s = _scenario()
     s.temperature = 0.7

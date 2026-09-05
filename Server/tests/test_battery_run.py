@@ -585,7 +585,7 @@ def executed(tmp_path, monkeypatch, floor_battery):
     root, rel = floor_battery
     _vector(root)
     from steerlab_server.experiment import generate as generate_mod
-    from steerlab_server.experiment import model_variant, tasks
+    from steerlab_server.experiment import model_variant, runtime_backends
 
     # Agent-dependent readings, so the report cannot pass by returning the
     # same block three times: the third agent is the degraded one.
@@ -615,7 +615,7 @@ def executed(tmp_path, monkeypatch, floor_battery):
             return "the quick brown fox jumps over the lazy dog again"
         return "and and and and and and and and"
 
-    monkeypatch.setattr(tasks, "_battery_backends", fake_backends)
+    monkeypatch.setattr(runtime_backends, "battery_backends", fake_backends)
     monkeypatch.setattr(generate_mod, "generate", fake_generate)
     monkeypatch.setattr(model_variant, "variant_injections",
                         lambda variant, root=None: [])
@@ -792,10 +792,10 @@ def test_a_second_base_model_loads_after_the_first_is_released(
     root, rel = floor_battery
     from contextlib import contextmanager
     from steerlab_server.experiment import generate as generate_mod
-    from steerlab_server.experiment import model_variant, tasks
+    from steerlab_server.experiment import model_variant, runtime_backends
 
     monkeypatch.setattr(
-        tasks, "_battery_backends",
+        runtime_backends, "battery_backends",
         lambda model, model_id, injections, latent_edits=None: (
             lambda p, a: "a", lambda p, o, a: (o[0], {o[0]: 1.0})))
     monkeypatch.setattr(
@@ -839,10 +839,10 @@ def test_a_failing_release_never_fails_the_run(tmp_path, monkeypatch,
     root, rel = floor_battery
     from contextlib import contextmanager
     from steerlab_server.experiment import generate as generate_mod
-    from steerlab_server.experiment import model_variant, tasks
+    from steerlab_server.experiment import model_variant, runtime_backends
 
     monkeypatch.setattr(
-        tasks, "_battery_backends",
+        runtime_backends, "battery_backends",
         lambda model, model_id, injections, latent_edits=None: (
             lambda p, a: "a", lambda p, o, a: (o[0], {o[0]: 1.0})))
     monkeypatch.setattr(
@@ -965,10 +965,10 @@ def adapter_run(tmp_path, monkeypatch, floor_battery):
     from contextlib import contextmanager
 
     from steerlab_server.experiment import generate as generate_mod
-    from steerlab_server.experiment import tasks
+    from steerlab_server.experiment import runtime_backends
 
     monkeypatch.setattr(
-        tasks, "_battery_backends",
+        runtime_backends, "battery_backends",
         lambda model, model_id, injections, latent_edits=None: (
             lambda p, a: "a", lambda p, o, a: (o[0], {o[0]: 1.0})))
     monkeypatch.setattr(
@@ -1134,11 +1134,11 @@ def test_the_finished_model_is_unreachable_before_the_next_one_loads(
     from contextlib import contextmanager
 
     from steerlab_server.experiment import generate as generate_mod
-    from steerlab_server.experiment import model_variant, tasks
+    from steerlab_server.experiment import model_variant, runtime_backends
 
     root, rel = floor_battery
     monkeypatch.setattr(
-        tasks, "_battery_backends",
+        runtime_backends, "battery_backends",
         lambda model, model_id, injections, latent_edits=None: (
             lambda p, a: "a", lambda p, o, a: (o[0], {o[0]: 1.0})))
     monkeypatch.setattr(
@@ -1204,11 +1204,11 @@ def test_two_base_models_resolve_to_two_execution_stamps(
     from contextlib import contextmanager
 
     from steerlab_server.experiment import generate as generate_mod
-    from steerlab_server.experiment import model_variant, tasks
+    from steerlab_server.experiment import model_variant, runtime_backends
 
     root, rel = floor_battery
     monkeypatch.setattr(
-        tasks, "_battery_backends",
+        runtime_backends, "battery_backends",
         lambda model, model_id, injections, latent_edits=None: (
             lambda p, a: "a", lambda p, o, a: (o[0], {o[0]: 1.0})))
     monkeypatch.setattr(
@@ -1366,13 +1366,13 @@ def test_a_single_regime_reading_is_an_advisory_not_a_refusal(tmp_path,
     know it cannot see a generative failure before citing it."""
     from steerlab_server.cli import main
     from steerlab_server.experiment import generate as generate_mod
-    from steerlab_server.experiment import model_variant, tasks
+    from steerlab_server.experiment import model_variant, runtime_backends
     root = str(tmp_path)
     rel = "prompts/batteries/v2.jsonl"
     rows = [{"batteryFormat": 2, "scoring": "choiceProbability"}] + GRADED
     _write(root, rel, "".join(json.dumps(r) + "\n" for r in rows))
     monkeypatch.setattr(
-        tasks, "_battery_backends",
+        runtime_backends, "battery_backends",
         lambda model, model_id, injections, latent_edits=None: (
             lambda p, a: "a", lambda p, o, a: (o[0], {o[0]: 1.0})))
     monkeypatch.setattr(generate_mod, "generate",

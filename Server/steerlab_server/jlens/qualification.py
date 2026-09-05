@@ -1018,7 +1018,7 @@ def _check_capability(model, *, model_id: str, layer: int, alpha: float,
     format compliance.
     """
     from ..experiment import battery as battery_mod
-    from ..experiment.tasks import _battery_backends
+    from ..experiment.runtime_backends import battery_backends
     from ..steering.vector_math import norm_unit_scale
     from ..experiment.generate import CellInjection
 
@@ -1035,7 +1035,7 @@ def _check_capability(model, *, model_id: str, layer: int, alpha: float,
     advisory = battery_mod.contamination_advisory(spec, arming)
 
     def _accuracy(injections) -> float:
-        generate_fn, choice_fn = _battery_backends(model, model_id, injections)
+        generate_fn, choice_fn = battery_backends(model, model_id, injections)
         correct = 0
         for item in spec.items:
             fields = battery_mod.score_item(spec, item, arming,

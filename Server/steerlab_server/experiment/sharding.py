@@ -473,7 +473,7 @@ def merge_shard_runs(name: str, shard_dirs: list[str], *, root: str,
             "inconsistent")
 
     # Heavy imports only after the cheap refusals.
-    from . import paths, reasoning_style, tasks
+    from . import paths, reasoning_style, run_artifacts, run_reporting
     from .manifest import Manifest
 
     manifest = Manifest.load(name, root)
@@ -526,7 +526,7 @@ def merge_shard_runs(name: str, shard_dirs: list[str], *, root: str,
     # per-shard Slurm ids live in report.json's `sharded` block.
     from .manifest import inert_machinery_note
     inert_note = inert_machinery_note(manifest.raw)
-    tasks._write_config_snapshot(manifest, merged_dir, "run", job_id=job_id,
+    run_artifacts._write_config_snapshot(manifest, merged_dir, "run", job_id=job_id,
                                  notes=({"inertConceptMachinery": inert_note}
                                         if inert_note is not None else None))
 
@@ -562,8 +562,8 @@ def merge_shard_runs(name: str, shard_dirs: list[str], *, root: str,
         numeric_parser = parser_registry.resolve(manifest.numeric_parser, root)
     battery_summary = (
         _battery_summary(battery_records) if battery_records else None)
-    tasks._write_metrics_csv(merged_records, merged_dir, style=style)
-    tasks._write_summaries_csv(merged_records, merged_dir)
+    run_reporting.write_metrics_csv(merged_records, merged_dir, style=style)
+    run_reporting.write_summaries_csv(merged_records, merged_dir)
     # Panel voice lint over the WHOLE matrix. Each shard rolled up only its own
     # transcripts; the per (speaker × condition) rate is only meaningful once
     # every transcript is in hand. Empty (no file) for non-panel runs.
@@ -578,7 +578,7 @@ def merge_shard_runs(name: str, shard_dirs: list[str], *, root: str,
     }
     if shard_job_ids:
         sharded_block["shardJobIDs"] = list(shard_job_ids)
-    tasks._write_report(name, manifest, merged_records, merged_dir,
+    run_reporting.write_report(name, manifest, merged_records, merged_dir,
                         battery=battery_summary, style=style,
                         numeric_parser=numeric_parser,
                         sharded=sharded_block)
@@ -807,7 +807,7 @@ def seed_pipeline_directory(name: str, root: str, merged_run_dir: str,
     ledger is stamped ``disposition: "completed"`` and the caller needs no
     continuation job."""
     _log = log or (lambda *_: None)
-    from . import paths, pipeline_spec, tasks
+    from . import paths, pipeline_spec, run_artifacts, pipeline_ledger
     from .manifest import Manifest
     manifest = Manifest.load(name, root)
     raw_block = manifest.raw.get("pipeline")
@@ -826,11 +826,11 @@ def seed_pipeline_directory(name: str, root: str, merged_run_dir: str,
     # is created on the controller, not inside the job that will run the
     # remaining stages, so the env fallback would stamp the controller's
     # own allocation id.
-    tasks._write_config_snapshot(manifest, pipeline_dir, "pipeline",
+    run_artifacts._write_config_snapshot(manifest, pipeline_dir, "pipeline",
                                  job_id=job_id)
     remaining = list(spec.stages[1:])
     ledger = {
-        "schema": tasks.PIPELINE_LEDGER_SCHEMA,
+        "schema": pipeline_ledger.PIPELINE_LEDGER_SCHEMA,
         "experiment": name,
         "experimentHash": manifest.content_hash(),
         "manifestStatus": manifest.status,
@@ -840,7 +840,7 @@ def seed_pipeline_directory(name: str, root: str, merged_run_dir: str,
         },
         "disposition": ("completed" if not remaining else None),
     }
-    tasks._write_pipeline_ledger(pipeline_dir, ledger)
+    pipeline_ledger.write_pipeline_ledger(pipeline_dir, ledger)
     _log(f"pipeline continuation seeded → {pipeline_dir} "
          f"(run stage adopted from {merged_run_dir}; remaining: "
          + (", ".join(remaining) if remaining else "none") + ")")
