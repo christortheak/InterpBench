@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://steerlab.dev/schemas/model-capabilities.schema.json",
+  "title": "SteerLab model capability record",
+  "description": "Chat-template capabilities DERIVED from the pinned template by render probes, recorded per (model id, revision) at prompts/models/<owner>--<repo>@<revision>.json and read by both engines (Python: experiment/model_capabilities.py; Swift: SteeringKit.ModelCapabilities). `detected` is what the probe found and is never hand-edited; `overrides` is the human block, displayed beside the detected value and stamped into runs; `recordHash` is sha256 over the canonical JSON (byte-sorted keys, compact separators, raw UTF-8) of every other key.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "modelID", "revision", "source", "probedBy", "template", "detected", "overrides", "advisories", "recordHash"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "modelID": {"type": "string", "minLength": 1},
+    "revision": {"type": ["string", "null"]},
+    "source": {"enum": ["probe", "heuristic"]},
+    "probedBy": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["engine", "version", "at"],
+      "properties": {
+        "engine": {"type": "string"},
+        "version": {"type": "string"},
+        "at": {"type": "string"}
+      }
+    },
+    "template": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["sha256", "tokenizerConfigSha256"],
+      "properties": {
+        "sha256": {"type": ["string", "null"]},
+        "tokenizerConfigSha256": {"type": ["string", "null"]}
+      }
+    },
+    "detected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["systemRole", "systemRoleDetail", "foldSeparator", "thinkingSwitch", "thinkOpenInPrompt", "effortVariableRead", "effortLevels", "thinkTokens", "architecture"],
+      "properties": {
+        "systemRole": {"enum": ["systemTurn", "foldedIntoUser", "unsupported"]},
+        "systemRoleDetail": {"type": ["string", "null"]},
+        "foldSeparator": {"type": ["string", "null"]},
+        "thinkingSwitch": {"enum": ["supported", "unsupported"]},
+        "thinkOpenInPrompt": {"type": ["boolean", "null"]},
+        "effortVariableRead": {"type": ["boolean", "null"]},
+        "effortLevels": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "low": {"enum": ["accepted", "rejected", "ignored", "assumed"]},
+            "medium": {"enum": ["accepted", "rejected", "ignored", "assumed"]},
+            "high": {"enum": ["accepted", "rejected", "ignored", "assumed"]},
+            "xhigh": {"enum": ["accepted", "rejected", "ignored", "assumed"]}
+          }
+        },
+        "thinkTokens": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["open", "close"],
+          "properties": {
+            "open": {"type": ["integer", "null"]},
+            "close": {"type": ["integer", "null"]}
+          }
+        },
+        "architecture": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["layerCount", "hiddenSize", "layerTypes"],
+          "properties": {
+            "layerCount": {"type": ["integer", "null"]},
+            "hiddenSize": {"type": ["integer", "null"]},
+            "layerTypes": {"type": ["array", "null"], "items": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "overrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "systemRole": {"$ref": "#/$defs/override"},
+        "thinkingSwitch": {"$ref": "#/$defs/override"},
+        "thinkOpenInPrompt": {"$ref": "#/$defs/override"}
+      }
+    },
+    "advisories": {"type": "array", "items": {"type": "string"}},
+    "recordHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "override": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "reason", "setAt"],
+      "properties": {
+        "value": {"type": ["string", "boolean"]},
+        "reason": {"type": "string", "minLength": 1},
+        "setAt": {"type": "string"}
+      }
+    }
+  }
+}

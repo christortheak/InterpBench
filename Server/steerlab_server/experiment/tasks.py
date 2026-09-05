@@ -1193,13 +1193,29 @@ def _reader_scores(model, scorers: list[tuple[str, object]], text: str) -> dict[
 
 def _write_config_snapshot(manifest: Manifest, run_directory: str, task: str,
                            notes: dict | None = None, *, model=None,
-                           job_id: str | None = None) -> None:
+                           job_id: str | None = None,
+                           root: str | None = None, log=None) -> None:
     with open(os.path.join(run_directory, "experiment.json"), "w", encoding="utf-8") as handle:
         json.dump(manifest.raw, handle, indent=2, sort_keys=True)
     with open(os.path.join(run_directory, "experiment-hash.txt"), "w", encoding="utf-8") as handle:
         handle.write(manifest.content_hash() + "\n")
     with open(os.path.join(run_directory, "task.txt"), "w", encoding="utf-8") as handle:
         handle.write(task + "\n")
+    # The model's chat-template capabilities this run rendered under
+    # (2026-09-05): with a model in hand the loaded tokenizer is probed and
+    # the workspace record ensured (written if absent, re-probed loudly if
+    # the template changed); without one the workspace record is read. The
+    # stamp lands in `notes.modelCapabilities` — the closed config.json key
+    # set gains nothing — and the declared reasoning effort is checked
+    # against it, as an ADVISORY: a submitted run never dies on a fact
+    # probed after its freeze (post-submit drift policy), it continues
+    # loudly and stamps.
+    capabilities = _model_capabilities_for_run(manifest, model, root, log, task)
+    if capabilities is not None:
+        notes = dict(notes or {})
+        notes["modelCapabilities"] = capabilities.stamp()
+        if task in ("run", "sweep"):
+            _advise_capabilities(manifest, capabilities, run_directory, log)
     # Canonical cross-engine per-run stamp (additive — never replaces the
     # richer per-task artifacts above). Sampling-policy fields are stamped
     # only for generation-bearing tasks (study runs — incl. the multi-agent
@@ -1227,6 +1243,75 @@ def _write_config_snapshot(manifest: Manifest, run_directory: str, task: str,
                      # ids sat in report.json's sharded block (2026-08-06).
                      job_id=job_id,
                      notes=notes)
+
+
+#: The run types whose directory holds RENDERED generations even when the
+#: directory itself was written without a model in hand (a shard merge, a
+#: pipeline seed on the controller): they stamp the workspace record. Every
+#: other model-less writer (analyze, evaluate, rescore) rendered nothing and
+#: stamps nothing — a heuristic stamp on a run that never touched a template
+#: would claim a render that never happened.
+_RENDERING_RUN_TYPES = ("run", "sweep", "pipeline", "multi-agent")
+
+
+def _model_capabilities_for_run(manifest: Manifest, model, root, log, task: str):
+    """The capability view a run stamps: probed from the loaded tokenizer
+    (ensuring the workspace record) when a model is present; the workspace
+    record when a rendering run type was written without one; else None."""
+    from . import model_capabilities as mc
+    _log = log or print
+    tokenizer = getattr(model, "tokenizer", None)
+    if tokenizer is not None:
+        config = getattr(getattr(model, "model", None), "config", None)
+        revision = getattr(model, "revision", None) or manifest.model_revision
+        try:
+            return mc.ensure_record(
+                tokenizer, model_id=manifest.model_id, revision=revision,
+                config=config, root=root, log=_log)
+        except Exception as exc:  # noqa: BLE001 - a probe must never sink a run
+            _log(f"ADVISORY: could not probe the chat template of "
+                 f"{manifest.model_id}: {exc}; stamping the workspace record "
+                 "instead")
+    if task not in _RENDERING_RUN_TYPES:
+        return None
+    try:
+        return mc.lookup(manifest.model_id, manifest.model_revision, root)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _advise_capabilities(manifest: Manifest, capabilities, run_directory: str,
+                         log) -> None:
+    """Run-start advisory (never a refusal): the declared reasoning effort
+    or system prompt against what the probed template actually does, plus
+    the record's own notes. Appended to the run directory's advisories.txt
+    like every other run-start advisory."""
+    _log = log or print
+    effort = manifest.reasoning_effort
+    lines: list[str] = []
+    if effort not in (prompt_render.REASONING_OFF, prompt_render.REASONING_ON):
+        if capabilities.has_thinking_switch:
+            lines += prompt_render.effort_level_violations(
+                effort, manifest.model_id, capabilities)
+        else:
+            lines.append(prompt_render.effort_without_thinking_mode_reason(
+                effort, manifest.model_id))
+    lines += prompt_render.system_prompt_violations(
+        system_prompt=manifest.system_prompt, model_id=manifest.model_id,
+        prompt_mode=manifest.prompt_mode, capabilities=capabilities)
+    lines += prompt_render.reasoning_protocol_advisories(
+        effort=effort, model_id=manifest.model_id, capabilities=capabilities)
+    for line in lines:
+        _log(f"ADVISORY: {line}")
+    if not lines:
+        return
+    try:
+        with open(os.path.join(run_directory, "advisories.txt"), "a",
+                  encoding="utf-8") as handle:
+            for line in lines:
+                handle.write(line + "\n")
+    except OSError:  # the advisory must never sink a run
+        pass
 
 
 def _advise_cross_substrate(manifest: Manifest, run_directory: str | None,
@@ -1372,7 +1457,8 @@ def extract(name: str, root: str | None = None, dtype: str = "auto",
         manifest = _pin_model_revision(name, manifest, model, root, _log)
         bundles = _extract_all(model, manifest, root)
         run_directory = paths.make_unique_run_directory(f"exp-{name}-extract", root)
-        _write_config_snapshot(manifest, run_directory, "extract", model=model)
+        _write_config_snapshot(manifest, run_directory, "extract", model=model,
+                               root=root, log=_log)
         _persist_vectors(bundles, manifest, model, run_directory)
         _write_reading_position_diagnostics(bundles, run_directory, _log)
         _write_logit_lens_vocabulary(bundles, manifest, model,
@@ -1589,7 +1675,8 @@ def _validate_impl(name: str, manifest: Manifest, model, root, _log) -> str:
         condition_layer=None, layer_count=max(_depth, 1))
 
     run_directory = paths.make_unique_run_directory(f"exp-{name}-validate", root)
-    _write_config_snapshot(manifest, run_directory, "validate", model=model)
+    _write_config_snapshot(manifest, run_directory, "validate", model=model,
+                           root=root, log=_log)
     # Validation-evidence contract (parallel to Swift ``isCompleteValidationRun``):
     # a freeze accepts this run only if validation-evidence.json names task
     # "validate" with the matching scope hash AND a validation report exists.
@@ -3754,7 +3841,8 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
     else:
         run_directory = paths.make_unique_run_directory(
             f"exp-{name}-sweep", root)
-        _write_config_snapshot(manifest, run_directory, "sweep", model=model)
+        _write_config_snapshot(manifest, run_directory, "sweep", model=model,
+                               root=root, log=_log)
         # Persist the sweep's re-derived vectors as first-class extraction
         # artifacts (same helper as extract/validate — never a parallel
         # writer): the sweep run itself then carries recipe-matching
@@ -4363,7 +4451,8 @@ def _sweep_impl(name, manifest, model, root, layer_fractions, alphas, prompt,
                 should_cancel, _log) -> str:
     bundles = _extract_all(model, manifest, root)
     run_directory = paths.make_unique_run_directory(f"exp-{name}-sweep", root)
-    _write_config_snapshot(manifest, run_directory, "sweep", model=model)
+    _write_config_snapshot(manifest, run_directory, "sweep", model=model,
+                           root=root, log=_log)
     sweep_prompt = prompt or (manifest.task_description or "Write a short paragraph.")
 
     rows = []
@@ -5376,7 +5465,7 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
             run_notes["saeLatentConditions"] = [
                 provenance for _spec, _edit, provenance in latent_conditions]
         _write_config_snapshot(manifest, run_directory, "run", model=model,
-                               notes=run_notes or None)
+                               notes=run_notes or None, root=root, log=_log)
         _persist_vectors(bundles, manifest, model, run_directory)
         _write_substrate(model, run_directory, sampling)
     # WS7.1: study-run-start cross-substrate check — logged every start
@@ -5980,7 +6069,8 @@ def _run_multi_agent_study(name, manifest, model, root, model_provider=None,
     resuming = run_directory is not None
     if not resuming:
         run_directory = paths.make_unique_run_directory(f"exp-{name}-run", root)
-        _write_config_snapshot(manifest, run_directory, "run", model=model)
+        _write_config_snapshot(manifest, run_directory, "run", model=model,
+                               root=root, log=log)
     else:
         # Same admission guards the ordinary resume path enforces. Accepting
         # any supplied directory would permit mutating a COMPLETE run, or

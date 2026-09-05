@@ -19,6 +19,17 @@ Two prompt modes mirror ``ExperimentManifest.PromptMode``:
 ``chatAssistant`` (apply chat template, add generation prompt) and
 ``rawCompletion`` (no template; the bare/scaffolded text).
 
+THE CAPABILITY RECORD (2026-09-05). The family rules above are no longer
+substring tests on the model id: every predicate here reads a
+:mod:`model_capabilities` record — the pinned template's PROBED answers to
+"is there a system role", "is there a thinking switch", "which effort levels
+does the template read" — passed explicitly by a caller that resolved one
+from the workspace, or derived on the spot from the tokenizer in hand (the
+template itself is the authority, memoized per template hash). With neither
+(a test double, an authoring client with no tokenizer) the old id heuristics
+answer, as a record that SAYS it is heuristic. Rendering passes ONLY the
+template variables the record says the template reads.
+
 THE REASONING EFFORT (2026-09-03). The Qwen-specific boolean
 ``qwenThinkingEnabled`` was replaced by ``reasoningEffort`` ∈ {off, low,
 medium, xhigh}, on the study protocol and on a concept's
@@ -40,10 +51,19 @@ RAW_COMPLETION = "rawCompletion"
 #: The declared reasoning effort that means NO thinking block: today's
 #: ``enable_thinking=False`` path, byte for byte.
 REASONING_OFF = "off"
+#: Thinking ON at the template's own default effort: ``enable_thinking=True``
+#: and no ``reasoning_effort`` variable at all — the only non-off effort a
+#: template with a thinking switch but no effort control can honour.
+REASONING_ON = "on"
 #: The closed vocabulary of ``reasoningEffort``, in the fixed cross-engine
-#: order. The non-off values are the ones the Qwen3.8 chat template accepts.
-#: Swift twin: ``ReasoningEffort`` (SteeringKit).
-REASONING_EFFORTS: tuple[str, ...] = (REASONING_OFF, "low", "medium", "xhigh")
+#: order: off, on, then the probe candidates a template may accept
+#: (``model_capabilities.EFFORT_CANDIDATES``). Which LEVELS a given model may
+#: declare is the pinned template's answer, not the vocabulary's. Swift twin:
+#: ``ReasoningEffort`` (SteeringKit).
+REASONING_EFFORTS: tuple[str, ...] = (
+    REASONING_OFF, REASONING_ON, "low", "medium", "high", "xhigh")
+#: The vocabulary entries that name a LEVEL (a value of ``reasoning_effort``).
+REASONING_LEVELS: tuple[str, ...] = ("low", "medium", "high", "xhigh")
 #: What a legacy ``qwenThinkingEnabled: true`` means: the template's own
 #: default effort, which is what every such study actually ran under.
 LEGACY_THINKING_EFFORT = "xhigh"
@@ -57,6 +77,8 @@ class RenderedPrompt:
 
 
 def _is_gemma(model_id: str) -> bool:
+    """The id heuristic, kept ONLY as the fallback inside
+    ``model_capabilities.heuristic`` and for the family label."""
     return "gemma" in model_id.lower()
 
 
@@ -64,13 +86,27 @@ def _is_qwen(model_id: str) -> bool:
     return "qwen" in model_id.lower()
 
 
-def has_thinking_mode(model_id: str) -> bool:
-    """Whether this family's chat template HAS a thinking mode to declare an
-    effort for. Qwen3/Qwen3.8 do; Gemma 3 does not — a non-off effort on it
-    would reach nothing, so the declaration gates refuse it by name rather
-    than letting a study look as if it reasoned. Swift twin:
-    ``PromptRendering.hasThinkingMode``."""
-    return _is_qwen(model_id)
+def capabilities_for(model_id: str, tokenizer=None, capabilities=None,
+                     revision: str | None = None):
+    """The capability record a renderer or gate reads, in precedence order:
+    the one the caller resolved; else the tokenizer's own template (probed,
+    memoized per template hash); else the id heuristic, which says so.
+    Swift twin: ``PromptRendering.capabilities(for:)``."""
+    if capabilities is not None:
+        return capabilities
+    from . import model_capabilities as mc
+    if tokenizer is not None:
+        return mc.for_tokenizer(tokenizer, model_id=model_id, revision=revision)
+    return mc.effective(mc.heuristic(model_id, revision))
+
+
+def has_thinking_mode(model_id: str, capabilities=None) -> bool:
+    """Whether the pinned chat template HAS a thinking switch to declare an
+    effort for — the record's ``thinkingSwitch`` (Qwen3/Qwen3.8 do; Gemma 3
+    does not — a non-off effort on it would reach nothing, so the declaration
+    gates refuse it by name rather than letting a study look as if it
+    reasoned). Swift twin: ``PromptRendering.hasThinkingMode``."""
+    return capabilities_for(model_id, capabilities=capabilities).has_thinking_switch
 
 
 def resolve_reasoning_effort(reasoning_effort: str | None,
@@ -86,19 +122,41 @@ def resolve_reasoning_effort(reasoning_effort: str | None,
     return reasoning_effort
 
 
-def thinking_template_kwargs(model_id: str, effort: str) -> dict:
-    """The chat-template variables the effort becomes, for this family.
+class EffortUnrenderable(ValueError):
+    """A declared effort the pinned template cannot take (rejected by the
+    template). The declaration gates refuse it first; this is the render-time
+    guard for a hand-edited manifest, typed so it is never a raw Jinja error
+    from inside a run."""
 
-    Nothing for a family without a thinking mode. For Qwen, ``off`` is
-    exactly the kwargs every study has always rendered with
-    (``enable_thinking=False``), so an off study's prompt bytes cannot move;
-    a non-off effort adds ``reasoning_effort`` beside ``enable_thinking=True``.
+
+def thinking_template_kwargs(model_id: str, effort: str, capabilities=None) -> dict:
+    """The chat-template variables the effort becomes, for this template.
+
+    ONLY the variables the record says the template reads. Nothing for a
+    template without a thinking switch. ``off`` is exactly the kwargs every
+    study has always rendered with (``enable_thinking=False``), so an off
+    study's prompt bytes cannot move; ``on`` is ``enable_thinking=True``
+    alone; a level adds ``reasoning_effort`` beside it when the template
+    reads the variable and accepts the level — a level the template IGNORES
+    renders as ``on`` (byte-identical to what such a template always
+    produced, and the gates refuse declaring it anew), a level the template
+    REJECTS raises :class:`EffortUnrenderable`. A heuristic record keeps the
+    pre-record behaviour: every assumed level is passed through.
     Swift twin: ``PromptRendering.thinkingContext``.
     """
-    if not has_thinking_mode(model_id):
+    record = capabilities_for(model_id, capabilities=capabilities)
+    if not record.has_thinking_switch:
         return {}
     if effort == REASONING_OFF:
         return {"enable_thinking": False}
+    if effort == REASONING_ON:
+        return {"enable_thinking": True}
+    verdict = record.effort_verdict(effort)
+    from . import model_capabilities as mc
+    if verdict == mc.REJECTED:
+        raise EffortUnrenderable(effort_rejected_reason(effort, model_id, record))
+    if verdict == mc.IGNORED or (verdict is None and record.effort_variable_read is False):
+        return {"enable_thinking": True}
     return {"enable_thinking": True, "reasoning_effort": effort}
 
 
@@ -174,9 +232,57 @@ def effort_without_budget_reason(effort: str) -> str:
 
 def effort_without_thinking_mode_reason(effort: str, model_id: str) -> str:
     return (f"{REASONING_EFFORT_KEY} '{effort}' declared for {model_id}, "
-            "whose family has no thinking mode — the chat template would "
-            "ignore it and the study would look as if it reasoned when it "
-            f"did not; declare {REASONING_EFFORT_KEY} off")
+            "whose chat template has no thinking switch (enable_thinking "
+            "changes nothing it renders) — the template would ignore it and "
+            "the study would look as if it reasoned when it did not; declare "
+            f"{REASONING_EFFORT_KEY} off")
+
+
+def effort_ignored_reason(effort: str, model_id: str) -> str:
+    """A level on a template that has the switch but never reads
+    ``reasoning_effort`` (Qwen3-14B/-32B): the study would run at the
+    template's default while its manifest asserted the level."""
+    return (f"{REASONING_EFFORT_KEY} '{effort}' declared for {model_id}, "
+            "whose chat template reads enable_thinking but ignores "
+            "reasoning_effort — the study would run at the template's default "
+            f"effort while its manifest asserts {effort}; declare "
+            f"{REASONING_EFFORT_KEY} {REASONING_ON} (thinking at the "
+            "template's default), or pin a model whose template reads the "
+            "effort")
+
+
+def effort_rejected_reason(effort: str, model_id: str, capabilities) -> str:
+    accepted = ", ".join(capabilities.accepted_efforts) or "none"
+    return (f"{REASONING_EFFORT_KEY} '{effort}' is rejected by the chat "
+            f"template of {model_id} (the template raises on it) — accepted "
+            f"levels: {accepted}; or declare {REASONING_EFFORT_KEY} "
+            f"{REASONING_ON}")
+
+
+def effort_unprobed_reason(effort: str, model_id: str, capabilities) -> str:
+    """A level the record never judged — a heuristic record asked for a
+    level the old family rule never assumed (``high``), or a probed record
+    from an older candidate list."""
+    accepted = ", ".join(capabilities.accepted_efforts) or "none"
+    return (f"{REASONING_EFFORT_KEY} '{effort}' is not known to be accepted "
+            f"by the chat template of {model_id} (record source "
+            f"{capabilities.source}; accepted levels: {accepted}) — probe the "
+            "template (model capabilities --probe) or declare a level it "
+            "accepts")
+
+
+def effort_assumed_advisory(effort: str, model_id: str) -> str:
+    return (f"{REASONING_EFFORT_KEY} '{effort}' on {model_id} is ASSUMED "
+            "accepted from the model id — no probed capability record; a "
+            "template that ignores reasoning_effort would run at its default "
+            "effort. Probe it: model capabilities --probe")
+
+
+def system_prompt_unsupported_reason(model_id: str) -> str:
+    return (f"a system prompt is declared for {model_id}, whose chat template "
+            "has no way to deliver system text (it raises on, or drops, a "
+            "system turn) — drop the system prompt, or write the frame into "
+            "the task prompts yourself and say so in METHODS")
 
 
 def malformed_budget_reason(value) -> str:
@@ -185,13 +291,16 @@ def malformed_budget_reason(value) -> str:
 
 
 def reasoning_protocol_violations(*, effort, reasoning_max_tokens,
-                                  model_id: str) -> list[str]:
+                                  model_id: str, capabilities=None) -> list[str]:
     """Every rule a declared reasoning protocol must satisfy, as the
     sentences both engines refuse with. ``effort`` and
     ``reasoning_max_tokens`` are the RAW declared values (None = absent).
 
     - the effort is in the closed vocabulary;
-    - a non-off effort names a family with a thinking mode;
+    - a non-off effort names a template with a thinking switch;
+    - a LEVEL names one the template accepts (``on`` needs only the switch;
+      an ignored level is refused, a rejected one is refused, an assumed one
+      — heuristic record — passes and is advised on elsewhere);
     - a non-off effort carries a positive-integer reasoning budget;
     - an off effort carries none.
     """
@@ -211,25 +320,103 @@ def reasoning_protocol_violations(*, effort, reasoning_max_tokens,
         if reasoning_max_tokens is not None:
             problems.append(BUDGET_WITHOUT_EFFORT_REASON)
         return problems
-    if not has_thinking_mode(model_id):
+    record = capabilities_for(model_id, capabilities=capabilities)
+    if not record.has_thinking_switch:
         problems.append(effort_without_thinking_mode_reason(effort, model_id))
+    elif effort != REASONING_ON:
+        problems += effort_level_violations(effort, model_id, record)
     if reasoning_max_tokens is None:
         problems.append(effort_without_budget_reason(effort))
     return problems
 
 
-def has_system_role(model_id: str) -> bool:
-    """Whether this family's chat template has a SYSTEM ROLE.
+def effort_level_violations(effort: str, model_id: str, capabilities) -> list[str]:
+    """The one rule about a LEVEL: the pinned template must accept it."""
+    from . import model_capabilities as mc
+    verdict = capabilities.effort_verdict(effort)
+    if verdict in (mc.ACCEPTED, mc.ASSUMED):
+        return []
+    if verdict == mc.IGNORED:
+        return [effort_ignored_reason(effort, model_id)]
+    if verdict == mc.REJECTED:
+        return [effort_rejected_reason(effort, model_id, capabilities)]
+    return [effort_unprobed_reason(effort, model_id, capabilities)]
+
+
+def reasoning_protocol_advisories(*, effort, model_id: str,
+                                  capabilities=None) -> list[str]:
+    """Non-blocking notes beside a declaration the gates accepted: a level
+    ASSUMED from a heuristic record, and — only when the record DECIDED
+    something, i.e. a non-off effort is declared — the record's own
+    advisories (heuristic source, a stand-in revision). A study that reasons
+    not at all is not nagged about a record it never read."""
+    record = capabilities_for(model_id, capabilities=capabilities)
+    notes: list[str] = []
+    if not isinstance(effort, str) or effort == REASONING_OFF:
+        return notes
+    if effort in REASONING_LEVELS:
+        from . import model_capabilities as mc
+        if record.effort_verdict(effort) == mc.ASSUMED:
+            notes.append(effort_assumed_advisory(effort, model_id))
+    notes += [a for a in record.advisories if a not in notes]
+    return notes
+
+
+def has_system_role(model_id: str, capabilities=None) -> bool:
+    """Whether the pinned chat template has a SYSTEM ROLE — the record's
+    ``systemRole == systemTurn``.
 
     The capability :func:`render` branches on, named so authoring surfaces can
-    ask it without re-deriving the family rule: True means a declared system
-    prompt is inserted as a genuine system turn, False means the SAME text is
-    prepended to the first user turn (``system + "\\n\\n" + user``) because the
-    template has nowhere else to put it. Either way it reaches the model —
-    which is the property ``set-system-prompt`` reports. Gemma 3 is today's
-    only False. Swift twin: ``PromptRendering.hasSystemRole``.
+    ask it without re-deriving the rule: True means a declared system prompt
+    is inserted as a genuine system turn, False means the SAME text is
+    prepended to the first user turn (``system + separator + user``, the
+    separator the probe recorded) because the template has nowhere else to
+    put it. Either way it reaches the model — which is the property
+    ``set-system-prompt`` reports — unless the record says ``unsupported``,
+    which :func:`system_prompt_violations` refuses. Swift twin:
+    ``PromptRendering.hasSystemRole``.
     """
-    return not _is_gemma(model_id)
+    return capabilities_for(model_id, capabilities=capabilities).has_system_role
+
+
+def system_prompt_delivery(model_id: str, prompt_mode: str,
+                           capabilities=None) -> str:
+    """How a declared system prompt reaches the model: ``promptPrepend``
+    (rawCompletion renders no template at all), ``systemTurn``,
+    ``prependedToFirstUserTurn``, or ``undeliverable``."""
+    if prompt_mode == RAW_COMPLETION:
+        return "promptPrepend"
+    record = capabilities_for(model_id, capabilities=capabilities)
+    if record.has_system_role:
+        return "systemTurn"
+    if record.system_prompt_deliverable:
+        return "prependedToFirstUserTurn"
+    return "undeliverable"
+
+
+def system_prompt_violations(*, system_prompt, model_id: str, prompt_mode: str,
+                             capabilities=None) -> list[str]:
+    """The one rule about a system prompt: under a chat template, the
+    template must be able to deliver it."""
+    if not (system_prompt or "").strip():
+        return []
+    if system_prompt_delivery(model_id, prompt_mode, capabilities) == "undeliverable":
+        return [system_prompt_unsupported_reason(model_id)]
+    return []
+
+
+class SystemRoleUnsupported(ValueError):
+    """Render-time guard for a system prompt on a template the record marks
+    ``unsupported`` — the declaration gates refuse it first."""
+
+
+def fold_system_prompt(system: str, user: str, capabilities) -> str:
+    """The fold a template without a system role gets: the probe-recorded
+    separator (``"\n\n"`` on Gemma 3 and under the heuristic)."""
+    separator = capabilities.fold_separator
+    if separator is None:
+        separator = "\n\n"
+    return system + separator + user
 
 
 # --- Conversation-structure constraints (per vendored family) -----------------
@@ -395,7 +582,8 @@ def render_transcript(tokenizer, transcript: list, *, model_id: str,
                       prompt_mode: str = CHAT_ASSISTANT,
                       system_prompt: str | None = None,
                       qwen_thinking_enabled: bool = False,
-                      reasoning_effort: str | None = None) -> RenderedPrompt:
+                      reasoning_effort: str | None = None,
+                      capabilities=None) -> RenderedPrompt:
     """Render one scripted-transcript study item through the model family's
     REAL chat template — the same :func:`render_messages` path the interactive
     Playground verified byte-parity for, so pinned stimulus bytes and the
@@ -416,7 +604,7 @@ def render_transcript(tokenizer, transcript: list, *, model_id: str,
     return render_messages(
         tokenizer, turns, model_id=model_id, prompt_mode=CHAT_ASSISTANT,
         system_prompt=system, qwen_thinking_enabled=qwen_thinking_enabled,
-        reasoning_effort=reasoning_effort)
+        reasoning_effort=reasoning_effort, capabilities=capabilities)
 
 
 class ChatTemplateConstraintError(ValueError):
@@ -478,7 +666,8 @@ def render(tokenizer, prompt: str, *, model_id: str,
            prompt_mode: str = CHAT_ASSISTANT, system_prompt: str | None = None,
            qwen_thinking_enabled: bool = False,
            add_generation_prompt: bool = True,
-           reasoning_effort: str | None = None) -> RenderedPrompt:
+           reasoning_effort: str | None = None,
+           capabilities=None) -> RenderedPrompt:
     """Render one prompt to token ids.
 
     ``add_generation_prompt`` exists for the EXTRACTION rendering path
@@ -489,8 +678,11 @@ def render(tokenizer, prompt: str, *, model_id: str,
 
     ``reasoning_effort`` is the declared effort (see the module docstring);
     when None the legacy ``qwen_thinking_enabled`` boolean decides.
+    ``capabilities`` is the model's capability record; when None the
+    tokenizer's own template answers (:func:`capabilities_for`).
     """
     effort = resolve_reasoning_effort(reasoning_effort, qwen_thinking_enabled)
+    record = capabilities_for(model_id, tokenizer, capabilities)
     system = (system_prompt or "").strip()
     has_system = bool(system)
 
@@ -498,7 +690,9 @@ def render(tokenizer, prompt: str, *, model_id: str,
         text = prompt
         if has_system:
             text = system + "\n\n" + text
-        if _is_qwen(model_id):
+        if record.has_thinking_switch:
+            # The soft switch of a ChatML thinking family, appended to raw
+            # text exactly as before the record existed.
             text += " /no_think" if effort == REASONING_OFF else " /think"
         # Raw completion: tokenize as-is (special tokens per tokenizer default,
         # matching the Swift raw-text path which adds them once).
@@ -509,13 +703,15 @@ def render(tokenizer, prompt: str, *, model_id: str,
     user = prompt
     messages: list[dict] = []
     if has_system:
-        if not has_system_role(model_id):
-            user = system + "\n\n" + user  # Gemma has no system role
-        else:
+        if record.has_system_role:
             messages.append({"role": "system", "content": system})
+        elif record.system_prompt_deliverable:
+            user = fold_system_prompt(system, user, record)  # no system role
+        else:
+            raise SystemRoleUnsupported(system_prompt_unsupported_reason(model_id))
     messages.append({"role": "user", "content": user})
 
-    template_kwargs = thinking_template_kwargs(model_id, effort)
+    template_kwargs = thinking_template_kwargs(model_id, effort, record)
 
     text = _apply_chat_template(
         tokenizer, messages, model_id=model_id,
@@ -549,7 +745,8 @@ class AssistantVoiceUnsupported(ValueError):
 
 def render_assistant_turn(tokenizer, text: str, *, model_id: str,
                           qwen_thinking_enabled: bool = False,
-                          reasoning_effort: str | None = None) -> RenderedPrompt:
+                          reasoning_effort: str | None = None,
+                          capabilities=None) -> RenderedPrompt:
     """Render one stimulus as the model's OWN OUTPUT — the assistant voice.
 
     THE EXACT RENDERED FORM. On Gemma 3 this produces, and nothing else::
@@ -590,7 +787,8 @@ def render_assistant_turn(tokenizer, text: str, *, model_id: str,
     scaffold. A study that needs this voice extracts here.
     """
     template_kwargs = thinking_template_kwargs(
-        model_id, resolve_reasoning_effort(reasoning_effort, qwen_thinking_enabled))
+        model_id, resolve_reasoning_effort(reasoning_effort, qwen_thinking_enabled),
+        capabilities_for(model_id, tokenizer, capabilities))
     probe = [{"role": "user", "content": ASSISTANT_VOICE_PROBE_TURN}]
     prefix = _apply_chat_template(
         tokenizer, probe, model_id=model_id, tokenize=False,
@@ -719,7 +917,8 @@ def render_messages(tokenizer, messages: list[dict], *, model_id: str,
                     system_prompt: str | None = None,
                     qwen_thinking_enabled: bool = False,
                     continue_final_message: bool = False,
-                    reasoning_effort: str | None = None) -> RenderedPrompt:
+                    reasoning_effort: str | None = None,
+                    capabilities=None) -> RenderedPrompt:
     """Render a multi-turn chat transcript for interactive server chat.
 
     Study runs intentionally stay on ``render``'s single-prompt path. This
@@ -761,33 +960,54 @@ def render_messages(tokenizer, messages: list[dict], *, model_id: str,
             raise ValueError(
                 "continueFinalMessage requires chatAssistant prompt mode — "
                 "raw completion has no assistant turn to continue")
+    record = capabilities_for(model_id, tokenizer, capabilities)
     if not cleaned:
         return render(tokenizer, "", model_id=model_id, prompt_mode=prompt_mode,
                       system_prompt=system_prompt,
                       qwen_thinking_enabled=qwen_thinking_enabled,
-                      reasoning_effort=reasoning_effort)
+                      reasoning_effort=reasoning_effort, capabilities=record)
     if prompt_mode == RAW_COMPLETION:
         text = "\n".join(f"{m['role']}: {m['content']}" for m in cleaned)
         return render(tokenizer, text, model_id=model_id, prompt_mode=prompt_mode,
                       system_prompt=system_prompt,
                       qwen_thinking_enabled=qwen_thinking_enabled,
-                      reasoning_effort=reasoning_effort)
+                      reasoning_effort=reasoning_effort, capabilities=record)
 
     system = (system_prompt or "").strip()
     chat = list(cleaned)
     if system:
-        if _is_gemma(model_id):
+        if record.has_system_role:
+            if chat[0]["role"] != "system":
+                chat.insert(0, {"role": "system", "content": system})
+        elif record.system_prompt_deliverable:
+            # No system role: the frame folds into the FIRST user turn with
+            # the separator the probe recorded.
             for idx, message in enumerate(chat):
                 if message["role"] == "user":
-                    chat[idx] = {"role": "user", "content": system + "\n\n" + message["content"]}
+                    chat[idx] = {"role": "user",
+                                 "content": fold_system_prompt(system, message["content"], record)}
                     break
             else:
                 chat.insert(0, {"role": "user", "content": system})
-        elif chat[0]["role"] != "system":
-            chat.insert(0, {"role": "system", "content": system})
+        else:
+            raise SystemRoleUnsupported(system_prompt_unsupported_reason(model_id))
+    if not record.has_system_role:
+        # A transcript's OWN system turn on a template without a system role:
+        # fold it the same way rather than hand the template a turn it
+        # cannot place (Gemma 3 raises on one).
+        if chat and chat[0]["role"] == "system":
+            own = chat.pop(0)["content"]
+            if not record.system_prompt_deliverable:
+                raise SystemRoleUnsupported(system_prompt_unsupported_reason(model_id))
+            if chat and chat[0]["role"] == "user":
+                chat[0] = {"role": "user",
+                           "content": fold_system_prompt(own, chat[0]["content"], record)}
+            else:
+                chat.insert(0, {"role": "user", "content": own})
 
     template_kwargs = thinking_template_kwargs(
-        model_id, resolve_reasoning_effort(reasoning_effort, qwen_thinking_enabled))
+        model_id, resolve_reasoning_effort(reasoning_effort, qwen_thinking_enabled),
+        record)
     if continue_final_message:
         # transformers renders the final assistant turn WITHOUT its
         # end-of-turn suffix and adds no generation prompt (sentinel-tag

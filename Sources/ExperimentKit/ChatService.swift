@@ -529,8 +529,13 @@ public final class ChatService {
         // the judge-capability memo (see `refreshLocalInstalledModels`), so a
         // repo that was "no cached snapshot" a minute ago is re-inspected
         // rather than remembered as un-judgeable for the session.
-        modelInstaller.onFinished = { [weak self] _ in
+        modelInstaller.onFinished = { [weak self] modelID in
             self?.catalog.refreshLocalInstalledModels()
+            // Written at install (2026-09-05): the just-fetched tokenizer is
+            // probed and the capability record lands in the workspace, so
+            // the declaration gates read the template's own answers from
+            // the first draft on.
+            Task { await ExperimentTasks.ensureModelCapabilities(modelID: modelID, revision: nil) }
         }
         refreshVectors()
     }
@@ -2329,6 +2334,11 @@ public final class ChatService {
             }
             container = loaded
             loadedModelID = spec.id
+            // The chat-template capability record, ensured at the load so
+            // the session's system-prompt route and thinking context read
+            // what the template does rather than what the id suggests.
+            _ = await ExperimentTasks.ensureModelCapabilities(
+                modelID: spec.id, revision: nil)
             startSession()
             state = .ready
             refreshVectors()  // defaults slot 0 to the first compatible vector
@@ -4223,7 +4233,7 @@ public final class ChatService {
     private func startSession(replayingTranscriptUpTo count: Int? = nil) {
         pendingSeededHistoryReplay = false
         guard let container else { return }
-        let isGemma = selectedModelID.lowercased().contains("gemma")
+        let capabilities = PromptRendering.capabilities(for: selectedModelID)
         let history: [Chat.Message]
         if let count, count > 0 {
             history = ExperimentTasks.chatHistoryMessages(
@@ -4242,7 +4252,10 @@ public final class ChatService {
         // default but exposes a toggle for interactive comparison.
         session = ChatSession(
             container,
-            instructions: isGemma ? nil : nilIfEmpty(systemPrompt),
+            // A template with a system role gets the instructions as a
+            // system turn; one without had them folded into the history by
+            // `chatHistoryMessages` (the recorded separator).
+            instructions: capabilities.hasSystemRole ? nilIfEmpty(systemPrompt) : nil,
             history: history,
             generateParameters: GenerateParameters(
                 temperature: Float(temperature), prefillStepSize: 32768),

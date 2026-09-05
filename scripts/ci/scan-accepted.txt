@@ -8,3 +8,4 @@
 Tests/ExperimentKitTests/ClusterCLITests.swift :: secret
 Tests/ExperimentKitTests/ClusterLifecycleCoordinatorTests.swift :: secret
 Tests/ExperimentKitTests/ClusterProvisioningOperationsTests.swift :: secret
+Tests/Fixtures/cross-engine/model-capabilities.json :: email

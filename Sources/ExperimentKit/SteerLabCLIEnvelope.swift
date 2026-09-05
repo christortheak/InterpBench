@@ -234,6 +234,16 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// thing that knows a floor reading was asked for.
     case singleRegimeCapabilityReading
 
+    /// The model's chat-template CAPABILITY RECORD has something to say
+    /// about a declaration the verb accepted: an effort level ASSUMED from
+    /// the model id because no probed record exists, a frozen study whose
+    /// declared level the probed template ignores, a record standing in for
+    /// another revision. Named for the MECHANISM — the record spoke — not
+    /// for any one finding: the vocabulary is closed and cross-engine, and
+    /// what an agent's `switch` cares about is that the template, not the
+    /// declaration, decides what the model rendered.
+    case modelCapabilities
+
     public static let vocabulary: [String] = allCases.map(\.rawValue)
 }
 

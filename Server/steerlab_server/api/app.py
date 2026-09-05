@@ -94,6 +94,9 @@ _PRIVILEGED_PREFIXES = (
     "/api/variants/upload",
     "/api/jobs/reconcile",
     "/api/models/install",
+    # Writes the chat-template capability record under prompts/models/;
+    # the read-only GET /api/models/capabilities stays open.
+    "/api/models/capabilities/probe",
     # J-lens lifecycle: /acquire goes ONLINE (the whole point of the verb) and
     # /import writes the workspace lens store. Both are token-gated the moment
     # the deployment is anything but a local loopback dev process. The trailing

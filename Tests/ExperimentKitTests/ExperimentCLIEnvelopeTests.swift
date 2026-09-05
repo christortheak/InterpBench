@@ -758,6 +758,11 @@ import Testing
             // pre-existing read verbs, declared when the family joined the
             // agent path; their human output is unchanged.
             "panel list", "panel check", "panel compile",
+            // The chat-template capability record (2026-09-05): shown, probed
+            // from the pinned template through this Mac's tokenizer, or
+            // overridden with a reason — the one place the family rules the
+            // renderers used to infer from a model id are now DATA.
+            "model capabilities", "model set-capability",
             // The generation-prompt emitter: the only verb here that touches
             // no manifest and writes nothing into the workspace. It answers
             // "this study is missing X; what do I ask an LLM for", which is a

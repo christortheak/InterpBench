@@ -76,7 +76,9 @@ flow resolve exactly the package set they always did.
 The client covers the **whole authoring lifecycle** on that bare install —
 create, attach, detach, declare-condition, set-protocol, set-sweep-grid, list,
 duplicate, `verify`, `freeze` and `bundle package`, plus `authoring prompt
-<kind>` for the generation prompts that unblock missing study data — including
+<kind>` for the generation prompts that unblock missing study data, and `model
+capabilities` / `model set-capability` to read and override the chat-template
+capability record an engine probed (`prompts/models/`) — including
 studies that declare an SAE latent condition they never execute. `[runner]` is
 needed to *execute*, not to author or to check. The bare install is also
 self-contained: the authoring-prompt registry ships inside the package (see

@@ -139,6 +139,15 @@ ADVISORY_CODES: tuple[str, ...] = (
     # switch cares about is that the floor it is about to cite is narrower
     # than the charter's floor.
     "singleRegimeCapabilityReading",
+    # The model's chat-template CAPABILITY RECORD has something to say about
+    # a declaration the verb accepted: an effort level ASSUMED from the model
+    # id because no probed record exists, a frozen study whose declared level
+    # the probed template ignores, a record standing in for another revision.
+    # Named for the MECHANISM — the record spoke — not for any one finding:
+    # the vocabulary is closed and cross-engine, and what an agent's switch
+    # cares about is that the template, not the declaration, decides what
+    # the model rendered.
+    "modelCapabilities",
 )
 
 
@@ -500,6 +509,18 @@ VERB_SPECS: tuple[VerbSpec, ...] = (
              boolean_flags=frozenset({"--skip-model-fixtures"}),
              accepts_legacy_json_path=True),
     VerbSpec("jobs", "list", purpose="List this engine's durable jobs."),
+    # The chat-template capability record (2026-09-05). `--probe` renders
+    # the pinned template through this engine's own tokenizer — weights-free
+    # — and writes prompts/models/<owner>--<repo>@<revision>.json; without
+    # it the verb shows the workspace record, or the id heuristic and says
+    # so. Swift twin: `steerlab-cli model capabilities`.
+    VerbSpec("model", "capabilities", positional="<modelID>",
+             purpose="Show the model's chat-template capability record — or "
+                     "with --probe, derive it from the pinned template "
+                     "(system role, thinking switch, accepted reasoning-effort "
+                     "levels) and write it into the workspace.",
+             boolean_flags=frozenset({"--probe"}),
+             value_flags=frozenset({"--revision"})),
     VerbSpec("study", "submit", positional="<experiment>",
              purpose="Submit one experiment verb to an executor as a durable "
                      "job.",

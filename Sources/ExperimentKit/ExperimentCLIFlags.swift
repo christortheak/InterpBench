@@ -344,6 +344,31 @@ public enum ExperimentCLIParser {
             ],
             requiredFlags: ["--experiment"]),
 
+        // model — the chat-template CAPABILITY RECORD (2026-09-05): what the
+        // pinned template does with a system turn, whether it has a thinking
+        // switch, which reasoning-effort levels it reads — derived by render
+        // probes, never by a regex over the model id, and kept under
+        // prompts/models/ for both engines. `--probe` renders through this
+        // Mac's swift-transformers tokenizer (weights-free) and writes the
+        // record; without it the verb shows the record, or the id heuristic
+        // and says so. Server twin: `steerlab-server model capabilities`;
+        // client twin: `steerlab model capabilities|set-capability`.
+        .init(
+            namespace: "model", verb: "capabilities", positional: "<modelID>",
+            purpose: "Show the model's chat-template capability record — or "
+                + "with --probe, derive it from the pinned template (system "
+                + "role, thinking switch, accepted reasoning-effort levels) and "
+                + "write it into the workspace.",
+            booleanFlags: ["--probe"], valueFlags: ["--revision"]),
+        .init(
+            namespace: "model", verb: "set-capability",
+            positional: "<modelID> <field> <value>",
+            purpose: "Override one detected capability on the record "
+                + "(systemRole, thinkingSwitch, thinkOpenInPrompt) with a reason "
+                + "that is displayed beside the detected value and stamped into "
+                + "runs; \"\" clears the override.",
+            valueFlags: ["--revision", "--reason"]),
+
         // remote
         .init(
             namespace: "remote", verb: "capabilities",

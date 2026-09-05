@@ -366,6 +366,9 @@ def test_every_committed_fixture_has_a_staleness_test():
         "choice-margins.json", "server-evidence-bundle.json",
         # Checked inline in test_system_prompt_composition.py.
         "system-prompt-composition.json",
+        # Checked inline in test_model_capabilities.py (the records against
+        # the schema, the probe verdicts, hashes, gates and sentences).
+        "model-capabilities.json", "model-capabilities.schema.json",
         # Phase-0 portability contracts. The two produced by THIS engine are
         # write-if-missing goldens checked inline in
         # test_portability_contracts.py (delete the file and re-run that

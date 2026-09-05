@@ -135,6 +135,7 @@ def test_advisory_codes_match_the_swift_literal():
         "revisionAdoptionWarning", "siteQualifyWarning",
         "deprecatedImplicitSelection", "systemPromptNotApplied",
         "singleRegimeCapabilityReading",
+        "modelCapabilities",
     ]
     assert list(cli_envelope.ADVISORY_CODES) == contract
 
@@ -316,7 +317,9 @@ def test_the_declared_verbs_are_the_audits_fourteen_plus_site_qualify():
     mirroring, added later still: pure local file work, so it joined the agent
     path rather than following `backfill-norms` off it), and `battery run`
     (the standalone capability reading, 2026-08-29 — it loads models, so it is
-    server-only, and it brought its family onto the agent path with it).
+    server-only, and it brought its family onto the agent path with it), and
+    `model capabilities` (2026-09-05 — `--probe` renders the pinned chat
+    template through this engine's tokenizer, which no client can do).
     `data check` is counted once (its argument domain differs from Swift's — a
     documented §3.2 divergence, not a second verb)."""
     labels = sorted(spec.label for spec in cli_envelope.VERB_SPECS)
@@ -325,10 +328,10 @@ def test_the_declared_verbs_are_the_audits_fourteen_plus_site_qualify():
         "experiment confirm", "experiment evaluate", "experiment extract",
         "experiment list", "experiment promote", "experiment run",
         "experiment sweep", "experiment validate", "experiment verify",
-        "jobs list", "site qualify", "study submit", "vectors compare",
-        "vectors mirror-poles",
+        "jobs list", "model capabilities", "site qualify", "study submit",
+        "vectors compare", "vectors mirror-poles",
     ])
-    assert len(cli_envelope.VERB_SPECS) == 17
+    assert len(cli_envelope.VERB_SPECS) == 18
 
 
 # =============================================================================
