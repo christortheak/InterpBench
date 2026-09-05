@@ -1948,7 +1948,8 @@ def build_router(state: ServiceState) -> APIRouter:
                 fit_template = template
             job.log(f"fitting reader '{concept}' via template "
                     f"'{fit_template.id}' ({len(dataset.train)} train / "
-                    f"{len(dataset.held_out)} held-out pairs) on "
+                    f"{len(dataset.held_out)} held-out / "
+                    f"{len(dataset.final_test)} final-test pairs) on "
                     f"{fit_model_id}"
                     + (f"@{fit_revision}" if fit_revision else ""))
             with state.acquire_model(fit_model_id, fit_revision) as model:
@@ -1964,6 +1965,14 @@ def build_router(state: ServiceState) -> APIRouter:
                         {"layer": a.layer,
                          "trainAccuracy": a.train_accuracy,
                          "heldOutAccuracy": a.held_out_accuracy,
+                         # Absent when the dataset reserved no split 'test'
+                         # rows — no final-test evidence, not a zero.
+                         "finalTestAccuracy": a.final_test_accuracy,
+                         # WHICH DECISIONS each of the numbers above was
+                         # allowed to make: held-out signed the direction and
+                         # ranked these layers, so its accuracy is a selection
+                         # statistic wherever it is shown.
+                         "evidenceRoles": a.resolved_evidence_roles,
                          "signConvention": a.sign_convention,
                          "signHeldOutAccuracy": a.sign_held_out_accuracy,
                          "pc1ExplainedVarianceOfDifferences":
@@ -1973,7 +1982,8 @@ def build_router(state: ServiceState) -> APIRouter:
                     "contrastMode": artifacts[0].contrast_mode if artifacts else None,
                     "recommendedLayer": (artifacts[0].recommended_layer
                                          if artifacts else None),
-                    "layerRecommendationNote": repe_reader.LAYER_RECOMMENDATION_NOTE}
+                    "layerRecommendationNote": repe_reader.LAYER_RECOMMENDATION_NOTE,
+                    "evidenceRoleNote": repe_reader.EVIDENCE_ROLE_NOTE}
 
         return _run_or_submit(state, "reader:fit", work,
                                path="/api/reader/fit", body=body)

@@ -309,6 +309,18 @@ class ReaderSummary:
     #: The set's argmax-held-out-accuracy layer — a RECOMMENDATION. The layer a
     #: study reads is declared in its manifest; nothing selects it here.
     recommendedLayer: int | None = None
+    #: FINAL-TEST accuracy over rows marked ``split: "test"``, which no fitting
+    #: or selection step read. **Absent means the dataset reserved none**, and
+    #: then this reader has no final-test evidence — not that it scored zero.
+    finalTestAccuracy: float | None = None
+    #: WHICH DECISIONS each accuracy's rows were allowed to make
+    #: (``repe_reader.derive_evidence_roles``), so a listing cannot show
+    #: ``heldOutAccuracy`` as though it were out-of-sample when the same rows
+    #: chose the sign and ranked the layers. Derived from the artifact's own
+    #: stamps when it predates the block — ``evidenceRolesBasis`` says which.
+    evidenceRoles: dict | None = None
+    evidenceRolesBasis: str | None = None
+    evidenceRoleNote: str | None = None
 
     @property
     def id(self) -> str:
@@ -317,6 +329,10 @@ class ReaderSummary:
 
 def list_readers(root: str | None = None) -> list[ReaderSummary]:
     """Every ``repe-reader-lat`` artifact JSON under runs/."""
+    # Local import: `steering.repe_reader` reaches back into `experiment` for
+    # the family-aware renderer, and catalog is imported from there.
+    from ..steering import repe_reader
+
     runs = paths.runs_directory(root)
     out: list[ReaderSummary] = []
     if not os.path.isdir(runs):
@@ -336,6 +352,13 @@ def list_readers(root: str | None = None) -> list[ReaderSummary]:
             if artifact.get("artifactType") != "repe-reader-lat":
                 continue
             try:
+                # Every reader in a listing says what its accuracies ARE,
+                # whether or not it was fitted by an engine that stamped them:
+                # an artifact without the block has its roles derived from
+                # `signConvention` and `layerRecommendationBasis`, and the
+                # basis says so. Inside the try with everything else, so a
+                # malformed artifact is skipped rather than breaking the list.
+                roles, roles_basis = repe_reader.evidence_roles_from_json(artifact)
                 out.append(ReaderSummary(
                     runDirectory=run_dir, name=fname[:-len(".json")],
                     concept=str(artifact.get("concept", "")),
@@ -353,7 +376,10 @@ def list_readers(root: str | None = None) -> list[ReaderSummary]:
                     extracted=(artifact.get("extractionDate") or "")[:10] or None,
                     contrastMode=artifact.get("contrastMode"),
                     signConvention=artifact.get("signConvention"),
-                    recommendedLayer=artifact.get("recommendedLayer")))
+                    recommendedLayer=artifact.get("recommendedLayer"),
+                    finalTestAccuracy=artifact.get("finalTestAccuracy"),
+                    evidenceRoles=roles, evidenceRolesBasis=roles_basis,
+                    evidenceRoleNote=repe_reader.EVIDENCE_ROLE_NOTE))
             except (TypeError, ValueError):
                 continue
     return out

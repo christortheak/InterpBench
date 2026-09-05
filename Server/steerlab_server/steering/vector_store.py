@@ -171,6 +171,17 @@ class SteeringVectorSidecar:
     readerTemplateHash: str | None = None
     readerContrastMode: str | None = None
     readerSignConvention: str | None = None
+    # WHICH SPLIT DECIDED WHAT on the reader this vector came from — the
+    # reader's own `evidenceRoles` block ({"trainAccuracy": "fit",
+    # "heldOutAccuracy": "selection" | "validation", "finalTestAccuracy":
+    # "finalEvaluation" when the reader had final-test rows, "signSelectedBy",
+    # "layerRecommendedBy", "splitCounts"}). Copied because the sign these
+    # bytes carry was chosen by ONE of those splits and the reader file does
+    # not travel with a bundle. Absent on every non-reader artifact and on
+    # reader-derived vectors written before 2026-09-05. Swift parity owed:
+    # `SteeringVectorStore.SteeringVectorSidecar` has no such key yet, so a
+    # Swift round trip drops it.
+    readerEvidenceRoles: dict | None = None
     # The reader probe's ``orientation`` at derive time (+1 or −1) — the sign
     # the TRAIN class means imply. Under ``trainMajority`` the derived BYTES
     # have it folded in (a reader with orientation −1 stores a direction
