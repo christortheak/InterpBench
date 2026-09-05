@@ -612,4 +612,3 @@ def rescore_style(name: str, root: str | None = None, source_run: str | None = N
     _log(f"rescore-style ({len(sampled)} generations, {len(feature_ids)} "
          f"feature(s), {len(by_condition)} condition(s)) → {out}")
     return out
-

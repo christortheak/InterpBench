@@ -48,4 +48,3 @@ def seeded_generation(temperature: float, seed: int):
     with torch.random.fork_rng(devices=devices):
         torch.manual_seed(seed)
         yield
-

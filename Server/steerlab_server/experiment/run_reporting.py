@@ -303,4 +303,3 @@ def write_report(name: str, manifest: Manifest, records: list[dict],
                 report["modelBySeat"] = by_seat
     with open(os.path.join(run_directory, "report.json"), "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, sort_keys=True)
-

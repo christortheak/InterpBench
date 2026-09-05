@@ -286,4 +286,3 @@ def resolve_ordinal_aggregation(manifest: Manifest) -> str | None:
             f"is {aggregation!r} — declare one of "
             + ", ".join(ORDINAL_AGGREGATIONS))
     return aggregation
-

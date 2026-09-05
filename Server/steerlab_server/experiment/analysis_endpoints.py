@@ -467,4 +467,3 @@ def _promotion_decisions(manifest, rows, run_dir, promotion_mod):
             provenance={"sourceRun": os.path.basename(run_dir)})
         decisions.append(promotion_mod.decide(candidate, manifest.promotion_rule))
     return decisions
-

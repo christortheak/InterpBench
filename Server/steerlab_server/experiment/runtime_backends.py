@@ -54,4 +54,3 @@ def battery_backends(model, model_id: str, injections, latent_edits=None, *,
         return result.selected, result.probability
 
     return generate_fn, choice_fn
-

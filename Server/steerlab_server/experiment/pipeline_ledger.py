@@ -39,4 +39,3 @@ def read_pipeline_ledger(run_directory: str) -> dict:
             "it would fall back to ambient catalog resolution; start a "
             "fresh pipeline instead")
     return data
-

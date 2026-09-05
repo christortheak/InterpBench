@@ -171,4 +171,3 @@ def _advise_implicit_case_family(fires: bool, run_directory: str | None, _log,
             handle.write(IMPLICIT_CASE_FAMILY_ADVISORY + "\n")
     except OSError:  # the advisory must never sink a run
         pass
-

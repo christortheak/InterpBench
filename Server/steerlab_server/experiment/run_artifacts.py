@@ -82,4 +82,3 @@ def _latest_run(name: str, root: str | None) -> str | None:
          and os.path.isfile(os.path.join(runs, e, "generations.jsonl"))),
         reverse=True)
     return os.path.join(runs, candidates[0]) if candidates else None
-
