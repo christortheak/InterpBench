@@ -12,7 +12,8 @@ now been integrated. See [main integration record](MAIN-INTEGRATION.md) for
 the merge resolutions, preservation checks and updated validation.
 
 This change establishes focused owners for reusable Python task support,
-offline analysis, Swift contracts, and workspace file access. It is a staged
+offline analysis, pipeline orchestration, Swift contracts, manifest-save policy,
+and workspace file access. It is a staged
 migration of the maintainability proposal, not a claim that the remaining large
 workflows or presentation state have already been decomposed.
 
@@ -42,10 +43,21 @@ All Python paths below are under `Server/steerlab_server/experiment/`.
 | `analysis_endpoints.py` | Endpoint reduction, transcript pairing, stratification and promotion summaries | Retains existing statistical definitions |
 | `analysis_workflow.py` | Analyze and rescore-style workflows | Reads prior evidence and writes new output; no generation runtime import |
 | `runtime_backends.py` | Battery generation/scoring capabilities bound to an intervention | Explicit callable injection, with lazy runtime defaults |
+| `cancellation.py` | Cancellation observation, checkpoint and exception contract | No model or workflow imports |
+| `judge_dispatch.py` | Judge roster, remote preflight and fanout request files | No task orchestrator import or model acquisition |
+| `judgment_evidence.py` | Judgment completion verification and canonical-run discovery | Retains existing hash, epoch and fail-closed checks |
+| `pipeline_evidence.py` | Pipeline discovery, revision/drift evidence and promoted-agent identity | Reads existing evidence and uses the shared ledger writer |
+| `pipeline_policy.py` | Remaining-stage model need and inline-judging admission | Existing decision rules, independent of stage execution |
+| `pipeline_workflow.py` | Pipeline coordination, resume, gates and held-model lifetime | Receives seven stage callables and two model capabilities |
 
 `battery_run.py`, `multi_agent.py`, `jlens/qualification.py`, and `sharding.py`
 now use the focused owners. They no longer import the task orchestrator. The
 CLI's choice-prompt preview uses `task_inputs` directly.
+
+Pipeline listing routes use `pipeline_evidence` directly. Submission and orphan
+recovery classification use `judge_dispatch` and `pipeline_policy`; only actual
+execution enters the task facade. The pipeline owns the held-model context,
+while the stage implementations retain their existing local cleanup behavior.
 
 All Swift paths below are under `Sources/ExperimentKit/`.
 
@@ -57,11 +69,14 @@ All Swift paths below are under `Sources/ExperimentKit/`.
 | `StudyResultContracts.swift` | Result and preview value types | Independent of panel state |
 | `StudyResultRepository.swift` | Run discovery, artifact parsing and result details | Constructed with an explicit workspace root |
 | `StudyResultStore.swift` | Existing static result API | Compatibility adapter for the currently selected workspace |
+| `ManifestMutationPolicy.swift` | Save admission, immutability and arm-clearing decisions | Operates only on supplied manifest values; no workspace or filesystem access |
 
 `ExperimentStore` still admits lifecycle mutations before calling the repository's
 internal persistence primitive. `persistAdmitted` is intentionally not a public
-alternative to `save`. Frozen/complete immutability, arm-clearing refusals and
-repair messages stay at their existing admission sites.
+alternative to `save`. The store reads the existing manifest, delegates save
+admission to `ManifestMutationPolicy`, then persists through the same repository
+instance. Frozen/complete immutability, arm-clearing refusals and repair messages
+are preserved. Other draft/freeze operations still need decomposition.
 
 `StudyRecordContracts` uses an extension to preserve source compatibility. That
 move improves contract ownership and navigation; by itself it is not an
@@ -100,6 +115,13 @@ Tests that injected the old task-module RNG or battery helpers now inject their
 new owners. Existing behavioral assertions remain. Patching a private facade
 name is not a promise that it will replace an independent owner's implementation.
 
+`tasks.pipeline` retains its public signature and supplies `PipelineStages`
+(extract, validate, sweep, run, evaluate, analyze, promote) and `PipelineModels`
+(acquire, pin revision). It binds the existing entry points at invocation time,
+preserving stage injection through the facade. The workflow can also be exercised
+directly without task globals or a generation runtime. Promotion still uses its
+existing domain types, identity rules and refusal contract.
+
 Swift public names, nested record names and Codable keys are retained. Static
 store entry points resolve the selected workspace and delegate; repository
 instances support independently addressed workspaces without setting a global.
@@ -121,6 +143,23 @@ must preserve this corrected baseline. Passing tests is evidence for the covered
 contracts, not a general certification of every scientific claim.
 
 ## Verification
+
+Latest continuation validation on 2026-09-05, against the integrated baseline:
+
+- Python complete suite: **5,605 passed, 9 skipped**. After the final promotion
+  callback was added to the explicit stage interface, all **69 focused pipeline,
+  fanout and boundary tests passed** again.
+- Swift: **277 SteeringKit tests and 4,350 ExperimentKit tests passed** in a
+  serial Xcode beta run (`TEST SUCCEEDED`).
+- All **23 definitions** moved into the five new pipeline support owners have
+  identical parsed Python ASTs to the integrated baseline. The pipeline function
+  also matches after normalizing only its new capability parameters and calls.
+- Two new orchestration tests cover CPU-only continuation without model
+  acquisition and release of a held model after stage failure without recording
+  completion. Three value-only Swift policy tests cover creation intent,
+  status-only completion and the limits of explicit arm-clearing permission.
+- Offline-import enforcement includes all six new Python owners. Existing
+  lifecycle, pipeline, judgment, recovery and scientific assertions remain.
 
 Original refactor validation on 2026-09-05, before integrating main's fixes
 (updated results are in the integration record):
@@ -178,12 +217,12 @@ should be migrated as separately reviewed slices:
 1. Turn extraction, validation, sweeps, run and judging into workflows with
    explicit resource lifetimes and cancellation. Preserve existing model,
    adapter and hook cleanup behavior before redesigning their APIs.
-2. Move pipeline coordination behind a small stage-execution interface. The
-   ledger already has an independent owner; a stage failure, checkpoint, resume
-   or scientific abort must retain its current disposition and artifacts.
-3. Extract Swift and Python draft/freeze policies from filesystem fact gathering.
-   The repository introduced here is only the filesystem boundary, not a full
-   replacement for `ExperimentStore`.
+2. With the pipeline stage interface now in place, migrate individual stage
+   implementations behind it in separate slices. Keep stage failure, checkpoint,
+   resume and scientific-abort dispositions and artifacts unchanged.
+3. Continue separating Swift and Python draft/freeze policies from filesystem
+   fact gathering. Swift save admission now has a value-only owner; the broader
+   draft/freeze lifecycle remains in the stores.
 4. Migrate Swift offline analysis through explicit evidence and workspace inputs;
    avoid giving it an `ExperimentTasks` or `ExperimentPanel` dependency.
 5. Separate panel draft state, job execution/polling, and selection/result state.
@@ -191,6 +230,13 @@ should be migrated as separately reviewed slices:
    `ExperimentPanel`, and that coupling remains to be addressed.
 6. Split the feature views after their state owners are independent. Remove
    compatibility bridges only when production callers and tests have migrated.
+
+Further main fixes are intentionally deferred during this continuation. The
+integrated baseline remains `5309b5f`; J-lens recomputation and outstanding science
+work proceed independently. Before review and merge, integrate the then-current
+main into this branch, resolve moved-code conflicts in the owners listed above,
+and rerun the affected regression tests and full suites. A clean textual merge
+alone does not establish that a fix survived a move.
 
 When integrating later main changes, apply each scientific fix in
 its new owning module and carry its regression tests with it. Do not restore a
