@@ -551,6 +551,7 @@ SIDECAR_V2_KEYS = {
     "buildIdentity", "optimizerSettings", "schedule", "selectedCheckpoint",
     "historyFile", "packageVersions", "gpu", "slurm", "timestamps",
     "resumeLineage", "adapterBytesHash", "adapterConfigHash", "controlArm",
+    "adapterScaleConvention", "effectiveAdapterScale",
 }
 
 
@@ -580,6 +581,38 @@ def test_sidecar_carries_every_contract_key(tiny_model_path, dataset, tmp_path):
     assert set(sidecar["timestamps"]) == {"start", "end"}
     assert sidecar["buildIdentity"]["dirty"] in (True, False)
     assert sidecar["controlArm"] is None
+
+
+def test_sidecar_names_the_adapter_scale_convention_and_resolves_it(
+        tiny_model_path, dataset, tmp_path):
+    """``alpha`` is PEFT's numerator, not the multiplier.
+
+    The Swift/MLX path stamps a ``scale`` that IS the multiplier and carries no
+    rank, so an adapter comparison that equates the two numeric fields compares
+    different treatments. The sidecar therefore says which convention its
+    ``alpha`` follows and what that resolves to (external review, REM-06).
+    """
+    # alpha 4.0 over rank 2 — deliberately unequal, so a stamp that echoed
+    # ``alpha`` (or hard-coded 1.0) fails here.
+    config = _config(tiny_model_path, dataset, tmp_path, epochs=1,
+                     rank=2, alpha=4.0)
+    run = lora_train.train(config, run_directory=str(tmp_path / "scale"))
+    sidecar = _sidecar(run)
+    assert sidecar["adapterScaleConvention"] == "peft:lora_alpha/r"
+    assert sidecar["effectiveAdapterScale"] == pytest.approx(2.0)
+    assert isinstance(sidecar["effectiveAdapterScale"], float)
+    # The stamp exists because these two are NOT the same number.
+    assert sidecar["alpha"] == 4.0
+    assert sidecar["effectiveAdapterScale"] != sidecar["alpha"]
+
+    # It tracks the configuration rather than this fixture: the same alpha at a
+    # different rank is a different treatment and stamps a different multiplier.
+    other = lora_train.adapter_sidecar_dict(
+        LoRAConfig(base_model_id="org/m", rank=16, alpha=4.0),
+        name="a", provenance=[], train_chunk_count=0, final_loss=None,
+        training_dtype_name="bfloat16")
+    assert other["adapterScaleConvention"] == "peft:lora_alpha/r"
+    assert other["effectiveAdapterScale"] == pytest.approx(0.25)
 
 
 def test_dataset_block_carries_row_identity_and_reserved_hashes(

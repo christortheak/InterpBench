@@ -96,6 +96,15 @@ from ..steering.vector_store import SUBSTRATE
 # failing weirdly. Absent stamp = legacy/unknown — attempted as today.
 ADAPTER_FORMAT = "hf-peft-lora"
 
+#: How this engine's ``alpha`` becomes the multiplier actually applied to the
+#: LoRA update. PEFT scales the adapter delta by ``lora_alpha / r``, so ``alpha``
+#: is a NUMERATOR, meaningless without the rank beside it. The Swift/MLX path's
+#: adapter ``scale`` is a DIRECT multiplier with no rank in it, so two runs whose
+#: numeric fields agree are not the same treatment. Naming the convention (and
+#: stamping the resolved multiplier) is what stops a reader equating them
+#: (external review, REM-06).
+ADAPTER_SCALE_CONVENTION = "peft:lora_alpha/r"
+
 #: Sidecar schema. v1 keys are all still written; v2 adds the provenance the
 #: plan's §2.8 requires (dataset identity, revisions, schedule, selection,
 #: package/GPU/Slurm identity, resume lineage, adapter byte hashes).
@@ -500,6 +509,17 @@ def adapter_sidecar_dict(config: LoRAConfig, *, name: str, provenance: list[dict
         "adapterFormat": ADAPTER_FORMAT,
         "substrate": SUBSTRATE,
         "trainingDtype": training_dtype_name,
+        # ``alpha`` above is PEFT's ``lora_alpha`` — a numerator, not the
+        # multiplier. Stamped beside it: the convention that turns it into one,
+        # and the resolved multiplier itself. Without these a reader compares
+        # this adapter's ``alpha`` to the Swift/MLX path's ``scale``, which is a
+        # DIRECT multiplier carrying no rank — equal numbers there are different
+        # treatments (external review, REM-06). ``rank`` is a positive integer
+        # in every configuration PEFT will build; ``None`` rather than a raised
+        # ZeroDivisionError is the honest answer if it ever is not.
+        "adapterScaleConvention": ADAPTER_SCALE_CONVENTION,
+        "effectiveAdapterScale": (float(config.alpha) / float(config.rank)
+                                  if config.rank else None),
         # v2 stamps that every mode carries, so "is this evidence?" is
         # answerable from the artifact alone.
         "schemaVersion": SIDECAR_SCHEMA_VERSION,
