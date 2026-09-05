@@ -1,0 +1,6 @@
+{
+  "clean_up_tokenization_spaces": false,
+  "eos_token": "<|im_end|>",
+  "model_max_length": 4096,
+  "tokenizer_class": "PreTrainedTokenizer"
+}
