@@ -307,3 +307,30 @@ def test_deflation_reports_one_diagnostic_per_component():
         [[3.0, 0.0, 0.0], [0.0, 2.0, 0.0], [-3.0, 0.0, 0.1], [0.0, -2.0, 0.0]], 2)
     assert len(result.diagnostics) == len(result.components) == 2
     assert all(not d.ill_conditioned for d in result.diagnostics)
+
+
+def test_a_full_fraction_draw_reproduces_the_full_data_direction():
+    """The reference every stability cosine is measured against IS
+    :func:`direction`'s own output: a draw that keeps every row must therefore
+    come back at exactly 1.0, in both families. Anything else would mean the
+    diagnostic is measuring a differently-computed direction than the one the
+    extractor writes into a sidecar."""
+    rng = np.random.default_rng(19)
+    pos = (rng.standard_normal((10, 12)) + 1.5).tolist()
+    neg = rng.standard_normal((10, 12)).tolist()
+    for method in (vm.ExtractionMethod.MEAN_DIFFERENCE,
+                   vm.ExtractionMethod.PAIRED_DIFFERENCE_PCA):
+        result = vm.direction_stability(pos, neg, method, resamples=2,
+                                        fraction=1.0, seed=0)
+        assert result.subsample_size == 10
+        assert result.resample_cosines == pytest.approx([1.0, 1.0], abs=1e-6)
+
+
+def test_the_subsample_size_rounds_half_up_not_to_even():
+    """Banker's rounding would send 0.5 of 5 rows and 0.5 of 7 rows in
+    opposite directions for a reason no reader of the artifact could
+    reconstruct."""
+    assert vm.resolved_subsample_size(5, 0.5) == 3
+    assert vm.resolved_subsample_size(7, 0.5) == 4
+    assert vm.resolved_subsample_size(10, 0.5) == 5
+    assert vm.resolved_subsample_size(3, 1.0) == 3

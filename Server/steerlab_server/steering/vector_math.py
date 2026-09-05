@@ -1051,3 +1051,379 @@ def _first_component_of_centered_with_diagnostic(
         warnings.warn(power_iteration_warning(diagnostic), UserWarning,
                       stacklevel=3)
     return (component / norm).astype(_F32).tolist(), diagnostic
+
+
+# --- resampling stability of a direction -----------------------------------
+#
+# WHY THIS IS HERE AND NOT IN THE EXTRACTOR. The question it answers is a
+# question about :func:`direction` — "how much of this vector is the contrast
+# and how much is these particular rows?" — and nothing about it needs a model,
+# a tokenizer, or a workspace. Keeping it pure keeps it unit-testable against
+# synthetic clouds whose answer is known in advance, which is the only way to
+# calibrate what a "low" cosine means before spending a GPU on a real one.
+
+#: What a stability diagnostic does and does not license, in one paragraph,
+#: written once so the CLI artifact, the Swift twin, and any future surface all
+#: say the SAME thing rather than three paraphrases that drift.
+#:
+#: The distinction it protects is the one the whole diagnostic can be misread
+#: as settling: resampling perturbs the rows of ONE contrast population and
+#: reports how far the direction moves. A direction that is perfectly stable
+#: under that perturbation is stable — it is not thereby *the concept*, and it
+#: has not been shown to do anything to the model's behavior. Both of those are
+#: separate instruments with separate evidence (``docs/EXTRACTION-RECIPES.md``
+#: §"What the arithmetic being correct does and does not establish").
+STABILITY_DIAGNOSTIC_NOTE = (
+    "This is a STABILITY DIAGNOSTIC of an extracted direction under "
+    "resampling of ITS OWN contrast population — the same stimuli, redrawn. "
+    "A high cosine means the direction is determined by the contrast rather "
+    "than by which particular rows were drawn. It is NOT evidence that the "
+    "direction is the concept: a stable direction can encode a confound the "
+    "two classes share, and resampling cannot see a confound that is present "
+    "in every draw. It is NOT behavioral validation: nothing here touches "
+    "generation, and a direction that is perfectly stable may steer nothing. "
+    "Any recipe choice made because of these numbers is a SELECTION DECISION "
+    "and belongs in the study's selection provenance, declared before the "
+    "evidence run, not discovered after it."
+)
+
+#: Resample draws below this cannot produce a distribution worth summarizing —
+#: a min over one number is that number. Refused, never clamped.
+MINIMUM_RESAMPLES = 2
+
+#: Rows below this in a draw cannot produce a paired-difference PCA at all
+#: (``direction`` refuses a cloud of fewer than two non-degenerate
+#: differences), and a mean over one row is that row. The floor applies to
+#: every method so the two families' refusals say the same thing.
+MINIMUM_SUBSAMPLE_ROWS = 2
+
+
+@dataclass
+class DirectionStability:
+    """How far :func:`direction` moves when its own rows are redrawn.
+
+    Every number here is a cosine against the FULL-DATA direction, so 1.0 is
+    "the draw changed nothing" and a negative value is a sign flip — the
+    failure mode that matters most, because a flipped direction steers the
+    opposite way at the same alpha while every norm and every hash looks
+    exactly as it should.
+
+    ``resample_cosines`` and ``order_shuffle_cosines`` are separate populations
+    and are never pooled into the summary statistics: they answer different
+    questions. A resample draw perturbs WHICH ROWS the direction saw; an order
+    shuffle keeps every row and perturbs only their ORDER, which is a no-op for
+    the mean-difference family and is emphatically not one for the
+    paired-difference PCA, whose alternating ± construction reads the row order
+    (:func:`direction`). The summary — ``min``/``mean``/``median``/
+    ``percentile5`` — is over the RESAMPLE draws alone; the order shuffles are
+    reported whole, because a family for which they should all be 1.0 is a
+    control and a family for which they are not is the finding.
+
+    ``sign_flips`` counts negatives across BOTH populations, because a sign
+    flip from either cause is the same defect downstream.
+
+    ``degenerate_draws`` records, rather than hides, any draw
+    :func:`direction` refused (an all-zero difference cloud, a rank-deficient
+    subsample). Those draws contribute to no statistic and are stamped with
+    their seed and reason, so a summary computed over eight of ten draws can
+    never be read as a summary over ten.
+    """
+
+    method: str
+    pair_count: int
+    subsample_size: int
+    #: True when the two classes have equal length and the draw therefore keeps
+    #: rows PAIRED (one index set drives both). False only for the unpaired
+    #: class shape ``designatedReference`` allows, where each class is drawn
+    #: independently and the pairing language does not apply.
+    paired: bool
+    resamples: int
+    fraction: float
+    seed: int
+    order_shuffles: int
+    resample_seeds: list = field(default_factory=list)
+    resample_cosines: list = field(default_factory=list)
+    order_shuffle_seeds: list = field(default_factory=list)
+    order_shuffle_cosines: list = field(default_factory=list)
+    degenerate_draws: list = field(default_factory=list)
+    sign_flips: int = 0
+    min_cosine: float = 0.0
+    mean_cosine: float = 0.0
+    median_cosine: float = 0.0
+    percentile5_cosine: float = 0.0
+
+    def to_dict(self) -> dict:
+        """The artifact shape — closed keys, sorted by the writer, full values.
+
+        Per-draw values are carried in full rather than summarized away: the
+        summary is a reading of them, and a reader who disagrees with the
+        reading must be able to recompute it from the same numbers.
+        """
+        return {
+            "degenerateDraws": [dict(entry) for entry in self.degenerate_draws],
+            "fraction": self.fraction,
+            "meanCosine": self.mean_cosine,
+            "medianCosine": self.median_cosine,
+            "method": self.method,
+            "minCosine": self.min_cosine,
+            "orderShuffleCosines": list(self.order_shuffle_cosines),
+            "orderShuffleSeeds": list(self.order_shuffle_seeds),
+            "orderShuffles": self.order_shuffles,
+            "paired": self.paired,
+            "pairCount": self.pair_count,
+            "percentile5Cosine": self.percentile5_cosine,
+            "resampleCosines": list(self.resample_cosines),
+            "resampleSeeds": list(self.resample_seeds),
+            "resamples": self.resamples,
+            "seed": self.seed,
+            "signFlips": self.sign_flips,
+            "subsampleSize": self.subsample_size,
+        }
+
+
+def _derived_seeds(seed: int, count: int) -> list[int]:
+    """``count`` per-draw seeds from one master seed, via the shared
+    cross-engine SplitMix64.
+
+    The generator is :mod:`steerlab_server.steering.token_bank_downsampling`'s
+    — the same one the neutral token bank's draw and the RepE orientation draw
+    use — for the reason that module states: the sequence is a property of
+    64-bit integer arithmetic written down in this repository, not of the
+    interpreter's standard library, so a Python upgrade cannot silently move
+    which rows a stamped seed selects. ``random.sample`` and
+    ``np.random.default_rng`` both make weaker promises than a diagnostic whose
+    whole claim is "run this again and get these numbers" can accept.
+    """
+    from .token_bank_downsampling import SplitMix64
+
+    rng = SplitMix64(seed)
+    return [rng.next() for _ in range(max(0, int(count)))]
+
+
+def _one_step(seed: int) -> int:
+    """One SplitMix64 step from a stamped seed — how the NEGATIVE class's draw
+    is derived when the two classes are unpaired. Stamping one seed per draw
+    and deriving the second keeps the artifact readable while leaving both
+    draws exactly reproducible."""
+    from .token_bank_downsampling import SplitMix64
+
+    return SplitMix64(seed).next()
+
+
+def _shuffled_order(count: int, seed: int) -> list[int]:
+    """A full seeded Fisher–Yates permutation of ``0..count-1``.
+
+    The partial draw in ``token_bank_downsampling.selected_indices`` returns
+    its keep-set SORTED — deliberately, because a bank's rows keep their
+    corpus order — so it cannot express "same rows, different order", which is
+    the entire order-shuffle question. Same generator, same loop, one extra
+    pass and no sort.
+    """
+    from .token_bank_downsampling import SplitMix64
+
+    count = int(count)
+    if count <= 1:
+        return list(range(max(0, count)))
+    rng = SplitMix64(seed)
+    order = list(range(count))
+    for position in range(count - 1):
+        offset = rng.next() % (count - position)
+        other = position + offset
+        order[position], order[other] = order[other], order[position]
+    return order
+
+
+def resolved_subsample_size(pair_count: int, fraction: float) -> int:
+    """``fraction`` of ``pair_count`` rows, rounded half up.
+
+    Half-up rather than :func:`round`, whose banker's rounding would make
+    ``0.5`` of 5 rows and ``0.5`` of 7 rows round in opposite directions for
+    no reason a reader of the artifact could reconstruct.
+    """
+    import math
+
+    return int(math.floor(float(fraction) * int(pair_count) + 0.5))
+
+
+def direction_stability(positive: Rows, negative: Rows, method: ExtractionMethod,
+                        *, resamples: int, fraction: float, seed: int,
+                        order_shuffles: int = 0) -> DirectionStability:
+    """Resample ``positive``/``negative`` and report how far :func:`direction`
+    moves — see :class:`DirectionStability` for what each number means and
+    :data:`STABILITY_DIAGNOSTIC_NOTE` for what none of them establishes.
+
+    The full-data direction is computed FIRST and is the reference every draw
+    is measured against, so this is a statement about one specific extracted
+    vector, not about a family of vectors with no privileged member.
+
+    Draws are subsamples WITHOUT replacement of ``fraction`` of the rows,
+    selected by the shared cross-engine seeded partial Fisher–Yates
+    (``token_bank_downsampling.selected_indices``) and therefore keeping their
+    original relative order — which the paired-difference PCA's alternating ±
+    construction reads, so a subsample is a subsample of the recipe, not of a
+    re-ordered stand-in for it. When the two classes are the same length the
+    same index set drives both, keeping rows PAIRED; the unpaired class shape
+    ``designatedReference`` permits draws each class independently from a
+    derived seed and says so in ``paired``.
+
+    ``order_shuffles`` reorders the FULL row set (no subsampling) and
+    re-derives the direction. It runs for every method on purpose: for the
+    mean-difference family it is a control that must come back at 1.0, and a
+    control that is only run where it is expected to fail is not one.
+
+    Refuses — never clamps, never silently reduces — ``resamples`` below
+    :data:`MINIMUM_RESAMPLES`, a ``fraction`` outside ``(0, 1]``, a row count
+    that cannot yield :data:`MINIMUM_SUBSAMPLE_ROWS`, a method that never
+    reaches :func:`direction`, and a full-data direction that is degenerate.
+    """
+    if not method.is_paired and not method.is_designated_reference:
+        raise SteeringVectorError(
+            f"{method.value} never reaches direction() — a resampling "
+            "stability diagnostic exists only for the recipes that compare "
+            "two row populations (meanDifference, lat, designatedReference)")
+    if int(resamples) < MINIMUM_RESAMPLES:
+        raise SteeringVectorError(
+            f"resamples={resamples} — a stability summary needs at least "
+            f"{MINIMUM_RESAMPLES} draws; raise --resamples")
+    if not (0.0 < float(fraction) <= 1.0):
+        raise SteeringVectorError(
+            f"fraction={fraction} — the subsample fraction must be in (0, 1]; "
+            "pass --fraction between 0 and 1")
+
+    pos = _arr(positive)
+    neg = _arr(negative)
+    if pos.shape[0] == 0 or neg.shape[0] == 0:
+        raise SteeringVectorError("emptyInput")
+    paired = pos.shape[0] == neg.shape[0]
+    if method is ExtractionMethod.PAIRED_DIFFERENCE_PCA and not paired:
+        raise SteeringVectorError(
+            f"unpairedStimuli positive={pos.shape[0]} negative={neg.shape[0]} "
+            "— the paired-difference PCA takes per-pair differences, so the "
+            "two classes must be the same length")
+    row_count = min(int(pos.shape[0]), int(neg.shape[0]))
+    subsample_size = resolved_subsample_size(row_count, fraction)
+    if subsample_size < MINIMUM_SUBSAMPLE_ROWS:
+        raise SteeringVectorError(
+            f"fraction={fraction} of {row_count} row(s) is {subsample_size} "
+            f"row(s) — a draw needs at least {MINIMUM_SUBSAMPLE_ROWS}; raise "
+            "--fraction, or extract from more stimuli")
+
+    full = direction(positive, negative, method)
+    if l2_norm(full) <= 0:
+        raise SteeringVectorError(
+            "degenerateData — the full-data direction has zero norm, so there "
+            "is nothing for a draw to be stable against")
+
+    # ONE stream for both populations, so a resample seed and a shuffle seed
+    # can never collide: the first `resamples` values are the draws, the next
+    # `order_shuffles` are the shuffles.
+    stream = _derived_seeds(seed, int(resamples) + max(0, int(order_shuffles)))
+    resample_seeds = stream[:int(resamples)]
+    shuffle_seeds = stream[int(resamples):]
+
+    from .token_bank_downsampling import selected_indices
+
+    resample_cosines: list[float] = []
+    order_shuffle_cosines: list[float] = []
+    degenerate: list[dict] = []
+
+    def record(kind: str, draw_seed: int, rows_p, rows_n, sink: list) -> None:
+        try:
+            candidate = direction(rows_p, rows_n, method)
+            sink.append(cosine_similarity(candidate, full))
+        except SteeringVectorError as exc:
+            degenerate.append({"kind": kind, "reason": str(exc),
+                               "seed": int(draw_seed)})
+
+    for draw_seed in resample_seeds:
+        if paired:
+            keep = selected_indices(row_count, subsample_size, draw_seed)
+            rows_p = pos[keep]
+            rows_n = neg[keep]
+        else:
+            keep_p = selected_indices(
+                int(pos.shape[0]),
+                resolved_subsample_size(int(pos.shape[0]), fraction),
+                draw_seed)
+            keep_n = selected_indices(
+                int(neg.shape[0]),
+                resolved_subsample_size(int(neg.shape[0]), fraction),
+                _one_step(draw_seed))
+            rows_p = pos[keep_p]
+            rows_n = neg[keep_n]
+        record("resample", draw_seed, rows_p, rows_n, resample_cosines)
+
+    for shuffle_seed in shuffle_seeds:
+        if paired:
+            order = _shuffled_order(row_count, shuffle_seed)
+            rows_p = pos[order]
+            rows_n = neg[order]
+        else:
+            rows_p = pos[_shuffled_order(int(pos.shape[0]), shuffle_seed)]
+            rows_n = neg[_shuffled_order(int(neg.shape[0]),
+                                         _one_step(shuffle_seed))]
+        record("orderShuffle", shuffle_seed, rows_p, rows_n,
+               order_shuffle_cosines)
+
+    if len(resample_cosines) < MINIMUM_RESAMPLES:
+        raise SteeringVectorError(
+            f"degenerateData — only {len(resample_cosines)} of {resamples} "
+            "draws produced a direction at all "
+            f"({'; '.join(sorted({e['reason'] for e in degenerate}))}); there "
+            "is no distribution to summarize")
+
+    # The summary is computed in float64. The DIRECTIONS and their cosines stay
+    # on the module's float32 path — they are the same numbers the extractor
+    # and every sidecar carry, and a diagnostic that reported a cosine the rest
+    # of the engine cannot reproduce would be measuring its own arithmetic. The
+    # aggregation is a different job: summing and sorting a hundred float32
+    # cosines in float32 loses digits the reading depends on.
+    values = np.asarray(resample_cosines, dtype=np.float64)
+    return DirectionStability(
+        method=method.value,
+        pair_count=row_count,
+        subsample_size=subsample_size,
+        paired=paired,
+        resamples=int(resamples),
+        fraction=float(fraction),
+        seed=int(seed),
+        order_shuffles=max(0, int(order_shuffles)),
+        resample_seeds=[int(s) for s in resample_seeds],
+        resample_cosines=[float(c) for c in resample_cosines],
+        order_shuffle_seeds=[int(s) for s in shuffle_seeds],
+        order_shuffle_cosines=[float(c) for c in order_shuffle_cosines],
+        degenerate_draws=degenerate,
+        sign_flips=sum(1 for c in resample_cosines if c < 0)
+                   + sum(1 for c in order_shuffle_cosines if c < 0),
+        min_cosine=float(values.min()),
+        mean_cosine=float(values.mean()),
+        median_cosine=float(np.median(values)),
+        percentile5_cosine=float(np.percentile(values, 5.0)))
+
+
+def stability_by_layer(rows_by_layer: dict, method: ExtractionMethod, *,
+                       resamples: int, fraction: float, seed: int,
+                       order_shuffles: int = 0) -> dict:
+    """:func:`direction_stability` per layer, over ``{layer: (positive rows,
+    negative rows)}``.
+
+    ONE seed for every layer, deliberately: the draw is a draw of STIMULI, and
+    the same stimuli produced every layer's rows. Drawing different subsets per
+    layer would make the per-layer numbers incomparable — a layer would look
+    unstable because it was asked a different question, not because it is — and
+    would make "layer 20 is the unstable one" unfalsifiable. With one seed the
+    draws are identical across layers by construction, because
+    :func:`direction_stability` derives them from ``(seed, row count,
+    subsample size)`` alone.
+
+    Returns a dict keyed by the same layer keys it was given. Refusals
+    propagate: a layer that cannot be diagnosed makes the whole reading
+    unreportable, and returning a partial map would let a caller average over
+    the layers that happened to work.
+    """
+    return {
+        layer: direction_stability(
+            rows[0], rows[1], method, resamples=resamples, fraction=fraction,
+            seed=seed, order_shuffles=order_shuffles)
+        for layer, rows in sorted(rows_by_layer.items())
+    }

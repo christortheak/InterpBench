@@ -2923,6 +2923,7 @@ The ten agent-path verbs — strict flag parsing, the shared envelope under
 steerlab-server experiment list
 steerlab-server experiment verify <name>
 steerlab-server experiment extract <name> [--device <device>] [--dtype <dtype>]
+steerlab-server experiment extract-stability <name> <concept> [--device <device>] [--dtype <dtype>] [--fraction <0-1>] [--order-shuffles <n>] [--resamples <n>] [--seed <int>]
 steerlab-server experiment validate <name> [--device <device>] [--dtype <dtype>]
 steerlab-server experiment sweep <name> [--device <device>] [--dtype <dtype>]
 steerlab-server experiment run <name> [--device <device>] [--dtype <dtype>] [--prompts <path>] [--resume <run-dir>] [--shard <k/K>]
@@ -2937,6 +2938,7 @@ steerlab-server experiment confirm <name> --agent <name-or-path> [--deltas <d1,d
 | `experiment list` | List this root's experiments with their status. |
 | `experiment verify` | Re-check every pinned input against the file bytes on disk. |
 | `experiment extract` | Derive the manifest's concept vectors on this engine. |
+| `experiment extract-stability` | Resample one concept's extraction rows and report how far the per-layer direction moves — a stability diagnostic, not validation. |
 | `experiment validate` | Score each vector on its held-out probe and report cross-concept similarity. |
 | `experiment sweep` | Sweep layer × alpha on the dev split and record a recommendation per concept. |
 | `experiment run` | Generate the measured run for every declared condition. |

@@ -428,6 +428,20 @@ VERB_SPECS: tuple[VerbSpec, ...] = (
     VerbSpec("experiment", "extract", positional="<name>",
              purpose="Derive the manifest's concept vectors on this engine.",
              value_flags=frozenset({"--dtype", "--device"})),
+    # A DIAGNOSTIC, not a lifecycle stage: it captures one concept's rows
+    # through the extraction seam and resamples them in process, writing a
+    # document under `diagnostics/` that no manifest pins and no run holds. It
+    # EXECUTES a model, which is why it lives on this engine rather than on an
+    # authoring client. Swift parity is owed
+    # (`SteeringVectorMath.directionStability`); until it lands the diagnostic
+    # is server-only, and the document says which engine measured it.
+    VerbSpec("experiment", "extract-stability", positional="<name> <concept>",
+             purpose="Resample one concept's extraction rows and report how "
+                     "far the per-layer direction moves — a stability "
+                     "diagnostic, not validation.",
+             value_flags=frozenset({"--dtype", "--device", "--fraction",
+                                    "--order-shuffles", "--resamples",
+                                    "--seed"})),
     VerbSpec("experiment", "validate", positional="<name>",
              purpose="Score each vector on its held-out probe and report "
                      "cross-concept similarity.",

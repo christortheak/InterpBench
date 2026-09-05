@@ -175,7 +175,8 @@ _AGENT_FAMILY_ORDER = ("experiment", "jobs", "study", "vectors", "data",
 #: place and asserted against the dispatch by
 #: ``test_cli_reference.py::test_the_printed_experiment_verb_list_is_complete``.
 EXPERIMENT_VERBS = (
-    "list", "verify", "attach-artifact", "extract", "validate", "sweep", "run",
+    "list", "verify", "attach-artifact", "extract", "extract-stability",
+    "validate", "sweep", "run",
     "pipeline", "evaluate", "judge-worker", "complete-judgment", "analyze",
     "rescore-style", "promote", "confirm", "preflight-endpoints",
 )
@@ -2258,6 +2259,8 @@ def _experiment(args: list[str]):
             message=f"extracted vectors for '{name}'", changed=True,
             payload={"experiment": name, "runDirectory": run_directory},
             next_action=next_action(f"experiment validate {name}"))
+    if verb == "extract-stability":
+        return _extract_stability(name, rest, root, dtype, device)
     if verb == "validate":
         run_directory = tasks.validate(name, root, dtype, device)
         # THE QUALITY NUMBERS and THE VACUITY LEDGER (punch list #1, P4 and
@@ -2848,6 +2851,92 @@ def _parity_could_not_compare_repair(*, incomparable: bool, path_a: str,
                 f"('{path_a}' vs '{path_b}'); {shape}")
     return (f"check both operand paths and their sidecars — '{path_a}' and "
             f"'{path_b}': {shape}")
+
+
+def _extract_stability(name: str, rest: list[str], root, dtype, device):
+    """``experiment extract-stability <name> <concept> …`` — the resampling
+    stability diagnostic (:mod:`steerlab_server.experiment.extract_stability`).
+
+    A THIN ARM on purpose: everything the verb decides lives in the module, so
+    this function only turns argv into typed values and a typed refusal into a
+    ``CLIResult``. The numeric flags are parsed HERE rather than passed through
+    as strings, because ``--fraction half`` is a malformed invocation (64) and
+    not a refusal (65), and the module's own refusals are the latter.
+    """
+    from .cli_envelope import CLIResult, exit_code_for
+    from .experiment import extract_stability
+
+    if len(rest) < 2 or rest[1].startswith("--"):
+        sys.stderr.write(
+            "usage: experiment extract-stability <name> <concept> "
+            "[--resamples N] [--fraction F] [--seed S] [--order-shuffles N]\n"
+            f"  (defaults: --resamples {extract_stability.DEFAULT_RESAMPLES} "
+            f"--fraction {extract_stability.DEFAULT_FRACTION} "
+            f"--seed {extract_stability.DEFAULT_SEED} "
+            f"--order-shuffles {extract_stability.DEFAULT_ORDER_SHUFFLES}; the "
+            "document lands under <root>/diagnostics/, never under runs/)\n")
+        return 64
+    concept = rest[1]
+
+    def number(flag: str, default, cast):
+        raw = _flag(rest, flag)
+        if raw is None:
+            return default
+        try:
+            return cast(raw)
+        except ValueError:
+            raise _StabilityFlagError(flag, raw) from None
+
+    try:
+        resamples = number("--resamples", extract_stability.DEFAULT_RESAMPLES, int)
+        fraction = number("--fraction", extract_stability.DEFAULT_FRACTION, float)
+        seed = number("--seed", extract_stability.DEFAULT_SEED, int)
+        order_shuffles = number(
+            "--order-shuffles", extract_stability.DEFAULT_ORDER_SHUFFLES, int)
+    except _StabilityFlagError as exc:
+        sys.stderr.write(f"experiment extract-stability: {exc}\n")
+        return 64
+    if order_shuffles < 0:
+        sys.stderr.write("experiment extract-stability: --order-shuffles may "
+                         "not be negative\n")
+        return 64
+
+    try:
+        document = extract_stability.run(
+            name, concept, root=root, resamples=resamples, fraction=fraction,
+            seed=seed, order_shuffles=order_shuffles, dtype=dtype,
+            device=device,
+            log=lambda line: print(line, file=sys.stderr, flush=True))
+    except extract_stability.ExtractStabilityError as exc:
+        sys.stderr.write(f"experiment extract-stability: {exc}\n")
+        # The human-mode exit code follows the state's stable code (64 / 65 /
+        # 66), exactly as the JSON envelope's does — never a bare 2.
+        return CLIResult(
+            state=exc.state, exit_code=exit_code_for(exc.state),
+            code=exc.code, message=str(exc), repair_action=exc.repair_action,
+            payload={"concept": concept, "experiment": name})
+    result = extract_stability.summary(document)
+    print(f"wrote {result['path']}")
+    print(f"min cosine {result['minCosine']:.4f} at layer "
+          f"{result['worstLayer']} over {result['layerCount']} layer(s); "
+          f"{result['signFlips']} sign flip(s)")
+    if result["stimulusDrift"]:
+        print("NOTE: the concept's stimuli no longer match the manifest's "
+              "pinned hash — this reading is of the LIVE bytes",
+              file=sys.stderr)
+    return CLIResult(
+        message=(f"stability of '{concept}' in '{name}': min cosine "
+                 f"{result['minCosine']:.4f} at layer {result['worstLayer']}, "
+                 f"{result['signFlips']} sign flip(s)"),
+        changed=True, payload=result)
+
+
+class _StabilityFlagError(ValueError):
+    """A numeric flag that will not parse — a malformed invocation (64), never
+    a refusal."""
+
+    def __init__(self, flag: str, raw: str) -> None:
+        super().__init__(f"bad {flag} {raw!r} — it must be a number")
 
 
 _MODEL_USAGE = ("usage: steerlab-server model capabilities <modelID> "

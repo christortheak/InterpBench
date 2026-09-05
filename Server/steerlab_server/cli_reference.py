@@ -30,6 +30,7 @@ from .cli_envelope import VERB_SPECS
 REGIONS: dict = {
     "server-experiment": [
         "experiment list", "experiment verify", "experiment extract",
+        "experiment extract-stability",
         "experiment validate", "experiment sweep", "experiment run",
         "experiment evaluate", "experiment analyze", "experiment promote",
         "experiment confirm",
