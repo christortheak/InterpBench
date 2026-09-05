@@ -13,6 +13,7 @@ would strand provenance that those artifacts assert (plan §4.2).
 
 from __future__ import annotations
 
+import errno
 import os
 
 from ..experiment import paths
@@ -57,7 +58,9 @@ def resolve(lens_id: str, root: str | None = None) -> JLensRecord:
     if not os.path.exists(path):
         raise JLensError(
             f"no imported lens '{lens_id}' — import it first "
-            f"(steerlab-server jlens import <model>)")
+            f"(steerlab-server jlens import <model>)"
+        ) from FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+                                 path)  # a CLI reads this as notFound
     return read_record(path)
 
 

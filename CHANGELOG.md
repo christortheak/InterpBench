@@ -60,6 +60,33 @@ migration that rewrites frozen bytes.
   `set-sampling --max-length-stopped-fraction` flag is the obvious next verb
   and is deliberately not in this change.
 
+### Changed
+
+- **`steerlab-server optvec` exits in the shared vocabulary.** Every
+  `optvec` verb (train, eval, geometry, campaign, interpret, family, jspace,
+  gradient, fracture) answered every typed error with exit 2 and let untyped
+  ones escape as tracebacks; the process code now comes from the envelope's
+  state table (`cli_envelope.STATE_EXIT_CODES`), the one every agent-path
+  verb uses: **64** for usage or a config that breaks its own contract,
+  **65** for a typed refusal by an input (a missing choice-row dataset is
+  the shared loader's `sweepSelectionRule` refusal, 65 here as under
+  `experiment sweep`), **66** for a named config, artifact, lens,
+  neutral-text file, gradient file, survey or campaign directory that does
+  not exist,
+  **70** for an operational failure (traceback on stderr). One classifier in
+  the CLI (`_optvec_exception_envelope`) does the mapping, and a test asserts
+  every exception class the optvec modules define is in it. The verbs' own
+  behavior is unchanged — same stdout, same run directories, `campaign
+  submit` still exits 3 on a fan-out failure — and the stderr line keeps its
+  `optvec <verb>: <reason>` shape, now followed by the repair. Two library
+  refinements make the split readable without message-matching:
+  `OptVecGeometryConfigError` and `OptVecFamilyConfigError` (subclasses of the
+  errors callers already catch) mark the config-contract sites, and the six
+  loaders that test for existence themselves chain an explicit
+  `FileNotFoundError` cause (`lens_store.resolve` included, so a J-space run
+  against a never-imported lens is a 66, not a 65). A caller that branched on
+  `== 2` for these verbs must branch on 64/65/66 instead.
+
 ## [0.9.4] — 2026-08-29
 
 ### Added

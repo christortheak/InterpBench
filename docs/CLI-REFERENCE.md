@@ -4129,8 +4129,30 @@ frozen model against a hashed choice-row dataset bundle (target/anchor/
 capability), and writes an immutable `optvec-train` run directory: baseline
 cache, per-step `metrics.jsonl`, checkpoints, and the selected best-val vector
 as an ordinary artifact (`extractionMethod: "optvec"`, additive `optvec`
-provenance block). Exit codes: 0 = trained; 2 = bad config/dataset (unknown
-key, hash drift, multi-token option, overlapping split ids); 64 = usage.
+provenance block).
+
+**Exit codes, for every `optvec` verb** (2026-09-05 — before it every typed
+error was a 2 and an untyped one escaped as a traceback): the shared
+vocabulary of §7.7, read from the same table the agent-path verbs answer
+in. **0** = done. **64** = usage, or a config that breaks its own contract
+(an unknown key, a wrong type, an out-of-range value, a selection split the
+verb must not see, too few artifacts to be a statistic). **65** = a typed
+refusal by an input — hash drift, a multi-token option, an artifact without
+an `optvec` block, mixed layers, a lens with no Jacobian at the injection
+layer, a campaign whose cells drifted; the stderr line carries the reason
+and the repair, and a dataset loader's lifecycle refusal keeps its gate
+(`sweepSelectionRule`), read the same way `experiment sweep` reads it.
+**66** = a named config, artifact, lens, neutral-text or probe-prompt file,
+gradient file, survey or campaign directory that does not exist (a missing
+input used to be indistinguishable from a refusal); a missing choice-row
+dataset is the shared loader's gate refusal above, 65, so the same file
+reads the same way on every verb that pins one. **70** = an operational failure — an
+exception no verb typed, with its traceback on stderr. `campaign submit`
+additionally exits **3** when any sbatch failed (below); that is a success
+report carrying failures, not a refusal, and it is unchanged. These verbs
+print their run's JSON on stdout, not the envelope; on a non-zero exit
+stdout is empty and stderr has `optvec <verb>: <reason>` followed by the
+indented repair.
 
 Traps: the config is strict camelCase JSON — unknown keys refuse (a silently
 ignored `lambdaAnchor` typo would run S1 while the record claims S2); every
