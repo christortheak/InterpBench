@@ -11,6 +11,10 @@ and operational fixes through `5309b5f2efc8f70dfb7b1a444feb5312b27c7704` have
 now been integrated. See [main integration record](MAIN-INTEGRATION.md) for
 the merge resolutions, preservation checks and updated validation.
 
+The subsequent execution-stage and draft/freeze policy decomposition is recorded
+in [stage and lifecycle handoff](REFACTOR-STAGES-AND-LIFECYCLE.md). That record
+contains the current ownership map, validation and integration instructions.
+
 This change establishes focused owners for reusable Python task support,
 offline analysis, pipeline orchestration, Swift contracts, manifest-save policy,
 and workspace file access. It is a staged
@@ -106,8 +110,8 @@ Existing public Python task functions and signatures remain available through
 Some shared helpers retain their original underscore names; new production
 consumers import them from the actual owner rather than from the facade.
 
-`tasks._battery_backends` remains a small adapter that explicitly supplies
-`tasks.generate`. Standalone battery and qualification execution bind directly
+`tasks._battery_backends` now re-exports the adapter in `choice_scoring`, which
+explicitly supplies `generate.generate`. Standalone battery and qualification execution bind directly
 through `runtime_backends.battery_backends`. The two injected callables preserve
 the battery's own rendering, token budget and latent/steering arguments.
 
@@ -144,7 +148,8 @@ contracts, not a general certification of every scientific claim.
 
 ## Verification
 
-Latest continuation validation on 2026-09-05, against the integrated baseline:
+The latest stage/lifecycle validation is in the linked handoff. The results
+below record the preceding pipeline-only continuation on 2026-09-05:
 
 - Python complete suite: **5,605 passed, 9 skipped**. After the final promotion
   callback was added to the explicit stage interface, all **69 focused pipeline,
@@ -214,21 +219,16 @@ worktree. Build outputs are never shared with the active agent's checkout.
 The central files are smaller, but the following responsibilities remain and
 should be migrated as separately reviewed slices:
 
-1. Turn extraction, validation, sweeps, run and judging into workflows with
-   explicit resource lifetimes and cancellation. Preserve existing model,
-   adapter and hook cleanup behavior before redesigning their APIs.
-2. With the pipeline stage interface now in place, migrate individual stage
-   implementations behind it in separate slices. Keep stage failure, checkpoint,
-   resume and scientific-abort dispositions and artifacts unchanged.
-3. Continue separating Swift and Python draft/freeze policies from filesystem
-   fact gathering. Swift save admission now has a value-only owner; the broader
-   draft/freeze lifecycle remains in the stores.
-4. Migrate Swift offline analysis through explicit evidence and workspace inputs;
+Execution stages now have workflow/support owners, and central draft/freeze
+decisions operate on supplied values. The stores retain filesystem operations,
+artifact authoring and freeze transaction sequencing. Remaining larger work:
+
+1. Migrate Swift offline analysis through explicit evidence and workspace inputs;
    avoid giving it an `ExperimentTasks` or `ExperimentPanel` dependency.
-5. Separate panel draft state, job execution/polling, and selection/result state.
+2. Separate panel draft state, job execution/polling, and selection/result state.
    Result parsing has moved out; `UnifiedStudyRunner` still delegates through
    `ExperimentPanel`, and that coupling remains to be addressed.
-6. Split the feature views after their state owners are independent. Remove
+3. Split the feature views after their state owners are independent. Remove
    compatibility bridges only when production callers and tests have migrated.
 
 Further main fixes are intentionally deferred during this continuation. The
