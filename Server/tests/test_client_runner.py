@@ -594,6 +594,55 @@ def test_submit_refuses_a_staged_path_that_is_not_the_pinned_bundle(
     assert len(adapter.jobs()) == before, "a refused submit created a job"
 
 
+@pytest.mark.parametrize("pin", ["", "   ", "abc", "c" * 63, "c" * 65,
+                                 "g" * 64, "sha256:" + "c" * 64])
+def test_submit_refuses_an_explicit_pin_that_is_not_a_digest(
+        adapter, service, pin):
+    """CONTRACT: a pin that was GIVEN is checked for shape before anything is
+    compared. An explicit empty string used to read as "no pin" and switch
+    the pre-check off; ``"abc"`` reached the comparison as though it were a
+    digest (external review, 2026-09-05). Both are refused, typed, and
+    nothing is submitted."""
+    uploaded = adapter.upload_run_bundle(service["bundle"])
+    before = len(adapter.jobs())
+
+    with pytest.raises(runner_api.RunnerRefusal) as caught:
+        adapter.submit_uploaded_bundle(
+            remote_path=uploaded["path"], expected_sha256=pin,
+            verb="verify", executor="local")
+
+    exc = caught.value
+    assert exc.code == "malformedDigestPin"
+    assert exc.detail["pin"] == pin
+    assert exc.detail["bundlePath"] == uploaded["path"]
+    assert len(adapter.jobs()) == before, "a refused submit created a job"
+
+
+def test_an_uppercase_pin_is_the_same_digest(adapter, service):
+    """Shape is checked case-folded: a digest pasted in upper case is the
+    digest, not a malformed pin."""
+    uploaded = adapter.upload_run_bundle(service["bundle"])
+    submission = adapter.submit_uploaded_bundle(
+        remote_path=uploaded["path"],
+        expected_sha256=uploaded["bundle"]["bundleSha256"].upper(),
+        verb="verify", executor="local", target_root=service["target"],
+        dry_run=True)
+    assert submission["jobId"] and submission["dryRun"] is True
+
+
+def test_a_download_with_a_malformed_digest_is_refused_before_any_bytes_move(
+        adapter):
+    """The download path already refused an ABSENT pin; a present-but-broken
+    one used to be discovered only after a full transfer, as a mismatch."""
+    with pytest.raises(runner_api.RunnerRefusal) as caught:
+        adapter.download_bundle(remote_path="/runs/x.tar.gz",
+                                expected_sha256="not-a-digest",
+                                destination="/tmp/x",
+                                temp_path="/tmp/x.partial")
+    assert caught.value.code == "malformedDigestPin"
+    assert caught.value.detail["remotePath"] == "/runs/x.tar.gz"
+
+
 # =============================================================================
 # 3. The token discipline
 # =============================================================================

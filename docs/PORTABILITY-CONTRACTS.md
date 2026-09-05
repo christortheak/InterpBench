@@ -1179,9 +1179,9 @@ modes — under `--json` stdout carries exactly one document).
 | 2 | `package` | package the run bundle here, record its sha256 | `bundles.package_experiment` | `bundleRefused` (65) |
 | 3 | `capabilities` | ask the runner who it is and whether it can execute **this verb on this executor** | `RunnerClient.info` / `.capabilities` / `.identity` | `runnerCannotExecute` (65), naming what the runner offers |
 | 4 | `upload` | stage the archive; the cross-socket digest agreement is the adapter's | `RunnerClient.upload_run_bundle` | `uploadDigestMismatch` (65) and the adapter's HTTP vocabulary |
-| 5 | `submit` | submit with an explicit `--verb`, `--executor` and the submit endpoint's pass-throughs | `RunnerClient.submit_uploaded_bundle` (which pre-checks `--bundle-sha` against the runner's own inspect) | `bundleDigestMismatch` (65); `submitOutcomeUnknown` (70) |
+| 5 | `submit` | submit with an explicit `--verb`, `--executor` and the submit endpoint's pass-throughs | `RunnerClient.submit_uploaded_bundle` (which pre-checks `--bundle-sha` against the runner's own inspect) | `malformedDigestPin` (65, an explicit pin that is not 64 hex characters — never treated as "no pin"); `bundleDigestMismatch` (65); `submitOutcomeUnknown` (70) |
 | 6 | `wait` | poll to a terminal status | `RunnerClient.job` | `waitDeadlineExceeded` (70); `remoteJobFailed` (70, after stages 7–9) |
-| 7 | `evidence` | fetch the **strongest evidence available** and verify its outer digest | `RunnerClient.evidence_reference`, `.download_bundle` | `evidenceNotPackaged` (65); `evidenceDigestMismatch` (65) |
+| 7 | `evidence` | fetch the **strongest evidence available** and verify its outer digest | `RunnerClient.evidence_reference`, `.download_bundle` | `evidenceNotPackaged` (65); `malformedDigestPin` (65, before any bytes move); `evidenceDigestMismatch` (65) |
 | 8 | `import` | verify-and-extract into this workspace with the out-of-band pin | `bundles.import_bundle(expected_sha256=…)` | `bundleRefused` (65) |
 | 9 | `provenance` | stamp the imported run, additively | `_write_provenance` | never — it skips and says why |
 
