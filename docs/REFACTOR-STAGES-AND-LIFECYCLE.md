@@ -153,6 +153,7 @@ the move, and passing the full existing suite does not cover this branch.
    coding agent for independent review and merge. J-lens recomputation remains
    owned by the existing science workstream.
 
-The next maintainability slices are Swift offline analysis, independent panel
-state owners and the large feature views. Compatibility bridges can be retired
-after their production callers have migrated.
+The subsequent [Swift offline analysis slice](REFACTOR-SWIFT-ANALYSIS.md) is now
+implemented. The next slices are independent panel state owners and the large
+feature views. Compatibility bridges can be retired after their production
+callers have migrated.

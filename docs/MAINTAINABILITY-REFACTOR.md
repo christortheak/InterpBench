@@ -13,7 +13,8 @@ the merge resolutions, preservation checks and updated validation.
 
 The subsequent execution-stage and draft/freeze policy decomposition is recorded
 in [stage and lifecycle handoff](REFACTOR-STAGES-AND-LIFECYCLE.md). That record
-contains the current ownership map, validation and integration instructions.
+contains its ownership map, validation and integration instructions. The next
+slice is recorded in the [Swift offline analysis handoff](REFACTOR-SWIFT-ANALYSIS.md).
 
 This change establishes focused owners for reusable Python task support,
 offline analysis, pipeline orchestration, Swift contracts, manifest-save policy,
@@ -223,12 +224,13 @@ Execution stages now have workflow/support owners, and central draft/freeze
 decisions operate on supplied values. The stores retain filesystem operations,
 artifact authoring and freeze transaction sequencing. Remaining larger work:
 
-1. Migrate Swift offline analysis through explicit evidence and workspace inputs;
-   avoid giving it an `ExperimentTasks` or `ExperimentPanel` dependency.
-2. Separate panel draft state, job execution/polling, and selection/result state.
+Swift offline analysis now has explicit evidence, calculation and publication
+owners; see the linked handoff for compatibility boundaries and validation.
+
+1. Separate panel draft state, job execution/polling, and selection/result state.
    Result parsing has moved out; `UnifiedStudyRunner` still delegates through
    `ExperimentPanel`, and that coupling remains to be addressed.
-3. Split the feature views after their state owners are independent. Remove
+2. Split the feature views after their state owners are independent. Remove
    compatibility bridges only when production callers and tests have migrated.
 
 Further main fixes are intentionally deferred during this continuation. The

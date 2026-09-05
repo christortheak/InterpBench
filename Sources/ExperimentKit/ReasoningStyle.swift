@@ -727,6 +727,13 @@ extension ExperimentStore {
     public static func loadPinnedReasoningStyle(
         _ manifest: ExperimentManifest
     ) throws -> PinnedReasoningStyle? {
+        try loadPinnedReasoningStyle(manifest, root: workspaceRoot)
+    }
+
+    /// Explicit workspace binding for offline evidence readers.
+    public static func loadPinnedReasoningStyle(
+        _ manifest: ExperimentManifest, root: URL
+    ) throws -> PinnedReasoningStyle? {
         guard let path = manifest.reasoningStyleTaxonomyPath else {
             guard manifest.reasoningStyleTaxonomyHash == nil else {
                 throw ExperimentError(
@@ -742,7 +749,7 @@ extension ExperimentStore {
                     + "must both be set (re-pin with "
                     + "'experiment set-style-taxonomy')")
         }
-        let url = resolveProjectPath(path)
+        let url = resolveProjectPath(path, root: root)
         guard let data = try? Data(contentsOf: url) else {
             throw ExperimentError(
                 reason: "pinned reasoning-style taxonomy missing (\(path))")

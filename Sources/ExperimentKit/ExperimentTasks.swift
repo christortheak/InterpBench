@@ -323,62 +323,7 @@ public enum ExperimentTasks {
     static func loadTaskPrompts(
         for manifest: ExperimentManifest, override: String? = nil
     ) throws -> (file: String, hash: String, prompts: [StudyPrompt]) {
-        let file = override ?? manifest.taskPromptsFile ?? "prompts/dev/dev-prompts.jsonl"
-        let url =
-            file.hasPrefix("/")
-            ? URL(filePath: file)
-            : VectorCatalog.projectRoot.appending(path: file)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw ExperimentError.refusing(
-                .missingPrerequisite,
-                "task prompt file not found: \(url.path)",
-                repair: "author \(file) as {\"id\": …, \"prompt\": …} JSONL rows, "
-                    + "then steerlab-cli experiment pin-prompts "
-                    + "\(manifest.name) \(file)")
-        }
-        let data = try Data(contentsOf: url)
-        // SHA-256 over the raw bytes — identical to `StimulusSet.loadTexts`
-        // and the server, so existing pinned hashes stay valid.
-        let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        let frozen = manifest.status != .draft
-        if override == nil {
-            if let pinned = manifest.taskPromptsHash, pinned != hash {
-                throw ExperimentError.refusing(
-                    .pinDrift,
-                    "task prompts '\(file)' drifted from the pinned hash "
-                        + "(have \(hash.prefix(12))…, pinned \(pinned.prefix(12))…)",
-                    repair: "restore \(file) to its pinned bytes ; then "
-                        + "steerlab-cli experiment run \(manifest.name)  (on a "
-                        + "DRAFT, re-pin instead: steerlab-cli experiment "
-                        + "pin-prompts \(manifest.name) \(file))")
-            }
-            if frozen, manifest.taskPromptsHash == nil {
-                // The prose keeps its shape (it already named the three steps);
-                // the machine repair is the same three as one runnable line.
-                throw ExperimentError.refusing(
-                    .missingPrerequisite,
-                    "frozen study has no pinned task prompts — duplicate it "
-                        + "('steerlab-cli experiment duplicate \(manifest.name) "
-                        + "<new-name>'), pin the prompt set ('steerlab-cli experiment "
-                        + "pin-prompts <new-name> prompts/…/file.jsonl'), and re-freeze",
-                    repair: "steerlab-cli experiment duplicate \(manifest.name) "
-                        + "\(manifest.name)-v2 && steerlab-cli experiment "
-                        + "pin-prompts \(manifest.name)-v2 prompts/…/file.jsonl "
-                        + "&& steerlab-cli experiment freeze \(manifest.name)-v2 "
-                        + "&& steerlab-cli experiment run \(manifest.name)-v2")
-            }
-        } else if frozen, hash != manifest.taskPromptsHash {
-            throw ExperimentError.refusing(
-                .pinDrift,
-                "prompt override on a FROZEN study must match the pinned prompt "
-                    + "set byte-for-byte — duplicate the experiment to iterate",
-                repair: "steerlab-cli experiment run \(manifest.name)  (without "
-                    + "--prompts: the pin IS the measured task), or steerlab-cli "
-                    + "experiment duplicate \(manifest.name) \(manifest.name)-v2 "
-                    + "&& steerlab-cli experiment pin-prompts "
-                    + "\(manifest.name)-v2 \(file)")
-        }
-        return (file, hash, try parseTaskPrompts(data))
+        try StudyPromptRepository(projectRoot: VectorCatalog.projectRoot).load(for: manifest, override: override)
     }
 
     /// Cross-engine duplicate-id refusal message (server twin: the same
@@ -392,8 +337,7 @@ public enum ExperimentTasks {
     static func duplicateTaskPromptIDMessage(
         id: String, firstItem: Int, duplicateItem: Int
     ) -> String {
-        "task prompts: duplicate item id '\(id)' (items \(firstItem) and "
-            + "\(duplicateItem)) — ids must be unique for pairing and reporting"
+        StudyPromptParsing.duplicateTaskPromptIDMessage(id: id, firstItem: firstItem, duplicateItem: duplicateItem)
     }
 
     /// Every duplicated item id with its 1-based item ordinals, in first-
@@ -403,36 +347,14 @@ public enum ExperimentTasks {
     /// Lenient about everything else (undecodable rows are other readiness
     /// rules' findings, and the parser refuses such files outright anyway).
     static func duplicateTaskPromptIDs(_ data: Data) -> [(id: String, items: [Int])] {
-        struct IDLine: Decodable { let id: String? }
-        let decoder = JSONDecoder()
-        var positions: [String: [Int]] = [:]
-        var order: [String] = []
-        var count = 0
-        let lines = String(decoding: data, as: UTF8.self)
-            .split(separator: "\n", omittingEmptySubsequences: true)
-        for raw in lines {
-            let trimmed = raw.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty,
-                let line = try? decoder.decode(IDLine.self, from: Data(trimmed.utf8))
-            else { continue }
-            count += 1
-            let id = line.id ?? "prompt-\(count)"
-            if positions[id] == nil { order.append(id) }
-            positions[id, default: []].append(count)
-        }
-        return order.compactMap { id in
-            guard let items = positions[id], items.count > 1 else { return nil }
-            return (id: id, items: items)
-        }
+        StudyPromptParsing.duplicateTaskPromptIDs(data)
     }
 
     /// Cross-engine refusal for an item whose `factors` is not the flat
     /// string→string object the factorial generator emits (server twin: the
     /// same literal in `tasks._load_prompts`).
     static func taskPromptFactorsMessage(itemID: String) -> String {
-        "task prompts: item '\(itemID)' has a 'factors' value that is not "
-            + "a flat string-to-string object — factor names and level "
-            + "names must both be strings"
+        StudyPromptParsing.taskPromptFactorsMessage(itemID: itemID)
     }
 
     /// JSONL task items: `{"prompt": …}` (server style) or legacy
@@ -447,131 +369,7 @@ public enum ExperimentTasks {
     /// — run, validate, sweep, logprob, pin — inherits the gate from this
     /// parser). Split from file IO so the parse is unit-testable.
     static func parseTaskPrompts(_ data: Data) throws -> [StudyPrompt] {
-        struct AttentionCheckLine: Decodable {
-            let expected: String?
-            let grading: String?
-        }
-        struct Line: Decodable {
-            let id: String?
-            let prompt: String?
-            let text: String?
-            let options: [String]?
-            let target: String?
-            let anchorMonths: Double?
-            let severity: Double?
-            let arm: String?
-            let caseID: String?
-            let transcript: [TranscriptTurn]?
-            let attentionCheck: AttentionCheckLine?
-            let responseFormat: String?
-        }
-        let decoder = JSONDecoder()
-        var prompts: [StudyPrompt] = []
-        var seenIDs: [String: Int] = [:]  // id → 1-based item ordinal
-        let lines = String(decoding: data, as: UTF8.self)
-            .split(separator: "\n", omittingEmptySubsequences: true)
-        for (index, raw) in lines.enumerated() {
-            let trimmed = raw.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
-            guard
-                let line = try? decoder.decode(Line.self, from: Data(trimmed.utf8)),
-                line.prompt ?? line.text != nil || line.transcript != nil
-            else {
-                throw ExperimentError(
-                    reason: "malformed task prompt JSONL at line \(index + 1)")
-            }
-            // Explicit ids must be non-empty; null/absent take the shared
-            // prompt-<ordinal> fallback (review 2026-08-03, P2 — message
-            // string is the cross-engine contract; server twin:
-            // _load_prompts).
-            let id: String
-            if let declared = line.id {
-                guard !declared.trimmingCharacters(in: .whitespaces).isEmpty
-                else {
-                    throw ExperimentError(
-                        reason: "task prompts: item \(prompts.count + 1) "
-                            + "declares an empty or non-string 'id' — "
-                            + "declare a non-empty string, or omit the key "
-                            + "for the prompt-<ordinal> fallback")
-                }
-                id = declared
-            } else {
-                id = "prompt-\(prompts.count + 1)"
-            }
-            // Duplicate ids (explicit or auto-collided) refuse BEFORE the
-            // per-item transcript checks — cross-engine ordering contract.
-            if let firstItem = seenIDs[id] {
-                throw ExperimentError(
-                    reason: duplicateTaskPromptIDMessage(
-                        id: id, firstItem: firstItem,
-                        duplicateItem: prompts.count + 1))
-            }
-            seenIDs[id] = prompts.count + 1
-            if let transcript = line.transcript {
-                if let violation = transcriptSchemaViolation(transcript, itemID: id) {
-                    throw ExperimentError(reason: violation)
-                }
-            }
-            // Per-item attention check (the exclusion instrument's first
-            // user), validated at LOAD with plain-language, cross-engine-
-            // identical messages; items without a check are untouched.
-            var attentionCheck: AttentionCheck?
-            if let check = line.attentionCheck {
-                if let violation = ExclusionEngine.attentionCheckViolation(
-                    expected: check.expected, grading: check.grading, itemID: id)
-                {
-                    throw ExperimentError(reason: violation)
-                }
-                attentionCheck = AttentionCheck(
-                    expected: check.expected ?? "",
-                    grading: check.grading.flatMap(
-                        CapabilityBattery.GradingMode.init(rawValue:)))
-            }
-            // Factorial cell metadata (the generator's `factors` object):
-            // validated as a flat string→string map at LOAD via the raw
-            // JSON (Codable can't distinguish wrong-shape from absent) —
-            // identical message on the server. Empty ⇒ treated as absent.
-            var factors: [String: String]?
-            if let object = try? JSONSerialization.jsonObject(
-                with: Data(trimmed.utf8)) as? [String: Any],
-                let rawFactors = object["factors"]
-            {
-                guard let typed = rawFactors as? [String: String] else {
-                    throw ExperimentError(
-                        reason: taskPromptFactorsMessage(itemID: id))
-                }
-                if !typed.isEmpty { factors = typed }
-            }
-            // Closed vocabulary, validated at LOAD: an unrecognised value
-            // must refuse rather than degrade to "unspecified", which would
-            // re-open the hole `ResponseFormat` closes (a typo silently
-            // restoring permissive behaviour).
-            let responseFormat: ResponseFormat?
-            do {
-                responseFormat = try ResponseFormat.parse(line.responseFormat)
-            } catch {
-                throw ExperimentError(
-                    reason: "task prompt '\(id)': \(error)")
-            }
-            let text =
-                line.prompt ?? line.text
-                ?? line.transcript.map(transcriptDisplayText) ?? ""
-            prompts.append(
-                StudyPrompt(
-                    id: id,
-                    text: text,
-                    options: line.options,
-                    target: line.target,
-                    anchorMonths: line.anchorMonths,
-                    severity: line.severity,
-                    arm: line.arm,
-                    caseID: line.caseID,
-                    transcript: line.transcript,
-                    attentionCheck: attentionCheck,
-                    factors: factors,
-                    responseFormat: responseFormat))
-        }
-        return prompts
+        try StudyPromptParsing.parseTaskPrompts(data)
     }
 
     /// How many of the manifest's pinned items are CHOICE-shaped (WP0 step 7).
@@ -705,11 +503,7 @@ public enum ExperimentTasks {
     /// promptID → declared attention check, from loaded task items (the
     /// exclusion engine's join input; server twin `attention_checks`).
     static func attentionChecks(of prompts: [StudyPrompt]) -> [String: AttentionCheck] {
-        var checks: [String: AttentionCheck] = [:]
-        for prompt in prompts {
-            if let check = prompt.attentionCheck { checks[prompt.id] = check }
-        }
-        return checks
+        StudyPromptParsing.attentionChecks(of: prompts)
     }
 
     /// The exclusion engine's view of one sampled record: pairing identity,
@@ -737,25 +531,7 @@ public enum ExperimentTasks {
     static func analysisEndpoints(
         jsonLine: Data, names: Set<String>
     ) -> [String: Double?] {
-        guard !names.isEmpty,
-            let object = try? JSONSerialization.jsonObject(with: jsonLine),
-            let record = object as? [String: Any]
-        else { return [:] }
-        var endpoints: [String: Double?] = [:]
-        for name in names {
-            guard let value = record[name] else { continue }
-            if value is NSNull {
-                // `updateValue`, never subscript-assign: the key must appear
-                // with a nil VALUE (a parse failure); the subscript would
-                // remove it instead.
-                endpoints.updateValue(nil, forKey: name)
-            } else if let number = value as? NSNumber,
-                CFGetTypeID(number) != CFBooleanGetTypeID()
-            {
-                endpoints.updateValue(number.doubleValue, forKey: name)
-            }
-        }
-        return endpoints
+        StudyAnalysisCalculator.analysisEndpoints(jsonLine: jsonLine, names: names)
     }
 
     /// The run-inline exclusion outcome: nil when the manifest declares no
@@ -2519,37 +2295,7 @@ public enum ExperimentTasks {
     static func transcriptSchemaViolation(
         _ turns: [TranscriptTurn], itemID: String
     ) -> String? {
-        guard !turns.isEmpty else {
-            return "item '\(itemID)': transcript is empty — a scripted "
-                + "transcript needs at least a final user turn"
-        }
-        for (index, turn) in turns.enumerated() {
-            guard transcriptRoles.contains(turn.role) else {
-                return "item '\(itemID)': transcript turn \(index + 1) has role "
-                    + "'\(turn.role)' — allowed roles are system, user, assistant"
-            }
-            guard !turn.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            else {
-                return "item '\(itemID)': transcript turn \(index + 1) has "
-                    + "empty content"
-            }
-        }
-        guard !turns.dropFirst().contains(where: { $0.role == "system" }) else {
-            return "item '\(itemID)': transcript may carry at most one system "
-                + "turn, and it must be first"
-        }
-        switch turns.last?.role {
-        case "user":
-            return nil
-        case "assistant":
-            return "item '\(itemID)': transcript ends with an assistant turn — "
-                + "generation produces the assistant's reply to a final user "
-                + "turn; assistant-prefix continuation is out of scope for "
-                + "scripted-transcript studies (v1)"
-        default:
-            return "item '\(itemID)': transcript must end with a user turn "
-                + "(generation produces the assistant's reply to it)"
-        }
+        StudyPromptParsing.transcriptSchemaViolation(turns, itemID: itemID)
     }
 
     /// First family chat-template constraint the transcript violates, or nil
@@ -2585,7 +2331,7 @@ public enum ExperimentTasks {
     /// The record's display text for a transcript item without its own
     /// `text`/`prompt`: the final user turn (schema-validated to exist).
     static func transcriptDisplayText(_ turns: [TranscriptTurn]) -> String {
-        turns.last?.content ?? ""
+        StudyPromptParsing.transcriptDisplayText(turns)
     }
 
     /// Run-START refusal for scripted-transcript items (never a mid-run
@@ -5248,52 +4994,7 @@ public enum ExperimentTasks {
         manifest: ExperimentManifest,
         allowUnverified: Bool = false
     ) throws -> RunEpoch.Check {
-        let check = RunEpoch.check(
-            verb: verb, experiment: manifest.name,
-            liveHash: ExperimentStore.manifestHash(manifest),
-            runDirectory: runDirectory, liveManifest: manifest,
-            allowUnverified: allowUnverified,
-            tolerateMeasurementDrift: true,
-            // The whole family reads the source run's RECORDS, so a run from
-            // the other engine is refused here rather than measured into an
-            // empty result that exits 0 (WP0 dry run #2, P0).
-            refuseForeignSubstrate: true)
-        if let refusal = check.refusal {
-            // A foreign run's repair is not "re-run" and is certainly not
-            // `--allow-unverified-epoch` (which forgives a missing stamp, and
-            // would leave this run just as unreadable) — it is the same verb
-            // on the engine that wrote the records.
-            let repair =
-                RunEpoch.foreignSubstrate(runDirectory) != nil
-                ? "steerlab-server experiment \(verb) \(manifest.name)  "
-                    + "(on the engine that produced the run; the Mac reads "
-                    + "its results, it does not re-measure them)"
-                : "steerlab-cli experiment run \(manifest.name)  "
-                    + "(a run of the CURRENT manifest), or read the older run "
-                    + "under its own epoch with steerlab-cli experiment "
-                    + "\(verb) \(manifest.name) --allow-unverified-epoch  "
-                    + "(which only bypasses an UNSTAMPED run, never a "
-                    + "mismatched one)"
-            throw ExperimentError.refusing(.manifestEpoch, refusal, repair: repair)
-        }
-        // Tolerated is never silent (server twin: the `_log` warnings in
-        // `tasks.evaluate`/`analyze`/`rescore_style`).
-        if let drift = check.measurementDrift {
-            print(
-                "WARNING: '\(manifest.name)' drifted from source run "
-                    + "'\(runDirectory.lastPathComponent)' in MEASUREMENT-side "
-                    + "fields only (\(drift)) — the generations are "
-                    + "unaffected; \(verb) proceeds under the LIVE settings "
-                    + "and the output is stamped measurementDrift")
-        }
-        if check.unverified {
-            print(
-                "WARNING: source run '\(runDirectory.lastPathComponent)' "
-                    + "carries no experiment-hash stamp — \(verb) under "
-                    + "allowUnverifiedEpoch; the output is stamped "
-                    + "epochUnverified")
-        }
-        return check
+        try StudyAnalysisRepository.verifyRunEpoch(verb: verb, runDirectory: runDirectory, manifest: manifest, allowUnverified: allowUnverified)
     }
 
     // MARK: - analyze (headless statistics)
@@ -5302,91 +5003,10 @@ public enum ExperimentTasks {
     /// `…-exp-<name>-run[-N]`, with generations.jsonl + report.json present
     /// and a manifest snapshot naming this experiment).
     public static func newestCompletedRun(experimentName: String) -> URL? {
-        let fm = FileManager.default
-        guard
-            let entries = try? fm.contentsOfDirectory(
-                at: ExperimentStore.runsDirectory, includingPropertiesForKeys: nil)
-        else { return nil }
-        for entry in entries.sorted(by: { $0.lastPathComponent > $1.lastPathComponent }) {
-            guard
-                entry.lastPathComponent.range(
-                    of: "-exp-\(experimentName)-run(-\\d+)?$",
-                    options: .regularExpression) != nil,
-                fm.fileExists(
-                    atPath: entry.appending(component: "generations.jsonl").path),
-                fm.fileExists(atPath: entry.appending(component: "report.json").path),
-                let data = try? Data(
-                    contentsOf: entry.appending(component: "experiment.json")),
-                let snapshot = try? JSONDecoder().decode(
-                    ExperimentManifest.self, from: data),
-                snapshot.name == experimentName
-            else { continue }
-            return entry
-        }
-        return nil
+        StudyAnalysisRepository(workspaceRoot: ExperimentStore.workspaceRoot, promptRoot: VectorCatalog.projectRoot).newestCompletedRun(experimentName: experimentName)
     }
 
-    /// Minimal per-record view of generations.jsonl for analysis: sampled
-    /// records map onto MetricRow; choice-instrument records contribute
-    /// their ordinalPosition (when the run declared ordinalScale) and are
-    /// otherwise skipped.
-    private struct AnalysisGeneration: Decodable {
-        let instrument: String?
-        let condition: String
-        let seed: UInt64?
-        let promptIndex: Int?
-        let promptID: String
-        let wordCount: Int?
-        let distinct2: Float?
-        let markerDensity: [String: Float]?
-        /// Sampled output text — needed to RECOMPUTE reasoning-style values
-        /// (they are derived, not stored on records).
-        let output: String?
-        /// The ordinalScale instrument's ladder position (instrument records
-        /// of an ordinalScale run only) — one more paired numeric metric.
-        let ordinalPosition: Double?
-        /// Per-option joint logprobs (choice records only) — the input to the
-        /// D3 distance-from-boundary diagnostics.
-        let optionLogprobs: [String: Double]?
-        /// Per-option log-odds against the rest of the option set, the
-        /// per-option probabilities, the selected option and the item's
-        /// target — the choice-deltas table's inputs (choice records only).
-        let logOdds: [String: Double]?
-        let choiceProbability: [String: Double]?
-        let selected: String?
-        let target: String?
-        /// `"declared"` when the run stamped a DECLARED target (open-issues
-        /// #6). Absent on every record written before the stamp existed —
-        /// `ChoiceDeltas.targetIsDeclared` resolves those.
-        let targetSource: String?
-        /// Present only if a future sampled instrument writes one; today's
-        /// answer-token readout is one per (condition, prompt).
-        let sampleIndex: Int?
-        /// Science-layer prompt metadata (stamped on sampled AND instrument
-        /// records) — the stratification keys of the per-cell effect rows.
-        let arm: String?
-        let caseID: String?
-        let factors: [String: String]?
-    }
 
-    /// Cross-engine analyze output (`analysis.json`): epochUnverified is
-    /// present ONLY when an unstamped run was accepted via
-    /// --allow-unverified-epoch, and measurementDrift ONLY when a hash
-    /// mismatch was tolerated because every drifted field was
-    /// measurement-side (`RunEpoch.measurementFields`).
-    struct AnalyzeReport: Codable {
-        let experiment: String
-        let experimentHash: String
-        let sourceRun: String
-        let sourceRunExperimentHash: String?
-        let epochUnverified: Bool?
-        let measurementDrift: String?
-        let effectSizes: [EffectSizeEntry]
-        /// Declared-exclusion stamp (cross-engine shape; also written as
-        /// `exclusions.json`, the server's stamp file). nil ⇒ key omitted
-        /// (no rules declared — analysis unchanged byte-for-byte).
-        let exclusions: ExclusionStamp?
-    }
 
     /// Headless `experiment analyze <name>`: recomputes paired-to-baseline
     /// effect sizes (bootstrap CI + Wilcoxon via StudyStatistics, plus the
@@ -5409,13 +5029,7 @@ public enum ExperimentTasks {
     static func baselineOnlyAnalysisWarning(
         runName: String, conditions: Set<String>
     ) -> String? {
-        guard !conditions.isEmpty,
-              !conditions.contains(where: { $0 != "baseline" })
-        else { return nil }
-        return "WARNING: run '\(runName)' contains only BASELINE records — "
-            + "there is no non-baseline condition to pair against, so this "
-            + "analysis will produce no effect sizes. Check the study's "
-            + "conditions before citing it."
+        StudyAnalysisCalculator.baselineOnlyAnalysisWarning(runName: runName, conditions: conditions)
     }
 
     /// The historical `emptyAnalysis` detail: the ONE cause the advisory used
@@ -5469,24 +5083,7 @@ public enum ExperimentTasks {
     static func analysisSourceRecords(
         at runDirectory: URL
     ) -> (recordCount: Int?, conditions: Set<String>) {
-        guard
-            let text = try? String(
-                contentsOf: runDirectory.appending(component: "generations.jsonl"),
-                encoding: .utf8)
-        else { return (nil, []) }
-        struct ConditionOnly: Decodable { let condition: String }
-        var conditions = Set<String>()
-        var count = 0
-        let decoder = JSONDecoder()
-        for line in text.split(separator: "\n") {
-            count += 1
-            if let record = try? decoder.decode(
-                ConditionOnly.self, from: Data(line.utf8))
-            {
-                conditions.insert(record.condition)
-            }
-        }
-        return (count, conditions)
+        StudyAnalysisRepository.analysisSourceRecords(at: runDirectory)
     }
 
     /// The detail for a named source run under the workspace's `runs/`.
@@ -5502,392 +5099,14 @@ public enum ExperimentTasks {
         allowUnverifiedEpoch: Bool = false
     ) throws -> URL {
         let manifest = try loadVerified(experimentName)
-        guard let sourceRun = newestCompletedRun(experimentName: experimentName) else {
-            throw ExperimentError.refusing(
-                .missingPrerequisite,
-                "no completed study run found for '\(experimentName)' "
-                    + "(need generations.jsonl + report.json under runs/)",
-                repair: "steerlab-cli experiment run \(experimentName) && "
-                    + "steerlab-cli experiment analyze \(experimentName)")
-        }
-        let epoch = try verifyRunEpoch(
-            verb: "analyze", runDirectory: sourceRun, manifest: manifest,
-            allowUnverified: allowUnverifiedEpoch)
-
-        // Reasoning-style values are derived, not stored: recompute them from
-        // each record's output through the pinned (hash-checked) taxonomy so
-        // rs_<featureID> joins the same paired effect-size machinery.
-        let style = try ExperimentStore.loadPinnedReasoningStyle(manifest)
-
-        // Declared exclusion rules join HERE — records drop from the paired
-        // statistics only (pairwise deletion falls out of the (seed,
-        // promptID) baseline join), never from generations.jsonl, and the
-        // stamp lands in analysis.json + exclusions.json. Scope is
-        // allRecordTypes (the engine default): instrument readouts are
-        // considered too — endpoint rules read endpoints the record itself
-        // carries (e.g. ordinalPosition), and a cell whose every sampled
-        // record failed its attention check drops its instrument readout
-        // from the ordinal pairing with it. No rules declared = today's
-        // behavior byte-for-byte. Server twin: `tasks.analyze`.
-        let exclusionRules = manifest.exclusionRules ?? []
-        let ruleProblems = ExclusionEngine.violations(exclusionRules)
-        guard ruleProblems.isEmpty else {
-            throw ExperimentError(reason: ruleProblems.joined(separator: "; "))
-        }
-        var exclusionChecks: [String: AttentionCheck] = [:]
-        if ExclusionEngine.needsChecks(exclusionRules) {
-            guard manifest.taskPromptsHash != nil else {
-                // WP0 step 8: the deferred cross-engine-twinned message gets
-                // its id on BOTH engines. The STRING is unchanged and stays
-                // byte-identical to the server's `PIN_REQUIRED_MESSAGE`
-                // (asserted on both sides); only the gate id and the runnable
-                // repair are new.
-                throw ExperimentError.refusing(
-                    .missingPrerequisite, ExclusionEngine.pinRequiredMessage,
-                    repair: ExclusionEngine.pinRequiredRepair)
-            }
-            exclusionChecks = attentionChecks(
-                of: try loadTaskPrompts(for: manifest).prompts)
-            guard !exclusionChecks.isEmpty else {
-                throw ExperimentError(reason: ExclusionEngine.noChecksMessage)
-            }
-        }
-        let exclusionEndpoints = Set(
-            exclusionRules
-                .filter { $0.rule != ExclusionEngine.ruleFailedAttentionCheck }
-                .map(ExclusionEngine.resolvedEndpoint))
-        var exclusionViews: [ExclusionEngine.RecordView] = []
-        var instrumentExclusionViews: [ExclusionEngine.InstrumentRecordView] = []
-
-        let text = try String(
-            contentsOf: sourceRun.appending(component: "generations.jsonl"),
-            encoding: .utf8)
-        var rows: [MetricRow] = []
-        var ordinalReadouts: [ReportChoiceReadout] = []
-        var conceptSet = Set<String>()
-        // D3: per-condition option logprobs, for the distance-from-boundary
-        // diagnostics written alongside the effect sizes.
-        var optionLogprobsByCondition: [String: [[String: Double]]] = [:]
-        // Phase 3: per-item choice deltas, paired to the same item's baseline
-        // readout. Collected in run order; the pairing and the sort happen in
-        // ChoiceDeltas (server twin: choice_deltas.rows).
-        var choiceReadouts: [ChoiceDeltas.Readout] = []
-        // Declared-target map from the PINNED task file (open-issues #6, the
-        // exact authority — server twin: `tasks.analyze`'s `declared_targets`).
-        // It keeps a mixed instrument's legitimate endpoint (an item with both
-        // a declared A/B target and an ordinal readout on one record) while
-        // dropping the ordinalScale items whose "target" was synthesized. An
-        // unloadable prompts file falls back to the per-record ladder inside
-        // `ChoiceDeltas.targetIsDeclared`.
-        var declaredTargets: [String: Bool]? = nil
-        if manifest.taskPromptsHash != nil,
-            let loaded = try? loadTaskPrompts(for: manifest)
-        {
-            declaredTargets = Dictionary(
-                loaded.prompts.map { ($0.id, $0.target?.isEmpty == false) },
-                uniquingKeysWith: { first, _ in first })
-        }
-        // Item → declared factor levels (arm/caseID + the factorial
-        // `factors` object), for the stratified effect rows. Records carry
-        // the item metadata verbatim, so no rejoin of the task-prompts file;
-        // first record per item wins (items stamp identically).
-        var factorsByItem: [String: [String: String]] = [:]
-        // Every condition name that actually produced a record. A run with
-        // no NON-baseline condition has nothing to pair against — analyze
-        // still writes its (empty) artifacts and exits 0, so the fact has to
-        // be said out loud on stderr (WP0 dry run #0, P0-2).
-        var conditionsSeen = Set<String>()
-        let decoder = JSONDecoder()
-        for line in text.split(separator: "\n") {
-            guard
-                let record = try? decoder.decode(
-                    AnalysisGeneration.self, from: Data(line.utf8))
-            else { continue }
-            conditionsSeen.insert(record.condition)
-            if factorsByItem[record.promptID] == nil {
-                var levels: [String: String] = [:]
-                if let arm = record.arm, !arm.isEmpty { levels["arm"] = arm }
-                if let caseID = record.caseID, !caseID.isEmpty {
-                    levels["caseID"] = caseID
-                }
-                for (key, value) in record.factors ?? [:] where !value.isEmpty {
-                    levels[key] = value
-                }
-                factorsByItem[record.promptID] = levels
-            }
-            if let logprobs = record.optionLogprobs, !logprobs.isEmpty {
-                optionLogprobsByCondition[record.condition, default: []]
-                    .append(logprobs)
-            }
-            if record.instrument != nil {
-                // Instrument records carry no sampled metrics, but an
-                // ordinalScale run's ladder positions are per-item numeric
-                // data for the SAME paired effect-size machinery — and
-                // under scope allRecordTypes the declared rules consider
-                // the readout itself (its own endpoints; its cell's
-                // attention evidence).
-                if !exclusionRules.isEmpty {
-                    instrumentExclusionViews.append(
-                        ExclusionEngine.InstrumentRecordView(
-                            condition: record.condition,
-                            promptID: record.promptID,
-                            endpoints: analysisEndpoints(
-                                jsonLine: Data(line.utf8),
-                                names: exclusionEndpoints)))
-                }
-                // Every answer-token readout with a DECLARED target is
-                // collected, including one whose logOdds is missing or has no
-                // entry for that target: that is an unreadable measurement,
-                // counted as such downstream, never quietly absent from the
-                // coverage numbers. A readout whose target was never declared
-                // (open-issues #6) is not an unreadable choice — it is not a
-                // choice measurement at all, so it stays out of the table
-                // rather than inflating its skip counts.
-                if record.instrument == ChoiceDeltas.instrument,
-                    ChoiceDeltas.targetIsDeclared(
-                        promptID: record.promptID,
-                        targetSource: record.targetSource,
-                        ordinalPosition: record.ordinalPosition,
-                        declaredTargets: declaredTargets)
-                {
-                    choiceReadouts.append(
-                        ChoiceDeltas.Readout(
-                            condition: record.condition,
-                            promptID: record.promptID,
-                            sampleIndex: record.sampleIndex.map { String($0) } ?? "",
-                            target: record.target ?? "",
-                            logOdds: record.logOdds ?? [:],
-                            choiceProbability: record.choiceProbability ?? [:],
-                            selected: record.selected ?? ""))
-                }
-                if let position = record.ordinalPosition {
-                    ordinalReadouts.append(
-                        ReportChoiceReadout(
-                            condition: record.condition,
-                            promptID: record.promptID,
-                            sampleIndex: nil,
-                            source: "instrument",
-                            selected: "",
-                            target: nil,
-                            ordinalPosition: position))
-                }
-                continue
-            }
-            guard let wordCount = record.wordCount else { continue }
-            if !exclusionRules.isEmpty {
-                exclusionViews.append(
-                    ExclusionEngine.RecordView(
-                        condition: record.condition,
-                        seed: record.seed ?? 0,
-                        promptID: record.promptID,
-                        output: record.output ?? "",
-                        endpoints: analysisEndpoints(
-                            jsonLine: Data(line.utf8),
-                            names: exclusionEndpoints)))
-            }
-            let markerDensity = record.markerDensity ?? [:]
-            conceptSet.formUnion(markerDensity.keys)
-            let reasoningStyle: [String: Double] =
-                if let style, let output = record.output {
-                    style.taxonomy.score(output)
-                } else {
-                    [:]
-                }
-            rows.append(
-                MetricRow(
-                    condition: record.condition,
-                    seed: record.seed ?? 0,
-                    promptIndex: record.promptIndex ?? 0,
-                    promptID: record.promptID,
-                    wordCount: wordCount,
-                    distinct2: record.distinct2 ?? 0,
-                    markerDensity: markerDensity,
-                    reasoningStyle: reasoningStyle))
-        }
-        // Choice readouts count as analyzable material alongside sampled
-        // generations and ordinal readouts: a study whose whole instrument is
-        // the answer-token logprob (no prose arm at all) has per-item deltas
-        // to report, and refusing it here would make choice-deltas.csv
-        // unreachable on this engine. The server has never had this guard.
-        guard !rows.isEmpty || !ordinalReadouts.isEmpty || !choiceReadouts.isEmpty
-        else {
-            throw ExperimentError(
-                reason: "run '\(sourceRun.lastPathComponent)' has no sampled "
-                    + "generations or instrument readouts to analyze")
-        }
-        // Records exist, but every one of them is the baseline: the paired
-        // statistics have no contrast to compute, so this analysis is
-        // structurally empty however many generations it read. A warning,
-        // not a refusal — the run's own artifacts are still legitimate
-        // material — but never silent (WP0 dry run #0, P0-2). Server twin:
-        // the same line in `tasks.analyze`.
-        if let warning = baselineOnlyAnalysisWarning(
-            runName: sourceRun.lastPathComponent, conditions: conditionsSeen)
-        {
-            FileHandle.standardError.write(Data((warning + "\n").utf8))
-        }
-        var exclusionStamp: ExclusionStamp?
-        if !exclusionRules.isEmpty {
-            let outcome = ExclusionEngine.evaluate(
-                rules: exclusionRules, checks: exclusionChecks,
-                views: exclusionViews,
-                instrumentViews: instrumentExclusionViews)
-            exclusionStamp = outcome.stamp
-            rows = rows.filter {
-                !outcome.excludedKeys.contains(
-                    ExclusionEngine.rowKey(
-                        condition: $0.condition, seed: $0.seed,
-                        promptID: $0.promptID))
-            }
-            ordinalReadouts = ordinalReadouts.filter {
-                !outcome.excludedInstrumentKeys.contains(
-                    ExclusionEngine.instrumentKey(
-                        condition: $0.condition, promptID: $0.promptID))
-            }
-            // Same drop for the choice-delta table: an excluded readout must
-            // not reappear as a citable per-item delta.
-            choiceReadouts = choiceReadouts.filter {
-                !outcome.excludedInstrumentKeys.contains(
-                    ExclusionEngine.instrumentKey(
-                        condition: $0.condition, promptID: $0.promptID))
-            }
-            print(
-                "exclusions: \(outcome.stamp.excludedRecords) record(s) "
-                    + "excluded by \(exclusionRules.count) declared rule(s); "
-                    + "surviving N per condition: "
-                    + outcome.stamp.survivingN.sorted { $0.key < $1.key }
-                        .map { "\($0.key)=\($0.value)" }
-                        .joined(separator: ", "))
-        }
-        let pooledEntries = effectSizes(
-            rows: rows, concepts: conceptSet.sorted(),
-            styleFeatureIDs: style?.taxonomy.featureIDs ?? [],
-            choiceReadouts: ordinalReadouts,
-            phase: manifest.phase)
-        // Per-cell strata beside the pooled rows (same file, extra rows):
-        // pooling across items has both hidden a real single-cell effect
-        // behind saturated cells and manufactured pooled effects from one
-        // cell's parse garbage. Pooled entries keep their exact semantics
-        // and correction family; each stratified family is corrected
-        // independently. Server twin: tasks.analyze.
-        let entries = pooledEntries
-            + stratifiedEffectSizes(
-                rows: rows, concepts: conceptSet.sorted(),
-                styleFeatureIDs: style?.taxonomy.featureIDs ?? [],
-                choiceReadouts: ordinalReadouts,
-                factorsByItem: factorsByItem,
-                phase: manifest.phase)
-
-        let runDirectory = try makeRunDirectory(experiment: manifest, task: "analyze")
-        let report = AnalyzeReport(
-            experiment: manifest.name,
-            experimentHash: ExperimentStore.manifestHash(manifest),
-            sourceRun: sourceRun.lastPathComponent,
-            sourceRunExperimentHash: runExperimentHashStamp(at: sourceRun),
-            epochUnverified: epoch.unverified ? true : nil,
-            measurementDrift: epoch.measurementDrift,
-            effectSizes: entries,
-            exclusions: exclusionStamp)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(report).write(
-            to: runDirectory.appending(component: "analysis.json"))
-        if let exclusionStamp {
-            // The stamp file the server also writes — one artifact name to
-            // look for on either engine.
-            try encoder.encode(exclusionStamp).write(
-                to: runDirectory.appending(component: "exclusions.json"))
-        }
-        try effectSizesCSV(entries).write(
-            to: runDirectory.appending(component: "effect-sizes.csv"),
-            atomically: true, encoding: .utf8)
-        // Per-item choice deltas (server twin: choice-deltas.csv +
-        // choice-deltas.json). Absence over empty artifacts: a run with no
-        // non-baseline choice readouts grows no table implying it had some.
-        // When there ARE readouts the file is written even if every one of
-        // them was skipped — the skip counts are the finding in that case.
-        let choiceDeltas = ChoiceDeltas.table(choiceReadouts)
-        if !choiceDeltas.summary.conditions.isEmpty {
-            try ChoiceDeltas.csv(choiceDeltas.rows).write(
-                to: runDirectory.appending(component: "choice-deltas.csv"),
-                atomically: true, encoding: .utf8)
-            try encoder.encode(choiceDeltas.summary).write(
-                to: runDirectory.appending(component: "choice-deltas.json"))
-            let flips = choiceDeltas.summary.conditions.values
-                .reduce(0) { $0 + $1.flipped }
-            print(
-                "choice deltas: \(choiceDeltas.rows.count) paired item(s) "
-                    + "across \(choiceDeltas.summary.conditions.count) "
-                    + "condition(s), \(flips) flip(s), "
-                    + "\(choiceDeltas.summary.skippedNoBaseline) skipped "
-                    + "(no baseline partner) → choice-deltas.csv")
-            if choiceDeltas.summary.skippedNoTargetValue > 0 {
-                print(
-                    "choice deltas: \(choiceDeltas.summary.skippedNoTargetValue) "
-                        + "readout(s) skipped — no log-odds entry for the "
-                        + "item's own target option")
-            }
-        }
-        // D3: a large joint-logprob margin means the FLIP RATE has poor
-        // sensitivity — an intervention can move the log-odds a long way
-        // without flipping any item — while the log-odds itself keeps moving
-        // continuously. Calling that "saturation" invites the wrong
-        // conclusion; true numerical saturation is the separately counted
-        // clamp incidence.
-        var marginReports: [String: ChoiceMarginDiagnostics.Report] = [:]
-        for (condition, logprobs) in optionLogprobsByCondition {
-            let block = ChoiceMarginDiagnostics.report(
-                optionLogprobsPerItem: logprobs)
-            if block.scoredItems > 0 { marginReports[condition] = block }
-        }
-        if !marginReports.isEmpty {
-            try encoder.encode(marginReports).write(
-                to: runDirectory.appending(component: "choice-margins.json"))
-            for (condition, block) in marginReports.sorted(by: { $0.key < $1.key }) {
-                print("\(condition): \(block.interpretation ?? "")")
-            }
-        }
-        let ordinalNote =
-            ordinalReadouts.isEmpty
-            ? "" : " + \(ordinalReadouts.count) ordinal readouts"
-        let stratifiedCount = entries.count - pooledEntries.count
-        print(
-            "analyzed \(rows.count) generations\(ordinalNote) from "
-                + "\(sourceRun.lastPathComponent): "
-                + "\(pooledEntries.count) effect-size "
-                + "entr\(pooledEntries.count == 1 ? "y" : "ies")"
-                + (stratifiedCount > 0 ? " + \(stratifiedCount) stratified" : ""))
-        print("analysis artifacts: \(runDirectory.path)")
-        return runDirectory
+        let repository = StudyAnalysisRepository(
+            workspaceRoot: ExperimentStore.workspaceRoot, promptRoot: VectorCatalog.projectRoot)
+        return try StudyAnalysisWorkflow.analyze(
+            manifest: manifest, repository: repository, allowUnverifiedEpoch: allowUnverifiedEpoch)
     }
 
     // MARK: - rescore-style (post-hoc reasoning-style scoring)
 
-    /// The cross-engine `reasoning-style.json` shape (sorted-keys JSON on
-    /// both engines): source-run provenance + the pinned taxonomy identity +
-    /// per-condition per-feature means. `epochUnverified` present ONLY when
-    /// an unstamped run was accepted via --allow-unverified-epoch;
-    /// `measurementDrift` ONLY when measurement-side drift was tolerated.
-    struct RescoreStyleReport: Codable {
-        struct ConditionBlock: Codable, Equatable {
-            let features: [String: ReasoningStyleFeatureStat]
-        }
-        let experiment: String
-        let experimentHash: String
-        let sourceRun: String
-        let sourceRunExperimentHash: String?
-        let epochUnverified: Bool?
-        let measurementDrift: String?
-        let taxonomy: String
-        let taxonomyHash: String
-        /// The pinned taxonomy file, named beside its hash so the report is
-        /// self-describing (same stamp as report.json's per-condition block).
-        let taxonomyFile: String
-        /// Style features are a diagnostic/manipulation check, never an
-        /// outcome endpoint (docs/METHODS.md).
-        let diagnosticOnly: Bool
-        let conditions: [String: ConditionBlock]
-    }
 
     /// Headless `experiment rescore-style <name> [--run DIR]`: recomputes
     /// reasoning-style feature values for an EXISTING completed run's sampled
@@ -5903,107 +5122,11 @@ public enum ExperimentTasks {
         allowUnverifiedEpoch: Bool = false
     ) throws -> URL {
         let manifest = try loadVerified(experimentName)
-        guard let style = try ExperimentStore.loadPinnedReasoningStyle(manifest) else {
-            throw ExperimentError(
-                reason: "experiment '\(experimentName)' pins no reasoning-style "
-                    + "taxonomy — pin one first: steerlab-cli experiment "
-                    + "set-style-taxonomy \(experimentName) "
-                    + "prompts/taxonomies/<name>.json")
-        }
-        let sourceRun: URL
-        if let runDirectoryName {
-            sourceRun =
-                runDirectoryName.hasPrefix("/")
-                ? URL(filePath: runDirectoryName)
-                : ExperimentStore.runsDirectory.appending(path: runDirectoryName)
-        } else if let newest = newestCompletedRun(experimentName: experimentName) {
-            sourceRun = newest
-        } else {
-            throw ExperimentError.refusing(
-                .missingPrerequisite,
-                "no completed study run found for '\(experimentName)' "
-                    + "(need generations.jsonl + report.json under runs/) — "
-                    + "run it first, or pass --run",
-                repair: "steerlab-cli experiment run \(experimentName) && "
-                    + "steerlab-cli experiment rescore-style \(experimentName)")
-        }
-        let epoch = try verifyRunEpoch(
-            verb: "rescore-style", runDirectory: sourceRun, manifest: manifest,
-            allowUnverified: allowUnverifiedEpoch)
-
-        let text = try String(
-            contentsOf: sourceRun.appending(component: "generations.jsonl"),
-            encoding: .utf8)
-        var rows: [MetricRow] = []
-        let decoder = JSONDecoder()
-        for line in text.split(separator: "\n") {
-            guard
-                let record = try? decoder.decode(
-                    AnalysisGeneration.self, from: Data(line.utf8)),
-                record.instrument == nil,
-                let output = record.output
-            else { continue }
-            rows.append(
-                MetricRow(
-                    condition: record.condition,
-                    seed: record.seed ?? 0,
-                    promptIndex: record.promptIndex ?? 0,
-                    promptID: record.promptID,
-                    wordCount: record.wordCount ?? 0,
-                    distinct2: record.distinct2 ?? 0,
-                    markerDensity: [:],
-                    reasoningStyle: style.taxonomy.score(output)))
-        }
-        guard !rows.isEmpty else {
-            throw ExperimentError(
-                reason: "run '\(sourceRun.lastPathComponent)' has no sampled "
-                    + "generations to rescore")
-        }
-
-        // NEW immutable artifacts only — never a byte into the source run.
-        let runDirectory = try makeRunDirectory(experiment: manifest, task: "rescore-style")
-        let header = ["condition", "seed", "promptIndex", "promptID"]
-            + style.taxonomy.featureIDs.map { "rs_\($0)" }
-        var lines = [header.joined(separator: ",")]
-        for row in rows {
-            let cells = [
-                csvEscape(row.condition),
-                String(row.seed),
-                String(row.promptIndex),
-                csvEscape(row.promptID),
-            ] + style.taxonomy.featureIDs.map { String(row.reasoningStyle[$0] ?? 0) }
-            lines.append(cells.joined(separator: ","))
-        }
-        try (lines.joined(separator: "\n") + "\n").write(
-            to: runDirectory.appending(component: "reasoning-style.csv"),
-            atomically: true, encoding: .utf8)
-
-        let grouped = Dictionary(grouping: rows, by: \.condition)
-        let report = RescoreStyleReport(
-            experiment: manifest.name,
-            experimentHash: ExperimentStore.manifestHash(manifest),
-            sourceRun: sourceRun.lastPathComponent,
-            sourceRunExperimentHash: runExperimentHashStamp(at: sourceRun),
-            epochUnverified: epoch.unverified ? true : nil,
-            measurementDrift: epoch.measurementDrift,
-            taxonomy: style.taxonomy.name,
-            taxonomyHash: style.hash,
-            taxonomyFile: style.path,
-            diagnosticOnly: true,
-            conditions: grouped.compactMapValues { conditionRows in
-                reasoningStyleReport(rows: conditionRows, style: style)
-                    .map { RescoreStyleReport.ConditionBlock(features: $0.features) }
-            })
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(report).write(
-            to: runDirectory.appending(component: "reasoning-style.json"))
-        print(
-            "rescored \(rows.count) generations from \(sourceRun.lastPathComponent): "
-                + "\(style.taxonomy.featureIDs.count) feature(s) × "
-                + "\(grouped.count) condition(s)")
-        print("rescore artifacts: \(runDirectory.path)")
-        return runDirectory
+        let repository = StudyAnalysisRepository(
+            workspaceRoot: ExperimentStore.workspaceRoot, promptRoot: VectorCatalog.projectRoot)
+        return try StudyAnalysisWorkflow.rescoreStyle(
+            manifest: manifest, repository: repository, runDirectoryName: runDirectoryName,
+            allowUnverifiedEpoch: allowUnverifiedEpoch)
     }
 
     // MARK: - paired judge evaluation
@@ -8850,21 +7973,7 @@ public enum ExperimentTasks {
     static func reasoningStyleReport(
         rows: [MetricRow], style: PinnedReasoningStyle?
     ) -> ReasoningStyleConditionReport? {
-        guard let style, !rows.isEmpty else { return nil }
-        let features = Dictionary(
-            uniqueKeysWithValues: style.taxonomy.featureIDs.map { id in
-                (
-                    id,
-                    ReasoningStyleFeatureStat(
-                        mean: rows.map { $0.reasoningStyle[id] ?? 0 }.reduce(0, +)
-                            / Double(rows.count),
-                        n: rows.count)
-                )
-            })
-        return ReasoningStyleConditionReport(
-            taxonomy: style.taxonomy.name, taxonomyHash: style.hash,
-            taxonomyFile: style.path, diagnosticOnly: true,
-            features: features)
+        StudyAnalysisStatistics.reasoningStyleReport(rows: rows, style: style)
     }
 
     static func report(
@@ -9047,12 +8156,7 @@ public enum ExperimentTasks {
         choiceReadouts: [ReportChoiceReadout] = [],
         replicates: Int = 10_000, phase: String? = nil
     ) -> [EffectSizeEntry] {
-        applyCorrection(
-            sampledEffectSizes(
-                rows: rows, concepts: concepts,
-                styleFeatureIDs: styleFeatureIDs, replicates: replicates)
-                + ordinalEffectSizes(choiceReadouts, replicates: replicates),
-            phase: phase)
+        StudyAnalysisStatistics.effectSizes(rows: rows, concepts: concepts, styleFeatureIDs: styleFeatureIDs, choiceReadouts: choiceReadouts, replicates: replicates, phase: phase)
     }
 
     /// The correction method for a funnel phase — the server's exact rule
@@ -9060,7 +8164,7 @@ public enum ExperimentTasks {
     /// "bh"`): Holm step-down for the pre-registered confirm family, BH-FDR
     /// for screens and every other/absent phase.
     static func correctionMethod(phase: String?) -> String {
-        phase == "confirm" ? "holm" : "bh"
+        StudyAnalysisStatistics.correctionMethod(phase: phase)
     }
 
     /// The phase's multiple-comparison correction over effect rows,
@@ -9074,186 +8178,10 @@ public enum ExperimentTasks {
     static func applyCorrection(
         _ entries: [EffectSizeEntry], phase: String?
     ) -> [EffectSizeEntry] {
-        let method = correctionMethod(phase: phase)
-        var result = entries
-        var families: [String: [Int]] = [:]
-        for (index, entry) in entries.enumerated() {
-            families[entry.metric, default: []].append(index)
-        }
-        for indices in families.values {
-            let usable = indices.filter { result[$0].wilcoxonP != nil }
-            let dense = usable.compactMap { result[$0].wilcoxonP }
-            let adjusted =
-                method == "holm"
-                ? StudyStatistics.holm(dense) : StudyStatistics.bhFDR(dense)
-            for (offset, index) in usable.enumerated() {
-                result[index].adjustedP = adjusted[offset]
-            }
-            for index in indices {
-                result[index].correction = method
-            }
-        }
-        return result
+        StudyAnalysisStatistics.applyCorrection(entries, phase: phase)
     }
 
-    /// When `stratum` is set the rows have already been restricted to one
-    /// stratum's items; every produced entry carries the stratification
-    /// provenance, and `unit` says what one paired difference is: "item"
-    /// when each joined item contributes exactly one pair, "sample" when
-    /// the pairs resolve within items (multiple seeds of the same item).
-    private static func sampledEffectSizes(
-        rows: [MetricRow], concepts: [String], styleFeatureIDs: [String],
-        replicates: Int, stratum: (family: String, label: String)? = nil
-    ) -> [EffectSizeEntry] {
-        var baselineByKey: [String: MetricRow] = [:]
-        for row in rows where row.condition == "baseline" {
-            baselineByKey["\(row.seed)::\(row.promptID)"] = row
-        }
-        guard !baselineByKey.isEmpty else { return [] }
 
-        var metrics: [(name: String, value: (MetricRow) -> Double)] = [
-            ("wordCount", { Double($0.wordCount) }),
-            ("distinct2", { Double($0.distinct2) }),
-        ]
-        for concept in concepts.sorted() {
-            metrics.append(
-                ("\(concept)MarkerDensity", { Double($0.markerDensity[concept] ?? 0) }))
-        }
-        // Reasoning-style features join the same paired machinery, one
-        // numeric metric per feature (declared taxonomy order).
-        for id in styleFeatureIDs {
-            metrics.append(("rs_\(id)", { $0.reasoningStyle[id] ?? 0 }))
-        }
-
-        // Conditions in first-appearance order; items in a deterministic
-        // (seed, promptIndex, promptID) order so the bootstrap draws are
-        // reproducible for a given run.
-        var conditionOrder: [String] = []
-        var seen = Set<String>()
-        for row in rows where row.condition != "baseline" {
-            if seen.insert(row.condition).inserted { conditionOrder.append(row.condition) }
-        }
-        var entries: [EffectSizeEntry] = []
-        for condition in conditionOrder {
-            let conditionRows = rows
-                .filter { $0.condition == condition }
-                .sorted {
-                    ($0.seed, $0.promptIndex, $0.promptID)
-                        < ($1.seed, $1.promptIndex, $1.promptID)
-                }
-            for metric in metrics {
-                var diffs: [Double] = []
-                var pairedItems = Set<String>()
-                for row in conditionRows {
-                    guard let base = baselineByKey["\(row.seed)::\(row.promptID)"] else {
-                        continue
-                    }
-                    diffs.append(metric.value(row) - metric.value(base))
-                    pairedItems.insert(row.promptID)
-                }
-                guard !diffs.isEmpty else { continue }
-                let ci = StudyStatistics.pairedBootstrapCI(
-                    diffs, replicates: replicates, seed: 0)
-                let wilcoxon = StudyStatistics.wilcoxonSignedRank(diffs)
-                entries.append(
-                    EffectSizeEntry(
-                        condition: condition,
-                        metric: metric.name,
-                        n: ci.n,
-                        meanDiff: ci.mean,
-                        ciLower: ci.ciLower,
-                        ciUpper: ci.ciUpper,
-                        wilcoxonW: wilcoxon.w.isNaN ? nil : wilcoxon.w,
-                        wilcoxonP: wilcoxon.p.isNaN ? nil : wilcoxon.p,
-                        stratifyBy: stratum?.family,
-                        stratum: stratum?.label,
-                        unit: stratum.map {
-                            _ in diffs.count == pairedItems.count
-                                ? "item" : "sample"
-                        },
-                        // The unit IS the estimand: one pair per item is the
-                        // pooled estimand restricted to this stratum and
-                        // belongs in the correction family; several draws of
-                        // the same item are a within-item variability read
-                        // and are reported as a diagnostic instead.
-                        estimand: stratum.map {
-                            _ in diffs.count == pairedItems.count
-                                ? EffectSizeEstimand.itemLevel
-                                : EffectSizeEstimand.withinItemSamples
-                        },
-                        inference: stratum.map {
-                            _ in diffs.count == pairedItems.count
-                                ? EffectSizeInference.corrected
-                                : EffectSizeInference.diagnostic
-                        }))
-            }
-        }
-        return entries
-    }
-
-    /// The ordinalScale instrument's paired effects: per-item ladder-position
-    /// differences against the SAME-item baseline instrument readout (one
-    /// deterministic readout per condition × prompt, so pairing is by
-    /// promptID), through the same bootstrap CI + Wilcoxon as every other
-    /// metric — no new statistics. The metric name "ordinalPosition" is the
-    /// pinned cross-engine contract (server `_endpoint_values` twin).
-    private static func ordinalEffectSizes(
-        _ readouts: [ReportChoiceReadout], replicates: Int,
-        stratum: (family: String, label: String)? = nil
-    ) -> [EffectSizeEntry] {
-        let ordinal = readouts.filter {
-            $0.source == "instrument" && $0.ordinalPosition != nil
-        }
-        // Defensive last-wins on a duplicated promptID, matching `report`.
-        var baselineByItem: [String: Double] = [:]
-        for readout in ordinal where readout.condition == "baseline" {
-            baselineByItem[readout.promptID] = readout.ordinalPosition
-        }
-        guard !baselineByItem.isEmpty else { return [] }
-        var conditionOrder: [String] = []
-        var seen = Set<String>()
-        for readout in ordinal where readout.condition != "baseline" {
-            if seen.insert(readout.condition).inserted {
-                conditionOrder.append(readout.condition)
-            }
-        }
-        var entries: [EffectSizeEntry] = []
-        for condition in conditionOrder {
-            let diffs: [Double] = ordinal
-                .filter { $0.condition == condition }
-                .sorted { $0.promptID < $1.promptID }
-                .compactMap { readout in
-                    guard let base = baselineByItem[readout.promptID],
-                        let position = readout.ordinalPosition
-                    else { return nil }
-                    return position - base
-                }
-            guard !diffs.isEmpty else { continue }
-            let ci = StudyStatistics.pairedBootstrapCI(
-                diffs, replicates: replicates, seed: 0)
-            let wilcoxon = StudyStatistics.wilcoxonSignedRank(diffs)
-            entries.append(
-                EffectSizeEntry(
-                    condition: condition,
-                    metric: "ordinalPosition",
-                    n: ci.n,
-                    meanDiff: ci.mean,
-                    ciLower: ci.ciLower,
-                    ciUpper: ci.ciUpper,
-                    wilcoxonW: wilcoxon.w.isNaN ? nil : wilcoxon.w,
-                    wilcoxonP: wilcoxon.p.isNaN ? nil : wilcoxon.p,
-                    stratifyBy: stratum?.family,
-                    stratum: stratum?.label,
-                    // One deterministic readout per (condition, prompt):
-                    // the instrument has no sample axis, so a stratified
-                    // ordinal pair is always per-item — item-level, and
-                    // therefore always a member of the correction family.
-                    unit: stratum.map { _ in "item" },
-                    estimand: stratum.map { _ in EffectSizeEstimand.itemLevel },
-                    inference: stratum.map { _ in EffectSizeInference.corrected }))
-        }
-        return entries
-    }
 
     // MARK: - Stratified effect sizes (per-cell strata; server twin)
 
@@ -9267,41 +8195,7 @@ public enum ExperimentTasks {
     static func stratificationFamilies(
         factorsByItem: [String: [String: String]], items: Set<String>
     ) -> [(name: String, strata: [(label: String, items: Set<String>)])] {
-        var families: [(name: String, strata: [(label: String, items: Set<String>)])] = [
-            (name: "promptID",
-             strata: items.sorted().map { (label: $0, items: Set([$0])) })
-        ]
-        let keys = Set(factorsByItem.values.flatMap(\.keys)).sorted()
-        for key in keys {
-            var strata: [String: Set<String>] = [:]
-            for item in items {
-                if let level = factorsByItem[item]?[key] {
-                    strata[level, default: []].insert(item)
-                }
-            }
-            if strata.count >= 2 {
-                families.append(
-                    (name: key,
-                     strata: strata.sorted { $0.key < $1.key }
-                         .map { (label: $0.key, items: $0.value) }))
-            }
-        }
-        if keys.count >= 2 {
-            var cells: [String: Set<String>] = [:]
-            for item in items {
-                let levels = factorsByItem[item] ?? [:]
-                let values = keys.compactMap { levels[$0] }
-                guard values.count == keys.count else { continue }
-                cells[values.joined(separator: "×"), default: []].insert(item)
-            }
-            if cells.count >= 2 {
-                families.append(
-                    (name: keys.joined(separator: "×"),
-                     strata: cells.sorted { $0.key < $1.key }
-                         .map { (label: $0.key, items: $0.value) }))
-            }
-        }
-        return families
+        StudyAnalysisStatistics.stratificationFamilies(factorsByItem: factorsByItem, items: items)
     }
 
     /// The stratified companion rows to the pooled effect sizes — the
@@ -9320,49 +8214,7 @@ public enum ExperimentTasks {
         factorsByItem: [String: [String: String]],
         replicates: Int = 10_000, phase: String? = nil
     ) -> [EffectSizeEntry] {
-        var items = Set(rows.map(\.promptID))
-        for readout in choiceReadouts
-        where readout.source == "instrument" && readout.ordinalPosition != nil {
-            items.insert(readout.promptID)
-        }
-        guard !items.isEmpty else { return [] }
-        var entries: [EffectSizeEntry] = []
-        for family in stratificationFamilies(
-            factorsByItem: factorsByItem, items: items)
-        {
-            var familyEntries: [EffectSizeEntry] = []
-            for (label, members) in family.strata {
-                let stratum = (family: family.name, label: label)
-                familyEntries += sampledEffectSizes(
-                    rows: rows.filter { members.contains($0.promptID) },
-                    concepts: concepts, styleFeatureIDs: styleFeatureIDs,
-                    replicates: replicates, stratum: stratum)
-                familyEntries += ordinalEffectSizes(
-                    choiceReadouts.filter { members.contains($0.promptID) },
-                    replicates: replicates, stratum: stratum)
-            }
-            // The phase's correction, per metric WITHIN this family —
-            // applyCorrection groups by metric over exactly the entries it
-            // is handed — and ONLY over the item-level rows.
-            //
-            // A `withinItemSamples` row pairs several draws of the SAME item
-            // against that item's baseline draws: it measures within-item
-            // variability, not an item-level effect, so it is not an
-            // independent test of the pre-registered hypothesis. Correcting
-            // across those rows inflated the family (shrinking every real
-            // row's adjustedP) AND stamped an `adjustedP` that read as a
-            // citable test. They are emitted as `diagnostic` instead — raw
-            // Wilcoxon and bootstrap CI kept, no adjustedP, no correction
-            // stamp. Order is preserved so the CSV row order is unchanged.
-            let corrected = applyCorrection(
-                familyEntries.filter { !$0.isWithinItemSamples }, phase: phase)
-            var correctedRows = corrected.makeIterator()
-            entries += familyEntries.map { entry in
-                entry.isWithinItemSamples
-                    ? entry : (correctedRows.next() ?? entry)
-            }
-        }
-        return entries
+        StudyAnalysisStatistics.stratifiedEffectSizes(rows: rows, concepts: concepts, styleFeatureIDs: styleFeatureIDs, choiceReadouts: choiceReadouts, factorsByItem: factorsByItem, replicates: replicates, phase: phase)
     }
 
     /// `effect-sizes.csv` — fixed cross-engine column set:
@@ -9380,39 +8232,11 @@ public enum ExperimentTasks {
     /// position, and both engines' readers are name-keyed, so an older
     /// reader simply ignores them.
     static func effectSizesCSV(_ entries: [EffectSizeEntry]) -> String {
-        var lines = [
-            "condition,metric,n,meanDiff,ciLower,ciUpper,wilcoxonW,wilcoxonP,"
-                + "adjustedP,correction,stratifyBy,stratum,unit,estimand,"
-                + "inference"
-        ]
-        for entry in entries {
-            lines.append(
-                [
-                    csvEscape(entry.condition),
-                    csvEscape(entry.metric),
-                    String(entry.n),
-                    String(entry.meanDiff),
-                    String(entry.ciLower),
-                    String(entry.ciUpper),
-                    entry.wilcoxonW.map { String($0) } ?? "",
-                    entry.wilcoxonP.map { String($0) } ?? "",
-                    entry.adjustedP.map { String($0) } ?? "",
-                    entry.correction.map(csvEscape) ?? "",
-                    csvEscape(entry.stratifyBy ?? "pooled"),
-                    entry.stratum.map(csvEscape) ?? "",
-                    entry.unit.map(csvEscape) ?? "",
-                    entry.estimand.map(csvEscape) ?? "",
-                    entry.inference.map(csvEscape) ?? "",
-                ].joined(separator: ","))
-        }
-        return lines.joined(separator: "\n") + "\n"
+        StudyAnalysisRendering.effectSizesCSV(entries)
     }
 
     private static func csvEscape(_ value: String) -> String {
-        guard value.contains(",") || value.contains("\"") || value.contains("\n") else {
-            return value
-        }
-        return "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        StudyAnalysisRendering.csvEscape(value)
     }
 
     /// The layer a condition pins for this concept, else mid-network.
