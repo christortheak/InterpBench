@@ -391,8 +391,9 @@ public enum CLIFlagVocabulary {
         "cluster sites import --force":
             "Replace a site the registry already holds (default: refuse).",
         "cluster import --dry-run":
-            "Print the classification, what would transfer, and the "
-            + "purge-eligibility report; transfer and write nothing.",
+            "Print the classification, what would transfer, what is still in "
+            + "progress, and the purge-eligibility report; transfer and write "
+            + "nothing.",
         "install stamp --revision":
             "Record this source revision in the stamp (the build's git SHA).",
     ]

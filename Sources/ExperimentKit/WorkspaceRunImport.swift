@@ -49,7 +49,13 @@ public enum WorkspaceRunImport {
         /// A shard partial: never imported. Its family's purge eligibility is
         /// decided by the evidence gate, in the purge report.
         case skippedShardPartial(shardIndex: Int?, shardCount: Int?)
-        /// Not a run directory (library subtree, stray entry).
+        /// The stage has not finished: none of its completion artifacts is
+        /// on the cluster yet. Held back — a record file still being written
+        /// would otherwise be frozen here as-is. `localFiles` counts what an
+        /// earlier import already brought home, if anything.
+        case skippedInProgress(awaiting: [String], localFiles: Int)
+        /// Nothing to bring home (library subtree, stray entry, upload
+        /// staging).
         case notApplicable(reason: String)
         /// Filtered out by `--since`.
         case outsideWindow(stamp: String?)
@@ -72,6 +78,13 @@ public enum WorkspaceRunImport {
                 true
             default: false
             }
+        }
+
+        /// Held back by the in-progress gate — nothing about the directory
+        /// is settled until its stage finishes.
+        public var isInProgress: Bool {
+            if case .skippedInProgress = self { return true }
+            return false
         }
     }
 
@@ -178,6 +191,13 @@ public enum WorkspaceRunImport {
                 default: false
                 }
             }
+        }
+
+        /// Directories whose stage has not written its completion artifact
+        /// yet. Reported apart from the policy skips: these are expected to
+        /// transfer on a later import, once the job finishes.
+        public var skippedInProgress: [DirectoryReport] {
+            directories.filter(\.outcome.isInProgress)
         }
 
         public var failures: [DirectoryReport] {
@@ -421,22 +441,27 @@ public enum WorkspaceRunImport {
             let excluded = remote.filter {
                 WorkspaceImportPolicy.isExcluded(relativePath: $0.relativePath, rules: rules)
             }
-            for rule in rules {
-                let matching = excluded.filter {
-                    WorkspaceImportPolicy.isExcluded(
-                        relativePath: $0.relativePath, rules: [rule])
-                }
-                guard !matching.isEmpty else { continue }
-                report.purgeablePaths.append(
-                    PurgeablePathRow(
-                        directory: classification.name, rule: rule,
-                        paths: matching.map(\.relativePath).sorted(),
-                        bytes: matching.reduce(0) { $0 + $1.size }))
-            }
 
             let outcome = await importOne(
                 classification, remote: remote, rules: rules, engine: engine,
                 options: options, emit: emit)
+            // The bytes the policy leaves on the cluster are named as
+            // purgeable only for a directory whose stage has finished: a
+            // running job's checkpoint tree is what its resume reads.
+            if !outcome.isInProgress {
+                for rule in rules {
+                    let matching = excluded.filter {
+                        WorkspaceImportPolicy.isExcluded(
+                            relativePath: $0.relativePath, rules: [rule])
+                    }
+                    guard !matching.isEmpty else { continue }
+                    report.purgeablePaths.append(
+                        PurgeablePathRow(
+                            directory: classification.name, rule: rule,
+                            paths: matching.map(\.relativePath).sorted(),
+                            bytes: matching.reduce(0) { $0 + $1.size }))
+                }
+            }
             if case .refusedByteDrift(let message) = outcome {
                 report.violations.append(message)
             }
@@ -454,7 +479,10 @@ public enum WorkspaceRunImport {
                 DirectoryReport(
                     name: classification.name, kind: classification.kind,
                     outcome: outcome,
-                    excludedByPolicy: excluded.map(\.relativePath).sorted()))
+                    // Nothing was left behind by policy in a directory the
+                    // gate held back whole.
+                    excludedByPolicy: outcome.isInProgress
+                        ? [] : excluded.map(\.relativePath).sorted()))
         }
         report.directories.append(contentsOf: deferredReports)
         report.directories.sort { $0.name < $1.name }
@@ -527,7 +555,35 @@ public enum WorkspaceRunImport {
         let incomplete = WorkspaceImportPolicy.isIncomplete(
             kind: classification.kind, remote: remote, exclusions: rules)
 
-        guard engine.localExists(name) else {
+        let exists = engine.localExists(name)
+        let local = exists ? engine.localInventory(name) : []
+
+        // An EMPTY remote inventory can never certify a populated local
+        // directory complete. `gaps` is derived entirely from the remote
+        // inventory, so "no gaps" over an empty inventory says nothing at all
+        // — and on 2026-08-24 that path certified 31 incomplete directories,
+        // two of them inside frozen studies, because a run-root prefix bug
+        // emptied every inventory. The remote reporting zero files while
+        // bytes sit here is a human's question, never a completeness proof.
+        // It is not an in-progress stage either: the inventory itself is in
+        // question, so this refusal comes BEFORE the gate below, which must
+        // never read a failed listing as "still running".
+        if remote.isEmpty, !local.isEmpty {
+            return .refusedEmptyRemoteInventory(localFiles: local.count)
+        }
+
+        // The in-progress gate, by CONTENT: a stage that has not written its
+        // completion artifact is held back, whether or not an earlier import
+        // already brought part of it home. Before the drift check on purpose
+        // — a partial copy of a still-growing file is exactly what this gate
+        // exists to prevent, and where one already exists the reason says so.
+        if let awaiting = WorkspaceImportPolicy.awaitedCompletionArtifacts(
+            for: classification.kind, remote: remote)
+        {
+            return .skippedInProgress(awaiting: awaiting, localFiles: local.count)
+        }
+
+        guard exists else {
             guard !options.dryRun else {
                 return incomplete
                     ? .incompleteRun(files: kept.count, transferred: kept.count)
@@ -554,7 +610,6 @@ public enum WorkspaceRunImport {
         // Already here. Verify BEFORE anything transfers: tightening 4 makes a
         // size (or pinned-hash) disagreement an immutability violation, and a
         // violation must refuse rather than let rsync decide.
-        let local = engine.localInventory(name)
         let findings = verifyLanded(
             name, remote: remote, local: local, rules: rules, engine: engine)
         let violations = findings.filter(\.isViolation)
@@ -568,16 +623,6 @@ public enum WorkspaceRunImport {
                 return WorkspaceImportPolicy.FileStat(relativePath: path, size: size)
             }
             return nil
-        }
-        // An EMPTY remote inventory can never certify a populated local
-        // directory complete. `gaps` is derived entirely from the remote
-        // inventory, so "no gaps" over an empty inventory says nothing at all
-        // — and on 2026-08-24 that path certified 31 incomplete directories,
-        // two of them inside frozen studies, because a run-root prefix bug
-        // emptied every inventory. The remote reporting zero files while
-        // bytes sit here is a human's question, never a completeness proof.
-        guard !remote.isEmpty || local.isEmpty else {
-            return .refusedEmptyRemoteInventory(localFiles: local.count)
         }
         guard !gaps.isEmpty else {
             // "Already complete" is a certification. A run the cluster itself
@@ -732,6 +777,14 @@ public enum WorkspaceRunImport {
                 lines.append(
                     "\(directory.name)  [\(label) \(which)\(of)]  skipped by policy "
                         + "— the merged run carries these records")
+            case .skippedInProgress(let awaiting, let localFiles):
+                lines.append(
+                    "\(directory.name)  [\(label)]  skipped — in progress: no "
+                        + awaiting.joined(separator: " or ") + " on the cluster yet"
+                        + (localFiles > 0
+                            ? " (\(localFiles) file\(localFiles == 1 ? "" : "s") "
+                                + "from an earlier import already here)"
+                            : ""))
             case .notApplicable(let reason):
                 lines.append("\(directory.name)  skipped — \(reason)")
             case .outsideWindow(let stamp):
@@ -779,6 +832,23 @@ public enum WorkspaceRunImport {
             for name in report.unknowns { lines.append("  \(name)") }
         }
 
+        let inProgress = report.skippedInProgress
+        if !inProgress.isEmpty {
+            lines.append("")
+            lines.append(
+                "IN PROGRESS (skipped — no completion artifact on the cluster "
+                    + "yet; import again once these jobs finish):")
+            for directory in inProgress {
+                guard case .skippedInProgress(let awaiting, let localFiles) = directory.outcome
+                else { continue }
+                lines.append(
+                    "  · "
+                        + WorkspaceImportPolicy.inProgressReason(
+                            directory: directory.name, awaiting: awaiting,
+                            localFiles: localFiles))
+            }
+        }
+
         if report.hasAuthoringDivergences {
             lines.append("")
             lines.append(
@@ -822,6 +892,7 @@ public enum WorkspaceRunImport {
         }
         let skipped = report.skippedByPolicy.count
         if skipped > 0 { totals.append("skipped \(skipped)") }
+        if !inProgress.isEmpty { totals.append("in progress \(inProgress.count)") }
         if !report.unknowns.isEmpty { totals.append("unknown \(report.unknowns.count)") }
         if report.hasAuthoringDivergences {
             totals.append("DIVERGED \(report.authoringDivergences.count)")

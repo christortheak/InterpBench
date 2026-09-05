@@ -154,12 +154,18 @@ struct ClusterImportRunnerTests {
             WorkspaceRunImport.Engine(
                 listRemoteDirectories: { [run] },
                 remoteInventory: { _ in
-                    [run: [WorkspaceImportPolicy.FileStat(relativePath: "c.json", size: 8)]]
+                    [run: [
+                        WorkspaceImportPolicy.FileStat(relativePath: "c.json", size: 8),
+                        WorkspaceImportPolicy.FileStat(relativePath: "report.json", size: 8),
+                    ]]
                 },
                 transfer: { _, _ in },
                 localExists: { _ in false },
                 localInventory: { _ in
-                    [WorkspaceImportPolicy.FileStat(relativePath: "c.json", size: 8)]
+                    [
+                        WorkspaceImportPolicy.FileStat(relativePath: "c.json", size: 8),
+                        WorkspaceImportPolicy.FileStat(relativePath: "report.json", size: 8),
+                    ]
                 },
                 rebuildCatalog: {
                     WorkspaceRunCatalog.BuildReport(
@@ -198,7 +204,10 @@ struct ClusterImportRunnerTests {
             WorkspaceRunImport.Engine(
                 listRemoteDirectories: { [run] },
                 remoteInventory: { _ in
-                    [run: [WorkspaceImportPolicy.FileStat(relativePath: "c.json", size: 8)]]
+                    [run: [
+                        WorkspaceImportPolicy.FileStat(relativePath: "c.json", size: 8),
+                        WorkspaceImportPolicy.FileStat(relativePath: "report.json", size: 8),
+                    ]]
                 },
                 transfer: { name, _ in transfers.record(name) },
                 localExists: { _ in false },
@@ -222,6 +231,55 @@ struct ClusterImportRunnerTests {
         #expect(summary.dryRun)
         #expect(summary.imported == [run])
         #expect(outcome.envelope.message.contains("DRY RUN"))
+    }
+
+    /// A stage still running on the cluster is `ready`, not a finding: held
+    /// back under its own summary key, named in the message with the reason,
+    /// and absent from `imported` — on a dry run exactly as on a real one.
+    @Test func anInProgressStageIsHeldBackUnderItsOwnKey() async throws {
+        let stamp = "20260819T101500123"
+        let evaluate = "\(stamp)-exp-alpha-evaluate"
+        let finished = "\(stamp)-exp-beta-run"
+        let transfers = TransferLog()
+        let harness = try harness("in-progress") { _, _ in
+            WorkspaceRunImport.Engine(
+                listRemoteDirectories: { [evaluate, finished] },
+                remoteInventory: { _ in
+                    [
+                        evaluate: [
+                            WorkspaceImportPolicy.FileStat(relativePath: "config.json", size: 8),
+                            WorkspaceImportPolicy.FileStat(relativePath: "codings.jsonl", size: 268),
+                        ],
+                        finished: [
+                            WorkspaceImportPolicy.FileStat(relativePath: "report.json", size: 8)
+                        ],
+                    ]
+                },
+                transfer: { name, _ in transfers.record(name) },
+                localExists: { _ in false },
+                localInventory: { _ in [] })
+        }
+        defer { try? FileManager.default.removeItem(at: harness.root) }
+
+        let outcome = await harness.runner.run(
+            ClusterCLIInvocation(
+                verb: .importRuns, siteReference: try siteID(harness), dryRun: true))
+        #expect(outcome.exitCode == 0)
+        #expect(outcome.envelope.state == "ready")
+        #expect(!outcome.envelope.changed)
+        #expect(transfers.names.isEmpty)
+        let summary = try #require(outcome.envelope.importSummary)
+        #expect(summary.skippedInProgress == [evaluate])
+        #expect(summary.imported == [finished])
+        #expect(summary.skippedByPolicy.isEmpty)
+        #expect(summary.unknownShapes.isEmpty)
+        #expect(summary.violations.isEmpty)
+        #expect(outcome.envelope.nextAction == nil)
+        #expect(outcome.envelope.message.contains("\(evaluate)  [evaluate]  skipped — in progress"))
+        #expect(outcome.envelope.message.contains("no coding-report.json or judge-report.json on the cluster yet"))
+        #expect(outcome.envelope.message.contains("IN PROGRESS"))
+        // The key is on the wire, under its own name.
+        #expect(try outcome.envelope.jsonText().contains("\"skippedInProgress\""))
     }
 
     /// An orphaned shard family degrades the verb and asks for a human — it is
@@ -261,12 +319,18 @@ struct ClusterImportRunnerTests {
             WorkspaceRunImport.Engine(
                 listRemoteDirectories: { [run] },
                 remoteInventory: { _ in
-                    [run: [WorkspaceImportPolicy.FileStat(relativePath: "experiment.json", size: 512)]]
+                    [run: [
+                        WorkspaceImportPolicy.FileStat(relativePath: "experiment.json", size: 512),
+                        WorkspaceImportPolicy.FileStat(relativePath: "report.json", size: 8),
+                    ]]
                 },
                 transfer: { _, _ in },
                 localExists: { _ in false },
                 localInventory: { _ in
-                    [WorkspaceImportPolicy.FileStat(relativePath: "experiment.json", size: 512)]
+                    [
+                        WorkspaceImportPolicy.FileStat(relativePath: "experiment.json", size: 512),
+                        WorkspaceImportPolicy.FileStat(relativePath: "report.json", size: 8),
+                    ]
                 },
                 localRunManifestArms: { _ in
                     WorkspaceImportPolicy.ManifestArms(
@@ -295,41 +359,47 @@ struct ClusterImportRunnerTests {
     }
 
     /// A run the cluster has not finished — records and no report.json, the
-    /// shape of a shard merge the controller died under (2026-09-05) —
-    /// degrades the verb and names the next action. Its bytes come home (the
-    /// envelope says something changed), but the summary never calls them
-    /// imported or already complete.
-    @Test func anUnfinishedRunDegradesTheVerbAndIsNeverCertified() async throws {
+    /// shape of a shard merge the controller died under or of a run still
+    /// executing — is HELD BACK by content (precedence decision, 2026-09-05):
+    /// nothing is transferred, the envelope stays ready, and the summary never
+    /// calls it imported or already complete. The INCOMPLETE outcome stays in
+    /// the vocabulary, but the in-progress gate runs first, so an unfinished
+    /// run never reaches it.
+    @Test func anUnfinishedRunIsHeldBackAndNeverCertified() async throws {
         let stamp = "20260819T101500123"
         let run = "\(stamp)-exp-alpha-run"
         let files = [
             WorkspaceImportPolicy.FileStat(relativePath: "config.json", size: 120),
             WorkspaceImportPolicy.FileStat(relativePath: "generations.jsonl", size: 4096),
         ]
+        let transfers = TransferLog()
         let harness = try harness("unfinished") { _, _ in
             WorkspaceRunImport.Engine(
                 listRemoteDirectories: { [run] },
                 remoteInventory: { _ in [run: files] },
-                transfer: { _, _ in },
+                transfer: { name, _ in transfers.record(name) },
                 localExists: { _ in false },
-                localInventory: { _ in files })
+                localInventory: { _ in [] })
         }
         defer { try? FileManager.default.removeItem(at: harness.root) }
 
         let outcome = await harness.runner.run(
             ClusterCLIInvocation(verb: .importRuns, siteReference: try siteID(harness)))
-        #expect(outcome.envelope.state == "degraded")
-        #expect(outcome.exitCode == 13)
-        #expect(outcome.envelope.changed)
+        #expect(outcome.exitCode == 0)
+        #expect(outcome.envelope.state == "ready")
+        #expect(transfers.names.isEmpty, "an unfinished run must not be transferred")
         let summary = try #require(outcome.envelope.importSummary)
         #expect(summary.imported.isEmpty)
         #expect(summary.alreadyComplete.isEmpty)
-        #expect(summary.incompleteRuns == [run])
+        #expect(summary.incompleteRuns.isEmpty)
+        #expect(summary.skippedInProgress == [run])
         #expect(summary.violations.isEmpty)
-        #expect(outcome.envelope.nextAction?.requiresHuman == true)
-        #expect(outcome.envelope.nextAction?.detail?.contains("report.json") == true)
-        #expect(outcome.envelope.message.contains("INCOMPLETE RUNS"))
-        #expect(try outcome.envelope.jsonText().contains("incompleteRuns"))
+        #expect(outcome.envelope.nextAction == nil)
+        #expect(outcome.envelope.message.contains("skipped — in progress"))
+        #expect(outcome.envelope.message.contains("no report.json on the cluster yet"))
+        #expect(outcome.envelope.message.contains("IN PROGRESS"))
+        #expect(!outcome.envelope.message.contains("INCOMPLETE RUNS"))
+        #expect(try outcome.envelope.jsonText().contains("\"skippedInProgress\""))
     }
 
     /// Byte drift is a typed failure with a stable code, and its repair action
@@ -341,12 +411,20 @@ struct ClusterImportRunnerTests {
             WorkspaceRunImport.Engine(
                 listRemoteDirectories: { [run] },
                 remoteInventory: { _ in
-                    [run: [WorkspaceImportPolicy.FileStat(relativePath: "g.jsonl", size: 4096)]]
+                    [
+                        run: [
+                            WorkspaceImportPolicy.FileStat(relativePath: "g.jsonl", size: 4096),
+                            WorkspaceImportPolicy.FileStat(relativePath: "report.json", size: 8),
+                        ]
+                    ]
                 },
                 transfer: { _, _ in Issue.record("a drifted directory must not transfer") },
                 localExists: { _ in true },
                 localInventory: { _ in
-                    [WorkspaceImportPolicy.FileStat(relativePath: "g.jsonl", size: 2048)]
+                    [
+                        WorkspaceImportPolicy.FileStat(relativePath: "g.jsonl", size: 2048),
+                        WorkspaceImportPolicy.FileStat(relativePath: "report.json", size: 8),
+                    ]
                 })
         }
         defer { try? FileManager.default.removeItem(at: harness.root) }

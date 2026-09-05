@@ -855,6 +855,7 @@ public struct ClusterCLIRunner: Sendable {
             },
             incompleteRuns: report.incompleteRuns.map(\.name),
             skippedByPolicy: report.skippedByPolicy.map(\.name),
+            skippedInProgress: report.skippedInProgress.map(\.name),
             unknownShapes: report.unknowns,
             purgeEligible: report.purgeFamilies
                 .filter { $0.verdict.isPurgeEligible }.map(\.message),

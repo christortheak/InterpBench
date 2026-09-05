@@ -50,6 +50,10 @@ struct WorkspaceImportPolicyClassificationTests {
             ("derived-alpha-gm", .vectorArtifact),
             ("jlens-support-alpha", .lensSupport),
             ("session-gpu", .session),
+            // A bundle submission's receipt is a receipt like any other:
+            // the `submit-` origin decides, not the word after it.
+            ("submit-bundle-alpha-run", .submit),
+            ("submit-bundle-alpha-verify", .submit),
         ]
         for (name, expected) in cases {
             let classification = classify(name)
@@ -91,6 +95,101 @@ struct WorkspaceImportPolicyClassificationTests {
         let byStamp = classify("exp-alpha-run", shardStamp: true)
         #expect(byStamp.kind == .shardPartial)
         #expect(!WorkspaceImportPolicy.decision(for: byStamp).transfers)
+    }
+
+    /// An upload's staging directory is recognized, and skipped BY POLICY
+    /// rather than reported as an unknown shape: it holds only the bundle a
+    /// client sent, which that client's workspace already has.
+    @Test func uploadStagingDirectoriesAreSkippedByPolicyNotUnknown() {
+        let classification = classify("uploaded-bundle")
+        #expect(classification.kind == .uploadStaging)
+        #expect(!classification.kind.isAlwaysImported)
+        let decision = WorkspaceImportPolicy.decision(for: classification)
+        #expect(!decision.transfers)
+        guard case .notApplicable(let reason) = decision else {
+            Issue.record("expected a policy skip, got \(decision)")
+            return
+        }
+        #expect(reason.contains("staging directory"))
+        #expect(reason.contains("client"))
+    }
+
+    // MARK: The in-progress gate
+
+    /// The completion artifacts are the ENGINE's own: the study report for a
+    /// run, the validation report for a validate, the coding or judge report
+    /// for an evaluate, the recommendations file for a sweep. Every other
+    /// shape declares none, and the gate never holds one back.
+    @Test func completionArtifactsAreTheEnginesOwnAndOnlyForStagesThatWriteOne() {
+        #expect(WorkspaceImportPolicy.DirectoryKind.run.completionArtifacts == ["report.json"])
+        #expect(
+            WorkspaceImportPolicy.DirectoryKind.validate.completionArtifacts
+                == ["validation-report.json", "report.json"])
+        #expect(
+            WorkspaceImportPolicy.DirectoryKind.evaluate.completionArtifacts
+                == ["coding-report.json", "judge-report.json"])
+        #expect(
+            WorkspaceImportPolicy.DirectoryKind.sweep.completionArtifacts
+                == ["recommendations.json"])
+        for kind in WorkspaceImportPolicy.DirectoryKind.allCases
+        where ![.run, .validate, .evaluate, .sweep].contains(kind) {
+            #expect(kind.completionArtifacts.isEmpty, "\(kind.rawValue) must not be gated")
+            #expect(
+                WorkspaceImportPolicy.awaitedCompletionArtifacts(for: kind, remote: []) == nil,
+                "\(kind.rawValue) must never read as in progress")
+        }
+    }
+
+    /// The artifact must sit at the directory's ROOT: a chain's
+    /// `stage-1/report.json` belongs to that stage, and a run whose only
+    /// report is nested has not finished.
+    @Test func theGateReadsTheDirectoryRootAndAnyOneArtifactSuffices() {
+        func stat(_ path: String) -> WorkspaceImportPolicy.FileStat {
+            WorkspaceImportPolicy.FileStat(relativePath: path, size: 1)
+        }
+        #expect(
+            WorkspaceImportPolicy.awaitedCompletionArtifacts(
+                for: .evaluate, remote: [stat("config.json"), stat("codings.jsonl")])
+                == ["coding-report.json", "judge-report.json"])
+        #expect(
+            WorkspaceImportPolicy.awaitedCompletionArtifacts(
+                for: .evaluate, remote: [stat("codings.jsonl"), stat("coding-report.json")])
+                == nil)
+        #expect(
+            WorkspaceImportPolicy.awaitedCompletionArtifacts(
+                for: .evaluate, remote: [stat("judgments.jsonl"), stat("judge-report.json")])
+                == nil)
+        #expect(
+            WorkspaceImportPolicy.awaitedCompletionArtifacts(
+                for: .run, remote: [stat("stage-1/report.json")]) == ["report.json"])
+        #expect(
+            WorkspaceImportPolicy.awaitedCompletionArtifacts(
+                for: .run, remote: [stat("report.json")]) == nil)
+        // An empty inventory has no artifact in it either.
+        #expect(
+            WorkspaceImportPolicy.awaitedCompletionArtifacts(for: .run, remote: [])
+                == ["report.json"])
+    }
+
+    /// The reason names the directory, what it is waiting for, both readings
+    /// of an absent report, and — when an earlier import already brought
+    /// part of it home — that the local partial will read as drift later.
+    @Test func theInProgressReasonNamesTheArtifactAndBothReadings() {
+        let plain = WorkspaceImportPolicy.inProgressReason(
+            directory: "\(stamp)-exp-alpha-evaluate",
+            awaiting: ["coding-report.json", "judge-report.json"], localFiles: 0)
+        #expect(plain.contains("\(stamp)-exp-alpha-evaluate"))
+        #expect(plain.contains("coding-report.json or judge-report.json"))
+        #expect(plain.contains("never rewrites"))
+        #expect(plain.contains("Import again once the job completes"))
+        #expect(plain.contains("died before writing its report"))
+        #expect(!plain.contains("earlier import"))
+
+        let partial = WorkspaceImportPolicy.inProgressReason(
+            directory: "\(stamp)-exp-alpha-evaluate",
+            awaiting: ["coding-report.json", "judge-report.json"], localFiles: 3)
+        #expect(partial.contains("3 files from an earlier import already sit here"))
+        #expect(partial.contains("drifted"))
     }
 
     /// The conservative branch: an unrecognized shape is REPORTED and imported
@@ -633,8 +732,8 @@ struct WorkspaceRunImportOperationTests {
         let fake = FakeImportRemote()
         let run = "\(stamp)-exp-alpha-run"
         fake.directories = [run]
-        fake.inventories[run] = remote(files: [("config.json", 120)])
-        fake.localFiles[run] = remote(files: [("config.json", 120)])
+        fake.inventories[run] = remote(files: [("config.json", 120), ("report.json", 64)])
+        fake.localFiles[run] = remote(files: [("config.json", 120), ("report.json", 64)])
 
         let report = await WorkspaceRunImport.run(engine: fake.engine())
         #expect(fake.transferred.isEmpty)
@@ -655,7 +754,7 @@ struct WorkspaceRunImportOperationTests {
         fake.directories = [run]
         fake.inventories[run] = []
         fake.localFiles[run] = remote(files: [
-            ("config.json", 120), ("generations.jsonl", 4096),
+            ("config.json", 120), ("generations.jsonl", 4096), ("report.json", 64),
         ])
 
         let report = await WorkspaceRunImport.run(engine: fake.engine())
@@ -668,7 +767,7 @@ struct WorkspaceRunImportOperationTests {
                 "expected a refusal, got \(String(describing: report.directories.first))")
             return
         }
-        #expect(localFiles == 2)
+        #expect(localFiles == 3)
         let violation = report.violations.joined(separator: "\n")
         #expect(violation.contains(run))
         #expect(violation.contains("inventory failed"))
@@ -679,13 +778,15 @@ struct WorkspaceRunImportOperationTests {
     }
 
     /// …and a directory that is empty on BOTH sides is not a refusal: there is
-    /// nothing there to be wrong about.
+    /// nothing there to be wrong about. (A receipt, which no completion
+    /// artifact gates; an empty RUN directory is a stage that has not
+    /// written its report, and is held back as in progress instead.)
     @Test func anEmptyDirectoryOnBothSidesIsStillComplete() async {
         let fake = FakeImportRemote()
-        let run = "\(stamp)-exp-alpha-run"
-        fake.directories = [run]
-        fake.inventories[run] = []
-        fake.localFiles[run] = []
+        let receipt = "\(stamp)-submit-alpha-run"
+        fake.directories = [receipt]
+        fake.inventories[receipt] = []
+        fake.localFiles[receipt] = []
 
         let report = await WorkspaceRunImport.run(engine: fake.engine())
         #expect(report.violations.isEmpty)
@@ -694,6 +795,199 @@ struct WorkspaceRunImportOperationTests {
                 "expected alreadyComplete, got \(String(describing: report.directories.first))")
             return
         }
+    }
+
+    // MARK: The in-progress gate, end to end
+
+    /// The field case (2026-09-02): an evaluate whose job is still running —
+    /// its record file partly written, its report not yet — was classified
+    /// as importable. Now it is held back, by CONTENT, and the report says
+    /// why; nothing is transferred and the catalog still rebuilds.
+    @Test func aStageWithoutItsCompletionArtifactIsSkippedAsInProgress() async {
+        let fake = FakeImportRemote()
+        let evaluate = "\(stamp)-exp-alpha-evaluate"
+        fake.directories = [evaluate]
+        fake.inventories[evaluate] = remote(files: [
+            ("config.json", 120), ("codings.jsonl", 26_800),
+        ])
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.transferred.isEmpty, "an unfinished stage must not be transferred")
+        #expect(fake.localFiles[evaluate] == nil, "nothing may be created locally")
+        #expect(report.imported.isEmpty)
+        #expect(report.violations.isEmpty)
+        #expect(report.skippedInProgress.map(\.name) == [evaluate])
+        #expect(report.skippedByPolicy.isEmpty, "in progress is its own key, not a policy skip")
+        guard
+            case .skippedInProgress(let awaiting, let localFiles)?
+                = report.directories.first?.outcome
+        else {
+            Issue.record("expected in progress, got \(String(describing: report.directories.first))")
+            return
+        }
+        #expect(awaiting == ["coding-report.json", "judge-report.json"])
+        #expect(localFiles == 0)
+        #expect(fake.catalogRebuilds == 1)
+
+        let text = WorkspaceRunImport.summaryLines(report).joined(separator: "\n")
+        #expect(text.contains("\(evaluate)  [evaluate]  skipped — in progress: no coding-report.json or judge-report.json on the cluster yet"))
+        #expect(text.contains("IN PROGRESS"))
+        #expect(text.contains("has not finished"))
+        #expect(text.contains("in progress 1"))
+        #expect(!text.contains("would import"))
+        #expect(!text.contains("imported 1"))
+    }
+
+    /// Once the report lands, the same directory transfers on the next
+    /// import — the gate defers, it never strands.
+    @Test func theSameDirectoryTransfersOnceItsReportLands() async {
+        let fake = FakeImportRemote()
+        let run = "\(stamp)-exp-alpha-run"
+        fake.directories = [run]
+        // The records are landing; the report is not there yet.
+        fake.inventories[run] = remote(files: [("config.json", 120), ("generations.jsonl", 4096)])
+
+        let first = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(first.skippedInProgress.map(\.name) == [run])
+        #expect(fake.transferred.isEmpty)
+
+        fake.inventories[run]! += remote(files: [("report.json", 64)])
+        let second = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(second.skippedInProgress.isEmpty)
+        #expect(second.imported.map(\.name) == [run])
+        #expect(fake.transferred == [run])
+        #expect(second.violations.isEmpty)
+    }
+
+    /// A partial copy an EARLIER import froze here (the pre-gate damage) does
+    /// not turn a still-running stage into a drift violation: the gate comes
+    /// before the drift check, holds the directory back, and says that the
+    /// partial is here. Drift is judged when the stage has finished.
+    @Test func aFrozenPartialCopyOfARunningStageIsHeldBackNotRefused() async {
+        let fake = FakeImportRemote()
+        let evaluate = "\(stamp)-exp-alpha-evaluate"
+        fake.directories = [evaluate]
+        fake.inventories[evaluate] = remote(files: [
+            ("config.json", 120), ("codings.jsonl", 120_000),
+        ])
+        fake.localFiles[evaluate] = remote(files: [
+            ("config.json", 120), ("codings.jsonl", 26_800),
+        ])
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.transferred.isEmpty)
+        #expect(report.violations.isEmpty, "drift is not judged on an unfinished stage")
+        #expect(report.failures.isEmpty)
+        guard
+            case .skippedInProgress(_, let localFiles)? = report.directories.first?.outcome
+        else {
+            Issue.record("expected in progress, got \(String(describing: report.directories.first))")
+            return
+        }
+        #expect(localFiles == 2)
+        let text = WorkspaceRunImport.summaryLines(report).joined(separator: "\n")
+        #expect(text.contains("2 files from an earlier import already here"))
+        #expect(text.contains("will refuse the directory as drifted"))
+    }
+
+    /// The empty-inventory refusal keeps precedence over the gate: a populated
+    /// local directory the cluster reports no files for is the inventory in
+    /// question, never a stage "still running".
+    @Test func anEmptyRemoteInventoryStillRefusesRatherThanReadingAsInProgress() async {
+        let fake = FakeImportRemote()
+        let run = "\(stamp)-exp-alpha-run"
+        fake.directories = [run]
+        fake.inventories[run] = []
+        fake.localFiles[run] = remote(files: [("report.json", 64)])
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(report.skippedInProgress.isEmpty)
+        guard case .refusedEmptyRemoteInventory = report.directories.first?.outcome else {
+            Issue.record("expected a refusal, got \(String(describing: report.directories.first))")
+            return
+        }
+    }
+
+    /// A running job's excluded bytes (its checkpoint tree) are not listed as
+    /// purgeable: the resume reads them, and nothing about the directory is
+    /// settled until it finishes.
+    @Test func anInProgressDirectoryContributesNoPurgeablePaths() async {
+        let fake = FakeImportRemote()
+        let run = "\(stamp)-exp-alpha-run"
+        fake.directories = [run]
+        fake.inventories[run] = remote(files: [
+            ("config.json", 120), ("checkpoints/step-100/state.pt", 5_000_000),
+        ])
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(report.skippedInProgress.map(\.name) == [run])
+        #expect(report.purgeablePaths.isEmpty)
+    }
+
+    /// The gate over a directory on disk, through the SAME inventory walker
+    /// the live engine uses: a fixture that lacks its completion artifact
+    /// reads as in progress on a dry run, and as importable once the report
+    /// is written beside it.
+    @Test func aFixtureDirectoryWithoutItsReportReadsAsInProgressOnADryRun() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(component: "steerlab-import-in-progress-\(UUID().uuidString)")
+        let evaluate = "\(stamp)-exp-alpha-evaluate"
+        let directory = root.appending(component: evaluate)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data(#"{"stage": "evaluate"}"#.utf8)
+            .write(to: directory.appending(component: "config.json"))
+        // A record file mid-write: some rows, no report.
+        try Data(
+            (0..<3).map { #"{"row": \#($0)}"# }.joined(separator: "\n").utf8
+        ).write(to: directory.appending(component: "codings.jsonl"))
+
+        let fake = FakeImportRemote()
+        fake.directories = [evaluate]
+        fake.inventories[evaluate] = WorkspaceRunImport.localInventory(at: directory)
+        #expect(fake.inventories[evaluate]?.count == 2)
+
+        let dry = await WorkspaceRunImport.run(
+            engine: fake.engine(), options: .init(dryRun: true))
+        #expect(dry.dryRun)
+        #expect(fake.transferred.isEmpty)
+        #expect(fake.catalogRebuilds == 0)
+        #expect(dry.skippedInProgress.map(\.name) == [evaluate])
+        #expect(dry.imported.isEmpty)
+        let text = WorkspaceRunImport.summaryLines(dry).joined(separator: "\n")
+        #expect(text.contains("DRY RUN"))
+        #expect(text.contains("\(evaluate)  [evaluate]  skipped — in progress"))
+        #expect(text.contains("no coding-report.json or judge-report.json on the cluster yet"))
+        #expect(!text.contains("would import"))
+
+        // The job finishes: the report lands beside the records.
+        try Data(#"{"codings": 3}"#.utf8)
+            .write(to: directory.appending(component: WorkspaceImportPolicy.codingReportFileName))
+        fake.inventories[evaluate] = WorkspaceRunImport.localInventory(at: directory)
+        let again = await WorkspaceRunImport.run(
+            engine: fake.engine(), options: .init(dryRun: true))
+        #expect(again.skippedInProgress.isEmpty)
+        #expect(again.imported.map(\.name) == [evaluate])
+        #expect(
+            WorkspaceRunImport.summaryLines(again).joined(separator: "\n")
+                .contains("would import 3 files"))
+    }
+
+    /// An upload's staging directory is skipped by policy — never transferred,
+    /// never an unknown shape — and says why.
+    @Test func uploadStagingIsSkippedByPolicyEndToEnd() async {
+        let fake = FakeImportRemote()
+        let staging = "\(stamp)-uploaded-bundle"
+        fake.directories = [staging]
+        fake.inventories[staging] = remote(files: [("alpha.run-bundle.tar.gz", 4_000_000)])
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.transferred.isEmpty)
+        #expect(report.unknowns.isEmpty)
+        #expect(report.skippedByPolicy.map(\.name) == [staging])
+        let text = WorkspaceRunImport.summaryLines(report).joined(separator: "\n")
+        #expect(text.contains("\(staging)  skipped — "))
+        #expect(text.contains("staging directory"))
     }
 
     /// The exclusion rules apply to BOTH sides of the count. A directory that
@@ -778,7 +1072,7 @@ struct WorkspaceRunImportOperationTests {
         let run = "\(stamp)-exp-alpha-run"
         fake.directories = [run]
         fake.inventories[run] = remote(files: [
-            ("config.json", 120), ("generations.jsonl", 4096),
+            ("config.json", 120), ("generations.jsonl", 4096), ("report.json", 64),
         ])
         // A transfer that drops one file, and writes a local artifact besides.
         fake.transferOverride = {
@@ -817,7 +1111,10 @@ struct WorkspaceRunImportOperationTests {
 
     /// The 2026-09-05 directory, mirrored on both sides: records complete, no
     /// report.json. The merge never finished, so the directory is NOT "already
-    /// complete" — and the report says so in words a reader cannot miss.
+    /// complete" — it is held back as in progress (precedence decision,
+    /// 2026-09-05: the in-progress gate runs before the incomplete-run
+    /// classification), the reason names the partial copy already here, and
+    /// nothing is transferred.
     @Test func aMergedRunWithoutItsReportIsNeverCertifiedComplete() async {
         let fake = FakeImportRemote()
         let run = "\(stamp)-exp-alpha-run"
@@ -830,31 +1127,31 @@ struct WorkspaceRunImportOperationTests {
         #expect(fake.transferred.isEmpty)
         #expect(report.imported.isEmpty)
         #expect(report.violations.isEmpty)
-        #expect(report.hasIncompleteRuns)
-        #expect(report.incompleteRuns.map(\.name) == [run])
+        #expect(!report.hasIncompleteRuns)
+        #expect(report.skippedInProgress.map(\.name) == [run])
         #expect(!report.transferredAnything)
-        guard case .incompleteRun(let count, let transferred)? = report.directories.first?.outcome
+        guard case .skippedInProgress(let awaiting, let localFiles)? = report.directories.first?.outcome
         else {
             Issue.record(
-                "expected incompleteRun, got \(String(describing: report.directories.first))")
+                "expected in progress, got \(String(describing: report.directories.first))")
             return
         }
-        #expect(count == 2)
-        #expect(transferred == 0)
+        #expect(awaiting == ["report.json"])
+        #expect(localFiles == 2)
         let text = WorkspaceRunImport.summaryLines(report).joined(separator: "\n")
-        #expect(text.contains("INCOMPLETE"))
-        #expect(text.contains("no report.json"))
-        #expect(text.contains("NOT certified complete"))
+        #expect(text.contains("skipped — in progress"))
+        #expect(text.contains("no report.json on the cluster yet"))
+        #expect(text.contains("IN PROGRESS"))
         #expect(!text.contains("already complete"))
-        #expect(!text.contains("imported"))
+        #expect(!text.contains("INCOMPLETE"))
     }
 
-    /// A fresh import of an unfinished run brings its bytes home — evidence
-    /// never stays behind on a purging filesystem — but reports them as
-    /// incomplete, never imported. Once the controller's reconciler finishes
-    /// the merge, the report is one more gap, and the re-import that fills it
-    /// is the ordinary complete import.
-    @Test func anUnfinishedRunComesHomeAsIncompleteAndCompletesOnReimport() async {
+    /// A fresh import of an unfinished run brings nothing home — a growing
+    /// record stream copied mid-write would be frozen locally for good, so the
+    /// in-progress gate holds it back (precedence decision, 2026-09-05). Once
+    /// the controller's reconciler finishes the merge and the report exists,
+    /// the next import is the ordinary complete import.
+    @Test func anUnfinishedRunIsHeldBackAndImportsOnceItsReportExists() async {
         let fake = FakeImportRemote()
         let run = "\(stamp)-exp-alpha-run"
         fake.directories = [run]
@@ -863,34 +1160,37 @@ struct WorkspaceRunImportOperationTests {
         ])
 
         let first = await WorkspaceRunImport.run(engine: fake.engine())
-        #expect(fake.transferred == [run])
+        #expect(fake.transferred.isEmpty)
+        #expect(fake.localFiles[run] == nil, "nothing may be created locally")
         #expect(first.imported.isEmpty)
-        #expect(first.hasIncompleteRuns)
-        #expect(first.transferredAnything)
-        guard case .incompleteRun(let count, let transferred)? = first.directories.first?.outcome
+        #expect(!first.hasIncompleteRuns)
+        #expect(first.skippedInProgress.map(\.name) == [run])
+        #expect(!first.transferredAnything)
+        guard case .skippedInProgress(let awaiting, let localFiles)? = first.directories.first?.outcome
         else {
             Issue.record(
-                "expected incompleteRun, got \(String(describing: first.directories.first))")
+                "expected in progress, got \(String(describing: first.directories.first))")
             return
         }
-        #expect(count == 2)
-        #expect(transferred == 2)
+        #expect(awaiting == ["report.json"])
+        #expect(localFiles == 0)
 
         // The reconciler completed the merge on the cluster: report.json exists.
         fake.inventories[run] = remote(files: [
             ("config.json", 120), ("generations.jsonl", 4096), ("report.json", 300),
         ])
         let second = await WorkspaceRunImport.run(engine: fake.engine())
-        #expect(fake.transferred == [run, run])
+        #expect(fake.transferred == [run])
         #expect(second.imported.map(\.name) == [run])
+        #expect(second.skippedInProgress.isEmpty)
         #expect(!second.hasIncompleteRuns)
-        guard case .imported(let filled, let bytes)? = second.directories.first?.outcome else {
+        guard case .imported(let files, let bytes)? = second.directories.first?.outcome else {
             Issue.record(
-                "expected the gap fill to import, got \(String(describing: second.directories.first))")
+                "expected the finished run to import, got \(String(describing: second.directories.first))")
             return
         }
-        #expect(filled == 1)
-        #expect(bytes == 300)
+        #expect(files == 3)
+        #expect(bytes == 120 + 4096 + 300)
         #expect(fake.localFiles[run]?.contains { $0.relativePath == "report.json" } == true)
     }
 
@@ -900,8 +1200,8 @@ struct WorkspaceRunImportOperationTests {
         let fake = FakeImportRemote()
         let run = "\(stamp)-exp-alpha-run"
         fake.directories = [run]
-        fake.inventories[run] = remote(files: [("generations.jsonl", 4096)])
-        fake.localFiles[run] = remote(files: [("generations.jsonl", 2048)])
+        fake.inventories[run] = remote(files: [("generations.jsonl", 4096), ("report.json", 64)])
+        fake.localFiles[run] = remote(files: [("generations.jsonl", 2048), ("report.json", 64)])
 
         let report = await WorkspaceRunImport.run(engine: fake.engine())
         #expect(fake.transferred.isEmpty, "a drifted directory must not be rsynced")
@@ -993,7 +1293,7 @@ struct WorkspaceRunImportOperationTests {
         let fake = FakeImportRemote()
         let run = "\(stamp)-exp-alpha-run"
         fake.directories = [run]
-        fake.inventories[run] = remote(files: [("config.json", 120)])
+        fake.inventories[run] = remote(files: [("config.json", 120), ("report.json", 64)])
 
         let report = await WorkspaceRunImport.run(
             engine: fake.engine(), options: .init(dryRun: true))
@@ -1038,8 +1338,8 @@ struct WorkspaceRunImportOperationTests {
         let old = "20260701T090000000-exp-alpha-run"
         let new = "20260819T090000000-exp-beta-run"
         fake.directories = [old, new]
-        fake.inventories[old] = remote(files: [("config.json", 1)])
-        fake.inventories[new] = remote(files: [("config.json", 1)])
+        fake.inventories[old] = remote(files: [("config.json", 1), ("report.json", 1)])
+        fake.inventories[new] = remote(files: [("config.json", 1), ("report.json", 1)])
 
         let report = await WorkspaceRunImport.run(
             engine: fake.engine(),
@@ -1055,7 +1355,7 @@ struct WorkspaceRunImportOperationTests {
         let fake = FakeImportRemote()
         let run = "\(stamp)-exp-alpha-run"
         fake.directories = [run]
-        fake.inventories[run] = remote(files: [("experiment.json", 512)])
+        fake.inventories[run] = remote(files: [("experiment.json", 512), ("report.json", 64)])
         fake.runManifestArms[run] = WorkspaceImportPolicy.ManifestArms(
             studyName: "alpha", concepts: 16, conditions: 16)
         fake.liveArms["alpha"] = WorkspaceImportPolicy.ManifestArms(
@@ -1079,7 +1379,7 @@ struct WorkspaceRunImportOperationTests {
         let fake = FakeImportRemote()
         let run = "\(stamp)-exp-alpha-run"
         fake.directories = [run]
-        fake.inventories[run] = remote(files: [("experiment.json", 512)])
+        fake.inventories[run] = remote(files: [("experiment.json", 512), ("report.json", 64)])
         fake.runManifestArms[run] = WorkspaceImportPolicy.ManifestArms(
             studyName: "alpha", concepts: 2, conditions: 3)
         fake.liveArms["alpha"] = WorkspaceImportPolicy.ManifestArms(

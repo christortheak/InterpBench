@@ -260,6 +260,7 @@ public enum WorkspaceRunCatalog {
         case .vectorArtifact: "vector-" + vectorSubkind(stem: classification.stem)
         case .shardPartial: "shard-partial"
         case .lensSupport: "lens-support"
+        case .uploadStaging: "upload-staging"
         case .notARunDirectory: "other"
         case .unknown: "unknown"
         default: classification.kind.rawValue
