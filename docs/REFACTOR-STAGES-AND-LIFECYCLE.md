@@ -154,6 +154,6 @@ the move, and passing the full existing suite does not cover this branch.
    owned by the existing science workstream.
 
 The subsequent [Swift offline analysis slice](REFACTOR-SWIFT-ANALYSIS.md) is now
-implemented. The next slices are independent panel state owners and the large
-feature views. Compatibility bridges can be retired after their production
-callers have migrated.
+implemented, followed by the [study UI state/component slice](REFACTOR-STUDY-UI.md).
+That handoff records remaining editor commands and feature views. Compatibility
+bridges can be retired after their production callers have migrated.

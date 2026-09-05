@@ -134,7 +134,7 @@ artifact presence even when Git reports a clean merge. Integrate then-current
 main before the main coding agent reviews and merges this branch, and run the
 affected checks and both full suites.
 
-The next planned slice separates panel draft state, job execution/polling and
-selection/result state, including the `UnifiedStudyRunner` dependency on
-`ExperimentPanel`. Split the large feature views after those state owners are
-independent. The science-agent handoff and J-lens recomputation remain separate.
+The subsequent [study UI slice](REFACTOR-STUDY-UI.md) separates draft fields,
+job controllers, result state and run/result view components. Its handoff records
+remaining editor commands, global workspace boundaries and other feature views.
+The science-agent handoff and J-lens recomputation remain separate.

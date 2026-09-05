@@ -10,6 +10,11 @@ import SteeringKit
 /// runs through the same ExperimentKit task path as the CLI.
 @Observable @MainActor
 public final class ExperimentPanel {
+    public let draft = StudyDraftState()
+    public let results = StudyResultsState()
+    public let localJobs = StudyLocalJobController()
+    public let remoteJobs = StudyRemoteJobController()
+    public let submission = StudySubmissionOptions()
 
     public internal(set) weak var host: ChatService?
 
@@ -41,11 +46,6 @@ public final class ExperimentPanel {
             }
         }
     }
-    public var newName = ""
-    public var newDescription = ""
-    /// Optional exact HF snapshot commit for Create Draft (App gap A7):
-    /// empty = auto-pin from the local HF cache at first extract/validate.
-    public var newRevision = ""
 
     /// Display labels for the studies in `experiments`, read once per
     /// refresh — a picker body must never touch the disk.
@@ -64,10 +64,6 @@ public final class ExperimentPanel {
     public func displayName(_ manifest: ExperimentManifest) -> String {
         displayLabels[manifest.name] ?? manifest.name
     }
-    public var protocolDescription = ""
-    public var taskDescription = ""
-    public var outcomeMeasures = ""
-    public var studyKind: ExperimentManifest.StudyKind = .modelOutput
 
     /// THE study-type setter (2026-07-19 second pass): one control answers
     /// "what kind of study is this?". Sets the view classification AND —
@@ -164,113 +160,7 @@ public final class ExperimentPanel {
                 severity: .error)
         }
     }
-    public var studyBaseModelID = ChatService.availableModels.first?.id ?? ""
-    public var selectedVariantToAddID: ModelVariantRecord.ID?
-    public var selectedMultiAgentScenarioID: MultiAgentScenarioRecord.ID?
-    public var multiAgentIncludeBaseline = true
-    public var taskPromptsFile = "prompts/dev/dev-prompts.jsonl"
-    public var taskPromptsText = ""
-    public var promptMode: ExperimentManifest.PromptMode = .chatAssistant
-    public var systemPrompt = ""
-    /// The declared reasoning effort (off | low | medium | xhigh) and the
-    /// reasoning block's own token cap — the study protocol's
-    /// `reasoningEffort`/`reasoningMaxTokens` (2026-09-03). The legacy
-    /// `qwenThinkingEnabled` boolean survives below as a derived view for the
-    /// route and the toggle that still speak it: on ≡ the template's default
-    /// effort, off ≡ off.
-    public var reasoningEffort: String = ReasoningEffort.off.rawValue
-    public var reasoningMaxTokens: Int?
-    public var qwenThinkingEnabled: Bool {
-        get { (ReasoningEffort(rawValue: reasoningEffort) ?? .off).isOn }
-        set {
-            reasoningEffort = ReasoningEffort.legacy(qwenThinkingEnabled: newValue).rawValue
-            if !newValue { reasoningMaxTokens = nil }
-        }
-    }
-    public var evaluationPrompt = ""
-    public var evaluationStructuredPrompt = ""
-    public var judgeModel = ""
-    /// Selected rubric file under prompts/rubrics/ ("" = inline draft text
-    /// only — freezing a judge-evaluated study requires a pinned file).
-    public var judgeRubricFile = ""
-    /// Editable judge panel (kind/model rows). Saved into the manifest's
-    /// "judges"; >=2 required at freeze for judge-evaluated studies.
-    public var judges: [ExperimentManifest.JudgeRef] = []
-    public var runTemperature: Double = 0.7
-    public var runMaxTokens: Int = 2048
-    public var conditionName = ""
-    // Native condition editor (App gap A4): the add-vector-condition row's
-    // fields. Concept options come from `conditionConceptOptions`.
-    public var conditionConcept = ""
-    public var conditionLayerText = ""
-    public var conditionAlphaText = ""
-    public var conditionAlphaInNormUnits = true
-    /// Steer or ablate for the add-condition form. Switching resets the
-    /// strength: α is typically 1–3 and λ = 2 is already a reflection, so
-    /// carrying the number across would silently change what the condition
-    /// does.
-    public var conditionMode: InterventionPlan.Mode = .add {
-        didSet {
-            guard oldValue != conditionMode else { return }
-            conditionAlphaText = conditionMode == .ablate ? "1" : ""
-            clearFormError(.addCondition)
-        }
-    }
-    // Direct concept-attach picker (App gap A8): one-step attach on the
-    // Studies draft — concept, method, reading position, grand-mean corpus.
-    // Writes ONLY through ExperimentStore.attachConcept (the CLI-attach twin).
-    public var attachConceptName = ""
-    public var attachMethod: ExtractionMethod = .meanDifference
-    /// designatedReference only: the reference stories concept to subtract.
-    public var attachReferenceName: String = ""
-    /// WHERE the residual stream is read, as a picker holds it. `.recipeDefault`
-    /// declares NOTHING — the method keeps its own reading position (last token
-    /// for paired methods, mean-from-token-50 for grand mean and designated
-    /// reference) and the manifest keeps its bytes. This SUPERSEDES the old
-    /// pool-from field: `--pool-from K` is the legacy spelling of exactly
-    /// `mean from token K`, the two may never be declared together, and one
-    /// coherent control is what a person can reason about.
-    public var attachReadingPositionChoice: ReadingPositionChoice = .recipeDefault {
-        didSet {
-            guard oldValue != attachReadingPositionChoice else { return }
-            // Carry the number into the new kind's range. A convenience, not
-            // a validation — the field still accepts anything, and the store
-            // still answers for what is typed there.
-            attachReadingPositionParameter = attachReadingPositionChoice
-                .steppedParameter(from: attachReadingPositionParameter)
-        }
-    }
-    /// The K/k/i/n beside the position, when it takes one.
-    public var attachReadingPositionParameter = 0
-    /// HOW the stimulus reaches the model. Raw declares nothing — absent IS
-    /// the legacy raw rendering, so an undeclared attach writes what it always
-    /// wrote.
-    public var attachRendering = ExtractionRenderingChoice()
-    /// emotionGrandMean only: extra corpus members (comma-separated) beyond
-    /// the attached targets, which are always members.
-    public var attachCorpusText = ""
-    // Science-manifest editor fields (App gap A2), synced from the selected
-    // draft and written back ONLY through ExperimentStore setters.
-    public var phaseField = ""
-    public var caseFamilyField = ""
-    public var samplesPerItemField = 1
-    public var seedPolicyField = ""
-    /// The study's pinned numeric precision ("" = let the device decide).
-    /// Server-honored; the Mac validates it at freeze because this is the
-    /// AUTHORING surface (see `ExperimentManifest.dtype`).
-    public var studyDtypeField = ""
-    public var acknowledgeUnequalOptionLengthsField = false
-    public var humanBaselinePathField = ""
-    public var promotionFDRText = ""
-    public var promotionDoseMonotone = false
-    public var promotionExceedsRandomFloor = false
-    public var promotionCapabilityGateText = ""
-    // Confirmation flow (the concept study's CONFIRM phase): declared
-    // perturbation policy inputs; ConfirmationStudy.attach does the
-    // expansion + refusals.
-    public var confirmAgentID: ModelVariantRecord.ID?
-    public var confirmDeltasText = "0.2"
-    public var confirmIncludeControl = true
+
     public private(set) var status: String?
     /// Where notes persist (A15). The shared per-workspace feed in the app;
     /// tests inject a hermetic instance.
@@ -289,23 +179,7 @@ public final class ExperimentPanel {
 
     /// A form whose refusals must render AT the control, not only in the
     /// panel-top notice area.
-    public enum FormField: String, Sendable, Hashable, CaseIterable {
-        case addCondition
-        case sweepSpec
-        case validationControl
-        case promotion
-        case rename
-        case template
-    }
-
-    /// The last refusal each form produced, for rendering beside the control
-    /// that produced it (finding 11a). `note(_:severity:)` alone routes a
-    /// refusal to the notice feed at the TOP of a long panel, which a
-    /// researcher editing a field far below never sees: observed twice on
-    /// 2026-07-26, where an α = 0 refusal read as "Add Condition did
-    /// nothing" and a control margin was believed saved for days. The notice
-    /// feed still gets every message — this is an addition, not a move.
-    public var formErrors: [FormField: String] = [:]
+    public typealias FormField = StudyDraftState.FormField
 
     /// Refuse a form action: record the message for inline rendering AND
     /// speak it through the normal notice path.
@@ -320,93 +194,17 @@ public final class ExperimentPanel {
     /// Clear a form's inline refusal — on success, or when the researcher
     /// edits the inputs that caused it.
     public func clearFormError(_ field: FormField) {
-        formErrors[field] = nil
+        draft.clearFormError(field)
     }
 
-    public private(set) var taskPromptsStatus: String?
-    /// Non-editable badge: how many loaded items carry `options`/instrument
-    /// fields (preserved verbatim on save; nil when none do).
-    public private(set) var taskPromptsInstrumentSummary: String?
-    /// The full loaded records backing the text editor (see
-    /// `TaskPromptsDocument`) and which file they came from — save pairs
-    /// edited blocks against these so per-item instrument fields survive.
-    private var taskPromptsDocument: TaskPromptsDocument?
-    private var taskPromptsDocumentFile: String?
-    public private(set) var isValidating = false
-    public private(set) var isRunning = false
-    public private(set) var isEvaluating = false
-    /// A local extraction is executing (A11). Extraction shares the GPU with
-    /// runs/validation/sweeps, so all four flags gate each other.
-    public private(set) var isExtracting = false
-    public private(set) var lastExtractDirectory: String?
-    /// A local sweep is executing (Optimizations' Optimize). Sweeps share the GPU
-    /// with runs/validation, so all three flags gate each other.
-    public private(set) var isSweeping = false
-    public private(set) var lastValidationDirectory: String?
-    public private(set) var lastRunDirectory: String?
-    public private(set) var lastEvaluationDirectory: String?
-    public private(set) var liveRunDirectory: String?
-    public private(set) var liveEvaluationDirectory: String?
-    public private(set) var liveActiveGeneration: LiveStudyGeneration?
-    public private(set) var liveActiveJudgment: LiveStudyJudgment?
-    public private(set) var liveGenerations: [StudyGenerationPreview] = []
-    public private(set) var liveJudgments: [StudyJudgePreview] = []
     public private(set) var violations: [String] = []
-    public private(set) var resultRuns: [StudyRunListItem] = []
-    public var selectedResultID: String? {
-        didSet {
-            if oldValue != selectedResultID {
-                loadSelectedResult()
-            }
-        }
-    }
-    public private(set) var selectedResult: StudyRunDetail?
-    /// The selected run's Results-browser item, built ONCE per selection
-    /// (F10): `RunBrowser.item(at:)` reads config.json and probes sweep.csv
-    /// synchronously, and the study-detail body re-evaluates on every live
-    /// progress note — that read must never sit inline in a SwiftUI body.
-    public private(set) var selectedResultBrowserItem: RunBrowser.Item?
-    @ObservationIgnored private var browserItemMemo = RunBrowser.MemoizedItem()
-    private var syncedSelection: String?
-    public var remoteExecutor = "local"
-    // Defaults match the common intent — "run my study" — not the most
-    // cautious combination: verify+dryRun defaults produced submissions that
-    // appeared to do nothing. Dry run stays available as an explicit toggle.
-    public var remoteVerb = "run"
-    public var remoteDryRun = false
+
     /// One-shot request from a cross-link (e.g. Optimizations' "Submit Bundle:
     /// sweep") that the Studies view open its Run-on-Server disclosure so the
     /// preconfigured verb/study are visible, not hidden behind a collapsed
     /// group. The Studies view consumes (and clears) it on appear.
     public var pendingRevealRemoteControls = false
-    public var remoteGres = "A100"
-    /// 4 hours (2026-08-03): the old 30-minute default walltime-killed the
-    /// first real 27B sweep twenty minutes in — 30m fit only smoke tests,
-    /// and a killed job costs a full queue wait to retry. 4h covers a
-    /// trimmed-grid multi-concept sweep or validate with headroom; the
-    /// field stays editable for anything bigger.
-    public var remoteWalltime = "04:00:00"
-    /// Resume-on-checkpoint policy for Slurm submissions — DEFAULT ON with
-    /// the server's shipped limit (2026-07-22 incident: a checkpointed run
-    /// continuing is what the researcher asked for by submitting it; OFF is
-    /// the surprising choice). Sent only for the slurm executor; what was
-    /// sent is stamped into the submission transcript line.
-    public var remoteResumePolicy = RemoteResumePolicy()
-    /// "Parallel GPU jobs" (2026-07-22): shard a Slurm run across K sibling
-    /// GPU jobs (default 1 = single job, the historical path). Encoded on
-    /// the submission only when it applies (`ShardedSubmission` rule);
-    /// execution logistics only — never in the manifest or content hash.
-    public var remoteParallelJobs = 1
-    public private(set) var remoteStatus: String?
-    public private(set) var remoteProfileSummary: String?
-    // Persisted so a researcher can reconnect to a running Slurm job after an
-    // app restart (Phase C exit criterion).
-    public private(set) var remoteJobID: String? = UserDefaults.standard.string(forKey: "SteerLabRemoteJobID") {
-        didSet { UserDefaults.standard.set(remoteJobID, forKey: "SteerLabRemoteJobID") }
-    }
-    public private(set) var remoteLogLines: [String] = []
-    public private(set) var remoteLastUploadedBundle: String?
-    public private(set) var remoteImportedRunDirectory: String?
+
     /// The active server's `runs/` listing (read-only browse; refreshed on
     /// demand, cleared when no server workspace is active).
     public private(set) var remoteRuns: [RemoteRunRecord] = []
@@ -415,51 +213,17 @@ public final class ExperimentPanel {
     /// Imported/local chains for the selected experiment — read from the
     /// portable ledger (preferred) or the raw ledger in the local runs tree.
     public private(set) var localPipelineRuns: [ClusterClient.PipelineRunSummary] = []
-    private var remoteLogTask: Task<Void, Never>?
 
     /// Server jobs submitted from THIS panel this session (run-verb jobs and
     /// bundle submissions), id-first so a researcher can always copy the id
     /// and reconnect later — jobs persist on the server across app restarts.
-    public struct RecentServerJob: Identifiable, Sendable, Equatable {
-        public let id: String
-        public let verb: String
-        public let study: String
-        public var state: String
-
-        public init(id: String, verb: String, study: String, state: String) {
-            self.id = id
-            self.verb = verb
-            self.study = study
-            self.state = state
-        }
-    }
-
-    public private(set) var recentServerJobs: [RecentServerJob] = []
+    public typealias RecentServerJob = StudyRemoteJobController.RecentServerJob
 
     /// The in-flight server experiment job (durable, server-side): drives the
     /// visible Cancel control next to the run status. Cleared on terminal
     /// state; a timed-out follow keeps it set — the job is still running and
     /// must stay cancellable.
-    public struct ActiveServerJob: Sendable, Equatable {
-        public let id: String
-        public let verb: String
-        public let study: String
-    }
-
-    public private(set) var activeServerJob: ActiveServerJob?
-
-    /// The in-flight server SWEEP job, tracked in its own slot: the
-    /// Optimizations Cancel button must never cancel a study-run or Submit
-    /// Bundle job that happens to occupy `activeServerJob`/`remoteJobID`.
-    /// Same lifecycle as `activeServerJob` (cleared on terminal state; a
-    /// timed-out follow keeps it set — the job is still cancellable).
-    public private(set) var activeSweepJob: ActiveServerJob?
-
-    /// A local-sweep cancellation was requested (Optimizations' Cancel):
-    /// `ExperimentTasks.sweep` polls this between generations and stops
-    /// after the current one, keeping partial grid rows. Reset when the
-    /// next local sweep starts.
-    public private(set) var sweepCancelRequested = false
+    public typealias ActiveServerJob = StudyRemoteJobController.ActiveServerJob
 
     /// Cancel the in-flight Optimize. Server route: cancel the tracked
     /// sweep job (its own slot — never another flow's job id). Local route:
@@ -481,78 +245,30 @@ public final class ExperimentPanel {
             }
             return
         }
-        guard isSweeping, !sweepCancelRequested else { return }
-        sweepCancelRequested = true
-        note("cancelling optimization — stops after the current generation", severity: .warning)
-        appendDisplayLog(
-            "cancellation requested — the sweep stops after the current "
-                + "generation; partial rows stay in the run directory")
+        localJobs.cancelSweep()
     }
 
     // MARK: Local-operation cancellation (App gap A1)
 
-    /// A local study-run cancellation was requested: `ExperimentTasks.run`
-    /// polls this between generations/choice items/battery items and stops
-    /// after the current one — partial artifacts stay, marked by a
-    /// cancelled.txt note, and no report.json is written. Reset when the
-    /// next local run starts. (Server-routed runs are durable jobs with
-    /// their own Cancel Server Job control.)
-    public private(set) var studyRunCancelRequested = false
-    /// Same flag for `ExperimentTasks.validate` (polled between concepts,
-    /// scenarios, control extractions, and battery items; a cancelled
-    /// validation writes NO evidence).
-    public private(set) var validationCancelRequested = false
-    /// Same flag for `ExperimentTasks.evaluatePairedJudge` (polled between
-    /// judgments; completed judgments stay, no judge report is written).
-    public private(set) var evaluationCancelRequested = false
-    /// Same flag for `ExperimentTasks.extract` (A11; polled between
-    /// concepts — completed concepts keep their sidecar artifacts, and the
-    /// run directory is marked cancelled).
-    public private(set) var extractCancelRequested = false
-
     /// Stop the in-flight LOCAL extraction after the current concept.
     public func cancelExtract() {
-        guard isExtracting, !extractCancelRequested else { return }
-        extractCancelRequested = true
-        note("cancelling extraction — stops after the current concept; "
-            + "completed vectors stay in the run directory", severity: .warning)
-        appendDisplayLog(
-            "cancellation requested — extraction stops after the current "
-                + "concept; completed vectors stay")
+        localJobs.cancelExtract()
     }
 
     /// Stop the in-flight LOCAL study run after the current generation.
     public func cancelStudyRun() {
-        guard isRunning, !studyRunCancelRequested else { return }
-        studyRunCancelRequested = true
-        note("cancelling study run — stops after the current generation; "
-            + "partial artifacts stay in the run directory", severity: .warning)
-        appendDisplayLog(
-            "cancellation requested — the run stops after the current "
-                + "generation; partial artifacts stay (no report.json)")
+        localJobs.cancelStudyRun()
     }
 
     /// Stop the in-flight LOCAL validation after the current unit of work.
     public func cancelValidation() {
-        guard isValidating, !validationCancelRequested else { return }
-        validationCancelRequested = true
-        note("cancelling validation — stops after the current unit; "
-            + "no validation evidence will be written", severity: .warning)
-        appendDisplayLog(
-            "cancellation requested — validation stops after the current "
-                + "unit; no evidence is written")
+        localJobs.cancelValidation()
     }
 
     /// Stop the in-flight LOCAL paired-judge evaluation after the current
     /// judgment.
     public func cancelPairedJudge() {
-        guard isEvaluating, !evaluationCancelRequested else { return }
-        evaluationCancelRequested = true
-        note("cancelling paired judge — stops after the current judgment; "
-            + "completed judgments stay, no judge report is written", severity: .warning)
-        appendDisplayLog(
-            "cancellation requested — judging stops after the current "
-                + "judgment; no judge report is written")
+        localJobs.cancelPairedJudge()
     }
 
     /// Cancel the in-flight server experiment job (the durable job keeps its
@@ -573,9 +289,6 @@ public final class ExperimentPanel {
         }
     }
 
-    /// The server-side run directory produced by the last completed
-    /// run-on-active-server job (a path in the SERVER's tree, not local).
-    public private(set) var lastServerRunDirectory: String?
     /// Read-only freeze gate summary for the selected draft (nil for frozen/
     /// completed studies); recomputed on every refresh.
     public private(set) var freezeReadiness: ExperimentStore.FreezeReadiness?
@@ -620,9 +333,6 @@ public final class ExperimentPanel {
     // Display-pane live log (same affordance LoRA training and vector builds
     // use): panel-initiated runs mirror their CLI-style progress lines into
     // the chat transcript so long runs are observable outside this panel.
-    private var displayLogID: UUID?
-    private var displayLogTitle = ""
-    private var displayLogLines: [String] = []
 
     /// The workspace-global connection (URL, token, Keychain persistence)
     /// lives on the shared `ClusterConnectionStore`; the panel reaches it
@@ -743,9 +453,7 @@ public final class ExperimentPanel {
     public static func bundleSubmittedStatus(
         study: String, verb: String, dryRun: Bool, substrate: String, jobID: String
     ) -> String {
-        let mode = dryRun ? "\(verb) (dry run — prepared only, nothing executes)" : verb
-        return "bundled study '\(study)' submitted: \(mode) on \(substrate) — "
-            + "job \(jobID), following in the activity pane"
+        StudySubmissionPresentation.bundleSubmittedStatus(study: study, verb: verb, dryRun: dryRun, substrate: substrate, jobID: jobID)
     }
 
     /// The not-on-server callout body (rendered prominently by the view).
@@ -759,25 +467,15 @@ public final class ExperimentPanel {
     // MARK: Display-pane live log
 
     private func beginDisplayLog(title: String, initialLine: String) {
-        guard let host else { return }
-        displayLogTitle = title
-        displayLogLines = [initialLine]
-        displayLogID = host.startLiveLog(title: title, initialLine: initialLine)
+        localJobs.beginDisplayLog(title: title, initialLine: initialLine)
     }
 
     private func appendDisplayLog(_ line: String) {
-        guard let host, let id = displayLogID else { return }
-        displayLogLines.append(line)
-        if displayLogLines.count > 400 {
-            displayLogLines.removeFirst(displayLogLines.count - 400)
-        }
-        host.updateLiveLog(id: id, title: displayLogTitle, lines: displayLogLines)
+        localJobs.appendDisplayLog(line)
     }
 
     private func endDisplayLog(_ finalLine: String? = nil) {
-        if let finalLine { appendDisplayLog(finalLine) }
-        displayLogID = nil
-        displayLogLines = []
+        localJobs.endDisplayLog(finalLine)
     }
 
     /// Test seams for the ad-hoc judge picker: the KEY one is a presence
@@ -894,22 +592,7 @@ public final class ExperimentPanel {
 
     /// One kind's field set for one judge row, held while the row wears a
     /// different kind. See `judgeKindStashes`.
-    public struct JudgeKindStash: Sendable, Equatable {
-        public var model: String?
-        public var provider: String?
-        public var revision: String?
-        public var dtype: String?
-    }
-
-    /// Session-only stash of judge fields per row and per kind (field bug
-    /// 2026-08-07): switching a judge's kind swaps the row to that kind's
-    /// own field set, and the outgoing kind's values land here so toggling
-    /// back restores them — a hand-discovered OpenRouter provider slug must
-    /// survive an exploratory toggle to local. Never serialized: the
-    /// manifest write keeps only kind-owned fields
-    /// (`JudgeRef.keepingKindOwnedFields`), and the stash belongs to the
-    /// study it was made on (cleared on selection sync, like seat edits).
-    public private(set) var judgeKindStashes: [Int: [String: JudgeKindStash]] = [:]
+    public typealias JudgeKindStash = StudyDraftState.JudgeKindStash
 
     /// The kind picker's write path (field bug 2026-08-07). Stashes the
     /// outgoing kind's fields and restores any previously entered for the
@@ -917,23 +600,22 @@ public final class ExperimentPanel {
     /// CURRENT kind's own — a kind never renders (or saves) another kind's
     /// values, and nothing the researcher typed is lost to a toggle.
     public func setJudgeKind(at index: Int, to newKind: String) {
-        guard judges.indices.contains(index) else { return }
-        let current = judges[index]
-        guard current.kind != newKind else { return }
-        var stash = judgeKindStashes[index] ?? [:]
-        stash[current.kind] = JudgeKindStash(
-            model: current.model, provider: current.provider,
-            revision: current.revision, dtype: current.dtype)
-        judgeKindStashes[index] = stash
-        let restored = stash[newKind]
-        judges[index].kind = newKind
-        judges[index].model = restored?.model
-        judges[index].provider = restored?.provider
-        judges[index].revision = restored?.revision
-        judges[index].dtype = restored?.dtype
+        draft.setJudgeKind(at: index, to: newKind)
     }
 
     public init() {
+        let presentation = StudyJobPresentation(
+            note: { [weak self] text, severity in self?.note(text, severity: severity) },
+            status: { [weak self] text in self?.status = text },
+            refresh: { [weak self] in self?.refresh() },
+            selectResult: { [weak self] study, id in
+                guard let self, self.selectedName == study else { return }
+                self.refreshResults(selecting: id)
+            },
+            startLog: { [weak self] title, line in self?.host?.startLiveLog(title: title, initialLine: line) },
+            updateLog: { [weak self] id, title, lines in self?.host?.updateLiveLog(id: id, title: title, lines: lines) })
+        localJobs.presentation = presentation
+        remoteJobs.presentation = presentation
         refresh()
     }
 
@@ -981,15 +663,6 @@ public final class ExperimentPanel {
     }
 
     // MARK: Seats — who sits where in the study's scenario
-
-    /// Unsaved per-seat edits, keyed by the scenario's seat id.
-    ///
-    /// An OVERLAY, not the casting: what a study is cast as lives in the
-    /// scenario file it pins, and this holds only what the researcher has
-    /// changed since it was read (`SeatCasting.state`). Cleared when the
-    /// selection changes and when a casting is saved — a seat edit belongs to
-    /// the study it was made on.
-    public var seatCastingEdits: [String: SeatOccupant] = [:]
 
     /// The Seats section's model: the seats of the scenario this study is
     /// running (or about to), and who occupies each one.
@@ -1516,45 +1189,7 @@ public final class ExperimentPanel {
             await runExperimentVerbOnActiveServer(experimentName: name, verb: "sweep")
             return
         }
-        isSweeping = true
-        sweepCancelRequested = false
-        note("sweeping '\(name)'…", severity: .info)
-        beginDisplayLog(
-            title: "Optimization sweep — \(name)",
-            initialLine: "verifying pins — the sweep loads the pinned model itself…")
-        defer {
-            isSweeping = false
-            refresh()
-        }
-        do {
-            try await ExperimentTasks.sweep(
-                experimentName: name,
-                shouldCancel: { [weak self] in
-                    await self?.sweepCancelRequested ?? false
-                },
-                log: { [weak self] line in
-                    await MainActor.run {
-                        self?.appendDisplayLog(line)
-                        self?.status = line
-                    }
-                })
-            refresh()
-            if sweepCancelRequested {
-                // The sweep returned normally with a partial grid (server
-                // parity) — never report a cancelled run as complete.
-                note("sweep cancelled for '\(name)' — partial grid rows "
-                    + "kept in the run directory; no recommendation from an "
-                    + "incomplete grid", severity: .warning)
-                endDisplayLog("sweep cancelled for '\(name)' — partial rows kept")
-            } else {
-                note("sweep complete for '\(name)' — grid and recommendations updated", severity: .success)
-                endDisplayLog("sweep complete for '\(name)'")
-            }
-        } catch {
-            refresh()
-            note("sweep failed: \(error)", severity: .error)
-            endDisplayLog("sweep failed: \(error)")
-        }
+        await localJobs.runSweep(experimentName: name)
     }
 
     public func refresh() {
@@ -2133,21 +1768,12 @@ public final class ExperimentPanel {
     /// Reconnect to a running/finished job by id (e.g. after an app restart),
     /// resuming the live log tail and refreshing status.
     public func reconnectRemoteJob(_ id: String) async {
-        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            remoteStatus = "enter a job id to reconnect"
-            return
-        }
-        remoteJobID = trimmed
-        remoteLogLines = []
         loadStoredRemoteToken()
-        remoteLogTask?.cancel()
-        remoteLogTask = Task { [weak self] in await self?.streamRemoteJobLog(jobID: trimmed) }
+        await remoteJobs.reconnectRemoteJob(id, client: remoteClient)
     }
 
     public func stopRemoteLogStream() {
-        remoteLogTask?.cancel()
-        remoteLogTask = nil
+        remoteJobs.stopRemoteLogStream()
     }
 
     /// The no-GPU-allocation dialog's "Fix options" action (2026-07-21
@@ -2327,11 +1953,11 @@ public final class ExperimentPanel {
                 id: submission.jobId, verb: "\(submissionVerb) (bundle)",
                 study: manifest.name, state: "submitted")
             if followLog {
-                remoteLogTask?.cancel()  // don't interleave with a prior stream
+                remoteJobs.stopRemoteLogStream()  // don't interleave with a prior stream
                 let verb = submissionVerb
                 let dryRun = remoteDryRun
                 let study = manifest.name
-                remoteLogTask = Task { [weak self] in
+                remoteJobs.follow { [weak self] in
                     await self?.followBundleJob(
                         jobID: submission.jobId, verb: verb, study: study, dryRun: dryRun)
                 }
@@ -2559,32 +2185,14 @@ public final class ExperimentPanel {
 
     /// Upserts a session-scoped recent-job row (newest first, capped).
     private func noteRecentServerJob(id: String, verb: String, study: String, state: String) {
-        if let index = recentServerJobs.firstIndex(where: { $0.id == id }) {
-            recentServerJobs[index].state = state
-            return
-        }
-        recentServerJobs.insert(
-            RecentServerJob(id: id, verb: verb, study: study, state: state), at: 0)
-        if recentServerJobs.count > 15 {
-            recentServerJobs.removeLast(recentServerJobs.count - 15)
-        }
+        remoteJobs.noteRecentServerJob(id: id, verb: verb, study: study, state: state)
     }
 
     /// Refreshes recent-job states from the server (`client.jobs()`,
     /// filtered to experiment job kinds). Jobs this panel did not submit are
     /// appended too — they persist server-side and remain reconnectable.
     public func refreshRecentServerJobs() async {
-        guard let client = remoteClient else { return }
-        guard let jobs = try? await client.jobs() else { return }
-        for job in jobs
-        where job.kind.hasPrefix("experiment:") || job.kind.hasPrefix("study-submit") {
-            if let index = recentServerJobs.firstIndex(where: { $0.id == job.id }) {
-                recentServerJobs[index].state = job.status
-            } else {
-                let verb = job.kind.split(separator: ":").last.map(String.init) ?? job.kind
-                noteRecentServerJob(id: job.id, verb: verb, study: "—", state: job.status)
-            }
-        }
+        await remoteJobs.refreshRecentServerJobs(client: remoteClient)
     }
 
     /// Streams a server job's log into a display-pane live log until the
@@ -2600,67 +2208,7 @@ public final class ExperimentPanel {
         maxLines: Int = 400,
         mirrorToRemoteLog: Bool = false
     ) async -> RemoteJobRecord? {
-        guard let host else { return nil }
-        var lines = ["queued job \(jobID)"]
-        let logID = host.startLiveLog(title: title, initialLine: lines[0])
-
-        do {
-            try await client.streamJobLog(jobID: jobID) { line in
-                await MainActor.run {
-                    lines.append(line)
-                    if lines.count > maxLines {
-                        lines.removeFirst(lines.count - maxLines)
-                    }
-                    host.updateLiveLog(id: logID, title: title, lines: lines)
-                    self.status = "\(label) job \(jobID): \(line)"
-                    if mirrorToRemoteLog {
-                        self.appendRemoteLogLine(line)
-                    }
-                }
-            }
-        } catch is CancellationError {
-            return nil
-        } catch {
-            lines.append("log stream ended: \(error.localizedDescription)")
-            host.updateLiveLog(id: logID, title: title, lines: lines)
-        }
-
-        if let job = try? await client.job(jobID),
-            Self.terminalJobStatuses.contains(job.status) || job.finishedAt != nil
-        {
-            lines.append("job \(job.status)")
-            if let error = job.error, !error.isEmpty {
-                lines.append(error)
-            }
-            host.updateLiveLog(id: logID, title: title, lines: lines)
-            return job
-        }
-        // Stream gone but the job is unresolved (transient fetch error, or a
-        // non-terminal status like "cancelling"/"running" after a broken
-        // stream): poll until terminal, mirroring ConceptBuilder's fallback.
-        let deadline = Date().addingTimeInterval(600)
-        while !Task.isCancelled, Date() < deadline {
-            if let job = try? await client.job(jobID) {
-                if Self.terminalJobStatuses.contains(job.status)
-                    || job.finishedAt != nil
-                {
-                    return job
-                }
-                if RemoteJobStatusClass.classify(status: job.status) == .resumable {
-                    // Actionable, not a dead end (2026-07-22 incident): the
-                    // checkpoint line names the Resume button and the
-                    // auto-resume toggle.
-                    note(
-                        RemoteJobStatusClass.checkpointGuidance(jobID: jobID),
-                        severity: .warning)
-                } else {
-                    note("\(label) job \(jobID) \(job.status)"
-                        + (job.logTail.last.map { ": \($0)" } ?? "…"), severity: .info)
-                }
-            }
-            try? await Task.sleep(for: .seconds(2))
-        }
-        return nil
+        await remoteJobs.followServerJobInDisplay(jobID: jobID, client: client, title: title, label: label, maxLines: maxLines, mirrorToRemoteLog: mirrorToRemoteLog)
     }
 
     /// Terminal statuses of the server's durable job store. "prepared" is
@@ -2670,36 +2218,15 @@ public final class ExperimentPanel {
     /// it is the non-terminal window between a cancel request and the
     /// worker's acknowledgement, and a follower must keep following through
     /// it.
-    private static let terminalJobStatuses: Set<String> = [
-        "succeeded", "failed", "cancelled", "prepared", "parked",
-    ]
+    private static let terminalJobStatuses = StudyRemoteJobController.terminalJobStatuses
 
     /// Appends to the Studies-disclosure job log with the shared 400-line cap.
     private func appendRemoteLogLine(_ line: String) {
-        remoteLogLines.append(line)
-        if remoteLogLines.count > 400 {
-            remoteLogLines.removeFirst(remoteLogLines.count - 400)
-        }
+        remoteJobs.appendRemoteLogLine(line)
     }
 
     public func streamRemoteJobLog(jobID: String? = nil) async {
-        guard let remoteClient else { return }
-        guard let id = jobID ?? remoteJobID else {
-            remoteStatus = "no remote job selected"
-            return
-        }
-        do {
-            try await remoteClient.streamJobLog(jobID: id) { [weak self] line in
-                await MainActor.run {
-                    self?.appendRemoteLogLine(line)
-                }
-            }
-            if let job = try? await remoteClient.job(id) {
-                remoteStatus = "job \(id): \(job.status)"
-            }
-        } catch {
-            remoteStatus = "remote log stream failed: \(error)"
-        }
+        await remoteJobs.streamRemoteJobLog(jobID: jobID, client: remoteClient)
     }
 
     /// Fetch the active server's run-directory listing. Runs are per-substrate
@@ -2778,80 +2305,16 @@ public final class ExperimentPanel {
         }
     }
 
-    /// The active server's enriched `runs/` listing (config.json stamps +
-    /// file sizes) for the remote Results browser. Cleared when no server
-    /// workspace is active.
-    public private(set) var remoteResultsRuns: [RemoteStampedRunRecord] = []
-    public private(set) var remoteResultsStatus: String?
-    public private(set) var isLoadingRemoteResults = false
-
-    /// The remote run selected in the Results pane — the remote sibling of
-    /// `ChatService.selectedResultsRun` (which stays a LOCAL `RunBrowser.Item`
-    /// and is owned elsewhere). The activity pane's summary column mirrors
-    /// whichever selection matches the active results source.
-    public var selectedRemoteResultsRun: RemoteStampedRunRecord?
-
-    /// The FILE focused in the LOCAL Results run detail (lives beside
-    /// `ChatService.selectedResultsRun`): the Results detail pane lists the
-    /// run's files and sets this; the activity viewer's Results mode renders
-    /// this file's bounded preview. Pure UI selection state — no run data.
-    public var selectedResultsFile: RunBrowser.FileEntry?
-
     /// Refresh the remote Results listing from the active server. Keeps the
     /// current selection when its run id survives the refresh.
     public func refreshRemoteResultsRuns() async {
-        guard let cluster, case .server = cluster.activeWorkspace else {
-            remoteResultsRuns = []
-            selectedRemoteResultsRun = nil
-            remoteResultsStatus = nil
-            return
-        }
-        // Not connected yet (fresh launch, server workspace persisted from a
-        // prior session): a friendly empty state, never an attempted fetch
-        // that surfaces a raw transport error.
-        guard cluster.remoteState != nil else {
-            remoteResultsRuns = []
-            selectedRemoteResultsRun = nil
-            remoteResultsStatus = "not connected to \(cluster.substrateLabel) "
-                + "— connect in Compute to browse its runs"
-            return
-        }
-        loadStoredRemoteToken()
-        guard let client = remoteClient else {
-            remoteResultsRuns = []
-            remoteResultsStatus = "invalid server URL"
-            return
-        }
-        isLoadingRemoteResults = true
-        defer { isLoadingRemoteResults = false }
-        do {
-            let runs = try await client.stampedRuns()
-            remoteResultsRuns = runs
-            if let selected = selectedRemoteResultsRun {
-                selectedRemoteResultsRun = runs.first { $0.id == selected.id }
-            }
-            let substrate = cluster.substrateLabel
-            remoteResultsStatus = "\(runs.count) run\(runs.count == 1 ? "" : "s") "
-                + "on \(substrate)"
-        } catch {
-            remoteResultsRuns = []
-            // Human-sized reason, not a raw Swift error dump.
-            remoteResultsStatus = "could not reach \(cluster.substrateLabel) — "
-                + "check the connection in Compute "
-                + "(\(error.localizedDescription))"
-        }
+        await results.refreshRemoteResultsRuns(cluster: cluster)
     }
 
     /// Everything the remote run detail renders, assembled from ONE bounded
     /// fetch pass: previews and the semantic model share each file's bytes
     /// (a tunnel must never pay for the same head twice).
-    public struct RemoteRunDetailPayload: Sendable {
-        public var previewed: [RemoteRunFilePreviewItem] = []
-        public var other: [RemoteRunFileEntry] = []
-        public var model: RunResults.Model?
-
-        public init() {}
-    }
+    public typealias RemoteRunDetailPayload = StudyResultsState.RemoteRunDetailPayload
 
     /// Byte cap for the remote report.json / manifest-snapshot / validation
     /// report head fetch — orders of magnitude above real reports, still
@@ -2862,22 +2325,8 @@ public final class ExperimentPanel {
     /// arrives truncated WITH the server's file-size/truncated metadata
     /// headers and degrades to head-derived tables with the truncation
     /// caption — never to silently biased numbers presented as complete.
-    public static let remoteReportByteLimit = 4_194_304
-
-    /// Head-fetch caps for the files the semantic model reads. Superset of
-    /// the preview needs for the same names, so ONE fetch serves both.
-    static let remoteSemanticCaps: [String: Int] = [
-        "generations.jsonl": RunBrowser.jsonPreviewByteLimit,
-        "report.json": remoteReportByteLimit,
-        "experiment.json": remoteReportByteLimit,
-        "validation-report.json": remoteReportByteLimit,
-        "promoted-movers.json": RunBrowser.jsonPreviewByteLimit,
-        "summaries.csv": RunBrowser.jsonPreviewByteLimit,
-        "effect-sizes.csv": RunBrowser.jsonPreviewByteLimit,
-        "alien-residuals.csv": RunBrowser.jsonPreviewByteLimit,
-        "cosine-matrix.csv": RunBrowser.jsonPreviewByteLimit,
-        "panel-effects.csv": RunBrowser.jsonPreviewByteLimit,
-    ]
+    public static let remoteReportByteLimit = StudyResultsState.remoteReportByteLimit
+    static let remoteSemanticCaps = StudyResultsState.remoteSemanticCaps
 
     /// Fetch one remote run's detail: every listed file exactly ONCE,
     /// head-bounded (the `head=` param; JSON size-gated from the LISTED
@@ -2898,131 +2347,8 @@ public final class ExperimentPanel {
         fetcher: (@Sendable (_ name: String, _ maxBytes: Int) async throws -> RemoteRunFileHead)? =
             nil
     ) async -> RemoteRunDetailPayload {
-        // A stale status from a previous run's failed load must not caption
-        // THIS load — it re-appears below only if this load itself fails.
-        remoteResultsStatus = nil
-        var payload = RemoteRunDetailPayload()
-        let fetch: @Sendable (String, Int) async throws -> RemoteRunFileHead
-        if let fetcher {
-            fetch = fetcher
-        } else {
-            loadStoredRemoteToken()
-            guard let client = remoteClient else {
-                payload.other = run.previewFileEntries
-                remoteResultsStatus = "invalid server URL"
-                return payload
-            }
-            let runID = run.id
-            fetch = { name, maxBytes in
-                try await client.runFileHead(
-                    runID: runID, name: name, maxBytes: maxBytes)
-            }
-        }
-
-        // One bounded fetch per listed file, concurrent across files. The
-        // request size is the semantic cap for model-feeding files (already
-        // ≥ the preview parser's need for that type), else the preview
-        // plan's bytes; files with no plan and no semantic role move no
-        // bytes at all.
-        let entries = run.previewFileEntries
-        var fetched: [String: (head: RemoteRunFileHead, requested: Int)] = [:]
-        var failures: [String: String] = [:]
-        await withTaskGroup(
-            of: (name: String, requested: Int, result: Result<RemoteRunFileHead, any Error>).self
-        ) { group in
-            for file in entries {
-                let requested: Int
-                if let semanticCap = Self.remoteSemanticCaps[file.name] {
-                    requested = semanticCap
-                } else if let planBytes = RunBrowser.remoteFetchPlan(
-                    name: file.name, size: file.size).requestBytes
-                {
-                    requested = planBytes
-                } else {
-                    continue
-                }
-                group.addTask {
-                    do {
-                        return (
-                            file.name, requested,
-                            .success(try await fetch(file.name, requested))
-                        )
-                    } catch {
-                        return (file.name, requested, .failure(error))
-                    }
-                }
-            }
-            for await outcome in group {
-                switch outcome.result {
-                case .success(let head):
-                    fetched[outcome.name] = (head, outcome.requested)
-                case .failure(let error):
-                    failures[outcome.name] = "\(error)"
-                }
-            }
-        }
-
-        // Previews, in listing order, from the shared bytes (pure parsers,
-        // identical caps to local browsing).
-        var artifacts = RunResults.ArtifactBytes()
-        for file in entries {
-            let preview: RunBrowser.FilePreview
-            if let (fetchedHead, requested) = fetched[file.name] {
-                // The server's actual file size (when stamped) supersedes the
-                // listing for truncation captions — 0 there means "unknown".
-                preview = RunBrowser.remotePreview(
-                    name: file.name,
-                    size: fetchedHead.fileSize ?? file.size,
-                    data: fetchedHead.data)
-                if RunResults.ArtifactBytes.fileNames.contains(file.name) {
-                    let head = RunBrowser.remoteHead(
-                        data: fetchedHead.data, listedSize: file.size,
-                        requestedBytes: requested,
-                        serverFileSize: fetchedHead.fileSize,
-                        serverTruncated: fetchedHead.truncated)
-                    artifacts.assign(
-                        name: file.name, data: head.data,
-                        truncated: head.truncated)
-                }
-            } else if let failure = failures[file.name] {
-                preview = .unavailable(reason: "fetch failed: \(failure)")
-            } else if case .none(let reason) = RunBrowser.remoteFetchPlan(
-                name: file.name, size: file.size)
-            {
-                preview = .unavailable(reason: reason)
-            } else {
-                preview = .unavailable(reason: "no preview")
-            }
-            if case .unavailable = preview {
-                payload.other.append(file)
-            } else {
-                payload.previewed.append(
-                    RemoteRunFilePreviewItem(file: file, preview: preview))
-            }
-        }
-
-        // Semantic model: pure parsing off the main actor (mirrors the
-        // local detail's Task.detached load).
-        if !artifacts.isEmpty {
-            let runID = run.id
-            let built = artifacts
-            payload.model = await Task.detached(priority: .userInitiated) {
-                RunResults.remoteModel(runID: runID, artifacts: built)
-            }.value
-        }
-
-        // Surface fetch failures through the existing status line — a
-        // missing semantic section must be attributable, never a bare nil.
-        if !failures.isEmpty {
-            let names = failures.keys.sorted()
-            let shown = names.prefix(3).map {
-                "\($0) (\(failures[$0] ?? "error"))"
-            }
-            remoteResultsStatus = "run \(run.id): could not fetch "
-                + shown.joined(separator: "; ")
-                + (names.count > 3 ? " — and \(names.count - 3) more" : "")
-        }
-        return payload
+        loadStoredRemoteToken()
+        return await results.loadRemoteRunDetail(run: run, client: remoteClient, fetcher: fetcher)
     }
 
     /// The evidence-bundle file inside a server run directory, when the run
@@ -3889,12 +3215,6 @@ public final class ExperimentPanel {
             .sorted()
     }
 
-    /// Declared control field for the picker.
-    public var controlConcept = ""
-    /// The control's OWN extraction method — never inherited from a study
-    /// concept, which is the fault C2 removed.
-    public var controlMethod: ExtractionMethod = .meanDifference
-
     public func addValidationControl() {
         guard let name = selectedName else { return }
         let concept = controlConcept.trimmingCharacters(in: .whitespaces)
@@ -4040,10 +3360,6 @@ public final class ExperimentPanel {
             lastControlMatrixNotes = []
         }
     }
-
-    /// The manual-pieces notes from the last scaffold (rendered under the
-    /// button so the scaffold never pretends to be the whole Step-5 matrix).
-    public private(set) var lastControlMatrixNotes: [String] = []
 
     /// The Data Readiness "edit" affordance (2026-07-19 paper cut: the
     /// button's effect — populating the Input Data editor further down —
@@ -4204,53 +3520,7 @@ public final class ExperimentPanel {
             await runStudyOnActiveServer(verb: "run")
             return
         }
-        isRunning = true
-        studyRunCancelRequested = false
-        resetLiveViewer()
-        note("running study '\(name)'…", severity: .info)
-        beginDisplayLog(
-            title: "Study run — \(name)",
-            initialLine: "verifying pins and loading the pinned model…")
-        defer {
-            isRunning = false
-            refresh()
-        }
-        do {
-            let runDirectory = try await ExperimentTasks.run(
-                experimentName: name,
-                shouldCancel: { [weak self] in
-                    await self?.studyRunCancelRequested ?? false
-                },
-                progress: { [weak self] event in
-                    await MainActor.run {
-                        self?.handleStudyProgress(event)
-                    }
-                })
-            lastRunDirectory = runDirectory.path
-            refresh()
-            refreshResults(selecting: runDirectory.lastPathComponent)
-            if studyRunCancelRequested {
-                // Cancelled by user: partial artifacts on disk, honestly
-                // marked — never reported as an error or a completion.
-                note("study run cancelled by user — partial artifacts kept "
-                    + "in \(runDirectory.lastPathComponent) (no report.json; "
-                    + "not a completed run)", severity: .warning)
-                endDisplayLog(
-                    "study run cancelled by user — partial artifacts kept in "
-                        + runDirectory.lastPathComponent)
-            } else {
-                note("study run complete: \(runDirectory.lastPathComponent)", severity: .success)
-                endDisplayLog("study run complete: \(runDirectory.lastPathComponent)")
-            }
-        } catch {
-            refresh()
-            note(
-                "The study run failed — no report.json was written; any "
-                    + "partial run directory remains on disk for inspection. "
-                    + "Details: \(error)",
-                severity: .error)
-            endDisplayLog("study run failed: \(error)")
-        }
+        await localJobs.runStudy(experimentName: name)
     }
 
     public func validateStudy() async {
@@ -4276,47 +3546,7 @@ public final class ExperimentPanel {
             await runStudyOnActiveServer(verb: "validate")
             return
         }
-        isValidating = true
-        validationCancelRequested = false
-        note("validating study '\(name)'…", severity: .info)
-        beginDisplayLog(
-            title: "Study validation — \(name)",
-            initialLine: "verifying pins and loading the pinned model…")
-        defer {
-            isValidating = false
-            refresh()
-        }
-        do {
-            let runDirectory = try await ExperimentTasks.validate(
-                experimentName: name,
-                shouldCancel: { [weak self] in
-                    await self?.validationCancelRequested ?? false
-                },
-                log: { [weak self] line in
-                    await MainActor.run {
-                        self?.appendDisplayLog(line)
-                        self?.status = line
-                    }
-                })
-            if validationCancelRequested {
-                note("validation cancelled by user — partial artifacts kept "
-                    + "in \(runDirectory.lastPathComponent); no validation "
-                    + "evidence was written", severity: .warning)
-                endDisplayLog(
-                    "validation cancelled by user — no evidence written")
-            } else {
-                lastValidationDirectory = runDirectory.path
-                note("validation complete: \(runDirectory.lastPathComponent)", severity: .success)
-                endDisplayLog("validation complete: \(runDirectory.lastPathComponent)")
-            }
-        } catch {
-            note(
-                "Validation failed — no validation evidence was written, so "
-                    + "freeze will still ask for a matching validate run. Fix "
-                    + "the cause and validate again. Details: \(error)",
-                severity: .error)
-            endDisplayLog("validation failed: \(error)")
-        }
+        await localJobs.validateStudy(experimentName: name)
     }
 
     // MARK: Explicit extraction (App gap A11)
@@ -4355,54 +3585,7 @@ public final class ExperimentPanel {
             await runStudyOnActiveServer(verb: "extract")
             return
         }
-        isExtracting = true
-        extractCancelRequested = false
-        note("extracting vectors for '\(name)'…", severity: .info)
-        beginDisplayLog(
-            title: "Vector extraction — \(name)",
-            initialLine: "verifying pins and loading the pinned model…")
-        defer {
-            isExtracting = false
-            refresh()
-        }
-        do {
-            try await ExperimentTasks.extract(
-                experimentName: name,
-                shouldCancel: { [weak self] in
-                    await self?.extractCancelRequested ?? false
-                })
-            let runDirectory = ExperimentStore.newestRunDirectory(
-                experimentName: name, task: "extract")
-            lastExtractDirectory = runDirectory?.path
-            refresh()
-            if let id = runDirectory?.lastPathComponent {
-                refreshResults(selecting: id)
-            }
-            if extractCancelRequested {
-                note(
-                    "extraction cancelled by user — completed vectors kept in "
-                        + (runDirectory?.lastPathComponent ?? "the run directory")
-                        + " (marked cancelled)",
-                    severity: .warning)
-                endDisplayLog("extraction cancelled by user — partial vectors kept")
-            } else {
-                note(
-                    "extraction complete: "
-                        + (runDirectory?.lastPathComponent ?? "see runs/"),
-                    severity: .success)
-                endDisplayLog(
-                    "extraction complete: "
-                        + (runDirectory?.lastPathComponent ?? "see runs/"))
-            }
-        } catch {
-            refresh()
-            note(
-                "Vector extraction failed — any completed vectors remain in "
-                    + "the run directory; nothing pinned in the study changed. "
-                    + "Details: \(error)",
-                severity: .error)
-            endDisplayLog("extraction failed: \(error)")
-        }
+        await localJobs.extractStudy(experimentName: name)
     }
 
     /// The run the paired judge will evaluate: the selected completed run,
@@ -4523,132 +3706,21 @@ public final class ExperimentPanel {
         if selectedResultID != item.id {
             selectedResultID = item.id
         }
-        isEvaluating = true
-        evaluationCancelRequested = false
-        liveEvaluationDirectory = nil
-        liveActiveJudgment = nil
-        liveJudgments = []
-        note("running paired judge for '\(item.directoryName)'…", severity: .info)
-        // A pinned rubric file makes inline draft text optional; with
-        // neither, there is nothing to judge with.
-        let evaluation = evaluationSpecFromDraft()
-        if evaluation == nil,
-            judgeRubricFile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            note("enter a paired judge rubric or pin a rubric file first", severity: .info)
-            isEvaluating = false
-            return
-        }
-        beginDisplayLog(
-            title: "Paired judge — \(name)",
-            initialLine: "judging run \(item.directoryName)…")
-        defer {
-            isEvaluating = false
-            refresh()
-        }
-        do {
-            let url = try await ExperimentTasks.evaluatePairedJudge(
-                experimentName: name,
-                sourceRunDirectory: URL(filePath: item.path),
-                evaluation: evaluation,
-                shouldCancel: { [weak self] in
-                    await self?.evaluationCancelRequested ?? false
-                },
-                progress: { [weak self] event in
-                    await MainActor.run {
-                        self?.handleStudyProgress(event)
-                    }
-                })
-            refresh()
-            refreshResults(selecting: item.id)
-            if evaluationCancelRequested {
-                note("paired judge cancelled by user — completed judgments "
-                    + "kept in \(url.lastPathComponent); no judge report written", severity: .warning)
-                endDisplayLog(
-                    "paired judge cancelled by user — no judge report written")
-            } else {
-                lastEvaluationDirectory = url.path
-                note("paired judge complete: \(url.lastPathComponent)", severity: .success)
-                endDisplayLog("paired judge complete: \(url.lastPathComponent)")
-            }
-        } catch {
-            refresh()
-            note(
-                "Paired judging failed — no judge report was written; the "
-                    + "source run is untouched, so judging can simply be run "
-                    + "again. Details: \(error)",
-                severity: .error)
-            endDisplayLog("paired judge failed: \(error)")
-        }
+        await localJobs.runPairedJudgeEvaluation(experimentName: name, sourceRun: item,
+            evaluation: evaluationSpecFromDraft(),
+            hasPinnedRubric: !judgeRubricFile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     public func clearLiveViewer() {
-        resetLiveViewer()
+        localJobs.clearLiveViewer()
     }
 
     private func resetLiveViewer() {
-        liveRunDirectory = nil
-        liveEvaluationDirectory = nil
-        liveActiveGeneration = nil
-        liveActiveJudgment = nil
-        liveGenerations = []
-        liveJudgments = []
+        localJobs.resetLiveViewer()
     }
 
     private func handleStudyProgress(_ event: ExperimentTasks.StudyTaskProgress) {
-        switch event {
-        case .runDirectory(let path):
-            liveRunDirectory = path
-            status = "writing study artifacts to \(URL(filePath: path).lastPathComponent)…"
-            appendDisplayLog("run directory: \(URL(filePath: path).lastPathComponent)")
-        case .generationStarted(let condition, let promptID, let prompt):
-            liveActiveGeneration = LiveStudyGeneration(
-                condition: condition,
-                promptID: promptID,
-                prompt: prompt,
-                output: "")
-            status = "generating \(condition) · \(promptID)…"
-            appendDisplayLog("generating [\(condition)] \(promptID)…")
-        case .generationChunk(let condition, let promptID, let output):
-            // Per-token chunks update only the in-panel viewer — mirroring
-            // every chunk would flood the display-pane log.
-            liveActiveGeneration = LiveStudyGeneration(
-                condition: condition,
-                promptID: promptID,
-                prompt: liveActiveGeneration?.prompt ?? "",
-                output: output)
-        case .generationCompleted(let generation):
-            liveGenerations.insert(generation, at: 0)
-            liveActiveGeneration = nil
-            status = "generated \(generation.condition) · \(generation.promptID)"
-            appendDisplayLog(
-                "generated [\(generation.condition)] \(generation.promptID): "
-                    + "\(generation.wordCount) words")
-        case .evaluationDirectory(let path):
-            liveEvaluationDirectory = path
-            status = "writing judge artifacts to \(URL(filePath: path).lastPathComponent)…"
-            appendDisplayLog("judge directory: \(URL(filePath: path).lastPathComponent)")
-        case .judgmentStarted(let condition, let promptID):
-            liveActiveJudgment = LiveStudyJudgment(condition: condition, promptID: promptID)
-            status = "judging \(condition) · \(promptID)…"
-        case .judgmentCompleted(let judgment):
-            liveJudgments.insert(judgment, at: 0)
-            liveActiveJudgment = nil
-            status = "judged \(judgment.condition) · \(judgment.promptID): \(judgment.conditionResult)"
-            appendDisplayLog(
-                "judged [\(judgment.condition)] \(judgment.promptID): "
-                    + "\(judgment.conditionResult)")
-        case .codingCompleted(let coding):
-            liveActiveJudgment = nil
-            let codes = coding.codes.sorted { $0.key < $1.key }
-                .map { "\($0.key)=\($0.value.displayString)" }
-                .joined(separator: ", ")
-            status = "coded \(coding.condition) · \(coding.promptID) "
-                + "[\(coding.judge)]"
-            appendDisplayLog(
-                "coded [\(coding.condition)] \(coding.promptID) "
-                    + "(\(coding.judge)): \(codes)")
-        }
+        localJobs.handleStudyProgress(event)
     }
 
     // MARK: Direct concept attach / detach (App gap A8)
@@ -5475,142 +4547,25 @@ public final class ExperimentPanel {
     }
 
     private func syncDraftFieldsFromSelection(force: Bool = false) {
-        guard let manifest = selected else {
-            syncedSelection = nil
-            protocolDescription = ""
-            taskDescription = ""
-            outcomeMeasures = ""
-            studyKind = .modelOutput
-            taskPromptsFile = "prompts/dev/dev-prompts.jsonl"
-            taskPromptsText = ""
-            taskPromptsStatus = nil
-            taskPromptsInstrumentSummary = nil
-            taskPromptsDocument = nil
-            taskPromptsDocumentFile = nil
-            // Workspace-scoped default: the active workspace's model choice
-            // (server target → the selected/loaded SERVER model), falling
-            // back to that workspace's inventory — never a local MLX id
-            // seeding a server study.
-            studyBaseModelID =
-                host?.workspaceSelectedModelID
-                ?? modelOptions.first
-                ?? ChatService.availableModels.first?.id ?? ""
-            selectedVariantToAddID = nil
-            selectedMultiAgentScenarioID = multiAgentScenarioOptions.first?.id
-            seatCastingEdits = [:]
-            multiAgentIncludeBaseline = true
-            promptMode = .chatAssistant
-            systemPrompt = ""
-            reasoningEffort = ReasoningEffort.off.rawValue
-            reasoningMaxTokens = nil
-            evaluationPrompt = ""
-            evaluationStructuredPrompt = ""
-            judgeModel = defaultJudgeModel(for: nil)
-            judgeRubricFile = ""
-            judges = []
-            judgeKindStashes = [:]
-            resultRuns = []
-            selectedResultID = nil
-            selectedResult = nil
-            selectedResultBrowserItem = nil
-            runTemperature = 0
-            runMaxTokens = 2048
-            phaseField = ""
-            caseFamilyField = ""
-            samplesPerItemField = 1
-            seedPolicyField = ""
-            studyDtypeField = ""
-            acknowledgeUnequalOptionLengthsField = false
-            humanBaselinePathField = ""
-            promotionFDRText = ""
-            promotionDoseMonotone = false
-            promotionExceedsRandomFloor = false
-            promotionCapabilityGateText = ""
-            conditionConcept = ""
-            conditionLayerText = ""
-            conditionAlphaText = ""
-            conditionAlphaInNormUnits = true
-            lastControlMatrixNotes = []
-            return
-        }
-        guard force || syncedSelection != manifest.name else { return }
-        syncedSelection = manifest.name
-        protocolDescription = manifest.experimentDescription
-        taskDescription = manifest.taskDescription ?? ""
-        outcomeMeasures = manifest.outcomeMeasures ?? ""
-        studyKind = manifest.studyKind
-        // The study type needs no sync: `studyFocus` derives it from the
-        // manifest (perturbation policy → confirm; concepts → concept
-        // study; …) unless the user overrides via the top-of-page picker.
-        studyBaseModelID = manifest.modelID
-        selectedVariantToAddID = availableVariantsForStudy.first?.id
-        confirmAgentID = confirmableAgents.first?.id
-        // The picker names the scenario a researcher CHOSE. For a cast study
-        // that is the semantic scenario it was compiled from — the compiled
-        // file is deliberately outside the library and would leave the picker
-        // reading "select…" on a study that is fully configured.
-        let pickerPath = manifest.multiAgentSemanticScenarioPath
-            ?? manifest.multiAgentScenarioPath
-        if let pickerPath {
-            // Symlinks resolved on both sides: a directory listing and a path
-            // built from the workspace root can spell the same file two ways
-            // (a workspace under /tmp is the everyday case), and a selection
-            // that silently reads "select…" on a configured study is worse
-            // than a slow comparison.
-            let target = scenarioURL(from: pickerPath).resolvingSymlinksInPath().path
-            selectedMultiAgentScenarioID = multiAgentScenarioOptions.first {
+        let manifest = selected
+        if let manifest, !force, draft.syncedSelection == manifest.name { return }
+        // Resolve workspace/library facts here; the editor owns only their values.
+        let scenarioID: MultiAgentScenarioRecord.ID?
+        if let path = manifest?.multiAgentSemanticScenarioPath ?? manifest?.multiAgentScenarioPath {
+            let target = scenarioURL(from: path).resolvingSymlinksInPath().path
+            scenarioID = multiAgentScenarioOptions.first {
                 $0.url.resolvingSymlinksInPath().path == target
             }?.id
-        } else {
-            selectedMultiAgentScenarioID = multiAgentScenarioOptions.first?.id
-        }
-        // Seat edits belong to the study they were made on.
-        seatCastingEdits = [:]
-        multiAgentIncludeBaseline = manifest.multiAgentIncludeBaseline
-        taskPromptsFile = manifest.taskPromptsFile ?? "prompts/dev/dev-prompts.jsonl"
-        if manifest.studyKind == .modelOutput {
-            loadTaskPrompts()
-        } else {
-            taskPromptsText = ""
-            taskPromptsStatus = nil
-            taskPromptsInstrumentSummary = nil
-            taskPromptsDocument = nil
-            taskPromptsDocumentFile = nil
-        }
-        promptMode = manifest.promptMode ?? .chatAssistant
-        systemPrompt = manifest.systemPrompt ?? ""
-        reasoningEffort = manifest.resolvedReasoningEffort.rawValue
-        reasoningMaxTokens = manifest.reasoningMaxTokens
-        evaluationPrompt = manifest.evaluation?.judgePrompt ?? ""
-        evaluationStructuredPrompt = manifest.evaluation?.structuredPrompt ?? ""
-        judgeModel = manifest.evaluation?.judgeModel ?? defaultJudgeModel(for: manifest)
-        judgeRubricFile = manifest.judgeRubricFile ?? ""
-        judges = manifest.judges ?? []
-        // The kind stash belongs to the study it was made on (like seat
-        // edits above).
-        judgeKindStashes = [:]
-        runTemperature = manifest.temperature
-        runMaxTokens = manifest.maxTokens
-        // Science-manifest editor fields (A2).
-        phaseField = manifest.phase ?? ""
-        caseFamilyField = manifest.caseFamily ?? ""
-        samplesPerItemField = manifest.samplesPerItem ?? 1
-        seedPolicyField = manifest.seedPolicy ?? ""
-        studyDtypeField = manifest.dtype ?? ""
-        acknowledgeUnequalOptionLengthsField =
-            manifest.acknowledgeUnequalOptionLengths ?? false
-        humanBaselinePathField = manifest.humanBaseline?.path ?? ""
-        promotionFDRText = manifest.promotionRule?.fdrThreshold.map { "\($0)" } ?? ""
-        promotionDoseMonotone = manifest.promotionRule?.doseMonotone ?? false
-        promotionExceedsRandomFloor =
-            manifest.promotionRule?.exceedsRandomFloor ?? false
-        promotionCapabilityGateText = manifest.promotionRule?.capabilityGate ?? ""
-        // Condition editor defaults (A4).
-        conditionConcept = manifest.concepts.first?.name ?? ""
-        conditionLayerText = ""
-        conditionAlphaText = ""
-        conditionAlphaInNormUnits = true
-        lastControlMatrixNotes = []
+        } else { scenarioID = multiAgentScenarioOptions.first?.id }
+        let changed = draft.synchronize(manifest, defaults: .init(
+            baseModelID: host?.workspaceSelectedModelID ?? modelOptions.first
+                ?? ChatService.availableModels.first?.id ?? "",
+            judgeModel: defaultJudgeModel(for: manifest),
+            variantID: availableVariantsForStudy.first?.id,
+            confirmAgentID: confirmableAgents.first?.id, scenarioID: scenarioID), force: force)
+        guard changed else { return }
+        if manifest == nil { results.clearSelectionAndRuns() }
+        if manifest?.studyKind == .modelOutput { loadTaskPrompts() }
     }
 
     private func nilIfEmpty(_ text: String) -> String? {
@@ -5694,43 +4649,7 @@ public final class ExperimentPanel {
     }
 
     public func refreshResults(selecting preferredID: String? = nil) {
-        guard let name = selectedName else {
-            resultRuns = []
-            selectedResultID = nil
-            selectedResult = nil
-            selectedResultBrowserItem = nil
-            return
-        }
-        resultRuns = StudyResultStore.list(experimentName: name)
-        if let preferredID, resultRuns.contains(where: { $0.id == preferredID }) {
-            selectedResultID = preferredID
-            loadSelectedResult()
-            return
-        }
-        if let selectedResultID, !resultRuns.contains(where: { $0.id == selectedResultID }) {
-            self.selectedResultID = nil
-        }
-        if selectedResultID == nil {
-            selectedResultID = resultRuns.first(where: { $0.kind == .run })?.id
-                ?? resultRuns.first?.id
-        } else {
-            loadSelectedResult()
-        }
-    }
-
-    private func loadSelectedResult() {
-        guard let id = selectedResultID,
-            let item = resultRuns.first(where: { $0.id == id })
-        else {
-            selectedResult = nil
-            selectedResultBrowserItem = nil
-            return
-        }
-        selectedResult = StudyResultStore.detail(for: item)
-        // F10: build the browser item here, once per selection — never in a
-        // view body. Runs are immutable, so the memo may serve repeats.
-        selectedResultBrowserItem = browserItemMemo.item(
-            at: URL(filePath: item.path))
+        results.refresh(experimentName: selectedName, repository: StudyResultRepository(workspaceRoot: ExperimentStore.workspaceRoot), selecting: preferredID)
     }
 
 }

@@ -20,23 +20,13 @@ struct ExperimentsPanelView: View {
     /// Runs stamped with the study being deleted, read at click time (never
     /// per frame — it scans runs/) so the confirmation can say what is at stake.
     @State private var deleteDraftRunCount = 0
-    @State private var reviewSheet: ResultReviewSheet?
     /// The one Rename affordance, offered for every study whatever its
     /// status: a draft renames for real, a frozen/complete study takes a
     /// display label (see `ExperimentStore.rename` for why the two differ).
     @State private var renameSheet: RenameStudySheet?
-    @State private var reconnectJobID = ""
     /// Bound expansion state for the "Remote options" disclosure so
     /// cross-links (Optimizations' preconfigured sweep) can open it directly.
     @State private var runOnServerExpanded = false
-    /// WS6.3 unified Run: the substrate picker's manual override (nil follows
-    /// the active scope) and the submission engine that owns the remote
-    /// bundle path + WS4 preflight surfacing. All rules live in
-    /// `SubstrateRouting` / `PreflightPresentation` (ExperimentKit,
-    /// unit-tested); this view renders them.
-    @State private var runSubstrate: SubstrateRouting.Substrate?
-    @State private var runner = UnifiedStudyRunner()
-    @State private var confirmForcedOverride = false
     /// Robustness reports scanned once per appearance (not per frame) so
     /// attached agent conditions can show non-blocking evidence notes.
     @State private var robustnessEvidence: [AgentEvidence.RobustnessEvidence] = []
@@ -110,6 +100,7 @@ struct ExperimentsPanelView: View {
 
     var body: some View {
         @Bindable var panel = service.experiments
+        @Bindable var draft = panel.draft
         Form {
             Section {
                 Picker("Draft", selection: $panel.selectedName) {
@@ -159,14 +150,14 @@ struct ExperimentsPanelView: View {
                                     : "frozen and completed studies keep their name for "
                                         + "run provenance — Rename sets a display label")
                             Button("Duplicate as Draft") { panel.duplicateSelected() }
-                                .help(Self.duplicateHelp)
+                                .help(StudyControlCopy.duplicateHelp)
                             Button("Delete…", role: .destructive) {
                                 deleteDraftRunCount = ExperimentStore.runsStamped(
                                     experimentName: manifest.name)
                                 confirmDeleteDraft = true
                             }
                             .disabled(panel.deleteSelectedStudyRefusal != nil)
-                            .help(panel.deleteSelectedStudyRefusal ?? Self.deleteStudyHelp)
+                            .help(panel.deleteSelectedStudyRefusal ?? StudyControlCopy.deleteStudyHelp)
                             .confirmationDialog(
                                 "Delete draft '\(manifest.name)'?",
                                 isPresented: $confirmDeleteDraft,
@@ -206,17 +197,17 @@ struct ExperimentsPanelView: View {
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
-                            TextField("new study name", text: $panel.newName)
+                            TextField("new study name", text: $draft.newName)
                                 .help("creates a draft pinned to the currently selected model")
                             TextField(
-                                "question or purpose", text: $panel.newDescription,
+                                "question or purpose", text: $draft.newDescription,
                                 axis: .vertical
                             )
                             .lineLimit(1 ... 3)
                             .help("short domain-neutral purpose for the draft protocol")
                             TextField(
                                 "model revision (optional commit hash)",
-                                text: $panel.newRevision
+                                text: $draft.newRevision
                             )
                             .font(.caption.monospaced())
                             .help(
@@ -259,7 +250,7 @@ struct ExperimentsPanelView: View {
                 Section("Study Setup") {
                     TextField(
                         "question or purpose",
-                        text: $panel.protocolDescription,
+                        text: $draft.protocolDescription,
                         axis: .vertical
                     )
                     .lineLimit(1 ... 3)
@@ -268,7 +259,7 @@ struct ExperimentsPanelView: View {
 
                     TextField(
                         "task: what the model or agents will do",
-                        text: $panel.taskDescription,
+                        text: $draft.taskDescription,
                         axis: .vertical
                     )
                     .lineLimit(2 ... 5)
@@ -279,7 +270,7 @@ struct ExperimentsPanelView: View {
 
                     TextField(
                         "outcome measures",
-                        text: $panel.outcomeMeasures,
+                        text: $draft.outcomeMeasures,
                         axis: .vertical
                     )
                     .lineLimit(2 ... 5)
@@ -300,7 +291,7 @@ struct ExperimentsPanelView: View {
                             panel.studyKind == .multiAgent
                                 ? "Default model for seats"
                                 : "Baseline model",
-                            selection: $panel.studyBaseModelID
+                            selection: $draft.studyBaseModelID
                         ) {
                             if panel.studyBaseModelID.isEmpty {
                                 Text("select model…").tag("")
@@ -345,10 +336,10 @@ struct ExperimentsPanelView: View {
                         ModelRevisionControls(manifest: manifest, panel: panel)
                         studyDtypePicker(
                             manifest: manifest,
-                            selection: $panel.studyDtypeField)
+                            selection: $draft.studyDtypeField)
 
                         HStack(spacing: 6) {
-                            Picker("Baseline prompt mode", selection: $panel.promptMode) {
+                            Picker("Baseline prompt mode", selection: $draft.promptMode) {
                                 ForEach(ExperimentManifest.PromptMode.allCases, id: \.self) { mode in
                                     Text(mode.label).tag(mode)
                                 }
@@ -370,7 +361,7 @@ struct ExperimentsPanelView: View {
                                 ? "Baseline instruction (Gemma: prepended to "
                                     + "the first user turn — no system role)"
                                 : "Baseline system prompt",
-                            text: $panel.systemPrompt, axis: .vertical)
+                            text: $draft.systemPrompt, axis: .vertical)
                             .lineLimit(1 ... 4)
                             .disabled(manifest.status != .draft)
                             .help(
@@ -382,7 +373,7 @@ struct ExperimentsPanelView: View {
                                     + "user turn (this affects prompt-set "
                                     + "hashing and prompt design)")
 
-                        Picker("Reasoning effort", selection: $panel.reasoningEffort) {
+                        Picker("Reasoning effort", selection: $draft.reasoningEffort) {
                             ForEach(ReasoningEffort.vocabulary, id: \.self) { effort in
                                 Text(effort).tag(effort)
                             }
@@ -400,7 +391,7 @@ struct ExperimentsPanelView: View {
                         if panel.qwenThinkingEnabled {
                             TextField(
                                 "Reasoning max tokens",
-                                value: $panel.reasoningMaxTokens,
+                                value: $draft.reasoningMaxTokens,
                                 format: .number)
                             .disabled(manifest.status != .draft)
                             .help("The reasoning block's own token cap (up to </think>); "
@@ -408,12 +399,12 @@ struct ExperimentsPanelView: View {
                         }
                     }
 
-                    TemperatureRow(value: $panel.runTemperature)
+                    TemperatureRow(value: $draft.runTemperature)
                         .disabled(manifest.status != .draft)
 
                     LabeledContent("Max tokens") {
                         TextField(
-                            "", value: $panel.runMaxTokens,
+                            "", value: $draft.runMaxTokens,
                             format: .number.grouping(.never)
                         )
                         .frame(width: 72)
@@ -424,7 +415,7 @@ struct ExperimentsPanelView: View {
 
                     if panel.studyKind == .multiAgent {
                         Picker("Scenario",
-                               selection: $panel.selectedMultiAgentScenarioID) {
+                               selection: $draft.selectedMultiAgentScenarioID) {
                             Text("select…").tag(String?.none)
                             ForEach(panel.multiAgentScenarioOptions) { scenario in
                                 Text(Self.scenarioMenuLabel(scenario))
@@ -448,7 +439,7 @@ struct ExperimentsPanelView: View {
                         }
                         Toggle(
                             "Include stripped baseline arm",
-                            isOn: $panel.multiAgentIncludeBaseline
+                            isOn: $draft.multiAgentIncludeBaseline
                         )
                         .disabled(manifest.status != .draft)
                         .help(
@@ -487,7 +478,7 @@ struct ExperimentsPanelView: View {
                     // (saveProtocol always writes phaseField back).
                     if panel.studyFocus == .conceptStudy {
                         HStack(spacing: 6) {
-                            Picker("Funnel phase", selection: $panel.phaseField) {
+                            Picker("Funnel phase", selection: $draft.phaseField) {
                                 Text("not declared").tag("")
                                 ForEach(ExperimentStore.knownPhases, id: \.self) { phase in
                                     Text(phase).tag(phase)
@@ -665,17 +656,11 @@ struct ExperimentsPanelView: View {
                     // split across the page from the run actions.
 
                     if panel.studyKind == .modelOutput {
-                        validationControls(manifest: manifest, panel: panel)
-                        if !manifest.concepts.isEmpty {
-                            extractControls(manifest: manifest, panel: panel)
-                            // DiscriminantControlsSection moved to the
-                            // Evaluation section (2026-08-01) — declaring
-                            // controls is an evaluation decision, not a run
-                            // action.
-                        }
+                        StudyPreparationControlsView(service: service, manifest: manifest,
+                            pendingModelJob: $pendingModelJob, runOnServerExpanded: $runOnServerExpanded)
                     }
-                    runControls(manifest: manifest, panel: panel)
-                    remoteRunControls(manifest: manifest, panel: panel)
+                    StudyRunControlsView(service: service, manifest: manifest,
+                        runOnServerExpanded: $runOnServerExpanded, pendingModelJob: $pendingModelJob)
                 }
 
                 if !panel.awaitingSweepJudgments.isEmpty,
@@ -743,7 +728,7 @@ struct ExperimentsPanelView: View {
                     }
                 }
 
-                liveRunViewer(panel: panel)
+                StudyLiveRunView(jobs: panel.localJobs)
 
                 // ONE results area (2026-07-19 second pass): what used to
                 // be four sibling sections — Results, Server Runs,
@@ -752,12 +737,18 @@ struct ExperimentsPanelView: View {
                 // subheaded by WHERE the runs live and at what granularity.
                 Section("Runs & Results") {
                     if !panel.recentServerJobs.isEmpty {
-                        recentServerJobsGroup(panel: panel)
+                        StudyRecentJobsView(jobs: panel.remoteJobs,
+                            resume: { await panel.resubmitRemoteJob($0) },
+                            importEvidence: { await panel.importEvidence(fromJobID: $0) },
+                            refresh: { await panel.refreshRecentServerJobs() })
                     }
                     Text("Run reports — this workspace")
                         .font(.caption.bold())
                         .padding(.top, 4)
-                    resultsView(panel: panel)
+                    StudyResultsView(service: service, results: panel.results,
+                        refresh: { panel.refreshResults() }) {
+                        pairedJudgeControls(panel: panel)
+                    }
                     // Runs are per-substrate artifacts: in a server
                     // workspace, also list the server's runs/ tree.
                     if service.cluster.computeTarget == .server {
@@ -790,9 +781,6 @@ struct ExperimentsPanelView: View {
                     }
                 }
             }
-        }
-        .sheet(item: $reviewSheet) { sheet in
-            ResultReviewWindow(sheet: sheet)
         }
         .sheet(item: $renameSheet) { sheet in
             RenameStudyWindow(sheet: sheet, panel: panel)
@@ -857,12 +845,6 @@ struct ExperimentsPanelView: View {
                 await panel.refreshAwaitingSweepJudgments(study: study)
             }
         }
-        // A different study is a different design: the substrate override
-        // and any surfaced preflight belong to the previous selection.
-        .onChange(of: panel.selectedName) {
-            runSubstrate = nil
-            runner.clearPreflight()
-        }
         .sheet(isPresented: $showImportJSONL) {
             ImportJSONLSheet(
                 text: $importJSONLText,
@@ -924,7 +906,7 @@ struct ExperimentsPanelView: View {
                     confirmSaveBackToDesign = true
                 }
                 .disabled(refusal != nil)
-                .help(refusal ?? Self.saveBackHelp)
+                .help(refusal ?? StudyControlCopy.saveBackHelp)
                 .confirmationDialog(
                     "Update design '\(target)'?",
                     isPresented: $confirmSaveBackToDesign,
@@ -940,7 +922,7 @@ struct ExperimentsPanelView: View {
             Button("Save as new design") {
                 panel.newDesignFromStudy(named: manifest.name)
             }
-            .help(Self.saveAsNewDesignHelp)
+            .help(StudyControlCopy.saveAsNewDesignHelp)
             if target == nil {
                 Button("Open Templates") { openTemplates() }
                     .buttonStyle(.link)
@@ -973,17 +955,6 @@ struct ExperimentsPanelView: View {
             + "design's name, description and creation date are unchanged."
     }
 
-    private static let saveBackHelp =
-        "overwrites the design this study was minted from with this study's "
-        + "current settings (agents stripped). The design's content hash "
-        + "changes; studies already minted from it keep their original lineage "
-        + "stamps."
-
-    private static let saveAsNewDesignHelp =
-        "adds a NEW design to the library from this study's settings, leaving "
-        + "any design it came from untouched. An unchanged instance of a live "
-        + "design selects that design instead of minting a near-duplicate."
-
     // MARK: Starting a study from a design
 
     /// The first control in the new-study flow: what this study starts FROM.
@@ -994,6 +965,7 @@ struct ExperimentsPanelView: View {
     @ViewBuilder
     private func newStudyDesignPicker(panel: ExperimentPanel) -> some View {
         @Bindable var panel = panel
+        @Bindable var draft = panel.draft
         Picker("Start from", selection: $panel.newStudyDesign) {
             ForEach(StudyDesignChoice.choices(designs: panel.templates)) { choice in
                 Text(choice.label).tag(choice)
@@ -1077,16 +1049,6 @@ struct ExperimentsPanelView: View {
         return message
     }
 
-    private static let duplicateHelp =
-        "copies EVERYTHING, agents included — the only way to iterate on a "
-        + "frozen study. (Saving a study as a DESIGN, in Templates, does the "
-        + "opposite: it strips the agents and re-derives the derived pins.)"
-
-    private static let deleteStudyHelp =
-        "moves the draft's directory to a .trash-<timestamp> sibling under "
-        + "experiments/ — never a destructive delete. Frozen and completed "
-        + "studies cannot be deleted at all: their runs stamp them."
-
     /// Opens Rename on `manifest`, selecting it first so the panel action
     /// (which always targets the selection) cannot act on another study.
     private func openRename(_ manifest: ExperimentManifest) {
@@ -1108,97 +1070,11 @@ struct ExperimentsPanelView: View {
 
     // Long strings live outside the body — interpolating them inline blows
     // the SwiftUI type-checker budget (same fix as ChatView.provenanceLine).
-    private static let freezeHelp =
-        "ONE-WAY: verifies every pinned input, requires a pinned model revision, "
-        + "and stamps the content hash and git commit. Agent-comparison "
-        + "studies pin each agent (variant artifact) by artifact hash; concept-vector "
-        + "studies also require a matching validate run. Settings must be "
-        + "frozen before behavior is measured — iterate afterwards by duplicating. "
-        + "CLI: freeze --force skips validation gates"
-
-    private static let remoteFreezeHelp =
-        "ONE-WAY, executed by the ACTIVE SERVER: the server verifies every "
-        + "pinned input, evaluates the freeze gates against ITS OWN substrate's "
-        + "validation evidence (validation evidence counts on the substrate "
-        + "that freezes — validate on the server first), stamps frozenBy: "
-        + "\"server\" + the content hash, and exports preregistration.md. "
-        + "Freeze stamps the server-resident copy; before submitting, the app "
-        + "verifies that copy IS the manifest shown here (field-level "
-        + "comparison, volatile freeze stamps excluded) and refuses on a "
-        + "mismatch. On a paired workspace the frozen manifest appears here "
-        + "immediately. No force option in the app — forcing requires the CLI"
-
-    private static let runHelp =
-        "executes the study in-app: verifies pins, loads the model at the "
-        + "pinned revision, runs the baseline plus pinned agents for every "
-        + "task prompt, and writes generations, metrics.csv, report.json, "
-        + "and the manifest snapshot into a new immutable runs/ directory. "
-        + "Legacy concept-vector studies re-derive their vectors before running. "
-        + "Currently requires Temperature = 0 because mlx-swift-lm does not "
-        + "expose a per-run seed for reproducible sampling"
-
-    private static let validateHelp =
-        "creates the validation evidence required by Freeze Study: verifies "
-        + "the pinned inputs, loads the model at its pinned revision (or pins "
-        + "the local cached revision for drafts), re-derives concept vectors, "
-        + "runs never-named validation scenarios when present, writes the "
-        + "cross-concept cosine matrix, and stores a manifest snapshot in a "
-        + "new runs/ validate directory"
-
-    private static let extractHelp =
-        "re-derives the pinned concepts' steering vectors from the frozen "
-        + "recipe (stimulus hashes + extraction options) into a new immutable "
-        + "runs/ extract directory — the CLI 'experiment extract' verb. "
-        + "Deterministic re-derivation, so drafts AND frozen studies may run it"
-
-    private static let outcomeModeHelp =
-        "dispatches real instruments — not a note. Generated choice: the "
-        + "run samples text and parses answers from the prose. Answer-token "
-        + "probability: no endpoint prose — deterministic logprob records "
-        + "over the declared options. Both: the two side by side. Written "
-        + "to `outcomeInstruments`; the run's records and Results views "
-        + "differ accordingly"
-
-    private static let remoteOptionsCaption =
-        "the unified Run button packages this study as a hash-pinned bundle "
-        + "and submits it with these options — the portable path that works "
-        + "whether or not the study exists in the server's own workspace."
-
-    private static let unifiedRemoteRunHelp =
-        "packages this study as a hash-pinned bundle, uploads it, and submits "
-        + "the selected verb as a durable server job. The server preflights "
-        + "the submission (memory fit, walltime, quota) — warnings show "
-        + "inline; a failing verdict stops the submission unless explicitly "
-        + "forced."
-
-    private static let importEvidenceCaption =
-        "Import Evidence verifies an evidence bundle's hashes and lands it "
-        + "under runs/ as an immutable imported run."
-
-    private static let recentJobsCaption =
-        "jobs persist on the server — reconnect any time from Compute or here"
-
-    private static func validateCaption(variantsPresent: Bool) -> String {
-        "derives vectors from the pinned recipe and writes scope-hashed "
-            + "validation evidence (held-out probe accuracy, cross-concept geometry"
-            + (variantsPresent ? ", capability battery per agent" : "")
-            + "). Optional while drafting — freeze REQUIRES matching evidence."
-    }
 
     private func serverRunCaption(_ verb: String) -> String {
         "\(verb) runs on \(service.cluster.substrateLabel) as a durable job — "
             + "reconnect from Compute"
     }
-
-    private static let studyDtypeHelp =
-        "the numeric precision the study model runs in on the compute "
-        + "substrate. A PIN, not a hint: greedy decoding is not "
-        + "precision-proof — at a near-tie between two tokens, bf16 and fp16 "
-        + "round differently and the continuation diverges — so two runs at "
-        + "different precisions are not the same measurement. Leave it on "
-        + "\"device default\" to let the substrate choose, which is what "
-        + "every study did before this pin existed. Honored by the server; "
-        + "the Mac validates it here so a bad value cannot reach the cluster."
 
     /// The study's precision pin. Shown beside the baseline model because it
     /// qualifies that model: same repo at two precisions is two instruments.
@@ -1224,7 +1100,7 @@ struct ExperimentsPanelView: View {
             }
         }
         .disabled(manifest.status != .draft)
-        .help(Self.studyDtypeHelp)
+        .help(StudyControlCopy.studyDtypeHelp)
     }
 
     // Judge-row helpers (localJudgeModelPicker / openRouterJudgeFields)
@@ -1243,6 +1119,7 @@ struct ExperimentsPanelView: View {
         manifest: ExperimentManifest, panel: ExperimentPanel
     ) -> some View {
         @Bindable var panel = panel
+        @Bindable var draft = panel.draft
         Section {
             if manifest.concepts.isEmpty {
                 Text(
@@ -1289,6 +1166,7 @@ struct ExperimentsPanelView: View {
     @ViewBuilder
     private func attachPickerRows(panel: ExperimentPanel) -> some View {
         @Bindable var panel = panel
+        @Bindable var draft = panel.draft
         let sources = panel.attachableConceptSources
         if sources.isEmpty {
             Text(
@@ -1299,7 +1177,7 @@ struct ExperimentsPanelView: View {
                 .foregroundStyle(.secondary)
         } else {
             let selectedSource = sources.first { $0.name == panel.attachConceptName }
-            Picker("Attach Concept…", selection: $panel.attachConceptName) {
+            Picker("Attach Concept…", selection: $draft.attachConceptName) {
                 Text("select…").tag("")
                 ForEach(sources, id: \.name) { source in
                     Text(source.pickerLabel).tag(source.name)
@@ -1320,7 +1198,7 @@ struct ExperimentsPanelView: View {
                 }
             }
             HStack(spacing: 8) {
-                Picker("", selection: $panel.attachMethod) {
+                Picker("", selection: $draft.attachMethod) {
                     ForEach(
                         selectedSource?.supportedMethods
                             ?? ExtractionMethod.allCases.filter(\.isRecipeMethod),
@@ -1335,8 +1213,8 @@ struct ExperimentsPanelView: View {
                         + "read positive/negative stimuli; grand mean reads the "
                         + "multi-concept story corpus")
                 ReadingPositionField(
-                    choice: $panel.attachReadingPositionChoice,
-                    parameter: $panel.attachReadingPositionParameter,
+                    choice: $draft.attachReadingPositionChoice,
+                    parameter: $draft.attachReadingPositionParameter,
                     defaultCaption: "method default",
                     help:
                         "WHERE the residual stream is read, pinned into the "
@@ -1358,7 +1236,7 @@ struct ExperimentsPanelView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 ExtractionRenderingField(
-                    choice: $panel.attachRendering,
+                    choice: $draft.attachRendering,
                     help:
                         "HOW each stimulus reaches the model. 'raw' is the "
                             + "legacy rendering and declares nothing — the bare "
@@ -1369,7 +1247,7 @@ struct ExperimentsPanelView: View {
                 Spacer(minLength: 0)
             }
             if panel.attachMethod == .designatedReference {
-                Picker("reference", selection: $panel.attachReferenceName) {
+                Picker("reference", selection: $draft.attachReferenceName) {
                     Text("select reference…").tag("")
                     ForEach(sources.filter(\.hasStories), id: \.name) { source in
                         Text(source.name).tag(source.name)
@@ -1385,7 +1263,7 @@ struct ExperimentsPanelView: View {
             if panel.attachMethod == .emotionGrandMean {
                 TextField(
                     "extra corpus members (comma-separated; targets are always members)",
-                    text: $panel.attachCorpusText)
+                    text: $draft.attachCorpusText)
                     .font(.caption)
                     .help(
                         "grand-mean vectors are concept mean − corpus grand mean, "
@@ -1413,6 +1291,7 @@ struct ExperimentsPanelView: View {
         manifest: ExperimentManifest, panel: ExperimentPanel
     ) -> some View {
         @Bindable var panel = panel
+        @Bindable var draft = panel.draft
         Section {
             if manifest.conditions.isEmpty {
                 Text(
@@ -1529,12 +1408,13 @@ struct ExperimentsPanelView: View {
         manifest: ExperimentManifest, panel: ExperimentPanel
     ) -> some View {
         @Bindable var panel = panel
+        @Bindable var draft = panel.draft
         let isDraft = manifest.status == .draft
         let isPanel = panel.studyKind == .multiAgent
         LabeledContent(isPanel ? "Play-throughs (transcripts)" : "Samples per item") {
             HStack(spacing: 6) {
                 TextField(
-                    "", value: $panel.samplesPerItemField,
+                    "", value: $draft.samplesPerItemField,
                     format: .number.grouping(.never)
                 )
                 .frame(width: 56)
@@ -1560,7 +1440,7 @@ struct ExperimentsPanelView: View {
         // that trips the epoch guard on existing runs), exactly the kind
         // of quiet drift the firewall exists to prevent.
         HStack(spacing: 6) {
-            Picker("Seed policy", selection: $panel.seedPolicyField) {
+            Picker("Seed policy", selection: $draft.seedPolicyField) {
                 Text("Fixed seed list (default)").tag("")
                 if panel.seedPolicyField == "manifestSeeds" {
                     Text("Fixed seed list (declared — same behavior)")
@@ -1633,6 +1513,7 @@ struct ExperimentsPanelView: View {
         manifest: ExperimentManifest, panel: ExperimentPanel
     ) -> some View {
         @Bindable var panel = panel
+        @Bindable var draft = panel.draft
         let isDraft = manifest.status == .draft
         // Editable with suggestions (the manifest accepts any string —
         // `setCaseFamily` does not validate against the known list) plus
@@ -1651,7 +1532,7 @@ struct ExperimentsPanelView: View {
             HStack(spacing: 6) {
                 Toggle(
                     "Acknowledge unequal option lengths",
-                    isOn: $panel.acknowledgeUnequalOptionLengthsField
+                    isOn: $draft.acknowledgeUnequalOptionLengthsField
                 )
                 .disabled(!isDraft)
                 .help(
@@ -1673,6 +1554,7 @@ struct ExperimentsPanelView: View {
         manifest: ExperimentManifest, panel: ExperimentPanel
     ) -> some View {
         @Bindable var panel = panel
+        @Bindable var draft = panel.draft
         let isDraft = manifest.status == .draft
         Section {
             if panel.studyKind == .multiAgent {
@@ -1697,7 +1579,7 @@ struct ExperimentsPanelView: View {
             } else {
                 if isDraft {
                     HStack {
-                        Picker("Add agent", selection: $panel.selectedVariantToAddID) {
+                        Picker("Add agent", selection: $draft.selectedVariantToAddID) {
                             Text("select…").tag(String?.none)
                             ForEach(panel.availableVariantsForStudy) { variant in
                                 Text(variant.artifact.name).tag(String?.some(variant.id))
@@ -1811,7 +1693,7 @@ struct ExperimentsPanelView: View {
                                     .tag(String?.some(agent.id))
                             }
                         }
-                        .help(Self.seatPickerHelp)
+                        .help(StudyControlCopy.seatPickerHelp)
                     } else {
                         LabeledContent(
                             seat.name,
@@ -1842,14 +1724,14 @@ struct ExperimentsPanelView: View {
                     HStack(spacing: 8) {
                         Button("Save Casting") { panel.saveSeatCasting() }
                             .disabled(refusal != nil || casting.seats.isEmpty)
-                            .help(refusal ?? Self.saveCastingHelp)
+                            .help(refusal ?? StudyControlCopy.saveCastingHelp)
                         Button("Create permuted siblings…") {
                             panel.startPermutedSiblings()
                         }
                         .disabled(casting.form != .cast)
                         .help(
                             casting.form == .cast
-                                ? Self.permutedSiblingsHelp
+                                ? StudyControlCopy.permutedSiblingsHelp
                                 : "save this study's casting first — permuted "
                                     + "siblings re-seat the cast it is running")
                     }
@@ -1890,26 +1772,6 @@ struct ExperimentsPanelView: View {
         }
     }
 
-    private static let seatPickerHelp =
-        "the agent that speaks for this role. 'baseline' is the study's own "
-        + "model with no intervention — a real condition (the control "
-        + "composition), not an empty seat. Only agents built on this study's "
-        + "base model are eligible."
-
-    private static let saveCastingHelp =
-        "compiles this scenario plus the casting into a bound scenario under "
-        + "prompts/panels/compiled/ and pins it as the study's scenario — the "
-        + "same write a design's instantiation table performs. The scenario "
-        + "itself is not modified."
-
-    private static let permutedSiblingsHelp =
-        "one study runs ONE casting (a panel's arms are the fixed "
-        + "baseline/configured pair), so re-seating the same agents means "
-        + "sibling studies. This saves the study as a design and opens the "
-        + "new-studies table holding every distinct re-seating of its current "
-        + "cast — swapping two identical occupants is the same panel, so those "
-        + "are deduped rather than run twice."
-
     /// Scenarios that carry their own seat bindings are marked in the picker,
     /// matching the Panels editor: only one of two same-named entries can be
     /// cast from a study.
@@ -1927,8 +1789,9 @@ struct ExperimentsPanelView: View {
         manifest: ExperimentManifest, panel: ExperimentPanel
     ) -> some View {
         @Bindable var panel = panel
+        @Bindable var draft = panel.draft
         HStack(spacing: 6) {
-            TextField("task prompts JSONL", text: $panel.taskPromptsFile)
+            TextField("task prompts JSONL", text: $draft.taskPromptsFile)
                 .disabled(manifest.status != .draft)
                 .help(
                     "relative path to a {\"text\": ...}-per-line JSONL file. "
@@ -1984,7 +1847,7 @@ struct ExperimentsPanelView: View {
             .font(.caption2)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
-        TextEditor(text: $panel.taskPromptsText)
+        TextEditor(text: $draft.taskPromptsText)
             .font(.system(.caption, design: .monospaced))
             .frame(minHeight: 220)
             .disabled(manifest.status != .draft)
@@ -2038,6 +1901,7 @@ struct ExperimentsPanelView: View {
         manifest: ExperimentManifest, panel: ExperimentPanel
     ) -> some View {
         @Bindable var panel = panel
+        @Bindable var draft = panel.draft
         Group {
                     // P1 — explicit instrument activation: what the DATA
                     // supports (detected), what is ENABLED (declared in the
@@ -2071,7 +1935,7 @@ struct ExperimentsPanelView: View {
                                 .tag(InstrumentActivation.OutcomeMode.both)
                         }
                         .disabled(manifest.status != .draft)
-                        .help(Self.outcomeModeHelp)
+                        .help(StudyControlCopy.outcomeModeHelp)
                         InfoButton(text: StudyInfo.evaluationOutcome)
                     }
                     if let warning = panel.instrumentActivationWarning {
@@ -2157,448 +2021,6 @@ struct ExperimentsPanelView: View {
                                     + "option-length acknowledgment")
                     }
         }
-    }
-
-    @ViewBuilder
-    private func validationControls(manifest: ExperimentManifest, panel: ExperimentPanel) -> some View {
-        // Validate routes through the same server-resident path as Run in a
-        // paired server workspace, so it shares the residency gate (the
-        // callout in the run controls below explains the disabled state).
-        // KNOWN-unpaired servers (Mac-authority mode, 2026-07-21) submit
-        // validate as a hash-pinned BUNDLE job instead — no residency
-        // needed, and the evidence bundle imports back into this workspace.
-        let bundleValidate = panel.isKnownUnpairedServerWorkspace
-        let missingOnServer = panel.isServerWorkspace && !bundleValidate
-            && panel.serverHasSelectedStudy == false
-        // The validation group: the declared read depth sits WITH the
-        // button that launches validation (2026-08-01 review feedback —
-        // it was orphaned in Evaluation below the save button, where its
-        // connection to the validate verb was invisible).
-        Text("Validation")
-            .font(.caption.bold())
-            .padding(.top, 4)
-        if !manifest.concepts.isEmpty {
-            ValidationDepthControls(manifest: manifest, panel: panel)
-        }
-        // Button row extracted (ValidateStudyButtonRow.swift): the gate
-        // wiring pushed this function past the type-checker budget.
-        ValidateStudyButtonRow(
-            service: service,
-            panel: panel,
-            bundleValidate: bundleValidate,
-            missingOnServer: missingOnServer,
-            help: Self.validateHelp,
-            pendingModelJob: $pendingModelJob,
-            runOnServerExpanded: $runOnServerExpanded)
-
-        Text(Self.validateCaption(variantsPresent: !manifest.variantConditions.isEmpty))
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-        if bundleValidate {
-            Text(
-                "unpaired server Compute — Validate submits the study as a "
-                    + "hash-pinned bundle job on "
-                    + "\(service.cluster.substrateLabel) (Remote options set "
-                    + "executor/GPU/walltime); its evidence bundle imports "
-                    + "back into this workspace and satisfies the local "
-                    + "freeze gate for server runs")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        } else if panel.isServerWorkspace {
-            Text(serverRunCaption("Validate Study"))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        // Direct validation executes the SERVER-RESIDENT copy only — the
-        // callout explains the disabled state and points at the unified
-        // Run's portable bundle path (which needs no residency).
-        if missingOnServer {
-            studyNotOnServerCallout(panel: panel)
-        }
-
-        if let validationDirectory = panel.lastValidationDirectory {
-            Text(validationDirectory)
-                .font(.caption2.monospaced())
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .help("latest completed validation run directory")
-        }
-    }
-
-    /// A11: the explicit Extract action — the CLI `experiment extract` verb
-    /// in-panel. Deliberately offered on drafts AND frozen studies:
-    /// extraction is deterministic re-derivation from the pinned recipe (the
-    /// CLI verb gates only on verify()). Server workspaces submit the
-    /// server's extract verb as a durable job.
-    @ViewBuilder
-    private func extractControls(manifest: ExperimentManifest, panel: ExperimentPanel) -> some View {
-        let missingOnServer = panel.isServerWorkspace
-            && panel.serverHasSelectedStudy == false
-        let busy = panel.isExtracting || panel.isRunning || panel.isValidating
-            || panel.isSweeping
-        let reason = ExperimentPanel.extractDisabledReason(
-            busy: busy,
-            hasViolations: !panel.violations.isEmpty,
-            missingOnServer: missingOnServer)
-        HStack(spacing: 8) {
-            Button(panel.isExtracting ? "Extracting…" : "Extract Vectors") {
-                // Item 2: same no-GPU-session gate as Run/Validate —
-                // extraction loads the pinned model on the server.
-                let panel = panel
-                ModelJobGPUGate.submit(
-                    "vector extraction", service: service,
-                    pending: $pendingModelJob
-                ) { await panel.extractStudy() }
-            }
-            .buttonStyle(.bordered)
-            .disabled(reason != nil)
-            .help(Self.extractHelp)
-            if panel.isExtracting, !panel.isServerWorkspace {
-                ProgressView().controlSize(.small)
-                Button("Stop", role: .destructive) { panel.cancelExtract() }
-                    .controlSize(.small)
-                    .disabled(panel.extractCancelRequested)
-                    .help(
-                        "stops after the current concept; completed vectors "
-                            + "stay in the run directory, marked cancelled")
-            }
-        }
-        if let reason {
-            Text(reason)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        } else {
-            Text(
-                "re-derives every pinned concept's vectors into a new "
-                    + "immutable runs/ directory — allowed on drafts and "
-                    + "frozen studies alike (deterministic from the pins)")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        if panel.isServerWorkspace {
-            Text(serverRunCaption("Extract"))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        if let extractDirectory = panel.lastExtractDirectory {
-            Text(extractDirectory)
-                .font(.caption2.monospaced())
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .help("latest completed extract run directory")
-        }
-    }
-
-    /// WS6.3: the substrate decision for the ONE Run control — every rule
-    /// (default scope, stochastic pinning, connect-first greying) is
-    /// unit-tested in `SubstrateRouting`, not here.
-    private func runDecision(manifest: ExperimentManifest) -> SubstrateRouting.Decision {
-        SubstrateRouting.decide(
-            SubstrateRouting.Inputs(
-                temperature: manifest.temperature,
-                samplesPerItem: manifest.samplesPerItem,
-                // E1: routing follows the resolved execution PLAN. A
-                // logprob-only study never samples, so its temperature must
-                // not pin it to the server.
-                outcomeInstruments: manifest.outcomeInstruments,
-                activeWorkspaceIsServer: panel.isServerWorkspace,
-                siteRegistered: !service.cluster.servers.isEmpty,
-                siteName: service.cluster.activeServer?.name
-                    ?? service.cluster.servers.first?.name,
-                serverConnected: service.cluster.capabilities != nil,
-                userSelection: runSubstrate))
-    }
-
-    @ViewBuilder
-    private func runControls(manifest: ExperimentManifest, panel: ExperimentPanel) -> some View {
-        let decision = runDecision(manifest: manifest)
-        // Greedy-only is a LOCAL substrate limitation (no per-run sampling
-        // seed in the MLX generator). A stochastic MANIFEST already pins the
-        // picker to the server; this gate catches a nonzero draft field.
-        // E1: greedy-only is a LOCAL sampler limitation, so it binds only a
-        // study that actually samples. A logprob-only study is deterministic
-        // whatever the temperature says.
-        let plan = ExecutionPlan.resolve(instruments: manifest.outcomeInstruments)
-        let requiresGreedy = decision.selection == .thisMac
-            && plan.samplingIsOperative
-            && (manifest.temperature != 0 || panel.runTemperature != 0)
-        substratePickerRow(decision: decision)
-        runNoteRows(decision: decision)
-        // A declared sampling setting this plan will never read. Advisory,
-        // not a refusal: the run is well-defined and its result unaffected,
-        // but a temperature that decides nothing is a design mistake.
-        if let inert = ExecutionPlan.inertSamplingAdvisory(
-            instruments: manifest.outcomeInstruments,
-            temperature: manifest.temperature,
-            samplesPerItem: manifest.samplesPerItem)
-        {
-            Label(inert, systemImage: "info.circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        // P1 — prominent PRE-RUN warning: the data carries options but no
-        // categorical instrument is declared, so the run will only generate
-        // and parse answer text.
-        if let warning = panel.instrumentActivationWarning {
-            Label(warning, systemImage: "exclamationmark.triangle")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.orange)
-                .textSelection(.enabled)
-                .help(
-                    "declare the instrument in Evaluation › Outcome mode — "
-                        + "measurement method is manifest provenance, never "
-                        + "inferred from the data")
-        }
-        primaryRunRow(
-            manifest: manifest, panel: panel, decision: decision,
-            requiresGreedy: requiresGreedy)
-        preflightRows(manifest: manifest, panel: panel, decision: decision)
-        if requiresGreedy {
-            Text("Run Study requires saved Temperature = 0 for reproducible measured runs.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        if let runDirectory = panel.lastRunDirectory {
-            Text(runDirectory)
-                .font(.caption2.monospaced())
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .help("latest completed study run directory")
-        }
-        if let serverRunDirectory = panel.lastServerRunDirectory {
-            Text("server run: \(serverRunDirectory)")
-                .font(.caption2.monospaced())
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .help("run directory in the active server's runs/ tree")
-        }
-    }
-
-    @ViewBuilder
-    private func substratePickerRow(decision: SubstrateRouting.Decision) -> some View {
-        Picker(
-            "Run on",
-            selection: Binding(
-                get: { decision.selection },
-                set: { newValue in
-                    runSubstrate = newValue
-                    runner.clearPreflight()
-                })
-        ) {
-            Text("This Mac").tag(SubstrateRouting.Substrate.thisMac)
-            if decision.serverSelectable {
-                Text(decision.serverLabel).tag(SubstrateRouting.Substrate.server)
-            } else {
-                // Greyed, never pickable: connect (or add a site) first.
-                Text("\(decision.serverLabel) — \(decision.serverHint ?? "connect first")")
-                    .tag(SubstrateRouting.Substrate.server)
-                    .selectionDisabled()
-            }
-        }
-        .pickerStyle(.segmented)
-        .disabled(decision.pinnedToServer)
-        .help(
-            "which substrate executes this study — the substrate is a scope, "
-                + "not a mode: same manifest, same lifecycle, artifacts land in "
-                + "the scoped workspace with their substrate stamp")
-    }
-
-    @ViewBuilder
-    private func runNoteRows(decision: SubstrateRouting.Decision) -> some View {
-        if let note = decision.stochasticNote {
-            // The kind enforcement: preselected, explained — never an error
-            // later.
-            Label(note, systemImage: "die.face.5")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        if let hint = decision.serverHint, decision.selection == .server {
-            Text(hint)
-                .font(.caption2)
-                .foregroundStyle(.orange)
-        }
-        if let hint = decision.localHint {
-            Text(hint)
-                .font(.caption2)
-                .foregroundStyle(.orange)
-        }
-    }
-
-    @ViewBuilder
-    private func primaryRunRow(
-        manifest: ExperimentManifest,
-        panel: ExperimentPanel,
-        decision: SubstrateRouting.Decision,
-        requiresGreedy: Bool
-    ) -> some View {
-        let busy = panel.isRunning || panel.isExtracting || runner.isSubmitting
-        // Finding 11c: what this button will ACTUALLY submit, stated before
-        // it is pressed — the verb lives in a collapsed disclosure and does
-        // not consult the Pipeline Composer's declared chain.
-        ExecutionPlanEchoRow(
-            plan: ExecutionPlanEcho.describe(
-                verb: panel.remoteVerb,
-                target: decision.selection,
-                serverLabel: decision.serverLabel,
-                dryRun: panel.remoteDryRun,
-                declaredPipelineStages: ShardedSubmission.declaredPipelineStages(
-                    manifest.pipeline)),
-            revealOptions: { runOnServerExpanded = true })
-        HStack(spacing: 8) {
-            Button(
-                SubstrateRouting.runButtonLabel(
-                    decision: decision, verb: panel.remoteVerb,
-                    dryRun: panel.remoteDryRun, isBusy: busy)
-            ) {
-                let runner = runner
-                let cluster = service.cluster
-                let run: @MainActor () async -> Void = {
-                    await runner.run(
-                        manifest: manifest, decision: decision, panel: panel,
-                        cluster: cluster)
-                }
-                // Item 2 + 2026-07-21 incident part 1: warn before a
-                // GPU-less model-running server submission — no GPU session,
-                // or (more specific) a bundle whose OWN options request no
-                // GPU on a Slurm site (non-slurm executor / empty gres would
-                // execute inside the controller's small CPU allocation).
-                // Dry runs (nothing executes) and non-model verbs (analyze)
-                // submit straight through — the predicate rules; so do
-                // local runs.
-                if decision.selection == .server {
-                    ModelJobGPUGate.submit(
-                        "study \(panel.remoteVerb)", service: service,
-                        pending: $pendingModelJob,
-                        bundleOptions: ModelJobSubmissionPreflight.BundleOptions(
-                            executor: panel.remoteExecutor,
-                            gres: panel.remoteGres,
-                            verb: panel.remoteVerb,
-                            dryRun: panel.remoteDryRun),
-                        fixOptions: {
-                            panel.applyGPUAllocationFix()
-                            runOnServerExpanded = true
-                        },
-                        action: run)
-                } else {
-                    Task { await run() }
-                }
-            }
-            .buttonStyle(.bordered)
-            .disabled(
-                busy || !panel.violations.isEmpty || requiresGreedy
-                    || decision.runBlockedReason != nil)
-            .help(decision.selection == .thisMac ? Self.runHelp : Self.unifiedRemoteRunHelp)
-            // A1: a LOCAL in-process run is cancellable between generations
-            // (server-routed runs get the Cancel Server Job control instead).
-            if panel.isRunning {
-                ProgressView().controlSize(.small)
-                Button("Stop", role: .destructive) { panel.cancelStudyRun() }
-                    .controlSize(.small)
-                    .disabled(panel.studyRunCancelRequested)
-                    .help(
-                        "stops after the current generation; completed "
-                            + "generations stay in the run directory, marked "
-                            + "cancelled (no report.json) — reported as cancelled "
-                            + "by user, never as an error")
-            }
-        }
-
-        if decision.selection == .server {
-            Text(serverRunCaption("Run"))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    /// WS4 preflight surfacing: ok → silent; warn → amber lines, job already
-    /// proceeding; fail → the submission stopped, failing checks shown, and
-    /// the forced override sits behind a confirmation that restates them.
-    @ViewBuilder
-    private func preflightRows(
-        manifest: ExperimentManifest,
-        panel: ExperimentPanel,
-        decision: SubstrateRouting.Decision
-    ) -> some View {
-        if let preflight = runner.preflight, preflight.verdict == .warn {
-            ForEach(preflight.attentionLines) { line in
-                Label(line.message, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .textSelection(.enabled)
-            }
-        }
-        if let refusal = runner.refusal {
-            VStack(alignment: .leading, spacing: 4) {
-                Label(
-                    refusal.inlineSummary ?? "preflight failed — submission refused",
-                    systemImage: "xmark.octagon")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.red)
-                ForEach(refusal.failingLines) { line in
-                    Text("• \(line.message)")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
-                }
-                Button("Override (forced)…") { confirmForcedOverride = true }
-                    .controlSize(.small)
-                    .help(
-                        "resubmit with force=true, bypassing the failed preflight "
-                            + "checks — loud and deliberate, never silent")
-                    .confirmationDialog(
-                        "Force past preflight?",
-                        isPresented: $confirmForcedOverride,
-                        titleVisibility: .visible
-                    ) {
-                        Button("Submit anyway (forced)", role: .destructive) {
-                            Task {
-                                await runner.run(
-                                    manifest: manifest, decision: decision,
-                                    panel: panel, cluster: service.cluster,
-                                    force: true)
-                            }
-                        }
-                    } message: {
-                        Text(refusal.overrideConfirmationMessage)
-                    }
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.red.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-        }
-        if let status = runner.statusLine {
-            Text(status)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-        }
-    }
-
-    /// Prominent warning callout for a study that exists locally but not in
-    /// the active server's workspace: Run Server Copy is disabled and this
-    /// box names both ways forward (portable bundle, or pair the server).
-    @ViewBuilder
-    private func studyNotOnServerCallout(panel: ExperimentPanel) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(
-                ExperimentPanel.residencyCalloutMessage(
-                    study: panel.selectedName ?? "study",
-                    substrate: service.cluster.substrateLabel),
-                systemImage: "exclamationmark.triangle")
-                .font(.caption)
-                .foregroundStyle(.orange)
-                .textSelection(.enabled)
-            Button("Show remote options") { runOnServerExpanded = true }
-                .controlSize(.small)
-                .help(
-                    "expands the Remote options — the unified Run button "
-                        + "submits a portable hash-pinned bundle, which works "
-                        + "without server residency")
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
     /// Read-only browse of the active server's `runs/` tree (`GET /api/runs`).
@@ -2821,261 +2243,6 @@ struct ExperimentsPanelView: View {
         .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
     }
 
-    /// The active site profile's cap on sharded fan-out (nil = uncapped;
-    /// the stepper falls back to `ShardedSubmission.defaultStepperCap`).
-    private var siteMaxParallelGPUJobs: Int? {
-        guard case .slurm(let slurm)? = service.cluster.activeSite?.scheduler
-        else { return nil }
-        return slurm.maxParallelGPUJobs
-    }
-
-    /// WS6.3: the retired "Run on Server" split is now "Remote options" —
-    /// the inputs the unified Run button uses when the substrate picker
-    /// selects the site (verb, executor, dry run, resources), plus job
-    /// reconnect/cancel/evidence utilities. No submit button lives here:
-    /// the ONE Run control above is the submission path.
-    @ViewBuilder
-    private func remoteRunControls(manifest: ExperimentManifest, panel: ExperimentPanel) -> some View {
-        @Bindable var panel = panel
-        let decision = runDecision(manifest: manifest)
-        if decision.selection == .server || panel.isServerWorkspace {
-        DisclosureGroup("Remote options", isExpanded: $runOnServerExpanded) {
-            LabeledContent("Server", value: service.cluster.serverHostLabel)
-                .help(
-                    "shared server connection — edit the URL and bearer token in the "
-                        + "window toolbar's substrate selector")
-            if let summary = panel.remoteProfileSummary {
-                LabeledContent("Backend", value: summary)
-                    .font(.caption)
-                    .help("server profile · executor · launch topology reported by /api/capabilities")
-            }
-            Picker("Verb", selection: $panel.remoteVerb) {
-                Text("verify").tag("verify")
-                // A11: symmetric artifact production — extract exists on the
-                // bundle path (VALID_STUDY_VERBS) like every other verb.
-                Text("extract").tag("extract")
-                Text("validate").tag("validate")
-                Text("sweep").tag("sweep")
-                Text("run").tag("run")
-                Text("evaluate").tag("evaluate")
-                // A3 rider: analyze exists server-side (headless paired
-                // statistics over the newest completed run).
-                Text("analyze").tag("analyze")
-                // Stage 3: the chain runner — the manifest's declared
-                // pipeline stages as ONE submission (one model load,
-                // gate-aborted between stages). EXPERIMENTAL until stage 5
-                // lands the abort/awaiting UI: the server refuses a
-                // manifest with no explicit pipeline block, and an abort
-                // reads as a successful job here — check pipeline.json /
-                // pipeline-abort.json in the run directory.
-                Text("pipeline (experimental)").tag("pipeline")
-            }
-            .help("the experiment verb the unified Run button submits remotely")
-            Picker("Executor", selection: $panel.remoteExecutor) {
-                Text("local").tag("local")
-                Text("slurm").tag("slurm")
-            }
-            Toggle("Dry run (prepare only, nothing executes)", isOn: $panel.remoteDryRun)
-                .help(
-                    "stages the bundle and renders the job without executing "
-                        + "the study — the job finishes as 'prepared'")
-            HStack {
-                TextField("GPU gres", text: $panel.remoteGres)
-                    .textFieldStyle(.roundedBorder)
-                TextField("walltime", text: $panel.remoteWalltime)
-                    .textFieldStyle(.roundedBorder)
-            }
-            // Resume-on-checkpoint (2026-07-22 incident: a checkpointed run
-            // had no resume path) — DEFAULT ON: a checkpointed batch run
-            // continuing is what submitting it asked for.
-            HStack {
-                Toggle(
-                    "Resume automatically if the run checkpoints",
-                    isOn: $panel.remoteResumePolicy.autoResubmit)
-                Stepper(value: $panel.remoteResumePolicy.limit, in: 1...50) {
-                    Text("up to \(panel.remoteResumePolicy.limit) restarts")
-                        .font(.caption)
-                }
-                .disabled(!panel.remoteResumePolicy.autoResubmit)
-            }
-            .help(
-                "when a Slurm run exits at the walltime margin with a clean "
-                    + "checkpoint (exit 85), the server re-submits the job's "
-                    + "own sbatch script and the run continues from the "
-                    + "checkpoint — up to this many restarts. Off, the job "
-                    + "parks as 'checkpointed (resumable)' until you press "
-                    + "Resume. Slurm submissions only; the transcript line "
-                    + "stamps what was sent")
-            // Multi-GPU fan-out (2026-07-22): shard a Slurm run across K
-            // sibling GPU jobs; the server merges the partials back into one
-            // run byte-identical to a single job (records are independent).
-            // Disabled-with-explanation when this submission cannot shard
-            // (finding 5: the server shards only run and run-FIRST
-            // pipelines — a stepper the server would ignore must say so).
-            let shardingReason = ShardedSubmission.shardingUnavailableReason(
-                verb: panel.remoteVerb, executor: panel.remoteExecutor,
-                declaredPipelineStages: ShardedSubmission.declaredPipelineStages(
-                    manifest.pipeline))
-            Stepper(
-                value: $panel.remoteParallelJobs,
-                in: 1...ShardedSubmission.stepperCap(siteMax: siteMaxParallelGPUJobs)
-            ) {
-                Text(
-                    panel.remoteParallelJobs > 1
-                        ? "Parallel GPU jobs: \(panel.remoteParallelJobs)"
-                        : "Parallel GPU jobs: 1 (no sharding)")
-                    .font(.caption)
-            }
-            .disabled(shardingReason != nil)
-            .help(
-                "shard the run across this many simultaneous GPU jobs "
-                    + "(Slurm, run/pipeline-first-stage-run only) — every "
-                    + "record is independent, so the merged result is "
-                    + "byte-identical to a single job and wall-clock scales "
-                    + "with GPUs. The cap comes from the site profile's "
-                    + "'Max parallel GPU jobs' (check yours with `sacctmgr "
-                    + "show qos format=Name,MaxTRESPerUser`)")
-            if let shardingReason {
-                Text(shardingReason)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            HStack {
-                Button("Test Connection") { Task { await panel.testRemoteConnection() } }
-                Button("Cancel Job") { Task { await panel.cancelRemoteJob() } }
-                    .disabled(panel.remoteJobID == nil)
-                Button("Import Evidence") { Task { await panel.downloadRemoteEvidence() } }
-                    .disabled(panel.remoteJobID == nil)
-            }
-            Text(Self.remoteOptionsCaption)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Text(Self.importEvidenceCaption)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            // Reconnect by job id — e.g. after an app restart while a Slurm job runs.
-            HStack {
-                TextField("job id to reconnect", text: $reconnectJobID)
-                    .textFieldStyle(.roundedBorder)
-                Button("Reconnect") {
-                    Task { await panel.reconnectRemoteJob(reconnectJobID) }
-                }
-                .disabled(reconnectJobID.trimmingCharacters(in: .whitespaces).isEmpty)
-                if !panel.remoteLogLines.isEmpty {
-                    Button("Stop Log") { panel.stopRemoteLogStream() }
-                }
-            }
-            .help("resume watching a running or finished job by its id after an app or session restart")
-            if let job = panel.remoteJobID {
-                LabeledContent("Remote job", value: job)
-                    .font(.caption)
-                    .textSelection(.enabled)
-            }
-            if let uploaded = panel.remoteLastUploadedBundle {
-                LabeledContent("Uploaded bundle", value: uploaded)
-                    .font(.caption2.monospaced())
-                    .textSelection(.enabled)
-            }
-            if let imported = panel.remoteImportedRunDirectory {
-                LabeledContent("Imported run", value: imported)
-                    .font(.caption2.monospaced())
-                    .textSelection(.enabled)
-            }
-            if let status = panel.remoteStatus {
-                Text(status)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-            if !panel.remoteLogLines.isEmpty {
-                // The log is always titled with the job id verbatim so it can
-                // be copied and reconnected to later.
-                Text("job log — \(panel.remoteJobID ?? "?")")
-                    .font(.caption.monospaced())
-                    .textSelection(.enabled)
-                ScrollView {
-                    Text(panel.remoteLogLines.joined(separator: "\n"))
-                        .font(.caption2.monospaced())
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .frame(minHeight: 120, maxHeight: 260)
-            }
-        }
-        .help(
-            "inputs for the unified Run button's remote submission (verb, "
-                + "executor, dry run, resources) plus job reconnect and "
-                + "evidence utilities")
-        }
-    }
-
-    /// Session-scoped list of server jobs submitted from this panel (run
-    /// verbs and bundle submissions), ids selectable so a researcher can
-    /// reconnect after an app restart.
-    @ViewBuilder
-    private func recentServerJobsGroup(panel: ExperimentPanel) -> some View {
-        Group {
-            Text("Recent server jobs")
-                .font(.caption.bold())
-                .padding(.top, 4)
-            ForEach(panel.recentServerJobs) { job in
-                HStack(spacing: 8) {
-                    Text(job.id)
-                        .font(.caption.monospaced())
-                        .textSelection(.enabled)
-                    Text("\(job.verb) · \(job.study) · \(job.state)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    // Checkpointed (resumable) jobs get the Resume button
-                    // right on the row — the 2026-07-22 incident was this
-                    // exact dead end.
-                    if RemoteJobStatusClass.offersResume(status: job.state) {
-                        Button("Resume") {
-                            Task { await panel.resubmitRemoteJob(job.id) }
-                        }
-                        .controlSize(.small)
-                        .help(
-                            "re-submit this checkpointed job's own sbatch "
-                                + "script — the run continues from its "
-                                + "checkpoint; the status line reports the "
-                                + "new Slurm job id")
-                    }
-                    // Completed run-verb jobs can carry an evidence bundle:
-                    // the same import the Run-on-Server disclosure offers,
-                    // right where the finished job is listed.
-                    if ExperimentPanel.jobOffersEvidenceImport(
-                        verb: job.verb, state: job.state)
-                    {
-                        Button("Import evidence") {
-                            Task { await panel.importEvidence(fromJobID: job.id) }
-                        }
-                        .controlSize(.small)
-                        .help(
-                            "download this job's evidence bundle, verify its "
-                                + "hashes, and land it under this workspace's "
-                                + "runs/ — the status line names the imported "
-                                + "run directory")
-                    }
-                }
-                .padding(.vertical, 1)
-            }
-            if let imported = panel.remoteImportedRunDirectory {
-                LabeledContent("Imported run", value: imported)
-                    .font(.caption2.monospaced())
-                    .textSelection(.enabled)
-                    .help("already visible in Results — imports land as immutable runs/ directories")
-            }
-            Button("Refresh Job States") {
-                Task { await panel.refreshRecentServerJobs() }
-            }
-            .help("re-query the active server's job list for current states")
-            Text(Self.recentJobsCaption)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-    }
-
     /// The substrate decision for the Freeze control — same rule family as
     /// the unified Run picker, unit-tested in `FreezeRouting`, never here.
     private func freezeRoutingDecision() -> FreezeRouting.Decision {
@@ -3107,7 +2274,7 @@ struct ExperimentsPanelView: View {
                 FreezeRouting.freezeButtonDisabled(
                     decision: decision,
                     hasLocalViolations: !panel.violations.isEmpty))
-            .help(decision.target == .server ? Self.remoteFreezeHelp : Self.freezeHelp)
+            .help(decision.target == .server ? StudyControlCopy.remoteFreezeHelp : StudyControlCopy.freezeHelp)
             .confirmationDialog(
                 freezeDialogTitle(manifest.name, decision: decision),
                 isPresented: $confirmFreeze
@@ -3267,23 +2434,24 @@ struct ExperimentsPanelView: View {
     /// expansion and every refusal live in `ConfirmationStudy.attach`.
     private func confirmationControls(panel: ExperimentPanel) -> some View {
         @Bindable var panel = panel
+        @Bindable var draft = panel.draft
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Picker("Confirm agent", selection: $panel.confirmAgentID) {
+                Picker("Confirm agent", selection: $draft.confirmAgentID) {
                     Text("select…").tag(ModelVariantRecord.ID?.none)
                     ForEach(panel.confirmableAgents) { record in
                         Text(confirmAgentLabel(record))
                             .tag(ModelVariantRecord.ID?.some(record.id))
                     }
                 }
-                TextField("strength deltas (α)", text: $panel.confirmDeltasText)
+                TextField("strength deltas (α)", text: $draft.confirmDeltasText)
                     .frame(width: 120)
                     .help(
                         "comma-separated positive strength offsets around the "
                             + "anchor α, e.g. 0.2, 0.5")
                 Toggle(
                     "random-direction control",
-                    isOn: $panel.confirmIncludeControl)
+                    isOn: $draft.confirmIncludeControl)
                     .help(
                         "adds a matched-norm random control at the anchor "
                             + "strength — same norm, deterministic random "
@@ -3408,191 +2576,6 @@ struct ExperimentsPanelView: View {
             + (condition.alphaInNormUnits ? " (norm units)" : "")
             + " · band \(condition.bandWidth)"
             + (condition.neutralPCBasisLabel.map { " · neutral-removed: \($0)" } ?? "")
-    }
-
-    @ViewBuilder
-    private func liveRunViewer(panel: ExperimentPanel) -> some View {
-        let hasLiveContent =
-            panel.isRunning || panel.isEvaluating
-            || panel.liveRunDirectory != nil
-            || panel.liveEvaluationDirectory != nil
-            || panel.liveActiveGeneration != nil
-            || panel.liveActiveJudgment != nil
-            || !panel.liveGenerations.isEmpty
-            || !panel.liveJudgments.isEmpty
-
-        if hasLiveContent {
-            Section("Run Viewer") {
-                if let directory = panel.liveRunDirectory {
-                    LabeledContent("Run", value: URL(filePath: directory).lastPathComponent)
-                        .font(.caption)
-                        .help("the immutable run artifact directory being written")
-                }
-                if let directory = panel.liveEvaluationDirectory {
-                    LabeledContent("Judge", value: URL(filePath: directory).lastPathComponent)
-                        .font(.caption)
-                        .help("the immutable paired-judge artifact directory being written")
-                }
-
-                if let active = panel.liveActiveGeneration {
-                    liveGenerationCard(active)
-                    // A1: the progress row carries its own Stop (the same
-                    // cooperative flag as the Run/Judge buttons' Stop).
-                    if panel.isRunning {
-                        Button("Stop Run", role: .destructive) {
-                            panel.cancelStudyRun()
-                        }
-                        .controlSize(.small)
-                        .disabled(panel.studyRunCancelRequested)
-                        .help("stops after this generation; partial artifacts stay")
-                    }
-                }
-
-                if !panel.liveGenerations.isEmpty {
-                    DisclosureGroup("Generated Responses (\(panel.liveGenerations.count))") {
-                        ForEach(panel.liveGenerations.prefix(12)) { generation in
-                            compactGenerationCard(generation)
-                        }
-                    }
-                    .help("completed generations appear here as soon as each prompt finishes")
-                }
-
-                if let active = panel.liveActiveJudgment {
-                    HStack(spacing: 10) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Judging \(active.condition) · \(active.promptID)")
-                            .font(.callout.weight(.medium))
-                        if panel.isEvaluating {
-                            Button("Stop", role: .destructive) {
-                                panel.cancelPairedJudge()
-                            }
-                            .controlSize(.small)
-                            .disabled(panel.evaluationCancelRequested)
-                            .help("stops after this judgment; completed judgments stay")
-                        }
-                    }
-                    .padding(.vertical, 4)
-                    .help("the paired judge is comparing this condition response against baseline")
-                }
-
-                if !panel.liveJudgments.isEmpty {
-                    DisclosureGroup("Judge Results (\(panel.liveJudgments.count))") {
-                        ForEach(panel.liveJudgments.prefix(20)) { judgment in
-                            compactJudgmentCard(judgment)
-                        }
-                    }
-                    .help("completed paired-judge decisions, highlighted separately from raw generations")
-                }
-
-                if !panel.isRunning && !panel.isEvaluating {
-                    Button("Clear Viewer") { panel.clearLiveViewer() }
-                        .help("clears only this live display; run artifacts remain on disk")
-                }
-            }
-        }
-    }
-
-    private func liveGenerationCard(_ active: LiveStudyGeneration) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                ProgressView()
-                    .controlSize(.small)
-                Text("Generating \(active.condition) · \(active.promptID)")
-                    .font(.callout.weight(.medium))
-                Spacer()
-                Text("\(active.output.split(whereSeparator: { $0.isWhitespace }).count) words")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if !active.prompt.isEmpty {
-                Text(active.prompt)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .textSelection(.enabled)
-            }
-            Text(active.output.isEmpty ? "waiting for first tokens…" : active.output)
-                .font(.body.monospaced())
-                .textSelection(.enabled)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.blue.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func compactGenerationCard(_ generation: StudyGenerationPreview) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("\(generation.condition) · \(generation.promptID)")
-                    .font(.callout.weight(.semibold))
-                Spacer()
-                Text(
-                    "\(generation.wordCount) words · distinct-2 "
-                        + generation.distinct2.formatted(.number.precision(.fractionLength(3))))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Text(generation.output + (generation.truncated ? "\n…" : ""))
-                .font(.caption.monospaced())
-                .lineLimit(10)
-                .textSelection(.enabled)
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.25))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func compactJudgmentCard(_ judgment: StudyJudgePreview) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("\(judgment.condition) · \(judgment.promptID)")
-                    .font(.callout.weight(.semibold))
-                Spacer()
-                Text(judgment.conditionResult)
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(judgmentHighlight(judgment).opacity(0.18))
-                    .clipShape(Capsule())
-            }
-            Text(
-                "winner \(judgment.winner) · confidence "
-                    + judgment.confidence.formatted(.number.precision(.fractionLength(2)))
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            Text(judgment.briefReason)
-                .font(.caption)
-                .textSelection(.enabled)
-            if let structured = structuredFieldsSummary(judgment) {
-                Text(structured)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-        }
-        .padding(.vertical, 5)
-    }
-
-    private func judgmentHighlight(_ judgment: StudyJudgePreview) -> Color {
-        switch judgment.conditionResult {
-        case "condition": .blue
-        case "baseline": .orange
-        default: .secondary
-        }
-    }
-
-    private func structuredFieldsSummary(_ judgment: StudyJudgePreview) -> String? {
-        guard let fields = judgment.structuredFields, !fields.isEmpty else { return nil }
-        let summary = fields.map { "\($0.key): \($0.value.displayString)" }
-            .sorted()
-            .joined(separator: ", ")
-        return "structured_fields [\(summary)]"
     }
 
     private func variantSummary(_ artifact: ModelVariantArtifact) -> String {
@@ -3734,768 +2717,4 @@ struct ExperimentsPanelView: View {
         }
     }
 
-    @ViewBuilder
-    private func resultsView(panel: ExperimentPanel) -> some View {
-        if panel.resultRuns.isEmpty {
-            Text("No run artifacts for this study yet.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            pairedJudgeControls(panel: panel)
-        } else {
-            Picker(
-                "Run",
-                selection: Binding<String?>(
-                    get: { panel.selectedResultID },
-                    set: { panel.selectedResultID = $0 })
-            ) {
-                ForEach(panel.resultRuns) { item in
-                    Text(resultPickerLabel(item))
-                        .tag(String?.some(item.id))
-                }
-            }
-            Button("Refresh Results") { panel.refreshResults() }
-
-            if let detail = panel.selectedResult {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Run artifact: \(detail.item.path)")
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    if let judgeArtifactDirectory = detail.judgeArtifactDirectory {
-                        Text("Judge artifact: \(judgeArtifactDirectory)")
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                }
-
-                artifactLinks(detail)
-
-                // F10: the browser item is built ONCE per selection by the
-                // panel (config.json read + sweep.csv probe) — never inline
-                // here, where the body re-evaluates on every live progress
-                // note.
-                if let browserItem = panel.selectedResultBrowserItem {
-                    RunSemanticSectionsView(service: service, item: browserItem)
-                }
-
-                pairedJudgeControls(panel: panel)
-
-                if let judge = detail.pairedJudgeReport {
-                    DisclosureGroup("Paired Judge Report") {
-                        LabeledContent("Judge", value: judge.judgeModel)
-                        Text(judge.sourceRunDirectory)
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                        ForEach(judge.conditions, id: \.name) { condition in
-                            LabeledContent(condition.name) {
-                                Text(judgeConditionLine(condition))
-                            }
-                            if !condition.structuredSummaries.isEmpty {
-                                ForEach(condition.structuredSummaries.keys.sorted(), id: \.self) { field in
-                                    if let summary = condition.structuredSummaries[field] {
-                                        LabeledContent(field) {
-                                            Text(structuredSummaryText(summary))
-                                        }
-                                        .font(.caption)
-                                    }
-                                }
-                            }
-                        }
-                        if !detail.judgments.isEmpty {
-                            Button("Review Judge Responses") {
-                                reviewSheet = ResultReviewSheet(mode: .judgments, detail: detail)
-                            }
-                        }
-                    }
-                }
-
-                if !detail.robustnessReports.isEmpty {
-                    DisclosureGroup("Agent Robustness") {
-                        ForEach(detail.robustnessReports.keys.sorted(), id: \.self) { name in
-                            if let report = detail.robustnessReports[name] {
-                                robustnessReportView(name: name, report: report)
-                            }
-                        }
-                    }
-                }
-
-                if let validation = detail.validationReportText {
-                    DisclosureGroup("Validation Report") {
-                        Text(validation)
-                            .font(.caption.monospaced())
-                            .textSelection(.enabled)
-                    }
-                }
-
-                if !detail.generations.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Button("Review Responses (\(detail.generations.count))") {
-                            reviewSheet = ResultReviewSheet(mode: .generations, detail: detail)
-                        }
-                        ForEach(detail.generations.prefix(5)) { generation in
-                            LabeledContent("\(generation.condition) · \(generation.promptID)") {
-                                Text("\(generation.wordCount) words")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func artifactLinks(_ detail: StudyRunDetail) -> some View {
-        HStack {
-            if !detail.generations.isEmpty {
-                Link("generations.jsonl", destination: artifactURL(detail, "generations.jsonl"))
-            }
-            if !detail.judgments.isEmpty {
-                Link("judgments.jsonl", destination: artifactURL(detail, "judgments.jsonl"))
-            }
-            if detail.report != nil || detail.validationReportText != nil {
-                Link("report.json", destination: artifactURL(detail, "report.json"))
-            }
-            if detail.pairedJudgeReport != nil {
-                Link("judge-report.json", destination: artifactURL(detail, "judge-report.json"))
-            }
-            if !detail.robustnessReports.isEmpty {
-                Link("robustness-report.json", destination: artifactURL(detail, "robustness-report.json"))
-            }
-        }
-        .font(.caption)
-    }
-
-    private func artifactURL(_ detail: StudyRunDetail, _ filename: String) -> URL {
-        let judgeFiles = Set(["judgments.jsonl", "judge-report.json"])
-        if judgeFiles.contains(filename), let judgeArtifactDirectory = detail.judgeArtifactDirectory {
-            return URL(filePath: judgeArtifactDirectory).appending(component: filename)
-        }
-        return URL(filePath: detail.item.path).appending(component: filename)
-    }
-
-    private func resultPickerLabel(_ item: StudyRunListItem) -> String {
-        switch item.kind {
-        case .run:
-            return "run · \(item.directoryName)"
-                + (item.generationCount > 0 ? " · \(item.generationCount) outputs" : "")
-        case .validate:
-            return "validation · \(item.directoryName)"
-        case .evaluate:
-            return "judge · \(item.directoryName)"
-        case .other:
-            return "artifact · \(item.directoryName)"
-        }
-    }
-
-    private func judgeConditionLine(_ condition: PairedJudgeReportView.Condition) -> String {
-        let confidence = condition.meanConfidence.formatted(.number.precision(.fractionLength(2)))
-        return "condition \(condition.conditionWins) · baseline \(condition.baselineWins)"
-            + " · ties \(condition.ties) · confidence \(confidence)"
-    }
-
-    private func robustnessReportView(name: String, report: VariantRobustnessReport) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(name)
-                .font(.callout.weight(.semibold))
-            LabeledContent(
-                "Capability",
-                value:
-                    percent(report.variantBatteryAccuracy) + " variant · "
-                    + percent(report.baselineBatteryAccuracy) + " baseline")
-            LabeledContent(
-                "Distinct-2",
-                value:
-                    report.meanVariantDistinct2.formatted(.number.precision(.fractionLength(3)))
-                    + " variant · "
-                    + report.meanBaselineDistinct2.formatted(.number.precision(.fractionLength(3)))
-                    + " baseline")
-            if report.judgeModel != nil {
-                let counts = Dictionary(grouping: report.coherenceItems.compactMap(\.judgeResult)) { $0 }
-                    .mapValues(\.count)
-                Text(
-                    "Judge: baseline \(counts["baseline"] ?? 0) · variant \(counts["variant"] ?? 0) · ties \(counts["tie"] ?? 0)"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                ForEach(report.coherenceItems.filter { $0.judge != nil }, id: \.index) { item in
-                    if let judge = item.judge {
-                        DisclosureGroup("Judge \(item.index): \(item.judgeResult ?? judge.winner)") {
-                            Text(judge.briefReason)
-                                .font(.caption)
-                                .textSelection(.enabled)
-                        }
-                    }
-                }
-            }
-            if report.warnings.isEmpty {
-                Label("No robustness warnings", systemImage: "checkmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-            } else {
-                ForEach(report.warnings, id: \.self) { warning in
-                    Label(warning, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-            }
-        }
-        .padding(.vertical, 6)
-    }
-
-    private func percent(_ value: Float) -> String {
-        value.formatted(.percent.precision(.fractionLength(0)))
-    }
-
-    private func structuredSummaryText(_ summary: StructuredFieldSummaryView) -> String {
-        var parts = ["n \(summary.count)"]
-        if let mean = summary.numericMean {
-            parts.append("mean \(mean.formatted(.number.precision(.fractionLength(3))))")
-        }
-        if let trueCount = summary.trueCount, let falseCount = summary.falseCount {
-            parts.append("true \(trueCount)")
-            parts.append("false \(falseCount)")
-        }
-        if let stringCounts = summary.stringCounts, !stringCounts.isEmpty {
-            let counts = stringCounts.map { "\($0.key): \($0.value)" }
-                .sorted()
-                .joined(separator: ", ")
-            parts.append(counts)
-        }
-        return parts.joined(separator: " · ")
-    }
-}
-
-// MARK: - Persistent notices bell (App gap A15)
-
-/// The notices bell for panel section headers (Studies, Agents): opens the
-/// shared per-workspace `PanelNotices` feed in a popover. Unseen errors
-/// badge the bell until the feed is viewed; the feed itself survives — it is
-/// the append-only ring persisted to `.steerlab/notices.json`, so an
-/// overnight failure is still consultable in the morning.
-struct NoticesBellButton: View {
-    @State private var showFeed = false
-
-    var body: some View {
-        let notices = PanelNotices.shared
-        Button {
-            showFeed = true
-            notices.markViewed()
-        } label: {
-            Image(
-                systemName: notices.hasUnseenErrors
-                    ? "bell.badge.fill" : "bell")
-                .foregroundStyle(
-                    notices.hasUnseenErrors
-                        ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-                .imageScale(.medium)
-        }
-        .buttonStyle(.plain)
-        .help(
-            "panel notices — every Studies/Agents status event, kept (last "
-                + "\(PanelNotices.capacity)) and persisted per workspace; "
-                + "errors badge the bell until viewed")
-        .popover(isPresented: $showFeed, arrowEdge: .bottom) {
-            NoticesFeedView()
-        }
-    }
-}
-
-/// The feed popover: newest first, severity icons, source + timestamp, and a
-/// Clear action. Read-only over the store — the panels append, this renders.
-struct NoticesFeedView: View {
-    var body: some View {
-        let notices = PanelNotices.shared
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Notices")
-                    .font(.headline)
-                Spacer()
-                Button("Clear") { notices.clear() }
-                    .controlSize(.small)
-                    .disabled(notices.notices.isEmpty)
-                    .help("empties the notices ring (and its persisted file)")
-            }
-            if notices.notices.isEmpty {
-                Text("No notices yet — Studies and Agents events land here "
-                    + "and persist across the session.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(notices.recentFirst) { notice in
-                            noticeRow(notice)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 360)
-            }
-        }
-        .padding(12)
-        .frame(width: 460)
-    }
-
-    private func noticeRow(_ notice: PanelNotice) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: notice.severity.symbolName)
-                .foregroundStyle(severityColor(notice.severity))
-                .imageScale(.small)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(notice.message)
-                    .font(.caption)
-                    .textSelection(.enabled)
-                Text(
-                    "\(notice.source) · "
-                        + notice.timestamp.formatted(
-                            date: .abbreviated, time: .standard))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func severityColor(_ severity: PanelNotice.Severity) -> Color {
-        switch severity {
-        case .info: .secondary
-        case .success: .green
-        case .warning: .orange
-        case .error: .red
-        }
-    }
-}
-
-private struct ResultReviewSheet: Identifiable {
-    enum Mode {
-        case generations
-        case judgments
-    }
-
-    let id = UUID()
-    let mode: Mode
-    let detail: StudyRunDetail
-
-    var title: String {
-        switch mode {
-        case .generations: "Generated Responses"
-        case .judgments: "Judge Responses"
-        }
-    }
-}
-
-private struct ResultReviewWindow: View {
-    let sheet: ResultReviewSheet
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(sheet.title)
-                        .font(.title2.weight(.semibold))
-                    Text(sheet.detail.item.directoryName)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-                Spacer()
-            }
-
-            Divider()
-
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
-                    switch sheet.mode {
-                    case .generations:
-                        ForEach(sheet.detail.generations) { generation in
-                            generationCard(generation)
-                        }
-                    case .judgments:
-                        ForEach(sheet.detail.judgments) { judgment in
-                            judgmentCard(judgment)
-                        }
-                    }
-                }
-                .padding(.trailing, 8)
-            }
-        }
-        .padding(18)
-        .frame(minWidth: 760, minHeight: 560)
-    }
-
-    private func generationCard(_ generation: StudyGenerationPreview) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("\(generation.condition) · \(generation.promptID)")
-                    .font(.headline)
-                Spacer()
-                Text(
-                    "\(generation.wordCount) words · distinct-2 "
-                        + generation.distinct2.formatted(.number.precision(.fractionLength(3))))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Text(generation.prompt)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-            Text(generation.output + (generation.truncated ? "\n…" : ""))
-                .font(.body.monospaced())
-                .textSelection(.enabled)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.35))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .padding(12)
-        .background(.background)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
-    }
-
-    private func judgmentCard(_ judgment: StudyJudgePreview) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("\(judgment.condition) · \(judgment.promptID)")
-                    .font(.headline)
-                Spacer()
-                Text(
-                    "winner \(judgment.winner) · \(judgment.conditionResult) · confidence "
-                        + judgment.confidence.formatted(.number.precision(.fractionLength(2))))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Text("baseline \(judgment.baselineWas) · condition \(judgment.conditionWas)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(judgment.prompt)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-            Text(judgment.briefReason)
-                .textSelection(.enabled)
-            if let scores = scoreSummary(judgment) {
-                Text(scores)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-            if let structured = structuredFieldsSummary(judgment) {
-                Text(structured)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-            DisclosureGroup("Raw judge JSON") {
-                Text(judgment.rawJSON)
-                    .font(.caption.monospaced())
-                    .textSelection(.enabled)
-            }
-        }
-        .padding(12)
-        .background(.background)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
-    }
-
-    private func scoreSummary(_ judgment: StudyJudgePreview) -> String? {
-        let a = (judgment.aScores ?? [:]).map { "\($0.key): \($0.value)" }.sorted().joined(separator: ", ")
-        let b = (judgment.bScores ?? [:]).map { "\($0.key): \($0.value)" }.sorted().joined(separator: ", ")
-        guard !a.isEmpty || !b.isEmpty else { return nil }
-        return "A [\(a.isEmpty ? "no scores" : a)] · B [\(b.isEmpty ? "no scores" : b)]"
-    }
-
-    private func structuredFieldsSummary(_ judgment: StudyJudgePreview) -> String? {
-        guard let fields = judgment.structuredFields, !fields.isEmpty else { return nil }
-        let summary = fields.map { "\($0.key): \($0.value.displayString)" }
-            .sorted()
-            .joined(separator: ", ")
-        return "structured_fields [\(summary)]"
-    }
-
-    private func structuredSummaryText(_ summary: StructuredFieldSummaryView) -> String {
-        var parts = ["n \(summary.count)"]
-        if let mean = summary.numericMean {
-            parts.append("mean \(mean.formatted(.number.precision(.fractionLength(3))))")
-        }
-        if let trueCount = summary.trueCount, let falseCount = summary.falseCount {
-            parts.append("true \(trueCount)")
-            parts.append("false \(falseCount)")
-        }
-        if let stringCounts = summary.stringCounts, !stringCounts.isEmpty {
-            let counts = stringCounts.map { "\($0.key): \($0.value)" }
-                .sorted()
-                .joined(separator: ", ")
-            parts.append(counts)
-        }
-        return parts.joined(separator: " · ")
-    }
-}
-
-/// Import JSONL… sheet for the Input Data section: paste (text area) or
-/// choose a file, watch the live parse preview — record count, how many
-/// records carry `options`/`target`, or the FIRST error with its line
-/// number — and import only when every line parses. Garbage is refused,
-/// never coerced into prompt text. All parsing rules live in
-/// `TaskPromptsImport` (ExperimentKit, unit-tested); this sheet renders
-/// them.
-private struct ImportJSONLSheet: View {
-    @Binding var text: String
-    /// Workspace-relative destination the import writes to (nil when no
-    /// study is selected — the import button explains instead of failing).
-    let destination: String?
-    /// Runs the panel's import (write → set as prompts file → pin hash);
-    /// the Bool is the "Replace the existing file" checkbox (the explicit
-    /// affordance — without it a differing existing file refuses);
-    /// true = landed, dismiss.
-    let onImport: (String, Bool) -> Bool
-    /// The panel's task-prompts status line (import refusals surface there).
-    let statusLine: () -> String?
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var showFilePicker = false
-    @State private var fileReadError: String?
-    @State private var replaceExisting = false
-
-    private var preview: TaskPromptsImport.Outcome {
-        TaskPromptsImport.preview(text)
-    }
-
-    private var importable: Bool {
-        if case .preview = preview { return destination != nil }
-        return false
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Import JSONL task prompts")
-                .font(.headline)
-            // Required record structure, VISIBLE in the sheet (2026-07-20
-            // researcher round, item 2b) — not hover-only.
-            Text(StudyInfo.importRecordStructure)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            TextEditor(text: $text)
-                .font(.system(.caption, design: .monospaced))
-                .frame(minWidth: 480, minHeight: 220)
-
-            HStack {
-                Button("Choose File…") { showFilePicker = true }
-                    .help("read a .jsonl file into the text area above")
-                if let fileReadError {
-                    Text(fileReadError)
-                        .font(.caption2)
-                        .foregroundStyle(.red)
-                }
-            }
-
-            previewRow
-
-            if let destination {
-                // Destination semantics, visible and TRUE to the code
-                // (2026-07-20 researcher round, item 2c).
-                Text(StudyInfo.importDestination(destination))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                // The study-pack write rule's ONE sanctioned exception:
-                // replacing a differing existing file is an explicit,
-                // per-import choice — never a default.
-                Toggle(
-                    "Replace the existing file if its contents differ",
-                    isOn: $replaceExisting)
-                    .font(.caption)
-                    .help(
-                        "without this, importing refuses when "
-                        + "\(destination) already exists with different "
-                        + "contents — nothing is overwritten silently")
-            } else {
-                Text("select a draft study first — the import pins into the "
-                    + "selected draft's manifest")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-            }
-            if let status = statusLine() {
-                Text(status)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Import & Pin") {
-                    if onImport(text, replaceExisting) { dismiss() }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!importable)
-            }
-        }
-        .padding(16)
-        .fileImporter(
-            isPresented: $showFilePicker,
-            allowedContentTypes: [
-                UTType(filenameExtension: "jsonl") ?? .plainText, .json, .plainText,
-            ]
-        ) { result in
-            switch result {
-            case .success(let url):
-                let accessing = url.startAccessingSecurityScopedResource()
-                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-                do {
-                    text = String(decoding: try Data(contentsOf: url), as: UTF8.self)
-                    fileReadError = nil
-                } catch {
-                    fileReadError = "could not read \(url.lastPathComponent): \(error.localizedDescription)"
-                }
-            case .failure(let error):
-                fileReadError = error.localizedDescription
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var previewRow: some View {
-        switch preview {
-        case .empty:
-            Label("nothing to import yet — paste JSONL records above",
-                systemImage: "info.circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .preview(let parsed):
-            Label(parsed.summaryLine, systemImage: "checkmark.circle")
-                .font(.caption)
-                .foregroundStyle(.green)
-        case .failure(let line, let message):
-            Label("line \(line): \(message) — fix it; garbage is refused, "
-                + "never imported as prompt text",
-                systemImage: "xmark.octagon")
-                .font(.caption)
-                .foregroundStyle(.red)
-                .textSelection(.enabled)
-        }
-    }
-}
-
-/// What Rename was opened on. Captured at open time so the sheet never
-/// re-reads the store while it is up.
-private struct RenameStudySheet: Identifiable {
-    let id = UUID()
-    let name: String
-    let status: ExperimentManifest.Status
-    let label: String
-    /// Run directories already stamping this study's canonical name — the
-    /// number a draft rename would strand (runs are immutable and are never
-    /// rewritten).
-    let runsStamped: Int
-
-    var isDraft: Bool { status == .draft }
-}
-
-/// The ONE rename affordance. A draft offers both effects — canonical name
-/// and display label — in a single action; a frozen or completed study
-/// offers only the label, because its canonical name is hashed into the
-/// manifest and stamped into every run's provenance.
-private struct RenameStudyWindow: View {
-    let sheet: RenameStudySheet
-    let panel: ExperimentPanel
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var canonicalName = ""
-    @State private var label = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Rename Study")
-                    .font(.title2.weight(.semibold))
-                Text(sheet.name)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-
-            Divider()
-
-            Form {
-                if sheet.isDraft {
-                    Section("Name") {
-                        TextField("study name", text: $canonicalName)
-                            .font(.body.monospaced())
-                        Text(Self.canonicalNameHelp)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if sheet.runsStamped > 0 {
-                            Label(strandedRunsNote, systemImage: "exclamationmark.triangle")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-
-                Section("Display label") {
-                    TextField("display label (optional)", text: $label)
-                    Text(labelHelp)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .formStyle(.grouped)
-
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                Button("Rename") {
-                    panel.renameSelected(
-                        canonicalName: sheet.isDraft ? canonicalName : nil,
-                        label: label)
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!hasChange)
-            }
-        }
-        .padding(18)
-        .frame(minWidth: 480, minHeight: sheet.isDraft ? 440 : 320)
-        .onAppear {
-            canonicalName = sheet.name
-            label = sheet.label
-        }
-    }
-
-    private var hasChange: Bool {
-        (sheet.isDraft && canonicalName != sheet.name) || label != sheet.label
-    }
-
-    // Long strings live outside the body — interpolating them inline blows
-    // the SwiftUI type-checker budget.
-    private static let canonicalNameHelp =
-        "lowercase letters, digits and hyphens; anything else is dropped. This "
-        + "IS the experiments/<name>/ directory and the name the CLI takes."
-
-    private var strandedRunsNote: String {
-        let plural = sheet.runsStamped == 1 ? "run" : "runs"
-        return "\(sheet.runsStamped) existing \(plural) stamp '\(sheet.name)'. Runs "
-            + "are immutable and a rename never rewrites them — they will no longer "
-            + "list under this study."
-    }
-
-    private var labelHelp: String {
-        guard !sheet.isDraft else {
-            return "shown first in study lists; the name above stays the identity "
-                + "everywhere else."
-        }
-        return "shown first in study lists. This study is \(sheet.status.rawValue): "
-            + "its name is hashed into the frozen manifest and stamped into every "
-            + "run, so the canonical id stays '\(sheet.name)'. A label is stored "
-            + "beside the manifest and moves no hash."
-    }
 }
