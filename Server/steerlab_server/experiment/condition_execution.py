@@ -43,10 +43,18 @@ def _residual_norm_at(norms, layer: int, *, artifact: str, where: str) -> float:
     return float(norms[layer])
 
 
-def _condition_injections(condition, bundles: dict[str, _dep_vector_materialization.ConceptVectorBundle]) -> list[_dep_generate.CellInjection]:
+def _condition_injections(condition, bundles: dict[str, _dep_vector_materialization.ConceptVectorBundle],
+                          *, preflight: bool = True) -> list[_dep_generate.CellInjection]:
     """Resolve a condition's slots to per-layer injection cells, applying the
     layer band and norm-unit alpha conversion (parallel to
-    ChatService.currentInjections)."""
+    ChatService.currentInjections).
+
+    ``preflight=False`` resolves the same cells without the ablation
+    mean-alignment advisory. The ONE caller that passes it is the run-start
+    intervention-scope stamp (:mod:`.intervention_scope`), which resolves the
+    whole matrix a second time purely to describe it: the advisory belongs to
+    the condition loop that executes the arm, and a provenance stamp must
+    neither duplicate it nor pre-empt the log line it belongs next to."""
     injections: list[_dep_generate.CellInjection] = []
     for slot in condition.slots:
         bundle = bundles.get(slot.concept)
@@ -71,7 +79,8 @@ def _condition_injections(condition, bundles: dict[str, _dep_vector_materializat
         is_ablation = slot.is_ablation
         first = 0 if is_ablation else max(0, center - half)
         last = layer_count - 1 if is_ablation else min(layer_count - 1, center + half)
-        if is_ablation and condition.control_type != "randomDirectionAblation":
+        if (preflight and is_ablation
+                and condition.control_type != "randomDirectionAblation"):
             # Ablation mean-alignment preflight (2026-08-06 collapse study):
             # a direction sharing a large component with the neutral residual
             # mean collapses generation into single-token repetition at λ=1.
@@ -332,8 +341,14 @@ def _effective_sae_latent_condition(spec, edit, provenance,
 def _intervention_state(condition) -> dict:
     """JSON-safe provenance for what was injected under this condition —
     stamped on every record so a reader never reconstructs it from the name."""
+    # `mode` is stamped only on an ablating slot (absent means add, the
+    # manifest's own spelling): a record whose slot says α=1.0 with no mode
+    # is a steering record, and an ablation record must not read as one
+    # (2026-09-05 — the stamp dropped the mode like `_condition_entry` did).
     state = {
-        "slots": [{"concept": s.concept, "layer": s.layer, "alpha": s.alpha}
+        "slots": [({"concept": s.concept, "layer": s.layer, "alpha": s.alpha,
+                    "mode": "ablate"} if s.is_ablation else
+                   {"concept": s.concept, "layer": s.layer, "alpha": s.alpha})
                   for s in condition.slots],
         "bandWidth": condition.band_width,
         "alphaInNormUnits": condition.alpha_in_norm_units,
@@ -501,8 +516,12 @@ def _variant_intervention_state(vc, variant) -> dict:
     components — a reader never reconstructs what a variant condition applied
     from its artifact path."""
     return {
-        "slots": [{"concept": inj.get("concept"), "layer": inj.get("layer"),
-                   "alpha": inj.get("alpha")} for inj in variant.injections],
+        "slots": [({"concept": inj.get("concept"), "layer": inj.get("layer"),
+                    "alpha": inj.get("alpha"), "mode": "ablate"}
+                   if str(inj.get("mode") or "add") == "ablate" else
+                   {"concept": inj.get("concept"), "layer": inj.get("layer"),
+                    "alpha": inj.get("alpha")})
+                  for inj in variant.injections],
         "bandWidth": variant.band_width,
         "alphaInNormUnits": variant.alpha_in_norm_units,
         "controlType": None,

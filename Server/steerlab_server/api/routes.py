@@ -869,6 +869,7 @@ def _jlens_supported() -> list[dict]:
     from ..jlens import importer
 
     return [{"modelID": model_id, "tier": entry["tier"],
+             "tierSource": "curated",
              "folder": entry["folder"], "tensor": entry["tensor"]}
             for model_id, entry in sorted(importer.SUPPORTED.items())]
 
@@ -1948,7 +1949,8 @@ def build_router(state: ServiceState) -> APIRouter:
                 fit_template = template
             job.log(f"fitting reader '{concept}' via template "
                     f"'{fit_template.id}' ({len(dataset.train)} train / "
-                    f"{len(dataset.held_out)} held-out pairs) on "
+                    f"{len(dataset.held_out)} held-out / "
+                    f"{len(dataset.final_test)} final-test pairs) on "
                     f"{fit_model_id}"
                     + (f"@{fit_revision}" if fit_revision else ""))
             with state.acquire_model(fit_model_id, fit_revision) as model:
@@ -1964,6 +1966,14 @@ def build_router(state: ServiceState) -> APIRouter:
                         {"layer": a.layer,
                          "trainAccuracy": a.train_accuracy,
                          "heldOutAccuracy": a.held_out_accuracy,
+                         # Absent when the dataset reserved no split 'test'
+                         # rows — no final-test evidence, not a zero.
+                         "finalTestAccuracy": a.final_test_accuracy,
+                         # WHICH DECISIONS each of the numbers above was
+                         # allowed to make: held-out signed the direction and
+                         # ranked these layers, so its accuracy is a selection
+                         # statistic wherever it is shown.
+                         "evidenceRoles": a.resolved_evidence_roles,
                          "signConvention": a.sign_convention,
                          "signHeldOutAccuracy": a.sign_held_out_accuracy,
                          "pc1ExplainedVarianceOfDifferences":
@@ -1973,7 +1983,8 @@ def build_router(state: ServiceState) -> APIRouter:
                     "contrastMode": artifacts[0].contrast_mode if artifacts else None,
                     "recommendedLayer": (artifacts[0].recommended_layer
                                          if artifacts else None),
-                    "layerRecommendationNote": repe_reader.LAYER_RECOMMENDATION_NOTE}
+                    "layerRecommendationNote": repe_reader.LAYER_RECOMMENDATION_NOTE,
+                    "evidenceRoleNote": repe_reader.EVIDENCE_ROLE_NOTE}
 
         return _run_or_submit(state, "reader:fit", work,
                                path="/api/reader/fit", body=body)
@@ -2141,7 +2152,7 @@ def build_router(state: ServiceState) -> APIRouter:
         job = state.jobs.submit("model:install", work)
         return {"jobId": job.id}
 
-    # --- J-lens reading instruments (server-only, Gemma-only) ----------------
+    # --- J-lens reading instruments (server-only) ----------------------------
     # Acquisition and import are separate verbs because they have different
     # prerequisites and different failure modes: acquire needs egress and puts
     # bytes in the machine's HF cache; import is offline and writes the
@@ -2175,13 +2186,23 @@ def build_router(state: ServiceState) -> APIRouter:
         caller-supplied pattern.
         """
         from ..jlens import acquire as acquire_mod
+        from ..jlens import importer
         from ..jlens.schemas import JLensError
 
         model_id = str(body.get("modelID", "")).strip()
-        try:
-            acquire_mod.patterns_for(model_id)      # validates against the table
-        except JLensError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+        # Curated rows validate here; any other owner/name is resolved by the
+        # job itself against the published configs it fetches first, and the
+        # pattern is still derived server-side either way.
+        if not model_id or "/" not in model_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{model_id}' is not a Hugging Face model id "
+                       f"(owner/name)")
+        if importer.is_curated(model_id):
+            try:
+                acquire_mod.patterns_for(model_id)
+            except JLensError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
 
         def work(job):
             snapshot = acquire_mod.acquire(
@@ -2202,15 +2223,18 @@ def build_router(state: ServiceState) -> APIRouter:
         from ..jlens.schemas import JLensError
 
         model_id = str(body.get("modelID", "")).strip()
+        tier = body.get("tier")
+        tier = str(tier).strip() if tier not in (None, "") else None
         try:
-            importer.entry_for(model_id)
+            importer.resolve_tier(model_id, tier)   # required off the table
+            importer.entry_for(model_id)            # curated row or cached config
         except JLensError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
         def work(job):
             job.log(f"importing the cached lens for {model_id} "
                     f"(converting once to per-layer safetensors)")
-            record = importer.import_lens(model_id)
+            record = importer.import_lens(model_id, tier=tier)
             job.log(f"lens {record.lensID}: layers {record.sourceLayers[0]}.."
                     f"{record.sourceLayers[-1]}, target {record.targetLayer}, "
                     f"converted {record.converted.layerCount} layers as "
@@ -2219,6 +2243,7 @@ def build_router(state: ServiceState) -> APIRouter:
                     "sourceLayers": record.sourceLayers,
                     "targetLayer": record.targetLayer,
                     "dModel": record.dModel,
+                    "tier": record.tier, "tierSource": record.tierSource,
                     "converted": record.converted.path if record.converted else None}
 
         return {"jobId": state.jobs.submit("jlens-import", work).id}
@@ -2441,11 +2466,11 @@ def build_router(state: ServiceState) -> APIRouter:
                     f"readout arm {report['arms']['readout']['verdict']}")
             return report
 
-        from ..jlens import importer, lens_store
+        from ..jlens import lens_store
 
         try:
             lens_store.resolve(str(body.get("lensID") or "").strip()
-                               or importer.lens_id_for(model_id))
+                               or lens_store.for_model(model_id))
         except JLensError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         return {"jobId": state.jobs.submit("jlens-g0", work).id}
@@ -2502,7 +2527,7 @@ def build_router(state: ServiceState) -> APIRouter:
 
         try:
             lens_store.resolve(str(body.get("lensID") or "").strip()
-                               or importer.lens_id_for(model_id))
+                               or lens_store.for_model(model_id))
         except JLensError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         return {"jobId": state.jobs.submit("jlens-probe", work).id}
@@ -4435,9 +4460,21 @@ def build_router(state: ServiceState) -> APIRouter:
             raise HTTPException(status_code=400, detail="provide 'text' or 'documentPaths'")
         if not body.get("baseModelID"):
             raise HTTPException(status_code=400, detail="baseModelID required")
+        # The v1 body speaks the same two conventions for the strength knob
+        # as the v2 hyperparameters block: ``alpha`` (PEFT's numerator) or
+        # ``adapterScale`` (the multiplier itself), never both.
+        from . import finetune_submission as _ft
+        rank = int(body.get("rank", 8))
+        try:
+            alpha, requested_scale = _ft.resolve_adapter_scale(
+                alpha=body.get("alpha"), adapter_scale=body.get("adapterScale"),
+                rank=rank)
+        except _ft.FineTuneRequestError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         config = lora_train.LoRAConfig(
             base_model_id=body["baseModelID"], document_paths=documents,
-            rank=int(body.get("rank", 8)), alpha=float(body.get("alpha", 16.0)),
+            rank=rank, alpha=float(16.0 if alpha is None else alpha),
+            requested_adapter_scale=requested_scale,
             iterations=int(body.get("iterations", 200)),
             learning_rate=float(body.get("learningRate", 1e-4)),
             output_name=body.get("name"))

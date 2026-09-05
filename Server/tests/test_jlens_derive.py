@@ -116,9 +116,17 @@ def _fake_model_snapshot(tmp_path, model_id="google/gemma-3-4b-it",
     (snap / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {
         "language_model.model.embed_tokens.weight": "model.safetensors",
         "language_model.model.norm.weight": "model.safetensors"}}))
-    (snap / "config.json").write_text(json.dumps(
-        {"text_config": {"num_hidden_layers": n_layers}}))
+    # A real architecture, because the gain fold is OBSERVED from the class
+    # config.json names (gemma3_text: offset, g = 1 + w).
+    (snap / "config.json").write_text(json.dumps(_tiny_config(n_layers)))
     return str(hub), embed, norm
+
+
+def _tiny_config(n_layers, model_type="gemma3_text"):
+    return {"model_type": model_type, "hidden_size": D_MODEL,
+            "num_hidden_layers": n_layers, "vocab_size": VOCAB,
+            "num_attention_heads": 1, "num_key_value_heads": 1,
+            "head_dim": D_MODEL, "intermediate_size": 2 * D_MODEL}
 
 
 def _stub_lens(tmp_path, root, *, layers=None, model_id="google/gemma-3-4b-it"):
@@ -212,7 +220,9 @@ def test_sidecar_uses_the_prefixed_compatibility_hash_not_a_fake_stimulus(env):
     assert payload["derivationIdentityHash"] == out["derivationIdentityHash"]
     assert payload["coverage"] == "complete"
     assert payload["directionConvention"] == "J_l^T (g . u_t)"
-    assert payload["finalNormConvention"] == "gemma (1 + weight)"
+    # Observed on the architecture, not assumed from the family name.
+    assert payload["finalNormConvention"].startswith("offset (g = 1 + weight")
+    assert payload["finalNormClass"] == "Gemma3RMSNorm"
     assert payload["tokenID"] == 7
     assert payload["substrate"] == "python-hf-transformers"
 

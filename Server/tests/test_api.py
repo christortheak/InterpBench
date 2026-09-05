@@ -307,6 +307,64 @@ def test_authoring_create_requires_fields():
     assert client.post("/api/authoring/create", json={"name": "x"}).status_code == 400
 
 
+def test_authoring_condition_route_carries_mode_and_control_type(tmp_path, monkeypatch):
+    """POST /api/authoring/{name}/condition is ``add_condition`` behind a
+    route. Until 2026-09-05 the store's projection dropped each slot's
+    ``mode`` and the condition's ``controlType``, so an ablation posted here
+    — e.g. a ``control_matrix.ablation_control_conditions()`` cell — was
+    stored as a steering arm at α = λ and its control as a plain treatment.
+    Both now round-trip through the raw manifest AND the detail summary."""
+    monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path))
+    from steerlab_server.experiment.control_matrix import (
+        ablation_control_conditions)
+    cdir = tmp_path / "prompts" / "concepts" / "joy"
+    cdir.mkdir(parents=True)
+    (cdir / "positive.jsonl").write_text('{"text": "yay"}\n', encoding="utf-8")
+    (cdir / "negative.jsonl").write_text('{"text": "meh"}\n', encoding="utf-8")
+    assert client.post("/api/authoring/create",
+                       json={"name": "abl", "modelID": "org/m"}).status_code == 200
+    assert client.post("/api/authoring/abl/attach",
+                       json={"concepts": ["joy"]}).status_code == 200
+    treatment, control = ablation_control_conditions("joy", lambdas=[1.0])
+    for body in (treatment, control):
+        r = client.post("/api/authoring/abl/condition", json=body)
+        assert r.status_code == 200, r.json()
+    stored = {c["name"]: c
+              for c in client.get("/api/experiment/abl/manifest").json()["conditions"]}
+    assert stored["joy-ablate-l1"]["slots"] == [
+        {"concept": "joy", "layer": 0, "alpha": 1.0, "mode": "ablate"}]
+    assert "controlType" not in stored["joy-ablate-l1"]
+    assert stored["joy-ablate-random"]["controlType"] == "randomDirectionAblation"
+    assert stored["joy-ablate-random"]["slots"][0]["mode"] == "ablate"
+    detail = {c["name"]: c
+              for c in client.get("/api/experiment/abl").json()["conditions"]}
+    assert detail["joy-ablate-l1"]["slots"][0]["mode"] == "ablate"
+    assert detail["joy-ablate-random"]["controlType"] == "randomDirectionAblation"
+    # A steering arm posted the same way grows no key (its bytes are hashed).
+    r = client.post("/api/authoring/abl/condition", json={
+        "name": "joy-a1", "alphaInNormUnits": True,
+        "slots": [{"concept": "joy", "layer": 4, "alpha": 1.0}]})
+    assert r.status_code == 200
+    stored = {c["name"]: c
+              for c in client.get("/api/experiment/abl/manifest").json()["conditions"]}
+    assert stored["joy-a1"]["slots"] == [{"concept": "joy", "layer": 4, "alpha": 1.0}]
+    assert "controlType" not in stored["joy-a1"]
+    detail = {c["name"]: c
+              for c in client.get("/api/experiment/abl").json()["conditions"]}
+    assert "mode" not in detail["joy-a1"]["slots"][0]
+    # The vocabularies are closed at the route too: typed 400, nothing written.
+    r = client.post("/api/authoring/abl/condition", json={
+        "name": "joy-x", "alphaInNormUnits": True,
+        "slots": [{"concept": "joy", "layer": 4, "alpha": 1.0, "mode": "remove"}]})
+    assert r.status_code == 400 and "add | ablate" in r.json()["detail"]
+    r = client.post("/api/authoring/abl/condition", json={
+        "name": "joy-x", "alphaInNormUnits": True, "controlType": "shuffled",
+        "slots": [{"concept": "joy", "layer": 4, "alpha": 1.0}]})
+    assert r.status_code == 400 and "randomMatchedNorm" in r.json()["detail"]
+    names = [c["name"] for c in client.get("/api/experiment/abl/manifest").json()["conditions"]]
+    assert "joy-x" not in names
+
+
 def test_index_serves_web_ui():
     resp = client.get("/")
     assert resp.status_code == 200

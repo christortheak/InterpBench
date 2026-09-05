@@ -41,6 +41,7 @@ Deliberately reused, never re-implemented:
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import math
@@ -729,7 +730,9 @@ def load_survey(run_directory: str) -> tuple[dict, dict]:
     if not os.path.exists(survey_path):
         raise OptVecGradientDataError(
             f"'{run_directory}' has no {SURVEY_JSON} — not an optvec-gradient "
-            "survey run directory")
+            "survey run directory"
+        ) from FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+                                 survey_path)  # a CLI reads this as notFound
     with open(survey_path, encoding="utf-8") as handle:
         readout = json.load(handle)
     tensors = load_file(os.path.join(run_directory, GRADIENTS_FILE))

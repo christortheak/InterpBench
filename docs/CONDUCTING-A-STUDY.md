@@ -970,6 +970,30 @@ mechanically into ordinary hashed conditions. Re-test on **held-out** task
 prompts — `verify` enforces that the confirmation pool is disjoint from the
 screen's — and analyze with Holm correction.
 
+**The dose-monotonicity gate reads the direction off the data (2026-09-05).**
+`promotionRule.doseMonotone` asks whether the primary-endpoint effect is
+monotone across the concept's alpha grid, and the direction it is monotone
+*in* is the observed one: the sign comes from the sorted endpoints (largest
+alpha versus smallest), so a consistently *decreasing* response passes exactly
+as a consistently increasing one does. A flat ladder, a ladder with fewer than
+two distinct doses, or a non-finite cell fails; the helper is not a
+minimum-effect-size gate and never was, and the random-floor criterion is what
+asks whether the nudge is bigger than noise. Both engines share the fixture
+(`Tests/Fixtures/cross-engine/dose-monotonicity.json`). Two consequences for
+the researcher. First, a screen whose hypothesis is *directional* — "the
+vector should raise the endpoint" — is not yet held to that direction by the
+gate: a concept whose effect runs the wrong way, monotonically, is promoted,
+and the direction has to be read off `promoted-movers.json`'s
+`effectEstimate` sign by the confirm stage's author. Second, if a confirmatory
+study needs the gate itself to enforce an expected direction, that is a
+*declared* acceptance rule (an expected-direction field on the promotion rule,
+versioned, with cross-engine tests for increasing, decreasing, flat,
+opposite-direction and single-dose ladders), never a silent default toward
+positive effects or a retrospective change to a frozen rule. The determination
+of whether the observed-direction policy suffices, or an expected direction
+must be declarable, is the researcher's; until it is made, report
+promotion under this gate as "monotone in the observed direction".
+
 ---
 
 ## 6. Measured-run policy: which substrate supports which claim

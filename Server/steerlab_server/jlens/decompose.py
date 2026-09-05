@@ -15,7 +15,8 @@ against other concepts would not surface.
 Convention is exactly ``derive.py``'s, so a support token and a derived direction
 mean the same thing:
 
-    atom_t(l) = J_l^T (g . u_t),   g = 1 + norm.weight,  u_t = tied embed row
+    atom_t(l) = J_l^T (g . u_t),   g = the final norm's gain (observed),
+                                   u_t = output-head row (tied embed on Gemma)
 
 Energy is never reported alone (hard rule, enforced by :func:`_layer_report` and
 its test)
@@ -257,12 +258,16 @@ class _LayerAtoms:
 def gain_scaled_head(model_id: str, revision: str | None):
     """``U diag(g)`` as ``[vocab, d]`` — one read, shared across every layer.
 
-    Delegates the tie/gain conventions to :mod:`derive` rather than restating
-    them: Gemma ties its embeddings so the output row IS the embedding row,
-    RMSNorm is ``1 + weight``, and the sqrt(d) input scaling must not appear.
+    Delegates the tie/gain conventions to :mod:`derive` and
+    :mod:`norm_convention` rather than restating them: Gemma ties its
+    embeddings so the output row IS the embedding row, the gain is whichever
+    fold the architecture's final norm is OBSERVED to apply, and the sqrt(d)
+    input scaling must not appear.
     """
     import torch
     from safetensors import safe_open
+
+    from . import norm_convention
 
     snapshot = derive_mod._snapshot_dir(model_id, revision)
     weight_map = derive_mod._weight_map(snapshot)
@@ -277,9 +282,11 @@ def gain_scaled_head(model_id: str, revision: str | None):
     with safe_open(os.path.join(snapshot, weight_map[embed_key]),
                    framework="pt") as handle:
         head = handle.get_tensor(embed_key).to(torch.float32)
+    convention = norm_convention.from_config(snapshot)["convention"]
     with safe_open(os.path.join(snapshot, weight_map[norm_key]),
                    framework="pt") as handle:
-        gain = 1.0 + handle.get_tensor(norm_key).to(torch.float32)
+        gain = norm_convention.gain_from_weight(
+            handle.get_tensor(norm_key).to(torch.float32), convention)
     if head.shape[1] != gain.numel():
         raise JLensError(
             f"head width {head.shape[1]} != final-norm width {gain.numel()}")

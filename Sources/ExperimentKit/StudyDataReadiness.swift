@@ -1098,7 +1098,7 @@ public enum StudyDataReadiness {
                 id: id, title: title, kind: .jlensReadout, status: .optional,
                 path: path,
                 detail: "no J-lens readout declared — without one a run records "
-                    + "no readout at all. Authored on the SERVER (Gemma-only, "
+                    + "no readout at all. Authored on the SERVER (any published lens, "
                     + "server-only); this engine renders and carries the block, "
                     + "it never produces one.")
         }

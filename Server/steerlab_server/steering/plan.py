@@ -17,9 +17,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from . import intervention as scope_vocabulary
 from .ablator import Ablation, SubspaceAblator, orthonormalized
 from .injector import Injection, VectorInjector
-from .intervention import LayerIntervention
+from .intervention import InterventionScope, LayerIntervention
 from .sae_latent import SAELatentEdit, SAELatentIntervention, group_edits
 
 
@@ -46,6 +47,12 @@ class Edit:
     #: what makes the removed subspace reproducible across runs and engines
     #: rather than a function of dict iteration.
     concept: str
+    #: The centering convention this edit's DIRECTION was expressed in
+    #: ("none" or "neutralMean"). Declared upstream, where the vector is
+    #: resolved, and carried here only so the chain can DESCRIBE itself
+    #: (:func:`scope_inventory`) — nothing in the arithmetic reads it, and no
+    #: caller has to supply it, so every existing construction is unchanged.
+    centering: str = scope_vocabulary.CENTERING_NONE
 
 
 class AmbiguousStrength(Exception):
@@ -84,7 +91,16 @@ def ablator(edits: list[Edit]) -> SubspaceAblator | None:
         if not basis:
             continue
         per_layer[layer] = Ablation(
-            basis=tuple(tuple(row) for row in basis), strength=strengths[0])
+            basis=tuple(tuple(row) for row in basis), strength=strengths[0],
+            # Carried, not honored per row: the orthonormalized basis no longer
+            # corresponds one-to-one with the concepts that produced it, so a
+            # layer whose edits declare different conventions can only be
+            # REPORTED as mixed. Not a refusal like `AmbiguousStrength`,
+            # because centering changes nothing about how the removal is
+            # computed — it changes what the removed direction MEANS, which is
+            # a reader's problem and belongs in the record.
+            centering=scope_vocabulary.centering_summary(
+                edit.centering for edit in ordered))
     return SubspaceAblator(per_layer) if per_layer else None
 
 
@@ -161,6 +177,29 @@ def interventions(edits: list[Edit],
                 {edit.layer: Injection(vector=edit.vector, alpha=edit.strength)},
                 prompt_token_count=prompt_token_count))
     return chain
+
+
+def scope_inventory(edits: list[Edit],
+                    prompt_token_count: int | None = None,
+                    latent_edits: list[SAELatentEdit] | None = None
+                    ) -> list[InterventionScope]:
+    """The scope descriptors for the chain :func:`interventions` would build,
+    in chain order (ablator first, then latent, then the injectors).
+
+    Built BY building the chain and asking each member, never by re-deriving
+    the description from the edits: a description assembled independently is a
+    second implementation of the plan, and the two would eventually disagree
+    about the thing this exists to state. The cost is one Gram-Schmidt over the
+    ablated directions, paid once at run start.
+
+    A condition that both ablates and adds yields TWO descriptors, in that
+    order, saying two different things about token positions — which is the
+    whole point: those two interventions are not one intervention with two
+    doses, and a run that arms both cannot be described by either row alone.
+    """
+    return [item.scope() for item in interventions(
+        edits, prompt_token_count=prompt_token_count,
+        latent_edits=latent_edits)]
 
 
 def satisfies_ordering_invariant(chain: list[LayerIntervention]) -> bool:

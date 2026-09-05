@@ -17,10 +17,22 @@ from steerlab_server.jlens import backend, importer, lens_store
 MODEL = "google/gemma-3-4b-it"
 
 
-class _FakeNorm:
+class _FakeNorm(__import__("torch").nn.Module):
+    """A runnable final norm: the readout OBSERVES the fold a norm applies
+    (offset here, Gemma's ``1 + weight``) rather than reading a weight off a
+    bare object."""
+
     def __init__(self, d):
         import torch as t
-        self.weight = t.zeros(d)
+        super().__init__()
+        self.weight = t.nn.Parameter(t.zeros(d), requires_grad=False)
+        self.eps = 1e-6
+
+    def forward(self, x):
+        import torch as t
+        normed = x.float() * t.rsqrt(x.float().pow(2).mean(-1, keepdim=True)
+                                     + self.eps)
+        return (normed * (1.0 + self.weight.float())).type_as(x)
 
 
 class _FakeHead:

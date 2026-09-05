@@ -2224,8 +2224,45 @@ ALPHA_UNITS_REPAIR = (
     "--slots <concept>:<layer>:<alpha> --alpha-units norm|raw`")
 
 
+#: The condition control vocabulary, as the manifest spells it. Not a
+#: free-text field: an unknown ``controlType`` silently produces a cell that
+#: duplicates the treatment (the substitution in ``tasks._condition_injections``
+#: never fires). Swift twin: ``ExperimentCLIRunner.knownControlTypes``.
+KNOWN_CONTROL_TYPES: tuple[str, ...] = ("randomMatchedNorm",
+                                        "randomDirectionAblation")
+
+#: The slot intervention vocabulary (``Slot.mode`` / Swift
+#: ``InterventionPlan.Mode``). Anything else would make the Mac engine unable
+#: to decode the manifest at all — its ``Mode`` is a closed Codable enum.
+SLOT_MODES: tuple[str, ...] = ("add", "ablate")
+
+
 def _condition_entry(condition: dict) -> dict:
     """Project one DECLARED condition into the manifest's stored shape.
+
+    **Every field the run path reads is carried (2026-09-05).** This used to
+    project exactly ``{concept, layer, alpha}`` per slot and drop the slot's
+    ``mode`` and the condition's ``controlType`` — so an ablation authored
+    through ``add_conditions`` (the ``POST /api/authoring/{name}/condition``
+    route, and anything feeding it ``control_matrix.ablation_control_
+    conditions()``) was stored as a STEERING condition at α = λ, and a
+    ``randomMatchedNorm`` / ``randomDirectionAblation`` control was stored as
+    an ordinary treatment cell. The same failure class as the 2026-07-27
+    variant-wire bug (``model_variant.py``): the wire spells add by omission,
+    so a dropped mode is indistinguishable from steering. The Swift engine's
+    ``ExperimentStore.Slot`` is Codable over ``mode`` and always round-tripped
+    it, so the two engines' authoring verbs disagreed.
+
+    ``mode`` is written ONLY when it is ``ablate``: an explicit ``add`` is
+    normalised to omission, exactly as the Swift encoder does (``Slot.encode``
+    skips ``.add``), because manifest bytes are the content hash — a key
+    appearing on every add-by-omission condition would re-identify every
+    frozen study in the workspace. ``controlType`` is written only when
+    declared. Both are checked against the closed vocabularies the Mac verb
+    refuses on (``knownControlTypes``; ``InterventionPlan.Mode``), and a
+    control is refused when it cannot fire for its slots' mode — a
+    matched-norm control on an ablation, or a direction-ablation control on a
+    steering slot, is a cell that silently duplicates the treatment.
 
     ``alphaInNormUnits`` is REQUIRED here (Phase-0 gap G6,
     ``docs/PORTABILITY-CONTRACTS.md``). It used to default to ``False`` while
@@ -2247,13 +2284,72 @@ def _condition_entry(condition: dict) -> dict:
             "would read raw α and the Mac engine residual-norm units for the "
             f"same document. {ALPHA_UNITS_REPAIR}",
             repair=ALPHA_UNITS_REPAIR)
+    name = condition["name"]
+    slots = []
+    for s in condition.get("slots", []):
+        slot = {"concept": s["concept"], "layer": int(s["layer"]),
+                "alpha": float(s["alpha"])}
+        mode = s.get("mode")
+        if mode is not None:
+            if mode not in SLOT_MODES:
+                repair = (f"set the slot's \"mode\" to one of "
+                          f"{' | '.join(SLOT_MODES)}, or omit it for add")
+                raise ExperimentStoreError(
+                    f"condition {name!r} slot {s['concept']!r} declares "
+                    f"mode {mode!r}, which is not an intervention this "
+                    f"engine or the Mac engine can decode — known: "
+                    f"{' | '.join(SLOT_MODES)}. {repair}", repair=repair)
+            # Absent means add, and an explicit add is never written back
+            # (`Slot.mode`, Swift `Slot.encode`): the bytes are the hash.
+            if mode == "ablate":
+                slot["mode"] = "ablate"
+        slots.append(slot)
     entry = {
-        "name": condition["name"],
-        "slots": [{"concept": s["concept"], "layer": int(s["layer"]), "alpha": float(s["alpha"])}
-                  for s in condition.get("slots", [])],
+        "name": name,
+        "slots": slots,
         "bandWidth": int(condition.get("bandWidth", 1)),
         "alphaInNormUnits": bool(condition["alphaInNormUnits"]),
     }
+    control_type = condition.get("controlType")
+    if control_type is not None:
+        known = " | ".join(KNOWN_CONTROL_TYPES)
+        if control_type not in KNOWN_CONTROL_TYPES:
+            repair = f"declare controlType as one of {known}, or omit it"
+            raise ExperimentStoreError(
+                f"condition {name!r} declares unknown controlType "
+                f"{control_type!r} — known: {known}. Not a free-text field: "
+                "an unknown control runs as an ordinary treatment cell, so "
+                f"the study would carry a duplicate arm named as a control. "
+                f"{repair}", repair=repair)
+        if not slots:
+            repair = ("give the control the SAME slots as the treatment it "
+                      "controls for, or drop controlType")
+            raise ExperimentStoreError(
+                f"condition {name!r} declares controlType {control_type!r} "
+                "with no slots — a control cell substitutes a random "
+                f"direction for the concept's in the SAME slots. {repair}",
+                repair=repair)
+        ablating = any("mode" in slot for slot in slots)
+        if control_type == "randomMatchedNorm" and ablating:
+            repair = ('use "controlType": "randomDirectionAblation" — the '
+                      "ablation control removes a random DIRECTION (norm "
+                      "matching means nothing to a projection)")
+            raise ExperimentStoreError(
+                f"condition {name!r} pairs controlType 'randomMatchedNorm' "
+                "with an ablating slot: the matched-norm substitution is the "
+                "steering control, and on the Mac engine it never fires for "
+                "an ablation, so the cell would ablate the concept itself and "
+                f"duplicate the treatment. {repair}", repair=repair)
+        if control_type == "randomDirectionAblation" and not ablating:
+            repair = ('use "controlType": "randomMatchedNorm" for a steering '
+                      'slot, or declare the slot "mode": "ablate"')
+            raise ExperimentStoreError(
+                f"condition {name!r} pairs controlType "
+                "'randomDirectionAblation' with a steering slot: the "
+                "direction substitution fires only for an ablating slot, so "
+                "the cell would steer the concept itself and duplicate the "
+                f"treatment. {repair}", repair=repair)
+        entry["controlType"] = str(control_type)
     # Sweep-selection provenance (cross-engine contract): the sweep stamps how
     # its `<concept>-recommended` cell was chosen — run, resolved criterion,
     # dev-split hash, winning cell, metrics, control. Preserved verbatim; this
@@ -3125,23 +3221,30 @@ def _check_jlens_readout(name: str, d: dict, root: str | None) -> None:
             f"sampled-text instrument, or drop the readout block")
 
     model_id = d.get("modelID")
-    entry = jlens_importer.SUPPORTED.get(model_id or "")
-    if entry is None:
-        raise ExperimentStoreError(
-            f"cannot freeze '{name}': jlensReadout is declared but "
-            f"'{model_id}' has no supported lens — this feature is Gemma-only")
-    if entry.get("tier") != "evidence":
-        raise ExperimentStoreError(
-            f"cannot freeze '{name}': '{model_id}' is a {entry.get('tier')}-tier "
-            f"model for J-lens work. It exercises the path and produces no "
-            f"evidence, so a frozen study cannot select it")
-
     try:
         record = jlens_store.resolve(block["lensID"], root)
     except Exception as exc:  # noqa: BLE001
         raise ExperimentStoreError(
             f"cannot freeze '{name}': pinned J-lens '{block['lensID']}' is not "
             f"imported in this workspace ({type(exc).__name__})") from exc
+
+    # The tier: the curated row when the study has decided about this model,
+    # else what the researcher declared when the lens was imported (2026-09-05
+    # — any model with a published lens may be imported, and the tier is the
+    # one thing no upstream file can supply). Resolved through ONE helper so
+    # freeze, qualify and run start cannot disagree.
+    tier, tier_source = jlens_importer.tier_of(model_id, record)
+    if tier == "unknown":
+        raise ExperimentStoreError(
+            f"cannot freeze '{name}': '{model_id}' has no evidence tier — it "
+            f"is not in the curated lens table and lens '{record.lensID}' "
+            f"carries no import declaration. Re-import it with "
+            f"`jlens import {model_id} --tier evidence|testing`")
+    if tier != "evidence":
+        raise ExperimentStoreError(
+            f"cannot freeze '{name}': '{model_id}' is a {tier}-tier "
+            f"model for J-lens work ({tier_source}). It exercises the path "
+            f"and produces no evidence, so a frozen study cannot select it")
 
     revision, dtype = d.get("modelRevision"), d.get("dtype")
     if not revision or not dtype:

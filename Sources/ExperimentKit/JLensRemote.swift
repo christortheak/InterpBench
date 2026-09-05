@@ -2,8 +2,8 @@ import Foundation
 
 /// Remote J-Space surface: the Mac app RENDERS lens artifacts, never produces them.
 ///
-/// J-lens work is server-only and Gemma-only by rule (CLAUDE.md, hard
-/// requirement): the imported lens artifacts are PyTorch/HF-native and
+/// J-lens work is server-only by rule (hard requirement): the imported
+/// lens artifacts are PyTorch/HF-native and
 /// activations do not transfer across substrates, so there is no local/MLX
 /// equivalent to fall back to. Every type here is a read/render model over a
 /// server response — this file deliberately contains no derivation, no

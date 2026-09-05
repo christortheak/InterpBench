@@ -56,6 +56,7 @@ attached as a pinned artifact.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import math
@@ -530,7 +531,10 @@ def parse_neutral_texts(content: str) -> list[str]:
 def load_neutral_texts(ref: FileRef) -> list[str]:
     resolved = optvec_train_resolve(ref.path)
     if not os.path.exists(resolved):
-        raise OptVecEvalDataError(f"neutral text file not found: {ref.path}")
+        raise OptVecEvalDataError(
+            f"neutral text file not found: {ref.path}"
+        ) from FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+                                 resolved)  # a CLI reads this as notFound
     with open(resolved, "rb") as handle:
         data = handle.read()
     digest = hashlib.sha256(data).hexdigest()

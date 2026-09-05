@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import time
+import traceback
 
 
 class RootFlagError(Exception):
@@ -92,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
         return _sae(args[1:])
     if args and args[0] == "gemmascope":
         return _gemmascope(args[1:])
+    if args and args[0] == "ledger":
+        return _ledger(args[1:])
     if len(args) >= 2 and args[0] == "--config":
         return _run_config(args[1])
 
@@ -143,6 +146,8 @@ def _usage_text() -> str:
         "| sae qualification show <path> [--json]\n"
         "| gemmascope import-id --model M --release R --sae-id S --feature N "
         "--label L --residual-norm-artifact <runDir/name>\n"
+        "| ledger impact [--code-checkout <git checkout>] [--json] "
+        "[--out <file>]\n"
         "| docs cli-reference [--check|--write] [--path <file>]\n"
         "(--root DIR sets the artifact root — STEERLAB_ROOT — for any verb)\n"
         "(`steerlab-server <family> --help` lists a family's agent-path verbs; "
@@ -171,7 +176,8 @@ _AGENT_FAMILY_ORDER = ("experiment", "jobs", "study", "vectors", "data",
 #: place and asserted against the dispatch by
 #: ``test_cli_reference.py::test_the_printed_experiment_verb_list_is_complete``.
 EXPERIMENT_VERBS = (
-    "list", "verify", "attach-artifact", "extract", "validate", "sweep", "run",
+    "list", "verify", "attach-artifact", "extract", "extract-stability",
+    "validate", "sweep", "run",
     "pipeline", "evaluate", "judge-worker", "complete-judgment", "analyze",
     "rescore-style", "promote", "confirm", "preflight-endpoints",
 )
@@ -794,7 +800,7 @@ def _print_jlens_report(report: dict) -> None:
 
 
 def _jlens(args: list[str]) -> int:
-    """J-lens reading instruments — server-only, Gemma-only (CLAUDE.md).
+    """J-lens reading instruments — server-only; any model with a published lens.
 
     Two operations, deliberately distinct (plan §11.0.1): `acquire` puts the
     published bytes in the HF cache and needs egress; `import` converts them
@@ -809,9 +815,27 @@ def _jlens(args: list[str]) -> int:
 
     try:
         if verb == "supported":
+            # Curated rows always; `--published` also lists every lens the
+            # upstream repository carries (fetches ~40 small configs, needs
+            # egress) so a researcher can see whether THEIR model has one
+            # before acquiring gigabytes. An uncurated model's tier is
+            # "declare at import" — nothing upstream can say what this study
+            # treats as evidence.
             for model_id in importer.supported_models():
                 entry = importer.SUPPORTED[model_id]
-                print(f"{model_id}\t{entry['tier']}\t{entry['folder']}/{entry['tensor']}")
+                print(f"{model_id}\t{entry['tier']} (curated)\t"
+                      f"{entry['folder']}/{entry['tensor']}")
+            if "--published" in args:
+                published = importer.published_entries(offline=False)
+                for model_id in sorted(published):
+                    if importer.is_curated(model_id):
+                        continue
+                    entry = published[model_id]
+                    tensor = entry.get("tensor") or "(tensor named on acquire)"
+                    print(f"{model_id}\tdeclare at import (--tier)\t"
+                          f"{entry['folder']}/{tensor}\t"
+                          f"{entry.get('corpus') or '?'}\t"
+                          f"{entry.get('promptsFitted') or '?'} prompts")
             return 0
 
         if verb == "list":
@@ -841,9 +865,10 @@ def _jlens(args: list[str]) -> int:
             return 0
 
         if verb == "import" and len(args) >= 2:
-            record = importer.import_lens(args[1])
+            record = importer.import_lens(args[1], tier=_flag(args, "--tier"))
             print(json.dumps({
                 "ok": True, "lensID": record.lensID,
+                "tier": record.tier, "tierSource": record.tierSource,
                 "sourceLayers": [record.sourceLayers[0], record.sourceLayers[-1]],
                 "targetLayer": record.targetLayer, "dModel": record.dModel,
                 "converted": record.converted.path if record.converted else None,
@@ -1020,9 +1045,10 @@ def _jlens(args: list[str]) -> int:
         return 1
 
     sys.stderr.write(
-        "usage: steerlab-server jlens supported\n"
-        "       steerlab-server jlens acquire <model-id>   # bytes -> HF cache (needs egress)\n"
-        "       steerlab-server jlens import <model-id>    # convert -> workspace (offline)\n"
+        "usage: steerlab-server jlens supported [--published]   # curated rows; --published lists every upstream lens (egress)\n"
+        "       steerlab-server jlens acquire <model-id>   # bytes -> HF cache (needs egress; any model with a published lens)\n"
+        "       steerlab-server jlens import <model-id> [--tier evidence|testing]\n"
+        "                                                  # convert -> workspace (offline); --tier REQUIRED off the curated table\n"
         "       steerlab-server jlens list\n"
         "       steerlab-server jlens inspect <lens-id>\n"
         "       steerlab-server jlens support <lens-id> <runDir>/<vectorName> "
@@ -2254,6 +2280,8 @@ def _experiment(args: list[str]):
             message=f"extracted vectors for '{name}'", changed=True,
             payload={"experiment": name, "runDirectory": run_directory},
             next_action=next_action(f"experiment validate {name}"))
+    if verb == "extract-stability":
+        return _extract_stability(name, rest, root, dtype, device)
     if verb == "validate":
         run_directory = tasks.validate(name, root, dtype, device)
         # THE QUALITY NUMBERS and THE VACUITY LEDGER (punch list #1, P4 and
@@ -2844,6 +2872,92 @@ def _parity_could_not_compare_repair(*, incomparable: bool, path_a: str,
                 f"('{path_a}' vs '{path_b}'); {shape}")
     return (f"check both operand paths and their sidecars — '{path_a}' and "
             f"'{path_b}': {shape}")
+
+
+def _extract_stability(name: str, rest: list[str], root, dtype, device):
+    """``experiment extract-stability <name> <concept> …`` — the resampling
+    stability diagnostic (:mod:`steerlab_server.experiment.extract_stability`).
+
+    A THIN ARM on purpose: everything the verb decides lives in the module, so
+    this function only turns argv into typed values and a typed refusal into a
+    ``CLIResult``. The numeric flags are parsed HERE rather than passed through
+    as strings, because ``--fraction half`` is a malformed invocation (64) and
+    not a refusal (65), and the module's own refusals are the latter.
+    """
+    from .cli_envelope import CLIResult, exit_code_for
+    from .experiment import extract_stability
+
+    if len(rest) < 2 or rest[1].startswith("--"):
+        sys.stderr.write(
+            "usage: experiment extract-stability <name> <concept> "
+            "[--resamples N] [--fraction F] [--seed S] [--order-shuffles N]\n"
+            f"  (defaults: --resamples {extract_stability.DEFAULT_RESAMPLES} "
+            f"--fraction {extract_stability.DEFAULT_FRACTION} "
+            f"--seed {extract_stability.DEFAULT_SEED} "
+            f"--order-shuffles {extract_stability.DEFAULT_ORDER_SHUFFLES}; the "
+            "document lands under <root>/diagnostics/, never under runs/)\n")
+        return 64
+    concept = rest[1]
+
+    def number(flag: str, default, cast):
+        raw = _flag(rest, flag)
+        if raw is None:
+            return default
+        try:
+            return cast(raw)
+        except ValueError:
+            raise _StabilityFlagError(flag, raw) from None
+
+    try:
+        resamples = number("--resamples", extract_stability.DEFAULT_RESAMPLES, int)
+        fraction = number("--fraction", extract_stability.DEFAULT_FRACTION, float)
+        seed = number("--seed", extract_stability.DEFAULT_SEED, int)
+        order_shuffles = number(
+            "--order-shuffles", extract_stability.DEFAULT_ORDER_SHUFFLES, int)
+    except _StabilityFlagError as exc:
+        sys.stderr.write(f"experiment extract-stability: {exc}\n")
+        return 64
+    if order_shuffles < 0:
+        sys.stderr.write("experiment extract-stability: --order-shuffles may "
+                         "not be negative\n")
+        return 64
+
+    try:
+        document = extract_stability.run(
+            name, concept, root=root, resamples=resamples, fraction=fraction,
+            seed=seed, order_shuffles=order_shuffles, dtype=dtype,
+            device=device,
+            log=lambda line: print(line, file=sys.stderr, flush=True))
+    except extract_stability.ExtractStabilityError as exc:
+        sys.stderr.write(f"experiment extract-stability: {exc}\n")
+        # The human-mode exit code follows the state's stable code (64 / 65 /
+        # 66), exactly as the JSON envelope's does — never a bare 2.
+        return CLIResult(
+            state=exc.state, exit_code=exit_code_for(exc.state),
+            code=exc.code, message=str(exc), repair_action=exc.repair_action,
+            payload={"concept": concept, "experiment": name})
+    result = extract_stability.summary(document)
+    print(f"wrote {result['path']}")
+    print(f"min cosine {result['minCosine']:.4f} at layer "
+          f"{result['worstLayer']} over {result['layerCount']} layer(s); "
+          f"{result['signFlips']} sign flip(s)")
+    if result["stimulusDrift"]:
+        print("NOTE: the concept's stimuli no longer match the manifest's "
+              "pinned hash — this reading is of the LIVE bytes",
+              file=sys.stderr)
+    return CLIResult(
+        message=(f"stability of '{concept}' in '{name}': min cosine "
+                 f"{result['minCosine']:.4f} at layer {result['worstLayer']}, "
+                 f"{result['signFlips']} sign flip(s)"),
+        changed=True, payload=result)
+
+
+class _StabilityFlagError(ValueError):
+    """A numeric flag that will not parse — a malformed invocation (64), never
+    a refusal."""
+
+    def __init__(self, flag: str, raw: str) -> None:
+        super().__init__(f"bad {flag} {raw!r} — it must be a number")
 
 
 _MODEL_USAGE = ("usage: steerlab-server model capabilities <modelID> "
@@ -3850,9 +3964,20 @@ def _optvec(args: list[str]) -> int:
     top-up-submits the Slurm grid (WP6); ``interpret``/``family`` read what a
     solution (and the solution family) contains (WP7); ``jspace`` reads what
     the model computes FROM it through an imported lens (WP8, exploratory
-    tier). Each prints its run's JSON. Exit codes: 0 = done; 2 = bad
-    config/dataset/artifact; 3 = campaign submit had failed sbatches;
-    64 = usage."""
+    tier). Each prints its run's JSON.
+
+    Exit codes are the shared vocabulary (``cli_envelope.STATE_EXIT_CODES``,
+    the table every agent-path verb answers in — until 2026-09-05 this family
+    answered every typed error with a 2 and let the untyped ones escape as
+    tracebacks): 0 = done; 64 = usage, or a config that breaks its own
+    contract; 65 = a typed refusal by an input (a missing choice-row
+    dataset is the shared loader's gate refusal, so it is 65 here as under
+    ``experiment sweep``); 66 = a named config, artifact, lens, text file,
+    survey or campaign directory that does not exist; 70 = an operational
+    failure. ``campaign submit`` additionally exits 3 when any
+    sbatch failed — a success document carrying failures, never buried in a
+    zero. :func:`_optvec_exception_envelope` is the one place the mapping
+    lives."""
     if not args:
         sys.stderr.write(_OPTVEC_USAGE)
         return 64
@@ -3878,12 +4003,162 @@ def _optvec(args: list[str]) -> int:
     return 64
 
 
+def _optvec_error_classes() -> tuple[tuple, tuple]:
+    """The optvec family's typed exceptions, split the way the exit vocabulary
+    splits them: ``(malformed-config classes, typed-refusal classes)``.
+
+    A CONFIG error is the config's own contract declined as written — an
+    unknown key, a wrong type, a value outside its range, a selection split
+    the verb must not see, too few artifacts to be a statistic. The
+    invocation is malformed (``blocked``, 64) and the repair is to edit the
+    config. A REFUSAL is a well-formed request that an INPUT declined — hash
+    drift, a multi-token option, an artifact with no ``optvec`` block, mixed
+    layers, a lens with no Jacobian at the injection layer, a drifted
+    campaign (``refused``, 65). A missing input is neither; see
+    :func:`_missing_file_in_chain`.
+
+    Imported lazily and all at once: every optvec module already pulls torch
+    through ``optvec_eval``, so by the time an optvec exception exists the
+    cost has been paid, and ONE table beats the seven per-handler tuples that
+    had drifted apart (``family`` never caught ``OptVecFamilyError``;
+    ``train`` let a missing dataset's lifecycle refusal escape as a
+    traceback). ``test_cli_optvec_exit_codes.py`` asserts that every
+    exception class the optvec modules define lands in one of the two.
+    """
+    from .experiment import (optvec_campaign, optvec_eval, optvec_geometry,
+                             optvec_gradient, optvec_interpret, optvec_jspace,
+                             optvec_train)
+    malformed = (
+        optvec_train.OptVecConfigError,
+        optvec_eval.OptVecEvalConfigError,
+        optvec_geometry.OptVecGeometryConfigError,
+        optvec_campaign.CampaignConfigError,
+        optvec_interpret.OptVecInterpretConfigError,
+        optvec_interpret.OptVecFamilyConfigError,
+        optvec_jspace.OptVecJSpaceConfigError,
+        optvec_gradient.OptVecGradientConfigError,
+        # A config file that is not JSON at all.
+        json.JSONDecodeError,
+    )
+    refusals = (
+        optvec_train.OptVecDataError,
+        optvec_eval.OptVecEvalDataError,      # and OptVecInterpretDataError
+        optvec_eval.OptVecArtifactError,
+        optvec_geometry.OptVecGeometryError,
+        optvec_campaign.CampaignError,
+        optvec_interpret.OptVecFamilyError,
+        optvec_jspace.OptVecJSpaceError,
+        optvec_gradient.OptVecGradientDataError,
+    )
+    return malformed, refusals
+
+
+def _missing_file_in_chain(exc: BaseException) -> FileNotFoundError | None:
+    """The ``FileNotFoundError`` an exception carries — itself, or anywhere
+    down its cause chain — or ``None``.
+
+    The optvec modules wrap what they cannot read into ONE typed error per
+    module, chained ``from`` the underlying failure, and the loaders that test
+    for existence themselves chain an explicit ``FileNotFoundError`` for the
+    same reason. Either way a missing config, artifact, lens, gradient file,
+    survey or campaign directory answers ``notFound`` (66) — the commonest
+    agent mistake, which used to be indistinguishable from a refusal. The walk
+    follows the rule the interpreter uses to print a traceback: the explicit
+    cause, else the implicit context unless it was suppressed.
+    """
+    seen: set = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, FileNotFoundError):
+            return current
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif not current.__suppress_context__:
+            current = current.__context__
+        else:
+            break
+    return None
+
+
+def _optvec_exception_envelope(label: str, exc: BaseException, *,
+                               config_path: str | None = None):
+    """The envelope for what an optvec verb raised — the ONE place the
+    family's exceptions meet the shared state vocabulary, so the process exit
+    code and a document's ``state`` cannot disagree.
+
+    Precedence, deliberately the agent path's (:func:`_exception_envelope`):
+    a LIFECYCLE gate first — the dataset loaders' typed refusal carries its
+    gate id and executable repair, and the same exception must read the same
+    way here as under ``experiment sweep``; then a missing file anywhere down
+    the chain (``notFound``); then the config's own contract (``blocked``);
+    then an input that declined (``refused``); everything else is an
+    operational failure (``failed``), whose traceback the caller prints
+    because the reason is then all there is.
+    """
+    from . import cli_envelope as envelope
+    from .experiment import lifecycle_gates
+
+    reason = str(exc)
+    gate = lifecycle_gates.gate_of(exc)
+    if gate:
+        return envelope.refusal(
+            label, code=gate, gate=gate, reason=reason,
+            repair_action=lifecycle_gates.repair_of(exc) or _UNTYPED_REPAIR)
+    missing = _missing_file_in_chain(exc)
+    if missing is not None:
+        filename = getattr(missing, "filename", None)
+        return envelope.refusal(
+            label, code="notFound", state="notFound", reason=reason,
+            repair_action=(
+                f"no file at {filename} — check the path the config or the "
+                "command line names" if filename else
+                "the reason names what is missing — create or import it, or "
+                "correct the path"))
+    malformed, refusals = _optvec_error_classes()
+    if isinstance(exc, malformed):
+        subject = (f"the config at {config_path}" if config_path
+                   else "the invocation")
+        return envelope.refusal(
+            label, code="malformedConfig", state="blocked", reason=reason,
+            repair_action=f"fix {subject} — the reason names the key, value, "
+                          "or rule")
+    if isinstance(exc, refusals):
+        return envelope.refusal(
+            label, code=type(exc).__name__, reason=reason,
+            repair_action=("the request was well formed and an input declined "
+                           "it — repair the input the reason names (re-pin a "
+                           "drifted file deliberately, never silently), then "
+                           "re-run"))
+    return envelope.failure(label, code="verbFailed", reason=reason,
+                            repair_action=_UNTYPED_REPAIR)
+
+
+def _optvec_exit(label: str, exc: BaseException, *,
+                 config_path: str | None = None) -> int:
+    """Report an optvec verb's raised outcome on stderr and return its exit
+    code — derived from the envelope's state, never written as a literal.
+
+    The first line keeps its historical shape (``optvec <verb>: <reason>``);
+    the repair follows it, indented, the way the agent path prints one. An
+    operational failure (70) also prints the traceback: that is the one case
+    in which the reason is not the whole diagnosis, and swallowing it would
+    turn a bug into a mystery.
+    """
+    document = _optvec_exception_envelope(label, exc, config_path=config_path)
+    sys.stderr.write(f"{label}: {exc}\n  {document.error['repairAction']}\n")
+    if document.state == "failed":
+        sys.stderr.write("".join(traceback.format_exception(exc)))
+    return document.exit_code
+
+
 def _optvec_gradient_verb(args: list[str]) -> int:
     """``gradient --config <json>`` runs the per-item α→0 survey (S4: one
     forward+backward per item plus the dose-ladder linearity check);
     ``gradient mint <survey-run-dir> <item-id> [--name N]`` exports one item's
     direction as a standard lifecycle-compatible artifact."""
     from .experiment import optvec_gradient
+    config_path = None
     try:
         if args and args[0] == "mint":
             if len(args) < 3:
@@ -3899,10 +4174,8 @@ def _optvec_gradient_verb(args: list[str]) -> int:
             config = optvec_gradient.load_config(config_path)
             result = optvec_gradient.survey(
                 config, log=lambda m: print(m, file=sys.stderr, flush=True))
-    except (OSError, optvec_gradient.OptVecGradientConfigError,
-            optvec_gradient.OptVecGradientDataError) as exc:
-        sys.stderr.write(f"optvec gradient: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec gradient", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -3916,9 +4189,8 @@ def _optvec_fracture(args: list[str]) -> int:
     try:
         config = optvec_geometry.load_fracture_config(config_path)
         result = optvec_geometry.fracture(config)
-    except (OSError, optvec_geometry.OptVecGeometryError) as exc:
-        sys.stderr.write(f"optvec fracture: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec fracture", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -3929,6 +4201,7 @@ def _optvec_campaign(args: list[str]) -> int:
     sbatch failed (the report is on stdout either way — this verb never buries
     a fan-out failure in a zero exit); ``status`` is read-only."""
     from .experiment import optvec_campaign
+    config_path = None
     try:
         if args and args[0] == "materialize":
             config_path = _flag(args, "--config")
@@ -3950,10 +4223,8 @@ def _optvec_campaign(args: list[str]) -> int:
             print(json.dumps(optvec_campaign.status(args[1]),
                              indent=2, sort_keys=True))
             return 0
-    except (OSError, optvec_campaign.CampaignConfigError,
-            optvec_campaign.CampaignError) as exc:
-        sys.stderr.write(f"optvec campaign: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec campaign", exc, config_path=config_path)
     sys.stderr.write(_OPTVEC_USAGE)
     return 64
 
@@ -3968,10 +4239,8 @@ def _optvec_interpret(args: list[str]) -> int:
         config = optvec_interpret.load_config(config_path)
         result = optvec_interpret.interpret(
             config, log=lambda m: print(m, file=sys.stderr, flush=True))
-    except (OSError, optvec_interpret.OptVecInterpretConfigError,
-            optvec_interpret.OptVecInterpretDataError) as exc:
-        sys.stderr.write(f"optvec interpret: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec interpret", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -3988,10 +4257,8 @@ def _optvec_family(args: list[str]) -> int:
                 json.load(handle))
         result = optvec_interpret.family_summary(
             config, log=lambda m: print(m, file=sys.stderr, flush=True))
-    except (OSError, optvec_interpret.OptVecInterpretConfigError,
-            optvec_interpret.OptVecInterpretDataError) as exc:
-        sys.stderr.write(f"optvec family: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec family", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -4006,10 +4273,8 @@ def _optvec_jspace(args: list[str]) -> int:
         config = optvec_jspace.load_config(config_path)
         result = optvec_jspace.analyze(
             config, log=lambda m: print(m, file=sys.stderr, flush=True))
-    except (OSError, optvec_jspace.OptVecJSpaceConfigError,
-            optvec_jspace.OptVecJSpaceError) as exc:
-        sys.stderr.write(f"optvec jspace: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec jspace", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -4024,10 +4289,8 @@ def _optvec_train(args: list[str]) -> int:
         config = optvec_train.load_config(config_path)
         result = optvec_train.train(
             config, log=lambda m: print(m, file=sys.stderr, flush=True))
-    except (OSError, optvec_train.OptVecConfigError,
-            optvec_train.OptVecDataError) as exc:
-        sys.stderr.write(f"optvec train: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec train", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -4042,11 +4305,8 @@ def _optvec_eval(args: list[str]) -> int:
         config = optvec_eval.load_config(config_path)
         result = optvec_eval.evaluate(
             config, log=lambda m: print(m, file=sys.stderr, flush=True))
-    except (OSError, optvec_eval.OptVecEvalConfigError,
-            optvec_eval.OptVecEvalDataError,
-            optvec_eval.OptVecArtifactError) as exc:
-        sys.stderr.write(f"optvec eval: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        return _optvec_exit("optvec eval", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -4083,15 +4343,11 @@ def _optvec_geometry(args: list[str]) -> int:
                 artifacts=positional, name=_flag(args, "--out-name"),
                 layer=layer)
         result = optvec_geometry.geometry(config)
-    except ValueError as exc:
-        # OptVecGeometryError and OptVecArtifactError are both ValueErrors,
-        # and both are the same "this cannot be computed as asked" for the
-        # caller.
-        sys.stderr.write(f"optvec geometry: {exc}\n")
-        return 2
-    except OSError as exc:
-        sys.stderr.write(f"optvec geometry: {exc}\n")
-        return 2
+    except Exception as exc:  # noqa: BLE001 - classified, never swallowed
+        # OptVecGeometryError and OptVecArtifactError are both ValueErrors;
+        # the classifier tells a malformed set (64) from one the artifacts
+        # declined (65) from one that names a missing artifact (66).
+        return _optvec_exit("optvec geometry", exc, config_path=config_path)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
@@ -4422,6 +4678,129 @@ def _gemmascope(args: list[str]) -> int:
         "gemmascopeSource": sidecar.get("gemmascopeSource"),
     }, indent=2, sort_keys=True))
     return 0
+
+
+_LEDGER_USAGE = (
+    "usage: steerlab-server [--root DIR] ledger impact "
+    "[--code-checkout <path>] [--json] [--out <file>]\n"
+    "  Scan this workspace for artifacts the 2026-09-05 science fixes\n"
+    "  (SCI-01..04) could have reached, and write an evidence-backed\n"
+    "  ledger into diagnostics/impact-ledger-<stamp>/.\n"
+    "  --code-checkout <path>  a git checkout, so a stamped build commit can\n"
+    "                          be tested for ancestry against the fixes;\n"
+    "                          without it the revision-dependent findings\n"
+    "                          answer 'unknown'.\n")
+
+#: The flags ``ledger impact`` accepts, as ``{flag: takes-a-value}``. Declared
+#: as data for the same reason ``_EXPERIMENT_PASSTHROUGH_FLAGS`` is: a leftover
+#: ``--…`` token must refuse at 64 rather than be silently dropped, and the
+#: refusal has to be able to say what the verb DOES accept.
+_LEDGER_IMPACT_FLAGS: dict = {"--code-checkout": True, "--json": False,
+                              "--out": True, "--help": False}
+
+
+def _ledger(args: list[str]) -> int:
+    """``ledger impact`` — the REM-01 impact ledger (docs/IMPACT-LEDGER.md).
+
+    Hand-parsed like ``jlens``/``sae``/``gemmascope`` rather than joining
+    ``cli_envelope.VERB_SPECS``: the declared-verb table is the CROSS-ENGINE
+    agent surface, twin-tested against Swift, and this is a Python-engine
+    diagnostic with no Swift twin and no place in that contract. It still
+    answers in the shared envelope, because the ground rule is about the
+    DOCUMENT an agent parses, not about which table a verb is listed in.
+
+    Exit codes are the envelope's: 0 written (an exposed artifact is the
+    PRODUCT, not a failure), 64 malformed invocation, 66 the root is not a
+    workspace, 70 the scan itself broke.
+    """
+    from . import cli_envelope as envelope
+    from .experiment import impact_ledger
+
+    if not args or args[0] != "impact":
+        sys.stderr.write(_LEDGER_USAGE)
+        return 64
+    rest = args[1:]
+    json_mode = "--json" in rest
+    if "--help" in rest:
+        sys.stdout.write(_LEDGER_USAGE)
+        return 0
+
+    repair = ("ledger impact accepts: "
+              + " ".join(sorted(_LEDGER_IMPACT_FLAGS)))
+    index = 0
+    while index < len(rest):
+        token = rest[index]
+        takes_value = _LEDGER_IMPACT_FLAGS.get(token)
+        if takes_value is None:
+            reason = f"ledger impact does not accept {token}"
+        elif takes_value and index + 1 >= len(rest):
+            reason = f"ledger impact's {token} needs a value"
+        else:
+            index += 2 if takes_value else 1
+            continue
+        sys.stderr.write(f"steerlab-server ledger: {reason}\n  {repair}\n")
+        envelope.emit(
+            envelope.refusal("ledger impact", code="unknownFlag",
+                             reason=reason, repair_action=repair,
+                             state="blocked"),
+            json_mode=json_mode, out_path=None)
+        return 64
+
+    out_path = _flag(rest, "--out")
+    checkout = _flag(rest, "--code-checkout")
+
+    document_stream = sys.stdout
+    try:
+        if json_mode:
+            sys.stdout = sys.stderr
+        try:
+            ancestry = impact_ledger.open_checkout(checkout)
+            root = impact_ledger.require_workspace()
+            summary = impact_ledger.build(root, ancestry=ancestry)
+        except impact_ledger.LedgerRefusal as refusal:
+            sys.stderr.write(f"steerlab-server ledger impact: "
+                             f"{refusal.reason}\n  {refusal.repair_action}\n")
+            document = envelope.refusal(
+                "ledger impact", code=refusal.code, reason=refusal.reason,
+                repair_action=refusal.repair_action, state=refusal.state)
+            return envelope.emit(document, json_mode=json_mode,
+                                 out_path=out_path, stream=document_stream)
+        except (OSError, ValueError) as exc:
+            sys.stderr.write(f"steerlab-server ledger impact: {exc}\n")
+            document = envelope.failure(
+                "ledger impact", code="ledgerFailed", reason=str(exc),
+                repair_action="fix the reported problem and re-run "
+                              "`steerlab-server ledger impact`")
+            return envelope.emit(document, json_mode=json_mode,
+                                 out_path=out_path, stream=document_stream)
+    finally:
+        sys.stdout = document_stream
+
+    exposed = sum(block[impact_ledger.EXPOSED]
+                  for block in summary["counts"].values())
+    unknown = sum(block[impact_ledger.UNKNOWN]
+                  for block in summary["counts"].values())
+    message = (f"impact ledger: {summary['entryCount']} candidate artifact(s), "
+               f"{exposed} exposed, {unknown} unknown → "
+               f"{summary['outputDirectory']}")
+    if not json_mode:
+        print(message)
+        for finding in impact_ledger.FINDINGS:
+            block = summary["counts"][finding.id]
+            print(f"  {finding.id}  {block['total']:>3d} candidate(s): "
+                  f"{block[impact_ledger.EXPOSED]} exposed, "
+                  f"{block[impact_ledger.UNKNOWN]} unknown, "
+                  f"{block[impact_ledger.UNAFFECTED]} unaffected")
+        for item in summary["reassessments"]:
+            print(f"  reassessed {item['sourceAnalysis']} → {item['path']} "
+                  f"({item['changedVerdicts']} changed verdict(s))")
+        if summary["revisionDating"] != "codeCheckout":
+            print("  no --code-checkout: the revision-dependent findings "
+                  "(SCI-01, SCI-03) answer 'unknown'")
+    document = envelope.success("ledger impact", message, changed=True,
+                                result=summary)
+    return envelope.emit(document, json_mode=json_mode, out_path=out_path,
+                         stream=document_stream)
 
 
 def _flag(args: list[str], name: str) -> str | None:

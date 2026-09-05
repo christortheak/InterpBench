@@ -1,4 +1,4 @@
-"""J-lens reading instruments — server-only, Gemma-only (CLAUDE.md).
+"""J-lens reading instruments — server-only; any model with a published lens.
 
 Imported lens artifacts are PyTorch/HF-native and activations do not transfer
 across substrates, so nothing here is valid for the MLX engine: the Mac app may

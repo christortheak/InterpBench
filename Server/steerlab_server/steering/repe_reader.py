@@ -10,6 +10,16 @@ held-out sign/layer selection + held-out scalar accuracy (see
     → per-pair differences → centered PCA → PC1 signed on the HELD-OUT split
     → ScalarProbe fitted on the TRAIN activations
 
+**Three split roles, and the reason they are named on the artifact.** The
+held-out split does double duty: it fixes the sign AND ranks the layers, so
+``heldOutAccuracy`` is the score of the winner of two selections made on the
+very rows it is computed over — a model-selection statistic, not an untouched
+estimate of generalization. A dataset that wants the latter reserves rows with
+``split: "finalTest"``; nothing that fits or selects reads them, and they are scored
+once, at the end, as ``finalTestAccuracy``. Every artifact stamps an
+``evidenceRoles`` block plus :data:`EVIDENCE_ROLE_NOTE` so no consumer has to
+know any of this to report the numbers honestly.
+
 Inference renders the *same* template under the *same* rendering, captures the
 *same* token position, and scores through the stored probe (training
 center/scale) — never a raw cosine-to-vector shortcut. A reader can *derive* a
@@ -114,6 +124,67 @@ MINIMUM_HELD_OUT_PAIRS_FOR_SIGN_SELECTION = 2
 #: irreproducibility. ``231001405`` is the paper's arXiv id.
 DEFAULT_ORIENTATION_SEED = 231_001_405
 
+#: The three SPLIT ROLES a dataset row can take, and what each one is allowed
+#: to touch. Swift twin owed: ``RepEReader`` knows only train / not-train, so
+#: it would read a ``finalTest`` row as HELD OUT — a dataset that uses the
+#: role must be fitted on this engine until that parity lands (brief, §3).
+#:
+#: - ``"train"`` (the default, and what an absent ``split`` means) — fits PC1
+#:   and the probe's center/scale.
+#: - ``"finalTest"`` (case-insensitive) — FINAL EVALUATION. Read by nothing
+#:   that fits or selects: not the direction, not the sign, not the layer
+#:   recommendation, not the probe's normalization. Scored once, after the
+#:   fit, as ``finalTestAccuracy``.
+#: - anything else (``"test"``, ``"heldOut"``, ``"validation"``, ``"dev"`` …)
+#:   — HELD OUT, exactly as every non-``train`` value has always been: it
+#:   fixes the sign (paper step 4) and ranks the layers, which is precisely
+#:   why its accuracy is a SELECTION statistic and not a final-test estimate.
+#:
+#: ``"test"`` stays held out ON PURPOSE. It is the spelling the app's corpus
+#: writer (``ConceptBuilder``), its import parser and the authoring prompt
+#: have always used for held-out rows, on both engines; repurposing that word
+#: would have changed the meaning of every existing corpus. The final-
+#: evaluation role got a new word instead (2026-09-05).
+TRAIN_SPLIT = "train"
+#: Lower-case, because ``parse_pairs`` lower-cases ``split`` before comparing;
+#: the canonical spelling in a file is ``finalTest``.
+FINAL_TEST_SPLIT = "finaltest"
+
+#: What each accuracy on the artifact IS, in one word. Roles, not adjectives:
+#: a number's role says which decisions were allowed to read the rows it was
+#: computed on, and that is the only thing that makes it evidence of anything.
+FIT_ROLE = "fit"
+SELECTION_ROLE = "selection"
+VALIDATION_ROLE = "validation"
+FINAL_EVALUATION_ROLE = "finalEvaluation"
+
+#: Which split decided something: the values of ``signSelectedBy`` and
+#: ``layerRecommendedBy`` in an ``evidenceRoles`` block.
+BY_HELD_OUT = "heldOut"
+BY_TRAIN = "train"
+
+#: Where an ``evidenceRoles`` block came from. ``"stamped"`` = written by the
+#: engine that fitted (or by an artifact that already carried one);
+#: ``"derivedFromLegacyStamps"`` = reconstructed at decode from a schema-1/2
+#: artifact's ``signConvention`` and ``layerRecommendationBasis``, which is a
+#: reading of the artifact, not a record it kept.
+EVIDENCE_ROLES_STAMPED = "stamped"
+EVIDENCE_ROLES_DERIVED = "derivedFromLegacyStamps"
+
+#: What a reader must be told about this instrument's ACCURACIES, in one
+#: paragraph, wherever they are surfaced. The sibling of
+#: :data:`LAYER_RECOMMENDATION_NOTE`, and for the same reason: the artifact
+#: says what its own numbers mean, so no consumer has to know the fit's
+#: internals to report them honestly.
+EVIDENCE_ROLE_NOTE = (
+    "heldOutAccuracy is a MODEL-SELECTION statistic: the same held-out rows "
+    "chose the direction's sign and ranked the layers, so it is not an "
+    "untouched final-test estimate. Final generalization evidence is "
+    "finalTestAccuracy, scored on rows marked split 'finalTest' that no "
+    "fitting or selection step read. When finalTestAccuracy is absent the "
+    "dataset reserved no such rows, and the result must be reported as "
+    "selection/validation evidence, not as a final test.")
+
 #: What a reader must be told about this instrument's layer, in one sentence,
 #: wherever the recommendation is surfaced.
 LAYER_RECOMMENDATION_NOTE = (
@@ -130,6 +201,13 @@ class RepeReaderError(Exception):
 
 def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _normalized_text(text: str) -> str:
+    """Whitespace-collapsed, case-folded text — the comparison form for the
+    cross-split leakage check ONLY. Nothing that reaches a model is normalized
+    this way: the stimulus is rendered verbatim, as it always was."""
+    return " ".join(str(text).split()).casefold()
 
 
 def _split_mix64(state: int) -> tuple[int, int]:
@@ -397,12 +475,36 @@ class ReaderPair:
     template_id: str
     id: str | None = None
     topic: str | None = None
-    split: str = "train"
+    #: One of the three roles in :data:`TRAIN_SPLIT` / :data:`FINAL_TEST_SPLIT`
+    #: / anything-else-is-held-out. Lower-cased at parse, so ``"FinalTest"``
+    #: is ``"finaltest"``.
+    split: str = TRAIN_SPLIT
     stimulus: str | None = None
 
     @property
     def is_template_pair_row(self) -> bool:
         return self.stimulus is not None
+
+    @property
+    def is_final_test(self) -> bool:
+        """A FINAL-TEST row: excluded from the fit, from sign selection, from
+        the layer recommendation and from the probe's normalization."""
+        return self.split == FINAL_TEST_SPLIT
+
+    @property
+    def content_key(self) -> str:
+        """The row's TEXT identity, ignoring ``id`` and ``topic``.
+
+        Whitespace-normalized and case-folded; a content pair's identity is
+        BOTH its stimuli (swapping them is a different row), a template-pair
+        row's is its single stimulus. Convention borrowed from
+        ``lora_data.Row.content_key``, which exists for the same reason: the
+        same passage under two ids is still the same passage in both splits.
+        """
+        if self.stimulus is not None:
+            return _normalized_text(self.stimulus)
+        return "\x00".join((_normalized_text(self.positive_stimulus),
+                            _normalized_text(self.negative_stimulus)))
 
 
 @dataclass(frozen=True)
@@ -413,11 +515,26 @@ class ReaderDataset:
 
     @property
     def train(self) -> list[ReaderPair]:
-        return [p for p in self.pairs if p.split == "train"]
+        return [p for p in self.pairs if p.split == TRAIN_SPLIT]
 
     @property
     def held_out(self) -> list[ReaderPair]:
-        return [p for p in self.pairs if p.split != "train"]
+        """The SELECTION rows: every split that is neither ``train`` nor
+        ``finalTest`` — ``test``, ``heldOut``, ``validation`` and the rest,
+        exactly as every non-``train`` value has always been read."""
+        return [p for p in self.pairs
+                if p.split not in (TRAIN_SPLIT, FINAL_TEST_SPLIT)]
+
+    @property
+    def final_test(self) -> list[ReaderPair]:
+        """The FINAL-TEST rows: fitted on by nothing, selected on by nothing,
+        scored once at the end."""
+        return [p for p in self.pairs if p.is_final_test]
+
+    @property
+    def split_counts(self) -> dict:
+        return {"train": len(self.train), "heldOut": len(self.held_out),
+                "finalTest": len(self.final_test)}
 
     @property
     def shape(self) -> str:
@@ -427,6 +544,56 @@ class ReaderDataset:
         if self.pairs and self.pairs[0].is_template_pair_row:
             return "singleStimulus"
         return "contentPair"
+
+
+def _row_label(pair: ReaderPair, position: int) -> str:
+    """How a row is named in a refusal: its ``id`` when it has one, else its
+    1-based position in the file (rows are optional-id by schema)."""
+    return f"row {pair.id!r}" if pair.id else f"row #{position}"
+
+
+def check_split_overlap(dataset: ReaderDataset, *,
+                        source: str = "<reader pairs>") -> dict:
+    """Refuse a dataset whose held-out or test rows repeat a train row's text,
+    and return the stamp that records the check ran.
+
+    The rule, its content-identity convention and its wording follow
+    ``lora_data.load_split_rows`` / ``lora_data.Row.content_key``, which
+    refuses a validation row present in training for exactly this reason:
+    evidence scored on rows the fit already read measures memorization. A
+    reader's rows are stimuli rather than training examples, so identity is the
+    stimulus text — BOTH stimuli of a content pair, the single stimulus of a
+    template-pair row — normalized for whitespace and case (:func:
+    `_normalized_text`).
+
+    **EXACT duplicates only.** Near-duplicates — a paraphrase, one edited
+    clause, the same scenario with a renamed subject — are NOT assessed here
+    and the stamp does not claim they were: ``exactDuplicatesAcrossSplits`` is
+    the only key it carries. A fuzzy check needs a threshold, and an unstated
+    threshold in a leakage gate is worse than an honest gap.
+
+    Swift twin owed: ``RepEReader`` has no split-overlap check.
+    """
+    by_key: dict[str, tuple[ReaderPair, int]] = {}
+    for position, pair in enumerate(dataset.pairs, 1):
+        if pair.split == TRAIN_SPLIT:
+            by_key.setdefault(pair.content_key, (pair, position))
+    for position, pair in enumerate(dataset.pairs, 1):
+        if pair.split == TRAIN_SPLIT:
+            continue
+        found = by_key.get(pair.content_key)
+        if found is None:
+            continue
+        train_pair, train_position = found
+        raise RepeReaderError(
+            f"{source}: {_row_label(pair, position)} (split {pair.split!r}) has "
+            f"the same stimulus text as train "
+            f"{_row_label(train_pair, train_position)} — a held-out or test row "
+            "identical to a train row is a leak: the fit already read those "
+            "words, so the accuracy scored on them measures memorization, not "
+            "generalization. Repair: rewrite or drop the duplicate row so each "
+            "split holds distinct stimuli")
+    return {"exactDuplicatesAcrossSplits": 0}
 
 
 def _require_row_keys(obj: dict, keys, source: str) -> None:
@@ -491,8 +658,10 @@ def parse_pairs(data: bytes | str, *, source: str = "<reader pairs>") -> ReaderD
             "with template-pair rows (stimulus) — the two produce different "
             "differences, so one file cannot mean both. Repair: split them into two "
             "datasets")
-    return ReaderDataset(concept=pairs[0].concept, pairs=tuple(pairs),
-                         hash=_sha256_hex(data))
+    dataset = ReaderDataset(concept=pairs[0].concept, pairs=tuple(pairs),
+                            hash=_sha256_hex(data))
+    check_split_overlap(dataset, source=source)
+    return dataset
 
 
 def load_pairs(path: str) -> ReaderDataset:
@@ -529,6 +698,106 @@ def resolve_contrast_mode(dataset: ReaderDataset, template: TaskTemplate) -> str
         "negativeStimulus content pairs")
 
 
+# --- evidence roles ----------------------------------------------------------
+
+def derive_evidence_roles(*, sign_convention: str,
+                          layer_recommendation_basis: str | None,
+                          held_out_accuracy: float | None,
+                          final_test_accuracy: float | None,
+                          train_pair_count: int, held_out_pair_count: int,
+                          final_test_pair_count: int) -> dict:
+    """WHICH DECISIONS each accuracy's rows were allowed to make.
+
+    The finding this answers (2026-09-05): the held-out split does double duty
+    here. It fixes the direction's sign (:func:`fit_direction`, the paper's
+    step 4) AND it ranks the layers (:func:`stamp_layer_recommendation`), so
+    ``heldOutAccuracy`` is the score of the winner of two selections made on
+    those very rows. Reporting it as an out-of-sample estimate overstates it,
+    and until now nothing on the artifact said so.
+
+    The rule: ``heldOutAccuracy`` is ``selection`` whenever the held-out rows
+    signed the direction OR ranked the layers, and ``validation`` only when
+    they did neither (a fit whose sign fell back to train-label majority and
+    whose recommendation had no held-out basis). It is omitted entirely when
+    there is no held-out accuracy to label.
+
+    ``finalTestAccuracy`` is the only ``finalEvaluation`` number, and it exists only
+    when the dataset reserved ``split: "finalTest"`` rows.
+
+    Swift twin owed: ``RepEReader`` stamps no evidence roles yet.
+    """
+    sign_by = BY_HELD_OUT if sign_convention == HELD_OUT_PAIR_AGREEMENT else BY_TRAIN
+    if layer_recommendation_basis == "heldOutAccuracy":
+        layer_by = BY_HELD_OUT
+    elif layer_recommendation_basis == "trainAccuracy":
+        layer_by = BY_TRAIN
+    else:
+        layer_by = None
+    roles: dict = {"trainAccuracy": FIT_ROLE}
+    if held_out_accuracy is not None:
+        roles["heldOutAccuracy"] = (
+            SELECTION_ROLE if (sign_by == BY_HELD_OUT or layer_by == BY_HELD_OUT)
+            else VALIDATION_ROLE)
+    if final_test_accuracy is not None:
+        roles["finalTestAccuracy"] = FINAL_EVALUATION_ROLE
+    roles["signSelectedBy"] = sign_by
+    roles["layerRecommendedBy"] = layer_by
+    roles["splitCounts"] = {"train": int(train_pair_count),
+                            "heldOut": int(held_out_pair_count),
+                            "finalTest": int(final_test_pair_count)}
+    return roles
+
+
+def evidence_roles_from_json(d: dict) -> tuple[dict, str]:
+    """``(roles, basis)`` for a raw artifact dict.
+
+    A stamped block is returned VERBATIM — including a wrong one, which
+    :func:`validate_evidence_roles` is there to catch on the way out rather
+    than silently repairing on the way in. A block-less artifact (schema 1, and
+    every schema-2 artifact fitted before 2026-09-05) has its roles derived
+    from the stamps it does carry, and the basis says so.
+    """
+    stamped = d.get("evidenceRoles")
+    if isinstance(stamped, dict):
+        return dict(stamped), str(d.get("evidenceRolesBasis")
+                                  or EVIDENCE_ROLES_STAMPED)
+    return (derive_evidence_roles(
+        sign_convention=str(d.get("signConvention") or TRAIN_MAJORITY),
+        layer_recommendation_basis=d.get("layerRecommendationBasis"),
+        held_out_accuracy=d.get("heldOutAccuracy"),
+        final_test_accuracy=d.get("finalTestAccuracy"),
+        train_pair_count=int(d.get("trainPairCount") or 0),
+        held_out_pair_count=int(d.get("heldOutPairCount") or 0),
+        final_test_pair_count=int(d.get("finalTestPairCount") or 0)),
+        EVIDENCE_ROLES_DERIVED)
+
+
+def validate_evidence_roles(roles: dict, *,
+                            source: str = "reader artifact") -> None:
+    """Refuse a roles block that promotes a selection statistic to a final
+    test, or demotes the final test to something else.
+
+    Serialization runs this, so a hand-written fixture (or a future decoder
+    bug) cannot put a relabelled score into a file that looks like every other
+    reader artifact. Two labels are load-bearing and both are checked."""
+    if roles.get("heldOutAccuracy") == FINAL_EVALUATION_ROLE:
+        raise RepeReaderError(
+            f"{source} labels heldOutAccuracy {FINAL_EVALUATION_ROLE!r}: those "
+            "rows chose the direction's sign and ranked the layers, so the "
+            "label would present a selection statistic as a final-test result. "
+            f"Repair: label heldOutAccuracy {SELECTION_ROLE!r} or "
+            f"{VALIDATION_ROLE!r}, and report final-test evidence as "
+            "finalTestAccuracy over rows marked split 'finalTest'")
+    if "finalTestAccuracy" in roles and roles["finalTestAccuracy"] != FINAL_EVALUATION_ROLE:
+        raise RepeReaderError(
+            f"{source} labels finalTestAccuracy {roles['finalTestAccuracy']!r}: "
+            "finalTestAccuracy is the ONLY final-evaluation statistic a reader has — "
+            "rows marked split 'finalTest' are read by no fitting or selection step, "
+            "which is the whole of what makes them one. Repair: label "
+            f"finalTestAccuracy {FINAL_EVALUATION_ROLE!r}, or drop it if the dataset "
+            "reserved no split 'finalTest' rows")
+
+
 # --- reader artifact ---------------------------------------------------------
 
 @dataclass
@@ -546,7 +815,17 @@ class ReaderArtifact:
     ``pc1ExplainedVarianceOfDifferences`` absent = the legacy
     ``pc1ExplainedVariance`` under basis ``alternatedRows``,
     ``pc1PowerIteration`` absent = fitted before the convergence diagnostic
-    existed (2026-08-28), NOT "converged".
+    existed (2026-08-28), NOT "converged", ``finalTestAccuracy``/``finalTestPairCount``
+    absent = the dataset reserved no ``split: "finalTest"`` rows (and, on an
+    artifact fitted before 2026-09-05, that the split role did not yet exist),
+    ``evidenceRoles`` absent = derive them from ``signConvention`` and
+    ``layerRecommendationBasis`` at decode, ``splitOverlap`` absent = the
+    cross-split leakage check had not been written when this was fitted, NOT
+    "no overlap".
+
+    Schema version stays **2**: every key here is additive and absent-means-
+    legacy, and the Swift decoder reads the keys it knows and ignores the rest,
+    so a version bump would buy nothing and break the twin's pin.
     """
 
     model_id: str
@@ -599,6 +878,22 @@ class ReaderArtifact:
     #: ``"heldOutAccuracy"``, or ``"trainAccuracy"`` when the fit had no
     #: held-out pairs to recommend from.
     layer_recommendation_basis: str | None = None
+    #: FINAL-TEST accuracy: the probe's accuracy over rows marked
+    #: ``split: "finalTest"``, which no fitting or selection step read. None when
+    #: the dataset reserved none — and then this reader has no final-test
+    #: evidence at all, only selection/validation evidence.
+    final_test_accuracy: float | None = None
+    final_test_pair_count: int = 0
+    #: The cross-split leakage check's result (:func:`check_split_overlap`).
+    #: ``{"exactDuplicatesAcrossSplits": 0}`` — the only value that can be
+    #: stamped, because a nonzero count refuses the fit. Absent = fitted before
+    #: the check existed, which is not the same as "checked and clean".
+    split_overlap: dict | None = None
+    #: The stamped ``evidenceRoles`` block, or None to derive it from this
+    #: artifact's own stamps at serialization. A block decoded from a file is
+    #: kept VERBATIM so a mislabelled one is refused rather than corrected.
+    evidence_roles: dict | None = None
+    evidence_roles_basis: str = EVIDENCE_ROLES_STAMPED
     substrate: str = SUBSTRATE
     #: HOW the scaffold reached the model. None = legacy raw, which is why a
     #: raw fit encodes byte-identically to a pre-2026-08-27 one.
@@ -616,6 +911,36 @@ class ReaderArtifact:
         return self.template.reading_position
 
     @property
+    def resolved_evidence_roles(self) -> dict:
+        """The roles block this artifact stands behind: the stamped one when it
+        has one, else derived from its own stamps. Consumers read this, never
+        the raw field, so a reader fitted before the block existed still says
+        which split chose its sign."""
+        if self.evidence_roles is not None:
+            return self.evidence_roles
+        return derive_evidence_roles(
+            sign_convention=self.sign_convention,
+            layer_recommendation_basis=self.layer_recommendation_basis,
+            held_out_accuracy=self.held_out_accuracy,
+            final_test_accuracy=self.final_test_accuracy,
+            train_pair_count=self.train_pair_count,
+            held_out_pair_count=self.held_out_pair_count,
+            final_test_pair_count=self.final_test_pair_count)
+
+    def refresh_evidence_roles(self) -> None:
+        """Re-derive and STAMP the roles from the current stamps.
+
+        Called by :func:`stamp_layer_recommendation`, because the layer
+        recommendation is decided over the whole fitted set AFTER each
+        artifact exists: until it lands, a fit whose sign fell back to train
+        majority looks like one whose held-out rows decided nothing, and its
+        held-out accuracy would be labelled ``validation`` when the layer
+        ranking is about to make it ``selection``.
+        """
+        self.evidence_roles = self.resolved_evidence_roles
+        self.evidence_roles_basis = EVIDENCE_ROLES_STAMPED
+
+    @property
     def resolved_extraction_rendering(self) -> ExtractionRendering:
         """The rendering actually applied — absent resolves to legacy raw."""
         if not self.extraction_rendering:
@@ -623,6 +948,11 @@ class ReaderArtifact:
         return _rendering_from_json(self.extraction_rendering)
 
     def to_dict(self) -> dict:
+        # Refuse on the way OUT: a relabelled block reaches serialization from
+        # a fixture or a decoder, never from `derive_evidence_roles`, and the
+        # file is where the mislabelling would do its damage.
+        roles = self.resolved_evidence_roles
+        validate_evidence_roles(roles)
         out = {
             "artifactType": ARTIFACT_TYPE,
             "schemaVersion": 2,
@@ -660,6 +990,24 @@ class ReaderArtifact:
             "heldOutAccuracy": self.held_out_accuracy,
             "trainPairCount": self.train_pair_count,
             "heldOutPairCount": self.held_out_pair_count,
+            # Final-test evidence. Both absent when the dataset reserved no
+            # 'finalTest' rows — absent means "none were reserved", which is
+            # exactly what the note tells a reader to do about it.
+            "finalTestAccuracy": self.final_test_accuracy,
+            "finalTestPairCount": (None if self.final_test_pair_count == 0
+                              else self.final_test_pair_count),
+            "splitOverlap": self.split_overlap,
+            # WHICH DECISIONS each accuracy's rows were allowed to make, and
+            # whether this artifact recorded that or we reconstructed it.
+            # Additive and outside every identity, exactly like
+            # pc1PowerIteration: no reader field is in `recipe_identity`'s
+            # closed sidecar list, so this cannot move a recipeIdentityHash. It
+            # does change the bytes — and so the readerHash — of NEWLY fitted
+            # readers, which is correct: they carry information older ones do
+            # not.
+            "evidenceRoles": roles,
+            "evidenceRolesBasis": self.evidence_roles_basis,
+            "evidenceRoleNote": EVIDENCE_ROLE_NOTE,
             "contrastMode": self.contrast_mode,
             "signConvention": self.sign_convention,
             "signHeldOutAccuracy": self.sign_held_out_accuracy,
@@ -706,6 +1054,7 @@ class ReaderArtifact:
                 "reader artifact carries neither 'pc1ExplainedVarianceOfDifferences', "
                 "its 'pc1ExplainedVarianceBasis', nor the legacy "
                 "'pc1ExplainedVariance' — one of them is required")
+        roles, roles_basis = evidence_roles_from_json(d)
         return cls(
             model_id=str(d["modelID"]), revision=d.get("revision"),
             concept=str(d["concept"]), layer=int(d["layer"]), template=template,
@@ -734,6 +1083,12 @@ class ReaderArtifact:
                 None if d.get("recommendedLayerAccuracy") is None
                 else float(d["recommendedLayerAccuracy"])),
             layer_recommendation_basis=d.get("layerRecommendationBasis"),
+            final_test_accuracy=(None if d.get("finalTestAccuracy") is None
+                           else float(d["finalTestAccuracy"])),
+            final_test_pair_count=int(d.get("finalTestPairCount") or 0),
+            split_overlap=(d.get("splitOverlap")
+                           if isinstance(d.get("splitOverlap"), dict) else None),
+            evidence_roles=roles, evidence_roles_basis=roles_basis,
             substrate=str(d.get("substrate", "")),
             extraction_rendering=(d.get("extractionRendering")
                                   if isinstance(d.get("extractionRendering"), dict)
@@ -788,7 +1143,13 @@ def held_out_sign_fallback_reason(*, held_out_pair_count: int, decided: int,
                                   agree: int, disagree: int) -> str:
     """Why the held-out sign rule stood down — stamped into the artifact, so a
     fit that fell back cannot be mistaken for one that did not. Swift twin:
-    ``RepEReader.heldOutSignFallbackReason``."""
+    ``RepEReader.heldOutSignFallbackReason``.
+
+    A dataset with ``finalTest`` rows and no held-out rows takes the ordinary
+    "no held-out pairs" branch: final-test rows are read by no selection step,
+    so they cannot sign the direction, and the repair is the same — mark some
+    OTHER rows held out.
+    """
     if held_out_pair_count == 0:
         return ("no held-out pairs (every row is split 'train'): the sign follows "
                 "train-label majority, the reference implementation's get_signs. "
@@ -858,6 +1219,10 @@ def fit_direction(pos_train: list[list[float]], neg_train: list[list[float]],
     selection therefore scores the PAIRED discrimination — does a held-out
     (positive − negative) difference project positive? — which is exactly what
     ``get_signs`` asks of the train split, asked of held-out data instead.
+
+    **Final-test rows never reach this function.** ``pos_held``/``neg_held``
+    are the SELECTION rows only; rows marked ``split: "finalTest"`` are not passed,
+    which is the whole of what makes their accuracy a final-test estimate.
 
     Swift twin: ``RepEReader.fitDirection``.
     """
@@ -947,8 +1312,17 @@ def stamp_layer_recommendation(artifacts: list[ReaderArtifact]) -> list[ReaderAr
     (the paper's step 4, layer half). A RECOMMENDATION: nothing downstream may
     read it as a selection, because which layer a study reads is a declarable
     choice recorded in its manifest. Swift twin:
-    ``RepEReader.stampLayerRecommendation``."""
+    ``RepEReader.stampLayerRecommendation``.
+
+    This is also where ``evidenceRoles`` is stamped, and it has to be: ranking
+    the layers by ``heldOutAccuracy`` is the SECOND selection those rows make,
+    so the role of ``heldOutAccuracy`` is not knowable until this function has
+    run over the whole set."""
     if len(artifacts) <= 1:
+        # One layer is never "recommended" over anything, but its roles are
+        # still owed.
+        for artifact in artifacts:
+            artifact.refresh_evidence_roles()
         return artifacts
     basis = ("heldOutAccuracy"
              if any(a.held_out_accuracy is not None for a in artifacts)
@@ -967,17 +1341,23 @@ def stamp_layer_recommendation(artifacts: list[ReaderArtifact]) -> list[ReaderAr
         artifact.recommended_layer = best.layer
         artifact.recommended_layer_accuracy = score(best)
         artifact.layer_recommendation_basis = basis
+        artifact.refresh_evidence_roles()
     return artifacts
 
 
 def fit_texts(dataset: ReaderDataset, template: TaskTemplate, *, model_id: str,
               rendering: ExtractionRendering | None = None) -> list[str]:
     """The rendered texts a fit reads, in the order :func:`fit_activations`
-    expects: train rows then held-out rows, positive/T+ before negative/T−
-    within each row. Pure (no model), so the rendering contract is testable."""
+    expects: train rows, then held-out rows, then FINAL-TEST rows, positive/T+
+    before negative/T− within each row. Pure (no model), so the rendering
+    contract is testable.
+
+    Test rows come last so that a dataset without any renders exactly the text
+    list this function has always produced — the ordering is a schema, and
+    appending is the only change to it that cannot move an existing fit."""
     contrast_mode = resolve_contrast_mode(dataset, template)
     texts: list[str] = []
-    for pair in dataset.train + dataset.held_out:
+    for pair in dataset.train + dataset.held_out + dataset.final_test:
         if contrast_mode == SUPERVISED_CONTENT:
             for stimulus in (pair.positive_stimulus, pair.negative_stimulus):
                 texts.append(render_scaffold(
@@ -1039,16 +1419,22 @@ def fit_activations(dataset: ReaderDataset, template: TaskTemplate,
                 f"pair {pair.id!r} pins template {pair.template_id!r} but the fit "
                 f"uses {template.id!r}")
     contrast_mode = resolve_contrast_mode(dataset, template)
+    # A hand-built dataset (one not routed through `parse_pairs`) reaches the
+    # fit here, so the leakage gate runs here too rather than trusting the
+    # loader to have been used.
+    split_overlap = check_split_overlap(dataset, source="reader dataset")
     train = dataset.train
     held = dataset.held_out
+    test = dataset.final_test
     if len(train) < 2:
         raise RepeReaderError(
             f"need at least 2 train pairs, have {len(train)} "
             "(rows default to split 'train')")
-    if len(captured) != 2 * (len(train) + len(held)):
+    if len(captured) != 2 * (len(train) + len(held) + len(test)):
         raise RepeReaderError(
-            f"captured {len(captured)} activations for {len(train) + len(held)} "
-            "pairs — expected two per pair")
+            f"captured {len(captured)} activations for "
+            f"{len(train) + len(held) + len(test)} pairs — expected two per "
+            "pair")
     layer_count = len(captured[0]) if captured else 0
     if layer_count == 0:
         raise RepeReaderError("no layers captured")
@@ -1066,6 +1452,12 @@ def fit_activations(dataset: ReaderDataset, template: TaskTemplate,
         neg_train = [captured[2 * i + 1][layer] for i in range(n_train)]
         pos_held = [captured[2 * (n_train + i)][layer] for i in range(len(held))]
         neg_held = [captured[2 * (n_train + i) + 1][layer] for i in range(len(held))]
+        # The final-test rows, kept in their own names from here down so that
+        # every selection step below can be read to not touch them.
+        n_selected = n_train + len(held)
+        pos_test = [captured[2 * (n_selected + i)][layer] for i in range(len(test))]
+        neg_test = [captured[2 * (n_selected + i) + 1][layer]
+                    for i in range(len(test))]
 
         fitted = fit_direction(pos_train, neg_train, pos_held, neg_held,
                                contrast_mode=contrast_mode,
@@ -1078,6 +1470,10 @@ def fit_activations(dataset: ReaderDataset, template: TaskTemplate,
                                 activation_center=center)
         train_accuracy = _pair_accuracy(probe, pos_train, neg_train)
         held_accuracy = _pair_accuracy(probe, pos_held, neg_held)
+        # Scored LAST, through the finished instrument: the direction, its
+        # sign, the probe's center and scale are all fixed by now, so this
+        # number is the only one on the artifact that no decision read.
+        final_test_accuracy = _pair_accuracy(probe, pos_test, neg_test)
         artifacts.append(ReaderArtifact(
             model_id=model_id, revision=revision,
             concept=dataset.concept, layer=layer, template=template,
@@ -1092,6 +1488,8 @@ def fit_activations(dataset: ReaderDataset, template: TaskTemplate,
             train_accuracy=float(train_accuracy or 0.0),
             held_out_accuracy=held_accuracy,
             train_pair_count=n_train, held_out_pair_count=len(held),
+            final_test_accuracy=final_test_accuracy, final_test_pair_count=len(test),
+            split_overlap=split_overlap,
             contrast_mode=contrast_mode,
             sign_convention=fitted.sign_convention,
             sign_held_out_accuracy=fitted.sign_held_out_accuracy,
@@ -1110,8 +1508,10 @@ def fit(model, dataset: ReaderDataset, template: TaskTemplate,
         extraction_rendering: ExtractionRendering | None = None
         ) -> list[ReaderArtifact]:
     """Fit one reader per layer from the dataset's train split; held-out rows
-    (any other ``split`` value) fix each layer's SIGN and score the instrument
-    they did not fit.
+    (any ``split`` value that is neither ``train`` nor ``test``) fix each
+    layer's SIGN and rank the layers, which is why their accuracy is SELECTION
+    evidence; rows marked ``split: "finalTest"`` are read by none of that and are
+    scored once at the end as ``finalTestAccuracy``.
 
     Rendering goes through :func:`render_scaffold` (family-aware, amendment A)
     and then the declared ``extraction_rendering``; activations are captured by
@@ -1258,8 +1658,13 @@ def derive_steering_sidecar(reader: ReaderArtifact, *, reader_file_name: str,
       because held-out never voted.
 
     ``readerProbeOrientation`` records the orientation either way, so what the
-    conversion did is recoverable from the artifact alone. Swift twin:
-    ``RepEReader.deriveSteeringArtifact``.
+    conversion did is recoverable from the artifact alone.
+
+    **The sidecar also carries the reader's ``evidenceRoles``**, because the
+    question a derived vector raises first is which rows chose the sign its
+    bytes now carry — and the reader file that could answer it does not travel
+    with a bundle. Swift twin: ``RepEReader.deriveSteeringArtifact`` (parity
+    owed for ``readerEvidenceRoles``).
     """
     from .vector_store import ConceptVectors, SteeringVectorSidecar
 
@@ -1295,6 +1700,7 @@ def derive_steering_sidecar(reader: ReaderArtifact, *, reader_file_name: str,
     sidecar.readerTemplateHash = reader.template.hash
     sidecar.readerContrastMode = reader.contrast_mode
     sidecar.readerSignConvention = reader.sign_convention
+    sidecar.readerEvidenceRoles = reader.resolved_evidence_roles
     sidecar.readerProbeOrientation = orientation
     sidecar.signConvention = reader.sign_convention
     if held_out_signed:

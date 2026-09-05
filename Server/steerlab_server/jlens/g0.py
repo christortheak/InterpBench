@@ -43,7 +43,7 @@ exactly backwards. This lives in the report's shape — separate ``mechanical``
 and ``scientific`` sections with independent verdicts, and arm verdicts that
 are ``null`` at testing tier — rather than in prose someone has to remember.
 
-Server-only, Gemma-only (CLAUDE.md, hard requirement).
+Server-only (hard requirement); any model with a published lens.
 """
 
 from __future__ import annotations
@@ -55,6 +55,7 @@ from dataclasses import dataclass, field
 
 from .qualification import CheckResult, load_fixture_prompts, tier_for
 from .schemas import JLensError
+from . import norm_convention
 
 RUN_TYPE = "jlens-g0"
 REPORT_FILENAME = "jlens-g0-report.json"
@@ -346,7 +347,8 @@ def _check_resolution(record, model, readout) -> CheckResult:
     **What the gain is, and why there is no sign check.** ``gain`` is not a
     lens-artifact field — the published lens carries ``J``/``d_model``/
     ``n_prompts``/``source_layers`` and nothing else. It is read live from the
-    RUNTIME model's final RMSNorm as ``1 + norm.weight``, and Gemma-3's gammas
+    RUNTIME model's final RMSNorm (``1 + norm.weight`` or ``norm.weight``,
+    whichever fold the module is observed to apply), and Gemma-3's gammas
     go negative at every size (4B min −0.0546875, 2/2560 non-positive dims;
     12B −0.117, 8/3840; 27B −0.25). A ``gain_min <= 0`` failure therefore could
     not pass on ANY supported model, and what it indicted was Google's weights
@@ -392,7 +394,7 @@ def _check_resolution(record, model, readout) -> CheckResult:
             problems.append(
                 f"the resolved gain has {gain_width} entries but the lens "
                 f"d_model is {record.dModel} — this is read as "
-                f"1 + norm.weight off the runtime's FINAL norm, and a width "
+                f"the gain off the runtime's FINAL norm, and a width "
                 f"mismatch means a different norm module was resolved")
         non_positive = int((gain <= 0).sum())
         non_positive_fraction = (non_positive / gain_width) if gain_width else None
@@ -404,8 +406,9 @@ def _check_resolution(record, model, readout) -> CheckResult:
             problems.append(
                 f"every one of the {gain_width} resolved gain entries is "
                 f"non-positive (max {gain_max:g}) — the convention here is "
-                f"g = 1 + norm.weight, and a whole-vector sign flip means the "
-                f"stored weight was read as the gain itself")
+                f"g = {getattr(readout, 'gain_convention', None) or '?'} "
+                f"(observed on the module), and a whole-vector sign flip "
+                f"means the fold does not match what the norm computes")
         elif (non_positive_fraction is not None
                 and non_positive_fraction > GAIN_NONPOSITIVE_FRACTION):
             problems.append(
@@ -437,7 +440,11 @@ def _check_resolution(record, model, readout) -> CheckResult:
                   "gainNonPositiveFraction": non_positive_fraction,
                   "gainNonPositiveFractionLimit": GAIN_NONPOSITIVE_FRACTION,
                   "finalLogitSoftcap": readout.softcap,
-                  "gainConvention": "gemma (1 + norm.weight)"})
+                  # Observed on the runtime's own norm module at build time.
+                  "gainConvention": getattr(readout, "gain_convention", None),
+                  "gainConventionDescription": (
+                      norm_convention.describe(readout.gain_convention)
+                      if getattr(readout, "gain_convention", None) else None)})
 
 
 def _check_alignment(model, readout, config, prompt: str) -> CheckResult:
@@ -1248,16 +1255,16 @@ def run(model_id: str, *, lens_id: str | None = None,
     from ..experiment import paths
     from ..experiment.run_config import write_run_config
     from ..steering import model_loader
-    from . import importer, lens_store
+    from . import lens_store
     from .readout import LensReadout, ReadoutConfig
 
     def emit(message: str) -> None:
         if log is not None:
             log(message)
 
-    lens = lens_id or importer.lens_id_for(model_id)
+    lens = lens_id or lens_store.for_model(model_id, root)
     record = lens_store.resolve(lens, root)
-    tier = tier_for(model_id)
+    tier = tier_for(model_id, record)
     prompts = load_fixture_prompts(prompts_path)
     carrier = next((r for r in prompts if r.get("causalSmoke")), prompts[-1])
     endpoint = Endpoint.load(endpoint_path, root) if endpoint_path else None

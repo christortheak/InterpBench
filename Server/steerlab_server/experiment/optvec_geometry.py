@@ -37,6 +37,7 @@ verdict.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 from dataclasses import dataclass, field
@@ -77,6 +78,18 @@ class OptVecGeometryError(ValueError):
     """A set of artifacts whose geometry cannot be computed as asked."""
 
 
+class OptVecGeometryConfigError(OptVecGeometryError):
+    """A geometry or fracture CONFIG that breaks its own contract — an
+    unknown key, a wrong type, too few artifacts to be a statistic.
+
+    A refinement, not a new failure class: it subclasses the error every
+    caller already catches, so nothing that handled ``OptVecGeometryError``
+    changes. It exists so the CLI can tell a malformed invocation (64) from
+    a well-formed one that the artifacts declined (65) — the other optvec
+    modules carry that distinction as two classes from birth; this one
+    grew it late (2026-09-05)."""
+
+
 _CONFIG_KEYS = {"name": "name", "artifacts": "artifacts", "layer": "layer"}
 
 
@@ -92,25 +105,25 @@ class OptVecGeometryConfig:
     def __post_init__(self) -> None:
         self.artifacts = [str(a) for a in self.artifacts]
         if len(self.artifacts) < 2:
-            raise OptVecGeometryError(
+            raise OptVecGeometryConfigError(
                 "geometry needs at least 2 artifacts — a cosine matrix and a "
                 "participation ratio over one vector are not statistics")
         if self.layer is not None and int(self.layer) < 0:
-            raise OptVecGeometryError("layer must be >= 0")
+            raise OptVecGeometryConfigError("layer must be >= 0")
 
     @classmethod
     def from_dict(cls, payload: dict) -> "OptVecGeometryConfig":
         if not isinstance(payload, dict):
-            raise OptVecGeometryError(
+            raise OptVecGeometryConfigError(
                 "the OptVec geometry config must be a JSON object")
         unknown = sorted(set(payload) - set(_CONFIG_KEYS))
         if unknown:
-            raise OptVecGeometryError(
+            raise OptVecGeometryConfigError(
                 "unknown OptVec geometry config key(s): " + ", ".join(unknown))
         artifacts = payload.get("artifacts")
         if not isinstance(artifacts, list) or not all(
                 isinstance(a, str) for a in artifacts):
-            raise OptVecGeometryError(
+            raise OptVecGeometryConfigError(
                 "'artifacts' must be a list of artifact paths "
                 "(extension-less vector locators)")
         return cls(**{field_name: payload[key]
@@ -324,46 +337,46 @@ class OptVecFractureConfig:
     def __post_init__(self) -> None:
         self.artifacts = [str(a) for a in self.artifacts]
         if len(self.artifacts) < 2:
-            raise OptVecGeometryError(
+            raise OptVecGeometryConfigError(
                 "fracture needs at least 2 solution artifacts — a basin count "
                 "over one restart is not a multiplicity statistic")
         if len(set(self.artifacts)) != len(self.artifacts):
-            raise OptVecGeometryError(
+            raise OptVecGeometryConfigError(
                 "fracture artifacts repeat a reference — the same solution "
                 "counted twice inflates a basin's frequency")
         if not isinstance(self.items, dict):
-            raise OptVecGeometryError(
+            raise OptVecGeometryConfigError(
                 "'items' must be an object mapping artifact reference → item "
                 "id")
         for reference, item in self.items.items():
             if not isinstance(item, str) or not item.strip():
-                raise OptVecGeometryError(
+                raise OptVecGeometryConfigError(
                     f"items[{reference!r}] must be a non-empty item id")
             if reference not in self.artifacts:
-                raise OptVecGeometryError(
+                raise OptVecGeometryConfigError(
                     f"items names {reference!r}, which is not one of the "
                     "artifacts — a mapping key that matches nothing would "
                     "silently leave its artifact ungrouped")
         self.threshold = float(self.threshold)
         if not -1.0 <= self.threshold <= 1.0:
-            raise OptVecGeometryError(
+            raise OptVecGeometryConfigError(
                 "threshold is a cosine: it must lie in [-1, 1]")
         if self.layer is not None and int(self.layer) < 0:
-            raise OptVecGeometryError("layer must be >= 0")
+            raise OptVecGeometryConfigError("layer must be >= 0")
 
     @classmethod
     def from_dict(cls, payload: dict) -> "OptVecFractureConfig":
         if not isinstance(payload, dict):
-            raise OptVecGeometryError(
+            raise OptVecGeometryConfigError(
                 "the OptVec fracture config must be a JSON object")
         unknown = sorted(set(payload) - set(_FRACTURE_CONFIG_KEYS))
         if unknown:
-            raise OptVecGeometryError(
+            raise OptVecGeometryConfigError(
                 "unknown OptVec fracture config key(s): " + ", ".join(unknown))
         artifacts = payload.get("artifacts")
         if not isinstance(artifacts, list) or not all(
                 isinstance(a, str) for a in artifacts):
-            raise OptVecGeometryError(
+            raise OptVecGeometryConfigError(
                 "'artifacts' must be a list of artifact paths "
                 "(extension-less vector locators)")
         return cls(**{field_name: payload[key]
@@ -470,7 +483,9 @@ def load_gradient_rows(path: str) -> tuple[dict, dict]:
     resolved = paths.resolve(path)
     if not os.path.exists(resolved):
         raise OptVecGeometryError(
-            f"gradient reference '{path}' names no file")
+            f"gradient reference '{path}' names no file"
+        ) from FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+                                 resolved)  # a CLI reads this as notFound
     try:
         with safe_open(resolved, framework="numpy") as handle:
             keys = list(handle.keys())

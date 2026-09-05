@@ -126,8 +126,41 @@ hashed from its bytes exactly like a registry file, stamped
 ## §3 — Reader datasets (`prompts/readers/<concept>/pairs.jsonl`)
 
 One JSON object per line. Every row carries `concept` and `templateID`; rows
-must share ONE concept and ONE shape. `split` defaults to `"train"`, and any
-other value is held out.
+must share ONE concept and ONE shape.
+
+**Three split roles.** `split` is matched case-insensitively and defaults to
+`"train"`.
+
+| `split` | Role | Read by |
+|---|---|---|
+| `"train"` (or absent) | Fits the direction and the probe's center/scale. | PCA, `scalar_probe`, `trainAccuracy`. |
+| anything else — `"test"`, `"heldOut"`, `"validation"`, `"dev"`, … | HELD OUT: fixes each layer's sign (step 4) and ranks the layers. | `fit_direction`, `stamp_layer_recommendation`, `heldOutAccuracy`. |
+| `"finalTest"` | FINAL EVALUATION. | Nothing that fits or selects. Scored once, after the fit, as `finalTestAccuracy`. |
+
+`"test"` stays held out on purpose. It is the spelling the app's corpus writer
+(`ConceptBuilder`), its import parser and the reader-pairs authoring prompt
+have always used for held-out rows, on both engines, so repurposing that word
+would have changed the meaning of every existing corpus; the final-evaluation
+role got a new word instead (2026-09-05). **Swift parity owed:** the Swift
+reader still reads every non-`train` row as held out, so it would treat a
+`"finalTest"` row as a selection row. A dataset that uses the role must be
+fitted on the Python engine until that lands.
+
+**Cross-split leakage is refused, not reported.** A held-out or final-test row whose
+stimulus text repeats a train row's is a leak: the fit already read those words,
+so the accuracy scored on them measures memorization. `check_split_overlap`
+refuses such a dataset at parse AND at fit, with a repair naming both rows.
+Identity is the stimulus text — BOTH stimuli of a content pair, the single
+stimulus of a template-pair row — compared after whitespace collapsing and case
+folding, the convention `lora_data.Row.content_key` uses for the same purpose on
+the LoRA side. A clean dataset stamps `splitOverlap:
+{"exactDuplicatesAcrossSplits": 0}` on every artifact of the fit.
+
+**Near-duplicates are NOT assessed.** A paraphrase, an edited clause, the same
+scenario with a renamed subject: none of them is caught, and neither the stamp
+nor this brief claims otherwise. A fuzzy check needs a similarity threshold, and
+an unstated threshold inside a leakage gate is worse than an honest gap — so
+authoring a genuinely independent `"finalTest"` split remains the researcher's job.
 
 **Content-pair shape** (`supervisedContent`, and the only shape before
 2026-08-27):
@@ -167,8 +200,17 @@ contrast against).
 
 One artifact per concept × layer × template × model × substrate. The full
 template record is embedded so inference is standalone and drift-proof;
-`templateID`/`templateHash` remain the registry pins. Both engines write the
-same keys.
+`templateID`/`templateHash` remain the registry pins.
+
+Both engines write the same keys, with one current exception: the six
+evidence-role and final-test keys below (`finalTestAccuracy`, `finalTestPairCount`,
+`evidenceRoles`, `evidenceRolesBasis`, `evidenceRoleNote`, `splitOverlap`) are
+written by the Python engine only, pending the Swift twin. They are additive
+and absent-means-legacy, and Swift's decoder reads the keys it declares and
+ignores the rest, so the schema version stays **2** on both sides — a bump would
+buy nothing and break the twin's pin. A Swift round trip of such an artifact
+DROPS them, which is why a reader re-encoded on the Mac loses its roles until
+the twin lands.
 
 | Key | Meaning |
 |---|---|
@@ -183,8 +225,13 @@ same keys.
 | `pc1ExplainedVarianceOfDifferences` | PC1's share of the DIFFERENCE CLOUD's variance. **Absent** when the cloud has none to apportion. |
 | `pc1ExplainedVarianceBasis` | `"differenceCloud"`, `"degenerateDifferenceCloud"` (value absent), or `"alternatedRows"` (a schema-1 artifact's legacy number — §10). |
 | `pc1PowerIteration` | Convergence health of the Gram iteration that produced PC1: `{converged, illConditioned, iterations, maxIterations, relativeResidual}`. `relativeResidual` is ‖Gw − λw‖/λ; `illConditioned` is that residual above 1e-4, meaning the top two eigenvalues are nearly tied and PC1 is ill-determined. **Absent** on any reader fitted before 2026-08-28 — and absent is not "converged", it means the question was never asked. |
-| `trainAccuracy`, `heldOutAccuracy` | Probe classification accuracy on each split. |
+| `trainAccuracy`, `heldOutAccuracy` | Probe classification accuracy on each split. `heldOutAccuracy` is a SELECTION statistic — see §5 before reporting it. |
 | `trainPairCount`, `heldOutPairCount` | Row counts. |
+| `finalTestAccuracy`, `finalTestPairCount` | Probe accuracy over the `split: "finalTest"` rows and how many there were. **Absent means the dataset reserved none** — no final-test evidence, not a zero. |
+| `evidenceRoles` | WHICH DECISIONS each accuracy's rows were allowed to make: `{"trainAccuracy": "fit", "heldOutAccuracy": "selection" \| "validation", "finalTestAccuracy": "finalEvaluation" (only when present), "signSelectedBy": "heldOut" \| "train", "layerRecommendedBy": "heldOut" \| "train" \| null, "splitCounts": {"train", "heldOut", "finalTest"}}`. Serialization REFUSES a block that labels `heldOutAccuracy` `"finalEvaluation"`, or `finalTestAccuracy` anything else. |
+| `evidenceRolesBasis` | `"stamped"` (the fitting engine recorded the block) or `"derivedFromLegacyStamps"` (reconstructed at decode from `signConvention` and `layerRecommendationBasis`, because the artifact predates the block). |
+| `evidenceRoleNote` | The block in one paragraph, in the artifact's own words (`EVIDENCE_ROLE_NOTE`), so a consumer needs none of this file to report the numbers honestly. |
+| `splitOverlap` | `{"exactDuplicatesAcrossSplits": 0}` — the record that the §3 leakage check RAN. **Absent = fitted before the check existed**, which is not the same as "checked and clean". |
 | `contrastMode` | `"supervisedContent"` \| `"unsupervisedTemplatePair"` (§3). |
 | `signConvention` | `"heldOutPairAgreement"` \| `"trainMajority"` (§5). |
 | `signHeldOutAccuracy` | Held-out paired-discrimination accuracy of the CHOSEN sign. Absent under `trainMajority`. |
@@ -217,8 +264,10 @@ sign-invariant by construction; the paired projection is not.
 (= 2) decided pairs, or on an exact tie, the sign falls back to train-label
 majority and the artifact stamps `signConvention: "trainMajority"` plus a
 `signFallbackReason` naming which of the three cases occurred — no held-out
-rows at all, too few off-zero projections, or an even split. A one-pair vote is
-a coin flip wearing a validation split's authority.
+rows at all (a dataset with only `finalTest` rows beside its train rows lands
+here too, since final-test rows may not sign), too few off-zero projections,
+or an even split. A one-pair vote is a coin flip wearing a
+validation split's authority.
 
 **Layer.** The fit stamps `recommendedLayer` — the argmax of held-out accuracy
 over the layers fitted together (ties to the lower index), or of train accuracy
@@ -228,6 +277,37 @@ recommendation. **Nothing selects a layer at use time.** Which layer a study
 reads is a declarable choice recorded in its manifest, because the layer is a
 scientific decision and an instrument that quietly picks its own is not
 reproducible from the manifest alone.
+
+**The held-out split is a SELECTION split, so its accuracy is selection
+evidence.** Both decisions above are made on those rows: the sign is the one
+under which they project positive, and the recommended layer is their argmax.
+`heldOutAccuracy` is therefore the score of the winner of two selections made
+on the very rows it is computed over: the sign was chosen so that those rows'
+differences project positively, and the layer reported is the one those rows
+scored highest. Both choices bias the number upward, which is the whole of what
+"selection statistic" means. Every
+artifact says so in its `evidenceRoles` block: `heldOutAccuracy` is labelled
+`"selection"` whenever the held-out rows signed the direction OR ranked the
+layers, and `"validation"` only when they did neither (a fit that fell back to
+train-label majority and was fitted alone, so nothing was ranked).
+
+**How to make a final claim.** Reserve rows with `split: "finalTest"`. Nothing that
+fits or selects reads them — not the PCA, not the sign, not the layer ranking,
+not the probe's center and scale — and they are scored once, at the end, as
+`finalTestAccuracy` with role `"finalEvaluation"`. That is the number a paper
+reports as this instrument's generalization. Without such rows there is no
+final-test estimate at all: report `heldOutAccuracy` as selection evidence and
+say so, which is exactly what `evidenceRoleNote` on the artifact tells a reader
+to do.
+
+Two consequences worth stating plainly. A fit with `finalTest` rows and no
+held-out rows CANNOT run the paper's step 4 — the sign falls back to
+train-label majority — so a dataset that wants both must author both. And a
+reader fitted before 2026-09-05 has no `finalTest` rows by definition: its
+roles are derived at
+decode from `signConvention` and `layerRecommendationBasis`,
+`evidenceRolesBasis` says `derivedFromLegacyStamps`, and its `heldOutAccuracy`
+is selection evidence exactly as a new one's is.
 
 **`pairedDifferencePCA` has no held-out split**, so its sign stays train-label
 majority — and its sidecar stamps `signConvention: "trainMajority"` so the

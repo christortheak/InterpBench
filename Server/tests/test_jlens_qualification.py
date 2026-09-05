@@ -230,8 +230,11 @@ def test_reference_agreement_FAILS_when_the_reference_package_is_absent(
 # comes from a git URL), so these stand a FAKE `jlens` in for it — one that
 # computes the same softcap(U · RMSNorm(J h)) this engine does, but casts into
 # the output head the way the real one does. That cast asymmetry is the whole
-# subject: our path is float32 throughout, the reference's is not, and the 27B
-# run's 0.07059 deviation is suspected to be nothing else.
+# subject: our path is float32 throughout, the reference's is its runtime
+# dtype, and the 27B run's 0.07059 deviation was nothing else (confirmed on the
+# 4B testing lens, 2026-09-05: 0.0837 at bf16, 1.9e-6 promoted). Hence the
+# ruling the tests below pin: the head is promoted by DEFAULT, and the
+# runtime-dtype comparison is the opt-in diagnostic.
 
 REF_VOCAB = 16
 REF_WATCHLIST = [1, 4, 9, 15]
@@ -371,60 +374,150 @@ def test_the_tolerance_is_untouched_by_the_diagnosis_instruments():
     assert qualification.REFERENCE_TOLERANCE == 5e-2
 
 
-def test_the_fp32_mode_is_OFF_unless_asked_and_the_record_says_which(
+def test_the_reference_head_is_promoted_by_DEFAULT_and_the_record_says_so(
         tmp_path, monkeypatch):
-    """Default behaviour is untouched: nothing is promoted, the reference keeps
-    its runtime dtype, and the stamp is present and False — so a default-mode
-    record is legible as one rather than by the absence of a key."""
+    """Ruling 2026-09-05: with nothing in the environment the reference's
+    output head is compared in float32, the deviation is float32 noise, and
+    the record stamps the mode AND that it came from the default — legible as
+    the default mode rather than by the absence of a key."""
     monkeypatch.delenv(qualification.REFERENCE_FP32_ENV, raising=False)
     result, ref_model = _run_reference_check(tmp_path, monkeypatch)
 
-    assert result.measured["referenceFP32Forced"] is False
-    assert result.measured["referenceFP32Promoted"] == []
+    assert result.passed is True
+    assert result.measured["referenceFP32Forced"] is True
+    assert result.measured["referenceFP32ModeSource"] == "default"
+    assert "_lm_head" in result.measured["referenceFP32Promoted"]
+    assert result.measured["referenceHeadDtype"] == "torch.float32"
     assert result.measured["referenceFP32EnvVar"] == \
         qualification.REFERENCE_FP32_ENV
+    assert "float32" in result.detail and "default mode" in result.detail
+    assert "diagnostic" not in result.detail
+    assert result.measured["maxAbsLogitDeviation"] < 1e-4
+    # Promotion is temporary: the reference wraps the STUDY model's live
+    # modules, and the checks that run after this one see the runtime dtype.
     assert ref_model._lm_head.weight.dtype == torch.bfloat16
-    assert "float32" not in result.detail
-    # And the cast asymmetry is really there to be explained.
-    assert result.measured["maxAbsLogitDeviation"] > 1e-4
 
 
-def test_an_unset_and_an_explicitly_off_env_produce_the_SAME_numbers(
+def test_an_unset_and_an_explicitly_on_env_produce_the_SAME_numbers(
         tmp_path, monkeypatch):
-    """'Opt-in' has to mean byte-identical when not opted in."""
+    """'Default' has to mean byte-identical to asking for it by name; only the
+    stamp's provenance differs."""
     monkeypatch.delenv(qualification.REFERENCE_FP32_ENV, raising=False)
     unset, _ = _run_reference_check(tmp_path, monkeypatch)
-    monkeypatch.setenv(qualification.REFERENCE_FP32_ENV, "0")
-    off, _ = _run_reference_check(tmp_path / "second", monkeypatch)
+    monkeypatch.setenv(qualification.REFERENCE_FP32_ENV, "on")
+    on, _ = _run_reference_check(tmp_path / "second", monkeypatch)
 
-    assert off.measured["maxAbsLogitDeviation"] == \
+    assert on.measured["maxAbsLogitDeviation"] == \
         unset.measured["maxAbsLogitDeviation"]
-    assert off.measured["perComparison"] == unset.measured["perComparison"]
-    assert off.detail == unset.detail
+    assert on.measured["perComparison"] == unset.measured["perComparison"]
+    assert on.measured["referenceFP32ModeSource"] == "env"
+    assert unset.measured["referenceFP32ModeSource"] == "default"
+    assert qualification.REFERENCE_FP32_ENV in on.detail
+    assert "default mode" in unset.detail
 
 
-def test_forcing_fp32_collapses_the_deviation_and_STAMPS_the_record(
+def test_the_runtime_dtype_comparison_is_the_opt_in_DIAGNOSTIC_and_is_stamped(
         tmp_path, monkeypatch):
-    """The confirmation the tolerance ruling wants: if the deviation collapses
-    when the reference path is promoted, the dtype-cast asymmetry is the whole
-    story. A record produced this way can never read as a default-mode one —
-    the stamp is in the measurements AND in the detail line."""
+    """Switching promotion off shows the cast asymmetry the ruling was about:
+    the deviation is back, nothing was promoted, and the record says in the
+    measurements AND in the detail line that this is not the default mode."""
     monkeypatch.delenv(qualification.REFERENCE_FP32_ENV, raising=False)
     default, _ = _run_reference_check(tmp_path, monkeypatch)
 
-    monkeypatch.setenv(qualification.REFERENCE_FP32_ENV, "1")
-    forced, ref_model = _run_reference_check(tmp_path / "fp32", monkeypatch)
+    monkeypatch.setenv(qualification.REFERENCE_FP32_ENV, "0")
+    native, ref_model = _run_reference_check(tmp_path / "native", monkeypatch)
 
-    assert forced.measured["referenceFP32Forced"] is True
-    assert "_lm_head" in forced.measured["referenceFP32Promoted"]
-    assert qualification.REFERENCE_FP32_ENV in forced.detail
-    assert "FORCED TO float32" in forced.detail
+    assert native.measured["referenceFP32Forced"] is False
+    assert native.measured["referenceFP32ModeSource"] == "env"
+    assert native.measured["referenceFP32Promoted"] == []
+    assert native.measured["referenceHeadDtype"] == "torch.bfloat16"
+    assert "RUNTIME DTYPE" in native.detail
+    assert "diagnostic mode" in native.detail
+    assert qualification.REFERENCE_FP32_ENV in native.detail
+    assert ref_model._lm_head.weight.dtype == torch.bfloat16
 
-    assert forced.measured["maxAbsLogitDeviation"] < \
-        default.measured["maxAbsLogitDeviation"] / 100
-    assert forced.measured["maxAbsLogitDeviation"] < 1e-4
-    # Promotion is temporary: the reference wraps the STUDY model's live
-    # modules, and the checks that run after this one see the runtime dtype.
+    # And the cast asymmetry is really there to be explained.
+    assert native.measured["maxAbsLogitDeviation"] > 1e-4
+    assert default.measured["maxAbsLogitDeviation"] < \
+        native.measured["maxAbsLogitDeviation"] / 100
+
+
+def test_a_mode_value_nobody_can_read_is_refused_not_guessed(tmp_path,
+                                                             monkeypatch):
+    """A typo must not silently select either mode: the check FAILS (not
+    skips), names the variable and the value, and stamps that the mode was
+    invalid — nothing was compared."""
+    monkeypatch.setenv(qualification.REFERENCE_FP32_ENV, "maybe")
+    result, ref_model = _run_reference_check(tmp_path, monkeypatch)
+
+    assert result.passed is False
+    assert result.skipped is False
+    assert qualification.REFERENCE_FP32_ENV in result.detail
+    assert "'maybe'" in result.detail
+    assert result.measured["referenceFP32Forced"] is None
+    assert result.measured["referenceFP32ModeSource"] == "invalid"
+    assert "perComparison" not in result.measured
+    assert ref_model._lm_head.weight.dtype == torch.bfloat16
+
+
+def test_promotion_reaches_the_output_head_and_never_the_decoder_stack():
+    """The comparison transports through OUR Jacobian and reads the reference's
+    output head, so that is all promotion may touch: a 27B decoder stack in
+    float32 would double the model's weight memory for nothing. Tied weights
+    (Gemma's head IS its embedding) are promoted once and restored once."""
+    class _Host:
+        def __init__(self):
+            self.layers = torch.nn.ModuleList(
+                [torch.nn.Linear(4, 4, bias=False).to(torch.bfloat16)
+                 for _ in range(2)])
+            self._final_norm = torch.nn.Linear(4, 4, bias=False).to(
+                torch.bfloat16)
+            self._lm_head = torch.nn.Linear(4, 8, bias=False).to(
+                torch.bfloat16)
+            self._embed_tokens = torch.nn.Embedding(8, 4).to(torch.bfloat16)
+            self._embed_tokens.weight = self._lm_head.weight
+
+    host = _Host()
+    promoted, restore = qualification._promote_reference_to_fp32(
+        host, qualification.REFERENCE_OUTPUT_HEAD)
+
+    assert promoted == ["_final_norm", "_lm_head"], \
+        "the tied embedding was already float32 when reached, so it is " \
+        "neither promoted twice nor listed twice"
+    assert host._lm_head.weight.dtype == torch.float32
+    assert host._embed_tokens.weight.dtype == torch.float32
+    assert host._final_norm.weight.dtype == torch.float32
+    assert all(layer.weight.dtype == torch.bfloat16 for layer in host.layers)
+
+    restore()
+    assert host._lm_head.weight.dtype == torch.bfloat16
+    assert host._embed_tokens.weight.dtype == torch.bfloat16
+    assert host._final_norm.weight.dtype == torch.bfloat16
+    assert all(layer.weight.dtype == torch.bfloat16 for layer in host.layers)
+
+
+def test_a_head_that_could_not_be_promoted_fails_the_check_loudly(
+        tmp_path, monkeypatch):
+    """A module of mixed float widths is skipped by the promotion (restoring
+    would have to guess). In the default mode that leaves the comparison at
+    the runtime dtype under a float32 stamp — so the check says so and FAILS,
+    rather than passing or failing for a reason the record cannot show."""
+    monkeypatch.delenv(qualification.REFERENCE_FP32_ENV, raising=False)
+    root = str(tmp_path / "ws")
+    record = _import(tmp_path, EVIDENCE_MODEL)
+    readout, ref_model = _install_fake_reference(monkeypatch, record, root)
+    ref_model._lm_head.register_buffer(
+        "scale", torch.ones(1, dtype=torch.float16))
+
+    result = qualification._check_reference_agreement(
+        record, ReferenceModelHost(), readout, [0], root=root)
+
+    assert result.passed is False
+    assert result.measured["referenceFP32Forced"] is True
+    assert result.measured["referenceFP32ModeSource"] == "default"
+    assert result.measured["referenceFP32Promoted"] == []
+    assert result.measured["referenceHeadDtype"] == "torch.bfloat16"
+    assert "not float32" in result.detail
     assert ref_model._lm_head.weight.dtype == torch.bfloat16
 
 
@@ -460,7 +553,7 @@ def test_a_promotion_that_dies_part_way_leaves_the_model_as_it_found_it():
     host = _HalfPromotable()
 
     with pytest.raises(RuntimeError, match="out of memory"):
-        qualification._promote_reference_to_fp32(host)
+        qualification._promote_reference_to_fp32(host, ("first", "second"))
 
     assert host.first.weight.dtype == torch.bfloat16, \
         "an earlier module was left promoted after the failure"
@@ -488,7 +581,7 @@ def test_a_failing_promotion_is_not_masked_by_a_failing_rollback():
 
     host = _Host()
     with pytest.raises(RuntimeError, match="cannot change dtype"):
-        qualification._promote_reference_to_fp32(host)
+        qualification._promote_reference_to_fp32(host, ("only",))
     # Promotion attempt plus its own rollback attempt, and neither escaped as
     # a different exception than the one that started it.
     assert host.only.calls == 2
@@ -499,7 +592,7 @@ def test_the_reference_check_restores_dtypes_when_the_comparison_explodes(
     """The caller's guard encompasses the promotion itself, so the region in
     which the shared modules are float32 is exactly the region the ``finally``
     covers."""
-    monkeypatch.setenv(qualification.REFERENCE_FP32_ENV, "1")
+    monkeypatch.delenv(qualification.REFERENCE_FP32_ENV, raising=False)
     root = str(tmp_path / "ws")
     record = _import(tmp_path, EVIDENCE_MODEL)
     readout, ref_model = _install_fake_reference(monkeypatch, record, root)
@@ -530,6 +623,7 @@ def test_the_fp32_stamp_is_present_even_when_the_reference_is_absent(
         record, None, None, [0], root=str(tmp_path / "ws"))
     assert result.skipped is True
     assert result.measured["referenceFP32Forced"] is True
+    assert result.measured["referenceFP32ModeSource"] == "env"
 
 
 def test_a_huge_comparison_set_keeps_the_LARGEST_deviations(tmp_path,

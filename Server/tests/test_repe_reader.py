@@ -121,18 +121,32 @@ def test_reader_scaffold_guard_rejects_embedded_chat_markers():
 # --- dataset -----------------------------------------------------------------
 
 def test_pairs_loader_hash_split_and_errors(tmp_path):
+    """Three split ROLES: train (the default), finalTest (final evaluation,
+    case-insensitive), and every other value — ``test`` included — held out
+    exactly as it always was."""
     path = _write_pairs(str(tmp_path / "pairs.jsonl"), [
         _pair_row(0, "p0", "n0"),
-        {**_pair_row(1, "p1", "n1"), "split": "TEST"},
+        {**_pair_row(1, "p1", "n1"), "split": "FinalTest"},
         {k: v for k, v in _pair_row(2, "p2", "n2").items() if k != "split"},
+        {**_pair_row(3, "p3", "n3"), "split": "heldOut"},
+        {**_pair_row(4, "p4", "n4"), "split": "validation"},
+        {**_pair_row(5, "p5", "n5"), "split": "test"},
     ])
     with open(path, "rb") as handle:
         expected = hashlib.sha256(handle.read()).hexdigest()
     dataset = repe_reader.load_pairs(path)
     assert dataset.hash == expected
     assert dataset.concept == "fear"
-    assert [p.split for p in dataset.pairs] == ["train", "test", "train"]
-    assert len(dataset.train) == 2 and len(dataset.held_out) == 1
+    assert [p.split for p in dataset.pairs] == [
+        "train", "finaltest", "train", "heldout", "validation", "test"]
+    assert len(dataset.train) == 2
+    # "heldOut", "validation" AND "test" are held out — "test" is what the
+    # app's corpus writer has always stamped, on both engines. Only
+    # "finalTest" is the final-evaluation role no selection step may read.
+    assert [p.id for p in dataset.held_out] == [
+        "fear-pair-3", "fear-pair-4", "fear-pair-5"]
+    assert [p.id for p in dataset.final_test] == ["fear-pair-1"]
+    assert dataset.split_counts == {"train": 2, "heldOut": 3, "finalTest": 1}
 
     mixed = _write_pairs(str(tmp_path / "mixed.jsonl"), [
         _pair_row(0, "p0", "n0"), _pair_row(1, "p1", "n1", concept="calm")])
@@ -173,11 +187,14 @@ def _fake_activations(model, texts, position, rendering=None):
 
 def _fit_dataset(tmp_path, swap_labels=False):
     template = repe_reader.load_template(_write_template(str(tmp_path)))
+    # Spelled "heldOut" for legibility; "test" means the same thing (held
+    # out) on both engines. Only "finalTest" names the final-evaluation role
+    # that no selection step may read.
     rows = [
         _pair_row(0, "n0" if swap_labels else "p0", "p0" if swap_labels else "n0"),
         _pair_row(1, "n1" if swap_labels else "p1", "p1" if swap_labels else "n1"),
         _pair_row(2, "hn" if swap_labels else "hp", "hp" if swap_labels else "hn",
-                  split="test"),
+                  split="heldOut"),
     ]
     dataset = repe_reader.load_pairs(
         _write_pairs(str(tmp_path / "pairs.jsonl"), rows))
@@ -595,7 +612,7 @@ VALID_TEMPLATE_JSON = json.dumps({
 def _fit_rows(template_id="amount-in-scenario-v1"):
     return [_pair_row(0, "p0", "n0", template_id=template_id),
             _pair_row(1, "p1", "n1", template_id=template_id),
-            _pair_row(2, "hp", "hn", split="test", template_id=template_id)]
+            _pair_row(2, "hp", "hn", split="heldOut", template_id=template_id)]
 
 
 def _fit_jsonl(template_id="amount-in-scenario-v1"):
@@ -734,9 +751,18 @@ def test_api_reader_fit_job_with_registry_template(tmp_path, monkeypatch):
         pairs_jsonl.encode("utf-8")).hexdigest()
     assert result["layerScores"] == [{
         "layer": 0, "trainAccuracy": 1.0, "heldOutAccuracy": 0.5,
+        # This dataset reserved no split 'finalTest' rows, so the job result has no
+        # final-test evidence to report — and its roles say so rather than
+        # letting the caller read heldOutAccuracy as one.
+        "finalTestAccuracy": None,
+        "evidenceRoles": {
+            "trainAccuracy": "fit", "heldOutAccuracy": "validation",
+            "signSelectedBy": "train", "layerRecommendedBy": None,
+            "splitCounts": {"train": 2, "heldOut": 1, "finalTest": 0}},
         "signConvention": "trainMajority", "signHeldOutAccuracy": None,
         "pc1ExplainedVarianceOfDifferences": None,
         "pc1ExplainedVarianceBasis": "degenerateDifferenceCloud"}]
+    assert result["evidenceRoleNote"] == repe_reader.EVIDENCE_ROLE_NOTE
     assert result["contrastMode"] == "supervisedContent"
     # The run-dir naming is discovered by the catalog (pattern-agnostic scan).
     listed = client.get("/api/readers").json()["readers"]
@@ -992,6 +1018,28 @@ REFUSAL_TWINS = {
         "not discriminate at this layer, so the sign follows train-label "
         "majority. Read this layer's heldOutAccuracy before trusting its "
         "direction",
+    # The four below are PYTHON-ONLY so far (REM-02, 2026-09-05): the Swift
+    # twin knows only train / not-train splits, stamps no evidence roles and
+    # runs no split-overlap check. The literals are fixed here so the Swift
+    # implementation, when it lands, has words to copy rather than invent.
+    "crossSplitDuplicate":
+        "S: row 'b' (split 'test') has the same stimulus text as train row "
+        "'a' — a held-out or test row identical to a train row is a leak: the "
+        "fit already read those words, so the accuracy scored on them measures "
+        "memorization, not generalization. Repair: rewrite or drop the "
+        "duplicate row so each split holds distinct stimuli",
+    "heldOutRelabelledAsFinal":
+        "reader artifact labels heldOutAccuracy 'finalEvaluation': those rows "
+        "chose the direction's sign and ranked the layers, so the label would "
+        "present a selection statistic as a final-test result. Repair: label "
+        "heldOutAccuracy 'selection' or 'validation', and report final-test "
+        "evidence as finalTestAccuracy over rows marked split 'finalTest'",
+    "finalTestRelabelledAsAnythingElse":
+        "reader artifact labels finalTestAccuracy 'validation': finalTestAccuracy is the "
+        "ONLY final-evaluation statistic a reader has — rows marked split "
+        "'finalTest' are read by no fitting or selection step, which is the whole of "
+        "what makes them one. Repair: label finalTestAccuracy 'finalEvaluation', or "
+        "drop it if the dataset reserved no split 'finalTest' rows",
 }
 
 
@@ -1060,6 +1108,18 @@ def _produced_refusals() -> dict[str, str]:
         held_out_pair_count=1, decided=1, agree=1, disagree=0)
     out["signFallbackTied"] = repe_reader.held_out_sign_fallback_reason(
         held_out_pair_count=4, decided=4, agree=2, disagree=2)
+    # Whitespace and case differ; the rows are the same stimuli, and the check
+    # compares them the way `lora_data.Row.content_key` does.
+    capture("crossSplitDuplicate", lambda: repe_reader.parse_pairs(
+        '{"id":"a","concept":"c","positiveStimulus":"P one",'
+        '"negativeStimulus":"n","templateID":"t"}\n'
+        '{"id":"b","concept":"c","positiveStimulus":"p  ONE",'
+        '"negativeStimulus":"N","templateID":"t","split":"test"}\n', source="S"))
+    capture("heldOutRelabelledAsFinal", lambda: repe_reader.validate_evidence_roles(
+        {"heldOutAccuracy": "finalEvaluation"}))
+    capture("finalTestRelabelledAsAnythingElse",
+            lambda: repe_reader.validate_evidence_roles(
+                {"finalTestAccuracy": "validation"}))
     return out
 
 
@@ -1083,7 +1143,7 @@ def _fit_from_rows(tmp_path, rows, acts, layers=None, **kwargs):
     dataset = repe_reader.load_pairs(
         _write_pairs(str(tmp_path / "rows.jsonl"), rows))
     captured = []
-    for pair in dataset.train + dataset.held_out:
+    for pair in dataset.train + dataset.held_out + dataset.final_test:
         captured.append(acts[pair.positive_stimulus])
         captured.append(acts[pair.negative_stimulus])
     return repe_reader.fit_activations(
@@ -1101,8 +1161,8 @@ def test_held_out_split_fixes_the_sign(tmp_path):
         "hp1": [[0.1, -0.2]], "hn1": [[1.1, -0.2]],
     }
     rows = [_pair_row(0, "p0", "n0"), _pair_row(1, "p1", "n1"),
-            _pair_row(2, "hp0", "hn0", split="test"),
-            _pair_row(3, "hp1", "hn1", split="test")]
+            _pair_row(2, "hp0", "hn0", split="heldOut"),
+            _pair_row(3, "hp1", "hn1", split="heldOut")]
     reader = _fit_from_rows(tmp_path, rows, acts)[0]
     assert reader.sign_convention == repe_reader.HELD_OUT_PAIR_AGREEMENT
     assert reader.sign_held_out_accuracy == pytest.approx(1.0)
@@ -1119,8 +1179,8 @@ def test_evenly_split_held_out_falls_back_loudly(tmp_path):
         "hc": [[0.0, 0.1]], "hd": [[1.0, 0.1]],
     }
     rows = [_pair_row(0, "p0", "n0"), _pair_row(1, "p1", "n1"),
-            _pair_row(2, "ha", "hb", split="test"),
-            _pair_row(3, "hc", "hd", split="test")]
+            _pair_row(2, "ha", "hb", split="heldOut"),
+            _pair_row(3, "hc", "hd", split="heldOut")]
     reader = _fit_from_rows(tmp_path, rows, acts)[0]
     assert reader.sign_convention == repe_reader.TRAIN_MAJORITY
     assert reader.sign_held_out_accuracy is None
@@ -1136,7 +1196,7 @@ def test_layer_recommendation_is_stamped_on_the_whole_set(tmp_path):
             "p1": row(3, 2), "n1": row(0.5, 0.5),
             "hp": row(2, 0), "hn": row(0, 3)}
     rows = [_pair_row(0, "p0", "n0"), _pair_row(1, "p1", "n1"),
-            _pair_row(2, "hp", "hn", split="test")]
+            _pair_row(2, "hp", "hn", split="heldOut")]
     readers = _fit_from_rows(tmp_path, rows, acts)
     assert len(readers) == 2
     # Every artifact of the set carries the SAME recommendation — a reader
@@ -1191,7 +1251,7 @@ def test_unsupervised_template_pair_fit_is_seeded_and_stamped(tmp_path):
     for index in range(5):
         rows.append({"id": f"fear-row-{index}", "concept": "fear",
                      "stimulus": f"s{index}", "templateID": template.id,
-                     "split": "train" if index < 3 else "test"})
+                     "split": "train" if index < 3 else "heldOut"})
         magnitude = float(index + 1)
         captured.append([[magnitude, 0.1 * magnitude]])   # T+
         captured.append([[0.0, 0.1 * magnitude]])         # T-
@@ -1245,7 +1305,7 @@ def test_template_pair_scores_carry_the_documented_positive_offset(tmp_path):
     for index in range(5):
         rows.append({"id": f"fear-row-{index}", "concept": "fear",
                      "stimulus": f"s{index}", "templateID": template.id,
-                     "split": "train" if index < 3 else "test"})
+                     "split": "train" if index < 3 else "heldOut"})
         magnitude = float(index + 1)
         captured.append([[magnitude, 0.1 * magnitude]])   # T+
         captured.append([[0.0, 0.1 * magnitude]])         # T-
@@ -1516,3 +1576,379 @@ def test_derived_sidecar_carries_reader_method_and_instrument_pins():
     method = ExtractionMethod(sidecar.extractionMethod)
     assert method.is_repe_reader_lat and not method.has_source_concept
     assert "RepE reader" in method.source_concept_absence[0]
+
+
+# --- REM-02: selection roles vs the final test --------------------------------
+#
+# The finding: the held-out split signs the direction AND ranks the layers, so
+# `heldOutAccuracy` is the score of the winner of two selections made on the
+# rows it is computed over. These tests pin the split role that gives a reader
+# an untouched estimate, the roles that name what each number is, and the
+# leakage gate that stops a "final test" from being a copy of the training set.
+
+# Two layers; the concept is the x axis at both. Train differences point +x,
+# the held-out pairs point −x (so held-out FLIPS the sign, paper step 4), and
+# the test pairs look like the train pairs.
+ROLE_ACTS = {
+    "p0": [[2.0, 0.5], [1.0, 0.5]], "n0": [[0.0, 0.5], [0.0, 0.5]],
+    "p1": [[3.0, 0.5], [2.0, 0.5]], "n1": [[0.5, 0.5], [0.5, 0.5]],
+    "hp0": [[0.0, 0.5], [0.0, 0.5]], "hn0": [[1.0, 0.5], [1.0, 0.5]],
+    "hp1": [[0.1, 0.5], [0.1, 0.5]], "hn1": [[1.1, 0.5], [1.1, 0.5]],
+    "tp0": [[2.5, 0.5], [1.5, 0.5]], "tn0": [[0.2, 0.5], [0.2, 0.5]],
+    "tp1": [[2.2, 0.5], [1.2, 0.5]], "tn1": [[0.1, 0.5], [0.1, 0.5]],
+}
+
+ROLE_ROWS = [_pair_row(0, "p0", "n0"), _pair_row(1, "p1", "n1"),
+             _pair_row(2, "hp0", "hn0", split="heldOut"),
+             _pair_row(3, "hp1", "hn1", split="heldOut"),
+             _pair_row(4, "tp0", "tn0", split="finalTest"),
+             _pair_row(5, "tp1", "tn1", split="finalTest")]
+
+
+def _role_fit(tmp_path, rows=None, acts=None, name="roles.jsonl"):
+    """(dataset, template, captured) for a fit with all three split roles, so a
+    test can mutate the capture rather than the file — the dataset hash then
+    stays put and any difference is attributable to the activations alone."""
+    template = _template(tmp_path)
+    acts = acts or ROLE_ACTS
+    dataset = repe_reader.load_pairs(
+        _write_pairs(str(tmp_path / name), rows or ROLE_ROWS))
+    captured = []
+    for pair in dataset.train + dataset.held_out + dataset.final_test:
+        captured.append(acts[pair.positive_stimulus])
+        captured.append(acts[pair.negative_stimulus])
+    return dataset, template, captured
+
+
+def test_final_test_rows_are_scored_after_the_fit_and_the_roles_say_who_selected(tmp_path):
+    """(a) Held-out chose the sign AND the layer, so heldOutAccuracy is a
+    SELECTION statistic; finalTestAccuracy is the only final-evaluation number."""
+    dataset, template, captured = _role_fit(tmp_path)
+    readers = repe_reader.fit_activations(dataset, template, captured,
+                                          model_id="org/m", revision="abc")
+    assert len(readers) == 2
+    reader = readers[0]
+    # Held-out did the signing (train majority alone would have chosen +x)…
+    assert reader.sign_convention == repe_reader.HELD_OUT_PAIR_AGREEMENT
+    assert reader.probe.direction == pytest.approx([-1.0, 0.0], abs=1e-5)
+    # …and the ranking.
+    assert reader.layer_recommendation_basis == "heldOutAccuracy"
+    assert reader.final_test_accuracy == 1.0 and reader.final_test_pair_count == 2
+    assert reader.held_out_pair_count == 2 and reader.train_pair_count == 2
+    assert reader.resolved_evidence_roles == {
+        "trainAccuracy": "fit",
+        "heldOutAccuracy": "selection",
+        "finalTestAccuracy": "finalEvaluation",
+        "signSelectedBy": "heldOut",
+        "layerRecommendedBy": "heldOut",
+        "splitCounts": {"train": 2, "heldOut": 2, "finalTest": 2}}
+    assert reader.evidence_roles_basis == "stamped"
+    d = reader.to_dict()
+    assert d["finalTestAccuracy"] == 1.0 and d["finalTestPairCount"] == 2
+    assert d["evidenceRoles"] == reader.resolved_evidence_roles
+    assert d["evidenceRoleNote"] == repe_reader.EVIDENCE_ROLE_NOTE
+    assert d["splitOverlap"] == {"exactDuplicatesAcrossSplits": 0}
+
+
+def test_held_out_accuracy_is_validation_only_when_it_selected_nothing(tmp_path):
+    """The other side of the rule: a single-layer fit whose sign fell back to
+    train-label majority made no selection on those rows, so their accuracy is
+    validation evidence — the label moves with the facts, not with the split's
+    name."""
+    dataset, template, captured = _role_fit(tmp_path)
+    one_layer = [[values[0]] for values in captured]
+    reader = repe_reader.fit_activations(
+        dataset, template, one_layer, model_id="org/m", revision="abc")[0]
+    assert reader.sign_convention == repe_reader.HELD_OUT_PAIR_AGREEMENT
+    # One layer: nothing was ranked, so only the sign selection is in play.
+    assert reader.layer_recommendation_basis is None
+    assert reader.resolved_evidence_roles["heldOutAccuracy"] == "selection"
+
+    # The other side: held-out rows that tie decide nothing, so the sign falls
+    # back to train-label majority and their accuracy is VALIDATION evidence —
+    # a number computed on rows no decision read, without being a final test.
+    tied_acts = {
+        "p0": [[2.0, 0.5]], "n0": [[0.0, 0.5]],
+        "p1": [[2.0, -0.5]], "n1": [[0.0, -0.5]],
+        "ha": [[1.0, 0.0]], "hb": [[0.0, 0.0]],
+        "hc": [[0.0, 0.1]], "hd": [[1.0, 0.1]],
+    }
+    tied_rows = [_pair_row(0, "p0", "n0"), _pair_row(1, "p1", "n1"),
+                 _pair_row(2, "ha", "hb", split="heldOut"),
+                 _pair_row(3, "hc", "hd", split="heldOut")]
+    reader2 = _fit_from_rows(tmp_path, tied_rows, tied_acts)[0]
+    assert reader2.sign_convention == repe_reader.TRAIN_MAJORITY
+    assert reader2.layer_recommendation_basis is None
+    assert reader2.resolved_evidence_roles["heldOutAccuracy"] == "validation"
+    assert reader2.resolved_evidence_roles["signSelectedBy"] == "train"
+
+
+def test_mutating_only_the_final_test_rows_moves_only_the_final_test_accuracy(tmp_path):
+    """(b) The proof that no selection step reads them: swap the test rows'
+    activations and every other byte of the artifact is identical."""
+    dataset, template, captured = _role_fit(tmp_path)
+    swapped = list(captured)
+    for index in (8, 10):          # the two test pairs, positive ↔ negative
+        swapped[index], swapped[index + 1] = swapped[index + 1], swapped[index]
+    base = repe_reader.fit_activations(dataset, template, captured,
+                                       model_id="org/m", revision="abc")[0]
+    other = repe_reader.fit_activations(dataset, template, swapped,
+                                        model_id="org/m", revision="abc")[0]
+
+    def comparable(artifact):
+        # extractionDate is wall clock, not a fit output.
+        return {k: v for k, v in artifact.to_dict().items()
+                if k != "finalTestAccuracy" and k != "extractionDate"}
+
+    assert comparable(base) == comparable(other)
+    assert base.final_test_accuracy == 1.0 and other.final_test_accuracy == 0.0
+    # Named explicitly, because these are the four things a test row must not
+    # be able to touch.
+    assert base.probe.to_dict() == other.probe.to_dict()
+    assert base.sign_convention == other.sign_convention
+    assert base.recommended_layer == other.recommended_layer
+    assert base.held_out_accuracy == other.held_out_accuracy
+
+
+def test_a_dataset_without_test_rows_reports_no_final_test_evidence(tmp_path):
+    """(c) Absent is not zero: no reserved rows means no final-test estimate,
+    and the artifact says what to do about that in its own words."""
+    rows = [r for r in ROLE_ROWS if r["split"] != "finalTest"]
+    dataset, template, captured = _role_fit(tmp_path, rows=rows,
+                                            name="notest.jsonl")
+    reader = repe_reader.fit_activations(dataset, template, captured,
+                                         model_id="org/m", revision="abc")[0]
+    assert reader.final_test_accuracy is None and reader.final_test_pair_count == 0
+    roles = reader.resolved_evidence_roles
+    assert "finalTestAccuracy" not in roles
+    assert "finalEvaluation" not in roles.values()
+    assert roles["splitCounts"] == {"train": 2, "heldOut": 2, "finalTest": 0}
+    d = reader.to_dict()
+    assert "finalTestAccuracy" not in d and "finalTestPairCount" not in d
+    assert ("When finalTestAccuracy is absent the dataset reserved no such rows"
+            in d["evidenceRoleNote"])
+
+
+def test_the_evidence_role_note_says_what_held_out_accuracy_is():
+    """Pinned verbatim: this paragraph is what a consumer quotes, and rewording
+    it silently would change what every artifact claims about its own
+    numbers."""
+    assert repe_reader.EVIDENCE_ROLE_NOTE == (
+        "heldOutAccuracy is a MODEL-SELECTION statistic: the same held-out rows "
+        "chose the direction's sign and ranked the layers, so it is not an "
+        "untouched final-test estimate. Final generalization evidence is "
+        "finalTestAccuracy, scored on rows marked split 'finalTest' that no fitting or "
+        "selection step read. When finalTestAccuracy is absent the dataset reserved "
+        "no such rows, and the result must be reported as selection/validation "
+        "evidence, not as a final test.")
+
+
+def _legacy_artifact(**overrides):
+    legacy = {
+        "artifactType": repe_reader.ARTIFACT_TYPE, "schemaVersion": 1,
+        "modelID": "org/m", "revision": "abc", "concept": "fear", "layer": 3,
+        "substrate": "python-hf-transformers",
+        "templateID": "unnamed-scenario-v1", "templateHash": "th",
+        "template": {"conceptSlot": False, "hash": "th",
+                     "id": "unnamed-scenario-v1", "latToken": "final",
+                     "text": "S: {{stimulus}} q"},
+        "datasetHash": "dh", "latTokenPosition": "final",
+        "readingPosition": "last token",
+        "probe": {"direction": [1.0, 0.0], "projectionCenter": 0.5,
+                  "projectionScale": 2.0, "orientation": 1.0,
+                  "positiveMean": 1.0, "negativeMean": -1.0},
+        "pc1ExplainedVariance": 0.87, "trainAccuracy": 1.0,
+        "heldOutAccuracy": 0.8, "trainPairCount": 4, "heldOutPairCount": 2,
+        "renderingConvention": "rawCompletion scaffold",
+        "extractionDate": "2026-07-03T00:00:00Z"}
+    legacy.update(overrides)
+    return legacy
+
+
+def test_a_legacy_artifact_derives_its_roles_from_the_stamps_it_has():
+    """(d) No block, so the roles are READ off `signConvention` and
+    `layerRecommendationBasis` — and the basis says they were read, not
+    recorded."""
+    reader = repe_reader.ReaderArtifact.from_dict(_legacy_artifact())
+    assert reader.evidence_roles_basis == "derivedFromLegacyStamps"
+    # Schema 1: absent signConvention means train majority, and no layer
+    # recommendation was ever stamped, so those rows selected nothing.
+    assert reader.resolved_evidence_roles == {
+        "trainAccuracy": "fit", "heldOutAccuracy": "validation",
+        "signSelectedBy": "train", "layerRecommendedBy": None,
+        "splitCounts": {"train": 4, "heldOut": 2, "finalTest": 0}}
+    assert reader.final_test_accuracy is None
+
+    signed = repe_reader.ReaderArtifact.from_dict(
+        _legacy_artifact(signConvention="heldOutPairAgreement"))
+    assert signed.resolved_evidence_roles["heldOutAccuracy"] == "selection"
+    assert signed.resolved_evidence_roles["signSelectedBy"] == "heldOut"
+
+    ranked = repe_reader.ReaderArtifact.from_dict(
+        _legacy_artifact(layerRecommendationBasis="heldOutAccuracy",
+                         recommendedLayer=3))
+    # The sign came from the train labels, but the LAYER came from these rows,
+    # and one selection is enough.
+    assert ranked.resolved_evidence_roles["heldOutAccuracy"] == "selection"
+    assert ranked.resolved_evidence_roles["layerRecommendedBy"] == "heldOut"
+    # Re-encoding a legacy artifact keeps the derived provenance visible.
+    assert ranked.to_dict()["evidenceRolesBasis"] == "derivedFromLegacyStamps"
+
+
+def test_serialization_refuses_a_relabelled_selection_score():
+    """(e) A fixture must not be able to publish a selection statistic as a
+    final-test result, and the refusal carries the repair."""
+    reader = _manual_reader()
+    reader.evidence_roles = {"trainAccuracy": "fit",
+                             "heldOutAccuracy": "finalEvaluation"}
+    with pytest.raises(repe_reader.RepeReaderError,
+                       match="label would present a selection statistic"):
+        reader.to_dict()
+
+    reader.evidence_roles = {"trainAccuracy": "fit",
+                             "finalTestAccuracy": "validation"}
+    with pytest.raises(repe_reader.RepeReaderError,
+                       match="ONLY final-evaluation statistic"):
+        reader.to_dict()
+
+    # And a mislabelled block survives DECODING — it is caught on the way out,
+    # not silently repaired on the way in.
+    hand_written = _legacy_artifact(
+        evidenceRoles={"trainAccuracy": "fit",
+                       "heldOutAccuracy": "finalEvaluation"})
+    decoded = repe_reader.ReaderArtifact.from_dict(hand_written)
+    assert decoded.resolved_evidence_roles["heldOutAccuracy"] == "finalEvaluation"
+    with pytest.raises(repe_reader.RepeReaderError, match="heldOutAccuracy"):
+        decoded.to_dict()
+
+
+def test_a_final_test_row_identical_to_a_train_row_refuses_as_a_leak(tmp_path):
+    """(f) Exact cross-split duplicates only, compared the way
+    `lora_data.Row.content_key` compares them."""
+    rows = list(ROLE_ROWS)
+    rows[4] = _pair_row(4, "p0", "n0", split="finalTest")
+    with pytest.raises(repe_reader.RepeReaderError, match="is a leak") as excinfo:
+        _write_pairs(str(tmp_path / "leak.jsonl"), rows)
+        repe_reader.load_pairs(str(tmp_path / "leak.jsonl"))
+    assert "Repair: rewrite or drop the duplicate row" in str(excinfo.value)
+
+    # A held-out duplicate is the same leak.
+    rows = list(ROLE_ROWS)
+    rows[2] = _pair_row(2, "p1", "n1", split="heldOut")
+    _write_pairs(str(tmp_path / "leak2.jsonl"), rows)
+    with pytest.raises(repe_reader.RepeReaderError, match="split 'heldout'"):
+        repe_reader.load_pairs(str(tmp_path / "leak2.jsonl"))
+
+    # The fit gate does not depend on the loader having been used: a dataset
+    # assembled in memory is checked too.
+    tid = "amount-in-scenario-v1"
+    handmade = repe_reader.ReaderDataset(
+        concept="c", hash="h",
+        pairs=(repe_reader.ReaderPair("p", "n", "c", tid, id="a"),
+               repe_reader.ReaderPair("q", "r", "c", tid, id="b"),
+               repe_reader.ReaderPair(" P ", "N", "c", tid, id="c",
+                                      split="test")))
+    with pytest.raises(repe_reader.RepeReaderError, match="is a leak"):
+        repe_reader.fit_activations(
+            handmade, _template(tmp_path), [[[1.0]]] * 6,
+            model_id="org/m", revision="abc")
+
+    # Two rows in the SAME split are not a cross-split leak (whether repeating
+    # a row is good practice is a different question this gate does not judge).
+    dataset, template, captured = _role_fit(
+        tmp_path, rows=list(ROLE_ROWS) + [_pair_row(6, "p0", "n0")],
+        name="dupe-in-train.jsonl")
+    assert repe_reader.check_split_overlap(dataset) == {
+        "exactDuplicatesAcrossSplits": 0}
+
+
+def test_the_new_artifact_keys_round_trip(tmp_path):
+    """(g) Save, load, re-encode: the roles, the counts and the overlap stamp
+    all survive, and the schema stays 2 because every one of them is
+    additive."""
+    dataset, template, captured = _role_fit(tmp_path)
+    reader = repe_reader.fit_activations(dataset, template, captured,
+                                         model_id="org/m", revision="abc")[0]
+    path = repe_reader.save_reader(reader, str(tmp_path / "run"))
+    loaded = repe_reader.load_reader(path)
+    assert loaded.to_dict() == reader.to_dict()
+    assert loaded.to_dict()["schemaVersion"] == 2
+    assert loaded.final_test_accuracy == reader.final_test_accuracy
+    assert loaded.final_test_pair_count == 2
+    assert loaded.split_overlap == {"exactDuplicatesAcrossSplits": 0}
+    assert loaded.evidence_roles == reader.resolved_evidence_roles
+    assert loaded.evidence_roles_basis == "stamped"
+
+
+def test_a_derived_vector_says_which_split_chose_its_sign(tmp_path):
+    """The sidecar carries the reader's roles, because the reader file does not
+    travel with a bundle and the sign in these bytes came from one split."""
+    dataset, template, captured = _role_fit(tmp_path)
+    reader = repe_reader.fit_activations(dataset, template, captured,
+                                         model_id="org/m", revision="abc")[0]
+    _, sidecar = repe_reader.derive_steering_sidecar(
+        reader, reader_file_name="r.json", reader_bytes=b"{}")
+    assert sidecar.readerEvidenceRoles == reader.resolved_evidence_roles
+    assert sidecar.readerEvidenceRoles["signSelectedBy"] == "heldOut"
+    assert sidecar.readerEvidenceRoles["finalTestAccuracy"] == "finalEvaluation"
+    assert "readerEvidenceRoles" in sidecar.to_dict()
+
+
+def test_reader_listings_carry_the_test_accuracy_and_the_roles(tmp_path,
+                                                               monkeypatch):
+    """catalog + /api/readers: a listing cannot show heldOutAccuracy as though
+    it were out-of-sample. A reader fitted before the block existed has its
+    roles derived, and the listing says which."""
+    monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path))
+    monkeypatch.delenv("STEERLAB_RUN_ROOT", raising=False)
+    dataset, template, captured = _role_fit(tmp_path)
+    fitted = repe_reader.fit_activations(dataset, template, captured,
+                                         model_id="org/m", revision="abc")[0]
+    run_dir = os.path.join(str(tmp_path), "runs", "20260905T000000000-reader-fit")
+    repe_reader.save_reader(fitted, run_dir, "reader-legacy")
+    # A pre-REM-02 artifact in the same directory: no roles block in the file,
+    # written as raw JSON because this engine cannot produce one any more.
+    with open(os.path.join(run_dir, "reader-legacy.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump(_legacy_artifact(), handle)
+    repe_reader.save_reader(fitted, run_dir, "reader-fitted")
+
+    listed = {r.name: r for r in catalog.list_readers(str(tmp_path))}
+    assert listed["reader-fitted"].finalTestAccuracy == 1.0
+    assert listed["reader-fitted"].evidenceRoles["heldOutAccuracy"] == "selection"
+    assert listed["reader-fitted"].evidenceRolesBasis == "stamped"
+    assert listed["reader-fitted"].evidenceRoleNote == \
+        repe_reader.EVIDENCE_ROLE_NOTE
+    assert listed["reader-legacy"].finalTestAccuracy is None
+    assert listed["reader-legacy"].evidenceRolesBasis == "derivedFromLegacyStamps"
+
+    body = {r["name"]: r for r in client.get("/api/readers").json()["readers"]}
+    assert body["reader-fitted"]["finalTestAccuracy"] == 1.0
+    assert body["reader-fitted"]["evidenceRoles"]["signSelectedBy"] == "heldOut"
+    assert body["reader-legacy"]["evidenceRoles"]["signSelectedBy"] == "train"
+
+
+def test_a_row_spelled_test_is_held_out_on_both_engines_and_never_a_final_row(tmp_path):
+    """The cross-engine spelling pin. The app's corpus writer
+    (``ConceptBuilder``) stamps held-out rows ``split: "test"``, the Swift
+    reader reads every non-train row as held out, and so does this engine: a
+    ``test`` row chooses the sign and is never a final-test row. Only
+    ``finalTest`` is."""
+    rows = [_pair_row(0, "p0", "n0"), _pair_row(1, "p1", "n1"),
+            _pair_row(2, "h0", "h1", split="test"),
+            _pair_row(3, "h2", "h3", split="test")]
+    dataset = repe_reader.load_pairs(
+        _write_pairs(str(tmp_path / "app-shaped.jsonl"), rows))
+    assert [p.id for p in dataset.held_out] == ["fear-pair-2", "fear-pair-3"]
+    assert dataset.final_test == []
+    assert dataset.split_counts == {"train": 2, "heldOut": 2, "finalTest": 0}
+    reader = _fit_from_rows(tmp_path, rows, {
+        "p0": [[1.0, 0.0]], "n0": [[-1.0, 0.0]],
+        "p1": [[1.0, 0.1]], "n1": [[-1.0, 0.1]],
+        "h0": [[1.0, 0.0]], "h1": [[-1.0, 0.0]],
+        "h2": [[1.0, 0.0]], "h3": [[-1.0, 0.0]],
+    })[0]
+    assert reader.sign_convention == repe_reader.HELD_OUT_PAIR_AGREEMENT
+    assert reader.final_test_accuracy is None
+    assert reader.resolved_evidence_roles["signSelectedBy"] == "heldOut"
+    assert "finalTestAccuracy" not in reader.resolved_evidence_roles

@@ -1,7 +1,9 @@
 """``steerlab-server optvec fracture --config`` — the CLI form of the
 per-item, per-dose basin count (``optvec_geometry.fracture``). CLI-layer
-concerns only: dispatch, exit codes (0 done / 2 refusal / 64 usage), the
-printed JSON being the run's report, and the run directory landing on disk.
+concerns only: dispatch, exit codes (the shared vocabulary — 0 done / 64 usage
+or malformed config / 65 refusal / 66 not found / 70 failure; the family-wide
+pins live in test_cli_optvec_exit_codes.py), the printed JSON being the run's
+report, and the run directory landing on disk.
 The clustering math and the sidecar/config item rules are unit-tested in
 test_optvec_geometry.py. Hand-built artifacts — no model, no inference.
 """
@@ -95,21 +97,31 @@ def test_fracture_cli_usage_and_refusals(tmp_path, monkeypatch, capsys):
     assert cli.main(["optvec", "fracture"]) == 64
     assert "optvec fracture --config" in capsys.readouterr().err
 
-    # A config path naming no file is exit 2 with the verb named.
+    # A config path naming no file is notFound (66) with the verb named.
     assert cli.main(["optvec", "fracture", "--config",
-                     str(tmp_path / "missing.json")]) == 2
+                     str(tmp_path / "missing.json")]) == 66
     assert "optvec fracture:" in capsys.readouterr().err
 
-    # A config-rule refusal (one artifact is not a multiplicity statistic).
+    # A config that breaks its own contract (one artifact is not a
+    # multiplicity statistic) is a malformed invocation, 64.
     lone = write_optvec_artifact(tmp_path / "v", "lone")
     one = _write_config(tmp_path / "one.json", {"artifacts": [lone]})
-    assert cli.main(["optvec", "fracture", "--config", one]) == 2
+    assert cli.main(["optvec", "fracture", "--config", one]) == 64
     assert "at least 2" in capsys.readouterr().err
 
     # An artifact the config cannot group (no sidecar marker, no mapping)
-    # refuses rather than guessing an item.
+    # refuses rather than guessing an item: a well-formed request an input
+    # declined, 65.
     other = write_optvec_artifact(tmp_path / "v", "other")
     ungrouped = _write_config(tmp_path / "ungrouped.json",
                               {"artifacts": [lone, other]})
-    assert cli.main(["optvec", "fracture", "--config", ungrouped]) == 2
+    assert cli.main(["optvec", "fracture", "--config", ungrouped]) == 65
     assert "names no item" in capsys.readouterr().err
+
+    # A gradient reference that names no file is notFound, not a refusal.
+    grouped = _write_config(tmp_path / "grouped.json", {
+        "artifacts": [lone, other],
+        "items": {lone: "item-A", other: "item-A"},
+        "gradients": str(tmp_path / "nope.safetensors")})
+    assert cli.main(["optvec", "fracture", "--config", grouped]) == 66
+    assert "names no file" in capsys.readouterr().err

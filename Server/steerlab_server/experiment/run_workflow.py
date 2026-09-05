@@ -437,6 +437,26 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     _dep_execution_reporting._advise_system_prompt_divergence(
         _dep_condition_execution._run_arm_system_prompts(manifest, conditions, latent_conditions, root),
         run_directory, _log, write_file=not resuming)
+    # What each condition's intervention actually CHANGES — token positions,
+    # prefill/decode behaviour, dose units, the matched control, the claim
+    # limits — stamped once, beside the run's other provenance, before any
+    # generation compute. The declared half (`interventionState`) already rides
+    # every record; it does not say where in the token stream an edit lands,
+    # and the four paths a condition can arm do not land in the same places.
+    # Sidecar, not a config.json key: that key set is the closed cross-engine
+    # schema. Full matrix like the advisory above, so every shard writes the
+    # same bytes and the merge carries one. See `.intervention_scope`.
+    if not resuming:
+        from . import intervention_scope as _intervention_scope
+        _intervention_scope.stamp_run(
+            run_directory, experiment=name, conditions=conditions,
+            resolve_ordinary=lambda c: (
+                _dep_condition_execution._intervention_state(c),
+                _dep_condition_execution._condition_injections(c, bundles, preflight=False)),
+            variant_conditions=manifest.variant_conditions,
+            resolve_variant=lambda vc: _dep_condition_execution._effective_variant_condition(
+                vc, manifest, model, root, wants_choice=wants_choice),
+            latent_conditions=latent_conditions, log=_log)
     try:
         for condition in conditions:
             if plan is not None and not plan.condition_participates(condition.name):

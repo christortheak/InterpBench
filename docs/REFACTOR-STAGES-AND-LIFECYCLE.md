@@ -6,7 +6,10 @@ Date: 2026-09-05
 
 Starting commit for this slice: `6e416f4`.
 
-Latest integrated main baseline: `5309b5f2efc8f70dfb7b1a444feb5312b27c7704`.
+Latest integrated main baseline: `b6949ffdef0e48bc32813247f231feead2e9ed44`.
+
+The [updated integration record](MAIN-INTEGRATION.md) covers the subsequent
+main merge; the slice-specific results below remain its historical validation.
 
 ## Result and scope
 

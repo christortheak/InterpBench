@@ -48,10 +48,13 @@ VALIDATION_TEXT = _jsonl([{"user": f"held out {i}", "assistant": f"reply {i}"}
 
 
 def _hyperparameters(**overrides):
-    """Every one of the contract's 20 keys, present-null where the client
-    sends null — the wire shape the shipped Swift encoder produces."""
+    """Every one of the contract's 21 keys, present-null where the client
+    sends null — the wire shape the shipped Swift encoder produces. ``alpha``
+    and ``adapterScale`` are two conventions for one knob: the encoder sends
+    exactly one of them non-null."""
     values = {
-        "rank": 8, "alpha": 16.0, "dropout": 0.05, "learningRate": 1e-4,
+        "rank": 8, "alpha": 16.0, "adapterScale": None,
+        "dropout": 0.05, "learningRate": 1e-4,
         "epochs": 1, "maxSteps": None, "batchSize": 2,
         "gradientAccumulation": 1, "warmupSteps": 0, "lrSchedule": "linear",
         "maxGradNorm": 1.0, "weightDecay": 0.0, "seed": 0,
@@ -131,6 +134,72 @@ def test_plan_returns_the_contract_shape_and_a_stable_hash():
     # whole confirm-then-submit handshake rests on.
     assert client.post("/api/finetune/plan", json=_body()).json()["planHash"] \
         == plan_hash
+
+
+def test_plan_reports_the_adapter_scale_it_resolves():
+    """``alpha`` is PEFT's numerator. The plan says what it resolves TO, so
+    the researcher confirms a multiplier, not a number whose meaning depends
+    on knowing the trainer's convention."""
+    plan = client.post("/api/finetune/plan", json=_body()).json()["plan"]
+    assert plan["adapterScale"] == {
+        "rank": 8, "alpha": 16.0,
+        "adapterScaleConvention": "peft:lora_alpha/r",
+        "effectiveAdapterScale": 2.0,
+        # The request spoke ``alpha``: nothing was translated.
+        "requestedAdapterScale": None,
+        "requestedAdapterScaleConvention": None,
+    }
+
+
+def test_plan_resolves_a_direct_adapter_scale_into_lora_alpha():
+    """The Swift/MLX ``scale`` is the multiplier itself. Sent as
+    ``adapterScale`` it becomes ``lora_alpha = scale × rank`` HERE, where the
+    convention lives — and the plan carries both the number asked for and
+    the number that will train."""
+    body = _body(hyperparameters=_hyperparameters(alpha=None,
+                                                  adapterScale=10.0))
+    answer = client.post("/api/finetune/plan", json=body).json()
+    assert answer["plan"]["adapterScale"] == {
+        "rank": 8, "alpha": 80.0,
+        "adapterScaleConvention": "peft:lora_alpha/r",
+        "effectiveAdapterScale": 10.0,
+        "requestedAdapterScale": 10.0,
+        "requestedAdapterScaleConvention": "direct",
+    }
+    # 10.0 as a direct multiplier and 16.0 as lora_alpha are different
+    # treatments, so they are different plans.
+    assert answer["planHash"] !=         client.post("/api/finetune/plan", json=_body()).json()["planHash"]
+    # ...and the same request plans to the same hash, translation included.
+    assert client.post("/api/finetune/plan", json=body).json()["planHash"]         == answer["planHash"]
+
+
+def test_a_direct_adapter_scale_resolves_against_the_default_rank_too():
+    """``rank`` absent (present-null) = the trainer's default, and the
+    translation uses THAT rank — the one PEFT will divide by."""
+    body = _body(hyperparameters=_hyperparameters(rank=None, alpha=None,
+                                                  adapterScale=10.0))
+    block = client.post("/api/finetune/plan", json=body).json()["plan"]["adapterScale"]
+    assert block["rank"] == 8 and block["alpha"] == 80.0
+    assert block["effectiveAdapterScale"] == 10.0 == block["requestedAdapterScale"]
+
+
+def test_plan_refuses_alpha_and_adapter_scale_together():
+    body = _body(hyperparameters=_hyperparameters(alpha=16.0,
+                                                  adapterScale=10.0))
+    response = client.post("/api/finetune/plan", json=body)
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "alpha" in detail and "adapterScale" in detail
+    assert "declare exactly one" in detail
+
+
+@pytest.mark.parametrize("value", [0, -1.5])
+def test_plan_refuses_a_non_positive_adapter_scale(value):
+    body = _body(hyperparameters=_hyperparameters(alpha=None,
+                                                  adapterScale=value))
+    response = client.post("/api/finetune/plan", json=body)
+    assert response.status_code == 400
+    assert "adapterScale must be positive" in response.json()["detail"]
 
 
 def test_plan_hash_moves_when_the_schedule_moves():
@@ -280,6 +349,29 @@ def test_v1_inline_body_still_trains_the_legacy_way(stub_trainer, workspace):
         assert handle.read() == "a corpus"
 
 
+def test_v1_inline_body_resolves_a_direct_adapter_scale(stub_trainer,
+                                                        workspace):
+    """The legacy route speaks the same two conventions as the v2 block: a
+    direct ``adapterScale`` is resolved server-side and stamped, never copied
+    into ``alpha`` by the caller."""
+    response = client.post("/api/finetune/train", json={
+        "baseModelID": "org/tiny", "text": "a corpus", "rank": 4,
+        "adapterScale": 2.5, "iterations": 3})
+    assert response.status_code == 200
+    config = stub_trainer["wait"]()
+    assert config.rank == 4
+    assert config.alpha == 10.0                    # 2.5 × 4
+    assert config.requested_adapter_scale == 2.5
+
+
+def test_v1_inline_body_refuses_alpha_and_adapter_scale_together():
+    response = client.post("/api/finetune/train", json={
+        "baseModelID": "org/tiny", "text": "a corpus", "rank": 4,
+        "alpha": 8.0, "adapterScale": 2.5})
+    assert response.status_code == 400
+    assert "declare exactly one" in response.json()["detail"]
+
+
 def test_v1_body_without_documents_still_refuses():
     response = client.post("/api/finetune/train", json={"baseModelID": "org/t"})
     assert response.status_code == 400
@@ -296,6 +388,16 @@ def test_v2_exploratory_body_runs_on_the_daemon(stub_trainer):
     assert config.dataset_root and os.path.isfile(
         os.path.join(config.dataset_root, config.train_paths[0]))
     assert config.evidence_grade is False
+
+
+def test_v2_direct_adapter_scale_reaches_the_trainer_resolved(stub_trainer):
+    body = _body(hyperparameters=_hyperparameters(alpha=None,
+                                                  adapterScale=10.0))
+    assert client.post("/api/finetune/train", json=body).status_code == 200
+    config = stub_trainer["wait"]()
+    assert config.rank == 8
+    assert config.alpha == 80.0
+    assert config.requested_adapter_scale == 10.0
 
 
 def test_v2_evidence_grade_is_refused_on_the_daemon_route():
@@ -323,6 +425,7 @@ def test_capability_block_carries_every_readiness_flag(monkeypatch):
         "revisionPinRequired": True,
         "walltimePreflight": True,
         "planEndpoint": True,
+        "directAdapterScale": True,
         "slurmSubmission": False,
     }
     monkeypatch.setenv("STEERLAB_EXECUTOR", "slurm")

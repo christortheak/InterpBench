@@ -2211,13 +2211,16 @@ import Testing
                 #expect(object["baseModelID"] as? String == "Qwen/Qwen3-4B")
                 #expect(object["text"] as? String == "corpus text")
                 #expect(object["rank"] as? Int == 16)
+                #expect(object["alpha"] as? Double == 32)
+                #expect(object["adapterScale"] == nil)
                 #expect(object["iterations"] as? Int == 300)
                 return (Data(#"{"jobId": "job-42"}"#.utf8), 200)
             })
 
         let jobID = try await client.fineTuneTrain(
             baseModelID: "Qwen/Qwen3-4B", text: "corpus text", name: "judicial",
-            rank: 16, alpha: 32, iterations: 300, learningRate: 1e-4)
+            rank: 16, adapterScale: .peftAlpha(32), iterations: 300,
+            learningRate: 1e-4)
 
         #expect(jobID == "job-42")
     }

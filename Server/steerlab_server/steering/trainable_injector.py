@@ -67,7 +67,8 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from .intervention import LayerIntervention
+from . import intervention as scope_vocabulary
+from .intervention import InterventionScope, LayerIntervention
 
 #: The two position modes. ``from_response`` is the default and the one that
 #: matches deployed injection semantics for a single-token readout.
@@ -124,6 +125,53 @@ class PositionedDelta(LayerIntervention):
     def clear_batch(self) -> None:
         self._answer_positions = None
         self._attention_mask = None
+
+    # ----------------------------------------------------------------- scope
+
+    #: Overridden per subclass: the sphere-projected injector carries a dose,
+    #: the zero-initialized probe carries none, and their claim limits differ
+    #: for the same reason. Everything else about the two descriptors is the
+    #: shared position machinery below, which is exactly the property the base
+    #: class exists to guarantee.
+    _scope_dose_units = scope_vocabulary.DOSE_UNITS_ALPHA_ABSOLUTE
+    _scope_claim_limits = scope_vocabulary.CLAIM_LIMITS_TRAINABLE
+
+    def scope(self) -> InterventionScope:
+        """This training-time intervention's scope descriptor.
+
+        Its whole reason for existing separately from the deployed additive
+        row: the positions are a MODE here, not a fixed rule.
+        ``from_response`` edits one position per item (the answer position, the
+        deployed injector's train-time equivalent), ``all`` edits every non-pad
+        position — a deliberately different intervention, which is why it is a
+        declared variant and never the default. Pinned to behaviour by
+        ``tests/test_trainable_injector.py``
+        ``::test_from_response_injects_exactly_at_the_supplied_positions`` and
+        ``::test_all_mode_injects_at_every_non_pad_position``.
+
+        ``layers`` is the single layer this object steers; there is no band —
+        the optimizer trains one layer at a time.
+        """
+        by_mode = {
+            "from_response": scope_vocabulary.POSITIONS_ANSWER_TEACHER_FORCED,
+            "all": scope_vocabulary.POSITIONS_ALL_TEACHER_FORCED,
+        }
+        return InterventionScope(
+            path=scope_vocabulary.TRAINABLE_ADDITIVE,
+            site=scope_vocabulary.SITE_BLOCK_OUTPUT,
+            layers=(self.layer,),
+            positions=by_mode[self.position_mode],
+            prefill=scope_vocabulary.PREFILL_TEACHER_FORCED,
+            decode=scope_vocabulary.DECODE_NOT_RUN,
+            centering=scope_vocabulary.CENTERING_NOT_APPLICABLE,
+            dose_units=self._scope_dose_units,
+            control=scope_vocabulary.CONTROL_TRAINABLE,
+            claim_limits=self._scope_claim_limits,
+            detail=self._scope_detail())
+
+    def _scope_detail(self) -> dict:
+        return {"positionMode": self.position_mode,
+                "hiddenSize": self.hidden_size}
 
     # --------------------------------------------------------------- vector
 
@@ -236,6 +284,10 @@ class TrainableVectorInjector(PositionedDelta):
         """The constrained direction ``alpha · u/‖u‖`` (float32, on the tape)."""
         return self.alpha_absolute * self.u / self.u.norm()
 
+    def _scope_detail(self) -> dict:
+        return dict(super()._scope_detail(),
+                    alphaAbsolute=float(self.alpha_absolute))
+
     def constrained_vector(self) -> list[float]:
         """The constrained direction as a plain float32 list — the handoff to
         ``VectorInjector`` / ``vector_store``, detached from the tape."""
@@ -287,6 +339,12 @@ class AdditiveDeltaProbe(PositionedDelta):
         if device is not None:
             init = init.to(device)
         self.delta = nn.Parameter(init, requires_grad=requires_grad)
+
+    #: The probe carries no dose and makes no vector claim — it reads a
+    #: derivative. Saying so in its own descriptor keeps a gradient survey from
+    #: being reported in the language of a steered run.
+    _scope_dose_units = scope_vocabulary.DOSE_UNITS_PROBE
+    _scope_claim_limits = scope_vocabulary.CLAIM_LIMITS_PROBE
 
     def delta_vector(self) -> torch.Tensor:
         return self.delta

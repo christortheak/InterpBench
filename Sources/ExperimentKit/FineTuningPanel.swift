@@ -838,6 +838,9 @@ public final class FineTuningPanel {
         public var validationFileCount: Int
         public var trainingResolvedPath: String
         public var validationResolvedPath: String
+        /// How this panel's `scale` was put on the wire — recorded in the
+        /// training log when the plan is confirmed and sent.
+        public var scaleNote: String
     }
 
     /// Set by `beginServerTraining` on a structured (explicit-split) route;
@@ -898,9 +901,30 @@ public final class FineTuningPanel {
                     + "batch \(batch), \(schedule.lrSchedule ?? "?") LR schedule")
         }
         lines.append("dtype: " + (plan.dtype ?? "server default"))
+        if let scaling = plan.adapterScale {
+            lines.append(Self.adapterScaleSummary(scaling))
+        }
         lines.append("training mode: " + (plan.trainingMode ?? "unstated"))
         lines.append("plan hash: \(planHash)")
         return lines
+    }
+
+    /// One line saying what the strength knob resolves to on the server —
+    /// the multiplier first, because that is the quantity this panel's
+    /// `scale` control means; PEFT's numerator second, as what it became.
+    public nonisolated static func adapterScaleSummary(
+        _ scaling: RemoteFineTunePlan.AdapterScale
+    ) -> String {
+        let effective = scaling.effectiveAdapterScale.map { "\($0)" } ?? "?"
+        let alpha = scaling.alpha.map { "\($0)" } ?? "?"
+        let rank = scaling.rank.map(String.init) ?? "?"
+        var line = "adapter scale: \(effective) (lora_alpha \(alpha) / rank \(rank)"
+        if let requested = scaling.requestedAdapterScale {
+            line += ", resolved by the server from adapterScale \(requested)"
+        } else {
+            line += ", from alpha as sent"
+        }
+        return line + ")"
     }
 
     /// Queue LoRA training on the active server as a durable job.
@@ -955,6 +979,7 @@ public final class FineTuningPanel {
             }
             await beginLegacyInlineServerTraining(
                 client: client, host: host, base: base,
+                capabilities: capabilities,
                 reason: Self.legacySplitServerNote)
         }
     }
@@ -997,6 +1022,7 @@ public final class FineTuningPanel {
             note(problem.message, severity: .warning)
             await beginLegacyInlineServerTraining(
                 client: client, host: host, base: base,
+                capabilities: capabilities,
                 reason: "the selection is a mixed-document corpus, so it "
                     + "uploads as one inline text stream with the server's "
                     + "own invented split — exploratory only")
@@ -1008,7 +1034,10 @@ public final class FineTuningPanel {
             return
         }
 
-        var request = structuredRequest(base: base, payload: payload)
+        let planned = structuredRequest(
+            base: base, payload: payload, capabilities: capabilities)
+        var request = planned.request
+        let scaleNote = planned.scaleNote
         guard capabilities.supportsFineTunePlanEndpoint else {
             // Splits without a plan endpoint: the upload is still honest,
             // but nothing was confirmed — say so and run it as exploratory.
@@ -1016,7 +1045,8 @@ public final class FineTuningPanel {
                 "server announces explicit splits but no /api/finetune/plan — "
                     + "training starts without a confirmed plan (exploratory)")
             await runServerTraining(
-                client: client, host: host, route: .structured(request),
+                client: client, host: host,
+                route: .structured(request, scaleNote: scaleNote),
                 sent: "sent \(payload.trainFiles.count) train + "
                     + "\(payload.validationFiles.count) validation JSONL "
                     + "file(s) from \(payload.trainingResolvedPath)")
@@ -1041,7 +1071,8 @@ public final class FineTuningPanel {
                 trainFileCount: payload.trainFiles.count,
                 validationFileCount: payload.validationFiles.count,
                 trainingResolvedPath: payload.trainingResolvedPath,
-                validationResolvedPath: payload.validationResolvedPath)
+                validationResolvedPath: payload.validationResolvedPath,
+                scaleNote: scaleNote)
             note(
                 "server training plan ready — confirm to queue it: "
                     + summary.joined(separator: " · "), severity: .info)
@@ -1051,20 +1082,29 @@ public final class FineTuningPanel {
         }
     }
 
-    /// The v2 request this panel's controls describe. `evidenceGrade` is
-    /// deliberately false: the panel targets the exploratory daemon route.
+    /// The v2 request this panel's controls describe, plus the log line that
+    /// says how `scale` was put on the wire. `evidenceGrade` is deliberately
+    /// false: the panel targets the exploratory daemon route.
     private func structuredRequest(
         base: String,
-        payload: FineTuneTrainingData.StructuredPayload
-    ) -> RemoteFineTuneRequest {
+        payload: FineTuneTrainingData.StructuredPayload,
+        capabilities: ClusterCapabilities
+    ) -> (request: RemoteFineTuneRequest, scaleNote: String) {
         var hyperparameters = RemoteFineTuneRequest.Hyperparameters()
         hyperparameters.rank = rank
-        hyperparameters.alpha = scale
+        // `scale` is this engine's DIRECT multiplier; the wire's `alpha` is
+        // PEFT's numerator (`lora_alpha / rank`). Never copy one into the
+        // other — at rank 8 that made a UI value of 10 train as 1.25 on the
+        // server. Translate, and record the translation.
+        let scaling = RemoteFineTuneRequest.AdapterScale.forServer(
+            scale: scale, rank: rank,
+            serverResolvesDirectScale: capabilities.supportsFineTuneDirectAdapterScale)
+        hyperparameters.adapterScale = scaling.wire
         hyperparameters.learningRate = learningRate
         hyperparameters.batchSize = batchSize
         hyperparameters.maxSteps = iterations > 0 ? iterations : nil
         let trimmedName = adapterName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return RemoteFineTuneRequest(
+        let request = RemoteFineTuneRequest(
             baseModelID: base,
             revision: selectedAdapter?.artifact.baseRevision,
             name: trimmedName.isEmpty ? nil : trimmedName,
@@ -1073,6 +1113,7 @@ public final class FineTuningPanel {
             dataset: RemoteFineTuneRequest.Dataset(
                 files: payload.files.map(RemoteFineTuneRequest.DatasetFile.init)),
             hyperparameters: hyperparameters)
+        return (request, scaling.note)
     }
 
     /// Queue the plan the researcher just approved.
@@ -1088,7 +1129,8 @@ public final class FineTuningPanel {
         }
         pendingServerTrainingPlan = nil
         await runServerTraining(
-            client: client, host: host, route: .structured(pending.request),
+            client: client, host: host,
+            route: .structured(pending.request, scaleNote: pending.scaleNote),
             sent: "sent \(pending.trainFileCount) train + "
                 + "\(pending.validationFileCount) validation JSONL file(s) from "
                 + "\(pending.trainingResolvedPath); plan \(pending.planHash)")
@@ -1111,6 +1153,7 @@ public final class FineTuningPanel {
         client: ClusterClient,
         host: ChatService,
         base: String,
+        capabilities: ClusterCapabilities?,
         reason: String
     ) async {
         let payload: FineTuneTrainingData.Payload
@@ -1120,16 +1163,35 @@ public final class FineTuningPanel {
             note("\(error)", severity: .warning)
             return
         }
+        // The v1 body speaks the same two conventions for the strength knob
+        // as the v2 block. No capability snapshot = the old contract, which
+        // is exactly the server that must not see `adapterScale`.
+        let scaling = RemoteFineTuneRequest.AdapterScale.forServer(
+            scale: scale, rank: rank,
+            serverResolvesDirectScale:
+                capabilities?.supportsFineTuneDirectAdapterScale ?? false)
         await runServerTraining(
             client: client, host: host,
-            route: .legacyInline(text: payload.text, note: reason),
+            route: .legacyInline(
+                text: payload.text, note: reason,
+                adapterScale: scaling.wire, scaleNote: scaling.note),
             sent: "sent \(payload.fileCount) training "
                 + "file\(payload.fileCount == 1 ? "" : "s") from \(payload.resolvedPath)")
     }
 
     private enum ServerTrainingRoute {
-        case legacyInline(text: String, note: String)
-        case structured(RemoteFineTuneRequest)
+        case legacyInline(
+            text: String, note: String,
+            adapterScale: RemoteFineTuneRequest.AdapterScale, scaleNote: String)
+        case structured(RemoteFineTuneRequest, scaleNote: String)
+
+        /// The log line saying how the panel's `scale` was put on the wire.
+        var scaleNote: String {
+            switch self {
+            case .legacyInline(_, _, _, let scaleNote): scaleNote
+            case .structured(_, let scaleNote): scaleNote
+            }
+        }
     }
 
     /// Submit on the chosen route, then stream the durable job's log. The
@@ -1151,14 +1213,17 @@ public final class FineTuningPanel {
             title: logTitle,
             initialLine: "submitting server LoRA training for "
                 + "\(adapterBaseModelID)...")
-        if case .legacyInline(_, let reason) = route {
+        if case .legacyInline(_, let reason, _, _) = route {
             recordTrainingEvent(reason)
-            host.updateLiveLog(id: displayLogID, title: logTitle, lines: trainingLog)
         }
+        // The scale translation is provenance: it goes in the log BEFORE the
+        // request leaves, so a run that fails to queue still records it.
+        recordTrainingEvent(route.scaleNote)
+        host.updateLiveLog(id: displayLogID, title: logTitle, lines: trainingLog)
         do {
             let jobID: String
             switch route {
-            case .legacyInline(let text, _):
+            case .legacyInline(let text, _, let adapterScale, _):
                 let trimmedName = adapterName
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 jobID = try await client.fineTuneTrain(
@@ -1167,10 +1232,10 @@ public final class FineTuningPanel {
                     text: text,
                     name: trimmedName.isEmpty ? nil : trimmedName,
                     rank: rank,
-                    alpha: Double(scale),
+                    adapterScale: adapterScale,
                     iterations: iterations,
                     learningRate: learningRate)
-            case .structured(let request):
+            case .structured(let request, _):
                 jobID = try await client.fineTuneTrainV2(request)
             }
             serverTrainingJobID = jobID

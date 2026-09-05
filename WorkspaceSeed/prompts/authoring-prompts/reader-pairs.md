@@ -34,7 +34,7 @@ direction that is partly one and partly the other.
 |---|---|---|
 | `concept` | yes, every row | Exactly `{{concept}}`. A file with two concepts is refused. |
 | `templateID` | yes, every row | Exactly `{{templateID}}`. |
-| `split` | no | Lower-cased; defaults to `train`. **Anything other than `train` is held out** — write `test` for held-out rows. |
+| `split` | no | Lower-cased; defaults to `train`. **Anything other than `train` or `finalTest` is held out** — write `test` for held-out rows (`heldOut` also works). |
 | `id` | no | A string; stable ids make a review diff readable. |
 | `topic` | no | Free text, for your own grouping. |
 
@@ -44,6 +44,9 @@ fit checks which orientation agrees with them, and falls back to a train-set
 majority — recording that it did so — when too few held-out pairs decide. Too
 few honest held-out rows is therefore not a small loss; it is a coin flip
 stamped into the artifact.
+
+`"finalTest"` is reserved for an optional final-evaluation set that no fitting
+or selection step reads; leave it out unless the study reserves one.
 
 At least 2 non-degenerate training rows are required or the fit refuses. That
 is a floor, not a target: {{count}} rows with {{heldOut}} held out is the shape

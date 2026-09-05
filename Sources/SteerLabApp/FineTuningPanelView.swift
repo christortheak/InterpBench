@@ -162,7 +162,7 @@ struct FineTuningPanelView: View {
                             range: 0.1 ... 128,
                             step: 0.5,
                             fractionDigits: 1,
-                            help: "LoRA scale controls the strength of the learned low-rank update during training and inference.")
+                            help: "LoRA scale is the direct multiplier on the learned low-rank update, during training and inference (this engine's MLX convention). A server run receives it as adapterScale and resolves PEFT's lora_alpha = scale × rank itself, so the number means the same strength on both engines.")
                         IntSliderField(
                             "Layers",
                             value: $panel.adaptedLayers,

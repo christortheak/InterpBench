@@ -319,19 +319,23 @@ def test_the_declared_verbs_are_the_audits_fourteen_plus_site_qualify():
     (the standalone capability reading, 2026-08-29 — it loads models, so it is
     server-only, and it brought its family onto the agent path with it), and
     `model capabilities` (2026-09-05 — `--probe` renders the pinned chat
-    template through this engine's tokenizer, which no client can do).
+    template through this engine's tokenizer, which no client can do), and
+    `experiment extract-stability` (the resampling stability diagnostic — it
+    captures activations, so it is server-only, and it is a DIAGNOSTIC rather
+    than a lifecycle stage: it writes under `diagnostics/`, nothing pins it).
     `data check` is counted once (its argument domain differs from Swift's — a
     documented §3.2 divergence, not a second verb)."""
     labels = sorted(spec.label for spec in cli_envelope.VERB_SPECS)
     assert labels == sorted([
         "battery run", "data check", "experiment analyze",
         "experiment confirm", "experiment evaluate", "experiment extract",
+        "experiment extract-stability",
         "experiment list", "experiment promote", "experiment run",
         "experiment sweep", "experiment validate", "experiment verify",
         "jobs list", "model capabilities", "site qualify", "study submit",
         "vectors compare", "vectors mirror-poles",
     ])
-    assert len(cli_envelope.VERB_SPECS) == 18
+    assert len(cli_envelope.VERB_SPECS) == 19
 
 
 # =============================================================================

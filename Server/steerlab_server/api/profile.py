@@ -405,6 +405,13 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             "revisionPinRequired": True,
             "walltimePreflight": True,
             "planEndpoint": True,
+            # ``hyperparameters.adapterScale`` (a direct multiplier, the
+            # Swift/MLX ``scale`` convention) is accepted and resolved into
+            # PEFT's ``lora_alpha`` server-side, with the translation stamped
+            # on the plan and the adapter sidecar. A client that sees this
+            # flag absent must not send the key (the server would refuse it
+            # by name) and must not copy its scale into ``alpha`` either.
+            "directAdapterScale": True,
             "slurmSubmission": profile.executor == "slurm",
         },
     }

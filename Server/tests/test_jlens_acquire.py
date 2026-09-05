@@ -24,9 +24,67 @@ def test_patterns_scope_to_one_model_folder():
     assert not any(p in ("*", "**", "") for p in pats)
 
 
-def test_unsupported_model_never_reaches_the_network():
-    with pytest.raises(JLensError, match="Gemma-only"):
-        acquire.acquire("Qwen/Qwen3-4B")
+def test_a_malformed_model_id_never_reaches_the_network(monkeypatch):
+    """Only an owner/name can be looked up in the published configs, so
+    anything else is refused before the installer is touched."""
+    from steerlab_server.api import model_install
+
+    def _never(*_a, **_kw):
+        raise AssertionError("the installer must not be called")
+
+    monkeypatch.setattr(model_install, "run_install", _never)
+    with pytest.raises(JLensError, match="not a Hugging Face model id"):
+        acquire.acquire("gemma-3-4b-it")
+
+
+def test_an_uncurated_model_fetches_the_published_configs_then_its_folder(
+        tmp_path, monkeypatch):
+    """Two scoped pulls, never one unscoped: the configs (a few KB) say which
+    folder names the model, then that folder alone is fetched."""
+    from steerlab_server.api import model_install
+
+    calls = []
+
+    def _fake_run_install(repo, revision, log, *, cancelled=None,
+                          allow_patterns=None, **kw):
+        calls.append(list(allow_patterns))
+        folder = tmp_path / "qwen3-14b" / "jlens" / "Salesforce-wikitext"
+        folder.mkdir(parents=True, exist_ok=True)
+        if allow_patterns == ["*/jlens/*/config.yaml"]:
+            (folder / "config.yaml").write_text(
+                "hf_model_name: Qwen/Qwen3-14B\n", encoding="utf-8")
+            # A second published model, to show the lookup picks by name.
+            other = tmp_path / "llama3.1-8b" / "jlens" / "Salesforce-wikitext"
+            other.mkdir(parents=True, exist_ok=True)
+            (other / "config.yaml").write_text(
+                "hf_model_name: meta-llama/Llama-3.1-8B\n", encoding="utf-8")
+        else:
+            (folder / "Qwen3-14B_jacobian_lens.pt").write_text("x")
+        return str(tmp_path)
+
+    monkeypatch.setattr(model_install, "run_install", _fake_run_install)
+    out = acquire.acquire("Qwen/Qwen3-14B")
+    assert out == str(tmp_path)
+    assert calls == [["*/jlens/*/config.yaml"],
+                     ["qwen3-14b/jlens/Salesforce-wikitext/*"]]
+    assert not any(p in ("*", "**", "") for call in calls for p in call)
+
+
+def test_an_uncurated_model_without_a_published_lens_is_refused_by_name(
+        tmp_path, monkeypatch):
+    from steerlab_server.api import model_install
+
+    def _configs_only(repo, revision, log, *, cancelled=None,
+                      allow_patterns=None, **kw):
+        assert allow_patterns == ["*/jlens/*/config.yaml"]
+        folder = tmp_path / "qwen3-14b" / "jlens" / "Salesforce-wikitext"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "config.yaml").write_text("hf_model_name: Qwen/Qwen3-14B\n")
+        return str(tmp_path)
+
+    monkeypatch.setattr(model_install, "run_install", _configs_only)
+    with pytest.raises(JLensError, match="no published lens"):
+        acquire.acquire("mistralai/Mistral-7B-v0.3")
 
 
 def test_verify_landed_catches_an_empty_pattern_match(tmp_path):

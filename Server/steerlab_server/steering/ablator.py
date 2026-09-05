@@ -35,6 +35,9 @@ ablated direction, which is the intended reading.
 the direction is unavailable, and letting the model read the whole prompt with
 the concept intact and stripping it only while writing is a different, muddier
 intervention. This deliberately inverts the injector's chunked-prefill gate.
+:meth:`SubspaceAblator.scope` states that as data, so a report prints the
+ablation path's positions instead of the injector's (``docs/INTERVENTION-
+SCOPE.md``).
 """
 
 from __future__ import annotations
@@ -44,7 +47,8 @@ from dataclasses import dataclass
 
 import torch
 
-from .intervention import LayerIntervention
+from . import intervention as scope_vocabulary
+from .intervention import InterventionScope, LayerIntervention
 
 #: Directions below this relative norm after orthogonalization are already
 #: inside the span of the earlier ones and are dropped: keeping them would
@@ -106,6 +110,14 @@ class Ablation:
     basis: tuple[tuple[float, ...], ...]
     #: λ. 1 = full ablation, (0,1) = partial, 2 = reflection.
     strength: float = 1.0
+    #: The centering convention the DIRECTIONS were expressed in before they
+    #: reached this class — "none" or "neutralMean". Carried, never applied:
+    #: the transform happens where the direction is resolved
+    #: (``experiment.model_variant.variant_injections``, ``api.routes``), so
+    #: the ablator can only record which convention it was handed. Absent
+    #: means "none", exactly as at those declaration sites, so every existing
+    #: construction keeps its meaning.
+    centering: str = scope_vocabulary.CENTERING_NONE
 
     @property
     def rank(self) -> int:
@@ -130,6 +142,45 @@ class SubspaceAblator(LayerIntervention):
 
     def ablation(self, layer: int) -> Ablation | None:
         return self._ablations.get(layer)
+
+    def scope(self) -> InterventionScope:
+        """This ablator's scope descriptor (see ``docs/INTERVENTION-SCOPE.md``).
+
+        The row that matters is ``positions``: EVERY position, prefill and
+        decode, which is the opposite of the additive path's last-position
+        firing and is why the two must never share a sentence in a report. It
+        is pinned to behaviour by ``tests/test_ablator.py``
+        ``::test_every_position_is_ablated_including_mid_prompt_chunks`` and
+        ``::test_unconfigured_layers_are_untouched``; the rank and λ in
+        ``detail`` are pinned by ``::test_concentric_ablations_at_a_layer_
+        become_one_subspace`` (rank) and ``::test_partial_ablation_removes_
+        part_of_the_component`` (λ).
+
+        Rank is reported per layer rather than as "the number of concepts"
+        because :func:`orthonormalized` drops dependent directions: a
+        two-concept ablation of two nearly parallel directions removes a rank-1
+        subspace, and the descriptor should say the rank that was removed, not
+        the count that was declared.
+        """
+        layers = tuple(sorted(self._ablations))
+        return InterventionScope(
+            path=scope_vocabulary.ABLATION,
+            site=scope_vocabulary.SITE_BLOCK_OUTPUT,
+            layers=layers,
+            positions=scope_vocabulary.POSITIONS_EVERY,
+            prefill=scope_vocabulary.PREFILL_EVERY_POSITION,
+            decode=scope_vocabulary.DECODE_EVERY_POSITION,
+            centering=scope_vocabulary.centering_summary(
+                self._ablations[layer].centering for layer in layers),
+            dose_units=scope_vocabulary.DOSE_UNITS_LAMBDA,
+            control=scope_vocabulary.CONTROL_RANDOM_DIRECTION_ABLATION,
+            claim_limits=scope_vocabulary.CLAIM_LIMITS_ABLATION,
+            detail={
+                "rankPerLayer": {str(layer): self._ablations[layer].rank
+                                 for layer in layers},
+                "lambdaPerLayer": {str(layer): float(self._ablations[layer].strength)
+                                   for layer in layers},
+            })
 
     def apply(self, h: torch.Tensor, layer: int, offset: int) -> torch.Tensor:
         ablation = self._ablations.get(layer)

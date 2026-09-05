@@ -13,6 +13,7 @@ would strand provenance that those artifacts assert (plan §4.2).
 
 from __future__ import annotations
 
+import errno
 import os
 
 from ..experiment import paths
@@ -57,7 +58,9 @@ def resolve(lens_id: str, root: str | None = None) -> JLensRecord:
     if not os.path.exists(path):
         raise JLensError(
             f"no imported lens '{lens_id}' — import it first "
-            f"(steerlab-server jlens import <model>)")
+            f"(steerlab-server jlens import <model>)"
+        ) from FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+                                 path)  # a CLI reads this as notFound
     return read_record(path)
 
 
@@ -76,6 +79,29 @@ def list_lenses(root: str | None = None) -> list[JLensRecord]:
         except JLensError:
             continue          # a corrupt record must not hide the healthy ones
     return sorted(out, key=lambda r: r.importedAt, reverse=True)
+
+
+def for_model(model_id: str, root: str | None = None) -> str:
+    """The lens id to use for ``model_id`` when the caller named none: the ONE
+    imported lens fitted on it.
+
+    Looked up in the store, never derived from the model name — the published
+    set is not all one corpus, so a name rule would miss a pile-10k lens and
+    name a wikitext one that was never imported. Several lenses for one model
+    (two corpora) refuse with the ids, so the caller names the one it means;
+    none refuses with the import to run.
+    """
+    matches = [r for r in list_lenses(root) if r.fit.modelID == model_id]
+    if len(matches) == 1:
+        return matches[0].lensID
+    if not matches:
+        raise JLensError(
+            f"no imported lens for '{model_id}' in this workspace — "
+            f"`steerlab-server jlens import {model_id}` first (with --tier "
+            f"for a model outside the curated table)")
+    raise JLensError(
+        f"'{model_id}' has {len(matches)} imported lenses "
+        f"({[r.lensID for r in matches]}) — name the one you mean with --lens")
 
 
 def save(record: JLensRecord, root: str | None = None) -> str:

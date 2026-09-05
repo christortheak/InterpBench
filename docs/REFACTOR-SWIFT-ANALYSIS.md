@@ -6,7 +6,10 @@ Date: 2026-09-05
 
 Starting commit: `35f686cdc22d640057077638512cd4eeb60c15a4`
 
-Latest integrated main baseline: `5309b5f2efc8f70dfb7b1a444feb5312b27c7704`.
+Latest integrated main baseline: `b6949ffdef0e48bc32813247f231feead2e9ed44`.
+
+The [updated integration record](MAIN-INTEGRATION.md) covers the subsequent
+main merge; the slice-specific results below remain its historical validation.
 
 ## Result
 
@@ -127,8 +130,8 @@ lifecycle handoff.
 
 ## Integration and remaining work
 
-Further main fixes remain intentionally deferred. Apply incoming edits to the
-owners above, retain their regression assertions, and inspect semantic conflicts
+Main fixes through `b6949ff` are now integrated. Apply later incoming edits
+to the owners above, retain their regression assertions, and inspect semantic conflicts
 in pin checks, source admission, pairing/exclusions, correction families and
 artifact presence even when Git reports a clean merge. Integrate then-current
 main before the main coding agent reviews and merges this branch, and run the

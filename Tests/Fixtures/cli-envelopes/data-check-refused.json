@@ -112,7 +112,7 @@
         "title" : "capability battery"
       },
       {
-        "detail" : "no J-lens readout declared — without one a run records no readout at all. Authored on the SERVER (Gemma-only, server-only); this engine renders and carries the block, it never produces one.",
+        "detail" : "no J-lens readout declared — without one a run records no readout at all. Authored on the SERVER (any published lens, server-only); this engine renders and carries the block, it never produces one.",
         "id" : "jlensReadout",
         "kind" : "jlensReadout",
         "path" : "experiments/demo/experiment.json",

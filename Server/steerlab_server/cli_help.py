@@ -45,10 +45,12 @@ METAVARS: dict = {
     "--expect-artifact-hash": "<sha256>",
     "--expect-cell": "<layer>:<alpha>",
     "--expect-epoch": "<sha256>",
+    "--fraction": "<0-1>",
     "--gres": "<spec>",
     "--job-name": "<name>",
     "--mem": "<size>",
     "--model": "<model-id>",
+    "--order-shuffles": "<n>",
     "--out": "<file>",
     "--parallel": "<n>",
     "--parallel-jobs": "<n>",
@@ -57,10 +59,12 @@ METAVARS: dict = {
     "--qualification": "<path>",
     "--reason": "<text>",
     "--revision": "<sha>",
+    "--resamples": "<n>",
     "--resume": "<run-dir>",
     "--resume-from": "<run-dir>",
     "--sample-per-condition": "<n>",
     "--sample-seed": "<hex-or-int>",
+    "--seed": "<int>",
     "--shard": "<k/K>",
     "--source": "<run-dir>",
     "--sweep-run": "<run-dir>",
@@ -103,6 +107,8 @@ FLAG_PURPOSES: dict = {
     "--expect-cell": "Refuse unless the selected cell is this one.",
     "--expect-epoch": "Refuse unless the manifest hash is this one.",
     "--force": "Submit despite a failing preflight verdict, recorded on the job.",
+    "--fraction":
+        "Share of the concept's rows each draw keeps, in (0, 1] (default 0.5).",
     "--gres": "Scheduler GPU resource request.",
     "--help": "Print this surface and run nothing.",
     "--job-name": "Scheduler job name.",
@@ -111,6 +117,10 @@ FLAG_PURPOSES: dict = {
     "--model": "The base model the reading is taken on.",
     "--no-control": "Omit the control condition.",
     "--no-evidence": "Skip packaging an evidence bundle for the job.",
+    "--order-shuffles":
+        "Re-derive the direction from the same rows in a different order this "
+        "many times (default 8) — a control for the mean-difference family, a "
+        "real perturbation for the paired-difference PCA.",
     "--out": "Write the same document to this file.",
     "--output-name":
         "File name for the new artifact inside its run directory (default: "
@@ -121,6 +131,9 @@ FLAG_PURPOSES: dict = {
     "--prompts": "Override the pinned task-prompt file (pin-checked when frozen).",
     "--qualification": "Qualification evidence recorded on the promotion.",
     "--reason": "Why the manual cell was chosen; recorded on the certificate.",
+    "--resamples":
+        "How many subsample draws the stability reading takes (default 32, "
+        "minimum 2).",
     "--resume": "Continue a checkpointed run in this directory.",
     "--revision": "Pin the model revision, so the reading names one set of weights.",
     "--skip-model-fixtures":
@@ -134,6 +147,9 @@ FLAG_PURPOSES: dict = {
     "--sample-seed":
         "The seed the subsample is drawn with, so anyone can redraw exactly "
         "these records; requires --sample-per-condition.",
+    "--seed":
+        "Seed the draws are derived from, stamped per draw so anyone can "
+        "redraw exactly these subsamples (default 0).",
     "--shard":
         "Generate only shard k of K of the run's records; resume a shard "
         "partial with the same k/K.",

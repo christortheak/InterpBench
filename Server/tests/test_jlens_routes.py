@@ -82,11 +82,26 @@ def test_a_lens_never_appears_in_the_model_catalog(client, tmp_path):
 
 @pytest.mark.parametrize("route", ["/api/jlens/lenses/acquire",
                                    "/api/jlens/lenses/import"])
-def test_mutating_verbs_refuse_an_unsupported_model_before_any_job(client, route):
-    resp = client.post(route, json={"modelID": "Qwen/Qwen3-4B"})
+def test_mutating_verbs_refuse_a_malformed_model_id_before_any_job(client, route):
+    resp = client.post(route, json={"modelID": "gemma-3-4b-it"})
     assert resp.status_code == 400
-    assert "Gemma-only" in resp.json()["detail"]
     assert "jobId" not in resp.json()
+
+
+def test_import_off_the_curated_table_needs_a_declared_tier(client):
+    """Any model with a published lens may be imported (2026-09-05), but its
+    evidence tier is the researcher's declaration, refused when absent —
+    before any job."""
+    resp = client.post("/api/jlens/lenses/import",
+                       json={"modelID": "Qwen/Qwen3-4B"})
+    assert resp.status_code == 400
+    assert "--tier" in resp.json()["detail"]
+    assert "jobId" not in resp.json()
+
+
+def test_the_supported_list_says_its_tiers_are_curated(client):
+    supported = client.get("/api/jlens/lenses").json()["supported"]
+    assert supported and all(s["tierSource"] == "curated" for s in supported)
 
 
 @pytest.mark.parametrize("route", ["/api/jlens/lenses/acquire",

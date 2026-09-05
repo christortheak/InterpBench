@@ -45,7 +45,7 @@ outside the study's trace budget, and captures through hooks on the armed
 layers rather than ``output_hidden_states`` (62 layers × 2000 positions ×
 5376 × 4 B ≈ 2.7 GB at 27B; four armed layers is ~170 MB).
 
-Server-only, Gemma-only (CLAUDE.md, hard requirement).
+Server-only (hard requirement); any model with a published lens.
 """
 
 from __future__ import annotations
@@ -346,7 +346,7 @@ def probe(model_id: str, *, prompt: str, lens_id: str | None = None,
     from ..experiment.run_config import write_run_config
     from ..experiment.optvec_jspace import evidence_tier_for, qualification_state
     from ..steering import model_loader
-    from . import importer, lens_store
+    from . import lens_store
     from .qualification import _default_layers
     from .readout import LensReadout, ReadoutConfig
 
@@ -357,7 +357,7 @@ def probe(model_id: str, *, prompt: str, lens_id: str | None = None,
     if not (prompt or "").strip():
         raise ProbeError("a probe needs a prompt to read")
 
-    lens = lens_id or importer.lens_id_for(model_id)
+    lens = lens_id or lens_store.for_model(model_id, root)
     record = lens_store.resolve(lens, root)
     if model is None:
         emit(f"loading {model_id} …")

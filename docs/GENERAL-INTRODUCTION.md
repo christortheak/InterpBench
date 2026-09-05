@@ -290,8 +290,9 @@ its norm denominator is backfilled.
 faithful to the paper and what departs from it.
 
 The Python engine also
-carries a family of **lens instruments** (`jlens` — server-only and Gemma-only,
-the imported lens artifacts being PyTorch-native): acquire and convert a lens,
+carries a family of **lens instruments** (`jlens` — server-only, the imported
+lens artifacts being PyTorch-native; any model with a published lens, some forty
+at the time of writing): acquire and convert a lens,
 decompose a steering vector into the vocabulary it is made of, probe a prompt
 for per-layer readouts of what the model is poised to verbalize, derive a
 steering direction from the lens, report across conditions. Useful as an

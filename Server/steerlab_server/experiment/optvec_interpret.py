@@ -50,6 +50,7 @@ and in the run's ``config.json`` notes.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -136,6 +137,13 @@ class OptVecInterpretDataError(OptVecEvalDataError):
 
 class OptVecFamilyError(ValueError):
     """A family summary that cannot be assembled from the given runs."""
+
+
+class OptVecFamilyConfigError(OptVecFamilyError):
+    """A family CONFIG that breaks its own contract (fewer than two runs, a
+    percentile outside [0, 100]) — a subclass, so every caller that catches
+    ``OptVecFamilyError`` still does; the CLI reads the refinement as a
+    malformed invocation (64) rather than a run that declined (65)."""
 
 
 # ------------------------------------------------------------------- config
@@ -973,12 +981,12 @@ class FamilySummaryConfig:
     def __post_init__(self) -> None:
         self.interpret_runs = [str(r) for r in self.interpret_runs]
         if len(self.interpret_runs) < 2:
-            raise OptVecFamilyError(
+            raise OptVecFamilyConfigError(
                 "a family summary needs at least 2 interpretation runs — the "
                 "distribution of matches over one solution is not a family")
         self.match_null_percentile = float(self.match_null_percentile)
         if not 0.0 <= self.match_null_percentile <= 100.0:
-            raise OptVecFamilyError(
+            raise OptVecFamilyConfigError(
                 "matchNullPercentile must be a percentile in [0, 100]")
 
     @classmethod
@@ -1011,7 +1019,9 @@ def load_interpret(reference: str, root: str | None = None) -> dict:
     if not os.path.exists(path):
         raise OptVecFamilyError(
             f"no {INTERPRET_JSON} at '{path}' — a family summarizes finished "
-            "interpretation runs")
+            "interpretation runs"
+        ) from FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+                                 path)  # a CLI reads this as notFound
     try:
         with open(path, encoding="utf-8") as handle:
             payload = json.load(handle)

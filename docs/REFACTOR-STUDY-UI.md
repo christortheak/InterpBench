@@ -8,7 +8,10 @@ State/controller slice starting commit: `22daaca`.
 
 Authoring-component continuation starting commit: `d494826`.
 
-Latest integrated main baseline: `5309b5f2efc8f70dfb7b1a444feb5312b27c7704`.
+Latest integrated main baseline: `b6949ffdef0e48bc32813247f231feead2e9ed44`.
+
+The [updated integration record](MAIN-INTEGRATION.md) covers the subsequent
+main merge; the slice-specific results below remain its historical validation.
 
 ## Result
 
@@ -223,9 +226,9 @@ remains appropriate as separately reviewed changes:
 3. Apply the same ownership approach to other large feature panels/views, then
    retire compatibility projections when their production callers migrate.
 
-Further main fixes remain deferred as agreed. Before the main coding agent's
-review and merge, integrate then-current main and apply edits to the owners
-above. Pay particular attention to new panel field declarations: add storage to
+Main fixes through `b6949ff` are now integrated. Before the main coding
+agent's review and merge, recheck main and integrate any newer commits, applying
+edits to the owners above. Pay particular attention to new panel field declarations: add storage to
 the proper owner and a compatibility projection when needed. Carry regression
 assertions over with changes to routing, admission, callbacks, cancellation,
 remote pin checks, resume policy and report parsing. A clean textual merge does

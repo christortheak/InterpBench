@@ -353,7 +353,7 @@
     <div class="panel"><h2>J-Space — Jacobian lens</h2>
       <p class="muted" style="margin-top:0;font-size:12px">
         Reads what the model is poised to verbalize, and derives steering directions from a lens.
-        <b>Server-only and Gemma-only</b>: imported lens artifacts are PyTorch/HF-native and
+        <b>Server-only</b> (any model with a published lens): imported lens artifacts are PyTorch/HF-native and
         activations do not transfer across substrates, so there is deliberately no local/MLX
         equivalent — everything here runs on whichever server this page is connected to.
         Scores are <i>estimated verbalizable representations</i>, never access to beliefs or reasoning.
@@ -573,7 +573,7 @@ function showTab(t){ TABS.forEach(([k])=>{ elFor(k).classList.toggle("active", k
 $("#nav").innerHTML = TABS.map(([k,l])=>`<button data-t="${esc(k)}">${esc(l)}</button>`).join("");
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>showTab(b.dataset.t));
 
-// ---- J-Space (server-only, Gemma-only) ----------------------------------
+// ---- J-Space (server-only) ----------------------------------------------
 // The evidence TIER is rendered on every lens, direction, and trace. A
 // testing-tier artifact exercises the path and can never be evidence, and that
 // has to be unmistakable by eye rather than inferable from a model id — this
@@ -586,7 +586,9 @@ function tierPill(tier){
   // cited. That is the condition's claim; see claimPill (round 7).
   return `<span class="pill ${ok?'ok':'warn'}" title="${ok
     ? 'evidence tier: this lens may be believed on this runtime'
-    : 'testing tier: exercises the path, never evidence'}">${esc(tier||'?')}</span>`;
+    : (tier === 'testing'
+       ? 'testing tier: exercises the path, never evidence'
+       : 'no tier: not curated and no import declaration — freeze refuses it')}">${esc(tier||'?')}</span>`;
 }
 
 // Reportability, per CONDITION. A qualified lens over an agent whose
@@ -620,11 +622,15 @@ async function loadJSpace(){
 }
 
 function renderLensRows(){
-  const tierOf = id => (JL.supported.find(s => s.modelID === id)||{}).tier || "testing";
+  // The record's own tier first (an uncurated model's import declaration),
+  // then the curated table; never a silent "testing" for an unknown model.
+  const tierOf = l => l.tier
+    || (JL.supported.find(s => s.modelID === l.fit?.modelID)||{}).tier
+    || "unknown";
   $("#jlLensRows").innerHTML = JL.lenses.length ? JL.lenses.map(l => {
     const q = (l.qualifications||[]).filter(x=>x.passed);
     return `<tr><td class="mono">${esc(l.lensID)}</td>
-      <td>${tierPill(tierOf(l.fit?.modelID))}</td>
+      <td>${tierPill(tierOf(l))}</td>
       <td class="mono">${esc(l.sourceLayers?.[0])}..${esc(l.sourceLayers?.[l.sourceLayers.length-1])}
         →${esc(l.targetLayer)}</td>
       <td>${l.converted ? `<span class="status-ok">${esc(l.converted.dtype)}</span>`

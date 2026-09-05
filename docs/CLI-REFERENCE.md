@@ -73,7 +73,7 @@ they are not interchangeable:
 | Cluster ops (Slurm, jobs, bundles) | client only (`remote …`) | yes (server-side) |
 | Cluster *lifecycle* (auth, push, bootstrap, controller, tunnel, connect) | yes (`cluster …`, §3.9) | **no** — it is the Mac's job to reach the cluster, not the cluster's |
 | LoRA fine-tuning | **no** (adapters are a server-native `hf-peft-lora` artifact) | yes (`finetune …`, §5.5; evidence-grade training is a Slurm job) |
-| J-lens reading instruments | **no** (hard rule: server + Gemma only) | yes (`jlens …`) |
+| J-lens reading instruments | **no** (server-side by rule; the app renders lens artifacts) | yes (`jlens …`, any model with a published lens) |
 | Web server | `serve` (loopback only, no `--host`) | `serve` (host configurable) |
 
 Vectors do **not** transfer between engines: re-extract and re-validate on the
@@ -751,7 +751,7 @@ never read by Python: `STEERLAB_MODULES`, `STEERLAB_CONDA_SH`,
 | `STEERLAB_JUDGE_KEY_FILE` | a `~/.steerlab-judge-key`-style path, mode 600 | A **path, never a secret**, which is why it is allowed through the secret-env filter and inherited into Slurm children. |
 | `STEERLAB_SKIP_PROVIDER_PREFLIGHT` | unset | Disables the provider catalogue lookup for air-gapped sites. **Skipping is logged** — an unverified pin must never look like a verified one. |
 | `STEERLAB_PREFILL_CHUNK` | `1024` | MPS-only; `0` disables chunking. CUDA and CPU never read it. |
-| `STEERLAB_JLENS_REFERENCE_FP32` | unset | `1`/`true`/`yes`/`on`: run `jlens qualify`'s `referenceAgreement` check with the REFERENCE path's own tensors promoted to float32 (ours is float32 already), then restored. A diagnostic for one question — whether a deviation is the two paths' dtype-cast asymmetry — at the cost of a second copy of the output head. The check stamps `referenceFP32Forced` in **both** modes and says so in its detail line, so a run that agreed only under promotion can never be read as a default-mode acceptance. It does not touch the tolerance. |
+| `STEERLAB_JLENS_REFERENCE_FP32` | unset (= on) | The dtype mode of `jlens qualify`'s `referenceAgreement` check. Unset, `1`/`true`/`yes`/`on`: the REFERENCE path's output head (final norm + `lm_head`, never the decoder stack) is promoted to float32 for the comparison — ours is float32 already — then restored. This is the **default** (ruling 2026-09-05): the reference computes at the runtime dtype, and a bf16 logit's grid spacing exceeds the 0.05 tolerance once the logit's magnitude reaches 8, so the runtime-dtype comparison was failing on the reference's own rounding (4B testing lens: 0.0837 at bf16 against 1.9e-6 promoted, both vocabulary paths). `0`/`false`/`no`/`off`: the reference keeps its runtime dtype — a diagnostic for how far the runtime-dtype reference sits from the float32 math, whose failures at large logits are the expected reading. Any other value FAILS the check rather than guessing a mode. The check stamps `referenceFP32Forced`, `referenceFP32ModeSource` (`default` / `env` / `invalid`) and `referenceHeadDtype` in every mode and says which mode ran in its detail line, so a diagnostic run can never be read as the default-mode agreement. It does not touch the tolerance; the cost is a second copy of the output head while the check runs. |
 | `STEERLAB_MEMORY_HEADROOM_GIB` | `16.0` | Floored at 0; a bad value is swallowed. |
 
 ### 2.8 Hugging Face
@@ -2923,6 +2923,7 @@ The ten agent-path verbs — strict flag parsing, the shared envelope under
 steerlab-server experiment list
 steerlab-server experiment verify <name>
 steerlab-server experiment extract <name> [--device <device>] [--dtype <dtype>]
+steerlab-server experiment extract-stability <name> <concept> [--device <device>] [--dtype <dtype>] [--fraction <0-1>] [--order-shuffles <n>] [--resamples <n>] [--seed <int>]
 steerlab-server experiment validate <name> [--device <device>] [--dtype <dtype>]
 steerlab-server experiment sweep <name> [--device <device>] [--dtype <dtype>]
 steerlab-server experiment run <name> [--device <device>] [--dtype <dtype>] [--prompts <path>] [--resume <run-dir>] [--shard <k/K>]
@@ -2937,6 +2938,7 @@ steerlab-server experiment confirm <name> --agent <name-or-path> [--deltas <d1,d
 | `experiment list` | List this root's experiments with their status. |
 | `experiment verify` | Re-check every pinned input against the file bytes on disk. |
 | `experiment extract` | Derive the manifest's concept vectors on this engine. |
+| `experiment extract-stability` | Resample one concept's extraction rows and report how far the per-layer direction moves — a stability diagnostic, not validation. |
 | `experiment validate` | Score each vector on its held-out probe and report cross-concept similarity. |
 | `experiment sweep` | Sweep layer × alpha on the dev split and record a recommendation per concept. |
 | `experiment run` | Generate the measured run for every declared condition. |
@@ -3687,6 +3689,20 @@ hand-translates anything:
 `content: null` means a server-resident file, resolved through the path
 resolver and hash-verified; a string is an inline upload, hash-verified before
 a byte is written. Dataset paths are workspace-relative by contract.
+
+*The strength knob has two spellings, and a request uses one.*
+`hyperparameters.alpha` is PEFT's `lora_alpha` — a numerator the trainer
+divides by `rank` (`adapterScaleConvention: "peft:lora_alpha/r"`).
+`hyperparameters.adapterScale` is the multiplier itself — the Swift/MLX `scale`
+convention, no rank in it. The server resolves the latter to
+`lora_alpha = adapterScale × rank` itself; the plan's `adapterScale` block
+shows both the number asked for (`requestedAdapterScale`) and the number that
+trains (`effectiveAdapterScale`), and the adapter sidecar stamps
+`requestedAdapterScale` / `requestedAdapterScaleConvention: "direct"` beside
+`alpha`. Declaring both is refused ("declare exactly one"), as is a
+non-positive `adapterScale`. Servers that accept the key announce
+`remoteFineTune.directAdapterScale`; older ones refuse it by name, and the
+Mac app then sends `alpha = scale × rank` and says so in its training log.
 `plan`/`train` take the *other* spelling — the resolved **snake_case**
 `LoRAConfig`, which is also what a submission writes into its job directory as
 `finetune-config.json`. Handing that file to `submit` is refused by name
@@ -3864,12 +3880,12 @@ gap: casting a panel writes a workspace input and pins it into a manifest, and
 authoring is Mac-authority (WP0-AGENT-SURFACE-AUDIT §10.x). Cast on the Mac,
 then submit the frozen study.
 
-### 6.3 `jlens` — server-only, Gemma-only
+### 6.3 `jlens` — server-only
 
 ```
-steerlab-server jlens supported
-steerlab-server jlens acquire <model-id>          # bytes → HF cache (needs egress)
-steerlab-server jlens import  <model-id>          # convert → workspace (offline)
+steerlab-server jlens supported [--published]    # curated rows; --published lists every upstream lens (egress)
+steerlab-server jlens acquire <model-id>          # bytes → HF cache (needs egress; any model with a published lens)
+steerlab-server jlens import  <model-id> [--tier evidence|testing]   # convert → workspace (offline)
 steerlab-server jlens list
 steerlab-server jlens inspect <lens-id>
 steerlab-server jlens support <lens-id> <runDir>/<vectorName> [--layers 5,17,29] [--k 25] [--json]
@@ -3893,7 +3909,39 @@ steerlab-server jlens report <runDir> [--baseline NAME] [--band 20,26] [--bands 
 ```
 
 `acquire` and `import` are deliberately distinct: acquisition needs network
-egress, conversion is offline. `support` decomposes a vector into the
+egress, conversion is offline.
+
+**Any model with a published lens can be imported** (2026-09-05). The
+curated table (`importer.SUPPORTED`: the Gemma-3 27B, 12B and 4B instruction
+models) now fixes only the evidence TIER of the models this study has decided
+about. For every other model, `acquire` first fetches the published
+`config.yaml` files (~40, a few KB each) to learn which upstream folder names
+the model — folder names are not model ids and are never guessed — then
+fetches that folder alone; `import` reads the folder's own config and the one
+`*_jacobian_lens.pt` beside it, and **requires `--tier`**, because nothing
+upstream can say whether a study treats a model as evidence or as rehearsal.
+The declaration is stamped on the record (`tier`, `tierSource`: `curated` or
+`declared`); a curated row always wins, and `--tier` that contradicts one is
+refused. Freeze, qualify, run start and the J-space report resolve the tier
+through one helper (`importer.tier_of`), so a declared tier is honoured
+everywhere or nowhere; a lens with no tier at all cannot be frozen and the
+refusal names the re-import.
+
+The readout folds the model's final-norm gain into the token rows, and two
+parameterizations of that gain exist: **offset** (`g = 1 + weight`: Gemma
+1/2/3, Qwen3.5, Qwen3-Next, …) and **direct** (`g = weight`: Llama, Qwen2/3,
+OLMo, GPT-OSS, and — despite the name — Gemma 3n). The engine never assumes
+one from the family name: `norm_convention.observe` runs the model's own norm
+module on a seeded vector and accepts the fold it reproduces (a float32 copy,
+so a bf16 runtime cannot blur it), and the checkpoint-only paths (`derive`,
+`support`) do the same against a weightless instance of the architecture's
+norm class. A norm the fold cannot reproduce — a LayerNorm with a bias, a
+mean-centering norm — refuses the build by name. The observed convention is
+stamped as `gainConvention` on the readout, `normGainConvention` in the
+qualification's `referenceAgreement`, and `finalNormConvention` on every
+derived direction.
+
+`support` decomposes a vector into the
 vocabulary it is made of and writes a readout run directory; `--k` defaults to
 `decompose.DEFAULT_BUDGET`, `--layers` to all fitted layers. The printed
 readout shows the energy fraction only next to its matched-norm-random null,
@@ -3915,8 +3963,9 @@ per-check numbers and all, to the lens record. **Exit 3 = did not qualify**,
 and the record is written anyway: "we tested this runtime and it did not pass"
 is evidence, and losing it would leave the absence looking like an untested
 runtime. Records are appended, never replaced. Tier is read from the
-supported-lens table, so `qualify` RUNS on 4B (the cheap mechanics rehearsal)
-and its record is refused by freeze; no flag upgrades that. An unresolvable
+curated table or the lens record's import declaration, so `qualify` RUNS on
+4B (the cheap mechanics rehearsal) and its record is refused by freeze; no
+qualify flag upgrades that. An unresolvable
 dtype refuses outright — absent is not a match.
 
 `referenceAgreement` records **every comparison**, not only the worst
@@ -3926,8 +3975,22 @@ absolute deviation, plus `worstComparison` and a `perComparisonTruncated` flag
 for the bounded-record case. `maxAbsLogitDeviation` is unchanged and is still
 what the tolerance is compared against — the breakdown exists because a max
 alone cannot say whether a deviation is large *relative to its operands*, which
-is the whole question when one fires. `STEERLAB_JLENS_REFERENCE_FP32=1` (§2.7)
-is the paired instrument.
+is the whole question when one fires. `STEERLAB_JLENS_REFERENCE_FP32` (§2.7) is
+the paired instrument.
+
+Since the 2026-09-05 ruling the comparison runs with the reference's output
+head promoted to float32 **by default**: the reference computes at the runtime
+dtype, and a bf16 logit's grid spacing already exceeds the 0.05 tolerance at
+magnitudes of 8 and above, so the runtime-dtype comparison was failing on the
+reference's own rounding (4B testing lens: 0.0837 at bf16, 1.9e-6 promoted,
+both vocabulary paths; the 27B run's 0.07059 on a fixture logit of ~96 is the
+same phenomenon). Only the output head is promoted, never the decoder stack,
+so the cost is one extra copy of the head. Setting the variable to `0` keeps
+the reference at its runtime dtype as a diagnostic; the record stamps the
+mode, its source and the head's dtype either way, and the detail line of a
+diagnostic run says it is not the default-mode agreement. A head the
+promotion could not reach (mixed float widths) fails the check by name
+rather than passing at a dtype the stamp does not show.
 
 `g0` is the feasibility gate, and its output is **two independent
 arm verdicts**: the STEERING arm (derive → inject → use in a study) and the
@@ -4066,8 +4129,30 @@ frozen model against a hashed choice-row dataset bundle (target/anchor/
 capability), and writes an immutable `optvec-train` run directory: baseline
 cache, per-step `metrics.jsonl`, checkpoints, and the selected best-val vector
 as an ordinary artifact (`extractionMethod: "optvec"`, additive `optvec`
-provenance block). Exit codes: 0 = trained; 2 = bad config/dataset (unknown
-key, hash drift, multi-token option, overlapping split ids); 64 = usage.
+provenance block).
+
+**Exit codes, for every `optvec` verb** (2026-09-05 — before it every typed
+error was a 2 and an untyped one escaped as a traceback): the shared
+vocabulary of §7.7, read from the same table the agent-path verbs answer
+in. **0** = done. **64** = usage, or a config that breaks its own contract
+(an unknown key, a wrong type, an out-of-range value, a selection split the
+verb must not see, too few artifacts to be a statistic). **65** = a typed
+refusal by an input — hash drift, a multi-token option, an artifact without
+an `optvec` block, mixed layers, a lens with no Jacobian at the injection
+layer, a campaign whose cells drifted; the stderr line carries the reason
+and the repair, and a dataset loader's lifecycle refusal keeps its gate
+(`sweepSelectionRule`), read the same way `experiment sweep` reads it.
+**66** = a named config, artifact, lens, neutral-text or probe-prompt file,
+gradient file, survey or campaign directory that does not exist (a missing
+input used to be indistinguishable from a refusal); a missing choice-row
+dataset is the shared loader's gate refusal above, 65, so the same file
+reads the same way on every verb that pins one. **70** = an operational failure — an
+exception no verb typed, with its traceback on stderr. `campaign submit`
+additionally exits **3** when any sbatch failed (below); that is a success
+report carrying failures, not a refusal, and it is unchanged. These verbs
+print their run's JSON on stdout, not the envelope; on a non-zero exit
+stdout is empty and stderr has `optvec <verb>: <reason>` followed by the
+indented repair.
 
 Traps: the config is strict camelCase JSON — unknown keys refuse (a silently
 ignored `lambdaAnchor` typo would run S1 while the record claims S2); every
@@ -5015,6 +5100,33 @@ MLX-vs-CUDA fixture pairs remain an open item. The check says so in its own
 `detail`.
 
 ---
+
+### 6.13 `ledger impact` — what the 2026-09-05 science fixes mean for existing artifacts (server-only)
+
+```
+steerlab-server [--root DIR] ledger impact [--code-checkout <git checkout>] [--json] [--out <file>]
+```
+
+Server-only, offline, no model. Scans a workspace for every artifact one of
+the four 2026-09-05 scientific fixes could have reached (SCI-01 J-lens
+full-vocabulary gain, SCI-02 Python LoRA accumulation, SCI-03 MLX
+completed-answer render, SCI-04 flat and single-dose ladders) and writes an
+evidence-backed ledger under `diagnostics/impact-ledger-<stamp>/`: one entry
+per artifact with its producing revision, the pins it carries, the finding,
+an exposure of `exposed` / `unaffected` / `unknown`, the concrete facts read,
+and a required action. Promotions whose analysis retained `effect-sizes.csv`
+and the run's manifest snapshot are re-scored under the current
+dose-monotonicity rule into `reassessed/<run>/promoted-movers.reassessed.json`,
+beside a verbatim copy of the original. Nothing under `runs/` is touched.
+
+`--code-checkout` names a git checkout so a stamped build commit can be tested
+for ancestry against each fix; without it every revision-dependent finding
+answers `unknown` and the ledger says how to resolve it. Missing metadata is
+never read as non-exposure. Exit `0` when the ledger is written (exposed
+artifacts are the product), `64` on a bad flag, `66` when `--root` is not a
+workspace. The rules, finding by finding, and the researcher's remaining job
+(dispositions, replacement links) are in
+[IMPACT-LEDGER.md](IMPACT-LEDGER.md).
 
 ## 7. Known gaps and traps
 

@@ -7,7 +7,7 @@ Base: `cd299e2d0fcf6fe2fa93090631c3a2713e1f9047`
 Prepared: 2026-09-05
 
 The base above identifies the original refactor. Main's subsequent scientific
-and operational fixes through `5309b5f2efc8f70dfb7b1a444feb5312b27c7704` have
+and operational fixes through `b6949ffdef0e48bc32813247f231feead2e9ed44` have
 now been integrated. See [main integration record](MAIN-INTEGRATION.md) for
 the merge resolutions, preservation checks and updated validation.
 
@@ -239,9 +239,10 @@ owners; see the linked handoff for compatibility boundaries and validation.
    apply the ownership pattern to other large feature views, and retire
    compatibility bridges after their callers migrate.
 
-Further main fixes are intentionally deferred during this continuation. The
-integrated baseline remains `5309b5f`; J-lens recomputation and outstanding science
-work proceed independently. Before review and merge, integrate the then-current
+Main fixes through `b6949ff` (SteerLab 0.9.5) are now integrated; see the
+[updated integration record](MAIN-INTEGRATION.md) for the moved-code resolutions
+and full-suite validation. J-lens recomputation and outstanding science work
+proceed independently. Before review and merge, integrate the then-current
 main into this branch, resolve moved-code conflicts in the owners listed above,
 and rerun the affected regression tests and full suites. A clean textual merge
 alone does not establish that a fix survived a move.

@@ -3,7 +3,7 @@ import SwiftUI
 
 /// J-Space: the app's control and rendering surface over SERVER lens artifacts.
 ///
-/// Server-only and Gemma-only by rule (CLAUDE.md, hard requirement). Imported
+/// Server-only by rule (hard requirement). Imported
 /// lens artifacts are PyTorch/HF-native and activations do not transfer across
 /// substrates, so this panel deliberately offers no local/MLX path: with no
 /// server connection it says so and stops, rather than degrading to something
@@ -57,7 +57,7 @@ struct JSpacePanelSection: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("""
                  Reads what the model is poised to verbalize, and derives steering \
-                 directions from a lens. Server-only and Gemma-only: lens artifacts \
+                 directions from a lens. Server-only: lens artifacts \
                  are PyTorch/HF-native and activations do not transfer across \
                  substrates, so everything here runs on the connected server. \
                  Scores are estimated verbalizable representations — never access \
