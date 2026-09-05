@@ -850,10 +850,18 @@ def _residual_norm_at(norms, layer: int, *, artifact: str, where: str) -> float:
     return float(norms[layer])
 
 
-def _condition_injections(condition, bundles: dict[str, ConceptVectorBundle]) -> list[CellInjection]:
+def _condition_injections(condition, bundles: dict[str, ConceptVectorBundle],
+                          *, preflight: bool = True) -> list[CellInjection]:
     """Resolve a condition's slots to per-layer injection cells, applying the
     layer band and norm-unit alpha conversion (parallel to
-    ChatService.currentInjections)."""
+    ChatService.currentInjections).
+
+    ``preflight=False`` resolves the same cells without the ablation
+    mean-alignment advisory. The ONE caller that passes it is the run-start
+    intervention-scope stamp (:mod:`.intervention_scope`), which resolves the
+    whole matrix a second time purely to describe it: the advisory belongs to
+    the condition loop that executes the arm, and a provenance stamp must
+    neither duplicate it nor pre-empt the log line it belongs next to."""
     injections: list[CellInjection] = []
     for slot in condition.slots:
         bundle = bundles.get(slot.concept)
@@ -878,7 +886,8 @@ def _condition_injections(condition, bundles: dict[str, ConceptVectorBundle]) ->
         is_ablation = slot.is_ablation
         first = 0 if is_ablation else max(0, center - half)
         last = layer_count - 1 if is_ablation else min(layer_count - 1, center + half)
-        if is_ablation and condition.control_type != "randomDirectionAblation":
+        if (preflight and is_ablation
+                and condition.control_type != "randomDirectionAblation"):
             # Ablation mean-alignment preflight (2026-08-06 collapse study):
             # a direction sharing a large component with the neutral residual
             # mean collapses generation into single-token repetition at λ=1.
@@ -5617,6 +5626,26 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     _advise_system_prompt_divergence(
         _run_arm_system_prompts(manifest, conditions, latent_conditions, root),
         run_directory, _log, write_file=not resuming)
+    # What each condition's intervention actually CHANGES — token positions,
+    # prefill/decode behaviour, dose units, the matched control, the claim
+    # limits — stamped once, beside the run's other provenance, before any
+    # generation compute. The declared half (`interventionState`) already rides
+    # every record; it does not say where in the token stream an edit lands,
+    # and the four paths a condition can arm do not land in the same places.
+    # Sidecar, not a config.json key: that key set is the closed cross-engine
+    # schema. Full matrix like the advisory above, so every shard writes the
+    # same bytes and the merge carries one. See `.intervention_scope`.
+    if not resuming:
+        from . import intervention_scope as _intervention_scope
+        _intervention_scope.stamp_run(
+            run_directory, experiment=name, conditions=conditions,
+            resolve_ordinary=lambda c: (
+                _intervention_state(c),
+                _condition_injections(c, bundles, preflight=False)),
+            variant_conditions=manifest.variant_conditions,
+            resolve_variant=lambda vc: _effective_variant_condition(
+                vc, manifest, model, root, wants_choice=wants_choice),
+            latent_conditions=latent_conditions, log=_log)
     try:
         for condition in conditions:
             if plan is not None and not plan.condition_participates(condition.name):

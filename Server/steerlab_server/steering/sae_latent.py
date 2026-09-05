@@ -117,8 +117,9 @@ from __future__ import annotations
 
 import torch
 
+from . import intervention as scope_vocabulary
 from .injector import VectorInjector
-from .intervention import LayerIntervention
+from .intervention import InterventionScope, LayerIntervention
 # The declared surface — mode vocabulary and the two data classes — lives in a
 # torch-free module so that manifest VALIDATION (`experiment.sae_latent`, and
 # through it `Manifest.verify`) can reach it without importing the execution
@@ -175,6 +176,49 @@ class SAELatentIntervention(LayerIntervention):
         chances for the prefill-only bug to come back on one of them.
         """
         return VectorInjector.should_inject(offset, seq_len, prompt_token_count)
+
+    def scope(self) -> InterventionScope:
+        """This latent intervention's scope descriptor.
+
+        Its positions are the injector's, because its gate IS the injector's
+        (:meth:`should_inject` above) — pinned by ``tests/test_sae_latent.py``
+        ``::test_gate_is_literally_the_injectors_gate``,
+        ``::test_applies_at_the_last_position_only`` and
+        ``::test_fires_on_every_decode_step``. Everything else about it differs
+        from the additive path and is why it gets its own row rather than a
+        footnote on that one: the edit is STATE-DEPENDENT (the SAE's JumpReLU
+        gate decides whether anything happens at all), so the same β is a
+        different residual-stream delta at every position, and β is in latent
+        units that no residual-norm denominator makes comparable to α.
+        """
+        layers = tuple(sorted(self._edits))
+        return InterventionScope(
+            path=scope_vocabulary.SAE_LATENT,
+            site=scope_vocabulary.SITE_BLOCK_OUTPUT,
+            layers=layers,
+            positions=(scope_vocabulary.POSITIONS_LAST_GATED
+                       if self._prompt_token_count is not None
+                       else scope_vocabulary.POSITIONS_LAST_UNGATED),
+            prefill=(scope_vocabulary.PREFILL_GATED
+                     if self._prompt_token_count is not None
+                     else scope_vocabulary.PREFILL_UNGATED),
+            decode=scope_vocabulary.DECODE_LAST_POSITION,
+            centering=scope_vocabulary.CENTERING_NOT_APPLICABLE,
+            dose_units=scope_vocabulary.DOSE_UNITS_BETA_LATENT,
+            control=scope_vocabulary.CONTROL_SAE_LATENT,
+            claim_limits=scope_vocabulary.CLAIM_LIMITS_SAE_LATENT,
+            detail={
+                "chunkedPrefillGate": ("promptTokenCount"
+                                       if self._prompt_token_count is not None
+                                       else "none"),
+                "editsPerLayer": {
+                    str(layer): [{"featureID": edit.feature_id,
+                                  "label": edit.label,
+                                  "mode": edit.mode,
+                                  "beta": float(edit.beta)}
+                                 for edit in self._edits[layer]]
+                    for layer in layers},
+            })
 
     def _tensors(self, layer: int, group: list[SAELatentEdit],
                  h: torch.Tensor) -> tuple[torch.Tensor, ...]:
