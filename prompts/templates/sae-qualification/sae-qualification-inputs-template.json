@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "notes": "TEMPLATE for `steerlab-server sae qualification record --inputs <this> --artifact runs/<run>/<name>`. Copy into the study WORKSPACE and replace every value. Constructs, metric names, and thresholds are DATA: nothing in the engine knows what a good number is here, and no verdict is computed from these rows — `decision` is the researcher's, recorded with its rationale. The engine checks shape, dose-grid coverage, and that `feature` matches the cited artifact's own gemmascopeSource (the decoderRowHash above all). Keys are CLOSED; `artifact`, `recordedAt`, `recordedBy`, and `substrate` are stamped by the verb and must NOT appear here.",
+  "notes": "TEMPLATE for `steerlab-server sae qualification record --inputs <this> --artifact runs/<run>/<name>`. Copy into the study WORKSPACE and replace every value. Constructs, metric names, and thresholds are DATA: nothing in the engine knows what a good number is here, and no verdict is computed from these rows — `decision` is the researcher's, recorded with its rationale. The engine checks shape, dose-grid coverage, that `doseResponse` claims nothing the `constructProbe` rows do not show (a declared monotone or sign-symmetric ladder must be one in these rows, by the same dose-monotonicity test `promote` applies to every vector family), and that `feature` matches the cited artifact's own gemmascopeSource (the decoderRowHash above all). Keys are CLOSED; `artifact`, `recordedAt`, `recordedBy`, and `substrate` are stamped by the verb and must NOT appear here.",
   "feature": {
     "feature": 62389,
     "layer": 40,
@@ -14,12 +14,12 @@
     "heldOutSetHash": "sha256 of the held-out probe file",
     "notes": "The construct measure, on data the feature was never chosen against.",
     "results": [
-      {"dose": 0.04, "sign": "positive", "value": 0.0, "direction": "increase", "n": 0, "ciLower": 0.0, "ciUpper": 0.0, "run": "runs/<qualification-run>"},
-      {"dose": 0.04, "sign": "negative", "value": 0.0, "direction": "decrease", "n": 0, "run": "runs/<qualification-run>"},
-      {"dose": 0.08, "sign": "positive", "value": 0.0, "direction": "increase", "n": 0, "run": "runs/<qualification-run>"},
-      {"dose": 0.08, "sign": "negative", "value": 0.0, "direction": "decrease", "n": 0, "run": "runs/<qualification-run>"},
-      {"dose": 0.12, "sign": "positive", "value": 0.0, "direction": "increase", "n": 0, "run": "runs/<qualification-run>"},
-      {"dose": 0.12, "sign": "negative", "value": 0.0, "direction": "decrease", "n": 0, "run": "runs/<qualification-run>"},
+      {"dose": 0.04, "sign": "positive", "value": 0.1, "direction": "increase", "n": 0, "ciLower": 0.0, "ciUpper": 0.0, "run": "runs/<qualification-run>"},
+      {"dose": 0.04, "sign": "negative", "value": -0.1, "direction": "decrease", "n": 0, "run": "runs/<qualification-run>"},
+      {"dose": 0.08, "sign": "positive", "value": 0.2, "direction": "increase", "n": 0, "run": "runs/<qualification-run>"},
+      {"dose": 0.08, "sign": "negative", "value": -0.2, "direction": "decrease", "n": 0, "run": "runs/<qualification-run>"},
+      {"dose": 0.12, "sign": "positive", "value": 0.3, "direction": "increase", "n": 0, "run": "runs/<qualification-run>"},
+      {"dose": 0.12, "sign": "negative", "value": -0.3, "direction": "decrease", "n": 0, "run": "runs/<qualification-run>"},
       {"dose": 0.0, "sign": "baseline", "value": 0.0, "direction": "none", "n": 0, "run": "runs/<qualification-run>"}
     ]
   },
@@ -54,7 +54,7 @@
   "doseResponse": {
     "monotone": true,
     "signSymmetric": true,
-    "spearmanRho": 0.0,
+    "spearmanRho": 1.0,
     "summary": "Directionally stable across the ladder and separated from matched-norm random at the middle and high doses."
   },
   "decision": {

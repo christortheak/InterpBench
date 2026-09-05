@@ -34,6 +34,15 @@ The schema checks SHAPE and internal consistency only. It never computes a
 verdict, because a verdict computed from the same numbers it records would
 make the artifact self-certifying.
 
+Internal consistency does reach the dose-response block. A record that
+declares its ladder ``monotone`` (or ``signSymmetric``) while its own
+``constructProbe`` rows are not — judged by the same
+:func:`study_stats.dose_monotonicity` the promote verb applies to an extracted
+direction — is refused, because the declaration would be cited as though the
+rows bore it out (external review, 2026-09-05). That is a claim checked
+against the numbers beneath it, not a verdict: the ``decision`` stays the
+researcher's, and a researcher may always claim LESS than the geometry shows.
+
 Written IMMUTABLY into its own ``runs/<stamp>-sae-qualification-<feature>/``
 directory, beside the canonical ``config.json``, exactly like every other
 durable evidence artifact on this engine. A qualification is never edited: a
@@ -49,6 +58,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -211,6 +221,7 @@ class Qualification:
                                      for b in self.discriminant_controls],
             "coherenceGatePassed": self.coherence_gate.passed,
             "doseResponseMonotone": self.dose_response.get("monotone"),
+            "doseResponseComputed": dose_response_geometry(self),
             "evidenceRuns": [dict(r) for r in self.evidence_runs],
         }
 
@@ -614,6 +625,81 @@ def grid_coverage_violations(record: Qualification) -> list[str]:
     return violations
 
 
+def dose_response_geometry(record: Qualification) -> dict:
+    """What the record's OWN construct-probe rows say about the ladder, per
+    claimed sign — computed, never declared.
+
+    The same helper the promote verb applies to an extracted direction
+    (:func:`study_stats.dose_monotonicity`), so an SAE feature meets the
+    ladder criterion every other vector family meets: at least two distinct
+    doses, a nonzero effect range, no step against the overall direction.
+    Baseline rows carry no sign and belong to no side's ladder; rows that
+    repeat a dose (several runs at one rung) are kept, as the helper keeps
+    them. ``trend`` is the observed direction of the sorted ladder's
+    endpoints — ``1`` rising, ``-1`` falling, ``0`` flat or unmeasured.
+    """
+    from .study_stats import dose_monotonicity
+
+    geometry: dict = {}
+    for sign in record.signs:
+        rows = [row for row in record.construct_probe.results
+                if row.sign == sign]
+        result = dose_monotonicity([row.dose for row in rows],
+                                   [row.value for row in rows])
+        ordered = sorted(rows, key=lambda row: (row.dose, row.value))
+        trend = 0
+        if len(ordered) >= 2 and ordered[-1].value != ordered[0].value:
+            trend = 1 if ordered[-1].value > ordered[0].value else -1
+        rho = result.spearman_rho
+        geometry[sign] = {
+            "rows": len(rows),
+            "monotone": bool(result.is_monotone),
+            "spearmanRho": None if math.isnan(rho) else float(rho),
+            "trend": trend,
+        }
+    return geometry
+
+
+def dose_response_violations(record: Qualification) -> list[str]:
+    """The declared ``doseResponse`` block may not claim MORE than the
+    construct-probe rows show.
+
+    ``monotone: true`` needs every claimed side's ladder to be monotone by
+    :func:`dose_response_geometry`; ``signSymmetric: true`` needs both sides
+    claimed and trending in opposite directions. The reverse is never a
+    violation — a researcher who declines to call a 1e-9 uptick a ladder is
+    being careful, not inconsistent — and ``spearmanRho`` is left as
+    declared: one number summarizing two opposed ladders is the researcher's
+    rounding, and the per-sign values sit beside it in
+    ``summary()["doseResponseComputed"]`` for a reader to compare.
+    """
+    geometry = dose_response_geometry(record)
+    violations: list[str] = []
+    declared = record.dose_response
+    if declared.get("monotone") is True:
+        failing = [sign for sign, side in geometry.items()
+                   if not side["monotone"]]
+        if failing:
+            violations.append(
+                "doseResponse declares monotone=true, but the constructProbe "
+                f"rows are not monotone in dose on the {', '.join(failing)} "
+                "side (fewer than two distinct doses, a flat ladder, or a "
+                "step against the overall direction) — a declared ladder "
+                "must be one in the record's own numbers")
+    if declared.get("signSymmetric") is True:
+        trends = [side["trend"] for side in geometry.values()]
+        symmetric = (len(trends) == 2 and 0 not in trends
+                     and trends[0] == -trends[1])
+        if not symmetric:
+            violations.append(
+                "doseResponse declares signSymmetric=true, but the "
+                "constructProbe rows do not move in opposite directions on "
+                "the two sides"
+                + ("" if len(geometry) == 2 else " (only one side is claimed)")
+                + " — sign symmetry must be visible in the rows")
+    return violations
+
+
 def artifact_sidecar(reference: str, root: str | None = None) -> dict:
     """The sidecar JSON of a vector artifact named by an extension-less
     locator (``<runDir>/<name>``). Raises :class:`QualificationError` naming
@@ -768,7 +854,8 @@ def consistency_violations(record: Qualification, *,
     dose grid is covered, and the artifact it names exists and is the feature
     it claims. Returns the violations; the caller decides whether they refuse
     (``record``, ``promote --qualification``) or merely report (``show``)."""
-    violations = grid_coverage_violations(record)
+    violations = (grid_coverage_violations(record)
+                  + dose_response_violations(record))
     reference = artifact or record.artifact
     if not reference:
         return violations + [
@@ -822,6 +909,8 @@ def record(*, inputs: object, artifact: str, root: str | None = None,
       (the ``decoderRowHash`` above all — it names the exact published bytes);
     * the claimed dose grid is covered by construct-probe rows on every
       claimed sign;
+    * the declared dose-response block claims nothing those rows do not
+      show (:func:`dose_response_violations`);
     * a decision with a rationale and a date is present (schema-enforced).
 
     The written record carries the FULL identity read from the sidecar, so a
@@ -844,6 +933,7 @@ def record(*, inputs: object, artifact: str, root: str | None = None,
     actual = feature_identity(sidecar)
     violations = identity_violations(declared.feature, actual)
     violations += grid_coverage_violations(declared)
+    violations += dose_response_violations(declared)
     if violations:
         raise QualificationError(
             "refusing to record this qualification — "
@@ -922,7 +1012,9 @@ def citation(qualification_path: str, *, artifact_reference: str,
     Additive by construction: a promotion that cites nothing never calls this
     and behaves exactly as it did before. What it refuses:
 
-    * a record that does not validate, or whose grid claim is uncovered;
+    * a record that does not validate, whose grid claim is uncovered, or
+      whose declared dose response its own rows do not bear out — a stored
+      record predating that check is still readable, but not citable;
     * a **rejected** feature — a promotion may not cite the evidence that says
       the direction failed qualification as though it supported seating it;
     * a record whose feature identity disagrees with the artifact actually
@@ -939,6 +1031,7 @@ def citation(qualification_path: str, *, artifact_reference: str,
     record_obj, digest = load(qualification_path, root)
     identity, origin = resolved_feature_identity(artifact_reference, root)
     violations = grid_coverage_violations(record_obj)
+    violations += dose_response_violations(record_obj)
     violations += identity_violations(record_obj.feature, identity)
     if violations:
         via = "" if origin == artifact_reference else f" (via {origin!r})"

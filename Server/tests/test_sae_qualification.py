@@ -120,7 +120,10 @@ def _inputs(*, feature=62389, layer=SAE_LAYER, row_hash=ROW_HASH,
     doses = list(dose_grid)
     sign_list = list(signs or ["positive", "negative"])
     rows = probe_rows if probe_rows is not None else [
-        {"dose": dose, "sign": sign, "value": 0.3 + i * 0.1,
+        {"dose": dose, "sign": sign,
+         # The positive side rises and the negative side falls: the fixture
+         # is a record whose declared doseResponse its own rows bear out.
+         "value": 0.3 + i * 0.1 if sign == "positive" else 0.3 - i * 0.1,
          "direction": "increase" if sign == "positive" else "decrease",
          "n": 40, "run": "runs/20260812T010000000-exp-a-run"}
         for i, dose in enumerate(doses) for sign in sign_list]
@@ -978,6 +981,9 @@ def test_shipped_inputs_template_validates():
         payload = json.load(handle)
     record = saq.from_dict(payload)
     assert saq.grid_coverage_violations(record) == []
+    # The sample rows must bear out the sample declaration, or the template
+    # teaches a record the engine refuses at `record` time.
+    assert saq.dose_response_violations(record) == []
     assert record.decision.accepted
     # The stamped-by-the-verb keys must not be pre-filled in a template.
     for key in ("artifact", "recordedAt", "recordedBy", "substrate"):
@@ -991,3 +997,160 @@ def test_content_hash_is_over_the_file_bytes(tmp_path):
     with open(out["path"], "rb") as handle:
         raw = handle.read()
     assert out["contentHash"] == hashlib.sha256(raw).hexdigest()
+
+
+# --- dose response: a declaration is held to the rows beneath it -----------
+#
+# External review, 2026-09-05: ``doseResponse`` was declared and never
+# checked, so a record could claim a monotone, sign-symmetric ladder over
+# rows that were neither, and the claim — not the rows — is what a citation
+# reader sees. The check is the same ``study_stats.dose_monotonicity`` the
+# promote verb applies to an extracted direction; SAE evidence meets the
+# ladder criterion every other vector family meets. It refuses a record that
+# claims MORE than its rows show and never one that claims less.
+
+def _ladder(positive, negative=None, doses=(0.04, 0.08, 0.12)):
+    rows = [{"dose": dose, "sign": "positive", "value": value,
+             "direction": "increase"}
+            for dose, value in zip(doses, positive)]
+    if negative is not None:
+        rows += [{"dose": dose, "sign": "negative", "value": value,
+                  "direction": "decrease"}
+                 for dose, value in zip(doses, negative)]
+    return rows
+
+
+def _three_rung(**kwargs):
+    return _inputs(dose_grid=(0.04, 0.08, 0.12), **kwargs)
+
+
+def test_the_fixture_record_is_consistent_with_its_own_rows():
+    record = saq.from_dict(_inputs())
+    assert saq.dose_response_violations(record) == []
+    geometry = saq.dose_response_geometry(record)
+    assert geometry["positive"] == {"rows": 2, "monotone": True,
+                                    "spearmanRho": 1.0, "trend": 1}
+    assert geometry["negative"] == {"rows": 2, "monotone": True,
+                                    "spearmanRho": -1.0, "trend": -1}
+    assert record.summary()["doseResponseComputed"] == geometry
+
+
+def test_a_declared_monotone_ladder_must_be_monotone_in_the_rows(tmp_path):
+    """THE reproduction: monotone=true over a positive side that steps back
+    at the top rung. ``record`` refuses and writes nothing."""
+    rows = _ladder([0.3, 0.5, 0.4], [0.3, 0.2, 0.1])
+    record = saq.from_dict(_three_rung(probe_rows=rows))
+    problems = saq.dose_response_violations(record)
+    assert len(problems) == 1
+    assert "monotone=true" in problems[0] and "positive side" in problems[0]
+    assert saq.dose_response_geometry(record)["negative"]["monotone"] is True
+
+    root = str(tmp_path)
+    artifact = _sae_sidecar(root)
+    with pytest.raises(saq.QualificationError, match="monotone=true"):
+        _record(root, artifact, dose_grid=(0.04, 0.08, 0.12), probe_rows=rows)
+    assert os.listdir(os.path.join(root, "runs")) == [
+        "20260812T000000000-sae-feature-62389"], "a refused record was written"
+
+
+def test_a_flat_ladder_is_not_a_monotone_one():
+    """SCI-04 parity with promote: identical effects carry no dose
+    information, and rho is undefined over them."""
+    record = saq.from_dict(_three_rung(
+        probe_rows=_ladder([0.3, 0.3, 0.3], [0.3, 0.2, 0.1])))
+    problems = saq.dose_response_violations(record)
+    # A flat side has no trend either, so the fixture's signSymmetric claim
+    # falls with it: two violations, each naming what the rows lack.
+    assert len(problems) == 2
+    assert "monotone=true" in problems[0] and "positive side" in problems[0]
+    assert "signSymmetric=true" in problems[1]
+    assert saq.dose_response_geometry(record)["positive"]["spearmanRho"] is None
+
+
+def test_one_dose_cannot_be_a_monotone_ladder():
+    """Two distinct doses are the floor a ladder needs (the promote verb's
+    own rule); a single rung declared monotone is refused on both sides."""
+    record = saq.from_dict(_inputs(
+        dose_grid=(0.04,), probe_rows=_ladder([0.3], [0.1], doses=(0.04,))))
+    problems = saq.dose_response_violations(record)
+    assert "monotone=true" in problems[0]
+    assert "positive, negative side" in problems[0]
+    # One rung per side is no trend on either, so symmetry is unclaimable too.
+    assert len(problems) == 2 and "signSymmetric=true" in problems[1]
+
+
+def test_claiming_less_than_the_rows_show_is_never_a_violation():
+    """The check runs one way. A researcher who will not call a ladder
+    monotone is being careful; the geometry is reported beside the
+    declaration, not imposed on it."""
+    record = saq.from_dict(_inputs(
+        doseResponse={"monotone": False, "signSymmetric": False}))
+    assert saq.dose_response_violations(record) == []
+    assert all(side["monotone"]
+               for side in saq.dose_response_geometry(record).values())
+
+
+def test_sign_symmetry_must_be_visible_in_the_rows():
+    both_rise = saq.from_dict(_three_rung(
+        probe_rows=_ladder([0.3, 0.4, 0.5], [0.3, 0.4, 0.5])))
+    problems = saq.dose_response_violations(both_rise)
+    assert len(problems) == 1 and "signSymmetric=true" in problems[0]
+
+    one_side = saq.from_dict(_three_rung(
+        signs=["positive"], probe_rows=_ladder([0.3, 0.4, 0.5])))
+    problems = saq.dose_response_violations(one_side)
+    assert len(problems) == 1 and "only one side is claimed" in problems[0]
+
+    opposed = saq.from_dict(_three_rung(
+        probe_rows=_ladder([0.3, 0.4, 0.5], [0.3, 0.2, 0.1])))
+    assert saq.dose_response_violations(opposed) == []
+
+
+def test_baseline_rows_belong_to_no_side_of_the_ladder():
+    rows = _ladder([0.3, 0.4], [0.3, 0.2], doses=(0.04, 0.08)) + [
+        {"dose": 0.0, "sign": "baseline", "value": 0.9, "direction": "none"}]
+    record = saq.from_dict(_inputs(probe_rows=rows))
+    assert saq.dose_response_violations(record) == []
+    geometry = saq.dose_response_geometry(record)
+    assert geometry["positive"]["rows"] == 2 and "baseline" not in geometry
+
+
+def test_a_stored_record_that_overclaims_its_ladder_cannot_be_cited(tmp_path):
+    """A record from before the check (or written by hand) stays readable
+    evidence, but a promotion may not cite it: the citation would carry the
+    declaration, and the declaration is what the rows contradict."""
+    root = str(tmp_path)
+    artifact = _sae_sidecar(root)
+    payload = _three_rung(probe_rows=_ladder([0.3, 0.5, 0.4], [0.3, 0.2, 0.1]))
+    payload["artifact"] = artifact
+    stored = os.path.join("runs", "20260812T020000000-stale", saq.FILENAME)
+    os.makedirs(os.path.dirname(os.path.join(root, stored)))
+    _write(os.path.join(root, stored), json.dumps(payload))
+
+    assert saq.load(stored, root)[0].dose_response["monotone"] is True
+    with pytest.raises(saq.QualificationError, match="cannot be cited.*monotone=true"):
+        saq.citation(stored, artifact_reference=artifact, root=root)
+
+
+def test_show_reports_an_inconsistent_stored_record_and_still_reads_it(
+        tmp_path, capsys):
+    """A record written by an older engine (or by hand) that declares a
+    ladder its rows lack is still readable evidence: ``show`` names the
+    problem and prints the computed geometry beside the declaration."""
+    root = str(tmp_path)
+    payload = _three_rung(probe_rows=_ladder([0.3, 0.5, 0.4], [0.3, 0.2, 0.1]))
+    payload["artifact"] = _sae_sidecar(root)
+    path = os.path.join(root, "runs", "20260812T020000000-stale", saq.FILENAME)
+    os.makedirs(os.path.dirname(path))
+    _write(path, json.dumps(payload))
+
+    assert _cli(["sae", "qualification", "show", path, "--json"], root) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert any("monotone=true" in p for p in out["consistencyViolations"])
+    assert out["doseResponseComputed"]["positive"]["monotone"] is False
+    assert out["doseResponseComputed"]["negative"]["monotone"] is True
+
+    assert _cli(["sae", "qualification", "show", path], root) == 0
+    text = capsys.readouterr().out
+    assert "computed monotone=False" in text
+    assert "computed monotone=True rho=-1.000" in text

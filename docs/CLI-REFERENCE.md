@@ -4468,6 +4468,16 @@ a rationale and date; and workspace-relative pointers to the runs each number
 came from. Constructs, metric names, and thresholds are DATA — nothing here
 computes a verdict.
 
+The dose-response summary is held to the rows it summarizes: `record` refuses
+(and `show` reports) a `monotone: true` or `signSymmetric: true` that the
+construct-probe rows do not bear out, judged by the same dose-monotonicity
+test `promote` applies to every other vector family — at least two distinct
+doses, a nonzero effect range, no step against the overall direction, and
+opposite trends on the two sides for symmetry. The check runs one way: a
+record may claim less than its rows show, never more. `show` prints the
+computed per-sign geometry (monotone, Spearman rho, row count) beside the
+declaration, and the JSON form carries it as `doseResponseComputed`.
+
 Refusals (**exit 2**): the inputs do not validate (closed keys, enums, ISO
 dates, positive unique doses, workspace-relative paths); the named artifact has
 no readable sidecar; the artifact is **not** a direct-ID Gemma Scope import

@@ -4324,6 +4324,11 @@ def _sae_qualification(args: list[str]) -> int:
         print(f"  coherence     {record_obj.coherence_gate.metric}: "
               f"{'passed' if summary['coherenceGatePassed'] else 'FAILED'}")
         print(f"  dose response monotone={summary['doseResponseMonotone']}")
+        for sign, side in summary["doseResponseComputed"].items():
+            rho = side["spearmanRho"]
+            rho_text = "—" if rho is None else f"{rho:.3f}"
+            print(f"      {sign:<8s} computed monotone={side['monotone']} "
+                  f"rho={rho_text} rows={side['rows']}")
         for run in summary["evidenceRuns"]:
             print(f"  evidence      {run['path']}"
                   + (f"  — {run['describes']}" if run.get("describes") else ""))
