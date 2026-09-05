@@ -3689,6 +3689,20 @@ hand-translates anything:
 `content: null` means a server-resident file, resolved through the path
 resolver and hash-verified; a string is an inline upload, hash-verified before
 a byte is written. Dataset paths are workspace-relative by contract.
+
+*The strength knob has two spellings, and a request uses one.*
+`hyperparameters.alpha` is PEFT's `lora_alpha` — a numerator the trainer
+divides by `rank` (`adapterScaleConvention: "peft:lora_alpha/r"`).
+`hyperparameters.adapterScale` is the multiplier itself — the Swift/MLX `scale`
+convention, no rank in it. The server resolves the latter to
+`lora_alpha = adapterScale × rank` itself; the plan's `adapterScale` block
+shows both the number asked for (`requestedAdapterScale`) and the number that
+trains (`effectiveAdapterScale`), and the adapter sidecar stamps
+`requestedAdapterScale` / `requestedAdapterScaleConvention: "direct"` beside
+`alpha`. Declaring both is refused ("declare exactly one"), as is a
+non-positive `adapterScale`. Servers that accept the key announce
+`remoteFineTune.directAdapterScale`; older ones refuse it by name, and the
+Mac app then sends `alpha = scale × rank` and says so in its training log.
 `plan`/`train` take the *other* spelling — the resolved **snake_case**
 `LoRAConfig`, which is also what a submission writes into its job directory as
 `finetune-config.json`. Handing that file to `submit` is refused by name

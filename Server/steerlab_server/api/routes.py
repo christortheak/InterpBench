@@ -4460,9 +4460,21 @@ def build_router(state: ServiceState) -> APIRouter:
             raise HTTPException(status_code=400, detail="provide 'text' or 'documentPaths'")
         if not body.get("baseModelID"):
             raise HTTPException(status_code=400, detail="baseModelID required")
+        # The v1 body speaks the same two conventions for the strength knob
+        # as the v2 hyperparameters block: ``alpha`` (PEFT's numerator) or
+        # ``adapterScale`` (the multiplier itself), never both.
+        from . import finetune_submission as _ft
+        rank = int(body.get("rank", 8))
+        try:
+            alpha, requested_scale = _ft.resolve_adapter_scale(
+                alpha=body.get("alpha"), adapter_scale=body.get("adapterScale"),
+                rank=rank)
+        except _ft.FineTuneRequestError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         config = lora_train.LoRAConfig(
             base_model_id=body["baseModelID"], document_paths=documents,
-            rank=int(body.get("rank", 8)), alpha=float(body.get("alpha", 16.0)),
+            rank=rank, alpha=float(16.0 if alpha is None else alpha),
+            requested_adapter_scale=requested_scale,
             iterations=int(body.get("iterations", 200)),
             learning_rate=float(body.get("learningRate", 1e-4)),
             output_name=body.get("name"))
