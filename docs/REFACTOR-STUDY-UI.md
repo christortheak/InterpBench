@@ -210,15 +210,23 @@ macOS `/var` and `/private/var` aliases; the final test verifies distinct file
 contents through the selected result path instead of relying on URL spelling.
 No Python files changed in this slice.
 
+## Subsequent study/design management slice
+
+The [management handoff](REFACTOR-STUDY-MANAGEMENT.md) records the next slice:
+commands and inventory moved to `StudyManagementController` and
+`StudyDesignLibrary`, and management dialogs/actions moved to their own views.
+The current main view is 875 lines; the coordinator is 4,653 lines. The earlier
+counts and tests above describe the authoring-editor slice.
+
 ## Remaining work and integration
 
 This is the study UI slice, not a rewrite of every app panel. The following work
 remains appropriate as separately reviewed changes:
 
-1. Decompose remaining study authoring/template/freeze/import commands in
-   `ExperimentPanel`, plus the parent view's study inventory/design actions,
-   freeze controls and remote pipeline/evidence presentation. The protocol,
-   condition, seat, prompt and evaluation editors have now moved.
+1. Decompose freeze coordination and remote submission/pipeline presentation,
+   followed by remaining protocol/condition/prompt authoring commands. The
+   study/design inventory and management actions have moved in the subsequent
+   slice linked above.
 2. Extend explicit request/workspace binding through the legacy submission and
    store/task boundaries. Those compatibility paths still use existing global
    workspace lookup; this slice does not make all model operations safe against
