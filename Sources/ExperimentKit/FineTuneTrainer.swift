@@ -6,6 +6,12 @@ import MLXNN
 import MLXOptimizers
 import PDFKit
 import SteeringKit
+// Direct tokenizer access for the instruction/chat training render: the
+// MLXLMCommon bridge only exposes the generation-prompt form of
+// `applyChatTemplate`, and a COMPLETED training example must be rendered
+// without one (external review, 2026-09-05 — SCI-03). Same reason
+// `ChatService.runLocalContinuation` reaches for the raw tokenizer.
+import Tokenizers
 
 public enum FineTuneTrainingMode: String, Codable, Sendable, CaseIterable, Identifiable {
     case document
@@ -112,6 +118,14 @@ public enum FineTuneTrainingError: Error, CustomStringConvertible {
     case noInstructionRows
     case incompatibleModel
     case cancelled
+    /// Instruction/chat training needs the raw swift-transformers tokenizer
+    /// from the model's cached snapshot (the only way to render a completed
+    /// example WITHOUT a generation prompt), and nothing is cached.
+    case noCachedTokenizerSnapshot(modelID: String)
+    /// The prompt-only render is not a token-level prefix of the completed
+    /// render, so there is no honest span to supervise. Refusing beats
+    /// training on a mask that starts in the wrong place.
+    case promptRenderNotPrefix(modelID: String, exampleIndex: Int)
 
     public var description: String {
         switch self {
@@ -125,7 +139,84 @@ public enum FineTuneTrainingError: Error, CustomStringConvertible {
             "loaded model does not expose LoRA-trainable modules"
         case .cancelled:
             "training cancelled"
+        case .noCachedTokenizerSnapshot(let modelID):
+            "instruction/chat training needs \(modelID)'s tokenizer in the "
+                + "local Hugging Face cache (it renders the training targets); "
+                + "download the model once, then train again"
+        case .promptRenderNotPrefix(let modelID, let exampleIndex):
+            "\(modelID)'s chat template renders example \(exampleIndex + 1)'s "
+                + "assistant turn differently from its generation header, so "
+                + "the answer's token span cannot be located and no honest "
+                + "loss mask exists; train this model in document mode, or "
+                + "remove the example whose answer the template rewrites"
         }
+    }
+}
+
+/// The render surface instruction/chat training needs — deliberately NOT
+/// `MLXLMCommon.Tokenizer`.
+///
+/// That bridge's only chat-template entry point takes no generation-prompt
+/// argument and the swift-transformers implementation behind it hard-codes
+/// `addGenerationPrompt: true` (1.3.x, `Sources/Tokenizers/Tokenizer.swift`).
+/// Rendering a COMPLETED example through it therefore appends a fresh
+/// assistant header AFTER the answer — for Qwen3 with thinking disabled,
+/// `<|im_start|>assistant\n<think>\n\n</think>\n\n` — and the loss mask
+/// (everything from the first assistant target on) supervised that junk
+/// suffix, in training AND in validation (external review, 2026-09-05 —
+/// SCI-03). Training must state the choice: generation prompt ON for the
+/// prompt-only render, OFF for the completed one.
+protocol FineTuneInstructionRenderer: Sendable {
+    /// Chat-template render with an EXPLICIT generation-prompt choice.
+    /// Throws `Tokenizers.TokenizerError.missingChatTemplate` (or its
+    /// MLXLMCommon twin) when the tokenizer carries no chat template, which
+    /// is the trainer's signal to use the plain-text fallback render.
+    func chatTemplateTokens(
+        messages: [[String: any Sendable]],
+        addGenerationPrompt: Bool,
+        additionalContext: [String: any Sendable]?
+    ) throws -> [Int]
+
+    /// Plain-text encode — the no-chat-template fallback render.
+    func encode(text: String, addSpecialTokens: Bool) -> [Int]
+}
+
+/// The production renderer: the raw swift-transformers tokenizer read from
+/// the model's cached snapshot, loaded exactly the way
+/// `ChatService.runLocalContinuation` loads it for the continuation render
+/// (`SteeredContainerLoader.cachedSnapshotDirectory` +
+/// `AutoTokenizer.from(modelFolder:)`).
+struct CachedSnapshotInstructionRenderer: FineTuneInstructionRenderer {
+    let tokenizer: any Tokenizers.Tokenizer
+
+    /// Refuses by name when the model has never been downloaded — the
+    /// snapshot is where the chat template lives.
+    static func load(modelID: String) async throws -> CachedSnapshotInstructionRenderer {
+        guard let snapshot = SteeredContainerLoader.cachedSnapshotDirectory(for: modelID)
+        else {
+            throw FineTuneTrainingError.noCachedTokenizerSnapshot(modelID: modelID)
+        }
+        return CachedSnapshotInstructionRenderer(
+            tokenizer: try await AutoTokenizer.from(modelFolder: snapshot))
+    }
+
+    func chatTemplateTokens(
+        messages: [[String: any Sendable]],
+        addGenerationPrompt: Bool,
+        additionalContext: [String: any Sendable]?
+    ) throws -> [Int] {
+        try tokenizer.applyChatTemplate(
+            messages: messages,
+            chatTemplate: nil,
+            addGenerationPrompt: addGenerationPrompt,
+            truncation: false,
+            maxLength: nil,
+            tools: nil,
+            additionalContext: additionalContext)
+    }
+
+    func encode(text: String, addSpecialTokens: Bool) -> [Int] {
+        tokenizer.encode(text: text, addSpecialTokens: addSpecialTokens)
     }
 }
 
@@ -180,6 +271,20 @@ public enum FineTuneTrainer {
             progress(.loadingModel(loadProgress.fractionCompleted))
         }
         if Task.isCancelled { throw FineTuneTrainingError.cancelled }
+
+        // Instruction/chat targets are rendered by the RAW swift-transformers
+        // tokenizer from the model's cached snapshot, not by the container's
+        // MLXLMCommon bridge — only the raw one can render a completed example
+        // without a generation prompt (external review, 2026-09-05 — SCI-03).
+        // Loaded after the container so a first-run download has already
+        // populated the snapshot.
+        let instructionRenderer: (any FineTuneInstructionRenderer)? =
+            switch request.trainingMode {
+            case .document: nil
+            case .instructionChat:
+                try await CachedSnapshotInstructionRenderer.load(
+                    modelID: request.baseModelID)
+            }
 
         try await container.perform { context in
             let module = context.model as Module
@@ -244,13 +349,19 @@ public enum FineTuneTrainer {
                 if stoppedByCancellation { throw FineTuneTrainingError.cancelled }
 
             case .instructionChat:
+                guard let instructionRenderer else {
+                    throw FineTuneTrainingError.noCachedTokenizerSnapshot(
+                        modelID: request.baseModelID)
+                }
+                // One construction for both splits: validation loss is scored
+                // against the same corrected targets as training.
                 let train = try tokenizeInstructionExamples(
                     instructionTrain,
-                    tokenizer: context.tokenizer,
+                    renderer: instructionRenderer,
                     modelID: request.baseModelID)
                 let validation = try tokenizeInstructionExamples(
                     instructionValidation,
-                    tokenizer: context.tokenizer,
+                    renderer: instructionRenderer,
                     modelID: request.baseModelID)
                 guard !train.isEmpty, !validation.isEmpty else {
                     throw FineTuneTrainingError.noInstructionRows
@@ -491,7 +602,7 @@ public enum FineTuneTrainer {
 
     static func chunkExamples(
         _ examples: [String],
-        tokenizer: Tokenizer,
+        tokenizer: MLXLMCommon.Tokenizer,
         maxTokens: Int = maxTrainingChunkTokens
     ) -> [String] {
         examples.flatMap { chunkText($0, tokenizer: tokenizer, maxTokens: maxTokens) }
@@ -499,7 +610,9 @@ public enum FineTuneTrainer {
             .filter { !$0.isEmpty }
     }
 
-    private static func chunkText(_ text: String, tokenizer: Tokenizer, maxTokens: Int) -> [String] {
+    private static func chunkText(
+        _ text: String, tokenizer: MLXLMCommon.Tokenizer, maxTokens: Int
+    ) -> [String] {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
         let tokens = tokenizer.encode(text: trimmed, addSpecialTokens: false)
@@ -540,27 +653,45 @@ public enum FineTuneTrainer {
         return chunks
     }
 
+    /// Tokenizes instruction rows into (tokens, loss weights) pairs. The SAME
+    /// call builds the training and the validation sets, so validation loss is
+    /// measured against exactly these targets.
+    ///
+    /// The prompt-only render carries the generation prompt (it is what the
+    /// model will actually be handed at inference); the completed render does
+    /// not, so it ends at the answer's end-of-turn. Their token-level prefix
+    /// relationship is then VERIFIED rather than assumed: a template that
+    /// renders an assistant turn differently from its generation header leaves
+    /// no honest span to supervise, and that is a refusal, not a silent skip
+    /// (external review, 2026-09-05 — SCI-03).
     static func tokenizeInstructionExamples(
         _ examples: [InstructionExample],
-        tokenizer: Tokenizer,
+        renderer: any FineTuneInstructionRenderer,
         modelID: String,
         maxTokens: Int = maxTrainingChunkTokens
     ) throws -> [TokenizedInstructionExample] {
-        try examples.compactMap { example in
+        try examples.enumerated().compactMap { exampleIndex, example in
             let promptTokens = try instructionTokens(
                 example: example,
                 includeAssistant: false,
-                tokenizer: tokenizer,
+                renderer: renderer,
                 modelID: modelID)
             let fullTokens = try instructionTokens(
                 example: example,
                 includeAssistant: true,
-                tokenizer: tokenizer,
+                renderer: renderer,
                 modelID: modelID)
+            // Length is a property of the ROW (skip it, as the loader already
+            // skips unusable rows); prefix failure is a property of the
+            // TEMPLATE (refuse, or every row trains on a wrong span).
             guard fullTokens.count >= 2,
                 promptTokens.count < fullTokens.count,
                 fullTokens.count <= maxTokens + 1
             else { return nil }
+            guard fullTokens.starts(with: promptTokens) else {
+                throw FineTuneTrainingError.promptRenderNotPrefix(
+                    modelID: modelID, exampleIndex: exampleIndex)
+            }
             var weights = Array(repeating: Float(0), count: fullTokens.count - 1)
             let firstAssistantTarget = max(0, promptTokens.count - 1)
             if firstAssistantTarget < weights.count {
@@ -573,10 +704,15 @@ public enum FineTuneTrainer {
         }
     }
 
+    /// One render of one example. `includeAssistant` picks which end of the
+    /// pair this is, and it drives the generation prompt: the prompt-only
+    /// render gets one (it is the inference-time prefix), the completed render
+    /// must NOT, or the template appends a second assistant header after the
+    /// answer and the mask supervises it.
     private static func instructionTokens(
         example: InstructionExample,
         includeAssistant: Bool,
-        tokenizer: Tokenizer,
+        renderer: any FineTuneInstructionRenderer,
         modelID: String
     ) throws -> [Int] {
         let lowerModel = modelID.lowercased()
@@ -594,25 +730,35 @@ public enum FineTuneTrainer {
             messages.append(["role": "assistant", "content": example.assistant])
         }
         do {
-            return try tokenizer.applyChatTemplate(
+            return try renderer.chatTemplateTokens(
                 messages: messages,
-                tools: nil,
+                addGenerationPrompt: !includeAssistant,
                 additionalContext: ExperimentTasks.qwenContext(
                     modelID: modelID,
                     qwenThinkingEnabled: false))
-        } catch TokenizerError.missingChatTemplate {
+        } catch Tokenizers.TokenizerError.missingChatTemplate {
             return fallbackInstructionTokens(
                 example: example,
                 includeAssistant: includeAssistant,
-                tokenizer: tokenizer,
+                renderer: renderer,
+                modelID: modelID)
+        } catch MLXLMCommon.TokenizerError.missingChatTemplate {
+            return fallbackInstructionTokens(
+                example: example,
+                includeAssistant: includeAssistant,
+                renderer: renderer,
                 modelID: modelID)
         }
     }
 
+    /// The no-chat-template render. It is generation-prompt shaped in the same
+    /// asymmetric way: the prompt-only render ends at the bare `Assistant:`
+    /// header, the completed render continues straight into the answer and
+    /// appends NOTHING after it.
     private static func fallbackInstructionTokens(
         example: InstructionExample,
         includeAssistant: Bool,
-        tokenizer: Tokenizer,
+        renderer: any FineTuneInstructionRenderer,
         modelID: String
     ) -> [Int] {
         let lowerModel = modelID.lowercased()
@@ -625,7 +771,7 @@ public enum FineTuneTrainer {
             : example.user
         parts.append("User: \(user)")
         parts.append(includeAssistant ? "Assistant: \(example.assistant)" : "Assistant:")
-        return tokenizer.encode(text: parts.joined(separator: "\n"), addSpecialTokens: true)
+        return renderer.encode(text: parts.joined(separator: "\n"), addSpecialTokens: true)
     }
 
     private static func trainMaskedInstructionAdapter(

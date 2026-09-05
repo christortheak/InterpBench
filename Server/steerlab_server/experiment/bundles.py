@@ -706,14 +706,20 @@ def _check_bundle_closure(meta: dict, members) -> None:
             "bundle carries duplicate member(s): "
             + ", ".join(sorted(duplicated)[:5])
             + " — refusing an ambiguous bundle")
-    if meta.get("pipelinePortableSha256") \
+    # PRESENCE of the field, not its truthiness (external review,
+    # 2026-09-05): the stamp is the claim, and a bundle that declares an
+    # EMPTY pin and ships no ledger would otherwise import clean — pin
+    # stamped, evidence silently gone. A malformed-but-present pin is the
+    # per-member check's business; that the member exists at all is this
+    # check's.
+    if meta.get("pipelinePortableSha256") is not None \
             and counts.get("steerlab-pipeline.json", 0) != 1:
         raise BundleError(
             "bundle metadata pins a portable pipeline ledger the bundle "
             "does not carry (exactly once) — refusing an incomplete bundle")
 
 
-def _refuse_outer_hash_mismatch(bundle_path: str, expected: str) -> None:
+def _refuse_outer_hash_mismatch(bundle_path: str, expected: str | None) -> None:
     """The OUT-OF-BAND pin, checked before the archive is opened at all.
 
     Portability gap G3 (``docs/PORTABILITY-CONTRACTS.md``): the archive digest
@@ -730,9 +736,16 @@ def _refuse_outer_hash_mismatch(bundle_path: str, expected: str) -> None:
     hashes are NAMED, because a client that cannot see which side moved cannot
     tell a stale pin from a tampered file.
     """
-    expected = expected.strip().lower()
-    if not expected:
+    # An ABSENT pin (``None``, ``""``, blank) is "no pin", which is the
+    # documented option every call site already relies on — ``import_bundle``
+    # only calls this when the caller supplied something. Anything else must
+    # be a digest: a non-string used to raise ``AttributeError`` from
+    # ``.strip()`` (a crash, not a refusal) and a garbage string was reported
+    # as a hash MISMATCH, which tells the reader to go re-fetch an archive
+    # that was never the problem (external review, 2026-09-05).
+    if expected is None or (isinstance(expected, str) and not expected.strip()):
         return
+    expected = _require_digest(expected, what="the out-of-band bundle pin")
     actual = sha256_file(bundle_path)
     if actual != expected:
         raise BundleError(
@@ -740,6 +753,108 @@ def _refuse_outer_hash_mismatch(bundle_path: str, expected: str) -> None:
             "nothing was extracted. Re-fetch the bundle and retry with the "
             "expectedSha256 the job record stamped, or drop the pin only if "
             "you fetched the archive over a channel you already trust")
+
+
+#: A SHA-256 digest as bundle metadata may spell one. Hex carries no case, so
+#: BOTH cases are accepted and every comparison is made in lowercase — a
+#: producer that stamped uppercase is VERIFIED, not refused over a difference
+#: that means nothing. Length and alphabet are exact, because the whole point
+#: of checking shape is that ``""`` and ``"not a digest"`` become refusals
+#: rather than a comparison that silently cannot fail (external review,
+#: 2026-09-05).
+_SHA256_TEXT = re.compile(r"\A[0-9a-fA-F]{64}\Z")
+
+
+def _require_digest(value, *, what: str) -> str:
+    """``value`` as a lowercase hex digest, or a refusal.
+
+    Anything that is not 64 hex characters is refused: absent, ``""``, blank,
+    the wrong length, the wrong alphabet, or not a string at all.
+
+    The distinction this exists for (external review, 2026-09-05). The
+    importer used to ask only whether a pin was ``None`` and then compare it
+    with ``if expected and digest != expected`` — so ``"sha256": ""`` passed
+    the presence test AND switched the comparison off, and the member landed
+    in the canonical workspace with nothing having verified a byte of it. A
+    pin that cannot be compared is not a weaker pin; it is NO pin, and an
+    unpinned member is precisely what this module refuses everywhere else.
+    """
+    if not isinstance(value, str) or not _SHA256_TEXT.match(value):
+        raise BundleError(
+            f"{what} declares {value!r}, which is not a SHA-256 digest "
+            "(64 hex characters) — refusing an unverifiable bundle")
+    return value.lower()
+
+
+def _require_safe_segment(value, *, field: str) -> str:
+    """One path segment, and one that cannot walk out of the directory it
+    names: no separators, no NUL, never absolute, never ``.`` or ``..``.
+
+    Bundle METADATA is attacker-controlled in exactly the way member names
+    are, and the importer DERIVES destinations from it — so a metadata
+    identifier gets the member rule (external review, 2026-09-05). This is the
+    cheap, legible half, and it names the field that is wrong; canonical
+    containment (:func:`_contained_destination`) is still checked afterwards,
+    because a segment that looks innocent can still be a symlink.
+    """
+    if (not isinstance(value, str) or not value.strip()
+            or value in (os.curdir, os.pardir) or os.path.isabs(value)
+            or "/" in value or "\\" in value or "\0" in value):
+        raise BundleError(
+            f"bundle metadata field {field!r} is not a single safe path "
+            f"segment: {value!r} — refusing a bundle whose derived "
+            "destination could leave the import root")
+    return value
+
+
+def _contained_destination(target: str, *parts: str, what: str) -> str:
+    """A DERIVED destination, canonicalized and held to the member rule.
+
+    Literally the two lines :func:`_plan_import` runs on every archive member
+    — ``os.path.realpath`` then ``os.path.commonpath`` — because a destination
+    the importer COMPUTES from metadata deserves no more trust than one the
+    archive states, and a symlink is a tunnel whichever way the path was
+    reached (external review, 2026-09-05).
+    """
+    dest = os.path.realpath(os.path.join(target, *parts))
+    if dest != target and os.path.commonpath([target, dest]) != target:
+        raise BundleError(
+            f"bundle metadata places {what} outside the target root "
+            f"({dest}) — refusing")
+    return dest
+
+
+def _preflight_run_directory(meta: dict, target: str, *,
+                             portable: bool) -> str | None:
+    """The run directory this bundle's metadata derives, VALIDATED — or
+    ``None`` when the bundle names no run and needs none.
+
+    The bug this closes (external review, 2026-09-05). ``runID`` came straight
+    out of the bundle's own metadata and was joined onto ``<target>/runs``
+    with no check at all, so a validly pinned evidence bundle declaring
+    ``runID: "../../outside"`` wrote its portable ledger into a sibling of the
+    import root — and a ``runs/<id>`` that was a symlink carried it out the
+    same way. Neither hash helps: the outer pin legitimately pins an archive
+    whose METADATA is unsafe, and the ledger's own pin attests that the bytes
+    are the right bytes, never where they may go.
+
+    Decided HERE, with the rest of preflight, so the refusal costs the
+    workspace nothing — not at commit time, once the archive's ordinary
+    members have already landed.
+    """
+    raw = meta.get("runID")
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        if portable:
+            # A verified ledger with nowhere to go used to be dropped in
+            # silence, which is a "successful" import missing the very
+            # evidence it was carrying.
+            raise BundleError(
+                "bundle carries a portable pipeline ledger but declares no "
+                "runID to place it under — refusing an unplaceable bundle")
+        return None
+    run_id = _require_safe_segment(raw, field="runID")
+    return _contained_destination(target, "runs", run_id,
+                                  what=f"runs/{run_id}")
 
 
 #: The staging directory's name prefix. Created INSIDE the target root, so the
@@ -755,9 +870,12 @@ class _PlannedMember:
     member: object                       # tarfile.TarInfo
     #: Absolute path in the target root this member commits to.
     dest: str
-    #: The pinned digest from the bundle's entry list (never ``None`` — a
-    #: member without one is refused in preflight).
-    expected: str | None
+    #: The pinned digest from the bundle's entry list, normalized to lowercase
+    #: hex. Always a usable digest: preflight refuses a member whose pin is
+    #: absent, empty, or malformed (:func:`_require_digest`), so the staging
+    #: pass compares UNCONDITIONALLY and has no "no pin here" branch left to
+    #: fall through (external review, 2026-09-05).
+    expected: str
     #: Whether OVERWRITING this destination was permitted at preflight, carried
     #: into the commit pass so the commit can ENFORCE the preflight's answer
     #: rather than assume it still holds (third-round review, 2026-08-24).
@@ -784,7 +902,8 @@ class _Landed:
 
 
 def _plan_import(tar, meta: dict, members, *, target: str,
-                 allow_overwrite: bool) -> tuple[list[_PlannedMember], bytes | None]:
+                 allow_overwrite: bool) -> tuple[list[_PlannedMember],
+                                                 bytes | None, str | None]:
     """PREFLIGHT the complete archive: every refusal that can be decided
     without the member's bytes, decided before a single byte lands.
 
@@ -796,9 +915,17 @@ def _plan_import(tar, meta: dict, members, *, target: str,
     refusal must leave the workspace exactly as it found it, which means the
     whole archive is judged before any of it is committed.
 
-    Returns the members that will land, in archive order, plus the verified
-    portable pipeline ledger (or ``None``). Reads nothing but tar metadata and
+    Returns the members that will land, in archive order, the verified
+    portable pipeline ledger (or ``None``), and the validated run directory
+    the metadata derives (or ``None``). Reads nothing but tar metadata and
     the bundle's own small JSON documents.
+
+    The DERIVED destination is judged here too (external review, 2026-09-05).
+    Preflight used to cover only what the archive names; the ledger's
+    destination is computed from ``runID``, landed after the members, and had
+    never been checked at all — so a refusal that belongs in preflight was
+    instead a write outside the import root. See
+    :func:`_preflight_run_directory`.
     """
     plan: list[_PlannedMember] = []
     portable_payload: bytes | None = None
@@ -812,12 +939,20 @@ def _plan_import(tar, meta: dict, members, *, target: str,
             # unpinned member is unverifiable), verified, and RETAINED inside
             # the imported pipeline run dir after extraction so local readers
             # resolve stage references without cluster paths.
-            expected = meta.get("pipelinePortableSha256")
-            payload = _read_metadata_member(tar, member)
-            if not expected:
+            declared = meta.get("pipelinePortableSha256")
+            if declared is None or (isinstance(declared, str)
+                                    and not declared.strip()):
                 raise BundleError(
                     "portable pipeline ledger carries no hash pin — "
                     "refusing an unverifiable bundle")
+            # Shape BEFORE comparison (external review, 2026-09-05): a pin
+            # that is not a digest is a broken bundle, not a tampered one, and
+            # `!=` reporting it as tampering sends the reader hunting the
+            # wrong thing.
+            expected = _require_digest(declared,
+                                       what="the portable pipeline ledger's "
+                                            "hash pin")
+            payload = _read_metadata_member(tar, member)
             if hashlib.sha256(payload).hexdigest() != expected:
                 raise BundleError(
                     "portable pipeline ledger failed its hash pin — "
@@ -834,11 +969,17 @@ def _plan_import(tar, meta: dict, members, *, target: str,
         # entry list does not name would otherwise land in the workspace
         # unchecked (parallel to the Swift evidence importer's
         # ensureAllVerified).
-        expected = _entry_hash(meta, member.name)
-        if expected is None:
+        declared = _entry_hash(meta, member.name)
+        if declared is _UNLISTED:
             raise BundleError(
                 f"bundle member not listed in the bundle's hash entries "
                 f"(unverifiable): {member.name}")
+        # LISTED is not the same as PINNED. The entry exists; whether it
+        # carries a digest that can be compared is a separate question, and
+        # the one ``"sha256": ""`` used to slip through (external review,
+        # 2026-09-05).
+        expected = _require_digest(
+            declared, what=f"the bundle's entry for {member.name}")
         dest = os.path.realpath(os.path.join(target, member.name))
         if os.path.commonpath([target, dest]) != target:
             raise BundleError(
@@ -863,7 +1004,9 @@ def _plan_import(tar, meta: dict, members, *, target: str,
         plan.append(_PlannedMember(member=member, dest=dest,
                                    expected=expected,
                                    may_overwrite=bool(allow_overwrite)))
-    return plan, portable_payload
+    run_dir = _preflight_run_directory(meta, target,
+                                       portable=portable_payload is not None)
+    return plan, portable_payload, run_dir
 
 
 def _stage_plan(tar, plan: list[_PlannedMember], *, staging: str,
@@ -901,7 +1044,12 @@ def _stage_plan(tar, plan: list[_PlannedMember], *, staging: str,
         # perfectly good bundle after 3 seconds ("hash mismatch after
         # extracting …"). Hashing what the tar actually carried is the tamper
         # firewall this check exists for, and it cannot race.
-        if planned.expected and digest != planned.expected:
+        # UNCONDITIONAL. It read ``if planned.expected and digest != …``,
+        # which made an empty pin disable its own check — a guard that a
+        # tampered bundle could satisfy by supplying nothing (external review,
+        # 2026-09-05). Preflight now guarantees a usable lowercase digest, so
+        # there is nothing left to guard against and no way to opt out.
+        if digest != planned.expected:
             raise BundleError(
                 f"hash mismatch after extracting {member.name}")
         if os.path.exists(planned.dest) and _is_manifest_path(planned.dest,
@@ -1089,8 +1237,11 @@ def import_bundle(bundle_path: str, *, target_root: str | None = None,
     Three passes, and the split is the whole point:
 
     1. **preflight** (:func:`_plan_import`) — closure, per-member containment,
-       hash-entry coverage, the size caps, and the never-overwrite rule, all
-       decided against the real target before anything is written;
+       hash-entry coverage (shape included, so an empty pin is a refusal
+       rather than a check that switches itself off), the containment of every
+       destination DERIVED from metadata, the size caps, and the
+       never-overwrite rule, all decided against the real target before
+       anything is written;
     2. **stage** (:func:`_stage_plan`) — every member streams into a temporary
        tree on the destination filesystem and is verified there, including the
        frozen- and draft-manifest firewalls;
@@ -1131,7 +1282,7 @@ def import_bundle(bundle_path: str, *, target_root: str | None = None,
             # the file and the one a hostile archive is built to outrun.
             _refuse_oversized_archive(members)
             _check_bundle_closure(meta, members)
-            plan, portable_payload = _plan_import(
+            plan, portable_payload, run_dir = _plan_import(
                 tar, meta, members, target=target,
                 allow_overwrite=allow_overwrite)
             if plan:
@@ -1176,9 +1327,21 @@ def import_bundle(bundle_path: str, *, target_root: str | None = None,
         # stage references by run ID, never by cluster path. Part of the same
         # transaction: it lands in the canonical workspace like anything else.
         if portable_payload is not None:
+            # `run_dir` is preflight's, not this line's: the metadata that
+            # names it was validated as a single safe segment and its
+            # destination canonically contained before a member landed
+            # (external review, 2026-09-05). Preflight also guarantees it is
+            # not None whenever there is a payload to place.
             run_id = str(meta.get("runID") or "")
-            run_dir = os.path.join(target, "runs", run_id)
-            if run_id and os.path.isdir(run_dir):
+            # …and re-canonicalized HERE, at commit time, for the same reason
+            # `_commit_one` re-enforces the overwrite rule: preflight ran
+            # before this call's own members created `runs/`, and a symlink
+            # swapped into that window would carry the write out of the root
+            # preflight cleared. Cheap, and the check must be true at the
+            # moment it is relied on, not merely at the moment it was made.
+            run_dir = _contained_destination(target, "runs", run_id,
+                                             what=f"runs/{run_id}")
+            if os.path.isdir(run_dir):
                 local = os.path.join(run_dir, "pipeline-portable.json")
                 # Retention is still "only if it is not already there" — a
                 # re-import must leave a ledger that stands alone, exactly as
@@ -1243,11 +1406,13 @@ def import_bundle(bundle_path: str, *, target_root: str | None = None,
         # never authored. Loud in the RESULT, never a refusal — importing
         # evidence into a workspace with no matching experiment stays legal.
         from . import experiment_store
-        run_id = str(meta.get("runID") or "")
-        primary = os.path.join(target, "runs", run_id)
-        if run_id and os.path.isdir(primary):
+        # The SAME derived directory, and therefore the same preflight-
+        # validated one: adoption reads the run's own artifacts and writes the
+        # local draft, so a `runID` that escaped the root would have aimed
+        # both at whatever it pleased (external review, 2026-09-05).
+        if run_dir is not None and os.path.isdir(run_dir):
             result["revisionAdoption"] = \
-                experiment_store.adopt_evidence_revision(primary, target)
+                experiment_store.adopt_evidence_revision(run_dir, target)
     return result
 
 
@@ -2070,11 +2235,22 @@ def _add_json(tar: tarfile.TarFile, arcname: str, payload: dict) -> None:
     tar.addfile(info, io.BytesIO(data))
 
 
-def _entry_hash(meta: dict, path: str) -> str | None:
+#: Returned when the entry list does not NAME the member at all — a different
+#: failure from an entry that names it and pins nothing, and one that deserves
+#: its own refusal. ``None`` cannot say which, because ``"sha256": null`` is
+#: itself one of the malformed pins being caught (external review,
+#: 2026-09-05).
+_UNLISTED = object()
+
+
+def _entry_hash(meta: dict, path: str):
+    """The digest the bundle's entry list DECLARES for ``path``, exactly as
+    declared — or :data:`_UNLISTED`. Validation is the caller's
+    (:func:`_require_digest`); this only looks it up."""
     for entry in meta.get("entries", []):
         if entry.get("path") == path:
             return entry.get("sha256")
-    return None
+    return _UNLISTED
 
 
 def sha256_file(path: str) -> str:

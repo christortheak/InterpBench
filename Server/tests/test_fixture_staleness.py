@@ -369,6 +369,12 @@ def test_every_committed_fixture_has_a_staleness_test():
         # Checked inline in test_model_capabilities.py (the records against
         # the schema, the probe verdicts, hashes, gates and sentences).
         "model-capabilities.json", "model-capabilities.schema.json",
+        # Hand-authored contract (not regenerated from either engine — it
+        # states the INTENDED verdicts, SCI-04, 2026-09-05), checked inline on
+        # both sides: test_study_stats.py
+        # (test_dose_monotonicity_matches_the_cross_engine_fixture) and
+        # Tests/ExperimentKitTests/StudyStatisticsTests.swift.
+        "dose-monotonicity.json",
         # Phase-0 portability contracts. The two produced by THIS engine are
         # write-if-missing goldens checked inline in
         # test_portability_contracts.py (delete the file and re-run that

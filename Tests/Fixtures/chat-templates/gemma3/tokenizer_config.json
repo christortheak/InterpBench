@@ -1,0 +1,7 @@
+{
+  "bos_token": "<bos>",
+  "clean_up_tokenization_spaces": false,
+  "eos_token": "<end_of_turn>",
+  "model_max_length": 4096,
+  "tokenizer_class": "PreTrainedTokenizer"
+}
