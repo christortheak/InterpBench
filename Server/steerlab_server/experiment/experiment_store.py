@@ -3538,23 +3538,30 @@ def _check_jlens_readout(name: str, d: dict, root: str | None) -> None:
             f"sampled-text instrument, or drop the readout block")
 
     model_id = d.get("modelID")
-    entry = jlens_importer.SUPPORTED.get(model_id or "")
-    if entry is None:
-        raise ExperimentStoreError(
-            f"cannot freeze '{name}': jlensReadout is declared but "
-            f"'{model_id}' has no supported lens — this feature is Gemma-only")
-    if entry.get("tier") != "evidence":
-        raise ExperimentStoreError(
-            f"cannot freeze '{name}': '{model_id}' is a {entry.get('tier')}-tier "
-            f"model for J-lens work. It exercises the path and produces no "
-            f"evidence, so a frozen study cannot select it")
-
     try:
         record = jlens_store.resolve(block["lensID"], root)
     except Exception as exc:  # noqa: BLE001
         raise ExperimentStoreError(
             f"cannot freeze '{name}': pinned J-lens '{block['lensID']}' is not "
             f"imported in this workspace ({type(exc).__name__})") from exc
+
+    # The tier: the curated row when the study has decided about this model,
+    # else what the researcher declared when the lens was imported (2026-09-05
+    # — any model with a published lens may be imported, and the tier is the
+    # one thing no upstream file can supply). Resolved through ONE helper so
+    # freeze, qualify and run start cannot disagree.
+    tier, tier_source = jlens_importer.tier_of(model_id, record)
+    if tier == "unknown":
+        raise ExperimentStoreError(
+            f"cannot freeze '{name}': '{model_id}' has no evidence tier — it "
+            f"is not in the curated lens table and lens '{record.lensID}' "
+            f"carries no import declaration. Re-import it with "
+            f"`jlens import {model_id} --tier evidence|testing`")
+    if tier != "evidence":
+        raise ExperimentStoreError(
+            f"cannot freeze '{name}': '{model_id}' is a {tier}-tier "
+            f"model for J-lens work ({tier_source}). It exercises the path "
+            f"and produces no evidence, so a frozen study cannot select it")
 
     revision, dtype = d.get("modelRevision"), d.get("dtype")
     if not revision or not dtype:

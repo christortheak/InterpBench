@@ -6766,8 +6766,7 @@ def _open_jlens_trace(manifest, model, root, *, run_directory, checkpoint,
         # it would be a second contract.
         raise RuntimeError(
             f"jlensReadout is declared but cannot be armed: {exc}") from exc
-    resolved_tier = (jlens_importer.SUPPORTED.get(manifest.model_id or "")
-                     or {}).get("tier") or "unknown"
+    resolved_tier = jlens_importer.tier_of(manifest.model_id, record)[0]
     try:
         runtime_dtype, quantization = resolve_runtime(model)
     except JLensError:

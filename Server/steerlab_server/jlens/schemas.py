@@ -34,10 +34,16 @@ ARTIFACT_TYPE = "jlens-imported"
 SUBSTRATE = "python-hf-transformers"
 
 #: Every readout convention this engine can stamp. The canonical readout is
-#: ``softcap(U · RMSNorm(J_l h))`` with Gemma's ``(1 + weight)`` gain folded
-#: into the token row; see plan §2. Verified against the reference on
-#: 2026-07-27 (Stage 1a).
-CANONICAL_READOUT = "softcap(U.RMSNorm(J_l h)); gain g=1+w folded into token row"
+#: ``softcap(U · RMSNorm(J_l h))`` with the model's final-norm gain ``g``
+#: folded into the token row; see plan §2. Verified against the reference on
+#: 2026-07-27 (Stage 1a). ``g`` is ``1 + weight`` on offset-parameterized
+#: RMSNorms (Gemma 1/2/3, Qwen3.5, Qwen3-Next, …) and ``weight`` on direct
+#: ones (Llama, Qwen2/3, OLMo, GPT-OSS, …); which one a model uses is
+#: OBSERVED from its norm module (:mod:`norm_convention`), never assumed from
+#: its name, and stamped wherever the gain is used.
+CANONICAL_READOUT = ("softcap(U.RMSNorm(J_l h)); final-norm gain g folded into "
+                     "token row (g=1+w offset RMSNorm, g=w direct RMSNorm; "
+                     "observed per model)")
 DIRECTION_CONVENTION = "J_l^T (g . u_t)"
 
 
@@ -68,9 +74,11 @@ def _iso(when: datetime | None = None) -> str:
 class SourceRef:
     """The upstream artifact, exactly as fetched.
 
-    ``folder``/``tensorFile``/``configFile`` come verbatim from the supported
-    table (plan §3.1) and are never synthesized from the model id: upstream
-    names the tensor after the *checkpoint variant*, so ``gemma-3-12b/`` ships
+    ``folder``/``tensorFile``/``configFile`` come verbatim from the curated
+    table (plan §3.1) or from the published folder's own contents — the
+    ``config.yaml`` that names the model and the one ``*_jacobian_lens.pt``
+    beside it — and are never synthesized from the model id: upstream names
+    the tensor after the *checkpoint variant*, so ``gemma-3-12b/`` ships
     ``gemma-3-12b-pt_jacobian_lens.pt`` and any naming rule is wrong for it.
     """
 
@@ -165,6 +173,15 @@ class JLensRecord:
     configHash: str | None = None
     referencePackage: str | None = None
     referenceCommit: str | None = None
+    #: The evidence tier this lens's model holds IN THIS PROJECT, and where
+    #: that came from: ``"curated"`` when the model has a row in
+    #: ``importer.SUPPORTED``, ``"declared"`` when the researcher declared it
+    #: at import (``jlens import --tier``) because the model has a published
+    #: lens but no curated row. A curated row always wins over a declaration.
+    #: ``None`` on records written before 2026-09-05, which resolve through
+    #: the curated table alone, exactly as they always did.
+    tier: str | None = None
+    tierSource: str | None = None
     readoutConvention: str = CANONICAL_READOUT
     directionConvention: str = DIRECTION_CONVENTION
     targetLayerConvention: str = "n_layers-1 (final block output); transport there is the identity"

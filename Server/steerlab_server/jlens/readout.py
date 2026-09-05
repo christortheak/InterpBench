@@ -2,7 +2,14 @@
 
 Canonical readout (plan §2, confirmed against the reference in Stage 1a)::
 
-    softcap( U · (g ⊙ RMSNorm(J_l h)) ),   g = 1 + norm.weight
+    softcap( U · (g ⊙ RMSNorm(J_l h)) ),   g = the final norm's gain
+
+``g`` is ``1 + norm.weight`` on an offset-parameterized RMSNorm (Gemma 1/2/3,
+Qwen3.5, Qwen3-Next, …) and ``norm.weight`` on a direct one (Llama, Qwen2/3,
+OLMo, GPT-OSS, …). Which one a model uses is OBSERVED from its own norm module
+at build time (:mod:`norm_convention`) and stamped on the readout as
+``gain_convention``; a name rule is wrong in both directions, and a norm the
+fold cannot reproduce (a LayerNorm with centering or bias) refuses the build.
 
 ``g`` is applied exactly ONCE on both vocabulary paths, but not in the same
 place: the watchlist folds it into its own copy of the token rows at build
@@ -31,6 +38,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from . import norm_convention
 from .schemas import JLensError
 
 
@@ -80,9 +88,16 @@ class LensReadout:
 
     def __init__(self, *, jacobians: dict, gain, watched_rows=None,
                  watchlist: list[int] | None = None, lm_head=None,
-                 softcap: float | None = None, device=None, dtype=None):
+                 softcap: float | None = None, device=None, dtype=None,
+                 gain_convention: str | None = None, eps: float = 1e-6):
         self.jacobians = jacobians
         self.gain = gain
+        #: How ``gain`` was read off the final norm — ``"offset"`` (1 + w) or
+        #: ``"direct"`` (w) — as observed on the model this readout was built
+        #: for. Stamped wherever the readout's numbers are recorded.
+        self.gain_convention = gain_convention
+        #: The final norm's own epsilon, so ``RMSNorm`` here is the model's.
+        self.eps = eps
         self.watched_rows = watched_rows      # [W, d], already gain-folded
         self.watchlist = list(watchlist or [])
         self.lm_head = lm_head
@@ -126,7 +141,12 @@ class LensReadout:
             raise JLensError(
                 "could not locate the model's output head and final norm — the "
                 "canonical readout needs both")
-        gain = (1.0 + norm.weight.detach().to(device=device, dtype=compute_dtype))
+        # OBSERVED, not assumed: the module is run on a seeded vector and the
+        # fold it reproduces is the one used. Refuses a norm it cannot fold.
+        observed = norm_convention.observe(norm)
+        gain = norm_convention.gain_from_weight(
+            norm.weight.detach().to(device=device, dtype=compute_dtype),
+            observed["convention"])
 
         watched_rows = None
         if config.watchlist:
@@ -141,14 +161,16 @@ class LensReadout:
                    watchlist=config.watchlist,
                    lm_head=head if config.armed_topk_layers() else None,
                    softcap=getattr(text_cfg, "final_logit_softcapping", None),
-                   device=device, dtype=compute_dtype)
+                   device=device, dtype=compute_dtype,
+                   gain_convention=observed["convention"],
+                   eps=observed["eps"])
 
     # --- the readout itself --------------------------------------------------
 
     def _normalize(self, z):
         import torch
 
-        return z * torch.rsqrt(z.pow(2).mean(-1, keepdim=True) + 1e-6)
+        return z * torch.rsqrt(z.pow(2).mean(-1, keepdim=True) + self.eps)
 
     def _cap(self, logits):
         import torch
@@ -252,26 +274,10 @@ class LensReadout:
             self.logits(hidden, layer, use_jacobian=use_jacobian), token_ids)
 
 
-def _output_head(model):
-    for attr in ("lm_head",):
-        head = getattr(model, attr, None)
-        if head is not None and hasattr(head, "weight"):
-            return head
-    inner = getattr(model, "language_model", None)
-    if inner is not None:
-        return _output_head(inner)
-    return None
-
-
-def _final_norm(model):
-    inner = getattr(model, "model", None) or getattr(model, "language_model", None)
-    while inner is not None:
-        norm = getattr(inner, "norm", None)
-        if norm is not None and hasattr(norm, "weight"):
-            return norm
-        nxt = getattr(inner, "model", None) or getattr(inner, "language_model", None)
-        inner = nxt if nxt is not inner else None
-    return None
+# The locators live with the convention observer, which needs them on the
+# checkpoint-only path too; these names stay for their existing callers.
+_output_head = norm_convention.output_head
+_final_norm = norm_convention.final_norm
 
 
 # --- resource preflight (plan §8.4) -----------------------------------------

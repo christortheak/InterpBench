@@ -47,16 +47,20 @@ history of what was tested when survives, and the freeze gate keeps its own
 rule — it looks for a *passing* entry for the exact runtime and ignores the
 rest.
 
-Tier is read from the supported-lens table, never from the caller
------------------------------------------------------------------
+Tier is read from the curated table or the import declaration, never from
+the qualify caller
+-----------------------------------------------------------------------------
 ``jlens qualify`` RUNS on a testing-tier model on purpose — rehearsing the
 mechanics on 4B before a 27B node is booked is the whole point of the cheap
 pass — and the record it writes is stamped ``tier: "testing"`` and refused by
-freeze. The tier comes from :data:`importer.SUPPORTED`, computed here, so no
-caller input and no later edit of an existing record can upgrade it.
+freeze. The tier comes from :func:`importer.tier_of` — the curated row when
+the study has decided about the model, else the tier the researcher declared
+at ``jlens import --tier`` and the record carries — computed here, so no
+qualify argument and no later edit of an existing record can upgrade it.
 
-Server-only, Gemma-only (CLAUDE.md, hard requirement): lens artifacts are
-PyTorch/HF-native and activations do not transfer across substrates.
+Server-only (lens artifacts are PyTorch/HF-native and activations do not
+transfer across substrates); any model with a published lens whose final norm
+is a foldable RMSNorm (:mod:`norm_convention`).
 """
 
 from __future__ import annotations
@@ -263,18 +267,19 @@ def resolve_runtime(model) -> tuple[str, str | None]:
     return dtype, method
 
 
-def tier_for(model_id: str) -> str:
-    """The evidence tier of a model, from the supported-lens table.
+def tier_for(model_id: str, record=None) -> str:
+    """The evidence tier of a model: the curated row, else the lens record's
+    import declaration, else ``"unknown"``.
 
-    Computed here on every write so a caller cannot supply it and an existing
-    record cannot be edited into a higher one: the tier is this project's
-    scope decision (CLAUDE.md 2026-07-27), and it is what stops a 4B rehearsal
-    from being cited as evidence.
+    Computed here on every write so a qualify caller cannot supply it and an
+    existing record cannot be edited into a higher one: the tier is this
+    project's scope decision (CLAUDE.md 2026-07-27, extended 2026-09-05 to a
+    declaration at import for uncurated models), and it is what stops a
+    rehearsal from being cited as evidence.
     """
-    from .importer import SUPPORTED
+    from .importer import tier_of
 
-    entry = SUPPORTED.get(model_id or "")
-    return (entry or {}).get("tier") or "unknown"
+    return tier_of(model_id, record)[0]
 
 
 def qualification_id(*, lens_id: str, lens_sha: str | None, model_id: str,
@@ -859,8 +864,8 @@ def _compare_against_reference(record, readout, layers: list[int], ref_model,
     if not norm_applied:
         problems.append(
             "the reference's unembed() no longer applies the model's final "
-            "norm — this engine folds g = 1 + norm.weight into the token rows "
-            "on the assumption that it does, so both paths would now be "
+            "norm — this engine folds the final norm's gain g into the token "
+            "rows on the assumption that it does, so both paths would now be "
             "self-consistently wrong")
     if fp32_forced and ref_model._lm_head.weight.dtype != torch.float32:
         # The mode says float32 and the head is not: the promotion skipped it
@@ -944,7 +949,12 @@ def _compare_against_reference(record, readout, layers: list[int], ref_model,
                   "referenceHeadDtype": head_dtype,
                   "referencePackage": backend_mod.REFERENCE_PACKAGE,
                   "referenceVersion": backend_mod.reference_version(),
-                  "referenceCommit": backend_mod.REFERENCE_COMMIT})
+                  "referenceCommit": backend_mod.REFERENCE_COMMIT,
+                  # Which gain fold the readout observed on this runtime's
+                  # final norm; the reference applies the module itself, so
+                  # agreement here is also agreement about the fold.
+                  "normGainConvention": getattr(readout, "gain_convention",
+                                                None)})
 
 
 def _block_outputs(model, prompt: str, layers: list[int], *,
@@ -1269,7 +1279,7 @@ def qualify(lens_id: str, model_id: str, *, revision: str | None = None,
             "the cache happens to hold later")
 
     runtime_dtype, quantization = resolve_runtime(model)
-    tier = tier_for(model_id)
+    tier = tier_for(model_id, record)
     emit(f"runtime resolved: {runtime_dtype}"
          + (f"/{quantization}" if quantization else ", unquantized")
          + f"; tier {tier}")

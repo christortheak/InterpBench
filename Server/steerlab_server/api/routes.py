@@ -869,6 +869,7 @@ def _jlens_supported() -> list[dict]:
     from ..jlens import importer
 
     return [{"modelID": model_id, "tier": entry["tier"],
+             "tierSource": "curated",
              "folder": entry["folder"], "tensor": entry["tensor"]}
             for model_id, entry in sorted(importer.SUPPORTED.items())]
 
@@ -2141,7 +2142,7 @@ def build_router(state: ServiceState) -> APIRouter:
         job = state.jobs.submit("model:install", work)
         return {"jobId": job.id}
 
-    # --- J-lens reading instruments (server-only, Gemma-only) ----------------
+    # --- J-lens reading instruments (server-only) ----------------------------
     # Acquisition and import are separate verbs because they have different
     # prerequisites and different failure modes: acquire needs egress and puts
     # bytes in the machine's HF cache; import is offline and writes the
@@ -2175,13 +2176,23 @@ def build_router(state: ServiceState) -> APIRouter:
         caller-supplied pattern.
         """
         from ..jlens import acquire as acquire_mod
+        from ..jlens import importer
         from ..jlens.schemas import JLensError
 
         model_id = str(body.get("modelID", "")).strip()
-        try:
-            acquire_mod.patterns_for(model_id)      # validates against the table
-        except JLensError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+        # Curated rows validate here; any other owner/name is resolved by the
+        # job itself against the published configs it fetches first, and the
+        # pattern is still derived server-side either way.
+        if not model_id or "/" not in model_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{model_id}' is not a Hugging Face model id "
+                       f"(owner/name)")
+        if importer.is_curated(model_id):
+            try:
+                acquire_mod.patterns_for(model_id)
+            except JLensError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
 
         def work(job):
             snapshot = acquire_mod.acquire(
@@ -2202,15 +2213,18 @@ def build_router(state: ServiceState) -> APIRouter:
         from ..jlens.schemas import JLensError
 
         model_id = str(body.get("modelID", "")).strip()
+        tier = body.get("tier")
+        tier = str(tier).strip() if tier not in (None, "") else None
         try:
-            importer.entry_for(model_id)
+            importer.resolve_tier(model_id, tier)   # required off the table
+            importer.entry_for(model_id)            # curated row or cached config
         except JLensError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
         def work(job):
             job.log(f"importing the cached lens for {model_id} "
                     f"(converting once to per-layer safetensors)")
-            record = importer.import_lens(model_id)
+            record = importer.import_lens(model_id, tier=tier)
             job.log(f"lens {record.lensID}: layers {record.sourceLayers[0]}.."
                     f"{record.sourceLayers[-1]}, target {record.targetLayer}, "
                     f"converted {record.converted.layerCount} layers as "
@@ -2219,6 +2233,7 @@ def build_router(state: ServiceState) -> APIRouter:
                     "sourceLayers": record.sourceLayers,
                     "targetLayer": record.targetLayer,
                     "dModel": record.dModel,
+                    "tier": record.tier, "tierSource": record.tierSource,
                     "converted": record.converted.path if record.converted else None}
 
         return {"jobId": state.jobs.submit("jlens-import", work).id}
@@ -2441,11 +2456,11 @@ def build_router(state: ServiceState) -> APIRouter:
                     f"readout arm {report['arms']['readout']['verdict']}")
             return report
 
-        from ..jlens import importer, lens_store
+        from ..jlens import lens_store
 
         try:
             lens_store.resolve(str(body.get("lensID") or "").strip()
-                               or importer.lens_id_for(model_id))
+                               or lens_store.for_model(model_id))
         except JLensError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         return {"jobId": state.jobs.submit("jlens-g0", work).id}
@@ -2502,7 +2517,7 @@ def build_router(state: ServiceState) -> APIRouter:
 
         try:
             lens_store.resolve(str(body.get("lensID") or "").strip()
-                               or importer.lens_id_for(model_id))
+                               or lens_store.for_model(model_id))
         except JLensError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         return {"jobId": state.jobs.submit("jlens-probe", work).id}

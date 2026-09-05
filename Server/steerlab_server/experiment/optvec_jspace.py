@@ -60,7 +60,7 @@ exploratory, not citable evidence; a runtime with a passing ``jlens qualify``
 record is stamped with that record's id instead. The stamp is written by the
 engine, not by the researcher remembering.
 
-Gemma-only / server-only by rule (CLAUDE.md, hard requirement): imported lens
+Server-only by rule (hard requirement; any model with a published lens): imported lens
 artifacts are PyTorch/HF-native and activations do not transfer across
 substrates. The gate is mechanical — the lens must resolve, and its fit model
 must be the running model — because lenses exist only for the Gemma models in
@@ -309,19 +309,18 @@ def resolve_lens(lens_id: str, root: str | None = None):
 
 
 def evidence_tier_for(record) -> str:
-    """The lens's own tier, from the supported-lens table keyed by the model it
-    was FITTED on.
+    """The lens's own tier — the curated row for the model it was FITTED on,
+    else the tier declared when it was imported.
 
     The tier is this project's scope decision about where evidence comes from
-    (27B is 'evidence', smaller Gemmas are 'testing'), so it belongs to the
-    lens, not to the run asking for it. A lens whose fit model is not in the
-    table — a hand-built record, a future row — is stamped ``unknown`` rather
-    than defaulted into a tier it never earned.
+    (27B is 'evidence', smaller Gemmas are 'testing', an uncurated model is
+    whatever its import declared), so it belongs to the lens, not to the run
+    asking for it. A lens with neither — a hand-built record — is stamped
+    ``unknown`` rather than defaulted into a tier it never earned.
     """
-    from ..jlens.importer import SUPPORTED
+    from ..jlens.importer import tier_of
 
-    entry = SUPPORTED.get(record.fit.modelID or "")
-    return (entry or {}).get("tier") or "unknown"
+    return tier_of(record.fit.modelID, record)[0]
 
 
 def qualification_state(record, model) -> tuple[str, str]:
