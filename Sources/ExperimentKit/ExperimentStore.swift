@@ -828,7 +828,7 @@ public enum ExperimentStore {
     /// that has never gone wrong. Server twin:
     /// `experiment_store.ARM_BEARING_KEYS`.
     static func holdsArms(_ manifest: ExperimentManifest) -> Bool {
-        !manifest.concepts.isEmpty || !manifest.conditions.isEmpty
+        ManifestMutationPolicy.holdsArms(manifest)
     }
 
     /// Whether the INCOMING document still carries ANY measured surface —
@@ -838,7 +838,7 @@ public enum ExperimentStore {
     /// (test_transcript_study, caught at landing 2026-08-20). Server twin:
     /// `experiment_store._clears_every_arm`'s incoming check.
     static func holdsAnySurface(_ manifest: ExperimentManifest) -> Bool {
-        holdsArms(manifest) || !manifest.variantConditions.isEmpty
+        ManifestMutationPolicy.holdsAnySurface(manifest)
     }
 
     /// Persists a manifest. Frozen manifests are immutable: only the
@@ -858,42 +858,11 @@ public enum ExperimentStore {
         _ manifest: ExperimentManifest, allowCreate: Bool = false,
         mayClearArms: Bool = false
     ) throws {
-        if let existing = try? load(name: manifest.name) {
-            switch existing.status {
-            case .draft:
-                if !mayClearArms, holdsArms(existing), !holdsAnySurface(manifest) {
-                    throw ExperimentError.refusing(
-                        .armsCleared,
-                        "refusing to save '\(manifest.name)' with no concepts "
-                            + "and no conditions over a draft that has "
-                            + "\(existing.concepts.count) concept(s) and "
-                            + "\(existing.conditions.count) condition(s) — a "
-                            + "manifest does not lose its whole measured "
-                            + "surface in one write by accident",
-                        repair: clearedArmsRepair(manifest.name))
-                }
-            case .frozen:
-                // Only completion is allowed, and nothing else may change.
-                var completed = existing
-                completed.status = .complete
-                guard manifest == completed else {
-                    throw ExperimentError.refusing(
-                        .statusImmutable,
-                        "experiment '\(manifest.name)' is frozen — duplicate it "
-                            + "to iterate",
-                        repair: duplicateToIterateRepair(manifest.name))
-                }
-            case .complete:
-                throw ExperimentError.refusing(
-                    .statusImmutable,
-                    "experiment '\(manifest.name)' is complete and immutable",
-                    repair: duplicateToIterateRepair(manifest.name))
-            }
-        } else if !allowCreate {
-            throw ExperimentError(reason: "experiment '\(manifest.name)' does not exist")
-        }
-
-        try repository.persistAdmitted(manifest)
+        let storage = repository
+        try ManifestMutationPolicy.admitSave(
+            manifest, existing: try? storage.load(name: manifest.name),
+            allowCreate: allowCreate, mayClearArms: mayClearArms)
+        try storage.persistAdmitted(manifest)
     }
 
     // MARK: - Draft science-manifest setters (App gap A2)
@@ -1016,12 +985,7 @@ public enum ExperimentStore {
     /// disk still holds, which is the fact a caller writing a stale document
     /// does not know.
     static func clearedArmsRepair(_ name: String) -> String {
-        "steerlab-cli experiment verify \(name)  "
-            + "# the manifest on disk still holds its arms; re-attach what "
-            + "the caller dropped (steerlab-cli experiment attach \(name) "
-            + "<concept>… ; steerlab-cli experiment declare-condition "
-            + "\(name) …), or author the cleared study as its own draft "
-            + "with steerlab-cli experiment duplicate \(name) \(name)-v2"
+        ManifestMutationPolicy.clearedArmsRepair(name)
     }
 
     /// THE repair for every frozen-manifest refusal, as a runnable command
@@ -1029,9 +993,7 @@ public enum ExperimentStore {
     /// was, until now, prose: an agent had to guess the verb, the argument
     /// order, and that the copy is what it then edits.
     static func duplicateToIterateRepair(_ name: String) -> String {
-        "steerlab-cli experiment duplicate \(name) \(name)-v2 && "
-            + "steerlab-cli experiment <the verb you just ran> \(name)-v2 …  "
-            + "(frozen studies are immutable; the duplicate is a draft again)"
+        ManifestMutationPolicy.duplicateToIterateRepair(name)
     }
 
     /// Persist the researcher's declared study type (the top-of-page
