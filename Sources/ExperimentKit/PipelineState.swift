@@ -197,16 +197,14 @@ extension ClusterClient {
 public enum PipelineImportTriage {
     public static func awaitingImport(
         _ rows: [ClusterClient.PipelineRunSummary],
-        importedRunIDs: Set<String>,
-        localRunExists: (String) -> Bool
+        importedRunIDs: Set<String>
     ) -> [ClusterClient.PipelineRunSummary] {
         rows.filter { row in
             guard row.hasCompletedStages else { return false }
             guard row.parked != nil || row.disposition != nil else {
                 return false
             }
-            guard !importedRunIDs.contains(row.run) else { return false }
-            return !localRunExists(row.run)
+            return !importedRunIDs.contains(row.run)
         }
     }
 }

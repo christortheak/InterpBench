@@ -412,3 +412,47 @@ suites pass. Full Xcode beta passes 277 SteeringKit and 4,453 ExperimentKit test
 (155.42 seconds). CLI reference checks, bridge ratchet and whitespace checks pass.
 The actual source/test diff was read. These are semantic fixes, not mechanical
 moves. Main and existing researcher workspaces remain untouched.
+
+
+## Evidence import records and displayed actions retain their origin
+
+`EvidenceImportOrigin` identifies the remote endpoint/login, serving root and
+canonical local workspace. It contains no secret values and does not use an SSH
+forward's reusable local port as remote identity. Auto-import captures this before
+listing or packaging; manual imports require the origin of the displayed list.
+Changed contexts return `evidenceContextChanged` with a reconnection/refresh repair
+before another package/download. A download already in progress keeps its captured
+local destination and records its original origin on completion.
+
+Ledger lookup and retry backoff now include origin and bundle version. Unscoped
+legacy records remain readable but cannot authorize deduplication. Missing serving
+roots or current bundle hashes also cannot establish unchanged remote identity.
+Ledger publication reads and merges under a file lock; corrupt existing bytes
+refuse rather than being replaced with partial history. Changing local workspaces
+replaces the auto-import poller while an existing operation keeps its original
+workspace. The pipeline triage no longer hides evidence merely because a local
+run directory exists. Housekeeping's partial archive filenames retain failure
+classification and the actual run ID.
+
+Server Jobs and housekeeping retain their list's origin. Job import, cancellation,
+resumption and retry check it before obtaining the action's client. Selection
+changes invalidate old lists; late log callbacks from replaced streams are
+ignored. Connection handshakes and state refreshes publish only into the context
+that requested them. Connection metadata reads no longer require reading a token.
+
+Validation: origin/backoff/restart tests cover identical paths on different
+servers, changed bundle bytes, missing origin/root, stale manual actions after
+server/root/workspace changes or disconnection, selection changes during listing
+and import, concurrent-owner ledger merging and corrupt-ledger preservation.
+Offline URLProtocol fixtures exercise late handshake/state replies; identity tests
+cover tunnel-port reuse and workspace registration. Full Xcode beta passes 277
+SteeringKit and 4,465 ExperimentKit tests (`TEST SUCCEEDED`); full Python passes
+5,896 with 9 skipped and 8 warnings (155.56 seconds). Bridge ratchet and whitespace
+checks pass, and the actual diff was read. No mechanical body move is claimed.
+
+This closes the scoped auto-import identity and Compute job-action seams, not the
+entire remote journey. A path-only housekeeping listing remains unverified even
+after an earlier import; it needs a current bundle stamp to prove unchanged bytes.
+Durable archive/member custody receipts, cleanup plans, remaining auxiliary
+operations and interactive UI qualification remain work. Main is still `bfd13a5`;
+there was no merge, install, allocation, or real remote cleanup.

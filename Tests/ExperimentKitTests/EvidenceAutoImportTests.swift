@@ -17,6 +17,10 @@ struct EvidenceAutoImportTests {
         return root
     }
 
+    private func source(_ workspace: URL) -> EvidenceImportOrigin {
+        .init(serverIdentity: "ssh://researcher@example.invalid:8080", remoteRoot: "/remote", workspaceRoot: workspace)
+    }
+
     private func succeededRunJob(
         id: String, bundlePath: String, sha: String? = "abc123",
         runDirectory: String? = nil
@@ -221,6 +225,14 @@ struct EvidenceAutoImportTests {
         #expect(entries.first?.isPartial == false)
     }
 
+    @Test func housekeepingPartialFilenamesStayFailureRecords() {
+        let candidate = EvidenceAutoImportService.candidates(fromHousekeepingBundles: [
+            .init(runId: "run.partial", path: "/remote/run.partial.evidence-bundle.tar.gz")
+        ]).first
+        #expect(candidate?.isPartial == true)
+        #expect(candidate?.runId == "run")
+    }
+
     @Test func derivesRunIDFromBundleFilenames() {
         #expect(
             EvidenceAutoImportService.runID(
@@ -232,7 +244,7 @@ struct EvidenceAutoImportTests {
     @Test func housekeepingBundlesBecomeCandidatesAndFilterAgainstLedger() async throws {
         let workspace = try freshWorkspace("pending")
         let service = EvidenceAutoImportService(
-            workspaceRoot: workspace,
+            workspaceRoot: workspace, originProvider: { source(workspace) },
             fetchJobs: { [] },
             performImport: { _ in workspace })
         let bundles = [
@@ -241,14 +253,15 @@ struct EvidenceAutoImportTests {
             HousekeepingEvidenceBundle(
                 jobId: "j2", path: "/remote/run-b.evidence-bundle.tar.gz"),
         ]
-        #expect(service.pendingCandidates(fromHousekeepingBundles: bundles).count == 2)
+        #expect(service.pendingCandidates(fromHousekeepingBundles: bundles, origin: source(workspace)).count == 2)
 
-        // Importing one drops it from pending (ledger-backed, persisted).
+        // A path-only listing cannot prove the current remote bytes match an
+        // earlier import, so it remains pending until a stamped listing exists.
         _ = await service.importNow(candidates: [
             EvidenceCandidate(bundlePath: "/remote/a.evidence-bundle.tar.gz", runId: "run-a")
-        ])
-        let pending = service.pendingCandidates(fromHousekeepingBundles: bundles)
-        #expect(pending.map(\.bundlePath) == ["/remote/run-b.evidence-bundle.tar.gz"])
+        ], origin: source(workspace))
+        let pending = service.pendingCandidates(fromHousekeepingBundles: bundles, origin: source(workspace))
+        #expect(pending.count == 2)
     }
 
     // MARK: Skip-already-imported
@@ -258,13 +271,13 @@ struct EvidenceAutoImportTests {
         let bundlePath = "/remote/runs/x/x.evidence-bundle.tar.gz"
         try EvidenceAutoImportService.saveLedger(
             [.init(bundlePath: bundlePath, runId: "x",
-                   importedAt: "2026-07-12T08:00:00Z", sha256: nil, contentsVerified: true)],
+                   importedAt: "2026-07-12T08:00:00Z", sha256: "abc123", contentsVerified: true, origin: source(workspace))],
             to: EvidenceAutoImportService.ledgerURL(workspaceRoot: workspace))
 
         let importCounter = Counter()
         let job = succeededRunJob(id: "j1", bundlePath: bundlePath)
         let service = EvidenceAutoImportService(
-            workspaceRoot: workspace,
+            workspaceRoot: workspace, originProvider: { source(workspace) },
             fetchJobs: { [job] },
             performImport: { _ in
                 await importCounter.increment()
@@ -274,7 +287,7 @@ struct EvidenceAutoImportTests {
         let events = await service.runOnce(force: true)
         #expect(events.isEmpty)  // nothing to do, nothing invented
         #expect(await importCounter.value == 0)
-        #expect(service.isImported(bundlePath: bundlePath))
+        #expect(service.isImported(candidate: .init(bundlePath: bundlePath, sha256: "abc123"), origin: source(workspace)))
     }
 
     @Test func legacyPresenceOnlyLedgerCannotSuppressVerification() async throws {
@@ -285,15 +298,15 @@ struct EvidenceAutoImportTests {
             .init(bundlePath: path, runId: "run", importedAt: "2026-07-12T08:00:00Z", sha256: nil)
         ], to: EvidenceAutoImportService.ledgerURL(workspaceRoot: workspace))
         let counter = Counter()
-        let service = EvidenceAutoImportService(workspaceRoot: workspace, performImport: { _ in
+        let service = EvidenceAutoImportService(workspaceRoot: workspace, originProvider: { source(workspace) }, performImport: { _ in
             await counter.increment()
             throw ChatServiceError(reason: "content verification failed")
         })
-        #expect(!service.isImported(bundlePath: path))
-        #expect(service.importedRunIDs.isEmpty)
-        _ = await service.importNow(candidates: [.init(bundlePath: path, runId: "run")])
+        #expect(!service.isImported(candidate: .init(bundlePath: path, sha256: "abc123"), origin: source(workspace)))
+        #expect(service.importedRunIDs(origin: source(workspace)).isEmpty)
+        _ = await service.importNow(candidates: [.init(bundlePath: path, runId: "run")], origin: source(workspace))
         #expect(await counter.value == 1)
-        #expect(!service.isImported(bundlePath: path))
+        #expect(!service.isImported(candidate: .init(bundlePath: path, sha256: "abc123"), origin: source(workspace)))
         #expect(service.ledgerEntries.count == 1)
     }
 
@@ -304,7 +317,7 @@ struct EvidenceAutoImportTests {
         let job = succeededRunJob(
             id: "j1", bundlePath: "/remote/runs/y/y.evidence-bundle.tar.gz")
         let service = EvidenceAutoImportService(
-            workspaceRoot: workspace,
+            workspaceRoot: workspace, originProvider: { source(workspace) },
             fetchJobs: { [job] },
             performImport: { _ in
                 throw ChatServiceError(reason: "refusing to overwrite existing run y")
@@ -316,7 +329,7 @@ struct EvidenceAutoImportTests {
             Issue.record("An overwrite refusal must remain a failed import")
             return
         }
-        #expect(!service.isImported(bundlePath: "/remote/runs/y/y.evidence-bundle.tar.gz"))
+        #expect(!service.isImported(candidate: .init(bundlePath: "/remote/runs/y/y.evidence-bundle.tar.gz", sha256: "abc123"), origin: source(workspace)))
         #expect(service.failures.count == 1)
     }
 
@@ -326,13 +339,13 @@ struct EvidenceAutoImportTests {
         try FileManager.default.createDirectory(
             at: workspace.appending(components: "runs", "run"), withIntermediateDirectories: true)
         let counter = Counter()
-        let service = EvidenceAutoImportService(workspaceRoot: workspace, performImport: { _ in
+        let service = EvidenceAutoImportService(workspaceRoot: workspace, originProvider: { source(workspace) }, performImport: { _ in
             await counter.increment()
             throw ChatServiceError(reason: "existing run lacks declared evidence")
         })
         let events = await service.importNow(candidates: [
             EvidenceCandidate(bundlePath: "/remote/run.evidence-bundle.tar.gz", runId: "run")
-        ])
+        ], origin: source(workspace))
         #expect(await counter.value == 1)
         #expect(service.ledgerEntries.isEmpty)
         #expect(events.count == 1)
@@ -355,7 +368,7 @@ struct EvidenceAutoImportTests {
         let bundlePath = "/data/runs/\(runID)/\(runID).evidence-bundle.tar.gz"
         let imported = ImportedCandidateBox()
         let service = EvidenceAutoImportService(
-            workspaceRoot: workspace,
+            workspaceRoot: workspace, originProvider: { source(workspace) },
             performImport: { candidate in
                 await imported.record(candidate)
                 return workspace
@@ -367,14 +380,14 @@ struct EvidenceAutoImportTests {
                              evidenceComplete: true, missingEvidence: nil)
             })
 
-        let event = await service.importPipeline(runID: runID)
+        let event = await service.importPipeline(runID: runID, origin: source(workspace))
         #expect(event?.outcome == .imported(runDirectory: workspace.path))
         let candidate = try #require(await imported.value)
         #expect(candidate.bundlePath == bundlePath)
         #expect(candidate.runId == runID)
         #expect(candidate.sha256 == "deadbeef")
         #expect(!candidate.isPartial)
-        #expect(service.isImported(bundlePath: bundlePath))
+        #expect(service.isImported(candidate: .init(bundlePath: bundlePath, sha256: "deadbeef"), origin: source(workspace)))
     }
 
     @Test func importPipelineMarksIncompleteBundlesPartial() async throws {
@@ -383,7 +396,7 @@ struct EvidenceAutoImportTests {
         let workspace = try freshWorkspace("pipeline-partial")
         let imported = ImportedCandidateBox()
         let service = EvidenceAutoImportService(
-            workspaceRoot: workspace,
+            workspaceRoot: workspace, originProvider: { source(workspace) },
             performImport: { candidate in
                 await imported.record(candidate)
                 return workspace
@@ -394,7 +407,7 @@ struct EvidenceAutoImportTests {
                       evidenceComplete: false,
                       missingEvidence: ["stage 'analyze': not found"])
             })
-        _ = await service.importPipeline(runID: "c")
+        _ = await service.importPipeline(runID: "c", origin: source(workspace))
         #expect(await imported.value?.isPartial == true)
         #expect(service.ledgerEntries.first?.isPartial == true)
     }
@@ -409,7 +422,7 @@ struct EvidenceAutoImportTests {
         let workspace = try freshWorkspace("pipeline-skip")
         let imported = ImportedCandidateBox()
         let service = EvidenceAutoImportService(
-            workspaceRoot: workspace,
+            workspaceRoot: workspace, originProvider: { source(workspace) },
             performImport: { candidate in
                 await imported.record(candidate)
                 return workspace
@@ -422,7 +435,7 @@ struct EvidenceAutoImportTests {
                       reason: "pipeline failure record with no stage outputs "
                           + "— nothing to bundle beyond the ledger snapshot")
             })
-        let event = await service.importPipeline(runID: "r")
+        let event = await service.importPipeline(runID: "r", origin: source(workspace))
         #expect(event?.outcome == .skippedUnbundleable(
             note: "pipeline failure record with no stage outputs "
                 + "— nothing to bundle beyond the ledger snapshot"))
@@ -438,15 +451,191 @@ struct EvidenceAutoImportTests {
     @Test func importPipelinePackagingFailureIsLoudAndProducesNoEvent() async throws {
         let workspace = try freshWorkspace("pipeline-pack-fail")
         let service = EvidenceAutoImportService(
-            workspaceRoot: workspace,
+            workspaceRoot: workspace, originProvider: { source(workspace) },
             performImport: { _ in workspace },
             packageEvidence: { _ in
                 throw ChatServiceError(reason: "runs root refused the path")
             })
-        let event = await service.importPipeline(runID: "x")
+        let event = await service.importPipeline(runID: "x", origin: source(workspace))
         #expect(event == nil)
         #expect(service.lastSummary?.contains("could not package") == true)
         #expect(service.ledgerEntries.isEmpty)
+    }
+
+    @Test func sameRemotePathIsScopedByServerAndSurvivesRestart() async throws {
+        let workspace = try freshWorkspace("server-identity")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let first = source(workspace)
+        let second = EvidenceImportOrigin(serverIdentity: "ssh://researcher@second.invalid:8080", remoteRoot: "/remote", workspaceRoot: workspace)
+        let selected = SelectedImportOrigin(first)
+        let counter = Counter()
+        let job = succeededRunJob(id: "same-job", bundlePath: "/remote/same.evidence-bundle.tar.gz")
+        let candidate = try #require(EvidenceAutoImportService.candidate(fromJob: job))
+        let service = EvidenceAutoImportService(workspaceRoot: workspace,
+            originProvider: { selected.value }, fetchJobs: { [job] }, performImport: { _ in
+                await counter.increment()
+                return workspace
+            })
+        _ = await service.runOnce(force: true)
+        selected.value = second
+        #expect(!service.isImported(candidate: candidate, origin: second))
+        _ = await service.runOnce(force: true)
+        #expect(await counter.value == 2)
+        #expect(service.ledgerEntries.map(\.origin) == [first, second])
+        let restarted = EvidenceAutoImportService(workspaceRoot: workspace,
+            originProvider: { selected.value }, fetchJobs: { [job] }, performImport: { _ in
+                await counter.increment()
+                return workspace
+            })
+        #expect(await restarted.runOnce(force: true).isEmpty)
+        #expect(await counter.value == 2)
+        #expect(restarted.isImported(candidate: candidate, origin: first))
+        #expect(restarted.isImported(candidate: candidate, origin: second))
+    }
+
+    @Test func verifiedButUnscopedLegacyReceiptDoesNotAuthorizeAnotherOrigin() async throws {
+        let workspace = try freshWorkspace("unscoped-ledger")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let origin = source(workspace)
+        let candidate = EvidenceCandidate(bundlePath: "/remote/evidence.tar.gz", sha256: "stamp")
+        try EvidenceAutoImportService.saveLedger([
+            .init(bundlePath: candidate.bundlePath, runId: "run", importedAt: "2026-09-05T00:00:00Z",
+                  sha256: candidate.sha256, contentsVerified: true)
+        ], to: EvidenceAutoImportService.ledgerURL(workspaceRoot: workspace))
+        let service = EvidenceAutoImportService(workspaceRoot: workspace,
+            originProvider: { origin }, performImport: { _ in workspace })
+        #expect(!service.isImported(candidate: candidate, origin: origin))
+        _ = await service.importNow(candidates: [candidate], origin: origin)
+        #expect(service.ledgerEntries.count == 2)
+        #expect(service.ledgerEntries.first?.origin == nil)
+        #expect(service.ledgerEntries.last?.origin == origin)
+    }
+
+    @Test func changedRemoteBytesAndUnknownOriginsCannotReuseALedgerEntry() async throws {
+        let workspace = try freshWorkspace("bundle-versions")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let origin = source(workspace)
+        let candidate = EvidenceCandidate(bundlePath: "/remote/evidence.tar.gz", sha256: "first")
+        let service = EvidenceAutoImportService(workspaceRoot: workspace,
+            originProvider: { origin }, performImport: { _ in workspace })
+        _ = await service.importNow(candidates: [candidate], origin: origin)
+        #expect(service.isImported(candidate: candidate, origin: origin))
+        var changed = candidate
+        changed.sha256 = "second"
+        #expect(!service.isImported(candidate: changed, origin: origin))
+        let unknown = EvidenceImportOrigin(serverIdentity: origin.serverIdentity, remoteRoot: nil, workspaceRoot: workspace)
+        #expect(!service.isImported(candidate: candidate, origin: unknown))
+        let moved = EvidenceImportOrigin(serverIdentity: origin.serverIdentity, remoteRoot: "/other", workspaceRoot: workspace)
+        #expect(!service.isImported(candidate: candidate, origin: moved))
+        _ = await service.importNow(candidates: [changed], origin: origin)
+        #expect(service.ledgerEntries.count == 2)
+    }
+
+    @Test func aSelectionChangeDuringListingRefusesBeforeImport() async throws {
+        let workspace = try freshWorkspace("late-listing")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let origin = source(workspace)
+        let selected = SelectedImportOrigin(origin)
+        let job = succeededRunJob(id: "job", bundlePath: "/remote/evidence.tar.gz")
+        let counter = Counter()
+        let service = EvidenceAutoImportService(workspaceRoot: workspace,
+            originProvider: { selected.value }, fetchJobs: {
+                await selected.clear()
+                return [job]
+            }, performImport: { _ in
+                await counter.increment()
+                return workspace
+            })
+        let events = await service.runOnce(force: true)
+        #expect(events.first?.outcome == .refused(code: "evidenceContextChanged", repairAction: EvidenceImportOrigin.changedRepair))
+        #expect(await counter.value == 0)
+        #expect(service.ledgerEntries.isEmpty)
+    }
+
+    @Test(arguments: ["disconnected", "server", "remote-root", "local-workspace"])
+    func staleManualActionsNeverPackageOrDownload(change: String) async throws {
+        let workspace = try freshWorkspace("stale-actions")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let origin = source(workspace)
+        let current: EvidenceImportOrigin? = change == "disconnected" ? nil : .init(
+            serverIdentity: change == "server" ? "ssh://other.invalid:8080" : origin.serverIdentity,
+            remoteRoot: change == "remote-root" ? "/different" : origin.remoteRoot,
+            workspaceRoot: change == "local-workspace" ? workspace.appending(component: "other") : workspace)
+        let counter = Counter()
+        let service = EvidenceAutoImportService(workspaceRoot: workspace,
+            originProvider: { current }, performImport: { _ in
+                await counter.increment()
+                return workspace
+            }, packageEvidence: { _ in
+                await counter.increment()
+                return .init(bundlePath: nil, bundleSha256: nil, runID: nil, evidenceComplete: nil, missingEvidence: nil)
+            })
+        let events = await service.importNow(candidates: [.init(bundlePath: "/remote/evidence.tar.gz")], origin: origin)
+        let pipeline = await service.importPipeline(runID: "run", origin: origin)
+        for event in events + [try #require(pipeline)] {
+            #expect(event.outcome == .refused(code: "evidenceContextChanged", repairAction: EvidenceImportOrigin.changedRepair))
+        }
+        #expect(await counter.value == 0)
+    }
+
+    @Test func completedImportKeepsItsCapturedOriginAfterSelectionChanges() async throws {
+        let workspace = try freshWorkspace("captured-receipt")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let origin = source(workspace)
+        let selected = SelectedImportOrigin(origin)
+        let service = EvidenceAutoImportService(workspaceRoot: workspace,
+            originProvider: { selected.value }, performImport: { _ in
+                await selected.clear()
+                return workspace
+            })
+        let events = await service.importNow(candidates: [
+            .init(bundlePath: "/remote/evidence.tar.gz", sha256: "first")
+        ], origin: origin)
+        #expect(events.first?.origin == origin)
+        #expect(service.ledgerEntries.first?.origin == origin)
+        #expect(service.ledgerEntries.first?.contentsVerified == true)
+    }
+
+    @Test func independentImportersMergeReceiptsAndPreserveCorruptLedgers() async throws {
+        let workspace = try freshWorkspace("ledger-merge")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let origin = source(workspace)
+        let first = EvidenceAutoImportService(workspaceRoot: workspace,
+            originProvider: { origin }, performImport: { _ in workspace })
+        let second = EvidenceAutoImportService(workspaceRoot: workspace,
+            originProvider: { origin }, performImport: { _ in workspace })
+        _ = await first.importNow(candidates: [.init(bundlePath: "/remote/first.tar.gz", sha256: "first")], origin: origin)
+        _ = await second.importNow(candidates: [.init(bundlePath: "/remote/second.tar.gz", sha256: "second")], origin: origin)
+        let url = EvidenceAutoImportService.ledgerURL(workspaceRoot: workspace)
+        #expect(EvidenceAutoImportService.loadLedger(at: url).count == 2)
+        let damaged = Data("incomplete ledger bytes".utf8)
+        try damaged.write(to: url)
+        let events = await second.importNow(candidates: [.init(bundlePath: "/remote/third.tar.gz", sha256: "third")], origin: origin)
+        guard case .failed? = events.first?.outcome else {
+            Issue.record("A corrupt ledger must not be replaced with partial history")
+            return
+        }
+        #expect(try Data(contentsOf: url) == damaged)
+    }
+
+    @Test func failureBackoffDoesNotCrossServerBoundaries() async throws {
+        let workspace = try freshWorkspace("scoped-backoff")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let origin = source(workspace)
+        let selected = SelectedImportOrigin(origin)
+        let job = succeededRunJob(id: "job", bundlePath: "/remote/evidence.tar.gz")
+        let counter = Counter()
+        let service = EvidenceAutoImportService(workspaceRoot: workspace,
+            originProvider: { selected.value }, fetchJobs: { [job] }, performImport: { _ in
+                await counter.increment()
+                throw ChatServiceError(reason: "transport failed")
+            })
+        _ = await service.runOnce(force: true)
+        #expect(await service.runOnce(force: true).isEmpty)
+        selected.value = .init(serverIdentity: "ssh://other.invalid:8080", remoteRoot: "/remote", workspaceRoot: workspace)
+        _ = await service.runOnce(force: true)
+        #expect(await counter.value == 2)
+        #expect(service.failures.count == 2)
     }
 
     // MARK: Failure retention + capped backoff
@@ -459,7 +648,7 @@ struct EvidenceAutoImportTests {
         let clock = MutableClock(start: Date(timeIntervalSince1970: 1_780_000_000))
         let importCounter = Counter()
         let service = EvidenceAutoImportService(
-            workspaceRoot: workspace,
+            workspaceRoot: workspace, originProvider: { source(workspace) },
             fetchJobs: { [job] },
             performImport: { _ in
                 await importCounter.increment()
@@ -477,7 +666,7 @@ struct EvidenceAutoImportTests {
         } else {
             Issue.record("expected a failed outcome")
         }
-        let failure = try #require(service.failure(forBundlePath: bundlePath))
+        let failure = try #require(service.failure(for: .init(bundlePath: bundlePath, sha256: nil), origin: source(workspace)))
         #expect(failure.attempts == 1)
         #expect(!failure.exhausted)
         #expect(await importCounter.value == 1)
@@ -493,7 +682,7 @@ struct EvidenceAutoImportTests {
         events = await service.runOnce(force: true)
         #expect(events.count == 1)
         #expect(await importCounter.value == 2)
-        let exhausted = try #require(service.failure(forBundlePath: bundlePath))
+        let exhausted = try #require(service.failure(for: .init(bundlePath: bundlePath, sha256: nil), origin: source(workspace)))
         #expect(exhausted.attempts == 2)
         #expect(exhausted.exhausted)
 
@@ -501,7 +690,7 @@ struct EvidenceAutoImportTests {
         events = await service.runOnce(force: true)
         #expect(events.isEmpty)
         #expect(await importCounter.value == 2)
-        #expect(!service.isImported(bundlePath: bundlePath))
+        #expect(!service.isImported(candidate: .init(bundlePath: bundlePath, sha256: nil), origin: source(workspace)))
     }
 
     @Test func successAfterFailureClearsTheFailureAndLedgers() async throws {
@@ -511,7 +700,7 @@ struct EvidenceAutoImportTests {
         let clock = MutableClock(start: Date(timeIntervalSince1970: 1_780_000_000))
         let gate = FailureGate(failuresBeforeSuccess: 1)
         let service = EvidenceAutoImportService(
-            workspaceRoot: workspace,
+            workspaceRoot: workspace, originProvider: { source(workspace) },
             fetchJobs: { [job] },
             performImport: { _ in
                 if await gate.shouldFail() {
@@ -522,7 +711,7 @@ struct EvidenceAutoImportTests {
             now: { clock.now })
 
         _ = await service.runOnce(force: true)
-        #expect(service.failure(forBundlePath: bundlePath) != nil)
+        #expect(service.failure(for: .init(bundlePath: bundlePath, sha256: "abc123"), origin: source(workspace)) != nil)
 
         clock.advance(by: 7200)
         let events = await service.runOnce(force: true)
@@ -532,8 +721,8 @@ struct EvidenceAutoImportTests {
         } else {
             Issue.record("expected an imported outcome")
         }
-        #expect(service.failure(forBundlePath: bundlePath) == nil)
-        #expect(service.isImported(bundlePath: bundlePath))
+        #expect(service.failure(for: .init(bundlePath: bundlePath, sha256: "abc123"), origin: source(workspace)) == nil)
+        #expect(service.isImported(candidate: .init(bundlePath: bundlePath, sha256: "abc123"), origin: source(workspace)))
         // Persisted, not just in memory.
         let reloaded = EvidenceAutoImportService.loadLedger(
             at: EvidenceAutoImportService.ledgerURL(workspaceRoot: workspace))
@@ -607,4 +796,11 @@ private final class MutableClock: @unchecked Sendable {
         defer { lock.unlock() }
         current = current.addingTimeInterval(seconds)
     }
+}
+
+@MainActor
+private final class SelectedImportOrigin {
+    var value: EvidenceImportOrigin?
+    init(_ value: EvidenceImportOrigin?) { self.value = value }
+    func clear() { value = nil }
 }

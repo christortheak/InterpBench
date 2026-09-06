@@ -115,10 +115,9 @@ struct PipelineStateTests {
         ]
         let surfaced = PipelineImportTriage.awaitingImport(
             rows,
-            importedRunIDs: ["already-ledgered"],
-            localRunExists: { $0 == "already-local" })
+            importedRunIDs: ["already-ledgered"])
         #expect(surfaced.map(\.run)
-            == ["parked-chain", "completed-chain", "aborted-chain"])
+            == ["parked-chain", "completed-chain", "aborted-chain", "already-local"])
     }
 
     @Test func pipelineDraftRoundTripsTheCrossEngineSchema() throws {

@@ -73,16 +73,18 @@ public final class EvidenceAutoImportService {
         /// this marker. Legacy presence-only entries cannot suppress a retry.
         /// This is not a cleanup receipt or a claim about current remote origin.
         public var contentsVerified: Bool
+        public var origin: EvidenceImportOrigin?
 
         public init(bundlePath: String, runId: String?, importedAt: String,
                     sha256: String?, isPartial: Bool = false,
-                    contentsVerified: Bool = false) {
+                    contentsVerified: Bool = false, origin: EvidenceImportOrigin? = nil) {
             self.bundlePath = bundlePath
             self.runId = runId
             self.importedAt = importedAt
             self.sha256 = sha256
             self.isPartial = isPartial
             self.contentsVerified = contentsVerified
+            self.origin = origin
         }
 
         /// Hand-written so a LEGACY ledger still decodes. Swift's
@@ -101,6 +103,7 @@ public final class EvidenceAutoImportService {
                 Bool.self, forKey: .isPartial) ?? false
             contentsVerified = try container.decodeIfPresent(
                 Bool.self, forKey: .contentsVerified) ?? false
+            origin = try container.decodeIfPresent(EvidenceImportOrigin.self, forKey: .origin)
         }
     }
 
@@ -115,6 +118,7 @@ public final class EvidenceAutoImportService {
         /// still be resumed and produce evidence later.
         case skippedUnbundleable(note: String)
         case failed(String)
+        case refused(code: String, repairAction: String)
     }
 
     public struct ImportEvent: Sendable, Equatable, Identifiable {
@@ -123,16 +127,18 @@ public final class EvidenceAutoImportService {
         public var bundlePath: String
         public var runId: String?
         public var outcome: Outcome
+        public var origin: EvidenceImportOrigin
 
         public init(
             id: UUID = UUID(), date: Date, bundlePath: String, runId: String?,
-            outcome: Outcome
+            outcome: Outcome, origin: EvidenceImportOrigin
         ) {
             self.id = id
             self.date = date
             self.bundlePath = bundlePath
             self.runId = runId
             self.outcome = outcome
+            self.origin = origin
         }
     }
 
@@ -159,7 +165,7 @@ public final class EvidenceAutoImportService {
     // MARK: Observable state
 
     public private(set) var events: [ImportEvent] = []
-    public private(set) var failures: [String: FailureRecord] = [:]
+    public private(set) var failures: [EvidenceImportKey: FailureRecord] = [:]
     public private(set) var ledgerEntries: [LedgerEntry] = []
     public private(set) var isImporting = false
     public private(set) var lastCheckedAt: Date?
@@ -181,20 +187,23 @@ public final class EvidenceAutoImportService {
     @ObservationIgnored private let packageEvidenceOverride:
         (@Sendable (String) async throws
             -> ClusterClient.EvidencePackageReceipt)?
+    @ObservationIgnored private let originProvider: (@MainActor () -> EvidenceImportOrigin?)?
     @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private var pollTask: Task<Void, Never>?
 
     public init(
         workspaceRoot: URL,
         cluster: ClusterConnectionStore? = nil,
+        originProvider: (@MainActor () -> EvidenceImportOrigin?)? = nil,
         fetchJobs: (@Sendable () async throws -> [RemoteJobRecord])? = nil,
         performImport: (@Sendable (EvidenceCandidate) async throws -> URL)? = nil,
         packageEvidence: (@Sendable (String) async throws
             -> ClusterClient.EvidencePackageReceipt)? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
-        self.workspaceRoot = workspaceRoot
+        self.workspaceRoot = workspaceRoot.standardizedFileURL.resolvingSymlinksInPath()
         self.cluster = cluster
+        self.originProvider = originProvider
         self.fetchJobsOverride = fetchJobs
         self.performImportOverride = performImport
         self.packageEvidenceOverride = packageEvidence
@@ -272,11 +281,12 @@ public final class EvidenceAutoImportService {
         var seen = Set<String>()
         return bundles.compactMap { bundle -> EvidenceCandidate? in
             guard let path = bundle.path, !path.isEmpty else { return nil }
+            let partial = path.hasSuffix(".partial.evidence-bundle.tar.gz")
             return EvidenceCandidate(
                 bundlePath: path,
-                runId: bundle.runId ?? runID(fromBundlePath: path),
+                runId: partial ? runID(fromBundlePath: path) : (bundle.runId ?? runID(fromBundlePath: path)),
                 jobId: bundle.jobId,
-                sha256: nil)
+                sha256: nil, isPartial: partial)
         }
         .filter { seen.insert($0.bundlePath).inserted }
     }
@@ -286,7 +296,8 @@ public final class EvidenceAutoImportService {
         let name = URL(filePath: path).lastPathComponent
         let suffix = ".evidence-bundle.tar.gz"
         guard name.hasSuffix(suffix), name.count > suffix.count else { return nil }
-        return String(name.dropLast(suffix.count))
+        let stem = String(name.dropLast(suffix.count))
+        return stem.hasSuffix(".partial") ? String(stem.dropLast(".partial".count)) : stem
     }
 
     private static func string(in value: JSONValue, at keyPath: [String]) -> String? {
@@ -300,25 +311,40 @@ public final class EvidenceAutoImportService {
 
     // MARK: Queries for the UI
 
-    public func isImported(bundlePath: String) -> Bool {
-        ledgerEntries.contains { $0.bundlePath == bundlePath && $0.contentsVerified }
+    public func isImported(candidate: EvidenceCandidate, origin: EvidenceImportOrigin) -> Bool {
+        guard origin.isComplete, origin.workspaceRoot == workspaceRoot,
+            let stamp = candidate.sha256, !stamp.isEmpty else { return false }
+        return ledgerEntries.contains {
+            $0.bundlePath == candidate.bundlePath && $0.contentsVerified
+                && $0.origin == origin && $0.sha256 == stamp
+        }
     }
 
-    public var importedRunIDs: Set<String> {
-        Set(ledgerEntries.filter(\.contentsVerified).compactMap(\.runId))
+    public func importedRunIDs(origin: EvidenceImportOrigin) -> Set<String> {
+        guard origin.isComplete, origin.workspaceRoot == workspaceRoot else { return [] }
+        return Set(ledgerEntries.filter {
+            $0.contentsVerified && $0.origin == origin && !$0.isPartial
+        }.compactMap(\.runId))
     }
 
-    /// Server-listed bundles not yet in the local ledger — the health card's
-    /// "evidence pending" number and Import-now payload.
     public func pendingCandidates(
-        fromHousekeepingBundles bundles: [HousekeepingEvidenceBundle]
+        fromHousekeepingBundles bundles: [HousekeepingEvidenceBundle], origin: EvidenceImportOrigin
     ) -> [EvidenceCandidate] {
         Self.candidates(fromHousekeepingBundles: bundles)
-            .filter { !isImported(bundlePath: $0.bundlePath) }
+            .filter { !isImported(candidate: $0, origin: origin) }
     }
 
-    public func failure(forBundlePath path: String) -> FailureRecord? {
-        failures[path]
+    public func failure(for candidate: EvidenceCandidate, origin: EvidenceImportOrigin) -> FailureRecord? {
+        failures[EvidenceImportKey(candidate: candidate, origin: origin)]
+    }
+
+    private var currentOrigin: EvidenceImportOrigin? {
+        if let originProvider { return originProvider() }
+        return cluster?.evidenceImportOrigin
+    }
+
+    private func isCurrent(_ origin: EvidenceImportOrigin) -> Bool {
+        origin == currentOrigin && origin.workspaceRoot == workspaceRoot
     }
 
     // MARK: Polling lifecycle
@@ -362,11 +388,12 @@ public final class EvidenceAutoImportService {
     public func runOnce(force: Bool = false) async -> [ImportEvent] {
         guard !isImporting else { return [] }
         guard force || isEligibleTick else { return [] }
-        guard fetchJobsOverride != nil || cluster?.client != nil else { return [] }
+        guard let origin = currentOrigin, isCurrent(origin) else { return [] }
+        let client = cluster?.client
+        guard fetchJobsOverride != nil || client != nil else { return [] }
         isImporting = true
         defer { isImporting = false }
         lastCheckedAt = now()
-        let client = cluster?.client
         let jobs: [RemoteJobRecord]
         do {
             jobs = try await fetchJobs(client: client)
@@ -375,7 +402,7 @@ public final class EvidenceAutoImportService {
             return []
         }
         let produced = await importAll(
-            candidates: Self.candidates(fromJobs: jobs), bypassBackoff: false, client: client)
+            candidates: Self.candidates(fromJobs: jobs), bypassBackoff: false, client: client, origin: origin)
         summarize(produced)
         return produced
     }
@@ -384,19 +411,20 @@ public final class EvidenceAutoImportService {
     /// housekeeping bundles, or a single job row's import button). A direct
     /// user action retries immediately, backoff or not.
     @discardableResult
-    public func importNow(candidates: [EvidenceCandidate]) async -> [ImportEvent] {
+    public func importNow(candidates: [EvidenceCandidate], origin: EvidenceImportOrigin) async -> [ImportEvent] {
         guard !isImporting else { return [] }
         isImporting = true
         defer { isImporting = false }
-        let produced = await importAll(candidates: candidates, bypassBackoff: true, client: cluster?.client)
+        let client = isCurrent(origin) ? cluster?.client : nil
+        let produced = await importAll(candidates: candidates, bypassBackoff: true, client: client, origin: origin)
         summarize(produced)
         return produced
     }
 
     @discardableResult
-    public func importNow(job: RemoteJobRecord) async -> ImportEvent? {
+    public func importNow(job: RemoteJobRecord, origin: EvidenceImportOrigin) async -> ImportEvent? {
         guard let candidate = Self.candidate(fromJob: job) else { return nil }
-        return await importNow(candidates: [candidate]).first
+        return await importNow(candidates: [candidate], origin: origin).first
     }
 
     /// One-click import for a dead/parked pipeline chain (2026-08-06, a
@@ -410,8 +438,12 @@ public final class EvidenceAutoImportService {
     /// could not finish still come home this way; a bundle stamped
     /// incomplete imports as a partial, never as a completed result.
     @discardableResult
-    public func importPipeline(runID: String) async -> ImportEvent? {
+    public func importPipeline(runID: String, origin: EvidenceImportOrigin) async -> ImportEvent? {
         guard !isImporting else { return nil }
+        guard isCurrent(origin) else {
+            return publish(candidate: .init(bundlePath: "", runId: runID),
+                outcome: .refused(code: "evidenceContextChanged", repairAction: EvidenceImportOrigin.changedRepair), origin: origin)
+        }
         isImporting = true
         defer { isImporting = false }
         let client = cluster?.client
@@ -427,7 +459,7 @@ public final class EvidenceAutoImportService {
                 return publish(
                     candidate: EvidenceCandidate(
                         bundlePath: "", runId: receipt.runID ?? runID),
-                    outcome: .skippedUnbundleable(note: note))
+                    outcome: .skippedUnbundleable(note: note), origin: origin)
             }
             guard let bundlePath = receipt.bundlePath else {
                 lastSummary = "server packaged pipeline '\(runID)' but "
@@ -439,7 +471,7 @@ public final class EvidenceAutoImportService {
                 runId: receipt.runID ?? runID,
                 sha256: receipt.bundleSha256,
                 isPartial: receipt.evidenceComplete != true)
-            return await importAll(candidates: [candidate], bypassBackoff: true, client: client).first
+            return await importAll(candidates: [candidate], bypassBackoff: true, client: client, origin: origin).first
         } catch {
             lastSummary = "could not package pipeline '\(runID)' on the "
                 + "server: \(String(describing: error))"
@@ -469,26 +501,32 @@ public final class EvidenceAutoImportService {
     }
 
     private func importAll(
-        candidates: [EvidenceCandidate], bypassBackoff: Bool, client: ClusterClient?
+        candidates: [EvidenceCandidate], bypassBackoff: Bool, client: ClusterClient?, origin: EvidenceImportOrigin
     ) async -> [ImportEvent] {
         var produced: [ImportEvent] = []
         for candidate in candidates {
-            guard !isImported(bundlePath: candidate.bundlePath) else { continue }
-            if !bypassBackoff, let failure = failures[candidate.bundlePath],
+            guard isCurrent(origin), client == nil || cluster?.connectionProfile == client?.profile else {
+                produced.append(publish(candidate: candidate,
+                    outcome: .refused(code: "evidenceContextChanged", repairAction: EvidenceImportOrigin.changedRepair), origin: origin))
+                continue
+            }
+            guard !isImported(candidate: candidate, origin: origin) else { continue }
+            let key = EvidenceImportKey(candidate: candidate, origin: origin)
+            if !bypassBackoff, let failure = failures[key],
                 failure.exhausted || now() < failure.nextRetryAt
             {
                 continue  // backing off (or capped out) — not silent: `failures` shows it
             }
             do {
                 let imported = try await performImport(candidate, client: client)
-                appendLedger(for: candidate)
-                failures[candidate.bundlePath] = nil
+                try appendLedger(for: candidate, origin: origin)
+                failures[key] = nil
                 produced.append(
-                    publish(candidate: candidate, outcome: .imported(runDirectory: imported.path)))
+                    publish(candidate: candidate, outcome: .imported(runDirectory: imported.path), origin: origin))
             } catch {
                 let message = String(describing: error)
-                recordFailure(candidate: candidate, message: message)
-                produced.append(publish(candidate: candidate, outcome: .failed(message)))
+                recordFailure(key: key, message: message)
+                produced.append(publish(candidate: candidate, outcome: .failed(message), origin: origin))
             }
         }
         return produced
@@ -531,51 +569,49 @@ public final class EvidenceAutoImportService {
         return imported
     }
 
-    /// Whether a run directory of this id is already in the workspace —
-    /// public so the pipeline awaiting-import triage can share the exact
-    /// same notion of "already here".
-    public static func localRunExists(_ runId: String) -> Bool {
-        var isDirectory: ObjCBool = false
-        let url = ExperimentStore.runsDirectory.appending(component: runId)
-        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
-            && isDirectory.boolValue
-    }
-
-    private func appendLedger(for candidate: EvidenceCandidate) {
-        guard !isImported(bundlePath: candidate.bundlePath) else { return }
+    private func appendLedger(for candidate: EvidenceCandidate, origin: EvidenceImportOrigin) throws {
         let entry = LedgerEntry(
-            bundlePath: candidate.bundlePath,
-            runId: candidate.runId,
-            importedAt: HousekeepingDates.format(now()),
-            sha256: candidate.sha256,
-            isPartial: candidate.isPartial,
-            contentsVerified: true)
-        ledgerEntries.append(entry)
-        do {
-            try Self.saveLedger(
-                ledgerEntries, to: Self.ledgerURL(workspaceRoot: workspaceRoot))
-        } catch {
-            lastSummary = "imported, but could not write the ledger: "
-                + error.localizedDescription
+            bundlePath: candidate.bundlePath, runId: candidate.runId,
+            importedAt: HousekeepingDates.format(now()), sha256: candidate.sha256,
+            isPartial: candidate.isPartial, contentsVerified: true, origin: origin)
+        let url = Self.ledgerURL(workspaceRoot: workspaceRoot)
+        // Read/merge/publish under a stable file lock, so two processes cannot
+        // discard each other's receipts. Corrupt existing bytes are preserved.
+        ledgerEntries = try ManifestFileTransaction.withLock(
+            manifestURL: url, workspaceRoot: workspaceRoot) {
+            var current: [LedgerEntry]
+            do {
+                current = try JSONDecoder().decode([LedgerEntry].self, from: Data(contentsOf: url))
+            } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+                current = []
+            }
+            if !current.contains(where: {
+                $0.origin == origin && $0.contentsVerified
+                    && $0.bundlePath == candidate.bundlePath && $0.sha256 == candidate.sha256
+            }) {
+                current.append(entry)
+                try Self.saveLedger(current, to: url)
+            }
+            return current
         }
     }
 
-    private func recordFailure(candidate: EvidenceCandidate, message: String) {
-        let attempts = (failures[candidate.bundlePath]?.attempts ?? 0) + 1
+    private func recordFailure(key: EvidenceImportKey, message: String) {
+        let attempts = (failures[key]?.attempts ?? 0) + 1
         let exhausted = attempts >= configuration.maxAttempts
         let delay = min(
             configuration.retryBase * pow(2, Double(attempts - 1)), configuration.retryCap)
-        failures[candidate.bundlePath] = FailureRecord(
+        failures[key] = FailureRecord(
             message: message,
             attempts: attempts,
             nextRetryAt: exhausted ? .distantFuture : now().addingTimeInterval(delay),
             exhausted: exhausted)
     }
 
-    private func publish(candidate: EvidenceCandidate, outcome: Outcome) -> ImportEvent {
+    private func publish(candidate: EvidenceCandidate, outcome: Outcome, origin: EvidenceImportOrigin) -> ImportEvent {
         let event = ImportEvent(
             date: now(), bundlePath: candidate.bundlePath, runId: candidate.runId,
-            outcome: outcome)
+            outcome: outcome, origin: origin)
         events.insert(event, at: 0)
         if events.count > configuration.maxEvents {
             events.removeLast(events.count - configuration.maxEvents)
@@ -588,11 +624,13 @@ public final class EvidenceAutoImportService {
         var imported = 0
         var unbundleable = 0
         var failed = 0
+        var refused = 0
         for event in produced {
             switch event.outcome {
             case .imported: imported += 1
             case .skippedUnbundleable: unbundleable += 1
             case .failed: failed += 1
+            case .refused: refused += 1
             }
         }
         var parts: [String] = []
@@ -602,6 +640,7 @@ public final class EvidenceAutoImportService {
                 + "record\(unbundleable == 1 ? "" : "s") (nothing to bundle)")
         }
         if failed > 0 { parts.append("FAILED \(failed) (see failures)") }
+        if refused > 0 { parts.append("REFUSED \(refused): " + EvidenceImportOrigin.changedRepair) }
         lastSummary = "evidence auto-import: " + parts.joined(separator: ", ")
     }
 }

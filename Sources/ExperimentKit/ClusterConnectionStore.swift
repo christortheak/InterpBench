@@ -717,7 +717,8 @@ public final class ClusterConnectionStore {
     /// exercised end to end rather than asserted a layer at a time.
     public var clientSessionOverride: URLSession?
 
-    public var client: ClusterClient? {
+    /// Connection metadata for context checks; does not read the bearer token.
+    public var connectionProfile: ClusterConnectionProfile? {
         var url = URL(string: serverURL.trimmingCharacters(in: .whitespacesAndNewlines))
         if let site = activeSite, site.isSSHTransport,
             let tunnel = attachedTunnel, tunnel.site == site,
@@ -726,9 +727,14 @@ public final class ClusterConnectionStore {
             url = tunnelURL
         }
         guard let url else { return nil }
+        return ClusterConnectionProfile(baseURL: url, tokenKey: tokenKey)
+    }
+
+    public var client: ClusterClient? {
+        guard let profile = connectionProfile else { return nil }
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         return ClusterClient(
-            profile: ClusterConnectionProfile(baseURL: url, tokenKey: tokenKey),
+            profile: profile,
             token: trimmed.isEmpty ? nil : trimmed,
             session: clientSessionOverride ?? .shared)
     }
@@ -755,14 +761,16 @@ public final class ClusterConnectionStore {
     public private(set) var evidenceAutoImport: EvidenceAutoImportService?
 
     /// Register (or return) the auto-import service for a workspace root and
-    /// start its poll loop. Idempotent; the first caller wins the root —
-    /// callers pass nil to use the resolved data workspace.
+    /// start its poll loop. A workspace change retires the old poller; an
+    /// in-flight operation still owns its original destination and ledger.
     @discardableResult
     public func registerEvidenceAutoImport(
         workspaceRoot: URL? = nil
     ) -> EvidenceAutoImportService {
-        if let evidenceAutoImport { return evidenceAutoImport }
-        let root = workspaceRoot ?? VectorCatalog.projectRoot
+        let root = (workspaceRoot ?? VectorCatalog.projectRoot)
+            .standardizedFileURL.resolvingSymlinksInPath()
+        if let evidenceAutoImport, evidenceAutoImport.workspaceRoot == root { return evidenceAutoImport }
+        evidenceAutoImport?.stopPolling()
         let service = EvidenceAutoImportService(workspaceRoot: root, cluster: self)
         evidenceAutoImport = service
         service.startPolling()
@@ -1034,27 +1042,34 @@ public final class ClusterConnectionStore {
             status = "invalid server URL"
             return false
         }
+        let origin = evidenceImportOrigin
+        let profile = connectionProfile
         do {
             status = "connecting..."
             async let caps = client.capabilities()
             async let state = client.state()
             async let variants = client.variants()
             async let info = client.serverInfo()
-            capabilities = try await caps
+            let fetchedCapabilities = try await caps
+            let fetchedState = try? await state
+            let fetchedVariants = try? await variants
+            let fetchedInfo = try? await info
+            guard evidenceImportOrigin == origin, connectionProfile == profile else { return false }
+            capabilities = fetchedCapabilities
             // State and variants are BEST-EFFORT during the handshake:
             // capabilities is the gate. Older controllers answered /api/state
             // with 503 while a GPU session was queued/starting, and a strict
             // fetch here turned a healthy reconnect into "connection failed"
             // (live 2026-07-17; newer servers compose controller state
             // instead, but the handshake must not depend on that).
-            if let fetched = try? await state { remoteState = fetched }
-            remoteVariants = (try? await variants) ?? remoteVariants
+            if let fetchedState { remoteState = fetchedState }
+            remoteVariants = fetchedVariants ?? remoteVariants
             // Pairing info is best-effort: an older server without a usable
             // /api/info must not fail the whole connection. Capabilities
             // report the same serving root top-level, so a failed info fetch
             // still yields a pairing verdict (never a silent "unknown" while
             // server-scoped panels show that root's artifacts).
-            remoteInfo = try? await info
+            remoteInfo = fetchedInfo
             if remoteInfo?.root == nil, let capabilitiesRoot = capabilities?.root {
                 remoteInfo = RemoteServerInfo(
                     service: remoteInfo?.service, root: capabilitiesRoot,
@@ -1068,6 +1083,7 @@ public final class ClusterConnectionStore {
             gpuSession.refreshAfterConnect()
             return true
         } catch {
+            guard evidenceImportOrigin == origin, connectionProfile == profile else { return false }
             status = Self.friendlyConnectionFailure(
                 error, urlString: serverURL,
                 throughSSHTunnel: activeSite?.isSSHTransport == true)
@@ -1118,17 +1134,14 @@ public final class ClusterConnectionStore {
     /// different artifact root); a failed info fetch keeps the last value.
     public func refreshRemoteState() async {
         guard let client else { return }
-        // Keep the last-known state on a failed fetch (like `remoteInfo`
-        // below): /api/state proxies to the GPU-session worker, so a
-        // transient failure while a session starts (or its worker is
-        // unreachable) used to NIL the whole inventory and render a
-        // successful model install as "no models installed".
-        if let state = try? await client.state() {
-            remoteState = state
-        }
-        if let info = try? await client.serverInfo() {
-            remoteInfo = info
-        }
+        let origin = evidenceImportOrigin
+        let profile = connectionProfile
+        async let state = try? client.state()
+        async let info = try? client.serverInfo()
+        let (fetchedState, fetchedInfo) = await (state, info)
+        guard evidenceImportOrigin == origin, connectionProfile == profile else { return }
+        if let fetchedState { remoteState = fetchedState }
+        if let fetchedInfo { remoteInfo = fetchedInfo }
     }
 
     // MARK: Workspace pairing

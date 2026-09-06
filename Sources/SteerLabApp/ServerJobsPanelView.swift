@@ -5,6 +5,7 @@ import SwiftUI
 struct ServerJobsPanelView: View {
     @Bindable var service: ChatService
     @State private var jobs: [RemoteJobRecord] = []
+    @State private var jobsOrigin: EvidenceImportOrigin?
     @State private var pipelines: [ClusterClient.PipelineRunSummary] = []
     @State private var selectedJobID: String?
     @State private var logLines: [String] = []
@@ -12,6 +13,7 @@ struct ServerJobsPanelView: View {
     @State private var isRefreshing = false
     @State private var isStreaming = false
     @State private var streamTask: Task<Void, Never>?
+    @State private var streamIdentity: UUID?
     /// The last workspace-import report, in full, for the button's tooltip.
     /// A `@State` string rather than a row: this column's minimum height must
     /// not move while an import streams (the 2026-08-05 crash class).
@@ -72,7 +74,20 @@ struct ServerJobsPanelView: View {
         .task(id: service.cluster.computeTarget.rawValue) {
             await refreshJobs(selectFirstWhenEmpty: true)
         }
+        .onChange(of: service.cluster.evidenceImportOrigin) { _, _ in
+            streamIdentity = nil
+            streamTask?.cancel()
+            isStreaming = false
+            jobsOrigin = nil
+            jobs = []
+            pipelines = []
+            selectedJobID = nil
+            logLines = []
+            status = nil
+            Task { await refreshJobs(selectFirstWhenEmpty: true) }
+        }
         .onDisappear {
+            streamIdentity = nil
             streamTask?.cancel()
         }
     }
@@ -180,7 +195,8 @@ struct ServerJobsPanelView: View {
                                             + "in this workspace")
                             } else {
                                 Button("Import evidence") {
-                                    Task { await importEvidence(job) }
+                                    let origin = jobsOrigin
+                                    Task { await importEvidence(job, origin: origin) }
                                 }
                                 .buttonStyle(.borderless)
                                 .controlSize(.small)
@@ -211,7 +227,8 @@ struct ServerJobsPanelView: View {
                                             + "record, not a result")
                             } else {
                                 Button("Retrieve partial data") {
-                                    Task { await importEvidence(job) }
+                                    let origin = jobsOrigin
+                                    Task { await importEvidence(job, origin: origin) }
                                 }
                                 .buttonStyle(.borderless)
                                 .controlSize(.small)
@@ -227,7 +244,8 @@ struct ServerJobsPanelView: View {
                             status: job.status, resubmittedAs: job.resubmittedAs)
                         {
                             Button("Resume") {
-                                Task { await resubmit(job.id) }
+                                let origin = jobsOrigin
+                                Task { await resubmit(job.id, origin: origin) }
                             }
                             .buttonStyle(.borderless)
                             .controlSize(.small)
@@ -285,12 +303,14 @@ struct ServerJobsPanelView: View {
                         status: job.status, resubmittedAs: job.resubmittedAs)
                     {
                         Button("Resume from Checkpoint") {
-                            Task { await resubmit(job.id) }
+                            let origin = jobsOrigin
+                            Task { await resubmit(job.id, origin: origin) }
                         }
                     }
                     if job.finishedAt == nil {
                         Button("Cancel Job", role: .destructive) {
-                            Task { await cancel(job.id) }
+                            let origin = jobsOrigin
+                            Task { await cancel(job.id, origin: origin) }
                         }
                     }
                 }
@@ -402,7 +422,8 @@ struct ServerJobsPanelView: View {
                     .disabled(isStreaming)
                     .help("Stream live log output for the selected job.")
                     Button(role: .destructive) {
-                        Task { await cancel(selectedJobID) }
+                        let origin = jobsOrigin
+                        Task { await cancel(selectedJobID, origin: origin) }
                     } label: {
                         Label("Cancel", systemImage: "stop.fill")
                     }
@@ -442,7 +463,9 @@ struct ServerJobsPanelView: View {
     }
 
     private func refreshJobs(selectFirstWhenEmpty: Bool) async {
-        guard hasServerClient, let client = service.cluster.client else {
+        guard hasServerClient, let client = service.cluster.client,
+            let origin = service.cluster.evidenceImportOrigin else {
+            jobsOrigin = nil
             jobs = []
             selectedJobID = nil
             status = "Connect to a server workspace to inspect jobs."
@@ -457,12 +480,14 @@ struct ServerJobsPanelView: View {
         do {
             let fetched = try await client.jobs()
                 .sorted { $0.createdAt > $1.createdAt }
-            jobs = fetched
             // Cross-experiment pipeline listing (2026-08-06): dead chains
             // with completed stages surface here for one-click import. An
             // older server without the route simply lists none.
-            pipelines = (try? await client.allPipelineRuns()) ?? []
-            await service.cluster.refreshRemoteState()
+            let fetchedPipelines = (try? await client.allPipelineRuns()) ?? []
+            guard service.cluster.evidenceImportOrigin == origin else { return }
+            jobsOrigin = origin
+            jobs = fetched
+            pipelines = fetchedPipelines
             if let selectedJobID, fetched.contains(where: { $0.id == selectedJobID }) {
                 status = "\(fetched.count) job\(fetched.count == 1 ? "" : "s")"
             } else {
@@ -470,6 +495,7 @@ struct ServerJobsPanelView: View {
                 status = "\(fetched.count) job\(fetched.count == 1 ? "" : "s")"
             }
         } catch {
+            guard service.cluster.evidenceImportOrigin == origin else { return }
             status = "could not list jobs: \(error.localizedDescription)"
         }
     }
@@ -533,15 +559,28 @@ struct ServerJobsPanelView: View {
         await refreshJobs(selectFirstWhenEmpty: false)
     }
 
+    private func clientForRows(origin: EvidenceImportOrigin?) -> ClusterClient? {
+        guard let origin, service.cluster.evidenceImportOrigin == origin else {
+            status = "evidenceContextChanged: " + EvidenceImportOrigin.changedRepair
+            return nil
+        }
+        return service.cluster.client
+    }
+
     private func startStreaming(_ jobID: String) {
         streamTask?.cancel()
-        guard hasServerClient, let client = service.cluster.client else { return }
+        let origin = jobsOrigin
+        guard hasServerClient, let client = clientForRows(origin: origin) else { return }
+        let identity = UUID()
+        streamIdentity = identity
         logLines = jobs.first(where: { $0.id == jobID })?.logTail ?? []
         isStreaming = true
         streamTask = Task {
             do {
                 try await client.streamJobLog(jobID: jobID) { line in
                     await MainActor.run {
+                        guard streamIdentity == identity, jobsOrigin == origin, service.cluster.evidenceImportOrigin == origin,
+                            selectedJobID == jobID else { return }
                         if logLines.last != line {
                             logLines.append(line)
                         }
@@ -550,17 +589,20 @@ struct ServerJobsPanelView: View {
                         }
                     }
                 }
+                guard streamIdentity == identity else { return }
                 await MainActor.run {
                     isStreaming = false
                     streamTask = nil
                 }
                 await refreshJobs(selectFirstWhenEmpty: false)
             } catch is CancellationError {
+                guard streamIdentity == identity else { return }
                 await MainActor.run {
                     isStreaming = false
                     streamTask = nil
                 }
             } catch {
+                guard streamIdentity == identity else { return }
                 await MainActor.run {
                     isStreaming = false
                     streamTask = nil
@@ -605,7 +647,8 @@ struct ServerJobsPanelView: View {
     private func retryEvaluateButton(for job: RemoteJobRecord) -> some View {
         if let retry = job.retryableEvaluate {
             Button("Retry missing judgments") {
-                Task { await retryEvaluate(job, retry) }
+                let origin = jobsOrigin
+                Task { await retryEvaluate(job, retry, origin: origin) }
             }
             .buttonStyle(.borderless)
             .controlSize(.small)
@@ -626,13 +669,10 @@ struct ServerJobsPanelView: View {
 
     private func retryEvaluate(
         _ job: RemoteJobRecord,
-        _ retry: (experiment: String, partialRunID: String)
+        _ retry: (experiment: String, partialRunID: String), origin: EvidenceImportOrigin?
     ) async {
         status = "retrying missing judgments for \(retry.experiment)…"
-        guard let client = service.cluster.client else {
-            status = "not connected to a server"
-            return
-        }
+        guard let client = clientForRows(origin: origin) else { return }
         do {
             // Route by how the ORIGINAL job ran. A Slurm evaluate retries
             // through study submission — the same path the original used,
@@ -659,6 +699,7 @@ struct ServerJobsPanelView: View {
                     resumeFrom: retry.partialRunID)
                 jobID = submission.jobId
             }
+            guard service.cluster.evidenceImportOrigin == origin else { return }
             status = "retry submitted as job \(jobID) — it reuses the "
                 + "verdicts \(retry.partialRunID) already produced"
             await refreshJobs(selectFirstWhenEmpty: false)
@@ -672,11 +713,11 @@ struct ServerJobsPanelView: View {
     /// reconcile) or terminal. Triage rule lives in ExperimentKit,
     /// unit-tested; the view only lays it out.
     private var awaitingPipelines: [ClusterClient.PipelineRunSummary] {
-        PipelineImportTriage.awaitingImport(
+        guard let origin = jobsOrigin, service.cluster.evidenceImportOrigin == origin else { return [] }
+        return PipelineImportTriage.awaitingImport(
             pipelines,
             importedRunIDs:
-                service.cluster.evidenceAutoImport?.importedRunIDs ?? [],
-            localRunExists: EvidenceAutoImportService.localRunExists)
+                service.cluster.evidenceAutoImport?.importedRunIDs(origin: origin) ?? [])
     }
 
     private static let pipelinesAwaitingCaption: String =
@@ -720,7 +761,8 @@ struct ServerJobsPanelView: View {
             }
             Spacer()
             Button("Import evidence") {
-                Task { await importPipelineEvidence(row) }
+                let origin = jobsOrigin
+                Task { await importPipelineEvidence(row, origin: origin) }
             }
             .buttonStyle(.borderless)
             .controlSize(.small)
@@ -732,11 +774,13 @@ struct ServerJobsPanelView: View {
     /// server packages from the ledger, then the same verified auto-import
     /// path lands it (hash check, importer, revision adoption).
     private func importPipelineEvidence(
-        _ row: ClusterClient.PipelineRunSummary
+        _ row: ClusterClient.PipelineRunSummary, origin: EvidenceImportOrigin?
     ) async {
+        guard let origin, clientForRows(origin: origin) != nil else { return }
         status = "packaging evidence for pipeline \(row.run) on the server…"
         let importer = service.cluster.registerEvidenceAutoImport()
-        if let event = await importer.importPipeline(runID: row.run) {
+        if let event = await importer.importPipeline(runID: row.run, origin: origin) {
+            guard service.cluster.evidenceImportOrigin == origin else { return }
             switch event.outcome {
             case .imported(let runDirectory):
                 status = "pipeline \(row.run) evidence imported → "
@@ -744,6 +788,8 @@ struct ServerJobsPanelView: View {
                     + " (hashes verified)"
             case .skippedUnbundleable(let note):
                 status = "pipeline \(row.run) skipped — \(note)"
+            case .refused(let code, let repair):
+                status = "\(code): \(repair)"
             case .failed(let message):
                 status = "pipeline evidence import failed: \(message)"
             }
@@ -755,47 +801,51 @@ struct ServerJobsPanelView: View {
     }
 
     /// Whether this job's evidence bundle is already in the local
-    /// auto-import ledger (imported here, or found already present).
+    /// origin-scoped ledger, with a matching bundle version.
     private func jobEvidenceImported(_ job: RemoteJobRecord) -> Bool {
-        guard let importer = service.cluster.evidenceAutoImport,
+        guard let origin = jobsOrigin, service.cluster.evidenceImportOrigin == origin,
+            let importer = service.cluster.evidenceAutoImport,
             let candidate = EvidenceAutoImportService.candidate(fromJob: job)
         else { return false }
-        return importer.isImported(bundlePath: candidate.bundlePath)
+        return importer.isImported(candidate: candidate, origin: origin)
     }
 
     /// Import through the auto-import service when it can see the bundle
-    /// (records the ledger entry, so the chip flips to "imported ✓");
-    /// otherwise the same verified panel path the Studies rows use. Either
-    /// way the landing is the existing hash-verified importer.
-    private func importEvidence(_ job: RemoteJobRecord) async {
+    /// (records the ledger entry, so the chip flips to "imported ✓"). A row
+    /// without a bundle needs packaging on its originating server first.
+    private func importEvidence(_ job: RemoteJobRecord, origin: EvidenceImportOrigin?) async {
+        guard let origin, clientForRows(origin: origin) != nil else { return }
         status = "importing evidence from job \(job.id)…"
         let importer = service.cluster.registerEvidenceAutoImport()
-        if let event = await importer.importNow(job: job) {
+        if let event = await importer.importNow(job: job, origin: origin) {
+            guard service.cluster.evidenceImportOrigin == origin else { return }
             switch event.outcome {
             case .imported(let runDirectory):
                 status = "evidence from job \(job.id) imported → "
                     + "runs/\(URL(filePath: runDirectory).lastPathComponent) (hashes verified)"
             case .skippedUnbundleable(let note):
                 status = "run \(event.runId ?? "?") skipped — \(note)"
+            case .refused(let code, let repair):
+                status = "\(code): \(repair)"
             case .failed(let message):
                 status = "evidence import failed: \(message)"
             }
             return
         }
-        // No bundle in the job's result payload — fall back to the panel
-        // path, which reports its own reason.
-        await service.experiments.importEvidence(fromJobID: job.id)
-        status = service.experiments.remoteJobs.remoteStatus ?? status
+        // No bundle in this captured row: never substitute another panel's
+        // selected job inventory or current connection.
+        status = importer.lastSummary ?? "This job has no packaged evidence. Refresh its originating server's job list or package the run before importing."
     }
 
     /// Manual resume of a checkpointed job: the server re-sbatches the
     /// job's own run.sbatch (the same implementation auto-resume uses) and
     /// the run continues from its checkpoint. Refusal details (already
     /// resubmitted / still running / cancelled) surface verbatim.
-    private func resubmit(_ jobID: String) async {
-        guard let client = service.cluster.client else { return }
+    private func resubmit(_ jobID: String, origin: EvidenceImportOrigin?) async {
+        guard let client = clientForRows(origin: origin) else { return }
         do {
             let result = try await client.resubmitJob(jobID)
+            guard service.cluster.evidenceImportOrigin == origin else { return }
             status = RemoteJobStatusClass.resumedStatusLine(
                 jobID: jobID, slurmJobID: result.slurmJobID,
                 continuationJobID: result.jobId)
@@ -807,10 +857,11 @@ struct ServerJobsPanelView: View {
         }
     }
 
-    private func cancel(_ jobID: String) async {
-        guard let client = service.cluster.client else { return }
+    private func cancel(_ jobID: String, origin: EvidenceImportOrigin?) async {
+        guard let client = clientForRows(origin: origin) else { return }
         do {
             try await client.cancelJob(jobID)
+            guard service.cluster.evidenceImportOrigin == origin else { return }
             status = "cancel requested for \(jobID)"
             await refreshJobs(selectFirstWhenEmpty: false)
         } catch let error as ClusterClient.ClientError {

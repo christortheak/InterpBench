@@ -53,7 +53,8 @@ struct ClusterHealthCard: View {
     /// Re-fetch when the workspace/connection identity changes.
     private var healthTaskKey: String {
         let connected = cluster.capabilities != nil
-        return "\(cluster.substrateLabel)|\(connected)|\(cluster.capabilities?.supportsHousekeeping == true)"
+        let origin = cluster.evidenceImportOrigin
+        return "\(origin?.serverIdentity ?? "local")|\(origin?.remoteRoot ?? "unknown")|\(origin?.workspaceRoot.path ?? "")|\(connected)|\(cluster.capabilities?.supportsHousekeeping == true)"
     }
 
     // MARK: Connection
@@ -359,27 +360,29 @@ struct ClusterHealthCard: View {
     @ViewBuilder
     private func evidenceRows(_ status: RemoteHousekeepingStatus) -> some View {
         let importer = cluster.evidenceAutoImport
-        let pending = importer?.pendingCandidates(
-            fromHousekeepingBundles: status.evidence?.bundleList ?? [])
-            ?? []
+        let origin = model.origin
+        let pending = origin.flatMap { origin in
+            importer?.pendingCandidates(fromHousekeepingBundles: status.evidence?.bundleList ?? [], origin: origin)
+        } ?? []
         HStack(alignment: .firstTextBaseline) {
             LabeledContent("Evidence pending") {
                 Text(pending.isEmpty
-                    ? "none — results are home"
+                    ? "no pending bundles in this listing"
                     : "\(pending.count) bundle\(pending.count == 1 ? "" : "s") on the server")
                     .font(.caption)
                     .foregroundStyle(pending.isEmpty ? Color.secondary : Color.orange)
             }
             if !pending.isEmpty {
                 Button(importer?.isImporting == true ? "Importing…" : "Import now") {
+                    guard let origin else { return }
                     Task {
                         let importer = cluster.registerEvidenceAutoImport()
-                        await importer.importNow(candidates: pending)
+                        await importer.importNow(candidates: pending, origin: origin)
                         await model.refresh(cluster: cluster, force: false)
                     }
                 }
                 .controlSize(.mini)
-                .disabled(importer?.isImporting == true)
+                .disabled(importer?.isImporting == true || origin != cluster.evidenceImportOrigin)
                 .help("download each bundle, verify its hash manifest, and land "
                     + "it under this workspace's runs/")
             }
@@ -404,12 +407,13 @@ struct ClusterHealthCard: View {
                 .textSelection(.enabled)
         }
         if let importer, !importer.failures.isEmpty {
-            ForEach(importer.failures.keys.sorted(), id: \.self) { path in
-                if let failure = importer.failures[path] {
+            ForEach(importer.failures.keys.filter { $0.origin == origin }
+                .sorted { $0.bundlePath < $1.bundlePath }, id: \.self) { key in
+                if let failure = importer.failures[key] {
                     Label(
                         "import failed (\(failure.attempts)×"
                             + (failure.exhausted ? ", retries exhausted" : "")
-                            + "): \(URL(filePath: path).lastPathComponent) — \(failure.message)",
+                            + "): \(URL(filePath: key.bundlePath).lastPathComponent) — \(failure.message)",
                         systemImage: "exclamationmark.triangle")
                         .font(.caption2)
                         .foregroundStyle(.red)
@@ -462,14 +466,16 @@ struct ClusterHealthCard: View {
 @Observable @MainActor
 final class ClusterHealthModel {
     private(set) var status: RemoteHousekeepingStatus?
+    private(set) var origin: EvidenceImportOrigin?
     private(set) var errorLine: String?
     private(set) var isLoading = false
     private(set) var isForcing = false
 
     func refresh(cluster: ClusterConnectionStore, force: Bool = false) async {
         guard cluster.capabilities?.supportsHousekeeping == true,
-            let client = cluster.client
+            let client = cluster.client, let capturedOrigin = cluster.evidenceImportOrigin
         else {
+            origin = nil
             status = nil
             return
         }
@@ -479,25 +485,33 @@ final class ClusterHealthModel {
         isLoading = true
         defer { isLoading = false }
         do {
-            status = try await client.housekeepingStatus()
+            let fetched = try await client.housekeepingStatus()
+            guard cluster.evidenceImportOrigin == capturedOrigin else { return }
+            origin = capturedOrigin
+            status = fetched
             errorLine = nil
         } catch {
+            guard cluster.evidenceImportOrigin == capturedOrigin else { return }
             errorLine = "could not fetch housekeeping status: \(error.localizedDescription)"
         }
     }
 
     func forceRefresh(cluster: ClusterConnectionStore) async {
-        guard let client = cluster.client else { return }
+        guard let client = cluster.client, let capturedOrigin = cluster.evidenceImportOrigin else { return }
         isForcing = true
         defer { isForcing = false }
         do {
             if let refreshed = try await client.refreshHousekeeping() {
+                guard cluster.evidenceImportOrigin == capturedOrigin else { return }
+                origin = capturedOrigin
                 status = refreshed
                 errorLine = nil
             } else {
+                guard cluster.evidenceImportOrigin == capturedOrigin else { return }
                 await refresh(cluster: cluster)
             }
         } catch {
+            guard cluster.evidenceImportOrigin == capturedOrigin else { return }
             // Privileged route — auth refusals surface verbatim.
             errorLine = "refresh refused: \(error.localizedDescription)"
         }
