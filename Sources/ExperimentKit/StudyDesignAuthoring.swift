@@ -34,6 +34,8 @@ public struct StudyDesignDocument: Encodable, Sendable {
     public let workspaceRoot: String
     public let designFileSHA256: String
     public let contentHash: String
+    public let portableContentHash: String
+    public let portableHashAlgorithm = PortableDesignIdentity.algorithm
     public let document: JSONValue
     public let seatIDs: [String]?
     public let advisories: [String]
@@ -43,6 +45,7 @@ public struct StudyDesignDocument: Encodable, Sendable {
         workspaceRoot = snapshot.workspaceRoot.path
         designFileSHA256 = snapshot.file.sha256
         contentHash = StudyTemplateStore.hash(snapshot.template)
+        portableContentHash = try PortableDesignIdentity.hash(snapshot.template)
         document = try JSONDecoder().decode(JSONValue.self, from: snapshot.file.data)
         if let ref = snapshot.template.semanticScenario {
             do {

@@ -18,7 +18,6 @@ import os
 from dataclasses import dataclass, field
 
 from . import neutral, paths
-from .generate import CellInjection
 from ..steering import residual_norm_convention
 from ..steering import vector_math as vm
 from ..steering import vector_store
@@ -109,6 +108,8 @@ def variant_injections(variant: ModelVariant, *,
                 paths.resolve_artifact(variant.neutral_pc_basis_path, root))
              if variant.neutral_pc_basis_path else None)
     half = max(1, variant.band_width) // 2
+    from .generate import CellInjection
+
     cells: list[CellInjection] = []
     for inj in variant.injections:
         vector_id = paths.resolve_artifact(inj["vectorArtifactID"], root)

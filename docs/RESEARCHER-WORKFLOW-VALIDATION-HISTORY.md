@@ -998,3 +998,48 @@ previous parser extraction's AST proof remains valid. No app installation,
 engine deployment, live scientific study or cluster qualification was performed.
 Independent re-review through the maintainer's designated agent remains the
 landing gate; main remains unchanged by this work.
+
+## Python reusable designs and shared interviews — 2026-09-06
+
+Branch `codex/python-design-interviews`, based directly on main `82da781`,
+including `99891ff` and the receipt/import gates. The
+[implementation and review handoff](PYTHON-DESIGN-INTERVIEW-WORKFLOW.md)
+describes the seven design operations, reviewed agent inspection, shared
+interviews, portable lineage identity and remaining surface gaps.
+
+Final validation after all production and test changes:
+
+- Full Python: **6,007 passed, 9 skipped, 8 warnings**, 164.88 seconds;
+  `/private/tmp/interpbench-design-python-full-final.log`.
+- Full serial Xcode beta: **277 SteeringKit + 4,578 ExperimentKit passed**,
+  `TEST SUCCEEDED`; `/private/tmp/interpbench-design-xcode-full-final.log`.
+  Both toolchain environment variables were set, with external derived data,
+  coverage mapping disabled and the configured Python interpreter supplied
+  in the shell environment before `xcodebuild`. No worktree venv or symlink
+  was needed.
+- Real Python/Mac owner journeys cover save, inspect, casting, minting, update
+  and reuse, including panel seat round trips. They also check portable hashes
+  with large seeds, null pins, arbitrary method data and legacy lineage, and
+  compare all three interview strings exactly. Python regressions exercise
+  stale reviews, immutable sources, ordinary-path admission, partial batches
+  and real panel minting with GPU imports blocked.
+- `audit-task-prompt-parser.py` and `audit-design-lazy-imports.py` pass with
+  negative controls. Only the named import deferrals claim unchanged engine
+  bodies; portable identity and authoring behavior are semantic additions.
+- Maintained/packaged/compiled interview equality, Python CLI reference,
+  all 17 Swift CLI-reference regions, shipped workspace contract, normal and
+  release bridge-retirement gates, public scan and whitespace checks pass.
+  New files were staged before the public scan so the scan included them.
+- The actual diff was read locally. Independent review through the maintainer's
+  designated reviewing/integration agent remains the landing gate.
+
+Earlier focused interchange tests exposed a missing decoded `recordTokenIDs`
+default. The first full suites caught seed census/packaging omissions and a
+draft-only contract comment in the shipping mirror. Those were corrected,
+then both complete suites passed without subsequent production or test edits.
+
+These are source and shared-owner interchange checks, not interactive UI,
+live model/GPU, scheduler or remote-cleanup qualification. No app installation,
+engine deployment, study execution or merge to main was performed. Existing
+frozen manifests and runs were not migrated; new draft lineage is explicitly
+versioned, while stale-write preconditions remain outside manifest bytes.

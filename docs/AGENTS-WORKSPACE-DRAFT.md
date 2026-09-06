@@ -581,9 +581,9 @@ inspection alone does not certify attachability. SwiftUI's Attach vector artifac
 uses the same operation. Supply `--source-concept` or `--eval-run` only when
 required by the artifact's provenance, never to bypass a refusal.
 
-**Cross-platform study assembly:** the Python client also supports `steerlab pack preview/apply/export`, `steerlab experiment inspect`, `import-prompts`, `inspect-artifact` and `attach-artifact`. Use the same pack format and reviewed flags shown above; `experiment inspect <study> --json` returns `document` and `manifestFileSHA256`. Keep preview and apply on the same client, in the same workspace: review tokens are authoring preconditions, not portable scientific identifiers. The client preserves complete prompt records and uses its scientific store for vector admission, including substrate restrictions. The Python client does not yet provide the conceptual study interview, design commands or model preparation. See `docs/PYTHON-STUDY-ASSEMBLY-WORKFLOW.md` in the code checkout for the exact client journey and remaining gaps.
+**Cross-platform study assembly:** the Python client also supports `steerlab pack preview/apply/export`, `steerlab experiment inspect`, `import-prompts`, `inspect-artifact` and `attach-artifact`. Use the same pack format and reviewed flags shown above; `experiment inspect <study> --json` returns `document` and `manifestFileSHA256`. Keep preview and apply on the same client, in the same workspace: review tokens are authoring preconditions, not portable scientific identifiers. The client preserves complete prompt records and uses its scientific store for vector admission, including substrate restrictions. The Python client now provides the same conceptual study interview through `steerlab authoring study <intent> --json`, all seven design verbs listed below through `steerlab design`, and `steerlab agent inspect <path> --json` for exact casting reviews. Model preparation remains follow-up work. See `docs/PYTHON-DESIGN-INTERVIEW-WORKFLOW.md` and `docs/PYTHON-STUDY-ASSEMBLY-WORKFLOW.md` in the code checkout for the client journeys and remaining gaps.
 
-**Study designs:** `steerlab-cli design list --json` reports the design library
+**Study designs:** both `steerlab` and `steerlab-cli` support the design commands in this section. `steerlab-cli design list --json` reports the design library
 and unreadable entries. `steerlab-cli design inspect <name> --json` returns the
 complete design document and `designFileSHA256`. To edit its description, use
 `steerlab-cli design describe <name> --description <text> --file-sha256 <digest> --json`
@@ -594,7 +594,11 @@ The casting JSON contains either `agents` (an array of objects naming
 `artifactPath` and `artifactFileSHA256`; empty means baseline) or `seats`
 (an object keyed by the inspected design's `seatIDs`, with null for baseline
 and the same artifact objects for treated seats). The command checks reviewed
-pins and derives an ordinary draft with design provenance. It reports the actual
+pins and derives an ordinary draft with design provenance. Both clients expose
+`portableContentHash` with `portableHashAlgorithm: "portable-v1"` for cross-client
+comparison. The Mac also retains its original `contentHash`. New Python drafts
+stamp their lineage algorithm explicitly; old stamps and frozen studies are not
+rewritten. File review digests remain external preconditions, never manifest fields. It reports the actual
 name, including a suffix if the requested name was occupied. Review the draft
 before freezing or submitting it.
 

@@ -12,6 +12,13 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Python reusable design list/inspect/describe/save/update/instantiate/batch and
+  reviewed agent inspection now support conceptual study authoring across clients.
+  Shared study interviews teach the same pack and casting workflow in Python,
+  the Mac CLI, HTTP and the app. Portable authoring lineage is versioned explicitly
+  while existing design stamps, frozen studies and runs retain their identities.
+
+
 ### Added
 
 - Cross-platform client study assembly: `steerlab pack preview/apply/export`,

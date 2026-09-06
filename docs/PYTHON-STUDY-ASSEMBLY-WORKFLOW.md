@@ -81,7 +81,8 @@ magically repair their pins.
 | Read reviewed study | `experiment manifest`; named HTTP document | `experiment inspect`; document and file digest |
 | Full JSONL import | Existing reviewed import | Same immutable-version policy; shared Python run parser |
 | Vector review and attachment | Mac scientific admission | Python scientific admission; substrate restrictions remain |
-| Study interview, design library, model preparation | Existing Mac operations | Still follow-up work |
+| Study interview, design library | Existing Mac operations | Added in [the design/interview checkpoint](PYTHON-DESIGN-INTERVIEW-WORKFLOW.md) |
+| Model preparation | Existing Mac operations | Still follow-up work |
 
 Review tokens are opaque and may differ between implementations. Obtain a new
 review when changing surfaces or workspaces. Input SHA-256 values describe
@@ -161,8 +162,8 @@ claimed by this change.
 
 ## Next slices
 
-1. Python reusable designs and study-interview support, preserving the Mac
-   casting, provenance and reviewed update rules.
+1. Python reusable designs and study interviews are implemented in the
+   [next checkpoint](PYTHON-DESIGN-INTERVIEW-WORKFLOW.md); independent review is the landing gate.
 2. Model preparation and the remaining scenario/casting/pipeline authoring
    paths, with explicit capability and execution-role boundaries.
 3. Cluster-document coauthoring and managed remote monitoring/recovery/cleanup

@@ -182,7 +182,7 @@ beside it renders exactly the same bytes.
 `run` is not an exception: it reads a study out of a workspace and imports
 evidence back into it, so it requires one.
 
-#### Reviewed client study assembly
+#### Reviewed client study assembly, designs and interviews
 
 The client authors its local workspace using the same pack format as the Mac.
 See [the complete client journey](PYTHON-STUDY-ASSEMBLY-WORKFLOW.md) for result
@@ -199,11 +199,29 @@ steerlab experiment inspect <name>
 steerlab experiment import-prompts <name> --file <path> --manifest-sha256 <digest>
 steerlab experiment inspect-artifact <path>
 steerlab experiment attach-artifact <name> <concept> --artifact <runs/<run>/<name>> --artifact-sha256 <digest> --manifest-sha256 <digest> --sidecar-sha256 <digest> [--eval-run <run-dir>] [--source-concept <concept>]
+steerlab authoring study <intent>
+steerlab design list
+steerlab design inspect <name>
+steerlab design describe <name> --description <text> --file-sha256 <value>
+steerlab design save <study> --manifest-sha256 <digest> [--description <text>] [--name <value>]
+steerlab design update <name> --file-sha256 <value> --manifest-sha256 <digest> --study <value>
+steerlab design instantiate <name> --casting <value> --file-sha256 <value> [--study-name <value>]
+steerlab design batch <name> --file-sha256 <value> --rows <value>
+steerlab agent inspect <path>
 ```
 
 All commands accept `--root <directory>` and `--json`; `--out` writes the envelope.
 
 <!-- END CLIENT-STUDY-ASSEMBLY -->
+
+`authoring study` emits the same research interview as the app and Mac CLI and
+writes nothing. Design castings name reviewed agent paths/hashes or explicit
+baseline seats; `design batch` reports each row and preserves successful drafts
+when another row refuses. File digests are external reviews. Both clients expose
+`portableContentHash` and `portableHashAlgorithm`; the Mac's additional
+`contentHash` retains its historical encoding. See
+[the full design/interview workflow](PYTHON-DESIGN-INTERVIEW-WORKFLOW.md).
+
 
 #### The `runner` family (Phase 2)
 

@@ -1022,19 +1022,16 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
     /// the study's stripped form against the hash recorded here to tell an
     /// unchanged instance from a diverged one.
     ///
-    /// Optional + omit-when-nil, so every manifest authored before templates
-    /// existed decodes unchanged and keeps its content hash. NOT part of the
-    /// cross-engine contract: the Python engine does not know the key, so a
-    /// server-side re-save of a manifest drops it (the `JudgeRef.provider`
-    /// failure mode). Instantiation is a Mac-authoring act and the stamp is
-    /// provenance rather than a pin, so a dropped stamp costs lineage, never
-    /// measurement — but re-mint on the Mac if the server has rewritten the
-    /// manifest.
+    /// Optional + omit-when-nil preserves historical manifest encodings. New
+    /// portable authoring stamps name their identity algorithm explicitly;
+    /// absent means the original Swift design hash. Python preserves the stamp.
     public struct TemplateProvenance: Codable, Sendable, Equatable {
         /// The template's directory name under the workspace's `templates/`.
         public var template: String
-        /// `StudyTemplateStore.hash` of the template at instantiation time.
+        /// Design identity at instantiation time, interpreted by hashAlgorithm.
         public var templateHash: String
+        /// Absent means the original Swift hash; portable-v1 is cross-client authoring identity.
+        public var hashAlgorithm: String?
         /// Set only on studies minted together by `instantiateBatch`: an id
         /// shared by every sibling of that mint, so analysis can group a
         /// composition sweep or a permutation set back together. Sibling
@@ -1044,10 +1041,11 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         public var batchGroup: String?
 
         public init(
-            template: String, templateHash: String, batchGroup: String? = nil
+            template: String, templateHash: String, batchGroup: String? = nil, hashAlgorithm: String? = nil
         ) {
             self.template = template
             self.templateHash = templateHash
+            self.hashAlgorithm = hashAlgorithm
             self.batchGroup = batchGroup
         }
     }

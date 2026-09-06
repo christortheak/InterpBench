@@ -7,7 +7,9 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "Server"))
 from steerlab_server import client_cli
-from steerlab_server.client.study_assembly import VERB_SPECS
+from steerlab_server.client.study_assembly import VERB_SPECS as ASSEMBLY_SPECS
+from steerlab_server.client.design_commands import VERB_SPECS as DESIGN_SPECS
+VERB_SPECS = (*ASSEMBLY_SPECS, *DESIGN_SPECS)
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--write", action="store_true")

@@ -320,7 +320,15 @@ extension StudyTemplateStore {
         // against the one stamped into the study at mint time. `hash` covers
         // the design's body and semantic panel and excludes its name and
         // description, so a renamed note cannot read as a revision.
-        let designRevised = hash(design) != provenance.templateHash
+        func identity(_ template: StudyTemplate) -> String? {
+            provenance.hashAlgorithm == PortableDesignIdentity.algorithm
+                ? try? PortableDesignIdentity.hash(template) : hash(template)
+        }
+        // Unknown algorithms must never certify agreement.
+        guard provenance.hashAlgorithm == nil || provenance.hashAlgorithm == PortableDesignIdentity.algorithm else {
+            return DesignLineage(agreement: .diverged, designRevised: true)
+        }
+        let designRevised = identity(design) != provenance.templateHash
         func reading(_ agreement: DesignAgreement) -> DesignLineage {
             DesignLineage(agreement: agreement, designRevised: designRevised)
         }
@@ -338,6 +346,6 @@ extension StudyTemplateStore {
         var candidate = design
         candidate.study = strippedBody(study)
         return reading(
-            hash(candidate) == provenance.templateHash ? .matches : .diverged)
+            identity(candidate) == provenance.templateHash ? .matches : .diverged)
     }
 }

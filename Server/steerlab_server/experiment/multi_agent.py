@@ -36,8 +36,13 @@ import re
 
 from . import model_variant, paths, truncation_gate, turn_endpoint, voice_lint
 from . import system_prompt as system_prompt_mod
-from .generate import generate
 from .turn_endpoint import EndpointError, TurnEndpoint
+
+
+def generate(*args, **kwargs):
+    """Load the GPU generator only when executing a turn, never to validate a panel."""
+    from .generate import generate as execute
+    return execute(*args, **kwargs)
 
 
 #: ``kind`` marker of a scenario PROTOCOL TEMPLATE — the reusable half of a

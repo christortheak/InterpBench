@@ -163,7 +163,7 @@ include = ["steerlab_server*"]
 # refused with a missing-file prerequisite no repair could satisfy. The
 # checkout's WorkspaceSeed/ is still the source of truth; a test asserts these
 # copies are byte-identical to it.
-"steerlab_server.experiment" = ["seed/prompts/authoring-prompts/*.md"]
+"steerlab_server.experiment" = ["seed/prompts/authoring-prompts/*.md", "seed/prompts/study-interviews/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -114,7 +114,7 @@ import os
 import sys
 
 from . import cli_envelope as envelope
-from .client import study_assembly
+from .client import study_assembly, design_commands
 from .cli_envelope import (HELP_FLAG, JSON_FLAG, OUT_FLAG, CLIResult,
                            UsageError, VerbSpec)
 
@@ -252,6 +252,7 @@ def _authoring_prompt_kinds():
 
 CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     *study_assembly.VERB_SPECS,
+    *design_commands.VERB_SPECS,
     VerbSpec("experiment", "create", positional="<name>",
              purpose="Create a draft study in this workspace.",
              value_flags=frozenset({"--model", "--revision", "--description"}),
@@ -508,7 +509,7 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
 _SPECS_BY_LABEL = {spec.label: spec for spec in CLIENT_VERB_SPECS}
 
 #: Families this binary dispatches, in the order ``--help`` prints them.
-FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "pack", "model",
+FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "pack", "design", "agent", "model",
                              "authoring", "runner", "run")
 
 #: Families whose ENTIRE surface is one verb, spelled as the family name and
@@ -525,7 +526,7 @@ SOLO_FAMILIES: dict = {"run": "run"}
 #: ``runner`` is excluded because addressing a runner is its entire job; it is
 #: a SEPARATE family precisely so the exclusion is a line in a table rather
 #: than a judgement call about a flag name.
-AUTHORING_FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "pack",
+AUTHORING_FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "pack", "design", "agent",
                                        "model")
 
 #: The generation-prompt emitter. NOT in :data:`AUTHORING_FAMILIES` despite
@@ -2071,6 +2072,8 @@ def _authoring_prompt(invocation: Invocation) -> CLIResult:
     .runAuthoringCommand``; the rendered bytes are identical on both engines
     for the same registry and the same arguments.
     """
+    if invocation.spec.verb == "study":
+        return design_commands.run(invocation)
     from .experiment import authoring_prompts
 
     spec = invocation.spec
@@ -4082,7 +4085,7 @@ def _iso(value) -> str | None:
 
 
 HANDLERS = {"experiment": _experiment, "concept": _concept, "bundle": _bundle,
-            "pack": study_assembly.run,
+            "pack": study_assembly.run, "design": design_commands.run, "agent": design_commands.run,
             "model": _model,
             "authoring": _authoring_prompt, "runner": _runner, "run": _run}
 
@@ -4110,11 +4113,13 @@ def _envelope_for_result(label: str, outcome: CLIResult):
             # that hard-set `ready` while carrying advisories would report a
             # clean run it did not have.
             state=(outcome.state if outcome.state != "ready" else None))
-    return envelope.refusal(
+    document = envelope.refusal(
         label, code=outcome.code or "refused", gate=outcome.gate,
         reason=outcome.message, repair_action=outcome.repair_action,
         state=outcome.state, result=outcome.payload or None,
         next_action_=outcome.next_action)
+    document.changed = outcome.changed
+    return document
 
 
 def _envelope_for_exception(label: str, exc: BaseException):

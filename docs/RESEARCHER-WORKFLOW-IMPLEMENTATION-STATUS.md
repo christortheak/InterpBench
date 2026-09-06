@@ -1,32 +1,26 @@
 # Researcher workflow implementation status
 
-Current branch: `codex/python-authoring-equivalence`, based directly on main
-`ef3dec8`. Main includes the independently reviewed study-assembly work and
-`3ea802a`: submission receipts wait for terminal scheduler jobs, and
-`--reimport-drifted` preserves the original import while creating a sibling.
-The earlier branch tips are retained. This branch does not install the app,
-change live services or authorize landing. The
-[implementation plan](RESEARCHER-WORKFLOW-IMPLEMENTATION-PLAN.md) remains
-authoritative; WP-5 and WP-6 remain in scope.
+Current branch: `codex/python-design-interviews`, based directly on main
+`82da781`, including the reviewed `99891ff` authoring corrections and the
+terminal-job receipt / immutable sibling reimport gates. Earlier branches
+are retained. Main is unchanged by this implementation branch.
 
-This checkpoint adds Python client pack preview/apply/export, manifest inspection,
-immutable full-record prompt import and reviewed vector attachment. See the
-[workflow and review handoff](PYTHON-STUDY-ASSEMBLY-WORKFLOW.md) for scope,
-verification and remaining work. Historical checkpoints below describe their
-own original review state, not the current state of main.
+This checkpoint adds the seven Python design operations, reviewed agent
+inspection for casting, shared study interviews, and real Python/Mac/app-owner
+journeys. See [the implementation and review handoff](PYTHON-DESIGN-INTERVIEW-WORKFLOW.md).
+The prior [Python assembly checkpoint](PYTHON-STUDY-ASSEMBLY-WORKFLOW.md) has
+landed; historical sections below retain their original review state.
 
-Audit follow-up to `06d1f78` corrects the verification-advisory envelope and
-adds shared LF/CRLF/CR prompt-import normalization with direct cross-client
-byte/hash regressions. The Xcode instructions now distinguish the working
-shell environment prefix from an Xcode build setting. Interpreter discovery
-remains unchanged.
+The [implementation plan](RESEARCHER-WORKFLOW-IMPLEMENTATION-PLAN.md) remains
+authoritative; WP-5 and WP-6 remain in scope. This branch authorizes no live
+execution, installation or self-merge. Independent review through the
+maintainer's designated reviewing agent remains the landing gate.
 
-Current validation: **5,975 Python tests passed, 9 skipped; 277 SteeringKit +
-4,574 ExperimentKit tests passed**. The full Swift run used the documented
-shell prefix without a worktree venv or symlink. Parser AST, reference/contract,
-normal/release bridge and public-scan gates pass. See the
-[validation history](RESEARCHER-WORKFLOW-VALIDATION-HISTORY.md) for logs and
-review findings. Independent re-review remains the landing gate.
+Validation for this checkpoint is recorded in the
+[validation history](RESEARCHER-WORKFLOW-VALIDATION-HISTORY.md).
+Final suites pass: **6,007 Python tests** (9 skipped), **277 SteeringKit tests**
+and **4,578 ExperimentKit tests**. Both AST audits, generated-reference and
+interview checks, bridge-retirement gates and the public scan pass.
 
 ## What researchers and agents gain
 
@@ -183,8 +177,8 @@ qualification is claimed. See the audit handoff for review boundaries.
    remaining draft writer/adapter migration. All four Swift bridges are
    retired, and normal/release bridge checks pass. Observation, auxiliary jobs
    and delayed actions outside this slice still need end-to-end context coverage.
-2. **Complete public surface equivalence (WP-3/4).** Fill cross-platform design,
-   model preparation, study assembly and advanced-method gaps; ship practical
+2. **Complete public surface equivalence (WP-3/4).** Finish model preparation, remaining scenario/casting/pipeline authoring,
+   and advanced-method gaps; ship practical
    method guides, dataset templates and coworker prompts. Every supported
    operation needs explicit inputs, truthful outcomes and actionable repairs.
 3. **Complete cluster coauthoring and the managed remote lifecycle (WP-5/6).**

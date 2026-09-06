@@ -100,9 +100,9 @@ def test_the_packaged_registry_is_declared_as_package_data():
     pyproject = os.path.join(os.path.dirname(checkout), "Server", "pyproject.toml")
     with open(pyproject, encoding="utf-8") as handle:
         text = handle.read()
-    assert (f'"steerlab_server.experiment" = '
-            f'["{ap.PACKAGED_SEED_DIRECTORY}/'
-            f'{ap.REGISTRY_RELATIVE_DIRECTORY}/*.md"]') in text
+    import tomllib
+    declared = tomllib.loads(text)["tool"]["setuptools"]["package-data"]["steerlab_server.experiment"]
+    assert f"{ap.PACKAGED_SEED_DIRECTORY}/{ap.REGISTRY_RELATIVE_DIRECTORY}/*.md" in declared
 
 
 @pytest.mark.skipif(
