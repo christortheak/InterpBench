@@ -267,19 +267,23 @@ public final class StudyManagementController {
     /// excluded from the content hash (see `StudyTemplateStore.hash`), so this
     /// cannot make an instance diverge — which is exactly why it is the one
     /// field the read-only library lets you change.
-    public func updateTemplateDescription(_ name: String, to description: String) {
+    @discardableResult
+    public func updateTemplateDescription(reviewed: StudyDesignSnapshot, to description: String) -> StudyDesignSnapshot? {
         clearFormError(.template)
         do {
-            var template = try StudyTemplateStore.load(name: name)
-            guard template.templateDescription != description else { return }
-            template.templateDescription = description
-            try StudyTemplateStore.save(template)
+            guard reviewed.workspaceRoot == ExperimentStore.workspaceRoot.standardizedFileURL else {
+                throw StudyDesignAuthoringError(code: "designWorkspaceChanged", reason: "The description belongs to another workspace.",
+                    repairAction: "Select the originating workspace and reload its design before saving.")
+            }
+            let saved = try StudyDesignAuthoring.updateDescription(description, reviewed: reviewed)
             refreshTemplates()
+            return saved
         } catch {
             refuse(
                 .template,
                 "Couldn't save the description — "
-                    + ((error as? ExperimentError)?.reason ?? "\(error)"))
+                    + error.localizedDescription)
+            return nil
         }
     }
 

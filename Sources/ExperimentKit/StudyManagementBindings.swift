@@ -63,10 +63,6 @@ extension ExperimentPanel {
         management.newDesignFromStudy(named: name)
     }
 
-    public func updateTemplateDescription(_ name: String, to description: String) {
-        management.updateTemplateDescription(name, to: description)
-    }
-
     @discardableResult
     public func editDesign(_ name: String) -> String? {
         management.editDesign(name)

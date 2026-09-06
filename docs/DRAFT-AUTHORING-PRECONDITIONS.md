@@ -87,6 +87,18 @@ adapter now invokes this command directly, without reading or mutating panel
 fields. An optional exclusion-rule edit is validated and published within that
 same operation; an omitted rule edit preserves the existing declaration.
 
+### Study design descriptions
+
+`StudyDesignSnapshot` captures a design's exact file bytes, name and workspace
+outside the template encoding. `StudyDesignAuthoring.updateDescription` checks
+that file version under the shared lock, including unchanged-text requests,
+then returns the saved snapshot. The native description editor preserves its
+review across catalog refresh and reloads explicitly. `design list/inspect/describe`
+and the Swift workbench HTTP adapters call that same owner; transport writes
+must supply `designFileSHA256`. See [the public design contract](STUDY-DESIGN-AUTHORING.md).
+Other design writers remain migration work; this is not a claim that all legacy
+upserts, rename or instantiation operations participate in reviewed transactions.
+
 ### Pipeline declaration edits
 
 `StudyPipelineAuthoring.save(_:reviewed:)` validates complete gate values and

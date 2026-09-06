@@ -44,6 +44,12 @@ The mode is required: the original invocation still audits the complete property
 bridge retirement. Future semantic changes should be checked independently, not
 normalized away to keep either historical audit green.
 
+The unreviewed `updateTemplateDescription` forwarding method is also removed.
+The Templates editor now calls the management owner with a `StudyDesignSnapshot`;
+that owner shares guarded description publication with the CLI and HTTP API.
+This is semantic authoring work after the mechanical design-property checkpoint,
+so audit the property migration at `8e8bc36`, not against this later source tree.
+
 The historical inventory below remains the ratchet baseline. Its old property
 bridge file/count describes what was removed, not an existing compatibility API.
 No baseline allowance was expanded.

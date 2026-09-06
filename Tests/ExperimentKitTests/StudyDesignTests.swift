@@ -151,7 +151,7 @@ import Testing
             let minted = try StudyTemplateStore.instantiate(
                 templateName: design.name, cell: .agents([]))
             let panel = makePanel(root: root)
-            panel.updateTemplateDescription(design.name, to: "wave 3, re-run for the appendix")
+            panel.management.updateTemplateDescription(reviewed: try StudyDesignSnapshot(workspaceRoot: root, name: design.name), to: "wave 3, re-run for the appendix")
             #expect(
                 panel.management.designs.templates.first?.templateDescription
                     == "wave 3, re-run for the appendix")

@@ -682,6 +682,7 @@ import Testing
             // new family rather than a changed one; nothing in the lifecycle
             // moved.
             "init",
+            "design list", "design inspect", "design describe",
             "workspace init", "data check", "data custody", "data verify-custody",
             // POLE MIRRORING: the opposite pole of a contrastive direction as
             // its own artifact. A new verb in an existing family, not a

@@ -110,6 +110,7 @@ public enum CLIReferenceDocument {
                 "remote import", "remote import-chain", "remote variants",
                 "remote chat",
             ]),
+        .init(id: "swift-design", verbLabels: ["design list", "design inspect", "design describe"]),
         .init(id: "swift-authoring", verbLabels: ["authoring prompt"]),
         .init(id: "swift-docs", verbLabels: ["docs cli-reference"]),
         .init(

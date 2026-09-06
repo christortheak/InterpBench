@@ -906,6 +906,15 @@ rationale. Fastest way to find what is missing. Blockers are a refusal:
 `state: "refused"`, exit **65 in both modes** (the one verb whose human exit
 has migrated — §5).
 
+**Study designs:** `steerlab-cli design list --json` reports the design library
+and unreadable entries. `steerlab-cli design inspect <name> --json` returns the
+complete design document and `designFileSHA256`. To edit its description, use
+`steerlab-cli design describe <name> --description <text> --file-sha256 <digest> --json`
+with that reviewed file digest. A stale digest refuses; inspect and review the
+intervening changes before reconstructing the edit. Descriptions do not change
+the scientific design hash. Creation, instantiation and broader design edits are
+not yet exposed by this CLI family; do not invent verbs or hand-edit frozen studies.
+
 **`data custody <run-id>`** discovers receipts for an imported run, including
 receipts for a pipeline archive that carried that run. Discovery lists recorded
 imports; it does not verify current evidence bytes. Use `data verify-custody`

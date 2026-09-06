@@ -601,6 +601,7 @@ public enum ExperimentCLIHelp {
             .init(
                 synopsis: "experiment <verb> <name> …",
                 purpose: "The study lifecycle."),
+            .init(synopsis: "design list | inspect | describe …", purpose: "Inspect designs and edit reviewed descriptions."),
             .init(
                 synopsis: "data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>",
                 purpose: "Study-data readiness and local evidence custody."),

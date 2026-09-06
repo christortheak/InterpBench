@@ -641,7 +641,7 @@ import Testing
                     "init", "workspace", "data", "vectors", "remote",
                     "experiment", "docs", "install", "panel", "authoring",
                     // The chat-template capability record (2026-09-05).
-                    "model",
+                    "model", "design",
                 ])
     }
 

@@ -3,7 +3,7 @@ import SteeringKit
 
 /// Common transport results for explicit study-authoring operations.
 enum StudyAuthoringHTTP {
-    struct Response {
+    struct Response: Sendable {
         let status: String
         let body: Data
         var succeeded: Bool { status == "200 OK" }

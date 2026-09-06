@@ -89,7 +89,7 @@ struct StudyManagementOwnershipTests {
     }
 
     @Test func designOperationsWorkWithoutAPanelAndRefreshTheirLibrary() throws {
-        try withWorkspace { _ in
+        try withWorkspace { root in
             _ = try ExperimentStore.create(
                 name: "source", description: "purpose", modelID: "test/model")
             let owner = StudyManagementController(draft: StudyDraftState())
@@ -104,7 +104,7 @@ struct StudyManagementOwnershipTests {
             owner.draft.newName = "unrelated-create-field"
             owner.renameTemplate(name, to: "renamed-design")
             #expect(owner.designs.selectedTemplateName == "renamed-design")
-            owner.updateTemplateDescription("renamed-design", to: "Updated description")
+            owner.updateTemplateDescription(reviewed: try StudyDesignSnapshot(workspaceRoot: root, name: "renamed-design"), to: "Updated description")
             #expect(owner.designs.selectedTemplate?.templateDescription == "Updated description")
             let editName = try #require(owner.editDesign("renamed-design"))
             var edit = try ExperimentStore.load(name: editName)
@@ -119,6 +119,19 @@ struct StudyManagementOwnershipTests {
             #expect(owner.designs.templates.isEmpty)
             #expect(owner.designs.newStudyDesign == .fromScratch)
             #expect(try ExperimentStore.load(name: editName).maxTokens == 333)
+        }
+    }
+
+    @Test func designDescriptionCannotFollowAWorkspaceSwitch() throws {
+        try withWorkspace { root in
+            let study = try ExperimentStore.create(name: "study", description: "", modelID: "test/model")
+            try StudyTemplateStore.save(StudyTemplate(name: "design", study: study))
+            let reviewed = try StudyDesignSnapshot(workspaceRoot: root, name: "design")
+            let owner = StudyManagementController(draft: StudyDraftState())
+            WorkspaceRoot.programmaticOverride = root.appending(component: "other")
+            #expect(owner.updateTemplateDescription(reviewed: reviewed, to: "Changed") == nil)
+            #expect(owner.draft.formErrors[.template]?.contains("another workspace") == true)
+            #expect(try StudyDesignSnapshot(workspaceRoot: root, name: "design").file.data == reviewed.file.data)
         }
     }
 

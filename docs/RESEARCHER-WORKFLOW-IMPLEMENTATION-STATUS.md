@@ -11,10 +11,10 @@ completion; a passing focused test does not establish release or scientific qual
 
 | Package | Status | Remaining gate |
 |---|---|---|
-| WP-0 operation inventory | [50-operation matrix](RESEARCH-OPERATION-MATRIX.md) and shared backlog | Expand advanced/per-field mappings and link executable journey evidence |
+| WP-0 operation inventory | [51-operation matrix](RESEARCH-OPERATION-MATRIX.md) and shared backlog | Expand advanced/per-field mappings and link executable journey evidence |
 | WP-1 observation and context | In progress | Finish origin persistence/actions, import context, transport policy, explicit submission and offline results; both suites |
 | WP-2 shared services | Runtime roles and draft preconditions implemented; writer/adapter migration in progress | External stale-write preconditions, authoring owners, service roles, bridge retirement |
-| WP-3 public operations | Pending | Designs, models, assembly, advanced-method mappings and adapters |
+| WP-3 public operations | Design inspection/description adapters implemented; in progress | Designs, models, assembly, advanced-method mappings and adapters |
 | WP-4 research guidance | Extraction contract and control interpretation corrected; full guides pending | Shipped method guides, prompt resources, scientific wording and executable examples |
 | WP-5 cluster coauthoring | Mac guide, sourced-fact review and shared preview implemented | Real documentation-to-profile journey, interactive qualification and cross-platform adapter mapping |
 | WP-6 remote lifecycle | Origin-aware import and durable archive custody implemented; in progress | Composed recovery, receipt adapters and bounded cleanup plan/apply with dependency checks |
@@ -555,3 +555,36 @@ ExperimentKit tests (`TEST SUCCEEDED`); full Python passes 5,896 with 9 skipped
 and 8 warnings (146.47 seconds). The bridge ratchet and whitespace checks pass,
 and the actual source/test/document diff was read. This is a mechanical owner
 access migration; substantive design storage/authorship remains separate work.
+
+
+## Reviewed design descriptions and public design inspection
+
+The description editor now retains a `StudyDesignSnapshot` containing the exact
+file version that supplied its text. The shared command checks that version
+under the manifest-file lock, including unchanged-text requests, and returns an
+updated snapshot only after success. Concurrent edits refuse with `designChanged`;
+a missing design is not recreated. Traversal, linked paths and mismatched internal
+names refuse. Template encoding, scientific content hashes and source studies
+remain unchanged by metadata version tracking.
+
+`design list/inspect/describe` and explicit Swift workbench HTTP operations expose
+that owner without panel selection or a server connection. Listing reports
+unreadable entries; inspection returns the document plus separate file/content
+hashes; writes require the reviewed file digest. The native editor retains
+failed edits and offers an explicit reload. Its unreviewed compatibility forwarding
+method has been removed. See [the public contract](STUDY-DESIGN-AUTHORING.md).
+
+Validation: six focused authoring tests pass, including a parameterized stale
+edit case. A compiled CLI and disposable loopback Swift workbench exercise list,
+inspect and describe, missing/stale preconditions, wrong workspace, unknown fields
+and missing designs; file digests match the published bytes, scientific hashes
+remain unchanged and the source study is untouched. Full Xcode tests pass 277
+SteeringKit and 4,485 ExperimentKit tests (`TEST SUCCEEDED`, 42.245 seconds);
+full Python passes 5,896 with 9 skipped and 8 warnings (145.47 seconds).
+The first full Swift run identified one namespace-census expectation; it was
+updated and the full suite rerun. The generated CLI reference, bridge ratchet
+and whitespace checks pass, and the actual diff was read. This semantic
+checkpoint does not extend the earlier mechanical AST claim.
+
+Other design writers (creation, save-back, rename, delete and instantiation),
+Python adapters and interactive UI qualification remain work.

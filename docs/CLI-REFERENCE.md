@@ -783,6 +783,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   init [--home <dir>]                           Create the home layout's Workspaces/ and Sites/.
   workspace init <path>                         Create and seed a data workspace.
   experiment <verb> <name> …                    The study lifecycle.
+  design list | inspect | describe …            Inspect designs and edit reviewed descriptions.
   data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>  Study-data readiness and local evidence custody.
   vectors <verb> …                              Vector artifacts.
   remote <verb> (--site <id> | --url <server>)  Cluster client.
@@ -2198,6 +2199,32 @@ custody receipt. `remote import --json` reports its digest; use
 archive and expanded files without contacting a server. This proves possession
 of bytes, not scientific validity or cleanup authorization. See
 [Local evidence custody](EVIDENCE-CUSTODY.md) for the contract and current limits.
+
+### Study design library (`design`)
+
+<!-- GENERATED:swift-design BEGIN -->
+<!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
+
+```
+steerlab-cli design list
+steerlab-cli design inspect <name>
+steerlab-cli design describe <name> --description <text> --file-sha256 <value>
+```
+
+| Verb | Purpose |
+|---|---|
+| `design list` | List the workspace's designs and report unreadable entries. |
+| `design inspect` | Read a design and its external file digest for reviewed edits. |
+| `design describe` | Save a design description against the reviewed file version. |
+
+Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
+<!-- GENERATED:swift-design END -->
+
+Design inspection returns `result.document`, `designFileSHA256` and the scientific
+`contentHash`. Use the file digest as the description-write precondition; it is
+separate from the content hash. This surface currently lists/inspects designs and
+edits descriptions. Creation, instantiation, rename and broader edits remain
+migration work. See [reviewed design authorship](DRAFT-AUTHORING-PRECONDITIONS.md).
 
 ### 3.9 Cluster lifecycle (`cluster`)
 

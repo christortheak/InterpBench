@@ -34,17 +34,32 @@ struct TemplatesPanelView: View {
     /// The description being edited, and the design it belongs to — so
     /// switching designs never carries one design's text onto another.
     @State private var descriptionDraft = ""
-    @State private var descriptionOwner: String?
+    @State private var descriptionOwner: DescriptionContext?
+    @State private var descriptionReview: StudyDesignSnapshot?
+    @State private var descriptionMessage: String?
+    private struct DescriptionContext: Equatable {
+        let workspaceRoot: URL
+        let name: String?
+    }
 
     private var panel: ExperimentPanel { service.experiments }
 
     /// Reloads the description editor when the selection changes, so one
     /// design's unsaved text never lands on another.
-    private func syncDescriptionDraft() {
-        let selected = panel.management.designs.selectedTemplateName
-        guard descriptionOwner != selected else { return }
-        descriptionOwner = selected
-        descriptionDraft = panel.management.designs.selectedTemplate?.templateDescription ?? ""
+    private func syncDescriptionDraft(force: Bool = false) {
+        let context = DescriptionContext(workspaceRoot: ExperimentStore.workspaceRoot.standardizedFileURL,
+            name: panel.management.designs.selectedTemplateName)
+        guard force || descriptionOwner != context else { return }
+        descriptionOwner = context
+        descriptionReview = nil
+        descriptionDraft = ""
+        descriptionMessage = nil
+        guard let name = context.name else { return }
+        do {
+            let reviewed = try StudyDesignSnapshot(workspaceRoot: context.workspaceRoot, name: name)
+            descriptionReview = reviewed
+            descriptionDraft = reviewed.template.templateDescription
+        } catch { descriptionMessage = "Could not read the design: \(error.localizedDescription)" }
     }
 
     var body: some View {
@@ -72,6 +87,7 @@ struct TemplatesPanelView: View {
             syncDescriptionDraft()
         }
         .onChange(of: panel.management.designs.selectedTemplateName) { syncDescriptionDraft() }
+        .onChange(of: ExperimentStore.workspaceRoot.path) { syncDescriptionDraft() }
         .alert(
             "Rename design",
             isPresented: Binding(
@@ -205,13 +221,24 @@ struct TemplatesPanelView: View {
         _ template: StudyTemplate, panel: ExperimentPanel
     ) -> some View {
         Section(template.name) {
+            if let descriptionMessage { Text(descriptionMessage).font(.caption).foregroundStyle(.orange) }
+            Button("Discard description edits and reload") { syncDescriptionDraft(force: true) }
             TextField(
                 "what this design is for", text: $descriptionDraft,
                 axis: .vertical
             )
             .lineLimit(1 ... 3)
             .onSubmit {
-                panel.updateTemplateDescription(template.name, to: descriptionDraft)
+                guard let reviewed = descriptionReview, reviewed.template.name == template.name else {
+                    descriptionMessage = "Reload and review this design before saving its description."
+                    return
+                }
+                if let saved = panel.management.updateTemplateDescription(reviewed: reviewed, to: descriptionDraft) {
+                    descriptionReview = saved
+                    descriptionMessage = nil
+                } else {
+                    descriptionMessage = "The description was not saved. Your edits are retained; review the notice and reload the saved design before retrying."
+                }
             }
             .help(
                 "a note for the researcher. Excluded from the design's content "
