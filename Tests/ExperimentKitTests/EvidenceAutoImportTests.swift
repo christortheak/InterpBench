@@ -258,7 +258,7 @@ struct EvidenceAutoImportTests {
         let bundlePath = "/remote/runs/x/x.evidence-bundle.tar.gz"
         try EvidenceAutoImportService.saveLedger(
             [.init(bundlePath: bundlePath, runId: "x",
-                   importedAt: "2026-07-12T08:00:00Z", sha256: nil)],
+                   importedAt: "2026-07-12T08:00:00Z", sha256: nil, contentsVerified: true)],
             to: EvidenceAutoImportService.ledgerURL(workspaceRoot: workspace))
 
         let importCounter = Counter()
@@ -277,10 +277,29 @@ struct EvidenceAutoImportTests {
         #expect(service.isImported(bundlePath: bundlePath))
     }
 
-    @Test func importerCollisionRefusalIsRecordedAsAlreadyPresent() async throws {
-        // The verified importer refuses to overwrite an existing run (e.g. a
-        // manual import beat us to it) — that outcome ledgers the bundle and
-        // never retries, instead of looping on a permanent failure.
+    @Test func legacyPresenceOnlyLedgerCannotSuppressVerification() async throws {
+        let workspace = try freshWorkspace("legacy-unverified")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let path = "/remote/run.evidence-bundle.tar.gz"
+        try EvidenceAutoImportService.saveLedger([
+            .init(bundlePath: path, runId: "run", importedAt: "2026-07-12T08:00:00Z", sha256: nil)
+        ], to: EvidenceAutoImportService.ledgerURL(workspaceRoot: workspace))
+        let counter = Counter()
+        let service = EvidenceAutoImportService(workspaceRoot: workspace, performImport: { _ in
+            await counter.increment()
+            throw ChatServiceError(reason: "content verification failed")
+        })
+        #expect(!service.isImported(bundlePath: path))
+        #expect(service.importedRunIDs.isEmpty)
+        _ = await service.importNow(candidates: [.init(bundlePath: path, runId: "run")])
+        #expect(await counter.value == 1)
+        #expect(!service.isImported(bundlePath: path))
+        #expect(service.ledgerEntries.count == 1)
+    }
+
+    @Test func importerCollisionRefusalIsNotEvidenceOfLocalCustody() async throws {
+        // A refusal proves no content match. It must stay a visible failure
+        // and must never create a ledger entry that later authorizes cleanup.
         let workspace = try freshWorkspace("collision")
         let job = succeededRunJob(
             id: "j1", bundlePath: "/remote/runs/y/y.evidence-bundle.tar.gz")
@@ -293,9 +312,34 @@ struct EvidenceAutoImportTests {
 
         let events = await service.runOnce(force: true)
         #expect(events.count == 1)
-        #expect(events.first?.outcome == .skippedAlreadyPresent)
-        #expect(service.isImported(bundlePath: "/remote/runs/y/y.evidence-bundle.tar.gz"))
-        #expect(service.failures.isEmpty)
+        guard case .failed? = events.first?.outcome else {
+            Issue.record("An overwrite refusal must remain a failed import")
+            return
+        }
+        #expect(!service.isImported(bundlePath: "/remote/runs/y/y.evidence-bundle.tar.gz"))
+        #expect(service.failures.count == 1)
+    }
+
+    @Test func anExistingEmptyRunStillReachesTheVerifier() async throws {
+        let workspace = try freshWorkspace("empty-run")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        try FileManager.default.createDirectory(
+            at: workspace.appending(components: "runs", "run"), withIntermediateDirectories: true)
+        let counter = Counter()
+        let service = EvidenceAutoImportService(workspaceRoot: workspace, performImport: { _ in
+            await counter.increment()
+            throw ChatServiceError(reason: "existing run lacks declared evidence")
+        })
+        let events = await service.importNow(candidates: [
+            EvidenceCandidate(bundlePath: "/remote/run.evidence-bundle.tar.gz", runId: "run")
+        ])
+        #expect(await counter.value == 1)
+        #expect(service.ledgerEntries.isEmpty)
+        #expect(events.count == 1)
+        guard case .failed? = events.first?.outcome else {
+            Issue.record("Empty local directories must not bypass verification")
+            return
+        }
     }
 
     // MARK: One-click pipeline import (dead/parked chains, 2026-08-06)

@@ -13,10 +13,8 @@ import Foundation
 //    disposition chooses — never the newest name or timestamp among
 //    unfinished siblings. When no sibling is completed, the refusal names
 //    every candidate and its state instead of guessing.
-//  - SKIP-IF-PRESENT semantics per run directory: a run already in the local
-//    workspace reports "already present" and is never overwritten. The
-//    importer's refuse-and-abort collision behavior made re-running a verb
-//    after a partial import impossible; here, re-running IS the recovery.
+//  - existing runs are reused only after per-file content verification;
+//    no existing evidence is overwritten and collisions remain failures.
 //  - the structured failure-record skip from `POST /api/bundles/evidence`
 //    (2026-08-11: a refused continuation's ledger-only pipeline dir has
 //    nothing to bundle) surfaces as a NOTE, never an error.
@@ -26,9 +24,8 @@ import Foundation
 //
 // Pipeline evidence bundles may EMBED their stage directories (observed live
 // 2026-08-12: importing the pipeline bundle materialized run + analyze too),
-// so the chain imports pipeline-first and re-checks local presence before
-// each stage — an embedded stage reports "already present" without a second
-// packaging round-trip or download.
+// so the chain imports pipeline-first, then verifies each declared stage's
+// evidence. Directory presence never substitutes for content verification.
 // =============================================================================
 
 public enum EvidenceChainImport {
@@ -113,10 +110,6 @@ public enum EvidenceChainImport {
         /// Downloaded, hash-verified, imported; revision adoption ran and
         /// its user-visible notice (if any) rides along.
         case imported(adoptionNotice: String?)
-        /// The run directory already exists locally (an earlier import, a
-        /// paired tree, or a stage the pipeline bundle embedded) — nothing
-        /// downloaded, nothing overwritten.
-        case alreadyPresent
         /// The server's structured skip: a ledger-only failure record with
         /// nothing to bundle. A note, never an error.
         case skippedFailureRecord(note: String)
@@ -157,7 +150,6 @@ public enum EvidenceChainImport {
             @Sendable (String) async throws -> ClusterClient.EvidencePackageReceipt
         /// (bundlePath, serverStampedSHA256) → imported local run directory.
         public var downloadAndImport: @Sendable (String, String?) async throws -> URL
-        public var localRunExists: @Sendable (String) -> Bool
         public var adoptRevision:
             @Sendable (URL) -> EvidenceRevisionAdoption.Outcome
         /// One cheap read against the endpoint, run BEFORE the chain touches
@@ -169,14 +161,12 @@ public enum EvidenceChainImport {
             packageEvidence: @escaping @Sendable (String) async throws
                 -> ClusterClient.EvidencePackageReceipt,
             downloadAndImport: @escaping @Sendable (String, String?) async throws -> URL,
-            localRunExists: @escaping @Sendable (String) -> Bool,
             adoptRevision: @escaping @Sendable (URL)
                 -> EvidenceRevisionAdoption.Outcome,
             probeEndpoint: @escaping @Sendable () async throws -> Void = {}
         ) {
             self.packageEvidence = packageEvidence
             self.downloadAndImport = downloadAndImport
-            self.localRunExists = localRunExists
             self.adoptRevision = adoptRevision
             self.probeEndpoint = probeEndpoint
         }
@@ -222,18 +212,12 @@ public enum EvidenceChainImport {
             },
             downloadAndImport: { bundlePath, sha256 in
                 let downloads = workspaceRoot.appending(
-                    components: ".steerlab", "downloads")
+                    components: ".steerlab", "downloads", UUID().uuidString)
                 let local = try await client.downloadArtifact(
                     path: bundlePath, to: downloads)
                 return try EvidenceBundleImporter.importEvidenceBundle(
-                    local, expectedSHA256: sha256, workspaceRoot: workspaceRoot)
-            },
-            localRunExists: { runID in
-                var isDirectory: ObjCBool = false
-                let url = workspaceRoot.appending(components: "runs", runID)
-                return FileManager.default.fileExists(
-                    atPath: url.path, isDirectory: &isDirectory)
-                    && isDirectory.boolValue
+                    local, expectedSHA256: sha256, workspaceRoot: workspaceRoot,
+                    verifyExistingRun: true)
             },
             adoptRevision: { imported in
                 EvidenceRevisionAdoption.adoptModelRevision(
@@ -249,9 +233,9 @@ public enum EvidenceChainImport {
     }
 
     /// Import the chain: pipeline directory first (its bundle may embed the
-    /// stage directories), then each stage — every directory re-checked for
-    /// local presence at its turn, so nothing is downloaded twice and a
-    /// second invocation over a fully imported chain is a pure no-op.
+    /// stage directories), then each stage. Existing directories still pass
+    /// through download and content verification; identical evidence is reused
+    /// without overwriting it. Presence alone cannot establish local custody.
     public static func importChain(
         _ chain: ResolvedChain, engine: Engine
     ) async -> [DirectoryReport] {
@@ -284,9 +268,6 @@ public enum EvidenceChainImport {
             DirectoryReport(
                 runID: runID, isPipelineDirectory: isPipeline, outcome: outcome)
         }
-        guard !engine.localRunExists(runID) else {
-            return report(.alreadyPresent)
-        }
         do {
             let receipt = try await engine.packageEvidence(runID)
             if receipt.skipped == true {
@@ -309,13 +290,6 @@ public enum EvidenceChainImport {
             return report(.imported(adoptionNotice: notice))
         } catch {
             let message = String(describing: error)
-            if message.contains("refusing to overwrite existing run") {
-                // The verified importer's collision refusal: the run became
-                // durable locally between our presence check and the import
-                // (e.g. embedded in a bundle imported this same pass) —
-                // that is "already present", not a failure.
-                return report(.alreadyPresent)
-            }
             return report(.failed(message: message))
         }
     }
@@ -328,7 +302,6 @@ public enum EvidenceChainImport {
     public static func summaryLines(_ reports: [DirectoryReport]) -> [String] {
         var lines: [String] = []
         var imported = 0
-        var present = 0
         var skipped = 0
         var failed = 0
         for report in reports {
@@ -340,9 +313,6 @@ public enum EvidenceChainImport {
                 if let adoptionNotice {
                     lines.append("          \(adoptionNotice)")
                 }
-            case .alreadyPresent:
-                present += 1
-                lines.append("\(role)  \(report.runID)  already present")
             case .skippedFailureRecord(let note):
                 skipped += 1
                 lines.append(
@@ -357,7 +327,6 @@ public enum EvidenceChainImport {
         }
         var totals: [String] = []
         if imported > 0 { totals.append("imported \(imported)") }
-        if present > 0 { totals.append("already present \(present)") }
         if skipped > 0 {
             totals.append(
                 "skipped \(skipped) failure record\(skipped == 1 ? "" : "s")")

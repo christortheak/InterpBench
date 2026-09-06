@@ -4696,9 +4696,13 @@ public enum EvidenceBundleImporter {
     /// - `expectedSHA256`, when supplied (from the server-stamped
     ///   `bundleSha256`), is checked against the downloaded file *before*
     ///   extraction — catching substitution, not just corruption.
+    /// - `verifyExistingRun` permits reuse only after every declared local
+    ///   evidence file and portable ledger matches. Existing bytes are never
+    ///   overwritten; directory presence alone is not evidence custody.
     public static func importEvidenceBundle(
         _ bundle: URL, expectedSHA256: String? = nil,
-        workspaceRoot: URL = ExperimentStore.workspaceRoot
+        workspaceRoot: URL = ExperimentStore.workspaceRoot,
+        verifyExistingRun: Bool = false
     ) throws -> URL {
         let runsDirectory = workspaceRoot.appending(component: "runs")
         let fm = FileManager.default
@@ -4848,8 +4852,21 @@ public enum EvidenceBundleImporter {
         }
 
         let targetRun = runsDirectory.appending(component: runID)
-        if fm.fileExists(atPath: targetRun.path) {
-            throw ChatServiceError(reason: "refusing to overwrite existing run \(runID)")
+        let primaryExists = fm.fileExists(atPath: targetRun.path)
+        if primaryExists {
+            guard verifyExistingRun else {
+                throw ChatServiceError(reason: "refusing to overwrite existing run \(runID)")
+            }
+            try ensureBundleEvidenceAlreadyPresent(
+                runID: runID, local: targetRun, metadata: object)
+            if let portableData {
+                let localData = try existingEvidenceData(
+                    "pipeline-portable.json", in: targetRun, runID: runID)
+                guard localData == portableData else {
+                    throw ChatServiceError(
+                        reason: "run \(runID) has a different portable pipeline ledger — refusing the collision")
+                }
+            }
         }
         try fm.createDirectory(at: runsDirectory, withIntermediateDirectories: true)
         // Atomic-in-effect: siblings first, the primary run last, the
@@ -4862,11 +4879,13 @@ public enum EvidenceBundleImporter {
                 try fm.moveItem(at: source, to: target)
                 completed.append(target)
             }
-            try fm.moveItem(at: sourceRun, to: targetRun)
-            completed.append(targetRun)
-            if let portableData {
-                try portableData.write(
-                    to: targetRun.appending(component: "pipeline-portable.json"))
+            if !primaryExists {
+                try fm.moveItem(at: sourceRun, to: targetRun)
+                completed.append(targetRun)
+                if let portableData {
+                    try portableData.write(
+                        to: targetRun.appending(component: "pipeline-portable.json"))
+                }
             }
         } catch {
             // The rollback is what keeps "failed import" and "absent
@@ -4889,9 +4908,9 @@ public enum EvidenceBundleImporter {
                 throw ChatServiceError(
                     reason: "\(error) — and the rollback could not remove "
                         + "runs/\(stranded.joined(separator: ", runs/"))"
-                        + ". Those directories are INCOMPLETE imports, not "
-                        + "runs: delete them before re-importing, or the "
-                        + "skip-if-present rule will treat them as done.")
+                        + ". Those directories are INCOMPLETE imports; "
+                        + "inspect them before recovery. Their presence does "
+                        + "not prove verified local evidence.")
             }
             throw error
         }
@@ -4912,6 +4931,7 @@ public enum EvidenceBundleImporter {
             throw ChatServiceError(reason: "evidence bundle declares no verifiable entries")
         }
         let prefix = "runs/\(runID)/"
+        var matched = 0
         for entry in entries {
             guard case .object(let item) = entry,
                 case .string(let relativePath)? = item["path"],
@@ -4919,13 +4939,8 @@ public enum EvidenceBundleImporter {
                 case .string(let expectedHash)? = item["sha256"]
             else { continue }
             let rest = String(relativePath.dropFirst(prefix.count))
-            let url = local.appending(path: rest)
-            guard let data = try? Data(contentsOf: url) else {
-                throw ChatServiceError(
-                    reason: "run \(runID) already exists locally but lacks "
-                        + "\(rest) — cannot prove it is the bundle's run; "
-                        + "refusing the collision")
-            }
+            let data = try existingEvidenceData(rest, in: local, runID: runID)
+            matched += 1
             guard sha256(data) == expectedHash else {
                 throw ChatServiceError(
                     reason: "run \(runID) already exists locally with "
@@ -4934,6 +4949,34 @@ public enum EvidenceBundleImporter {
                         + "bundle's evidence")
             }
         }
+        guard matched > 0 else {
+            throw ChatServiceError(
+                reason: "run \(runID) has no declared evidence files — cannot verify an existing run")
+        }
+    }
+
+    /// Local custody requires ordinary files inside the run, not links to
+    /// another tree that happens to hold the same bytes today.
+    private static func existingEvidenceData(
+        _ relativePath: String, in local: URL, runID: String
+    ) throws -> Data {
+        let fm = FileManager.default
+        let components = relativePath.split(separator: "/", omittingEmptySubsequences: false)
+        guard !components.isEmpty, components.allSatisfy({ isSafeComponent(String($0)) }),
+            try fm.attributesOfItem(atPath: local.path)[.type] as? FileAttributeType == .typeDirectory
+        else {
+            throw ChatServiceError(reason: "run \(runID) is not an ordinary local evidence directory")
+        }
+        var url = local
+        for (index, component) in components.enumerated() {
+            url.append(component: String(component))
+            let expected: FileAttributeType = index == components.count - 1 ? .typeRegular : .typeDirectory
+            guard try fm.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType == expected else {
+                throw ChatServiceError(
+                    reason: "run \(runID) has nonlocal or nonregular evidence at \(relativePath) — refusing the collision")
+            }
+        }
+        return try Data(contentsOf: url)
     }
 
     /// Reject empty names and any path separators / traversal in a name that

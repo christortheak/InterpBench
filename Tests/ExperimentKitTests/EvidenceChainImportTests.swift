@@ -5,8 +5,8 @@ import Testing
 
 /// `remote import-chain` — the headless chain importer. Resolution follows
 /// the ledger rule (completed disposition only, never name/timestamp among
-/// siblings), directories import skip-if-present so a second invocation is
-/// a no-op, the server's structured failure-record skip is a note rather
+/// siblings), existing directories still reach the verified importer,
+/// the server's structured failure-record skip is a note rather
 /// than an error, and revision adoption runs for every imported directory.
 /// Everything runs against the injected Engine seams — no networking, no
 /// real bundles.
@@ -91,9 +91,6 @@ struct EvidenceChainImportTests {
                         }
                     }
                     return URL(filePath: "/local/runs/\(runID)")
-                },
-                localRunExists: { runID in
-                    self.withLock { self.present.contains(runID) }
                 },
                 adoptRevision: { imported in
                     self.withLock {
@@ -265,7 +262,7 @@ struct EvidenceChainImportTests {
 
     // MARK: Import — embedded-stage dedupe and idempotency
 
-    @Test func pipelineFirstEmbeddedStagesAreNeverDownloadedTwice() async {
+    @Test func pipelineFirstEmbeddedStagesStillRequireVerification() async {
         let harness = Harness()
         // The pipeline bundle EMBEDS its stage dirs (observed live
         // 2026-08-12): importing it materializes run + analyze too.
@@ -276,21 +273,19 @@ struct EvidenceChainImportTests {
         let first = await EvidenceChainImport.importChain(
             chain, engine: harness.engine())
         #expect(first.map(\.outcome) == [
-            .imported(adoptionNotice: nil), .alreadyPresent, .alreadyPresent,
+            .imported(adoptionNotice: nil), .imported(adoptionNotice: nil), .imported(adoptionNotice: nil),
         ])
         #expect(first.map(\.isPipelineDirectory) == [true, false, false])
-        // One packaging round-trip, one download — the stages came along.
-        #expect(harness.packaged == ["P"])
-        #expect(harness.downloaded == ["P"])
+        // Embedded stage directory names do not replace content verification.
+        #expect(harness.packaged == ["P", "R", "A"])
+        #expect(harness.downloaded == ["P", "R", "A"])
 
-        // Second invocation: pure no-op — every row "already present",
-        // no further server calls. This is what the old refuse-and-abort
-        // collision behavior made impossible.
+        // A repeat invocation verifies evidence again without overwriting it.
         let second = await EvidenceChainImport.importChain(
             chain, engine: harness.engine())
-        #expect(second.allSatisfy { $0.outcome == .alreadyPresent })
-        #expect(harness.packaged == ["P"])
-        #expect(harness.downloaded == ["P"])
+        #expect(second.allSatisfy { $0.outcome == .imported(adoptionNotice: nil) })
+        #expect(harness.packaged == ["P", "R", "A", "P", "R", "A"])
+        #expect(harness.downloaded == ["P", "R", "A", "P", "R", "A"])
     }
 
     @Test func aPartialImportFinishesOnRerunWithoutOverwriting() async {
@@ -302,11 +297,22 @@ struct EvidenceChainImportTests {
         let reports = await EvidenceChainImport.importChain(
             chain, engine: harness.engine())
         #expect(reports.map(\.outcome) == [
-            .alreadyPresent, .alreadyPresent, .imported(adoptionNotice: nil),
+            .imported(adoptionNotice: nil), .imported(adoptionNotice: nil), .imported(adoptionNotice: nil),
         ])
-        // Only the missing directory touched the server.
-        #expect(harness.packaged == ["A"])
-        #expect(harness.downloaded == ["A"])
+        // All declared evidence reaches verification, including existing runs.
+        #expect(harness.packaged == ["P", "R", "A"])
+        #expect(harness.downloaded == ["P", "R", "A"])
+    }
+
+    @Test func aCollisionRefusalIsNeverSuccessfulCustody() async {
+        let harness = Harness(present: ["P"])
+        harness.downloadErrors["P"] = ChatServiceError(reason: "refusing to overwrite existing run P")
+        let reports = await EvidenceChainImport.importChain(
+            .init(pipelineRunID: "P", stageRunIDs: []), engine: harness.engine())
+        #expect(reports.count == 1)
+        #expect(reports[0].isFailure)
+        #expect(harness.packaged == ["P"])
+        #expect(harness.adopted.isEmpty)
     }
 
     // MARK: Failure records are notes, not errors
@@ -339,9 +345,8 @@ struct EvidenceChainImportTests {
             pipelineRunID: "P", stageRunIDs: ["R", "S", "A"])
         let reports = await EvidenceChainImport.importChain(
             chain, engine: harness.engine())
-        // Imported: P and A. Already present (R) and skipped (S) never
-        // reach adoption — there is no fresh snapshot to reconcile.
-        #expect(harness.adopted == ["P", "A"])
+        // Verified: P, R and A. Only the skipped failure record avoids adoption.
+        #expect(harness.adopted == ["P", "R", "A"])
         #expect(reports.count == 4)
     }
 

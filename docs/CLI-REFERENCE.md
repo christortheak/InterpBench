@@ -2064,7 +2064,7 @@ steerlab-cli remote chat [--hash <sha256>] [--max-tokens <n>] --prompt <text> [-
 | `remote resubmit` | Resume a checkpointed job: the server re-submits the job's own rendered sbatch script byte-for-byte, optionally under a longer walltime. |
 | `remote fetch` | Download one server artifact without importing it. |
 | `remote import` | Download, hash-verify, and import an evidence bundle into runs/. |
-| `remote import-chain` | Import a whole pipeline chain, skipping directories already present. |
+| `remote import-chain` | Import a whole pipeline chain, verifying existing evidence without overwriting it. |
 | `remote variants` | List the server's variant artifacts. |
 | `remote chat` | Generate one completion through a server-resident variant. |
 
@@ -2113,7 +2113,7 @@ id fails with the stable code `unknownSite`.
 | `cancel` | Prints `cancel requested`. |
 | `fetch` | `--out` defaults to `.`. |
 | `import` | Default `--out .steerlab-downloads`. Verifies the hash, imports into local `runs/`, and runs the model-revision adoption reconciliation. |
-| `import-chain` | Whole-chain import: the pipeline ledger dir plus every `stageResults` run dir, each packaged on the server (`POST /api/bundles/evidence`), downloaded, hash-verified, and imported **skip-if-present** — see below. Exit 1 only if a directory actually FAILED. |
+| `import-chain` | Whole-chain import: the pipeline ledger dir plus every `stageResults` run dir, each packaged on the server (`POST /api/bundles/evidence`), downloaded, hash-verified, and imported with **verified reuse** — see below. Exit 1 only if a directory actually FAILED. |
 | `variants` | Server-side variant list. |
 | `chat` | `--max-tokens` 512, `--prompt-mode` `chatAssistant`; `--variant` and `--prompt` are both required. |
 
@@ -2172,20 +2172,19 @@ authored.
   `pipeline.json` disposition — the ledger rule: never pick by name or
   timestamp among siblings, completed disposition only. When no sibling is
   completed, the verb refuses and names every candidate with its state.
-- **Skip-if-present.** A run directory already in the local workspace reports
-  `already present` and is never overwritten or re-downloaded — so re-running
-  the verb after a partial import simply fills the gaps (the raw importer's
-  refuse-and-abort collision behavior does not apply here).
-- **Embedded stages.** A pipeline evidence bundle may EMBED its stage dirs
-  (importing the pipeline bundle materializes run/analyze too); the verb
-  imports the pipeline bundle first and re-checks presence before each stage,
-  so embedded stages cost no second download.
+- **Verified reuse.** Every declared evidence file must match before an existing
+  local run can be reused. Missing or differing files are a failure; the importer
+  never overwrites them. Re-running after a partial import verifies existing
+  evidence and imports absent runs.
+- **Embedded stages.** The pipeline bundle imports first and may carry its stage
+  directories. Each declared stage still reaches content verification; its name
+  alone does not prove that the evidence is safely local.
 - **Failure records.** The server's structured skip for a ledger-only failure
   record (`POST /api/bundles/evidence`, 2026-08-11) surfaces as a per-row
   *note* (`skipped — failure record: …`), never an error.
 - **Adoption.** `EvidenceRevisionAdoption` runs for every imported directory,
   exactly like `remote import`.
-- Output is a per-directory summary (imported / already present /
+- Output is a per-directory summary (imported /
   skipped-failure-record / FAILED) plus a totals line, derived from run ids
   and outcomes only — never the endpoint, token, or server paths.
 

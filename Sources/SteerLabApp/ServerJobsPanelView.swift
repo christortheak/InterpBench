@@ -742,9 +742,6 @@ struct ServerJobsPanelView: View {
                 status = "pipeline \(row.run) evidence imported → "
                     + "runs/\(URL(filePath: runDirectory).lastPathComponent)"
                     + " (hashes verified)"
-            case .skippedAlreadyPresent:
-                status = "pipeline \(row.run) is already in this workspace "
-                    + "— recorded in the ledger"
             case .skippedUnbundleable(let note):
                 status = "pipeline \(row.run) skipped — \(note)"
             case .failed(let message):
@@ -778,9 +775,6 @@ struct ServerJobsPanelView: View {
             case .imported(let runDirectory):
                 status = "evidence from job \(job.id) imported → "
                     + "runs/\(URL(filePath: runDirectory).lastPathComponent) (hashes verified)"
-            case .skippedAlreadyPresent:
-                status = "run \(event.runId ?? "?") is already in this workspace — "
-                    + "recorded in the ledger"
             case .skippedUnbundleable(let note):
                 status = "run \(event.runId ?? "?") skipped — \(note)"
             case .failed(let message):

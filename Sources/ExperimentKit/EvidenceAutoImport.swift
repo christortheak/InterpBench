@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Observation
 
@@ -68,14 +69,20 @@ public final class EvidenceAutoImportService {
         /// before partial import existed decode unchanged — every entry
         /// they hold was, correctly, a completed run.
         public var isPartial: Bool = false
+        /// Only entries created after the verified importer succeeds carry
+        /// this marker. Legacy presence-only entries cannot suppress a retry.
+        /// This is not a cleanup receipt or a claim about current remote origin.
+        public var contentsVerified: Bool
 
         public init(bundlePath: String, runId: String?, importedAt: String,
-                    sha256: String?, isPartial: Bool = false) {
+                    sha256: String?, isPartial: Bool = false,
+                    contentsVerified: Bool = false) {
             self.bundlePath = bundlePath
             self.runId = runId
             self.importedAt = importedAt
             self.sha256 = sha256
             self.isPartial = isPartial
+            self.contentsVerified = contentsVerified
         }
 
         /// Hand-written so a LEGACY ledger still decodes. Swift's
@@ -92,6 +99,8 @@ public final class EvidenceAutoImportService {
             sha256 = try container.decodeIfPresent(String.self, forKey: .sha256)
             isPartial = try container.decodeIfPresent(
                 Bool.self, forKey: .isPartial) ?? false
+            contentsVerified = try container.decodeIfPresent(
+                Bool.self, forKey: .contentsVerified) ?? false
         }
     }
 
@@ -99,9 +108,6 @@ public final class EvidenceAutoImportService {
 
     public enum Outcome: Sendable, Equatable {
         case imported(runDirectory: String)
-        /// The run already exists locally (manual import, paired tree) —
-        /// recorded in the ledger so it is never fetched again.
-        case skippedAlreadyPresent
         /// The server answered a structured skip: the run directory is a
         /// failure record with nothing to bundle (a refused continuation's
         /// ledger-only pipeline dir, 2026-08-11). Noted with the server's
@@ -295,11 +301,11 @@ public final class EvidenceAutoImportService {
     // MARK: Queries for the UI
 
     public func isImported(bundlePath: String) -> Bool {
-        ledgerEntries.contains { $0.bundlePath == bundlePath }
+        ledgerEntries.contains { $0.bundlePath == bundlePath && $0.contentsVerified }
     }
 
     public var importedRunIDs: Set<String> {
-        Set(ledgerEntries.compactMap(\.runId))
+        Set(ledgerEntries.filter(\.contentsVerified).compactMap(\.runId))
     }
 
     /// Server-listed bundles not yet in the local ledger — the health card's
@@ -473,13 +479,6 @@ public final class EvidenceAutoImportService {
             {
                 continue  // backing off (or capped out) — not silent: `failures` shows it
             }
-            // A run already present locally (manual import, paired tree)
-            // needs no download: record it so it is never fetched again.
-            if let runId = candidate.runId, localRunExists(runId) {
-                appendLedger(for: candidate)
-                produced.append(publish(candidate: candidate, outcome: .skippedAlreadyPresent))
-                continue
-            }
             do {
                 let imported = try await performImport(candidate, client: client)
                 appendLedger(for: candidate)
@@ -488,17 +487,8 @@ public final class EvidenceAutoImportService {
                     publish(candidate: candidate, outcome: .imported(runDirectory: imported.path)))
             } catch {
                 let message = String(describing: error)
-                if message.contains("refusing to overwrite existing run") {
-                    // The verified importer's collision refusal: the run is
-                    // already durable locally — ledger it and move on.
-                    appendLedger(for: candidate)
-                    failures[candidate.bundlePath] = nil
-                    produced.append(
-                        publish(candidate: candidate, outcome: .skippedAlreadyPresent))
-                } else {
-                    recordFailure(candidate: candidate, message: message)
-                    produced.append(publish(candidate: candidate, outcome: .failed(message)))
-                }
+                recordFailure(candidate: candidate, message: message)
+                produced.append(publish(candidate: candidate, outcome: .failed(message)))
             }
         }
         return produced
@@ -509,7 +499,10 @@ public final class EvidenceAutoImportService {
         guard let client else {
             throw ChatServiceError(reason: "no connected server client for evidence import")
         }
-        let downloads = workspaceRoot.appending(components: ".steerlab", "downloads")
+        // An operation owns its downloaded bytes even if another server uses
+        // the same archive basename or another import starts concurrently.
+        let downloads = workspaceRoot.appending(
+            components: ".steerlab", "downloads", UUID().uuidString)
         let localBundle = try await client.downloadArtifact(
             path: candidate.bundlePath, to: downloads)
         let expected = candidate.sha256
@@ -517,8 +510,14 @@ public final class EvidenceAutoImportService {
         // Extraction + per-file hashing off the main actor (same rule as the
         // manual import path).
         let imported = try await Task.detached {
-            try EvidenceBundleImporter.importEvidenceBundle(
-                localBundle, expectedSHA256: expected, workspaceRoot: workspaceRoot)
+            let actual = SHA256.hash(data: try Data(contentsOf: localBundle))
+                .map { String(format: "%02x", $0) }.joined()
+            if let expected, !expected.isEmpty, expected != actual {
+                throw ChatServiceError(reason: "evidence bundle hash mismatch before import")
+            }
+            return try EvidenceBundleImporter.importEvidenceBundle(
+                localBundle, expectedSHA256: actual, workspaceRoot: workspaceRoot,
+                verifyExistingRun: true)
         }.value
         // Server-manifest-mutation family (2026-08-04): the AUTO path was
         // how runs arrived WITHOUT revision adoption — only the manual
@@ -542,10 +541,6 @@ public final class EvidenceAutoImportService {
             && isDirectory.boolValue
     }
 
-    private func localRunExists(_ runId: String) -> Bool {
-        Self.localRunExists(runId)
-    }
-
     private func appendLedger(for candidate: EvidenceCandidate) {
         guard !isImported(bundlePath: candidate.bundlePath) else { return }
         let entry = LedgerEntry(
@@ -553,7 +548,8 @@ public final class EvidenceAutoImportService {
             runId: candidate.runId,
             importedAt: HousekeepingDates.format(now()),
             sha256: candidate.sha256,
-            isPartial: candidate.isPartial)
+            isPartial: candidate.isPartial,
+            contentsVerified: true)
         ledgerEntries.append(entry)
         do {
             try Self.saveLedger(
@@ -590,20 +586,17 @@ public final class EvidenceAutoImportService {
     private func summarize(_ produced: [ImportEvent]) {
         guard !produced.isEmpty else { return }
         var imported = 0
-        var skipped = 0
         var unbundleable = 0
         var failed = 0
         for event in produced {
             switch event.outcome {
             case .imported: imported += 1
-            case .skippedAlreadyPresent: skipped += 1
             case .skippedUnbundleable: unbundleable += 1
             case .failed: failed += 1
             }
         }
         var parts: [String] = []
         if imported > 0 { parts.append("imported \(imported)") }
-        if skipped > 0 { parts.append("already present \(skipped)") }
         if unbundleable > 0 {
             parts.append("skipped \(unbundleable) failure "
                 + "record\(unbundleable == 1 ? "" : "s") (nothing to bundle)")

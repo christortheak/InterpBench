@@ -2487,7 +2487,7 @@ public struct ExperimentCLIRunner: Sendable {
             // Whole-chain twin of `import` (2026-08-12): resolve the pipeline
             // run (ledger rule — completed disposition only when named by
             // experiment), then package + download + import the pipeline dir and
-            // each stage dir skip-if-present, with revision adoption per
+            // each stage dir with verified reuse, with revision adoption per
             // imported directory. All logic lives in EvidenceChainImport
             // (ExperimentKit) where tests reach it; this case parses and prints.
             guard args.count >= 2, !args[1].hasPrefix("--") else {

@@ -32,7 +32,8 @@ struct EvidenceImportAtomicityTests {
     /// — the closest stand-in for "the transfer did not deliver what the server
     /// stamped", which is what a dead tunnel produces.
     private func bundle(
-        runID: String, files: [String: String], corruptEntryHashes: Bool = false
+        runID: String, files: [String: String], corruptEntryHashes: Bool = false,
+        portable: String? = nil
     ) throws -> URL {
         let fm = FileManager.default
         let staging = fm.temporaryDirectory.appending(
@@ -50,9 +51,14 @@ struct EvidenceImportAtomicityTests {
                     : sha(data),
             ])
         }
-        try JSONSerialization.data(withJSONObject: [
-            "runID": runID, "entries": entries,
-        ]).write(to: staging.appending(component: "steerlab-evidence.json"))
+        var metadata: [String: Any] = ["runID": runID, "entries": entries]
+        if let portable {
+            let bytes = Data(portable.utf8)
+            metadata["pipelinePortableSha256"] = sha(bytes)
+            try bytes.write(to: staging.appending(component: "steerlab-pipeline.json"))
+        }
+        try JSONSerialization.data(withJSONObject: metadata)
+            .write(to: staging.appending(component: "steerlab-evidence.json"))
         let archive = fm.temporaryDirectory.appending(
             component: "evidence-\(UUID().uuidString).tar.gz")
         let tar = Process()
@@ -75,6 +81,79 @@ struct EvidenceImportAtomicityTests {
             let imported = try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root)
             #expect(imported.path == root.appending(components: "runs", "captured-run").path)
             #expect(!FileManager.default.fileExists(atPath: other.appending(component: "runs").path))
+        }
+    }
+
+    @Test func repeatedVerifiedImportPreservesExistingFiles() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "verified-reimport") { root in
+            let archive = try bundle(runID: "run", files: ["records.jsonl": "{}\n"], portable: "{}")
+            defer { try? FileManager.default.removeItem(at: archive) }
+            let target = try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root)
+            let records = target.appending(component: "records.jsonl")
+            let before = try FileManager.default.attributesOfItem(atPath: records.path)
+            // Default manual policy still refuses; the verified reuse path is explicit.
+            #expect(throws: (any Error).self) {
+                try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root)
+            }
+            let reused = try EvidenceBundleImporter.importEvidenceBundle(
+                archive, workspaceRoot: root, verifyExistingRun: true)
+            #expect(reused == target)
+            let after = try FileManager.default.attributesOfItem(atPath: records.path)
+            #expect(before[.systemFileNumber] as? NSNumber == after[.systemFileNumber] as? NSNumber)
+            #expect(before[.modificationDate] as? Date == after[.modificationDate] as? Date)
+            #expect(try Data(contentsOf: records) == Data("{}\n".utf8))
+        }
+    }
+
+    @Test(arguments: ["missing", "different", "linked-file", "linked-run"])
+    func existingDirectoryIsNotCustody(kind: String) throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "unverified-existing") { root in
+            let fm = FileManager.default
+            let archive = try bundle(runID: "run", files: ["records.jsonl": "{}\n"])
+            defer { try? fm.removeItem(at: archive) }
+            let target = root.appending(components: "runs", "run")
+            try fm.createDirectory(at: target, withIntermediateDirectories: true)
+            let outside = root.appending(component: "elsewhere")
+            try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+            try Data("{}\n".utf8).write(to: outside.appending(component: "records.jsonl"))
+            let records = target.appending(component: "records.jsonl")
+            if kind == "different" {
+                try Data("different".utf8).write(to: records)
+            } else if kind == "linked-file" {
+                try fm.createSymbolicLink(at: records, withDestinationURL: outside.appending(component: "records.jsonl"))
+            } else if kind == "linked-run" {
+                try fm.removeItem(at: target)
+                try fm.createSymbolicLink(at: target, withDestinationURL: outside)
+            }
+            #expect(throws: (any Error).self) {
+                try EvidenceBundleImporter.importEvidenceBundle(
+                    archive, workspaceRoot: root, verifyExistingRun: true)
+            }
+            #expect(fm.fileExists(atPath: target.path))
+            #expect(try Data(contentsOf: outside.appending(component: "records.jsonl")) == Data("{}\n".utf8))
+            if kind == "different" { #expect(try Data(contentsOf: records) == Data("different".utf8)) }
+            if kind == "missing" { #expect(!fm.fileExists(atPath: records.path)) }
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func existingPortableLedgerMustMatch(missing: Bool) throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "portable-custody") { root in
+            let fm = FileManager.default
+            let archive = try bundle(runID: "run", files: ["records.jsonl": "{}\n"], portable: "{}")
+            defer { try? fm.removeItem(at: archive) }
+            // Construct an existing local run without mutating any imported evidence.
+            let target = root.appending(components: "runs", "run")
+            try fm.createDirectory(at: target, withIntermediateDirectories: true)
+            try Data("{}\n".utf8).write(to: target.appending(component: "records.jsonl"))
+            let ledger = target.appending(component: "pipeline-portable.json")
+            if !missing { try Data("different".utf8).write(to: ledger) }
+            #expect(throws: (any Error).self) {
+                try EvidenceBundleImporter.importEvidenceBundle(
+                    archive, workspaceRoot: root, verifyExistingRun: true)
+            }
+            if missing { #expect(!fm.fileExists(atPath: ledger.path)) }
+            else { #expect(try Data(contentsOf: ledger) == Data("different".utf8)) }
         }
     }
 

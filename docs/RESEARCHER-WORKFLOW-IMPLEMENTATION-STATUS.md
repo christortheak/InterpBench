@@ -381,3 +381,34 @@ interactive SwiftUI qualification and any additional cross-platform adapter rema
 explicit matrix/journey work. WP-1/WP-2 residual ownership/authoring work, WP-3/WP-4
 remaining operations/guides, WP-6 managed cleanup and WP-7 qualification remain in
 scope. No merge, install, production-app relaunch or remote allocation was performed.
+
+
+## Evidence reuse requires content verification
+
+Auto-import and CLI chain import no longer treat directory presence or an
+`overwrite` refusal message as a successful import. The shared archive importer
+has an explicit verified-reuse policy: every declared file in an existing run
+must be an ordinary local file with the expected SHA-256, and a carried portable
+pipeline ledger must match exactly. Missing/different/link-backed evidence
+refuses; matching files keep their bytes, inode and modification date. The default
+manual importer continues to refuse an existing primary run unless its caller
+explicitly requests verified reuse. Existing pipeline siblings use the same
+content check. No existing run is overwritten to resolve a collision.
+
+Auto-import and chain download operations use separate transfer directories so
+concurrent servers cannot replace one another's archive basename. Legacy ledger
+entries remain readable but lack the new external `contentsVerified` marker and
+cannot suppress verification. The marker is not a cleanup receipt: origin-scoped
+identity, durable verified archive/member receipts, late-response guards and
+cleanup eligibility remain outstanding. No cleanup operation is enabled here.
+
+Validation: the original overwrite-refusal regression failed before the fix.
+Archive regressions cover repeated matching import, missing/different evidence,
+file/run symlinks, and missing/different portable ledgers. Auto-import regressions
+cover failed collisions, empty runs and legacy presence-only entries; chain
+regressions require verification on retries and embedded stages. The focused
+suites pass. Full Xcode beta passes 277 SteeringKit and 4,453 ExperimentKit tests
+(`TEST SUCCEEDED`); full Python passes 5,896 with 9 skipped and 8 warnings
+(155.42 seconds). CLI reference checks, bridge ratchet and whitespace checks pass.
+The actual source/test diff was read. These are semantic fixes, not mechanical
+moves. Main and existing researcher workspaces remain untouched.

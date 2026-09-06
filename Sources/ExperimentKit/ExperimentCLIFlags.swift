@@ -427,8 +427,8 @@ public enum ExperimentCLIParser {
         .init(
             namespace: "remote", verb: "import-chain",
             positional: "<pipeline-run-id-or-experiment>",
-            purpose: "Import a whole pipeline chain, skipping directories "
-                + "already present.",
+            purpose: "Import a whole pipeline chain, verifying existing evidence "
+                + "without overwriting it.",
             valueFlags: remoteConnection),
         .init(
             namespace: "remote", verb: "variants",
