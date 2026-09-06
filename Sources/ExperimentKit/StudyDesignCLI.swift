@@ -23,6 +23,28 @@ enum StudyDesignCLI {
                 guard args.count == 2 else { throw usage() }
                 let read = try StudyDesignSnapshot(workspaceRoot: workspaceRoot, name: args[1])
                 return try result(read, changed: false, sink: sink)
+            case "save", "update":
+                guard args.count >= 2, let sourceSHA = flag("--manifest-sha256") else { throw usage() }
+                let sourceName: String
+                if args[0] == "update" {
+                    guard let name = flag("--study") else { throw usage() }
+                    sourceName = name
+                } else { sourceName = args[1] }
+                let source = try StudyDesignSourceReview(study: DraftAuthoringSnapshot.review(name: sourceName,
+                    workspaceRoot: workspaceRoot, expectedFileSHA256: sourceSHA))
+                let saved: StudyDesignSaveResult
+                if args[0] == "update" {
+                    guard let expected = flag("--file-sha256") else { throw usage() }
+                    let design = try StudyDesignAuthoring.review(name: args[1], workspaceRoot: workspaceRoot, expectedFileSHA256: expected)
+                    saved = try StudyDesignSaving.update(from: source, reviewed: design)
+                } else {
+                    saved = try StudyDesignSaving.create(from: source, name: flag("--name"), description: flag("--description"))
+                }
+                let data = try JSONEncoder().encode(StudyDesignSavingDocument(saved, source: source))
+                sink.out(String(decoding: data, as: UTF8.self))
+                return ExperimentCLIResult(message: saved.created ? "New design saved." : saved.changed ? "Reviewed design updated." : "Matching design reused.",
+                    changed: saved.changed, payload: try JSONDecoder().decode([String: JSONValue].self, from: data),
+                    advisories: saved.warnings.map { .init(code: CLIAdvisory.designDerivationWarning.rawValue, detail: $0) })
             case "instantiate":
                 guard args.count >= 2, let expected = flag("--file-sha256"), let castingPath = flag("--casting") else { throw usage() }
                 let reviewed = try StudyDesignAuthoring.review(name: args[1], workspaceRoot: workspaceRoot, expectedFileSHA256: expected)
@@ -46,7 +68,7 @@ enum StudyDesignCLI {
                 code: error.code, reason: error.reason, repairAction: error.repairAction)
         } catch CocoaError.fileReadNoSuchFile {
             throw ExperimentCLIStop(exitCode: 66, state: .notFound, code: "designNotFound",
-                reason: "The named design or casting file does not exist.", repairAction: "Use design list --json and inspect a design from that library.")
+                reason: "The named design, source study or input file does not exist.", repairAction: "Use design list --json and inspect a design from that library.")
         }
     }
 
@@ -60,7 +82,7 @@ enum StudyDesignCLI {
     }
 
     private static func usage() -> ExperimentError {
-        .malformed("Use design list, inspect <name>, describe <name> --description <text> --file-sha256 <digest>, or instantiate <name> --casting <file> --file-sha256 <digest>.",
+        .malformed("Use design list, inspect, describe, instantiate, save <study>, or update <design> --study <study> with the required reviewed file digests.",
             repair: "steerlab-cli design --help")
     }
 }

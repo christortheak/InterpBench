@@ -746,8 +746,10 @@ public final class ExperimentPanel {
             return
         }
         do {
-            let mint = try StudyTemplateStore.templateFromStudy(
-                experimentName: manifest.name)
+            let source = try management.reviewEditorDesignSource()
+            let saved = try StudyDesignSaving.create(from: source)
+            let mint = StudyTemplateStore.Mint(template: saved.snapshot.template, hash: StudyTemplateStore.hash(saved.snapshot.template),
+                minted: saved.created, divergedFrom: saved.created ? manifest.templateProvenance?.template : nil, warnings: saved.warnings)
             refreshTemplates()
             for warning in mint.warnings { note(warning, severity: .warning) }
             management.designs.templateInstantiationInvitation = TemplateInstantiationInvitation(

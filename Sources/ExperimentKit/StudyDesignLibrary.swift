@@ -11,6 +11,7 @@ public final class StudyDesignLibrary {
     /// ("Template" is the artifact's stored name; the interface calls one a
     /// DESIGN, which is what it is.)
     public private(set) var templates: [StudyTemplate] = []
+    @ObservationIgnored private var reviews: [String: StudyDesignSnapshot] = [:]
     public var selectedTemplateName: String?
     /// The template a just-completed "Load as Template" wants opened — the
     /// view consumes and clears it, exactly as `renameInvitation` works.
@@ -39,7 +40,11 @@ public final class StudyDesignLibrary {
     public private(set) var designLineage: [String: StudyTemplateStore.DesignLineage] = [:]
 
     public func refresh(experiments: [ExperimentManifest]) {
-        templates = StudyTemplateStore.list()
+        let root = ExperimentStore.workspaceRoot
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: root.appending(component: "templates").path)) ?? []
+        let snapshots = names.compactMap { try? StudyDesignSnapshot(workspaceRoot: root, name: $0) }
+        reviews = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.template.name, $0) })
+        templates = snapshots.map(\.template).sorted { $0.createdAt > $1.createdAt }
         if let selectedTemplateName,
             !templates.contains(where: { $0.name == selectedTemplateName })
         {
@@ -55,6 +60,17 @@ public final class StudyDesignLibrary {
         for manifest in experiments where manifest.templateProvenance != nil {
             designLineage[manifest.name] = StudyTemplateStore.lineage(of: manifest)
         }
+    }
+
+    /// A confirmation retains this value; later catalog refreshes cannot
+    /// authorize its old source settings against a newly read design version.
+    public func reviewedDesign(named name: String) throws -> StudyDesignSnapshot {
+        guard let review = reviews[name],
+            try ManifestFileTransaction.canonicalPath(review.workspaceRoot) == ManifestFileTransaction.canonicalPath(ExperimentStore.workspaceRoot) else {
+            throw StudyDesignAuthoringError(code: "designChanged", reason: "The reviewed design is unavailable in this workspace.",
+                repairAction: "Reload the design library and review the intended destination before saving.")
+        }
+        return review
     }
 
     /// The design-summary rows for a template — the Templates tab's read-only

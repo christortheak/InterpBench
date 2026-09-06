@@ -231,17 +231,40 @@ public final class StudyManagementController {
         note(messages.joined(separator: " — "), severity: .success)
     }
 
-    /// "New from Study" in the Templates tab: mint a design from ANY study.
-    ///
-    /// Deliberately quieter than `loadSelectedStudyAsTemplate`. In the library
-    /// the researcher is looking at the list, so the DEDUP case needs no
-    /// sentence — selecting the design that already existed shows the result.
-    /// A fresh mint and a divergence both say something, because both changed
-    /// the library.
-    public func newDesignFromStudy(named name: String) {
+    /// Retain the saved source settings displayed by the study catalog.
+    public func reviewDesignSource(named name: String) throws -> StudyDesignSourceReview {
+        guard let study = reviewedDrafts[name] else {
+            throw ExperimentError.refusing(.staleManifest, "The source study is no longer in the reviewed library.",
+                repair: "Refresh the study library, inspect the source, then select it again.")
+        }
+        try requireDesignWorkspace(study.workspaceRoot)
+        return try StudyDesignSourceReview(study: study)
+    }
+
+    public func reviewEditorDesignSource() throws -> StudyDesignSourceReview {
+        guard let name = selectedName else {
+            throw ExperimentError.malformed("Select a saved source study.", repair: "Open the intended study before saving its settings as a design.")
+        }
+        return try StudyDesignSourceReview(study: reviewedDraft(named: name))
+    }
+
+    private func requireDesignWorkspace(_ root: URL) throws {
+        guard try ManifestFileTransaction.canonicalPath(root) == ManifestFileTransaction.canonicalPath(ExperimentStore.workspaceRoot) else {
+            throw StudyDesignAuthoringError(code: "designWorkspaceChanged", reason: "The active workspace changed after this design operation was reviewed.",
+                repairAction: "Return to the intended workspace and review the source study and destination design again.")
+        }
+    }
+
+    /// "New from Study" uses the captured source. Selecting an unchanged
+    /// existing design is the result; newly created designs also get a status.
+    public func newDesignFromStudy(reviewedSource source: StudyDesignSourceReview) {
+        let name = source.study.manifest.name
         clearFormError(.template)
         do {
-            let mint = try StudyTemplateStore.templateFromStudy(experimentName: name)
+            try requireDesignWorkspace(source.study.workspaceRoot)
+            let saved = try StudyDesignSaving.create(from: source, name: displayLabels[name])
+            let mint = StudyTemplateStore.Mint(template: saved.snapshot.template, hash: StudyTemplateStore.hash(saved.snapshot.template),
+                minted: saved.created, divergedFrom: saved.created ? source.study.manifest.templateProvenance?.template : nil, warnings: saved.warnings)
             refreshTemplates()
             designs.selectedTemplateName = mint.template.name
             for warning in mint.warnings { note(warning, severity: .warning) }
@@ -347,16 +370,14 @@ public final class StudyManagementController {
     /// hash stamped at their own mint time, so their lineage lines go on saying
     /// what they were actually minted from (see
     /// `StudyTemplateStore.saveStudyBackToDesign`).
-    public func saveSelectedStudyBackToDesign() {
-        guard let manifest = selected else { return }
+    public func updateDesign(reviewedSource source: StudyDesignSourceReview, reviewedDesign design: StudyDesignSnapshot) {
+        let manifest = source.study.manifest
         clearFormError(.template)
-        if let refusal = designs.saveBackToDesignRefusal(for: manifest) {
-            refuse(.template, "Couldn't save back to a design — " + refusal)
-            return
-        }
         do {
-            let update = try StudyTemplateStore.saveStudyBackToDesign(
-                experimentName: manifest.name)
+            try requireDesignWorkspace(source.study.workspaceRoot)
+            let saved = try StudyDesignSaving.update(from: source, reviewed: design)
+            let update = StudyTemplateStore.DesignUpdate(design: saved.snapshot.template.name,
+                hashBefore: saved.hashBefore!, hashAfter: StudyTemplateStore.hash(saved.snapshot.template), warnings: saved.warnings)
             refreshTemplates()
             designs.selectedTemplateName = update.design
             for warning in update.warnings { note(warning, severity: .warning) }
@@ -376,7 +397,7 @@ public final class StudyManagementController {
         } catch {
             refuse(
                 .template,
-                "Couldn't update the design — nothing was written. "
+                "Couldn't update the design. "
                     + ((error as? ExperimentError)?.reason ?? "\(error)"))
         }
     }

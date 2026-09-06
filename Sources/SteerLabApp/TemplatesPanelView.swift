@@ -151,7 +151,10 @@ struct TemplatesPanelView: View {
             HStack(spacing: 8) {
                 Button {
                     guard let name = panel.management.designs.templateSourceStudyName else { return }
-                    panel.newDesignFromStudy(named: name)
+                    do {
+                        let source = try panel.management.reviewDesignSource(named: name)
+                        panel.management.newDesignFromStudy(reviewedSource: source)
+                    } catch { panel.draft.formErrors[.template] = error.localizedDescription }
                 } label: {
                     Label("New from Study", systemImage: "square.on.square")
                 }

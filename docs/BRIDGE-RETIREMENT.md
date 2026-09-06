@@ -85,6 +85,13 @@ This checkpoint audit intentionally flags subsequent semantic work; rerun it on
 the property-retirement commit for its original proof, rather than weakening its
 comparison to accommodate later features.
 
+The design-save `newDesignFromStudy` and `saveSelectedStudyBackToDesign` forwarding
+methods are now removed from `StudyManagementBindings.swift`. The app supplies
+retained source/design reviews to the management owner, which delegates to
+`StudyDesignSaving`. Confirmation cannot follow a refreshed catalog or another
+workspace. This is semantic admission work, not a mechanical move; the three
+remaining bridge files still have other callers to migrate.
+
 ## Baseline and callers
 
 | File under `Sources/ExperimentKit/` | Members scanned | Caller files |

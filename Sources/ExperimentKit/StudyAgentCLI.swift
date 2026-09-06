@@ -26,7 +26,7 @@ enum StudyAgentCLI {
         }
         guard args.count >= 2, let path = flag("--artifact"), let artifactSHA = flag("--artifact-sha256"),
             let studySHA = flag("--manifest-sha256") else { throw usage() }
-        let reviewed = try StudyAgentAuthoring.reviewStudy(name: args[1], workspaceRoot: workspaceRoot, expectedFileSHA256: studySHA)
+        let reviewed = try DraftAuthoringSnapshot.review(name: args[1], workspaceRoot: workspaceRoot, expectedFileSHA256: studySHA)
         let artifact = try StudyAgentAuthoring.reviewArtifact(path: path, workspaceRoot: workspaceRoot, expectedFileSHA256: artifactSHA)
         let saved = try StudyAgentAuthoring.attach(artifact, reviewed: reviewed)
         return try result(StudyAuthoringHTTP.Document(saved), message: "Agent attached to reviewed draft.",

@@ -7,10 +7,19 @@ struct StudyDesignActionsView: View {
     let management: StudyManagementController
     var openTemplates: () -> Void
     @State private var confirmSaveBackToDesign = false
+    @State private var saveReview: SaveReview?
+    private struct SaveReview {
+        let source: StudyDesignSourceReview
+        let design: StudyDesignSnapshot
+    }
 
     var body: some View {
         templateLineageRows(manifest: manifest, panel: management)
         designWriteBackRow(manifest: manifest, panel: management)
+            .onChange(of: manifest.name) { _, _ in
+                confirmSaveBackToDesign = false
+                saveReview = nil
+            }
     }
 
     /// Template lineage on the study detail — one subtle line, plus the
@@ -57,26 +66,33 @@ struct StudyDesignActionsView: View {
         HStack(spacing: 8) {
             if let target {
                 Button("Save back to design '\(target)'") {
-                    confirmSaveBackToDesign = true
+                    do {
+                        saveReview = SaveReview(source: try panel.reviewEditorDesignSource(),
+                            design: try panel.designs.reviewedDesign(named: target))
+                        confirmSaveBackToDesign = true
+                    } catch { panel.draft.formErrors[.template] = error.localizedDescription }
                 }
                 .disabled(refusal != nil)
                 .help(refusal ?? StudyControlCopy.saveBackHelp)
                 .confirmationDialog(
-                    "Update design '\(target)'?",
+                    "Update reviewed design?",
                     isPresented: $confirmSaveBackToDesign,
-                    titleVisibility: .visible
-                ) {
-                    Button("Update '\(target)' in place") {
-                        panel.saveSelectedStudyBackToDesign()
+                    titleVisibility: .visible,
+                    presenting: saveReview
+                ) { review in
+                    Button("Update '\(review.design.template.name)' in place") {
+                        panel.updateDesign(reviewedSource: review.source, reviewedDesign: review.design)
                     }
-                } message: {
-                    Text(Self.saveBackConfirmation(design: target))
+                } message: { review in
+                    Text(Self.saveBackConfirmation(design: review.design.template.name, source: review.source.study.manifest.name)
+                        + (review.source.panel?.warnings.isEmpty == false ? "\n\n" + (review.source.panel?.warnings.joined(separator: "\n") ?? "") : ""))
                 }
             }
             Button("Save as new design") {
-                panel.newDesignFromStudy(named: manifest.name)
+                do { panel.newDesignFromStudy(reviewedSource: try panel.reviewEditorDesignSource()) }
+                catch { panel.draft.formErrors[.template] = error.localizedDescription }
             }
-            .help(StudyControlCopy.saveAsNewDesignHelp)
+            .help(StudyControlCopy.saveAsNewDesignHelp + " Uses saved study settings; save Study Setup first to include unsaved edits.")
             if target == nil {
                 Button("Open Templates") { openTemplates() }
                     .buttonStyle(.link)
@@ -100,8 +116,8 @@ struct StudyDesignActionsView: View {
 
     /// Stated plainly, because it is the one thing about the round trip a
     /// researcher could be surprised by afterwards.
-    private static func saveBackConfirmation(design: String) -> String {
-        "Strips this study to its design form — every generation and "
+    private static func saveBackConfirmation(design: String, source: String) -> String {
+        "Uses the reviewed saved settings of study '\(source)'. Save Study Setup first to include unsaved edits. Keeps every generation and "
             + "measurement setting, no agents — and updates design '\(design)' "
             + "in place. Its content hash changes. Studies already minted from "
             + "it keep their original lineage stamps, so their divergence "

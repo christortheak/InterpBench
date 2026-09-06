@@ -113,6 +113,9 @@ ADVISORY_CODES: tuple[str, ...] = (
     "revisionAdoption",
     "revisionAdoptionWarning",
     "siteQualifyWarning",
+    # Shared vocabulary: reusable-design derivation can expose lost casting
+    # information or a changed semantic panel. Review the accompanying detail.
+    "designDerivationWarning",
     # A measurement instrument was selected by a DEPRECATED implicit rule
     # rather than a declaration, and the verb went ahead with it. Today's one
     # instance: ``caseFamily: "sentencing"`` selecting the built-in duration

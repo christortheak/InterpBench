@@ -40,6 +40,12 @@ public enum CLIFlagVocabulary {
         "--bootstrap-partition": "<partition>",
         "--bundle": "<server-path>",
         "--capability-tolerance": "<ratio>",
+        "--casting": "<file.json>",
+        "--file-sha256": "<sha256>",
+        "--manifest-sha256": "<sha256>",
+        "--artifact-sha256": "<sha256>",
+        "--study-name": "<name>",
+        "--study": "<name>",
         "--cell": "<layer>:<alpha>",
         "--choice-prompts": "<path>",
         "--coherence-backstop": "<ratio>",
@@ -149,6 +155,12 @@ public enum CLIFlagVocabulary {
     /// One line per flag. Imperative, and about the effect rather than the
     /// history.
     private static let purposes: [String: String] = [
+        "--casting": "JSON file containing reviewed agents or explicit seat assignments.",
+        "--file-sha256": "External SHA-256 of the reviewed design file, from design inspect.",
+        "--manifest-sha256": "External SHA-256 of the reviewed study file, from experiment manifest.",
+        "--artifact-sha256": "External SHA-256 of the reviewed agent file, from agent inspect.",
+        "--study-name": "Requested new study name; an occupied name receives a suffix reported in the result.",
+        "--study": "Named source study whose reviewed saved settings update the design.",
         "--agent": "The promoted agent the policy perturbs.",
         "--agent-name": "Name the minted variant artifact.",
         "--allow-bootstrap": "Authorize the bootstrap step to run.",
@@ -602,7 +614,7 @@ public enum ExperimentCLIHelp {
                 synopsis: "experiment <verb> <name> …",
                 purpose: "The study lifecycle."),
             .init(synopsis: "agent list | inspect <path>", purpose: "Inspect local agents for reviewed attachment."),
-            .init(synopsis: "design list | inspect | describe | instantiate …", purpose: "Inspect designs, edit reviewed descriptions, and create studies from castings."),
+            .init(synopsis: "design list | inspect | describe | instantiate | save | update …", purpose: "Inspect, save and revise designs, or create studies from reviewed castings."),
             .init(
                 synopsis: "data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>",
                 purpose: "Study-data readiness and local evidence custody."),

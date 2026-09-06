@@ -38,7 +38,7 @@ enum StudyAgentHTTP {
             case .inspect:
                 return .json(try AgentArtifactDocument(AgentArtifactSnapshot(workspaceRoot: workspaceRoot, path: request.artifactPath!)))
             case .attach:
-                let reviewed = try StudyAgentAuthoring.reviewStudy(name: request.name!, workspaceRoot: workspaceRoot,
+                let reviewed = try DraftAuthoringSnapshot.review(name: request.name!, workspaceRoot: workspaceRoot,
                     expectedFileSHA256: request.manifestFileSHA256!)
                 let artifact = try StudyAgentAuthoring.reviewArtifact(path: request.artifactPath!, workspaceRoot: workspaceRoot,
                     expectedFileSHA256: request.artifactFileSHA256!)

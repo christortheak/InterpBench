@@ -568,8 +568,18 @@ The casting JSON contains either `agents` (an array of objects naming
 and the same artifact objects for treated seats). The command checks reviewed
 pins and derives an ordinary draft with design provenance. It reports the actual
 name, including a suffix if the requested name was occupied. Review the draft
-before freezing or submitting it. Design creation, batch adapters and broader
-edits remain separate gaps; do not invent verbs or hand-edit frozen studies.
+before freezing or submitting it.
+
+Use `steerlab-cli design save <study> --manifest-sha256 <digest> --name <design-name> --json`
+to save a reusable design from the inspected study. An unchanged instance reuses
+its existing design; a new or divergent source creates a separate design and
+reports the actual name. Optional name/description fields apply to a newly
+created design. To revise the design named by a study's lineage, inspect both
+files and use `steerlab-cli design update <design> --study <study> --manifest-sha256 <source-digest> --file-sha256 <design-digest> --json`.
+Both saves use stored study settings, not unsaved app fields. Read any derivation
+warnings before using the result. Source studies, including frozen ones, and
+prior runs remain unchanged. Batch adapters, rename/deletion and Python design
+parity remain separate gaps; do not invent verbs or hand-edit frozen studies.
 
 **`data custody <run-id>`** discovers receipts for an imported run, including
 receipts for a pipeline archive that carried that run. Discovery lists recorded

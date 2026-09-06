@@ -392,7 +392,9 @@ import Testing
 
             let panel = makePanel(root: root)
             panel.selectedName = draft.name
-            panel.saveSelectedStudyBackToDesign()
+            panel.management.updateDesign(
+                reviewedSource: try panel.management.reviewDesignSource(named: try #require(panel.management.selectedName)),
+                reviewedDesign: try panel.management.designs.reviewedDesign(named: design.name))
 
             #expect(panel.draft.formErrors[.template] == nil)
             #expect(panel.management.designs.templates.count == 1)
@@ -436,7 +438,9 @@ import Testing
 
             let panel = makePanel(root: root)
             panel.selectedName = draft.name
-            panel.saveSelectedStudyBackToDesign()
+            panel.management.updateDesign(
+                reviewedSource: try panel.management.reviewDesignSource(named: try #require(panel.management.selectedName)),
+                reviewedDesign: try panel.management.designs.reviewedDesign(named: design.name))
 
             #expect(panel.draft.formErrors[.template] == nil)
             #expect(panel.management.designs.templates.count == 1)
@@ -463,7 +467,9 @@ import Testing
             let design = try makeDesign()
             let panel = makePanel(root: root)
             panel.selectedName = "vignette"  // no lineage
-            panel.saveSelectedStudyBackToDesign()
+            panel.management.updateDesign(
+                reviewedSource: try panel.management.reviewDesignSource(named: try #require(panel.management.selectedName)),
+                reviewedDesign: try panel.management.designs.reviewedDesign(named: design.name))
             #expect(panel.draft.formErrors[.template] != nil)
             // Nothing was written: the design is byte-for-byte what it was.
             #expect(
@@ -506,7 +512,7 @@ import Testing
             try ExperimentStore.save(draft)
 
             let panel = makePanel(root: root)
-            panel.newDesignFromStudy(named: draft.name)
+            panel.management.newDesignFromStudy(reviewedSource: try panel.management.reviewDesignSource(named: draft.name))
             #expect(panel.management.designs.templates.count == 2)
             // The original design is untouched by the minting path.
             #expect(

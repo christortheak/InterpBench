@@ -94,12 +94,12 @@ struct StudyManagementOwnershipTests {
                 name: "source", description: "purpose", modelID: "test/model")
             let owner = StudyManagementController(draft: StudyDraftState())
             owner.refresh()
-            owner.newDesignFromStudy(named: "source")
+            owner.newDesignFromStudy(reviewedSource: try owner.reviewDesignSource(named: "source"))
             let name = try #require(owner.designs.selectedTemplateName)
             // Dedup is lineage-based: an unchanged instance returns its design.
             // Exporting an unlinked source again intentionally mints a new one.
             let unchangedInstance = try #require(owner.editDesign(name))
-            owner.newDesignFromStudy(named: unchangedInstance)
+            owner.newDesignFromStudy(reviewedSource: try owner.reviewDesignSource(named: unchangedInstance))
             #expect(owner.designs.templates.count == 1)
             owner.draft.newName = "unrelated-create-field"
             owner.renameTemplate(name, to: "renamed-design")
@@ -111,7 +111,8 @@ struct StudyManagementOwnershipTests {
             edit.maxTokens = 333
             try ExperimentStore.save(edit)
             owner.refresh()
-            owner.saveSelectedStudyBackToDesign()
+            owner.updateDesign(reviewedSource: try owner.reviewDesignSource(named: editName),
+                reviewedDesign: try owner.designs.reviewedDesign(named: "renamed-design"))
             #expect(owner.designs.selectedTemplate?.study.maxTokens == 333)
             #expect(owner.designs.templates.count == 1)
             owner.designs.newStudyDesign = .design("renamed-design")

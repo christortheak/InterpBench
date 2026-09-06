@@ -302,7 +302,7 @@ import Testing
             // An unchanged INSTANCE of a live design says nothing at all: the
             // library is on screen, and selecting the design that already
             // existed IS the answer.
-            panel.newDesignFromStudy(named: minted.name)
+            panel.management.newDesignFromStudy(reviewedSource: try panel.management.reviewDesignSource(named: minted.name))
             #expect(panel.status == before)
             #expect(panel.management.designs.selectedTemplateName == design.name)
             #expect(StudyTemplateStore.list().count == 1)
@@ -320,7 +320,7 @@ import Testing
             try ExperimentStore.save(minted)
 
             let panel = makePanel(root: root)
-            panel.newDesignFromStudy(named: minted.name)
+            panel.management.newDesignFromStudy(reviewedSource: try panel.management.reviewDesignSource(named: minted.name))
             let status = try #require(panel.status)
             #expect(status.hasPrefix("created design"))
             #expect(status.contains("had diverged from '\(design.name)'"))

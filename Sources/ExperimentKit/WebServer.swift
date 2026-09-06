@@ -713,7 +713,7 @@ public final class SteerLabWebServer: Sendable {
             let response = await Task.detached { StudyAgentHTTP.perform(operation, body: body, workspaceRoot: root) }.value
             return Response(status: response.status, body: response.body)
 
-        case ("POST", "/api/design/list"), ("POST", "/api/design/inspect"), ("POST", "/api/design/describe"), ("POST", "/api/design/instantiate"):
+        case ("POST", "/api/design/list"), ("POST", "/api/design/inspect"), ("POST", "/api/design/describe"), ("POST", "/api/design/instantiate"), ("POST", "/api/design/save"), ("POST", "/api/design/update"):
             let root = ExperimentStore.workspaceRoot
             let operation = StudyDesignHTTP.Operation(rawValue: String(path.split(separator: "/").last!))!
             let response = await Task.detached {

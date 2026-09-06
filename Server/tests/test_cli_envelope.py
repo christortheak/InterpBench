@@ -132,7 +132,7 @@ def test_advisory_codes_match_the_swift_literal():
         "judgePanelTooSmall", "emptyAnalysis", "allEffectSizesZero",
         "sweepRecommendationsOnly", "sweepSelectionDefaulted",
         "choiceItemsWithoutInstrument", "revisionAdoption",
-        "revisionAdoptionWarning", "siteQualifyWarning",
+        "revisionAdoptionWarning", "siteQualifyWarning", "designDerivationWarning",
         "deprecatedImplicitSelection", "systemPromptNotApplied",
         "singleRegimeCapabilityReading",
         "modelCapabilities",

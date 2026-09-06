@@ -13,6 +13,23 @@ public struct DraftAuthoringSnapshot: Sendable {
         try self.init(workspaceRoot: workspaceRoot, name: name, file: file)
     }
 
+    /// A transport's external version must identify the study it actually
+    /// reviewed. This read also supports frozen source studies; mutation owners
+    /// decide which lifecycle states their operations admit.
+    public static func review(name: String, workspaceRoot: URL, expectedFileSHA256: String) throws -> Self {
+        guard expectedFileSHA256.count == 64,
+            expectedFileSHA256.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+            throw ExperimentError.malformed("A reviewed study precondition must be a lowercase SHA-256 digest.",
+                repair: "Use manifestFileSHA256 from the named study inspection result.")
+        }
+        let study = try Self(workspaceRoot: workspaceRoot, name: name)
+        guard study.file.sha256 == expectedFileSHA256 else {
+            throw ExperimentError.refusing(.staleManifest, "The study changed after inspection.",
+                repair: "Inspect the named study and review the changes before reconstructing the intended operation.")
+        }
+        return study
+    }
+
     public init(workspaceRoot: URL, name: String, file: ManifestFileSnapshot) throws {
         let manifest = try JSONDecoder().decode(ExperimentManifest.self, from: file.data)
         guard manifest.name == name else {

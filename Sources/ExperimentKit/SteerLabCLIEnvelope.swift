@@ -180,6 +180,9 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// identical across engines by contract, so that an agent's exhaustive
     /// `switch` compiles against either one.
     case siteQualifyWarning
+    /// Reusable-design derivation exposes information lost when removing a
+    /// casting or changing the semantic panel. Review the detail before use.
+    case designDerivationWarning
     /// A measurement instrument was selected by a DEPRECATED implicit rule
     /// rather than a declaration, and the verb went ahead with it.
     ///

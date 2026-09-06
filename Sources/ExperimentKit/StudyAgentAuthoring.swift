@@ -106,16 +106,6 @@ public enum StudyAgentAuthoring {
         return artifact
     }
 
-    public static func reviewStudy(name: String, workspaceRoot: URL, expectedFileSHA256: String) throws -> DraftAuthoringSnapshot {
-        try requireDigest(expectedFileSHA256)
-        let study = try DraftAuthoringSnapshot(workspaceRoot: workspaceRoot, name: name)
-        guard study.file.sha256 == expectedFileSHA256 else {
-            throw ExperimentError.refusing(.staleManifest, "The study changed after inspection.",
-                repair: "Inspect the named study and review the changes before reconstructing the attachment request.")
-        }
-        return study
-    }
-
     @discardableResult
     public static func attach(_ agent: AgentArtifactSnapshot, reviewed: DraftAuthoringSnapshot,
                               baseModelChoice: String? = nil) throws -> DraftAuthoringSnapshot {

@@ -122,7 +122,7 @@ import Testing
             "judgePanelTooSmall", "emptyAnalysis", "allEffectSizesZero",
             "sweepRecommendationsOnly", "sweepSelectionDefaulted",
             "choiceItemsWithoutInstrument", "revisionAdoption",
-            "revisionAdoptionWarning", "siteQualifyWarning",
+            "revisionAdoptionWarning", "siteQualifyWarning", "designDerivationWarning",
             "deprecatedImplicitSelection", "systemPromptNotApplied",
             "singleRegimeCapabilityReading", "modelCapabilities",
         ]

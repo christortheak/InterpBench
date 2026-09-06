@@ -450,12 +450,18 @@ public enum PanelComposition {
     /// produced the text, and the run's `generations.jsonl` already labels
     /// every turn with the scenario's root model, so a mixed panel's records
     /// are mislabelled at the top level whatever we do here.
-    public static func hoistLegacyScenario(path: String) throws -> LegacyHoist {
-        let url = ExperimentStore.resolveProjectPath(path)
+    public static func hoistLegacyScenario(path: String, workspaceRoot: URL = ExperimentStore.workspaceRoot) throws -> LegacyHoist {
+        let url = ExperimentStore.resolveProjectPath(path, root: workspaceRoot)
         guard let data = try? Data(contentsOf: url) else {
             throw ExperimentError(reason: "panel scenario not found: \(url.path)")
         }
         let scenario = try JSONDecoder().decode(MultiAgentScenario.self, from: data)
+        return try hoistLegacyScenario(scenario, workspaceRoot: workspaceRoot)
+    }
+
+    /// Hoist already reviewed scenario bytes without rereading a mutable path.
+    public static func hoistLegacyScenario(_ scenario: MultiAgentScenario,
+                                          workspaceRoot: URL) throws -> LegacyHoist {
         guard !scenario.agents.isEmpty else {
             throw ExperimentError(
                 reason: "panel '\(scenario.name)' declares no seats — nothing to hoist")
@@ -474,7 +480,7 @@ public enum PanelComposition {
                 name: seat.name,
                 artifactPath: artifactPath,
                 artifactHash: (try? ModelVariantStore.hash(
-                    ModelVariantStore.absoluteURL(artifactPath))) ?? "")
+                    ExperimentStore.resolveProjectPath(artifactPath, root: workspaceRoot))) ?? "")
             warnings.append(
                 "seat '\(seat.name)' named an agent artifact with no "
                     + "pinned hash; it was hashed from the file as it "

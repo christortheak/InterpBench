@@ -682,7 +682,7 @@ import Testing
             // new family rather than a changed one; nothing in the lifecycle
             // moved.
             "init",
-            "design list", "design inspect", "design describe", "design instantiate",
+            "design list", "design inspect", "design describe", "design instantiate", "design save", "design update",
             "agent list", "agent inspect", "experiment attach-agent",
             "workspace init", "data check", "data custody", "data verify-custody",
             // POLE MIRRORING: the opposite pole of a contrastive direction as

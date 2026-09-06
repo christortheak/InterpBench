@@ -354,8 +354,8 @@ public enum RefusalSiteRegistry {
                 + "&& steerlab-cli experiment promote <name> <concept>"),
         .init(
             gate: .artifactPin,
-            verbs: ["experiment promote", "agent inspect", "experiment attach-agent", "design instantiate"],
-            origin: "AgentPromotion.promote — vector-artifact byte pins; AgentArtifactSnapshot / StudyAgentAuthoring / ExperimentStore.agentCondition — reviewed agent bytes and model compatibility; StudyDesignInstantiation — casting pins",
+            verbs: ["experiment promote", "agent inspect", "experiment attach-agent", "design instantiate", "design save", "design update"],
+            origin: "AgentPromotion.promote — vector-artifact byte pins; AgentArtifactSnapshot / StudyAgentAuthoring / ExperimentStore.agentCondition — reviewed agent bytes and model compatibility; StudyDesignInstantiation — casting pins; StudyDesignSourceReview — source-panel pins",
             repairAction: "For promotion: steerlab-cli experiment extract <name> && steerlab-cli experiment promote <name> <concept>. For design casting: steerlab-cli design inspect <name> --json and steerlab-cli agent inspect <path> --json; review both before reconstructing the casting. For agent inspection/attachment: steerlab-cli agent inspect <path> --json; then steerlab-cli experiment manifest <name> --json; review both and reconstruct the attachment request."),
         .init(
             gate: .sweepInputDrift,
@@ -482,9 +482,9 @@ public enum RefusalSiteRegistry {
                 + "prompts/…/file.jsonl && steerlab-cli experiment freeze <name>-v2"),
         .init(
             gate: .staleManifest,
-            verbs: ["experiment attach", "experiment attach-agent", "experiment declare-condition", "panel compile", "design instantiate"],
+            verbs: ["experiment attach", "experiment attach-agent", "experiment declare-condition", "panel compile", "design instantiate", "design save", "design update"],
             origin: "ManifestFileTransaction.requireCurrent — external draft-write precondition",
-            repairAction: "steerlab-cli experiment manifest <name> --json; review the intervening changes and submit with manifestFileSHA256. For design instantiation, inspect the occupied destination and choose a fresh study name."),
+            repairAction: "steerlab-cli experiment manifest <name> --json; review the intervening changes and submit with manifestFileSHA256. For design creation, inspect the occupied destination and choose a fresh name. For design update, review both the source study and destination design before reconstructing the save."),
         .init(
             gate: .armsCleared,
             // Every verb that reaches `save` with a WHOLE document it did not

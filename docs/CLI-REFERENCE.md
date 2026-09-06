@@ -784,7 +784,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   workspace init <path>                         Create and seed a data workspace.
   experiment <verb> <name> …                    The study lifecycle.
   agent list | inspect <path>                   Inspect local agents for reviewed attachment.
-  design list | inspect | describe | instantiate …  Inspect designs, edit reviewed descriptions, and create studies from castings.
+  design list | inspect | describe | instantiate | save | update …  Inspect, save and revise designs, or create studies from reviewed castings.
   data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>  Study-data readiness and local evidence custody.
   vectors <verb> …                              Vector artifacts.
   remote <verb> (--site <id> | --url <server>)  Cluster client.
@@ -894,7 +894,7 @@ steerlab-cli experiment manifest <name>
 steerlab-cli experiment create <name> [--description <text>] --model <id> [--revision <commit>]
 steerlab-cli experiment attach <name> <concept>… [--corpus <a,b,c>] [--extraction-rendering <json>] [--method <name>] [--pool-from <k>] [--project-neutral <k>] [--reading-position <label>] [--reference <concept>]
 steerlab-cli experiment detach <name> <concept>…
-steerlab-cli experiment attach-agent <name> --artifact <value> --artifact-sha256 <value> --manifest-sha256 <value>
+steerlab-cli experiment attach-agent <name> --artifact <value> --artifact-sha256 <sha256> --manifest-sha256 <sha256>
 steerlab-cli experiment pin-prompts <name> <prompts/…/file.jsonl>
 steerlab-cli experiment pin-rubric <name> <prompts/rubrics/file.md> [--judge-pin <judge-name>=<revision>[:<dtype>]] [--judges <spec>]
 steerlab-cli experiment declare-condition <name> <condition> [--alpha-units <norm|raw>] [--band-width <k>] [--baseline] [--control <name>] [--slots <spec>]
@@ -2233,8 +2233,10 @@ the service computes and records the actual artifact pin. Frozen studies refuse.
 ```
 steerlab-cli design list
 steerlab-cli design inspect <name>
-steerlab-cli design describe <name> --description <text> --file-sha256 <value>
-steerlab-cli design instantiate <name> --casting <value> --file-sha256 <value> [--study-name <value>]
+steerlab-cli design describe <name> --description <text> --file-sha256 <sha256>
+steerlab-cli design instantiate <name> --casting <file.json> --file-sha256 <sha256> [--study-name <name>]
+steerlab-cli design save <study> [--description <text>] --manifest-sha256 <sha256> [--name <name>]
+steerlab-cli design update <name> --file-sha256 <sha256> --manifest-sha256 <sha256> --study <name>
 ```
 
 | Verb | Purpose |
@@ -2243,6 +2245,8 @@ steerlab-cli design instantiate <name> --casting <value> --file-sha256 <value> [
 | `design inspect` | Read a design and its external file digest for reviewed edits. |
 | `design describe` | Save a design description against the reviewed file version. |
 | `design instantiate` | Create a draft from a reviewed design and explicit casting JSON file. |
+| `design save` | Save a reusable design from a reviewed study, reusing an unchanged lineage match. |
+| `design update` | Replace a design's scientific settings from a reviewed source study with matching lineage. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-design END -->

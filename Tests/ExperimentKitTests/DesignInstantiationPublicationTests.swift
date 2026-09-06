@@ -6,6 +6,9 @@ import Testing
 struct DesignInstantiationPublicationTests {
     private func fixture(_ body: (URL, StudyTemplate) throws -> Void) throws {
         try ExperimentRootOverrideLock.withTempRoot(prefix: "design-publication") { root in
+            let previousWorkspace = WorkspaceRoot.programmaticOverride
+            WorkspaceRoot.programmaticOverride = root
+            defer { WorkspaceRoot.programmaticOverride = previousWorkspace }
             var study = try ExperimentStore.create(name: "source", description: "", modelID: "test/model")
             let relative = "prompts/tasks/items.jsonl"
             let file = root.appending(path: relative)
@@ -54,7 +57,10 @@ struct DesignInstantiationPublicationTests {
         try fixture { root, template in
             let file = root.appending(path: template.study.taskPromptsFile!)
             let reviewed = try Data(contentsOf: file)
-            WorkspaceRoot.programmaticOverride = root.appending(component: "another-workspace")
+            let other = root.appending(component: "another-workspace")
+            WorkspaceRoot.programmaticOverride = other
+            ExperimentStore.rootOverride = other
+            #expect(ExperimentStore.workspaceRoot == other)
             var explicitRoot = template.study
             try OutcomeInstrumentScopeAuthoring.apply(responseFormats: ["label"], into: &explicitRoot, workspaceRoot: root)
             #expect(explicitRoot.outcomeInstrumentScope?.itemCount == 1)
@@ -90,6 +96,8 @@ struct DesignInstantiationPublicationTests {
             let reviewed = try StudyDesignSnapshot(workspaceRoot: root, name: template.name)
             let other = root.appending(component: "other")
             WorkspaceRoot.programmaticOverride = other
+            ExperimentStore.rootOverride = other
+            #expect(ExperimentStore.workspaceRoot == other)
             let first = try StudyDesignInstantiation.instantiate(reviewed: reviewed, casting: .agents([]), studyName: "new-study")
             let second = try StudyDesignInstantiation.instantiate(reviewed: reviewed, casting: .agents([]), studyName: "new-study")
             #expect(first.manifest.name == "new-study")

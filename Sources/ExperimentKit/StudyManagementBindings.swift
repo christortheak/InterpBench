@@ -59,10 +59,6 @@ extension ExperimentPanel {
         management.designs.designSummary(template)
     }
 
-    public func newDesignFromStudy(named name: String) {
-        management.newDesignFromStudy(named: name)
-    }
-
     @discardableResult
     public func editDesign(_ name: String) -> String? {
         management.editDesign(name)
@@ -83,10 +79,6 @@ extension ExperimentPanel {
         for manifest: ExperimentManifest
     ) -> String? {
         management.designs.saveBackToDesignRefusal(for: manifest)
-    }
-
-    public func saveSelectedStudyBackToDesign() {
-        management.saveSelectedStudyBackToDesign()
     }
 
     public func renameTemplate(_ oldName: String, to newName: String) {

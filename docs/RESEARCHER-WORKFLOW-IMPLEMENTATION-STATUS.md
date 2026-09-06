@@ -734,3 +734,56 @@ writers that have not migrated. A compiled panel can remain unreferenced if late
 manifest publication fails; this is not a crash-atomic multi-file transaction.
 No scientific hashing schema, frozen study, immutable run, main checkout,
 installed app or live scheduler job was changed by this checkpoint.
+
+## Reviewed design saving across the app, CLI and HTTP
+
+- Added `StudyDesignSourceReview` and `StudyDesignSaving`. A save retains the
+  source manifest and panel bytes; an update additionally retains the destination
+  design version and requires matching lineage. Shared file locks and external
+  digests guard publication without adding schema fields. Frozen sources remain
+  legitimate read-only inputs; source studies, prior studies and runs are unchanged.
+- `design save` and `design update`, their named Swift HTTP operations, and the
+  app's design actions delegate to this owner. Results distinguish creation,
+  reuse and scientific change, carry the actual destination and file digest, and
+  report derivation warnings. Missing, stale, mismatched-workspace and malformed
+  requests have explicit refusals. Both reviewed files are required for updates.
+- App confirmation retains the source and destination even after catalog refresh,
+  names the captured source, and refuses after workspace changes. It explains
+  that design saving uses saved settings. Two design-saving forwarding methods
+  were removed from `StudyManagementBindings`; other bridge retirement remains.
+- Fixed semantic-panel reuse: structural equivalence after stripping is insufficient
+  when the stored file still contains a casting. Reuse now requires that the file
+  itself equals the stripped semantic panel; otherwise immutable content-addressed
+  semantic bytes are published separately. The original bound input is preserved.
+- Moved study-file review to `DraftAuthoringSnapshot`, shared by attachment and
+  design saving. This includes admission changes and is not an AST-equivalent
+  mechanical move. No new compatibility bridge was introduced.
+
+Validation:
+
+- Seven focused saving tests passed, covering source preservation, both stale
+  reviews, no-op reuse, frozen sources, lineage, panel drift, bound-panel reuse,
+  transport refusals and retained app confirmation authority. The bound-panel
+  regression was reproduced before the fix.
+- Root-switch tests now change both test overrides and assert that the active root
+  actually changed. The fixtures also restore the workspace override; this
+  strengthens earlier instantiation tests whose higher-priority override had
+  masked the intended switch.
+- Actual compiled CLI and disposable HTTP workbench save/update checks passed:
+  `/private/tmp/interpbench-design-saving-wire.log`.
+- Both initial full suites caught the newly added `designDerivationWarning`
+  missing from their copied parity lists. The lists were updated without weakening
+  the closed-vocabulary assertions.
+- Final full Xcode beta suite: 277 SteeringKit and 4,517 ExperimentKit tests passed,
+  `TEST SUCCEEDED`; `/private/tmp/interpbench-reviewed-design-saving-xcode-qualified.log`.
+- Final full Python suite: 5,896 passed, 9 skipped, 8 warnings (170.31 seconds);
+  `/private/tmp/interpbench-reviewed-design-saving-python-qualified.log`.
+- Actual diff read, generated CLI reference, contract mirror, bridge ratchet and
+  whitespace checks passed. A comment-placement correction followed the suites;
+  executable code was unchanged. Maintainer review remains the landing gate.
+
+Public batch/expansion, reviewed rename/deletion, Python design parity and
+interactive UI qualification remain unfinished. Legacy writers that do not take
+shared locks are not serialized. A newly published semantic input may remain
+unreferenced if later design publication fails; this is not a crash-atomic
+multi-file transaction. No merge, installation or live remote action occurred.

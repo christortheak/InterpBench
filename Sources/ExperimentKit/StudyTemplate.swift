@@ -353,61 +353,12 @@ public enum StudyTemplateStore {
         named requestedName: String? = nil,
         description: String? = nil
     ) throws -> Mint {
-        let study = try ExperimentStore.load(name: experimentName)
-        let body = strippedBody(study)
-
-        // The semantic panel, if this is a multi-agent study.
-        var warnings: [String] = []
-        var semanticScenario: StudyTemplate.SemanticScenarioRef?
-        var semanticPanel: MultiAgentScenario?
-        if let scenarioPath = study.multiAgentScenarioPath, !scenarioPath.isEmpty {
-            let hoist = try PanelComposition.hoistLegacyScenario(path: scenarioPath)
-            semanticPanel = hoist.semantic
-            warnings += hoist.warnings
-        }
-
-        // An unchanged instance of a live template returns that template.
-        if let provenance = study.templateProvenance,
-            let existing = try? load(name: provenance.template)
-        {
-            // The panel is compared structurally (see `sameSemanticPanel`);
-            // everything else is compared through the ordinary content hash.
-            let panelMatches = semanticPanel.map { sameSemanticPanel($0, as: existing) }
-                ?? (existing.semanticScenario == nil)
-            var candidate = existing
-            candidate.study = body
-            if panelMatches, hash(candidate) == hash(existing) {
-                return Mint(
-                    template: existing, hash: hash(existing), minted: false,
-                    warnings: warnings)
-            }
-        }
-
-        // Diverged, or never had a lineage: mint.
-        let base = requestedName
-            ?? ExperimentStore.displayLabel(name: experimentName)
-            ?? study.name
-        let name = unusedTemplateName(base: ExperimentStore.canonicalSlug(base))
-        guard !name.isEmpty else {
-            throw ExperimentError(
-                reason: "'\(base)' has no letters or digits to make a template "
-                    + "directory name from")
-        }
-        if let semanticPanel {
-            semanticScenario = try pinSemanticPanel(
-                semanticPanel, slug: name,
-                reusing: study.multiAgentSemanticScenarioPath)
-        }
-        let template = StudyTemplate(
-            name: name,
-            templateDescription: description ?? study.experimentDescription,
-            parentTemplate: study.templateProvenance?.template,
-            semanticScenario: semanticScenario,
-            study: body)
-        try save(template)
-        return Mint(
-            template: template, hash: hash(template), minted: true,
-            divergedFrom: study.templateProvenance?.template, warnings: warnings)
+        let root = ExperimentStore.workspaceRoot
+        let reviewed = try StudyDesignSourceReview(study: DraftAuthoringSnapshot(workspaceRoot: root, name: experimentName))
+        let result = try StudyDesignSaving.create(from: reviewed,
+            name: requestedName ?? ExperimentStore.displayLabel(name: experimentName), description: description)
+        return Mint(template: result.snapshot.template, hash: hash(result.snapshot.template), minted: result.created,
+            divergedFrom: result.created ? reviewed.study.manifest.templateProvenance?.template : nil, warnings: result.warnings)
     }
 
     // MARK: - Save a study back onto the design it names
@@ -466,53 +417,17 @@ public enum StudyTemplateStore {
     public static func saveStudyBackToDesign(
         experimentName: String
     ) throws -> DesignUpdate {
-        let study = try ExperimentStore.load(name: experimentName)
-        guard let provenance = study.templateProvenance else {
-            throw ExperimentError(
-                reason: "'\(experimentName)' was not minted from a design — "
-                    + "there is nothing to save it back onto (save it as a NEW "
-                    + "design instead)")
+        let root = ExperimentStore.workspaceRoot
+        let source = try StudyDesignSourceReview(study: DraftAuthoringSnapshot(workspaceRoot: root, name: experimentName))
+        guard let provenance = source.study.manifest.templateProvenance else {
+            throw ExperimentError(reason: "'\(experimentName)' was not minted from a design — there is nothing to save it back onto (save it as a NEW design instead)")
         }
-        guard let existing = try? load(name: provenance.template) else {
-            throw ExperimentError(
-                reason: "design '\(provenance.template)' is no longer in the "
-                    + "library (renamed or deleted) — save this study as a new "
-                    + "design instead")
+        guard let reviewed = try? StudyDesignSnapshot(workspaceRoot: root, name: provenance.template) else {
+            throw ExperimentError(reason: "design '\(provenance.template)' is no longer in the library (renamed or deleted) — save this study as a new design instead")
         }
-
-        var warnings: [String] = []
-        var updated = existing
-        updated.study = strippedBody(study)
-
-        if let scenarioPath = study.multiAgentScenarioPath, !scenarioPath.isEmpty {
-            // The study's scenario is COMPILED and seat-bound; a design holds
-            // the semantic panel, so the panel is hoisted and compared
-            // structurally exactly as minting does.
-            let hoist = try PanelComposition.hoistLegacyScenario(path: scenarioPath)
-            warnings += hoist.warnings
-            if !sameSemanticPanel(hoist.semantic, as: existing) {
-                updated.semanticScenario = try pinSemanticPanel(
-                    hoist.semantic, slug: existing.name,
-                    reusing: study.multiAgentSemanticScenarioPath)
-                warnings.append(
-                    "design '\(existing.name)' now declares a different panel — "
-                        + "studies minted from the old one read as diverged, "
-                        + "which is what they are")
-            }
-        } else if existing.semanticScenario != nil {
-            updated.semanticScenario = nil
-            warnings.append(
-                "'\(experimentName)' carries no panel, so design "
-                    + "'\(existing.name)' no longer declares one — seat "
-                    + "castings against it will refuse until a panel is saved "
-                    + "back")
-        }
-
-        let before = hash(existing)
-        try update(updated)
-        return DesignUpdate(
-            design: updated.name, hashBefore: before, hashAfter: hash(updated),
-            warnings: warnings)
+        let result = try StudyDesignSaving.update(from: source, reviewed: reviewed)
+        return DesignUpdate(design: result.snapshot.template.name, hashBefore: result.hashBefore!,
+            hashAfter: hash(result.snapshot.template), warnings: result.warnings)
     }
 
     /// Struct equality, not byte equality: the template's semantic panel is a
@@ -531,45 +446,6 @@ public enum StudyTemplateStore {
             let stored = try? JSONDecoder().decode(MultiAgentScenario.self, from: data)
         else { return false }
         return PanelComposition.semanticForm(stored) == panel
-    }
-
-    /// Writes a semantic panel into the panel library and returns its pin.
-    ///
-    /// `reusing` is the scenario a CAST study records as the source of its
-    /// casting (`multiAgentSemanticScenarioPath`). When that file is still in
-    /// the library and still says the same thing, the design points at it
-    /// rather than at a byte-identical copy: a workspace where every design
-    /// mints its own `-semantic.json` twin makes the scenario picker unusable
-    /// within a few replications.
-    private static func pinSemanticPanel(
-        _ panel: MultiAgentScenario, slug: String, reusing recorded: String? = nil
-    ) throws -> StudyTemplate.SemanticScenarioRef {
-        if let recorded, !recorded.isEmpty {
-            let url = ExperimentStore.resolveProjectPath(recorded)
-            if let data = try? Data(contentsOf: url),
-                let stored = try? JSONDecoder().decode(MultiAgentScenario.self, from: data),
-                PanelComposition.semanticForm(stored) == panel
-            {
-                return StudyTemplate.SemanticScenarioRef(
-                    path: recorded, hash: MultiAgentScenarioStore.hash(data))
-            }
-        }
-        let root = MultiAgentScenarioStore.directory
-        try FileManager.default.createDirectory(
-            at: root, withIntermediateDirectories: true)
-        var url = root.appending(component: "\(slug)-semantic.json")
-        var suffix = 2
-        while FileManager.default.fileExists(atPath: url.path) {
-            url = root.appending(component: "\(slug)-semantic-\(suffix).json")
-            suffix += 1
-        }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(panel)
-        try data.write(to: url, options: .atomic)
-        return StudyTemplate.SemanticScenarioRef(
-            path: FineTuneStore.relativePath(for: url),
-            hash: MultiAgentScenarioStore.hash(data))
     }
 
     // MARK: - Instantiate
