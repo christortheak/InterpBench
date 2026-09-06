@@ -784,7 +784,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   workspace init <path>                         Create and seed a data workspace.
   experiment <verb> <name> …                    The study lifecycle.
   agent list | inspect <path>                   Inspect local agents for reviewed attachment.
-  design list | inspect | describe | instantiate | save | update …  Inspect, save and revise designs, or create studies from reviewed castings.
+  design list | inspect | describe | instantiate | batch | save | update …  Inspect, save and revise designs, or create studies from reviewed castings.
   data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>  Study-data readiness and local evidence custody.
   vectors <verb> …                              Vector artifacts.
   remote <verb> (--site <id> | --url <server>)  Cluster client.
@@ -2235,6 +2235,7 @@ steerlab-cli design list
 steerlab-cli design inspect <name>
 steerlab-cli design describe <name> --description <text> --file-sha256 <sha256>
 steerlab-cli design instantiate <name> --casting <file.json> --file-sha256 <sha256> [--study-name <name>]
+steerlab-cli design batch <name> --file-sha256 <sha256> --rows <batch.json>
 steerlab-cli design save <study> [--description <text>] --manifest-sha256 <sha256> [--name <name>]
 steerlab-cli design update <name> --file-sha256 <sha256> --manifest-sha256 <sha256> --study <name>
 ```
@@ -2245,6 +2246,7 @@ steerlab-cli design update <name> --file-sha256 <sha256> --manifest-sha256 <sha2
 | `design inspect` | Read a design and its external file digest for reviewed edits. |
 | `design describe` | Save a design description against the reviewed file version. |
 | `design instantiate` | Create a draft from a reviewed design and explicit casting JSON file. |
+| `design batch` | Create one draft per reviewed casting row, reporting every success and refusal without submitting. |
 | `design save` | Save a reusable design from a reviewed study, reusing an unchanged lineage match. |
 | `design update` | Replace a design's scientific settings from a reviewed source study with matching lineage. |
 

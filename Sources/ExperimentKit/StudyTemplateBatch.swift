@@ -138,7 +138,7 @@ public struct TemplateBatchTotals: Sendable, Equatable {
 extension StudyTemplateStore {
 
     /// What one row's mint produced.
-    public struct RowMint: Sendable, Equatable {
+    public struct RowMint: Sendable, Equatable, Encodable {
         public let row: Int
         public let study: String?
         /// The refusal, VERBATIM. `instantiate`'s messages are actionable
@@ -146,11 +146,13 @@ extension StudyTemplateStore {
         /// already stale") and paraphrasing them costs the researcher the
         /// instruction.
         public let failure: String?
+        public let issue: StudyBatchIssue?
 
-        public init(row: Int, study: String?, failure: String?) {
+        public init(row: Int, study: String?, failure: String?, issue: StudyBatchIssue? = nil) {
             self.row = row
             self.study = study
             self.failure = failure
+            self.issue = issue
         }
     }
 
@@ -202,7 +204,7 @@ extension StudyTemplateStore {
                 result = RowMint(row: index, study: manifest.name, failure: nil)
             } catch {
                 result = RowMint(row: index, study: nil,
-                    failure: (error as? ExperimentError)?.reason ?? error.localizedDescription)
+                    failure: (error as? ExperimentError)?.reason ?? error.localizedDescription, issue: StudyBatchIssue(error))
             }
             results.append(result)
             onRow?(index, result)

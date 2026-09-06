@@ -936,8 +936,18 @@ created design. To revise the design named by a study's lineage, inspect both
 files and use `steerlab-cli design update <design> --study <study> --manifest-sha256 <source-digest> --file-sha256 <design-digest> --json`.
 Both saves use stored study settings, not unsaved app fields. Read any derivation
 warnings before using the result. Source studies, including frozen ones, and
-prior runs remain unchanged. Batch adapters, rename/deletion and Python design
-parity remain separate gaps; do not invent verbs or hand-edit frozen studies.
+prior runs remain unchanged.
+
+Use `steerlab-cli design batch <design> --rows <batch.json> --file-sha256 <design-digest> --json`
+for several explicit castings. The file contains `rows`, each with a `casting`
+using the single-study format and an optional `studyName`. Review all rows before
+creating drafts. Every row reports its zero-based index, actual study name or
+failure, and typed issue with a repair. All successful rows share a batch group.
+A partial batch returns a nonzero exit and retains its successful drafts; inspect
+`result.minted` and retry only repaired failed rows. Repeating the whole batch
+creates more studies. Nothing is frozen or submitted. The app casting table uses
+the same per-row publication owner. Automatic expansion adapters, rename/deletion
+and Python design parity remain gaps; do not invent verbs or edit frozen studies.
 
 **`data custody <run-id>`** discovers receipts for an imported run, including
 receipts for a pipeline archive that carried that run. Discovery lists recorded

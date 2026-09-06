@@ -19,8 +19,14 @@ public enum StudyDesignInstantiation {
     public static func mintBatch(reviewed: StudyDesignSnapshot, castings: [Casting],
                                  names: [String?] = [], batchID: String? = nil,
                                  onRow: ((Int, StudyTemplateStore.RowMint) -> Void)? = nil) -> StudyTemplateStore.BatchMint {
-        StudyTemplateStore.mintRows(count: castings.count, names: names, batchID: batchID, onRow: onRow) { index, name, batch in
-            try instantiate(reviewed: reviewed, casting: castings[index], studyName: name, batchGroup: batch).manifest
+        mintBatch(reviewed: reviewed, reviewedCastings: castings.map { .success($0) }, names: names, batchID: batchID, onRow: onRow)
+    }
+
+    static func mintBatch(reviewed: StudyDesignSnapshot, reviewedCastings: [Result<Casting, Error>],
+                          names: [String?], batchID: String? = nil,
+                          onRow: ((Int, StudyTemplateStore.RowMint) -> Void)? = nil) -> StudyTemplateStore.BatchMint {
+        StudyTemplateStore.mintRows(count: reviewedCastings.count, names: names, batchID: batchID, onRow: onRow) { index, name, batch in
+            try instantiate(reviewed: reviewed, casting: reviewedCastings[index].get(), studyName: name, batchGroup: batch).manifest
         }
     }
 

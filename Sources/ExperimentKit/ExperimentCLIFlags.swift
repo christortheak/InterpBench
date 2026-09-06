@@ -313,6 +313,8 @@ public enum ExperimentCLIParser {
             valueFlags: ["--study", "--manifest-sha256", "--file-sha256"], requiredFlags: ["--study", "--manifest-sha256", "--file-sha256"]),
         .init(namespace: "design", verb: "instantiate", positional: "<name>", purpose: "Create a draft from a reviewed design and explicit casting JSON file.",
             valueFlags: ["--casting", "--file-sha256", "--study-name"], requiredFlags: ["--casting", "--file-sha256"]),
+        .init(namespace: "design", verb: "batch", positional: "<name>", purpose: "Create one draft per reviewed casting row, reporting every success and refusal without submitting.",
+            valueFlags: ["--rows", "--file-sha256"], requiredFlags: ["--rows", "--file-sha256"]),
         .init(namespace: "design", verb: "describe", positional: "<name>", purpose: "Save a design description against the reviewed file version.",
             valueFlags: ["--description", "--file-sha256"], requiredFlags: ["--description", "--file-sha256"]),
 

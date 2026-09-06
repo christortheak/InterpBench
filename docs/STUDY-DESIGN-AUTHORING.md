@@ -52,6 +52,38 @@ that the destination is still unoccupied and refuses redirects through links.
 Design provenance uses the existing scientific content hash. No revision field is
 added, no source design or prior study is rewritten, and nothing runs or submits.
 
+## Create a batch of studies
+
+```sh
+steerlab-cli design batch <design> --rows <batch.json> --file-sha256 <design-digest> --json
+```
+
+The batch file contains explicit rows using the same casting format as single
+instantiation. For example, two independently named baseline drafts:
+
+```json
+{"rows":[
+  {"studyName":"baseline-a","casting":{"agents":[]}},
+  {"studyName":"baseline-b","casting":{"agents":[]}}
+]}
+```
+
+One retained design review supplies every row. Batch shape errors refuse before
+publication; each casting's pin, model and seat admission is evaluated separately.
+Successful rows remain if another row refuses. The result reports `batchGroup`,
+`minted` (actual names), and `results` with a zero-based `row`, optional `study`,
+`failure`, and typed `issue` (`state`, `code`, `reason`, `repairAction`). Successful
+drafts share that batch group and retain the reviewed design's provenance.
+
+An incomplete CLI batch returns 65 for row admission problems, or 70 if any row
+had an operational failure. Its envelope and result set `changed: true` when any
+draft was published. HTTP returns 207 with `ok: false`; a complete batch returns
+200. **Read every result and retry only repaired failed rows.** Repeating a batch
+is not idempotent and creates additional drafts with collision-resolved names.
+No batch request freezes, runs or submits anything. The app's casting table uses
+the same per-row publication and failure-reporting owner. Public automatic
+expansion presets remain separate work.
+
 ## Save a study as a reusable design
 
 ```sh
@@ -118,6 +150,7 @@ These Swift workbench operations require an explicit absolute `workspaceRoot`:
 | `POST /api/design/inspect` | `name` | `ok`, `changed: false`, `design` |
 | `POST /api/design/describe` | `name`, `description`, `designFileSHA256` | `ok`, `changed`, `design` |
 | `POST /api/design/instantiate` | `name`, `designFileSHA256`, `casting`; optional `studyName` | `ok`, saved study `name`, `workspaceRoot`, `manifestFileSHA256`, `document` |
+| `POST /api/design/batch` | `name`, `designFileSHA256`, `rows` | Shared batch result; 200 complete or 207 incomplete |
 | `POST /api/design/save` | `sourceStudy`, `manifestFileSHA256`; optional `name`, `description` | Shared design-saving result |
 | `POST /api/design/update` | `name`, `sourceStudy`, `manifestFileSHA256`, `designFileSHA256` | Shared design-saving result |
 
@@ -131,7 +164,7 @@ against the workspace captured when the request arrived.
 
 Single-study instantiation is callable through the Mac CLI and Swift workbench;
 the app's batch uses the same command with per-row outcomes. Design save/update
-are callable through both adapters and the app. Public batch/expansion adapters,
+are callable through both adapters and the app. Public batch creation is available; expansion adapters,
 rename and deletion remain unfinished. The Python client/engine has no equivalent design family yet.
 Existing seat assignments may carry absolute artifact pins. Creating siblings
 normalizes them only when the canonical path belongs to the captured workspace,

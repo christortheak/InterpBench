@@ -787,3 +787,45 @@ interactive UI qualification remain unfinished. Legacy writers that do not take
 shared locks are not serialized. A newly published semantic input may remain
 unreferenced if later design publication fails; this is not a crash-atomic
 multi-file transaction. No merge, installation or live remote action occurred.
+
+## Public batch design creation
+
+- Added `design batch` and `POST /api/design/batch`. Explicit rows use the same
+  reviewed casting format as single instantiation. Batch shape errors and an
+  initially stale design refuse before publication. One captured design version
+  and workspace supply all rows; artifact reviews are resolved before publishing.
+- Reused `StudyDesignInstantiation` and the app's per-row mint owner. Results keep
+  every successful study name and failure, add typed row issues and repairs, and
+  retain shared batch provenance. A later refusal neither rolls back nor hides
+  earlier drafts. No batch creates jobs, freezes studies or submits work.
+- Incomplete CLI batches return 65 for admission problems or 70 for operational
+  failures, with the complete result attached. `ExperimentCLIStop` can now report
+  durable changes explicitly; the batch envelope correctly says `changed: true`
+  after partial publication. HTTP returns 207 with `ok: false`; complete batches
+  return 200. The contract warns that replaying successful rows creates more drafts.
+- Updated the shipped agent instructions and mirror, parser/help, generated CLI
+  reference, refusal registry, design guide and operation matrix. No compatibility
+  bridge or scientific-schema field was added. This is a new operation/result
+  contract, not a claimed mechanical or AST-equivalent move.
+
+Validation:
+
+- Five focused batch tests passed: partial publication and collision names,
+  source preservation, malformed shape before publication, retained design review
+  between rows, HTTP preconditions and partial results, and the real CLI runner's
+  mutation flag and typed repair.
+- Actual compiled CLI and disposable HTTP workbench passed complete/partial
+  batches and missing/stale/root/unknown-field/empty-batch refusals. Log:
+  `/private/tmp/interpbench-design-batch-wire.log`.
+- Full Xcode beta suite: 277 SteeringKit and 4,522 ExperimentKit tests passed,
+  `TEST SUCCEEDED`; `/private/tmp/interpbench-design-batch-xcode.log`.
+- Full Python suite: 5,896 passed, 9 skipped, 8 warnings (174.05 seconds);
+  `/private/tmp/interpbench-design-batch-python.log`.
+- Actual diff and new-file review, reference regeneration, bridge ratchet and
+  whitespace checks passed. Independent maintainer review is still required.
+
+Automatic expansion presets, reviewed design rename/deletion, Python design
+parity and interactive app qualification remain open. Batch results are returned
+synchronously and are not a durable command journal; an interrupted caller must
+inspect the workspace before reconstructing a request. Main, installed software,
+real research data and live remote jobs were unchanged.

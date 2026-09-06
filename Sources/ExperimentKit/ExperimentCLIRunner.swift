@@ -83,6 +83,8 @@ struct ExperimentCLIStop: Error {
     var repairAction: String = ""
     /// What the verb learned before it stopped; still worth reporting.
     var payload: [String: JSONValue] = [:]
+    /// A partial operation can publish durable results before stopping.
+    var changed: Bool = false
 }
 
 /// The named panel is neither in the library nor a readable file.
@@ -235,6 +237,7 @@ public struct ExperimentCLIRunner: Sendable {
                 repairAction: stop.repairAction, state: stop.state,
                 observedAt: now(), workspace: workspacePath)
             if !stop.payload.isEmpty { envelope.result = stop.payload }
+            envelope.changed = stop.changed
             return ExperimentCLIOutcome(
                 namespace: namespace, verb: verb, exitCode: stop.exitCode,
                 envelope: envelope)

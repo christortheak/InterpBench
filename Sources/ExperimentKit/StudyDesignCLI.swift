@@ -45,6 +45,21 @@ enum StudyDesignCLI {
                 return ExperimentCLIResult(message: saved.created ? "New design saved." : saved.changed ? "Reviewed design updated." : "Matching design reused.",
                     changed: saved.changed, payload: try JSONDecoder().decode([String: JSONValue].self, from: data),
                     advisories: saved.warnings.map { .init(code: CLIAdvisory.designDerivationWarning.rawValue, detail: $0) })
+            case "batch":
+                guard args.count >= 2, let expected = flag("--file-sha256"), let path = flag("--rows") else { throw usage() }
+                let reviewed = try StudyDesignAuthoring.review(name: args[1], workspaceRoot: workspaceRoot, expectedFileSHA256: expected)
+                let batch = try StudyDesignBatchInput(Data(contentsOf: URL(fileURLWithPath: path))).mint(reviewed: reviewed)
+                let document = StudyDesignBatchDocument(batch, reviewed: reviewed)
+                let data = try JSONEncoder().encode(document)
+                let payload = try JSONDecoder().decode([String: JSONValue].self, from: data)
+                sink.out(String(decoding: data, as: UTF8.self))
+                if !document.ok {
+                    let failed = batch.failures.contains { $0.issue?.state == .failed }
+                    throw ExperimentCLIStop(exitCode: failed ? 70 : 65, state: failed ? .failed : .refused,
+                        code: "designBatchIncomplete", reason: "Created \(batch.minted.count) of \(batch.results.count) drafts. See every row's result before retrying.",
+                        repairAction: document.repairAction!, payload: payload, changed: document.changed)
+                }
+                return ExperimentCLIResult(message: "Created \(batch.minted.count) drafts from the reviewed design.", changed: document.changed, payload: payload)
             case "instantiate":
                 guard args.count >= 2, let expected = flag("--file-sha256"), let castingPath = flag("--casting") else { throw usage() }
                 let reviewed = try StudyDesignAuthoring.review(name: args[1], workspaceRoot: workspaceRoot, expectedFileSHA256: expected)
@@ -82,7 +97,7 @@ enum StudyDesignCLI {
     }
 
     private static func usage() -> ExperimentError {
-        .malformed("Use design list, inspect, describe, instantiate, save <study>, or update <design> --study <study> with the required reviewed file digests.",
+        .malformed("Use design list, inspect, describe, instantiate, batch, save <study>, or update <design> --study <study> with the required reviewed file digests.",
             repair: "steerlab-cli design --help")
     }
 }

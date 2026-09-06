@@ -41,6 +41,7 @@ public enum CLIFlagVocabulary {
         "--bundle": "<server-path>",
         "--capability-tolerance": "<ratio>",
         "--casting": "<file.json>",
+        "--rows": "<batch.json>",
         "--file-sha256": "<sha256>",
         "--manifest-sha256": "<sha256>",
         "--artifact-sha256": "<sha256>",
@@ -156,6 +157,7 @@ public enum CLIFlagVocabulary {
     /// history.
     private static let purposes: [String: String] = [
         "--casting": "JSON file containing reviewed agents or explicit seat assignments.",
+        "--rows": "JSON batch containing explicit casting rows and optional requested study names.",
         "--file-sha256": "External SHA-256 of the reviewed design file, from design inspect.",
         "--manifest-sha256": "External SHA-256 of the reviewed study file, from experiment manifest.",
         "--artifact-sha256": "External SHA-256 of the reviewed agent file, from agent inspect.",
@@ -614,7 +616,7 @@ public enum ExperimentCLIHelp {
                 synopsis: "experiment <verb> <name> …",
                 purpose: "The study lifecycle."),
             .init(synopsis: "agent list | inspect <path>", purpose: "Inspect local agents for reviewed attachment."),
-            .init(synopsis: "design list | inspect | describe | instantiate | save | update …", purpose: "Inspect, save and revise designs, or create studies from reviewed castings."),
+            .init(synopsis: "design list | inspect | describe | instantiate | batch | save | update …", purpose: "Inspect, save and revise designs, or create studies from reviewed castings."),
             .init(
                 synopsis: "data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>",
                 purpose: "Study-data readiness and local evidence custody."),
