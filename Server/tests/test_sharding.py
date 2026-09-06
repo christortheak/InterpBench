@@ -989,8 +989,8 @@ def test_restart_sweeps_orphaned_pending_fanout_parent(tmp_path, fake_slurm, mon
         "study-submit-bundle", status="pending", executor="slurm",
         requested_resources={"parallelJobs": 3,
                              "shardChildren": [c.id for c in children]})
-    monkeypatch.setattr("steerlab_server.api.job_ownership.owner_has_exited",
-                        lambda host, pid: True)
+    monkeypatch.setattr("steerlab_server.api.job_ownership.process_state",
+                        lambda host, pid: "exited")
     restarted = _manager(tmp_path)
     swept = restarted.get(parent.id)
     assert swept.status == "failed"

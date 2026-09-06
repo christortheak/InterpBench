@@ -36,7 +36,7 @@ REGIONS: dict = {
         "experiment confirm",
     ],
     "server-study": ["study submit"],
-    "server-jobs": ["jobs list"],
+    "server-jobs": ["jobs list", "jobs recovery", "jobs recover"],
     "server-model": ["model capabilities"],
     "server-vectors": ["vectors compare", "vectors mirror-poles"],
     "server-site": ["site qualify"],

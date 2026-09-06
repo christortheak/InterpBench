@@ -424,7 +424,7 @@ public enum ExperimentCLIParser {
                 // corpus actually runs, so the flags have to reach it through
                 // the same channel `--source` does.
                 "--sample-per-condition", "--sample-seed",
-            ])),
+            ]), requiredFlags: ["--verb"]),
         .init(
             namespace: "remote", verb: "jobs",
             purpose: "List the server's jobs.", valueFlags: remoteConnection),

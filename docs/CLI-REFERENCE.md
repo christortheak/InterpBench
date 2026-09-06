@@ -434,9 +434,9 @@ prevent.
 
 Read §7 before a cluster session. The short list:
 
-1. `steerlab-server study submit <exp>` **defaults to `--verb run`** — omitting
-   `--verb` submits a full measured run, not the sweep/validate you meant.
-2. `steerlab-cli remote submit-bundle` **also defaults to `--verb run`**.
+1. `steerlab-server study submit <exp>` requires an explicit `--verb`.
+2. `steerlab-cli remote submit-bundle` also requires `--verb`, before resolving
+   a site or credentials. HTTP study submission requires the `verb` body field.
 3. ~~`steerlab-cli remote` defaults to `--url http://127.0.0.1:8000`, but both
    `serve` verbs default to port **8080**.~~ **Fixed 2026-08-18:** `remote`
    now defaults to `http://127.0.0.1:8080`, the port every server surface
@@ -536,6 +536,7 @@ becomes `local` with no diagnostic.
 |---|---|---|
 | `STEERLAB_SERVER_PROFILE` | `local`, `workstation`, `cluster` | `local` |
 | `STEERLAB_LAUNCH_TOPOLOGY` | `local`, `ood`, `tunnel`, `batch` | `local` |
+| `STEERLAB_SERVICE_ROLE` | `workbench` (default), `runner` | Runtime authority, also settable with `serve --service-role`. Runner allows RUNNER and BOTH routes; WORKBENCH authoring and undeclared routes refuse. Choose the role separately from authentication and deployment; see [rollout notes](RESEARCHER-WORKFLOW-IMPLEMENTATION-STATUS.md#deployment-and-review). |
 | `STEERLAB_AUTH_MODE` | `none`, `token`, `external` | `none` when READ (`ServerProfile.from_env`); `serve` resolves and exports **`token`** when the variable is unset — see §2.3 |
 | `STEERLAB_EXECUTOR` | `local`, `slurm` | `local` |
 | `STEERLAB_SERVER_ROLE` | `controller`, `gpu-session`, `workstation` | derived: `batch` topology → `controller`; `cluster`+`slurm` → `controller`; else `workstation` |
@@ -2048,7 +2049,7 @@ workflow that works. The success message names the file to author:
 steerlab-cli remote capabilities [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote package <experiment> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote upload <bundle> [--site <id>] [--token <token>] [--url <server>]
-steerlab-cli remote submit-bundle <server-bundle-path> [--bundle <server-path>] [--dry-run] [--executor <local|slurm>] [--gres <spec>] [--parallel <n>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--site <id>] [--source <run-dir>] [--token <token>] [--url <server>] [--verb <verb>] [--walltime <hh:mm:ss>]
+steerlab-cli remote submit-bundle <server-bundle-path> [--bundle <server-path>] [--dry-run] [--executor <local|slurm>] [--gres <spec>] [--parallel <n>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--site <id>] [--source <run-dir>] [--token <token>] [--url <server>] --verb <verb> [--walltime <hh:mm:ss>]
 steerlab-cli remote jobs [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote logs <job-id> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote cancel <job-id> [--site <id>] [--token <token>] [--url <server>]
@@ -2115,7 +2116,7 @@ id fails with the stable code `unknownSite`.
 | `capabilities` | Server capability snapshot. |
 | `package` | Builds a hash-pinned run bundle locally; prints its path. |
 | `upload` | Uploads a bundle. |
-| `submit-bundle` | **`--verb` defaults to `run`**; `--executor` defaults to `local`. Empty resource values are dropped. `--parallel <n>` fans a Slurm run out across N GPU jobs — see below. `--sample-per-condition <n> --sample-seed <s>` submit a seeded subsample coding (`--verb evaluate` only, both or neither; §3.5), echoed at `result.samplePerConditionRequested` / `result.sampleSeedRequested`. |
+| `submit-bundle` | **`--verb` is required**; `--executor` defaults to `local`. Empty resource values are dropped. `--parallel <n>` fans a Slurm run out across N GPU jobs — see below. `--sample-per-condition <n> --sample-seed <s>` submit a seeded subsample coding (`--verb evaluate` only, both or neither; §3.5), echoed at `result.samplePerConditionRequested` / `result.sampleSeedRequested`. |
 | `jobs` | Job list as JSON. |
 | `logs` | Streams the job log. |
 | `cancel` | Prints `cancel requested`. |
@@ -3361,9 +3362,8 @@ Every verb above also accepts `--help` (print its arguments and run nothing), `-
 `--verb` takes one of `run|validate|extract|sweep|evaluate|analyze|verify|pipeline`;
 `--executor` one of `local|slurm`.
 
-> **`--verb` defaults to `run`.** `steerlab-server study submit my-study` with
-> no `--verb` submits a full measured run. If you meant a sweep, that is a GPU
-> allocation you will have to `scancel`. Always pass `--verb` explicitly.
+> **`--verb` is required.** Missing it refuses before submission. Declare the
+> intended operation explicitly, including for dry-run preparation.
 
 The vocabulary is `{verify, extract, validate, sweep, run, evaluate, analyze,
 pipeline}`; anything else raises `unsupported study verb '<verb>'` and exits 1.
@@ -3682,17 +3682,27 @@ immutable — the merge writes a new directory and never mutates a partial.
 
 ```
 steerlab-server jobs list
+steerlab-server jobs recovery <job-id>
+steerlab-server jobs recover <job-id> --confirm-owner-exited --reason <text> --review-token <sha256>
 ```
 
 | Verb | Purpose |
 |---|---|
 | `jobs list` | List this engine's durable jobs. |
+| `jobs recovery` | Review controller ownership and a snapshot token without changing jobs. |
+| `jobs recover` | Recover one orphan after verifying its controller exited; records an audit. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:server-jobs END -->
 
-`jobs list` is also the default when no subverb is given. The rest of this
-group is not on the agent path:
+`jobs list` is also the default when no subverb is given. `jobs recovery` only
+reviews a job; `jobs recover` requires an independently verified controller
+exit, the returned review token and a recorded reason. A known live controller
+or changed snapshot refuses. See [controller recovery](CONTROLLER-RECOVERY.md)
+for legacy records and deployment details. These operations use the engine's
+metadata database, not a client's local study workspace.
+
+The rest of this group is not on the agent path:
 
 ```
 steerlab-server jobs reconcile <records-dir>
@@ -5210,21 +5220,17 @@ workspace. The rules, finding by finding, and the researcher's remaining job
 
 ## 7. Known gaps and traps
 
-Documentation-only observations from reading the dispatch code. **Nothing here
-was changed** — where a fix is obvious it is stated as a recommendation, not
-applied.
+Historical observations and their current dispositions; resolved items state
+what callers must do now.
 
-### 7.1 `--verb` defaults to `run` on both submit paths
+### 7.1 Low-level submission requires an explicit operation (closed)
 
-`study submit` and Swift `remote submit-bundle` both default the verb to
-`"run"`. The vocabulary appears nowhere except the usage string printed on
-error, so a researcher who omits `--verb` gets a full measured run with no
-confirmation. This has already cost a `scancel` in the field — a sweep
-submitted as a run.
-
-*Recommendation (not implemented):* make `--verb` required on `study submit` —
-exit 64 with the vocabulary when absent. The default costs a GPU allocation;
-requiring it costs one word.
+`steerlab-server study submit`, Swift `remote submit-bundle`, and the HTTP
+study submit/submit-bundle routes refuse an omitted operation. Supply `--verb`
+(or HTTP `verb`) explicitly, including for a dry run. This avoids silently
+turning a requested validation or sweep into a measured run. The cross-platform
+client's intentionally composite `steerlab run` retains its documented default;
+it is already an explicit request for the run journey.
 
 ### 7.2 Sharding is half-exposed *(partly closed 2026-08-07, further 2026-08-28)*
 

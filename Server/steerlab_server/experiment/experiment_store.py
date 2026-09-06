@@ -119,6 +119,12 @@ def save_raw(d: dict, root: str | None = None, *, freeze_transition: bool = Fals
     bundle than an intentional reset, and the loss is silent — the run
     directory's snapshot is what preserved the arms the last time this
     happened, and only by luck.
+    Updating an existing file requires the external read precondition returned
+    by load_raw (also retained by Document.copy() and copy.deepcopy), or an
+    explicit expected_file_sha256 when d is a plain dict. dict(d) and JSON
+    round trips discard that metadata. Without a precondition this is a
+    create-only save; an existing file raises StaleManifestError. Use the
+    returned Document for subsequent writes; never insert a revision in JSON.
     """
     name = d["name"]
     captured_root = root or paths.project_root()

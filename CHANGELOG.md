@@ -12,6 +12,76 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+### Added
+
+- Shared study authoring operations across the Mac app, `steerlab-cli`, and
+  the workbench HTTP API: manifest inspection, reviewed agent attachment,
+  agent listing/inspection, and design listing, inspection, description,
+  instantiation, batch instantiation, saving and updating. Design writes bind
+  the reviewed source and destination file digests; frozen sources remain
+  unchanged. Batch results report each row and partial changes honestly.
+- Named workbench operations for protocol editing and prompt versions;
+  authoring uses shared owners with external stale-write preconditions.
+- Mac `cluster sites guide/review` for sourced cluster facts and unresolved
+  questions, plus `data custody/verify-custody` and workbench custody operations
+  for locally retained, verified evidence archives.
+- Mac `model plan/install` and workbench local-model plan, install, status and
+  cancellation operations share the app's model installer and revision handling.
+- Engine `jobs recovery <job-id>` provides a read-only owner review and snapshot
+  token. `jobs recover` requires that token, `--confirm-owner-exited` and a reason;
+  it records an operator attestation in the job database. Scheduler-hosted
+  controllers record their own allocation identity and can recover across nodes
+  when its exact accounting record proves exit. Legacy and uncertain owners are
+  reported at startup and left unchanged. See [controller recovery](docs/CONTROLLER-RECOVERY.md).
+
+### Changed
+
+- **Manifest write API compatibility:** GET manifest returns the exact bytes
+  with an ETag. PUT requires a strong `If-Match` digest, or `If-None-Match: *`
+  for creation. Missing preconditions return 428; stale preconditions return 412.
+  Preconditions and cross-process locks remain outside scientific JSON and
+  content hashes; no frozen study or historical run is migrated.
+- **Python save compatibility:** updating an existing file via `save_raw`
+  requires a `Document` from `load_raw`, or an explicit `expected_file_sha256`.
+  `Document.copy()` and `copy.deepcopy(Document)` preserve the read metadata;
+  `dict(Document)` and JSON round trips discard it. A plain dict without a
+  precondition is create-only. Retain the returned document for later writes.
+- `serve --service-role` / `STEERLAB_SERVICE_ROLE` select `workbench` (default)
+  or `runner`. A runner allows RUNNER and BOTH routes, refuses WORKBENCH
+  authoring with a typed repair, and refuses undeclared routes. Authentication
+  remains a separate boundary. Derived execution artifacts remain permitted.
+- Profiles with any non-HTTP transfer method now advertise and enforce
+  `externalTransferRequired`, regardless of profile name. Prohibited HTTP
+  upload/download returns 403 `external_transfer_required`; clients preflight.
+- Low-level engine study submission, HTTP study submission, and Mac
+  `remote submit-bundle` require an explicit operation (`--verb` / `verb`).
+  The intentionally composite `steerlab run` keeps its documented run behavior.
+
+### Fixed
+
+- Observing jobs no longer sweeps another controller's work. Recovery claims
+  recheck the complete job and owner snapshot atomically; scheduler uncertainty
+  is never treated as proof of death, and a known live owner cannot be overridden.
+- Remote actions and evidence imports retain their captured server/workspace
+  origin, verified reuse checks complete file bytes, and imported pipelines stay
+  visible independently of the selected compute target.
+- Shared authoring prompts describe matched-norm random controls as a test
+  against comparable random perturbations, not proof of construct specificity.
+- Background-shell Python tests check restoration of the original SIGINT
+  handler rather than assuming the shell supplied the default handler.
+
+### Deployment and remaining qualification
+
+- **Deploy the updated app/Swift CLI before the updated engine.** The old engine
+  ignores the new precondition header; the old app cannot satisfy the new engine's
+  428 requirement. Coordinate other manifest PUT clients before engine rollout.
+- Choose a deployment's service role separately. This branch does not change
+  private launch profiles, install an app, or deploy an engine.
+- One of four Swift compatibility bridges is retired; three remain blocked from
+  1.0 by the release gate. Complete journey/UI/GPU qualification and the remaining
+  [implementation scope](docs/RESEARCHER-WORKFLOW-IMPLEMENTATION-STATUS.md)
+  before claiming the researcher workflow vision is complete.
+
 ## [0.9.5] — 2026-09-05
 
 ### Added

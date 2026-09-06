@@ -929,8 +929,8 @@ import Testing
         // adjacency, not a swallowed value.
         let dry = try ExperimentCLIParser.parse(
             namespace: "remote",
-            ["submit-bundle", "b.tar", "--parallel", "4", "--dry-run"])
-        #expect(dry.args == ["submit-bundle", "b.tar", "--parallel", "4", "--dry-run"])
+            ["submit-bundle", "b.tar", "--verb", "run", "--parallel", "4", "--dry-run"])
+        #expect(dry.args == ["submit-bundle", "b.tar", "--verb", "run", "--parallel", "4", "--dry-run"])
 
         // (c) A flag-SHAPED token that is not one of this verb's flags is the
         // value the caller typed. Reinterpreting it as a flag would be this

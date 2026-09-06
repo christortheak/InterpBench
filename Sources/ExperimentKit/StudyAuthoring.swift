@@ -91,9 +91,9 @@ public enum StudyIntent: String, CaseIterable, Sendable, Identifiable {
             claims — a pinned judge rubric with a judge panel (two or more \
             distinct judges buy inter-rater agreement; one is legal and \
             reports none). Conditions are \
-            named injection arms; controls (matched-norm random) prove an \
-            effect is the DIRECTION, not the perturbation energy. The \
-            whole funnel can run as one declared pipeline. Description, \
+            named injection arms. Matched-norm random controls help test \
+            whether effects exceed comparable random perturbations; they \
+            do not establish construct specificity. The whole funnel can run as one declared pipeline. Description, \
             outcome measures, and case family are notes for the record — \
             never sent to any model.
             """

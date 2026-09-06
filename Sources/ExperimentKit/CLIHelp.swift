@@ -340,7 +340,7 @@ public enum CLIFlagVocabulary {
         "--url": "Name an unmanaged server by URL.",
         "--validation-count": "How many held-out probe rows the prompt asks for.",
         "--variant": "The server-resident variant to generate through.",
-        "--verb": "The verb the submitted job runs (defaults to run).",
+        "--verb": "The explicit operation the submitted job runs; required for low-level submission.",
         "--walltime":
             "Scheduler wall-time request. On `remote resubmit` it OVERRIDES "
             + "the rendered script's own limit for the continuation — on the "

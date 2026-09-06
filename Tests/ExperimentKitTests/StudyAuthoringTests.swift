@@ -787,6 +787,13 @@ struct StudyAuthoringTests {
 
     /// The LLM co-authoring prompt teaches the real contract — spot-check
     /// the load-bearing rules so drift between prompt and code fails here.
+    @Test func conceptStudyExplainsTheLimitsOfRandomControls() {
+        let explanation = StudyIntent.conceptStudy.explanation
+        #expect(explanation.contains("help test whether effects exceed comparable random perturbations"))
+        #expect(explanation.contains("do not establish construct specificity"))
+        #expect(!explanation.contains("prove an effect"))
+    }
+
     @Test func coauthoringPromptTeachesTheContract() {
         // One prompt PER STUDY TYPE (2026-07-19 feedback), each teaching
         // the study-pack envelope and its own type's interview.

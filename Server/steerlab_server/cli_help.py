@@ -59,6 +59,7 @@ METAVARS: dict = {
     "--qualification": "<path>",
     "--reason": "<text>",
     "--revision": "<sha>",
+    "--review-token": "<sha256>",
     "--resamples": "<n>",
     "--resume": "<run-dir>",
     "--resume-from": "<run-dir>",

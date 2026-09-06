@@ -96,7 +96,10 @@ class Document(dict):
 
     Normal dict/JSON iteration exposes only manifest keys. Authoring code can
     preserve unknown keys while carrying the exact bytes it read through to
-    save. A plain dict is a new document, not authority to overwrite a file.
+    save. Both document.copy() and copy.deepcopy(document) preserve this
+    metadata. dict(document) and a JSON round trip discard it; to update an
+    existing file from a plain dict, pass its reviewed expected_file_sha256
+    explicitly to save_raw. No precondition belongs inside the JSON.
     """
     def __init__(self, value: dict, *, source_path: str, source_digest: str):
         super().__init__(value)

@@ -282,8 +282,8 @@ def test_orphan_local_jobs_failed_on_restart(tmp_path, monkeypatch):
     mgr = JobManager(DurableJobStore(store_path), sweep_orphans=False)
     job = mgr.record_external("run", status="running", executor="local")
     # Simulate an exited owner; constructing a second manager is not a crash.
-    monkeypatch.setattr("steerlab_server.api.job_ownership.owner_has_exited",
-                        lambda host, pid: True)
+    monkeypatch.setattr("steerlab_server.api.job_ownership.process_state",
+                        lambda host, pid: "exited")
     restored = JobManager(DurableJobStore(store_path)).get(job.id)
     assert restored.status == "failed"
     assert "orphaned" in (restored.error or "")
@@ -378,8 +378,8 @@ def test_orphaned_cancelling_job_becomes_cancelled_on_restart(tmp_path, monkeypa
     store_path = str(tmp_path / "jobs.sqlite")
     mgr = JobManager(DurableJobStore(store_path), sweep_orphans=False)
     job = mgr.record_external("sweep", status="cancelling", executor="local")
-    monkeypatch.setattr("steerlab_server.api.job_ownership.owner_has_exited",
-                        lambda host, pid: True)
+    monkeypatch.setattr("steerlab_server.api.job_ownership.process_state",
+                        lambda host, pid: "exited")
     restored = JobManager(DurableJobStore(store_path)).get(job.id)
     assert restored.status == "cancelled"
     assert restored.finished_at is not None

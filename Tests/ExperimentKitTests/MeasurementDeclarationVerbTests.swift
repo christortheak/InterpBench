@@ -467,6 +467,15 @@ import Testing
         }
     }
 
+    @Test func lowLevelSubmissionRequiresAnExplicitOperationBeforeConnectionSetup() async {
+        let result = await ExperimentCLIRunner(sink: .discarding).run(
+            namespace: "remote", ["submit-bundle", "/srv/bundles/demo",
+                                  "--url", "invalid endpoint", "--site", "missing-profile"])
+        #expect(result.envelope.exitCode == 64)
+        #expect(result.envelope.error?.reason.contains("--verb") == true)
+        #expect(result.envelope.changed == false)
+    }
+
     // MARK: - remote submit-bundle --parallel
 
     /// A non-integer fan-out is a malformed invocation, refused before any
@@ -494,7 +503,7 @@ import Testing
             namespace: "remote",
             [
                 "submit-bundle", "/srv/bundles/demo", "--url",
-                "http://127.0.0.1:1", "--parallel", "0",
+                "http://127.0.0.1:1", "--verb", "run", "--parallel", "0",
             ])
         #expect(outcome.envelope.exitCode == 64)
         #expect(

@@ -114,7 +114,7 @@ def _usage_text() -> str:
         "usage: steerlab-server --config <path.json> "
         "| serve [--port N] [--root DIR] [--host H] [--dev-open-loopback] "
         "| experiment <verb> <name> … | profile show|validate "
-        "| jobs list|reconcile <dir> | bundle run|evidence|inspect|import|create|submit … "
+        "| jobs list|recovery|recover|reconcile … | bundle run|evidence|inspect|import|create|submit … "
         "| study submit <experiment> … "
         "| finetune execute <job-dir> [--record rec.json] | finetune plan|train <config.json> "
         "| finetune submit <finetune-request.json> [--plan-only] "
@@ -1383,11 +1383,36 @@ def _jobs(args: list[str]):
             message=f"{len(jobs)} job(s), {running} running",
             payload={"count": len(jobs), "runningCount": running,
                      "jobs": jobs})
+    if args[0] in {"recovery", "recover"}:
+        from .cli_envelope import CLIResult
+        mgr = JobManager(sweep_orphans=False)
+        def value(flag):
+            return args[args.index(flag) + 1] if flag in args and args.index(flag) + 1 < len(args) else None
+        try:
+            if len(args) < 2 or args[1].startswith("--"):
+                raise ValueError("a job ID is required")
+            if args[0] == "recovery":
+                report = mgr.store.recovery_report(args[1])
+                print(json.dumps(report, indent=2, sort_keys=True))
+                return CLIResult(message="Controller recovery review; no job changed", payload=report)
+            token, reason = value("--review-token"), value("--reason")
+            if not token or not reason or "--confirm-owner-exited" not in args:
+                raise ValueError("recovery requires --review-token, --reason and --confirm-owner-exited")
+            if not mgr.recover_orphan(args[1], token, reason):
+                raise ValueError("job is not eligible for controller recovery")
+            payload = {"jobID": args[1], "recovered": True}
+            print(json.dumps(payload, sort_keys=True))
+            return CLIResult(message="Recovered orphan; operator attestation recorded",
+                             changed=True, payload=payload)
+        except ValueError as exc:
+            return CLIResult(state="refused", exit_code=65, code="jobRecoveryRefused",
+                             message=str(exc), repair_action="Use jobs recovery <job-id>; "
+                             "establish controller exit before confirming recovery.")
     if args[0] == "reconcile" and len(args) >= 2:
         mgr = JobManager(sweep_orphans=False)
         print(json.dumps({"reconciled": mgr.reconcile(args[1])}, sort_keys=True))
         return 0
-    sys.stderr.write("usage: jobs list | jobs reconcile <records-dir>\n")
+    sys.stderr.write("usage: jobs list | jobs recovery <job-id> | jobs recover <job-id> --review-token <token> --confirm-owner-exited --reason <reason> | jobs reconcile <records-dir>\n")
     return 64
 
 

@@ -725,12 +725,14 @@ def test_the_client_table_is_separate_from_the_engines_twin_literal():
     """The engine's ``VERB_SPECS`` declares what the ENGINE executes.
     Appending client verbs to it would assert the engine grew verbs it does
     not have. The count moves only when the engine really gains one — most
-    recently ``experiment extract-stability``, which CAPTURES ACTIVATIONS (it
-    resamples rows the extraction seam produced) and therefore cannot live on
-    an authoring client any more than ``battery run`` (2026-08-29) can."""
+    recently ``jobs recovery/recover``, which inspect and recover controller
+    ownership in the engine metadata database. These administrative operations
+    do not belong to an authoring client."""
     engine = {spec.label for spec in cli_envelope.VERB_SPECS}
     client = {spec.label for spec in client_cli.CLIENT_VERB_SPECS}
-    assert len(cli_envelope.VERB_SPECS) == 19
+    assert len(cli_envelope.VERB_SPECS) == 21
+    assert {"jobs recovery", "jobs recover"} <= engine
+    assert not {"jobs recovery", "jobs recover"} & client
     assert "battery run" in engine and "battery run" not in client
     # `experiment list`, `experiment verify` and `model capabilities` exist
     # on both by design (a client reads its own workspace — and shows the

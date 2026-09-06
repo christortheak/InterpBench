@@ -8,6 +8,7 @@ reconnect by job id after a server restart.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -141,6 +142,7 @@ class DurableJobStore:
 
     def _init(self) -> None:
         with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             job_ownership.initialize(conn)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS jobs (
@@ -177,6 +179,7 @@ class DurableJobStore:
             """)
 
     def insert(self, job: "Job") -> None:
+        allocation = job_ownership.current_allocation()
         with self._lock, self._connect() as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO jobs (
@@ -193,21 +196,67 @@ class DurableJobStore:
                 _dumps(job.capability_snapshot),
             ))
 
-            job_ownership.record(conn, job.id)
+            job_ownership.record(conn, job.id, allocation)
 
-    def claim_orphan(self, job_id: str) -> "Job | None":
-        """Claim recovery only after proving the previous process exited.
+    @staticmethod
+    def recovery_token(row: sqlite3.Row, owner: dict | None) -> str:
+        return hashlib.sha256(json.dumps(
+            {"job": dict(row), "owner": owner}, sort_keys=True).encode()).hexdigest()
 
-        Read the current job under the same transaction as the ownership
-        transfer: a manager's startup snapshot may already be stale.
+    @staticmethod
+    def recovery_eligible(row: sqlite3.Row) -> bool:
+        return (row["executor"] == "local" and row["status"] in {
+            "running", "pending", "cancelling"}) or (
+            row["executor"] == "slurm" and row["status"] == "pending"
+            and bool(json.loads(row["requested_resources_json"] or "{}").get("parallelJobs")))
+
+    def recovery_report(self, job_id: str, *, allocation_states: dict | None = None) -> dict:
+        """Observe one record. Scheduler queries hold no SQLite transaction."""
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN")
+            row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            owner = job_ownership.read(conn, job_id)
+        if row is None:
+            raise ValueError("job not found")
+        return {"jobID": job_id, "status": row["status"], "owner": owner,
+                "eligible": self.recovery_eligible(row),
+                "ownerState": job_ownership.owner_state(owner, allocation_states),
+                "reviewToken": self.recovery_token(row, owner),
+                "repairAction": "Inspect the original controller and establish that it has exited; "
+                    "then use jobs recover with this review token, --confirm-owner-exited and --reason. "
+                    "Do not recover while controller liveness remains uncertain."}
+
+    def claim_orphan(self, job_id: str, *, review_token: str | None = None,
+                     reason: str = "", allocation_states: dict | None = None) -> "Job | None":
+        """Prove exit or audit explicit operator attestation, then claim once.
+
+        All scheduler I/O precedes the write transaction. The complete job and
+        owner snapshot is checked again under the lock, including the unique
+        owner instance, so an intervening writer or recoverer invalidates proof.
         """
+        report = self.recovery_report(job_id, allocation_states=allocation_states)
+        explicit = review_token is not None
+        if explicit and (review_token != report["reviewToken"] or not reason.strip()):
+            raise ValueError("stale recovery review or missing reason; inspect recovery again")
+        if not report["eligible"] or report["ownerState"] == "live":
+            if explicit:
+                raise ValueError("job is not recoverable or its controller is still live")
+            return None
+        if not explicit and report["ownerState"] != "exited":
+            return None
+        allocation = job_ownership.current_allocation()
         with self._lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
-            if row is None or row["status"] not in {"running", "pending", "cancelling"}:
+            owner = job_ownership.read(conn, job_id)
+            if row is None or self.recovery_token(row, owner) != report["reviewToken"]:
+                if explicit:
+                    raise ValueError("job changed since recovery review; inspect recovery again")
                 return None
-            if not job_ownership.claim_exited(conn, job_id):
-                return None
+            job_ownership.record(conn, job_id, allocation)
+            job_ownership.audit(conn, job_id, owner,
+                                "operator-attested-exit" if explicit else "proven-exit",
+                                reason, report["reviewToken"])
         return self._from_row(row)
 
     def update(self, job: "Job") -> None:
@@ -714,7 +763,7 @@ class JobManager:
             self._slurm_executor = SlurmExecutor()
         return self._slurm_executor
 
-    def _sweep_orphans(self) -> int:
+    def _sweep_orphans(self, *, recovery: tuple[str, str, str] | None = None) -> int:
         """Recover work whose recorded controller process demonstrably exited.
 
         Constructing another manager is not evidence of a crash. Unknown or
@@ -722,15 +771,23 @@ class JobManager:
         Scheduler-owned jobs remain the poller's responsibility.
         """
         swept = 0
+        unknown = 0
+        allocation_states: dict = {}  # One accounting query per allocation in this pass.
         for candidate in list(self._jobs.values()):
+            if recovery is not None and candidate.id != recovery[0]:
+                continue
             local = candidate.executor == "local" and candidate.status in {
                 "running", "pending", "cancelling"}
             fanout = (candidate.executor == "slurm" and candidate.status == "pending"
                       and candidate.requested_resources.get("parallelJobs"))
             if not (local or fanout):
                 continue
-            job = self.store.claim_orphan(candidate.id)
+            job = self.store.claim_orphan(
+                candidate.id, review_token=recovery[1] if recovery else None,
+                reason=recovery[2] if recovery else "", allocation_states=allocation_states)
             if job is None:
+                if recovery is None and self.store.recovery_report(candidate.id, allocation_states=allocation_states)["ownerState"] == "unknown":
+                    unknown += 1
                 continue
             self._jobs[job.id] = job
             # A sharded parent still "pending" was orphaned mid fan-out (the
@@ -775,7 +832,15 @@ class JobManager:
             job.finished_at = time.time()
             self.store.update(job)
             swept += 1
+        if unknown:
+            sys.stderr.write(f"jobRecoveryRequired: {unknown} nonterminal job(s) have unknown controller "
+                             "ownership; left unchanged. Use jobs list, then jobs recovery <job-id> "
+                             "to review the owner and repair instructions.\n")
         return swept
+
+    def recover_orphan(self, job_id: str, review_token: str, reason: str) -> bool:
+        """Explicit recovery shares startup finalization and honest shard cleanup."""
+        return self._sweep_orphans(recovery=(job_id, review_token, reason)) == 1
 
     def _live_pipeline_directories(self) -> set[str]:
         """Realpaths of every pipeline/run directory a NON-terminal job is

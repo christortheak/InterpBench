@@ -2164,6 +2164,11 @@ public struct ExperimentCLIRunner: Sendable {
             throw ExperimentError(
                 reason: "usage: remote capabilities|package|upload|submit-bundle|jobs|logs|cancel|resubmit|fetch|import|import-chain|variants|chat (--site <id> | --url <server>)")
         }
+        if verb == "submit-bundle", flag("--verb")?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            throw ExperimentError.malformed(
+                "remote submit-bundle requires an explicit --verb",
+                repair: "steerlab-cli remote submit-bundle <server-bundle-path> --verb <operation>")
+        }
         // Site-aware resolution (CLUSTER-CLI-LIFECYCLE-PLAN §5.4): `--site` reads
         // the endpoint from the shared registry and the bearer token from the
         // Keychain, so neither ever appears in argv, shell history, or agent
@@ -2234,9 +2239,11 @@ public struct ExperimentCLIRunner: Sendable {
                 message: "uploaded \(args[1])")
         case "submit-bundle":
             guard let path = flag("--bundle") ?? (args.count >= 2 ? args[1] : nil) else {
-                throw ExperimentError(reason: "usage: remote submit-bundle <server-bundle-path> [--verb verify] [--executor local|slurm] [--dry-run] [--parallel <n>] [--source <run-dir>]")
+                throw ExperimentError(reason: "usage: remote submit-bundle <server-bundle-path> --verb <operation> [--executor local|slurm] [--dry-run] [--parallel <n>] [--source <run-dir>]")
             }
-            let submitVerb = flag("--verb") ?? "run"
+            guard let submitVerb = flag("--verb"), !submitVerb.isEmpty else {
+                throw ExperimentError(reason: "remote submit-bundle requires an explicit --verb")
+            }
             let submitExecutor = flag("--executor") ?? "local"
             // The measurement verb's source run, by the one spelling every
             // surface uses (`bundle execute --source`, `study submit

@@ -1,5 +1,6 @@
 """File concurrency metadata never changes scientific manifest bytes."""
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from pathlib import Path
 import subprocess
 import sys
@@ -133,3 +134,17 @@ def test_http_manifest_etag_guards_replacement_without_a_document_field(tmp_path
                       headers={"If-None-Match": "*"}).status_code == 200
     assert client.put("/api/experiment/fresh/manifest", json=fresh,
                       headers={"If-None-Match": "*"}).status_code == 412
+
+
+@pytest.mark.parametrize("copier", [lambda d: d.copy(), deepcopy])
+def test_copy_preserves_external_authority_without_json_fields(tmp_path, copier):
+    from steerlab_server.experiment import experiment_store as store
+    original = store.create("example", model_id="org/model", root=str(tmp_path))
+    copied = copier(original)
+    assert copied.source_digest == original.source_digest
+    assert copied.source_path == original.source_path
+    copied["experimentDescription"] = "Reviewed edit"
+    saved = store.save_raw(copied, str(tmp_path))
+    assert saved["experimentDescription"] == "Reviewed edit"
+    assert set(saved) == set(original)
+    assert "source_digest" not in saved

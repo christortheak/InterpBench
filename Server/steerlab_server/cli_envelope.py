@@ -526,6 +526,13 @@ VERB_SPECS: tuple[VerbSpec, ...] = (
              boolean_flags=frozenset({"--skip-model-fixtures"}),
              accepts_legacy_json_path=True),
     VerbSpec("jobs", "list", purpose="List this engine's durable jobs."),
+    VerbSpec("jobs", "recovery", positional="<job-id>",
+             purpose="Review controller ownership and a snapshot token without changing jobs."),
+    VerbSpec("jobs", "recover", positional="<job-id>",
+             purpose="Recover one orphan after verifying its controller exited; records an audit.",
+             boolean_flags=frozenset({"--confirm-owner-exited"}),
+             value_flags=frozenset({"--review-token", "--reason"}),
+             required_flags=frozenset({"--review-token", "--reason", "--confirm-owner-exited"})),
     # The chat-template capability record (2026-09-05). `--probe` renders
     # the pinned template through this engine's own tokenizer — weights-free
     # — and writes prompts/models/<owner>--<repo>@<revision>.json; without

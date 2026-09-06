@@ -332,10 +332,10 @@ def test_the_declared_verbs_are_the_audits_fourteen_plus_site_qualify():
         "experiment extract-stability",
         "experiment list", "experiment promote", "experiment run",
         "experiment sweep", "experiment validate", "experiment verify",
-        "jobs list", "model capabilities", "site qualify", "study submit",
+        "jobs list", "jobs recovery", "jobs recover", "model capabilities", "site qualify", "study submit",
         "vectors compare", "vectors mirror-poles",
     ])
-    assert len(cli_envelope.VERB_SPECS) == 19
+    assert len(cli_envelope.VERB_SPECS) == 21
 
 
 # =============================================================================

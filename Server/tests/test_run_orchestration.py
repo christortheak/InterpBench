@@ -825,6 +825,7 @@ def test_an_interrupt_during_the_wait_detaches_rather_than_cancelling(
     """
     import signal
 
+    original_handler = signal.getsignal(signal.SIGINT)
     script.job_status = "running"
     delivered: list = []
     real_job = FakeRunner.job
@@ -852,7 +853,7 @@ def test_an_interrupt_during_the_wait_detaches_rather_than_cancelling(
     assert script.cancels == []
     # The handler is restored: an interrupt after this verb behaves exactly as
     # it did before it.
-    assert signal.getsignal(signal.SIGINT) is signal.default_int_handler
+    assert signal.getsignal(signal.SIGINT) is original_handler
 
 
 # =============================================================================
