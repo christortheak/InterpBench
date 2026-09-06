@@ -20,6 +20,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable
 
+from . import job_ownership
 from .profile import ServerProfile, capability_snapshot
 from .workspace_lock import submitting as _submitting_workspace
 
@@ -140,6 +141,7 @@ class DurableJobStore:
 
     def _init(self) -> None:
         with self._lock, self._connect() as conn:
+            job_ownership.initialize(conn)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS jobs (
                     id TEXT PRIMARY KEY,
@@ -190,6 +192,23 @@ class DurableJobStore:
                 job.executor, job.executor_job_id, int(job.cancelled),
                 _dumps(job.capability_snapshot),
             ))
+
+            job_ownership.record(conn, job.id)
+
+    def claim_orphan(self, job_id: str) -> "Job | None":
+        """Claim recovery only after proving the previous process exited.
+
+        Read the current job under the same transaction as the ownership
+        transfer: a manager's startup snapshot may already be stale.
+        """
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if row is None or row["status"] not in {"running", "pending", "cancelling"}:
+                return None
+            if not job_ownership.claim_exited(conn, job_id):
+                return None
+        return self._from_row(row)
 
     def update(self, job: "Job") -> None:
         with self._lock, self._connect() as conn:
@@ -696,11 +715,24 @@ class JobManager:
         return self._slurm_executor
 
     def _sweep_orphans(self) -> int:
-        """Fail local jobs left mid-flight by a crashed/restarted server. Their
-        worker threads are gone, so ``running``/``pending`` is a lie. Slurm jobs
-        are owned by the scheduler and left for the poller to reconcile."""
+        """Recover work whose recorded controller process demonstrably exited.
+
+        Constructing another manager is not evidence of a crash. Unknown or
+        live ownership is left intact, including legacy and foreign-host jobs.
+        Scheduler-owned jobs remain the poller's responsibility.
+        """
         swept = 0
-        for job in list(self._jobs.values()):
+        for candidate in list(self._jobs.values()):
+            local = candidate.executor == "local" and candidate.status in {
+                "running", "pending", "cancelling"}
+            fanout = (candidate.executor == "slurm" and candidate.status == "pending"
+                      and candidate.requested_resources.get("parallelJobs"))
+            if not (local or fanout):
+                continue
+            job = self.store.claim_orphan(candidate.id)
+            if job is None:
+                continue
+            self._jobs[job.id] = job
             # A sharded parent still "pending" was orphaned mid fan-out (the
             # submit loop creates the parent first, attaches shards as they
             # submit, and flips the status itself — finding 3): the loop's

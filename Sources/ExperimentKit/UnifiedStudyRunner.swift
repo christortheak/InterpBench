@@ -66,6 +66,7 @@ public final class UnifiedStudyRunner {
             statusLine = "invalid server URL"
             return
         }
+        let origin = RemoteJobOrigin(connection: client.profile, workspaceRoot: ExperimentStore.workspaceRoot)
         let capabilities = cluster.capabilities
         let substrate = cluster.substrateLabel
         isSubmitting = true
@@ -115,8 +116,9 @@ public final class UnifiedStudyRunner {
             statusLine = "packaging \(manifest.name)…"
             // Packaging copies files, hashes them, and shells out to tar;
             // keep it off the main actor (same rule as the legacy path).
+            let source = RunBundlePackager.captureSource(manifest)
             let bundle = try await Task.detached {
-                try RunBundlePackager.packageExperiment(manifest)
+                try RunBundlePackager.packageExperiment(manifest, source: source)
             }.value
             statusLine = "uploading \(bundle.lastPathComponent)…"
             let uploaded = try await client.uploadBundle(bundle)
@@ -139,6 +141,7 @@ public final class UnifiedStudyRunner {
                 parallelJobs: request.parallelJobs)
             preflight = PreflightPresentation.from(submission.preflight)
             lastJobID = submission.jobId
+            jobs.recordOrigin(origin, jobID: submission.jobId)
             var submitted = StudySubmissionPresentation.bundleSubmittedStatus(
                 study: manifest.name, verb: verb, dryRun: dryRun,
                 substrate: substrate, jobID: submission.jobId)

@@ -40,6 +40,7 @@ public final class StudyServerJobCoordinator {
             guard isCurrent(), !Task.isCancelled else { return }
             note("submitting \(verb) for '\(name)' to \(substrate)…", severity: .info)
             let jobID = try await transport.submit(name, verb)
+            jobs.recordOrigin(transport.origin, jobID: jobID)
             jobs.remoteJobID = jobID
             jobs.activeServerJob = StudyRemoteJobController.ActiveServerJob(
                 id: jobID, verb: verb, study: name)
@@ -159,6 +160,7 @@ struct StudyServerJobPresentation {
 
 @MainActor
 struct StudyServerJobTransport {
+    var origin: RemoteJobOrigin? = nil
     var experimentNames: () async throws -> [String]
     var submit: (String, String) async throws -> String
     var follow: (String, String, String, Bool) async -> RemoteJobRecord?
@@ -177,6 +179,7 @@ struct StudyServerJobTransport {
     }
 
     init(client: ClusterClient, jobs: StudyRemoteJobController) {
+        origin = RemoteJobOrigin(connection: client.profile, workspaceRoot: ExperimentStore.workspaceRoot)
         experimentNames = { try await client.experimentNames() }
         submit = { try await client.submitExperimentJob(experiment: $0, verb: $1) }
         follow = { id, title, label, mirror in

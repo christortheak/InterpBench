@@ -110,7 +110,7 @@ extension ExperimentPanel {
 
     var remoteContextIdentity: StudyRemoteContextIdentity {
         StudyRemoteContextIdentity(
-            root: VectorCatalog.projectRoot.standardizedFileURL,
+            root: ExperimentStore.workspaceRoot.standardizedFileURL,
             serverURL: cluster?.serverURL, isServer: isServerWorkspace,
             pairing: cluster?.activeServerPairing)
     }

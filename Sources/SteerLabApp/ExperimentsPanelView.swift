@@ -286,6 +286,8 @@ struct ExperimentsPanelView: View {
                         StudyServerRunsView(runs: panel.remoteRuns,
                             substrateLabel: service.cluster.substrateLabel,
                             refresh: { await panel.refreshRemoteRuns() })
+                    }
+                    if service.cluster.computeTarget == .server || !panel.pipelines.localPipelineRuns.isEmpty {
                         StudyPipelinesView(pipelines: panel.pipelines,
                             substrateLabel: service.cluster.substrateLabel,
                             refresh: { await panel.refreshPipelineRuns() },

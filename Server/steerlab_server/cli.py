@@ -1196,6 +1196,18 @@ def _apply_serve_posture(host: str, dev_open_flag: bool) -> int:
 
 
 def _serve(args: list[str]) -> int:
+    from .api.service_authority import service_role
+    if "--service-role" in args:
+        role = _flag(args, "--service-role")
+        if role not in {"runner", "workbench"}:
+            sys.stderr.write("--service-role requires runner or workbench\n")
+            return 64
+        os.environ["STEERLAB_SERVICE_ROLE"] = role
+    try:
+        service_role()
+    except ValueError as exc:
+        sys.stderr.write(str(exc) + "\n")
+        return 64
     port = None  # explicit --port wins; role-specific defaults resolve below
     if "--port" in args:
         i = args.index("--port")
@@ -1358,7 +1370,9 @@ def _jobs(args: list[str]):
     from .api.jobs import JobManager
     if not args or args[0] == "list":
         from .cli_envelope import CLIResult
-        mgr = JobManager()
+        # This process observes jobs owned by the daemon or another submitter.
+        # Opening its store is not evidence that their workers have died.
+        mgr = JobManager(sweep_orphans=False)
         jobs = [j.to_dict() for j in mgr.list()]
         # Human mode keeps the exact raw document it always wrote; JSON mode
         # gets the same array inside `result.jobs`, under a versioned envelope
@@ -1370,7 +1384,7 @@ def _jobs(args: list[str]):
             payload={"count": len(jobs), "runningCount": running,
                      "jobs": jobs})
     if args[0] == "reconcile" and len(args) >= 2:
-        mgr = JobManager()
+        mgr = JobManager(sweep_orphans=False)
         print(json.dumps({"reconciled": mgr.reconcile(args[1])}, sort_keys=True))
         return 0
     sys.stderr.write("usage: jobs list | jobs reconcile <records-dir>\n")
@@ -1552,7 +1566,10 @@ def _study(args: list[str]):
     from .api.submissions import SubmissionRefusal, submit_study
 
     experiment = args[1]
-    verb = _flag(args, "--verb") or "run"
+    verb = _flag(args, "--verb")
+    if not verb or verb.startswith("--"):
+        sys.stderr.write("study submit requires --verb <operation>; choose the stage explicitly\n")
+        return 64
     # `--parallel-jobs` is accepted as an alias for the API's `parallelJobs`
     # spelling: a flag the CLI silently ignored would run one job while the
     # researcher believed they had fanned out.
@@ -1598,7 +1615,7 @@ def _study(args: list[str]):
         # serializes this process); every write is a single short statement
         # inside one transaction, so contention with the 15 s reconcile tick
         # resolves inside the timeout rather than raising "database is locked".
-        jobs = JobManager()
+        jobs = JobManager(sweep_orphans=False)
         submission = submit_study(
             experiment, verb=verb, jobs=jobs,
             executor=_flag(args, "--executor"), dry_run=("--dry-run" in args),
@@ -1996,7 +2013,7 @@ def _finetune_submit(args: list[str], ft) -> int:
         body["dryRun"] = True
 
     try:
-        out = ft.submit_finetune(body, jobs=JobManager(), resolver=resolver)
+        out = ft.submit_finetune(body, jobs=JobManager(sweep_orphans=False), resolver=resolver)
     except ft.PreflightRejection as exc:
         sys.stderr.write(f"finetune submit refused by preflight: {exc}\n")
         print(json.dumps({"preflight": exc.preflight}, indent=2,
@@ -2039,7 +2056,7 @@ def _housekeeping(args: list[str]) -> int:
     if not args or args[0] == "status":
         if "--refresh" in args:
             from .api.jobs import JobManager
-            report = housekeeping.refresh(jobs=JobManager())
+            report = housekeeping.refresh(jobs=JobManager(sweep_orphans=False))
         else:
             report = housekeeping.status()
         print(json.dumps(report, indent=2, sort_keys=True))

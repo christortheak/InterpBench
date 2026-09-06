@@ -2596,6 +2596,7 @@ def _runner_environment(layout: dict, host: str) -> dict:
            # engine's own decision to make, through `steerlab-server serve`,
            # where the posture refusals are written for it.
            "STEERLAB_BIND": host,
+           "STEERLAB_SERVICE_ROLE": "runner",
            "STEERLAB_AUTH_MODE": "token",
            "STEERLAB_AUTH_TOKEN_FILE": layout["tokenFile"],
            # A managed LOCAL runner executes locally by definition. Inheriting

@@ -65,6 +65,19 @@ struct EvidenceImportAtomicityTests {
         return archive
     }
 
+    @Test func capturedWorkspaceSurvivesSelectionChange() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "captured-import") { root in
+            let archive = try bundle(runID: "captured-run", files: ["records.jsonl": "{}\n"])
+            defer { try? FileManager.default.removeItem(at: archive) }
+            let other = root.appending(component: "other-workspace")
+            ExperimentStore.rootOverride = other
+            defer { ExperimentStore.rootOverride = root }
+            let imported = try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root)
+            #expect(imported.path == root.appending(components: "runs", "captured-run").path)
+            #expect(!FileManager.default.fileExists(atPath: other.appending(component: "runs").path))
+        }
+    }
+
     private func leftoverStaging() -> [String] {
         let root = EvidenceBundleImporter.stagingRoot()
         let contents = (try? FileManager.default.contentsOfDirectory(
@@ -188,7 +201,7 @@ struct EvidenceImportAtomicityTests {
 /// The download half of §3: bytes stage beside the destination, are checked
 /// for having actually landed, and only then take the artifact's name. A dead
 /// tunnel must leave no download directory at all.
-struct ArtifactDownloadAtomicityTests {
+@Suite(.serialized) struct ArtifactDownloadAtomicityTests {
 
     private final class StubProtocol: URLProtocol, @unchecked Sendable {
         nonisolated(unsafe) static var handler:
@@ -220,7 +233,12 @@ struct ArtifactDownloadAtomicityTests {
     private func client(
         handler: @escaping @Sendable (URLRequest) throws -> (Data, Int)
     ) -> ClusterClient {
-        StubProtocol.handler = handler
+        StubProtocol.handler = { request in
+            if request.url?.path == "/api/capabilities" {
+                return (Data(#"{"remoteStudy":{"httpTransfer":true}}"#.utf8), 200)
+            }
+            return try handler(request)
+        }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubProtocol.self]
         return ClusterClient(

@@ -79,6 +79,7 @@ public final class StudyBundleSubmissionController {
             jobs.remoteStatus = "submitting \(submissionVerb)..."
             let resumePolicy = request.effectiveResumePolicy
             let submission = try await transport.submit(uploaded, request)
+            jobs.recordOrigin(transport.origin, jobID: submission.jobId)
             jobs.remoteJobID = submission.jobId
             let substrate = substrate ?? submission.executor
             var submitted = StudySubmissionPresentation.bundleSubmittedStatus(

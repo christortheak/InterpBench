@@ -469,6 +469,8 @@ def test_an_upload_the_runner_hashes_differently_is_refused(
     wrong = "0" * 64
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/capabilities":
+            return httpx.Response(200, json={"remoteStudy": {"httpTransfer": True}})
         assert request.url.path == "/api/bundles/upload"
         return httpx.Response(200, json={
             "path": "/runs/staged/x.tar.gz", "filename": "x.tar.gz",
@@ -1322,6 +1324,8 @@ def test_a_destination_that_appears_mid_download_is_refused_not_overwritten(
     intruder = b"somebody else's evidence"
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/capabilities":
+            return httpx.Response(200, json={"remoteStudy": {"httpTransfer": True}})
         # The window itself: another client lands its own file at the
         # destination while this download is in flight.
         os.makedirs(os.path.dirname(destination), exist_ok=True)

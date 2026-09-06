@@ -2452,10 +2452,11 @@ public struct ExperimentCLIRunner: Sendable {
             guard let path = flag("--path") ?? (args.count >= 2 ? args[1] : nil) else {
                 throw ExperimentError(reason: "usage: remote import <server-evidence-path> [--out dir] [--sha256 hex]")
             }
+            let workspaceRoot = ExperimentStore.workspaceRoot
             let out = URL(filePath: flag("--out") ?? ".steerlab-downloads")
             let local = try await client.downloadArtifact(path: path, to: out)
             let imported = try EvidenceBundleImporter.importEvidenceBundle(
-                local, expectedSHA256: flag("--sha256"))
+                local, expectedSHA256: flag("--sha256"), workspaceRoot: workspaceRoot)
             // The adoption reconciliation every import path must run
             // (2026-08-06, a replication-run incident): this raw verb was the one
             // importer that skipped it, and a server-auto-pinned revision then

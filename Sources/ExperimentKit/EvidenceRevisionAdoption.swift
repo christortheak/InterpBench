@@ -57,7 +57,11 @@ public enum EvidenceRevisionAdoption {
     /// with the same-named LOCAL experiment. Pure decision + a draft save on
     /// the adoption arm; the caller surfaces `notice(for:)`.
     @discardableResult
-    public static func adoptModelRevision(fromImportedRun runDirectory: URL) -> Outcome {
+    public static func adoptModelRevision(
+        fromImportedRun runDirectory: URL, workspaceRoot: URL? = nil
+    ) -> Outcome {
+        let root = workspaceRoot ?? runDirectory.deletingLastPathComponent().deletingLastPathComponent()
+        let repository = ExperimentRepository(workspaceRoot: root)
         guard
             let data = try? Data(
                 contentsOf: runDirectory.appending(component: "experiment.json")),
@@ -68,7 +72,7 @@ public enum EvidenceRevisionAdoption {
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             !evidenceRevision.isEmpty
         else { return .noEvidenceRevision }
-        guard let local = try? ExperimentStore.load(name: snapshot.name) else {
+        guard let local = try? repository.load(name: snapshot.name) else {
             return .noLocalExperiment
         }
         guard local.modelID == snapshot.modelID else {
@@ -87,7 +91,7 @@ public enum EvidenceRevisionAdoption {
         }
         guard local.status == .draft else { return .notADraft(experiment: local.name) }
         do {
-            try ExperimentStore.updateDraft(name: local.name) {
+            try ExperimentStore.updateDraft(name: local.name, workspaceRoot: root) {
                 $0.modelRevision = evidenceRevision
             }
         } catch {

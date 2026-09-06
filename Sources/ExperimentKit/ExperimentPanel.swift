@@ -190,6 +190,7 @@ public final class ExperimentPanel {
                 return
             }
             do {
+                let client = try remoteJobs.clientForJob(job.id, connected: client)
                 try await client.cancelJob(job.id)
                 note("cancel requested for server sweep job \(job.id) "
                     + "('\(job.study)') — cancelling…", severity: .warning)
@@ -1459,16 +1460,17 @@ public final class ExperimentPanel {
                 + "import from the producing job instead (Compute section)"
             return
         }
+        let workspaceRoot = ExperimentStore.workspaceRoot
         do {
             remoteResultsStatus = "downloading evidence from \(run.id)..."
-            let downloads = VectorCatalog.projectRoot
+            let downloads = workspaceRoot
                 .appending(components: ".steerlab", "downloads")
             let bundlePath = run.path.hasSuffix("/")
                 ? run.path + bundleName : run.path + "/" + bundleName
             let localBundle = try await remoteClient.downloadArtifact(
                 path: bundlePath, to: downloads)
             let imported = try await Task.detached {
-                try EvidenceBundleImporter.importEvidenceBundle(localBundle)
+                try EvidenceBundleImporter.importEvidenceBundle(localBundle, workspaceRoot: workspaceRoot)
             }.value
             remoteImportedRunDirectory = imported.path
             let importedMessage = "evidence from \(run.id) imported → "
@@ -1722,6 +1724,8 @@ public final class ExperimentPanel {
             return
         }
         do {
+            let remoteClient = try remoteJobs.clientForJob(jobID, connected: remoteClient)
+            let workspaceRoot = try remoteJobs.origin(for: jobID).workspaceRoot
             let job = try await remoteClient.job(jobID)
             guard let result = job.result,
                 let bundlePath = Self.findString(
@@ -1738,11 +1742,11 @@ public final class ExperimentPanel {
                 in: .object(result), keyPath: ["runResult", "evidenceBundle", "bundleSha256"])
                 ?? Self.findString(in: .object(result), keyPath: ["evidenceBundle", "bundleSha256"])
             remoteStatus = "downloading evidence..."
-            let downloads = VectorCatalog.projectRoot.appending(components: ".steerlab", "downloads")
+            let downloads = workspaceRoot.appending(components: ".steerlab", "downloads")
             let localBundle = try await remoteClient.downloadArtifact(path: bundlePath, to: downloads)
             // Extraction + per-file hashing off the main actor.
             let imported = try await Task.detached {
-                try EvidenceBundleImporter.importEvidenceBundle(localBundle, expectedSHA256: expectedSHA)
+                try EvidenceBundleImporter.importEvidenceBundle(localBundle, expectedSHA256: expectedSHA, workspaceRoot: workspaceRoot)
             }.value
             remoteImportedRunDirectory = imported.path
             let importedMessage = "evidence from job \(jobID) imported → "

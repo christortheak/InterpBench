@@ -277,11 +277,13 @@ def test_external_job_record_persists(tmp_path):
     assert restored.all_logs() == ["submitted"]
 
 
-def test_orphan_local_jobs_failed_on_restart(tmp_path):
+def test_orphan_local_jobs_failed_on_restart(tmp_path, monkeypatch):
     store_path = str(tmp_path / "jobs.sqlite")
     mgr = JobManager(DurableJobStore(store_path), sweep_orphans=False)
     job = mgr.record_external("run", status="running", executor="local")
-    # A fresh manager (server restart) has no live thread for that job.
+    # Simulate an exited owner; constructing a second manager is not a crash.
+    monkeypatch.setattr("steerlab_server.api.job_ownership.owner_has_exited",
+                        lambda host, pid: True)
     restored = JobManager(DurableJobStore(store_path)).get(job.id)
     assert restored.status == "failed"
     assert "orphaned" in (restored.error or "")
@@ -368,7 +370,7 @@ def test_cancel_pending_job_is_terminal_and_work_never_runs(tmp_path, monkeypatc
     assert job.status == "cancelled"
 
 
-def test_orphaned_cancelling_job_becomes_cancelled_on_restart(tmp_path):
+def test_orphaned_cancelling_job_becomes_cancelled_on_restart(tmp_path, monkeypatch):
     # A worker that dies (server restart) while a cancel was pending: the
     # work IS stopped and a cancel was requested, so the honest terminal is
     # "cancelled", not a forever-open "cancelling" (which would hold SSE
@@ -376,6 +378,8 @@ def test_orphaned_cancelling_job_becomes_cancelled_on_restart(tmp_path):
     store_path = str(tmp_path / "jobs.sqlite")
     mgr = JobManager(DurableJobStore(store_path), sweep_orphans=False)
     job = mgr.record_external("sweep", status="cancelling", executor="local")
+    monkeypatch.setattr("steerlab_server.api.job_ownership.owner_has_exited",
+                        lambda host, pid: True)
     restored = JobManager(DurableJobStore(store_path)).get(job.id)
     assert restored.status == "cancelled"
     assert restored.finished_at is not None

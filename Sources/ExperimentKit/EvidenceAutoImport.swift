@@ -360,15 +360,16 @@ public final class EvidenceAutoImportService {
         isImporting = true
         defer { isImporting = false }
         lastCheckedAt = now()
+        let client = cluster?.client
         let jobs: [RemoteJobRecord]
         do {
-            jobs = try await fetchJobs()
+            jobs = try await fetchJobs(client: client)
         } catch {
             lastSummary = "could not list server jobs: \(error.localizedDescription)"
             return []
         }
         let produced = await importAll(
-            candidates: Self.candidates(fromJobs: jobs), bypassBackoff: false)
+            candidates: Self.candidates(fromJobs: jobs), bypassBackoff: false, client: client)
         summarize(produced)
         return produced
     }
@@ -381,7 +382,7 @@ public final class EvidenceAutoImportService {
         guard !isImporting else { return [] }
         isImporting = true
         defer { isImporting = false }
-        let produced = await importAll(candidates: candidates, bypassBackoff: true)
+        let produced = await importAll(candidates: candidates, bypassBackoff: true, client: cluster?.client)
         summarize(produced)
         return produced
     }
@@ -404,8 +405,12 @@ public final class EvidenceAutoImportService {
     /// incomplete imports as a partial, never as a completed result.
     @discardableResult
     public func importPipeline(runID: String) async -> ImportEvent? {
+        guard !isImporting else { return nil }
+        isImporting = true
+        defer { isImporting = false }
+        let client = cluster?.client
         do {
-            let receipt = try await packageEvidence(runDirectory: runID)
+            let receipt = try await packageEvidence(runDirectory: runID, client: client)
             if receipt.skipped == true {
                 // A failure record with nothing to bundle — noted, never
                 // failed, never ledgered (a later resume can still produce
@@ -428,7 +433,7 @@ public final class EvidenceAutoImportService {
                 runId: receipt.runID ?? runID,
                 sha256: receipt.bundleSha256,
                 isPartial: receipt.evidenceComplete != true)
-            return await importNow(candidates: [candidate]).first
+            return await importAll(candidates: [candidate], bypassBackoff: true, client: client).first
         } catch {
             lastSummary = "could not package pipeline '\(runID)' on the "
                 + "server: \(String(describing: error))"
@@ -437,12 +442,12 @@ public final class EvidenceAutoImportService {
     }
 
     private func packageEvidence(
-        runDirectory: String
+        runDirectory: String, client: ClusterClient?
     ) async throws -> ClusterClient.EvidencePackageReceipt {
         if let packageEvidenceOverride {
             return try await packageEvidenceOverride(runDirectory)
         }
-        guard let client = cluster?.client else {
+        guard let client else {
             throw ChatServiceError(
                 reason: "no connected server client for evidence packaging")
         }
@@ -451,14 +456,14 @@ public final class EvidenceAutoImportService {
 
     // MARK: Internals
 
-    private func fetchJobs() async throws -> [RemoteJobRecord] {
+    private func fetchJobs(client: ClusterClient?) async throws -> [RemoteJobRecord] {
         if let fetchJobsOverride { return try await fetchJobsOverride() }
-        guard let client = cluster?.client else { return [] }
+        guard let client else { return [] }
         return try await client.jobs()
     }
 
     private func importAll(
-        candidates: [EvidenceCandidate], bypassBackoff: Bool
+        candidates: [EvidenceCandidate], bypassBackoff: Bool, client: ClusterClient?
     ) async -> [ImportEvent] {
         var produced: [ImportEvent] = []
         for candidate in candidates {
@@ -476,7 +481,7 @@ public final class EvidenceAutoImportService {
                 continue
             }
             do {
-                let imported = try await performImport(candidate)
+                let imported = try await performImport(candidate, client: client)
                 appendLedger(for: candidate)
                 failures[candidate.bundlePath] = nil
                 produced.append(
@@ -499,27 +504,28 @@ public final class EvidenceAutoImportService {
         return produced
     }
 
-    private func performImport(_ candidate: EvidenceCandidate) async throws -> URL {
+    private func performImport(_ candidate: EvidenceCandidate, client: ClusterClient?) async throws -> URL {
         if let performImportOverride { return try await performImportOverride(candidate) }
-        guard let client = cluster?.client else {
+        guard let client else {
             throw ChatServiceError(reason: "no connected server client for evidence import")
         }
         let downloads = workspaceRoot.appending(components: ".steerlab", "downloads")
         let localBundle = try await client.downloadArtifact(
             path: candidate.bundlePath, to: downloads)
         let expected = candidate.sha256
+        let workspaceRoot = self.workspaceRoot
         // Extraction + per-file hashing off the main actor (same rule as the
         // manual import path).
         let imported = try await Task.detached {
             try EvidenceBundleImporter.importEvidenceBundle(
-                localBundle, expectedSHA256: expected)
+                localBundle, expectedSHA256: expected, workspaceRoot: workspaceRoot)
         }.value
         // Server-manifest-mutation family (2026-08-04): the AUTO path was
         // how runs arrived WITHOUT revision adoption — only the manual
         // Import Evidence button reconciled. Every imported run's snapshot
         // now reconciles here too; outcomes surface in the import summary.
         let outcome = EvidenceRevisionAdoption.adoptModelRevision(
-            fromImportedRun: imported)
+            fromImportedRun: imported, workspaceRoot: workspaceRoot)
         if let notice = EvidenceRevisionAdoption.notice(for: outcome) {
             lastSummary = notice.message
         }

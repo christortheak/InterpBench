@@ -226,18 +226,18 @@ public enum EvidenceChainImport {
                 let local = try await client.downloadArtifact(
                     path: bundlePath, to: downloads)
                 return try EvidenceBundleImporter.importEvidenceBundle(
-                    local, expectedSHA256: sha256)
+                    local, expectedSHA256: sha256, workspaceRoot: workspaceRoot)
             },
             localRunExists: { runID in
                 var isDirectory: ObjCBool = false
-                let url = ExperimentStore.runsDirectory.appending(component: runID)
+                let url = workspaceRoot.appending(components: "runs", runID)
                 return FileManager.default.fileExists(
                     atPath: url.path, isDirectory: &isDirectory)
                     && isDirectory.boolValue
             },
             adoptRevision: { imported in
                 EvidenceRevisionAdoption.adoptModelRevision(
-                    fromImportedRun: imported)
+                    fromImportedRun: imported, workspaceRoot: workspaceRoot)
             },
             probeEndpoint: {
                 // The cheapest authenticated read the server offers. It runs

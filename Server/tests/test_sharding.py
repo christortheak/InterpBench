@@ -976,7 +976,7 @@ def test_reconciler_leaves_pending_fanout_parents_alone(tmp_path):
     assert jobs.get(parent.id).status == "pending"
 
 
-def test_restart_sweeps_orphaned_pending_fanout_parent(tmp_path, fake_slurm):
+def test_restart_sweeps_orphaned_pending_fanout_parent(tmp_path, fake_slurm, monkeypatch):
     """A server crash mid fan-out leaves the parent "pending" with the
     submit loop's thread gone — the restart sweep fails it honestly, and
     (finding 3, 2026-07-23) actively CANCELS the shards that did get
@@ -989,6 +989,8 @@ def test_restart_sweeps_orphaned_pending_fanout_parent(tmp_path, fake_slurm):
         "study-submit-bundle", status="pending", executor="slurm",
         requested_resources={"parallelJobs": 3,
                              "shardChildren": [c.id for c in children]})
+    monkeypatch.setattr("steerlab_server.api.job_ownership.owner_has_exited",
+                        lambda host, pid: True)
     restarted = _manager(tmp_path)
     swept = restarted.get(parent.id)
     assert swept.status == "failed"

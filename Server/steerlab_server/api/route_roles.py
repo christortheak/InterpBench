@@ -1,51 +1,9 @@
-"""THE ROUTE-OWNERSHIP CENSUS — runner-profile narrowing, step 1.
+"""Declared HTTP operation ownership, enforced by service_authority.
 
-Every HTTP route the FastAPI app exposes, labelled with the SERVICE ROLE it
-belongs to. This is a census of TODAY, not an aspiration: where a cluster
-deployment legitimately serves the Mac app's interactive features, the route is
-censused ``both`` and the rationale says so.
-
-**Nothing here restricts anything.** No production module imports this table,
-no request is refused because of it, and the app's behaviour is byte-identical
-with or without this file. What it buys is the ratchet in
-``test_route_roles.py``: a new route cannot ship undeclared, and a declaration
-for a route that no longer exists fails too, so the table cannot rot into
-fiction while everyone reads it as evidence.
-
-The three roles come from the two-service-roles ruling that
-``docs/PORTABILITY-CONTRACTS.md`` §9.1 already made:
-
-  RUNNER    — batch execution reached through the bundle protocol, plus the
-              operations that keep such a deployment alive: identity and
-              capabilities, bundle upload / inspect / submit, jobs, logs,
-              evidence packaging and download, the model cache, and the
-              scheduler. A runner's artifact root is a disposable CACHE; every
-              input it needs arrives hash-pinned.
-  WORKBENCH — interactive serving of a LIVE, authored workspace: authoring
-              writes, the workspace switch, concept and manifest writes,
-              server-side freeze, the playground and every other synchronous
-              in-process compute the app drives turn by turn, and catalog
-              browsing.
-  BOTH      — genuinely used by both roles today. This is the honest answer for
-              the cluster deployment's remote-workbench surface (artifact
-              catalogs the app browses over the wire, judging intake, artifact
-              provisioning) and for the submission spellings that name a
-              SERVER-RESIDENT study rather than an uploaded bundle.
-
-WHY THIS TABLE LIVES BESIDE THE TESTS AND NOT IN ``steerlab_server/api/``.
-Because it governs nothing. ``_PRIVILEGED_PREFIXES`` and
-``_OPEN_MUTATING_PATHS`` live in ``api/app.py`` because ``auth_middleware``
-branches on them; this table has no branch anywhere, and a table shipped inside
-the installed package that no code honours is a claim the package makes about
-itself and does not keep. The house precedent for exactly this shape is
-``Tests/ExperimentKitTests/CheckoutDependencyTests.swift``, whose census sits in
-the test target for the same reason, and ``tests/checkpoint_harness.py`` is the
-existing precedent for a non-test module beside the tests. When a runner profile
-really does refuse workbench routes, the table moves into the package as part of
-that change — a deliberate act, in the diff that gives it teeth.
-
-Keys are ROUTE TEMPLATES exactly as the router declares them, paired with the
-method, which is the same vocabulary ``test_wp_s_hardening.py`` walks.
+The runner receives pinned inputs and produces execution artifacts. The
+workbench may also author a live workspace. Authentication remains independent
+of this service role, as does controller/GPU-session execution topology.
+Every route must be declared; the completeness tests keep the census current.
 """
 
 from __future__ import annotations
@@ -564,10 +522,7 @@ def roles_for(role: Role) -> tuple[RouteRole, ...]:
 def is_runner_reachable(method: str, path: str) -> bool:
     """Whether a censused route is one a runner-role deployment serves.
 
-    Documentation of the census, NOT a gate: nothing calls this in production,
-    and step 1 activates no restriction whatsoever. It exists so the eventual
-    runner profile has one place to read the table from, and so the tests can
-    say ``runner or both`` without spelling the disjunction each time.
+    The service authority gate uses this same runner-or-both rule.
     """
     entry = BY_KEY.get(f"{method.upper()} {path}")
     return entry is not None and entry.role in (Role.RUNNER, Role.BOTH)

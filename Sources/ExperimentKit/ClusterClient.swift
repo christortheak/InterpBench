@@ -32,6 +32,7 @@ public struct ClusterCapabilities: Codable, Sendable {
         /// greedy while the baseline samples, so stochastic saved-agent
         /// submissions must refuse there.
         public var variantStudySampling: Bool?
+        public var httpTransfer: Bool?
         public var externalTransferRequired: Bool?
         public var stagingRoot: String?
     }
@@ -2750,7 +2751,18 @@ public struct ClusterClient: Sendable {
         return error
     }
 
+    func requireHTTPTransfer() async throws {
+        let remote = try await capabilities().remoteStudy
+        guard remote?.externalTransferRequired != true, remote?.httpTransfer != false else {
+            throw ChatServiceError(reason: "This server requires external artifact transfer. "
+                + "Use the site's configured transport to stage the bundle, then inspect and "
+                + "submit its path. Retrieve evidence with that transport and verify its "
+                + "SHA-256 before local import.")
+        }
+    }
+
     public func uploadBundle(_ url: URL) async throws -> UploadedBundle {
+        try await requireHTTPTransfer()
         let data = try Data(contentsOf: url)
         var request = try makeRequest(path: "/api/bundles/upload", method: "POST")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
@@ -2777,7 +2789,7 @@ public struct ClusterClient: Sendable {
         resumeFrom: String? = nil
     ) async throws -> RemoteStudySubmission {
         struct Body: Encodable {
-            var name: String
+            var experiment: String
             var verb: String
             var executor: String
             var dryRun: Bool
@@ -2785,7 +2797,7 @@ public struct ClusterClient: Sendable {
         }
         return try await post(
             "/api/studies/submit",
-            body: Body(name: experiment, verb: verb, executor: executor,
+            body: Body(experiment: experiment, verb: verb, executor: executor,
                        dryRun: dryRun, resumeFrom: resumeFrom))
     }
 
@@ -4174,6 +4186,7 @@ public struct ClusterClient: Sendable {
     /// artifact that a later exists-check reads as complete is the trap this
     /// verb exists to avoid.
     public func downloadArtifact(path: String, to directory: URL) async throws -> URL {
+        try await requireHTTPTransfer()
         let request = try makeRequest(
             path: "/api/bundles/download", method: "GET",
             queryItems: [URLQueryItem(name: "path", value: path)])
@@ -4485,9 +4498,28 @@ public enum RunBundlePackager {
     /// packed here automatically, never hand-listed. A REQUIRED pinned input
     /// missing on disk fails packaging loudly (a bundle that silently lacks a
     /// pinned input only fails child-side, hours later, on the cluster).
+    struct Source: Sendable {
+        let root: URL
+        let manifestURL: URL
+        let pins: [ExperimentStore.PinnedInputEntry]
+        let verification: [String]
+    }
+
+    /// Resolve every selection-dependent input before dispatching background I/O.
+    static func captureSource(_ manifest: ExperimentManifest) -> Source {
+        Source(root: ExperimentStore.workspaceRoot,
+               manifestURL: ExperimentStore.manifestURL(manifest.name),
+               pins: ExperimentStore.pinnedInputEntries(manifest),
+               verification: ExperimentStore.verify(manifest))
+    }
+
     public static func packageExperiment(_ manifest: ExperimentManifest) throws -> URL {
+        try packageExperiment(manifest, source: captureSource(manifest))
+    }
+
+    static func packageExperiment(_ manifest: ExperimentManifest, source: Source) throws -> URL {
         let fm = FileManager.default
-        let root = VectorCatalog.projectRoot
+        let root = source.root
         let stamp = ISO8601DateFormatter().string(from: Date())
             .replacingOccurrences(of: ":", with: "")
         let workspace = root.appending(components: ".steerlab", "bundles", "\(stamp)-\(manifest.name)")
@@ -4496,8 +4528,8 @@ public enum RunBundlePackager {
         try fm.createDirectory(at: payload, withIntermediateDirectories: true)
 
         var files: [(source: URL, relative: String)] = []
-        files.append((ExperimentStore.manifestURL(manifest.name), "experiments/\(manifest.name)/experiment.json"))
-        for entry in ExperimentStore.pinnedInputEntries(manifest) {
+        files.append((source.manifestURL, "experiments/\(manifest.name)/experiment.json"))
+        for entry in source.pins {
             guard fm.fileExists(atPath: entry.url.path) else {
                 if entry.required {
                     throw ChatServiceError(
@@ -4506,7 +4538,7 @@ public enum RunBundlePackager {
                 }
                 continue
             }
-            guard let relative = rootRelativePath(entry.url) else {
+            guard let relative = rootRelativePath(entry.url, root: root) else {
                 throw ChatServiceError(
                     reason: "cannot package '\(manifest.name)': pinned input "
                         + "outside the workspace cannot be bundled — "
@@ -4561,7 +4593,7 @@ public enum RunBundlePackager {
             "experimentContentHash": .string(ExperimentStore.manifestHash(manifest)),
             "validationScopeHash": .string(""),
             "rootRelative": .bool(true),
-            "verificationViolations": .array(ExperimentStore.verify(manifest).map { .string($0) }),
+            "verificationViolations": .array(source.verification.map { .string($0) }),
             "entries": .array(entries.map { .object($0) }),
         ]
         let encoder = JSONEncoder()
@@ -4577,9 +4609,8 @@ public enum RunBundlePackager {
     /// running under `ExperimentStore.rootOverride` resolve identically.
     /// Symlinks are resolved on BOTH sides so a workspace behind a symlink
     /// (e.g. /var → /private/var) still yields clean relative arcnames.
-    private static func rootRelativePath(_ url: URL) -> String? {
-        var bases = [VectorCatalog.projectRoot]
-        if let override = ExperimentStore.rootOverride { bases.append(override) }
+    private static func rootRelativePath(_ url: URL, root: URL) -> String? {
+        let bases = [root]
         let path = url.resolvingSymlinksInPath().path
         for base in bases {
             let basePath = base.resolvingSymlinksInPath().path
@@ -4654,8 +4685,8 @@ public enum EvidenceBundleImporter {
     /// destination and the publish is a same-volume rename. Internal so the
     /// atomicity tests can assert the same-volume property rather than
     /// re-deriving the path (open-issues §3).
-    static func stagingRoot() -> URL {
-        ExperimentStore.runsDirectory.deletingLastPathComponent()
+    static func stagingRoot(workspaceRoot: URL = ExperimentStore.workspaceRoot) -> URL {
+        workspaceRoot.appending(component: "runs").deletingLastPathComponent()
     }
 
     /// Import a server evidence bundle into the local `runs/` tree, verifying
@@ -4664,7 +4695,11 @@ public enum EvidenceBundleImporter {
     /// - `expectedSHA256`, when supplied (from the server-stamped
     ///   `bundleSha256`), is checked against the downloaded file *before*
     ///   extraction — catching substitution, not just corruption.
-    public static func importEvidenceBundle(_ bundle: URL, expectedSHA256: String? = nil) throws -> URL {
+    public static func importEvidenceBundle(
+        _ bundle: URL, expectedSHA256: String? = nil,
+        workspaceRoot: URL = ExperimentStore.workspaceRoot
+    ) throws -> URL {
+        let runsDirectory = workspaceRoot.appending(component: "runs")
         let fm = FileManager.default
         if let expectedSHA256, !expectedSHA256.isEmpty {
             let actual = sha256(try Data(contentsOf: bundle))
@@ -4675,7 +4710,7 @@ public enum EvidenceBundleImporter {
         }
         // STAGING IS A SIBLING OF THE DESTINATION (open-issues §3, 2026-08-18).
         // This used to extract into `VectorCatalog.projectRoot/.steerlab/
-        // imports/<uuid>` while publishing into `ExperimentStore.runsDirectory`
+        // imports/<uuid>` while publishing into `runsDirectory`
         // — and under the workspace rule those are DIFFERENT TREES (the
         // workspace is not the checkout; `ExperimentStore.workspaceRoot` honours
         // `STEERLAB_WORKSPACE` / `--workspace` / the test root override, while
@@ -4691,7 +4726,7 @@ public enum EvidenceBundleImporter {
         // same volume by construction, so every publish below is a true atomic
         // rename. It sits BESIDE `runs/` rather than inside it so no run
         // listing can ever enumerate a half-built import.
-        let workspace = stagingRoot()
+        let workspace = stagingRoot(workspaceRoot: workspaceRoot)
         let temp = workspace.appending(
             component: "\(stagingPrefix)\(UUID().uuidString)")
         try fm.createDirectory(at: temp, withIntermediateDirectories: true)
@@ -4778,7 +4813,7 @@ public enum EvidenceBundleImporter {
                         + "refusing an inconsistent bundle")
             }
             try ensureAllVerified(under: source, verified: verified)
-            let target = ExperimentStore.runsDirectory.appending(component: sibling)
+            let target = runsDirectory.appending(component: sibling)
             if fm.fileExists(atPath: target.path) {
                 // Skip only when the BUNDLE'S evidence is already present
                 // and matching locally (containment, stated precisely —
@@ -4811,11 +4846,11 @@ public enum EvidenceBundleImporter {
             portableData = data
         }
 
-        let targetRun = ExperimentStore.runsDirectory.appending(component: runID)
+        let targetRun = runsDirectory.appending(component: runID)
         if fm.fileExists(atPath: targetRun.path) {
             throw ChatServiceError(reason: "refusing to overwrite existing run \(runID)")
         }
-        try fm.createDirectory(at: ExperimentStore.runsDirectory, withIntermediateDirectories: true)
+        try fm.createDirectory(at: runsDirectory, withIntermediateDirectories: true)
         // Atomic-in-effect: siblings first, the primary run last, the
         // portable ledger inside it (local readers resolve stage
         // references through it, so a failed write is an import failure);

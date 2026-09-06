@@ -3,8 +3,7 @@
 **Phase-0 deliverable of the portability program**, extended by **Phase 1a**,
 **Phase 1b** (§7), **Phase 2** (§8), **Phase 3** (§9) and **Phase 5** (§10 —
 the composite `steerlab run`, which completes the eleven-step round trip this
-document opened with), and by the **route-ownership census** (§11 — step 1 of
-runner-profile narrowing, which restricts nothing).
+document opened with), and by the **enforced service-role census** (§11 — runner/workbench authority).
 Phase 0 changed no production behaviour: its entire output was this page plus
 the golden tests it indexes — a record of what the two engines promise each
 other, so a later phase that breaks one of those promises fails a test instead
@@ -1522,7 +1521,7 @@ that produced it does not.
 
 ---
 
-## 11. The route-ownership census — runner-profile narrowing, step 1
+## 11. Enforced runner/workbench service authority
 
 §9.1 made the ruling: there are **two service roles**. A **runner** executes
 batches reached through the bundle protocol and owns a disposable root; a
@@ -1530,11 +1529,22 @@ batches reached through the bundle protocol and owns a disposable root; a
 did not have was a list — one FastAPI app serves both roles, and nothing said
 which of its routes belongs to which.
 
-This step writes that list down. **It restricts nothing.**
+The census now governs runtime authorization. Set `STEERLAB_SERVICE_ROLE=runner`
+or launch `steerlab-server serve --service-role runner` for a runner deployment.
+`steerlab runner serve` sets this role explicitly. The default engine service role
+is `workbench`, retaining interactive authoring for existing workbench launchers.
+The capabilities response reports `serviceRole`.
 
-- `Server/tests/route_roles.py` — **the census**. Every HTTP route the app
-  exposes, with a declared role and one line of rationale.
-- `Server/tests/test_route_roles.py` — **the gate** and the sanity checks.
+- `Server/steerlab_server/api/route_roles.py` — every declared HTTP operation and its rationale.
+- `Server/steerlab_server/api/service_authority.py` — runner authorization over that census.
+- `Server/tests/test_route_roles.py` and `test_service_authority.py` — completeness and runtime refusal gates.
+
+A runner refuses workbench routes before their handlers run, with a typed
+`workbench_required` repair directing the caller to client/workbench authoring.
+Unknown operations are refused by the runner; invalid role configuration fails
+closed. Authentication runs independently and is not relaxed by service role.
+`STEERLAB_SERVER_ROLE` still describes controller/GPU-session topology: it is
+not this authorization setting.
 
 ### 11.1 The three roles
 
@@ -1579,7 +1589,7 @@ name a study **resident in the served workspace**, which a cache does not have.
 | **route-census-no-fiction** | The other direction: a censused route that no longer exists fails too, so the table cannot rot into a description of code that is gone. | `test_the_census_has_no_entries_for_routes_that_are_gone`, `…_declares_each_route_exactly_once`, `…_uses_the_methods_and_templates_the_router_declares`, `test_every_entry_carries_a_real_rationale` |
 | **adapter-routes-are-runner-reachable** | Every route the Phase-2 client adapter speaks (§8.1) is censused `runner` or `both` — a narrowing that refused one would break submit-and-bring-evidence-home, which is the runner role's whole purpose. Both directions again: the adapter's **source** is scanned for `/api/` literals, so a new endpoint cannot escape the check. | `test_every_route_the_client_adapter_uses_is_runner_reachable`, `test_the_adapters_endpoint_scan_finds_nothing_undeclared` |
 | **census-agrees-with-WP-S** | The mutating-by-default classification (`api/app.py`) answers a *different* question about the same table, and the two must not contradict. Every deliberately-open mutating route is censused `workbench` (an open mutating route neither writes nor spends, which is not a shape runner work takes); every mutating route the runner role keeps is token-gated; the two explicitly gated **reads** are runner-reachable. | `test_every_deliberately_open_mutating_route_is_workbench`, `test_every_mutating_runner_route_is_token_gated`, `test_the_read_side_privileged_prefixes_are_runner_reachable` |
-| **no-restriction-is-active** | No production module references the census at all. If that changes, it must change in the diff that gives the table teeth. | `test_the_census_activates_no_restriction` |
+| **runtime-role-authority** | Every workbench operation refuses on a runner; runner/both declarations remain reachable and authentication remains required. | `test_service_authority.py`, `test_the_census_is_the_runtime_authority_source` |
 
 The walk-and-require-declaration mechanism is deliberately the one
 `Tests/ExperimentKitTests/CheckoutDependencyTests.swift` already uses for the
@@ -1587,14 +1597,10 @@ baked-path census: the same problem (a table everybody reads as evidence,
 which is worthless the moment it silently falls behind the code) with the same
 answer.
 
-**Why the census lives beside the tests rather than in `steerlab_server/api/`.**
-Because it governs nothing. `_PRIVILEGED_PREFIXES` and `_OPEN_MUTATING_PATHS`
-live in `api/app.py` because `auth_middleware` branches on them; this table has
-no branch anywhere, and a table shipped inside the installed package that no
-code honours is a claim the package makes about itself and does not keep. It is
-also inside the light-import surface §7 and §8.6 measure, for nothing. When a
-runner profile really does refuse workbench routes, the table moves into the
-package as part of **that** change.
+The census lives in the installed API package because runtime enforcement now
+reads it. Its declaration bodies match the original census; the relocation AST
+audit against `1954094` excludes only updated docstrings. The adapter remains
+light: it does not import this server-side module.
 
 ### 11.3 One tension, recorded rather than forced
 
@@ -1610,24 +1616,17 @@ reach the socket. Pinned as an observation by
 `test_the_runner_reads_that_carry_no_token_gate_are_the_expected_three`, so a
 fourth one cannot join it quietly.
 
-### 11.4 What this step deliberately did NOT do
+### 11.4 Preserved execution authority
 
-- **No restriction of any kind.** No route refuses anything it did not refuse
-  before; the app's behaviour is byte-identical. There is no runner profile,
-  no `--role` flag, and no way to turn one on.
-- **No production module changed.** `api/routes.py`, `api/app.py` and every
-  other engine module are untouched; the whole change is two new test-tier
-  files and this section.
-- **No re-labelling to make the table tidier.** Twenty-seven routes are `both`
-  because they are used by both today. A census that recorded the architecture
-  we would like would be useless as the input to a narrowing.
+The existing `both` declarations remain unchanged. These include legitimate
+execution that produces derived GPU artifacts and existing server-resident
+submission paths. A workbench continues to serve the complete declared surface.
+Restricting a runner's independent authoring does not delete workbench authoring
+or make derived artifacts illegitimate runner output.
 
-**The eventual runner profile** — the thing this census is step 1 of — would
-read the table and refuse `workbench` routes with **typed refusals** carrying a
-`repairAction`, in the vocabulary §4 already pins, so a client that reached for
-an authoring verb against a runner would be told which service role it wanted
-and where to find one. Every `both` route is a decision that profile still has
-to make. **That is future work, and explicitly not this change.**
+New operations must declare their service role and pass the existing census,
+authentication and runtime authority tests. Deployments that require interactive
+authoring must choose `workbench` explicitly in their launch configuration.
 
 ---
 

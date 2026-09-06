@@ -685,6 +685,16 @@ class RunnerClient:
 
     # -- run bundles -------------------------------------------------------
 
+    def require_http_transfer(self) -> None:
+        remote = self.capabilities().get("remoteStudy") or {}
+        if remote.get("externalTransferRequired") or remote.get("httpTransfer") is False:
+            raise RunnerRefusal(
+                "This runner requires external artifact transfer.",
+                code="externalTransferRequired",
+                repair_action="Use the site's configured external transport to stage "
+                "the bundle, then inspect and submit its path. Retrieve evidence with "
+                "that transport and verify its SHA-256 before local import.")
+
     def upload_run_bundle(self, path: str) -> dict:
         """``POST /api/bundles/upload`` — stage a bundle on the runner, and
         prove it arrived intact.
@@ -701,6 +711,7 @@ class RunnerClient:
         ``localSha256``, so a caller keeps both numbers rather than trusting
         that the comparison happened.
         """
+        self.require_http_transfer()
         source = os.path.abspath(os.path.expanduser(path))
         if not os.path.isfile(source):
             raise FileNotFoundError(2, "no such bundle", source)
@@ -1026,6 +1037,7 @@ class RunnerClient:
         expected = _digest_pin(expected,
                                what="the expected sha256 for the download",
                                detail={"remotePath": remote_path})
+        self.require_http_transfer()
         cap = int(self.max_download_bytes if max_bytes is None else max_bytes)
         destination = os.path.abspath(os.path.expanduser(destination))
         if os.path.exists(destination):

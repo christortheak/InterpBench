@@ -9,10 +9,8 @@ public final class StudyRemoteJobController {
     public internal(set) var remoteProfileSummary: String?
     // Persisted so a researcher can reconnect to a running Slurm job after an
     // app restart (Phase C exit criterion).
-    public internal(set) var remoteJobID: String? = UserDefaults.standard.string(
-        forKey: "SteerLabRemoteJobID")
-    {
-        didSet { UserDefaults.standard.set(remoteJobID, forKey: "SteerLabRemoteJobID") }
+    public internal(set) var remoteJobID: String? {
+        didSet { defaults.set(remoteJobID, forKey: "SteerLabRemoteJobID") }
     }
     public internal(set) var remoteLogLines: [String] = []
     public internal(set) var remoteLastUploadedBundle: String?
@@ -49,7 +47,42 @@ public final class StudyRemoteJobController {
     @ObservationIgnored var presentation = StudyJobPresentation()
     @ObservationIgnored private var remoteLogTask: Task<Void, Never>?
     @ObservationIgnored private var streamGeneration = UUID()
-    public init() {}
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var origins: [String: [RemoteJobOrigin]]
+
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        remoteJobID = defaults.string(forKey: "SteerLabRemoteJobID")
+        origins = defaults.data(forKey: "SteerLabRemoteJobOrigins")
+            .flatMap { try? JSONDecoder().decode([String: [RemoteJobOrigin]].self, from: $0) } ?? [:]
+    }
+
+    func recordOrigin(_ origin: RemoteJobOrigin?, jobID: String) {
+        guard let origin else { return }
+        if !(origins[jobID] ?? []).contains(origin) {
+            origins[jobID, default: []].append(origin)
+            if let data = try? JSONEncoder().encode(origins) {
+                defaults.set(data, forKey: "SteerLabRemoteJobOrigins")
+            }
+        }
+    }
+
+    public func origin(for jobID: String) throws -> RemoteJobOrigin {
+        guard let known = origins[jobID], known.count == 1, let origin = known.first else {
+            throw ChatServiceError(reason: "Job \(jobID) has missing or ambiguous origin. "
+                + "Reconnect explicitly to its original server and workspace before acting.")
+        }
+        return origin
+    }
+
+    public func clientForJob(_ jobID: String, connected: ClusterClient?) throws -> ClusterClient {
+        let origin = try origin(for: jobID)
+        guard let connected, origin.matches(connected) else {
+            throw ChatServiceError(reason: "Job \(jobID) belongs to \(origin.connection.name) "
+                + "at \(origin.connection.baseURL). Reconnect that server to act on this job.")
+        }
+        return connected
+    }
     private func note(_ text: String, severity: PanelNotice.Severity) {
         presentation.note(text, severity)
     }
@@ -85,6 +118,26 @@ public final class StudyRemoteJobController {
             remoteStatus = "enter a job id to reconnect"
             return
         }
+        guard let client else {
+            remoteStatus = "connect the originating server before reconnecting a job"
+            return
+        }
+        let captured: RemoteJobOrigin
+        do {
+            if origins[trimmed] != nil {
+                captured = try origin(for: trimmed)
+                guard captured.matches(client) else {
+                    throw ChatServiceError(reason: "This job ID belongs to another server; reconnect its originating server.")
+                }
+            } else {
+                captured = RemoteJobOrigin(connection: client.profile, workspaceRoot: ExperimentStore.workspaceRoot)
+            }
+            _ = try await client.job(trimmed)
+            recordOrigin(captured, jobID: trimmed)
+        } catch {
+            remoteStatus = "job reconnect failed: \(error)"
+            return
+        }
         remoteJobID = trimmed
         remoteLogLines = []
         stopRemoteLogStream()
@@ -109,11 +162,18 @@ public final class StudyRemoteJobController {
         }
     }
     public func streamRemoteJobLog(jobID: String? = nil, client: ClusterClient?) async {
-        guard let client else { return }
+        let originatingClient: ClusterClient
+        do {
+            guard let id = jobID ?? remoteJobID else { return }
+            originatingClient = try clientForJob(id, connected: client)
+        } catch {
+            remoteStatus = "log follow refused: \(error)"
+            return
+        }
         await streamRemoteJobLog(
             jobID: jobID,
-            stream: { id, receive in try await client.streamJobLog(jobID: id, onLine: receive) },
-            job: { id in try await client.job(id) })
+            stream: { id, receive in try await originatingClient.streamJobLog(jobID: id, onLine: receive) },
+            job: { id in try await originatingClient.job(id) })
     }
 
     func streamRemoteJobLog(

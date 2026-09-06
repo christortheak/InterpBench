@@ -152,18 +152,25 @@ Pins each named concept's **current** stimulus hash plus its extraction
 options. It also pins the neutral corpus when one exists — that corpus
 denominates norm-unit α, so it is a pinned input, not a convenience.
 
-Author the concept directory first. Both stimulus files must exist; if either
-is missing, the refusal names *both* missing paths and the row shape in one
-message. The row shape is:
+Author inputs for the chosen method before attaching:
 
-```jsonl
-{"text": "A sentence that expresses the concept."}
-{"text": "Another one, same topic, same length, same register."}
-```
+- `meanDifference` and `lat`: `prompts/concepts/<concept>/positive.jsonl`
+  and `negative.jsonl`. Both files are required. Each row is a JSON object
+  with a `text` string, for example `{"text":"A concept-relevant statement."}`.
+  Match topics, length and register to reduce confounds. LAT uses aligned
+  pairs; mean difference compares class means and does not require equal counts.
+- `emotionGrandMean`: `prompts/emotions/<concept>/stories.jsonl` for every
+  member of the declared `--corpus a,b,c`. Rows contain `text`. The comparison
+  population is the pooled corpus, including the target concept; membership
+  and file hashes are part of the recipe.
+- `designatedReference`: the target and `--reference <concept>` each supply
+  `prompts/emotions/<concept>/stories.jsonl`. Both story corpora are pinned;
+  the reference must be chosen for the research question, not copied by default.
 
-`positive.jsonl` and `negative.jsonl` should be content-matched pair-for-pair:
-the difference between the files should be the concept and nothing else.
-Everything the extraction reads is these two files.
+Rendering, reading position, model revision and applicable neutral-norm inputs
+also affect extraction. Record and review those declarations alongside the data.
+Matched inputs and random controls support interpretation; they do not prove
+that a direction isolates the intended construct.
 
 `--project-neutral K` exists and is **legacy, draft-only** — verified and
 frozen manifests reject it. Do not use it.

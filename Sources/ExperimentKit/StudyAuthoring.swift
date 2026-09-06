@@ -290,9 +290,9 @@ public enum StudyIntent: String, CaseIterable, Sendable, Identifiable {
                     + "which layer and strength (the sweep grid)",
                 "Effect sizes per condition, paired to the same-case "
                     + "baseline, with bootstrap confidence intervals",
-                "Direction vs energy: matched-norm random controls prove an "
-                    + "effect is the concept's direction, not perturbation "
-                    + "noise",
+                "Direction vs energy: matched-norm random controls test "
+                    + "whether the effect exceeds nonspecific perturbation; "
+                    + "they do not rule out confounds or establish construct validity",
                 "Capability cost: the battery says whether steering broke "
                     + "general ability",
                 "Confirm phase: replication on held-out prompts, dose "

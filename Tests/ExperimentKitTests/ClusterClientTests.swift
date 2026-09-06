@@ -6,6 +6,43 @@ import Testing
 @testable import ExperimentKit
 
 @Suite(.serialized) struct ClusterClientTests {
+    @Test func prohibitedTransferStopsBeforeOpeningLocalFileOrDownload() async throws {
+        let client = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { request in
+                #expect(request.url?.path == "/api/capabilities")
+                return (Data(#"{"remoteStudy":{"httpTransfer":false,"externalTransferRequired":true}}"#.utf8), 200)
+            })
+        do {
+            _ = try await client.uploadBundle(URL(filePath: "/missing-upload.tar.gz"))
+            Issue.record("expected policy refusal")
+        } catch {
+            #expect(String(describing: error).contains("external artifact transfer"))
+        }
+        do {
+            _ = try await client.downloadArtifact(path: "/missing", to: URL(filePath: "/missing-destination"))
+            Issue.record("expected policy refusal")
+        } catch {
+            #expect(String(describing: error).contains("external artifact transfer"))
+        }
+    }
+
+    @Test func serverResidentSubmissionUsesTheServerExperimentKey() async throws {
+        let client = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { request in
+                #expect(request.url?.path == "/api/studies/submit")
+                let body = try #require(Self.bodyData(from: request))
+                let object = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+                #expect(object["experiment"] as? String == "example")
+                #expect(object["name"] == nil)
+                #expect(object["verb"] as? String == "verify")
+                return (Data(#"{"jobId":"id","experiment":"example","verb":"verify","executor":"local","dryRun":true,"runBundle":{},"command":[],"recordsDirectory":"/runs/example","submissionDirectory":"/runs/submission"}"#.utf8), 200)
+            })
+        _ = try await client.submitStudy(experiment: "example", verb: "verify", executor: "local", dryRun: true)
+    }
+
+
     @Test func clientErrorsExposeTheirActionableMessageThroughLocalizedDescription() {
         let error = ClusterClient.ClientError.badResponse(
             401, #"{"detail":"missing or invalid bearer token"}"#)
@@ -832,6 +869,9 @@ import Testing
             profile: ClusterConnectionProfile(
                 baseURL: URL(string: "https://ood.test/node/gpu1/8000")!),
             session: Self.session { request in
+                if request.url?.path.hasSuffix("/api/capabilities") == true {
+                    return (Data(#"{"remoteStudy":{"httpTransfer":true}}"#.utf8), 200)
+                }
                 #expect(request.url?.path == "/node/gpu1/8000/api/bundles/download")
                 let components = URLComponents(
                     url: request.url!, resolvingAgainstBaseURL: false)

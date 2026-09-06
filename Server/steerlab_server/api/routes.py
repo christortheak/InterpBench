@@ -3774,9 +3774,19 @@ def build_router(state: ServiceState) -> APIRouter:
             raise HTTPException(status_code=400, detail=str(exc))
         return {"jobId": job.id, "slurmJobID": slurm_id, "bundle": bundle.to_dict()}
 
+    def require_submission_verb(body: dict) -> str:
+        verb = body.get("verb")
+        if not isinstance(verb, str) or not verb.strip():
+            raise HTTPException(status_code=400, detail={
+                "code": "operation_required",
+                "message": "Submission requires an explicit verb.",
+                "repairAction": "Choose the study operation and supply verb in the request."})
+        return verb
+
     @router.post("/api/studies/submit")
     def submit_study_route(body: dict):
         _refuse_worker_submission()
+        verb = require_submission_verb(body)
         name = body.get("experiment")
         if not name:
             raise HTTPException(status_code=400, detail="experiment required")
@@ -3789,7 +3799,7 @@ def build_router(state: ServiceState) -> APIRouter:
                                             resolver.roots.runs)
         try:
             submission = submit_study(
-                name, verb=body.get("verb", "run"), jobs=state.jobs,
+                name, verb=verb, jobs=state.jobs,
                 executor=body.get("executor"), dry_run=bool(body.get("dryRun", False)),
                 dtype=body.get("dtype", "auto"), device=body.get("device"),
                 target_root=target_root, prompts_path=prompts_path,
@@ -3823,6 +3833,7 @@ def build_router(state: ServiceState) -> APIRouter:
     @router.post("/api/studies/submit-bundle")
     def submit_bundle_route(body: dict):
         _refuse_worker_submission()
+        verb = require_submission_verb(body)
         bundle_path = body.get("bundlePath")
         if not bundle_path:
             raise HTTPException(status_code=400, detail="bundlePath required")
@@ -3839,7 +3850,7 @@ def build_router(state: ServiceState) -> APIRouter:
                                             resolver.roots.runs)
         try:
             submission = submit_run_bundle(
-                bundle_path, verb=body.get("verb", "run"), jobs=state.jobs,
+                bundle_path, verb=verb, jobs=state.jobs,
                 executor=body.get("executor"), dry_run=bool(body.get("dryRun", False)),
                 dtype=body.get("dtype", "auto"), device=body.get("device"),
                 target_root=target_root, prompts_path=prompts_path,
@@ -3930,6 +3941,8 @@ def build_router(state: ServiceState) -> APIRouter:
         The success path, and the response shape, are unchanged.
         """
         from ..experiment import bundles
+        from .transfer_policy import require_http_transfer
+        require_http_transfer()
         filename = request.headers.get("x-steerlab-filename", "upload.bundle")
         if "/" in filename or "\\" in filename or "\0" in filename:
             raise HTTPException(status_code=400, detail="invalid upload filename")
@@ -3996,6 +4009,8 @@ def build_router(state: ServiceState) -> APIRouter:
 
     @router.get("/api/bundles/download")
     def download_bundle(path: str):
+        from .transfer_policy import require_http_transfer
+        require_http_transfer()
         safe_path = state.resolver.require_file(
             path, root=state.resolver.roots.runs, allow_local_absolute=True)
         name = os.path.basename(safe_path)

@@ -230,7 +230,9 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             devices = model_loader.available_devices()
         except Exception:  # pragma: no cover
             devices = ["cpu"]
+    from .service_authority import service_role
     return {
+        "serviceRole": service_role(),
         "serverVersion": __version__,
         "apiSchemaVersion": "2026-07-01",
         "engine": "python-hf-transformers",
@@ -384,8 +386,7 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             "variantStudySampling": True,
             "httpTransfer": profile.transfer_method in (None, "", "http"),
             "externalTransferRequired": (
-                profile.profile == "cluster"
-                and profile.transfer_method not in (None, "", "http")
+                profile.transfer_method not in (None, "", "http")
             ),
             "stagingRoot": profile.run_root or os.path.join(profile.root, "runs"),
         },

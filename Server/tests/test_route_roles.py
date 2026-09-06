@@ -34,7 +34,7 @@ from steerlab_server.api.app import (  # noqa: E402
     request_is_privileged,
 )
 
-from route_roles import (  # noqa: E402
+from steerlab_server.api.route_roles import (  # noqa: E402
     BY_KEY,
     CENSUS,
     Role,
@@ -286,17 +286,8 @@ def test_the_census_covers_the_whole_app_and_is_not_a_sample():
     assert len(CENSUS) == len(declared_routes(app))
 
 
-def test_the_census_activates_no_restriction():
-    # Step 1 is a labelled census and NOTHING else. The one helper that reads
-    # the table is documentation of it; no production module imports this
-    # file, and no request is refused because of a label. If that ever stops
-    # being true, it must stop being true in the diff that makes it true.
-    package = Path(__file__).resolve().parent.parent / "steerlab_server"
-    importers = sorted(
-        str(path.relative_to(package.parent))
-        for path in package.rglob("*.py")
-        if "route_roles" in path.read_text(encoding="utf-8"))
-    assert not importers, (
-        "Production modules now reference the census: "
-        f"{importers}. That is a real narrowing, not step 1 — move the table "
-        "into the package and give it tests that pin the refusals.")
+def test_the_census_is_the_runtime_authority_source():
+    from steerlab_server.api.service_authority import role_for_request
+    for entry in CENSUS:
+        # Literal templates also exercise each method's declaration lookup.
+        assert role_for_request(entry.method, entry.path) == entry.role

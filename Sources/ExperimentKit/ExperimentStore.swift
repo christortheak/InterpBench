@@ -692,9 +692,9 @@ public enum ExperimentStore {
     /// Server twin: `experiment_store.save_raw(clearing_arms=…)`.
     public static func save(
         _ manifest: ExperimentManifest, allowCreate: Bool = false,
-        mayClearArms: Bool = false
+        mayClearArms: Bool = false, workspaceRoot: URL? = nil
     ) throws {
-        let storage = repository
+        let storage = ExperimentRepository(workspaceRoot: workspaceRoot ?? Self.workspaceRoot)
         try ManifestMutationPolicy.admitSave(
             manifest, existing: try? storage.load(name: manifest.name),
             allowCreate: allowCreate, mayClearArms: mayClearArms)
@@ -796,13 +796,14 @@ public enum ExperimentStore {
     /// has to say so, which is what `mayClearArms` passes on.
     @discardableResult
     static func updateDraft(
-        name: String, mayClearArms: Bool = false,
+        name: String, mayClearArms: Bool = false, workspaceRoot: URL? = nil,
         _ mutate: (inout ExperimentManifest) throws -> Void
     ) throws -> ExperimentManifest {
-        var manifest = try load(name: name)
+        let root = workspaceRoot ?? Self.workspaceRoot
+        var manifest = try ExperimentRepository(workspaceRoot: root).load(name: name)
         try ManifestMutationPolicy.admitDraftEdit(manifest)
         try mutate(&manifest)
-        try save(manifest, mayClearArms: mayClearArms)
+        try save(manifest, mayClearArms: mayClearArms, workspaceRoot: root)
         return manifest
     }
 

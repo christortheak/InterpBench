@@ -14,6 +14,7 @@ extension StudyRemoteJobController {
             return
         }
         do {
+            let client = try clientForJob(id, connected: client)
             let result = try await client.resubmitJob(id)
             let line = RemoteJobStatusClass.resumedStatusLine(
                 jobID: id, slurmJobID: result.slurmJobID,
@@ -42,6 +43,7 @@ extension StudyRemoteJobController {
             return
         }
         do {
+            let client = try clientForJob(job.id, connected: client)
             try await client.cancelJob(job.id)
             actionNote(
                 "cancel requested for server \(job.verb) job \(job.id) ('\(job.study)')",
@@ -54,6 +56,7 @@ extension StudyRemoteJobController {
     public func cancelRemoteJob(client: ClusterClient?) async {
         guard let client, let remoteJobID else { return }
         do {
+            let client = try clientForJob(remoteJobID, connected: client)
             try await client.cancelJob(remoteJobID)
             remoteStatus = "cancel requested for \(remoteJobID)"
         } catch {

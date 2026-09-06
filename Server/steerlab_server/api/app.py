@@ -413,6 +413,17 @@ async def session_middleware(request: Request, call_next):
 
 
 @app.middleware("http")
+async def service_authority_middleware(request: Request, call_next):
+    # Registered before auth_middleware: authentication wraps this gate and
+    # still runs first. Role authorization cannot grant authentication.
+    from .service_authority import refusal
+    detail = refusal(request.method, request.url.path)
+    if detail is not None:
+        return JSONResponse({"detail": detail}, status_code=403)
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     profile = ServerProfile.from_env()
     path = request.url.path

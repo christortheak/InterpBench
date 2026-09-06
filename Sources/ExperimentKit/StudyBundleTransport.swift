@@ -4,6 +4,7 @@ import SteeringKit
 /// Replaceable at the network/package boundary for deterministic coordination tests.
 @MainActor
 struct StudyBundleTransport {
+    var origin: RemoteJobOrigin? = nil
     var frozenConflict: (ExperimentManifest) async -> String?
     var package: (ExperimentManifest) async throws -> URL
     var upload: (URL) async throws -> String
@@ -22,11 +23,19 @@ struct StudyBundleTransport {
     }
 
     init(client: ClusterClient) {
+        origin = RemoteJobOrigin(connection: client.profile, workspaceRoot: ExperimentStore.workspaceRoot)
         frozenConflict = { manifest in
             await client.frozenOnServerConflict(study: manifest.name, localStatus: manifest.status)
         }
+        let workspaceRoot = ExperimentStore.workspaceRoot
         package = { manifest in
-            try await Task.detached { try RunBundlePackager.packageExperiment(manifest) }.value
+            guard ExperimentStore.workspaceRoot == workspaceRoot else {
+                throw ChatServiceError(reason: "The workspace changed before packaging; submit from the intended workspace.")
+            }
+            let source = RunBundlePackager.captureSource(manifest)
+            return try await Task.detached {
+                try RunBundlePackager.packageExperiment(manifest, source: source)
+            }.value
         }
         upload = { try await client.uploadBundle($0).path }
         submit = { path, request in
