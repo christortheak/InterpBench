@@ -1814,6 +1814,21 @@ public final class ExperimentPanel {
     public func saveProtocol() {
         guard var manifest = selected, manifest.status == .draft else { return }
         do {
+            // Validate every protocol field before pinning or publishing. These
+            // are the same field policies used by the named store setters, but
+            // the setup edit publishes once instead of leaving a partial edit
+            // behind if a later policy refuses it.
+            let name = manifest.name
+            try ManifestDraftEdits.setPhase(
+                nilIfEmpty(draft.phaseField), experimentName: name, manifest: &manifest)
+            try ManifestDraftEdits.setCaseFamily(
+                nilIfEmpty(draft.caseFamilyField), experimentName: name, manifest: &manifest)
+            try ManifestDraftEdits.setSamplingPolicy(
+                samplesPerItem: draft.samplesPerItemField <= 1 ? nil : draft.samplesPerItemField,
+                seedPolicy: nilIfEmpty(draft.seedPolicyField),
+                experimentName: name, manifest: &manifest)
+            try ManifestDraftEdits.setAcknowledgeUnequalOptionLengths(
+                draft.acknowledgeUnequalOptionLengthsField, experimentName: name, manifest: &manifest)
             manifest.experimentDescription = draft.protocolDescription
             manifest.taskDescription = nilIfEmpty(draft.taskDescription)
             manifest.outcomeMeasures = nilIfEmpty(draft.outcomeMeasures)
@@ -1955,21 +1970,6 @@ public final class ExperimentPanel {
                 manifest.taskPromptsHash = nil
             }
             try management.persistReviewedDraft(manifest)
-            // Formerly "Science Manifest" fields (that section is
-            // dissolved), saved through the same store setters from their
-            // new homes: funnel phase + sampling policy (Study Setup),
-            // case family + option-length acknowledgment (Evaluation).
-            // After save(manifest): these load-modify-save by name.
-            try ExperimentStore.setPhase(
-                nilIfEmpty(draft.phaseField), experimentName: manifest.name)
-            try ExperimentStore.setCaseFamily(
-                nilIfEmpty(draft.caseFamilyField), experimentName: manifest.name)
-            try ExperimentStore.setSamplingPolicy(
-                samplesPerItem: draft.samplesPerItemField <= 1 ? nil : draft.samplesPerItemField,
-                seedPolicy: nilIfEmpty(draft.seedPolicyField),
-                experimentName: manifest.name)
-            try ExperimentStore.setAcknowledgeUnequalOptionLengths(
-                draft.acknowledgeUnequalOptionLengthsField, experimentName: manifest.name)
             refresh()
             note("saved protocol notes and run defaults", severity: .success)
         } catch {

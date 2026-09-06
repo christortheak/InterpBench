@@ -110,6 +110,18 @@ import Testing
             #expect(saved.variantConditions.isEmpty)
         }
     }
+
+    @Test func invalidSamplingPolicyDoesNotPartiallyPublishProtocolChanges() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "protocol-transaction") { _ in
+            try variantDraft(named: "reviewed")
+            let panel = makePanel(selecting: "reviewed")
+            let before = try #require(ExperimentStore.manifestData(name: "reviewed"))
+            panel.draft.protocolDescription = "changed description"
+            panel.draft.seedPolicyField = "unsupported-policy"
+            panel.saveProtocol()
+            #expect(ExperimentStore.manifestData(name: "reviewed") == before)
+        }
+    }
 }
 
 /// The other silent loss on this route: a default `JSONDecoder` ignores keys

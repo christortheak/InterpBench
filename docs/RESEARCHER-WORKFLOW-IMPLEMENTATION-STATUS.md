@@ -145,3 +145,19 @@ Xcode beta (`TEST SUCCEEDED`), and 5,896 Python tests passed with 9 skipped and
 8 warnings (149.44 seconds). The new cross-language subset passed four tests.
 The bridge dependency ratchet passes without a budget increase. These results
 qualify this checkpoint, not all of WP-2 or the remaining work packages.
+
+## Atomic protocol setup save
+
+The next authoring check reproduced a partial-write defect: an invalid seed
+policy was rejected only after the main protocol and earlier metadata setters
+had already published. Setup now applies the existing pure field policies before
+pinning or publication and writes the complete manifest once through the reviewed
+snapshot. The regression fails against the old behavior and passes after the fix.
+The full serialized Xcode suite passes: 277 SteeringKit and 4,413 ExperimentKit
+tests. Python implementation is unchanged by this correction; its latest full
+result remains the 5,896-pass run recorded above. These are branch checkpoints;
+landing still requires the maintainer's independent review and final suite gates.
+
+Combining workspace-mutating suites under SwiftPM's focused runner stalled again.
+Use the nonparallel Xcode invocation for combined/full Swift qualification; do
+not interrupt the installed production app to work around a test-runner stall.

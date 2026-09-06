@@ -34,14 +34,15 @@ To reproduce from this checkout (all scratch stays outside the workspace):
 export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
 export TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.920.1
 audit_scratch=$(mktemp -d /private/tmp/panel-owner-audit.XXXXXX)
-mkdir "$audit_scratch/before"
+mkdir "$audit_scratch/before" "$audit_scratch/after"
 git archive a9545df | tar -x -C "$audit_scratch/before"
+git archive 22024f7 | tar -x -C "$audit_scratch/after"
 audit_host="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host"
 xcrun swiftc -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
   -target arm64-apple-macosx15.0 -I "$audit_host" -L "$audit_host" \
   -Xlinker -rpath -Xlinker "$audit_host" \
   scripts/ci/audit-panel-owner-access.swift -o "$audit_scratch/audit"
-"$audit_scratch/audit" "$PWD" "$audit_scratch/before"
+"$audit_scratch/audit" "$audit_scratch/after" "$audit_scratch/before"
 ```
 
 This checkpoint audit intentionally flags subsequent semantic work; rerun it on
