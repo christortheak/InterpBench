@@ -11,7 +11,7 @@ completion; a passing focused test does not establish release or scientific qual
 
 | Package | Status | Remaining gate |
 |---|---|---|
-| WP-0 operation inventory | Started: this shared backlog | Maintained per-operation surface matrix and owner census |
+| WP-0 operation inventory | [49-operation matrix](RESEARCH-OPERATION-MATRIX.md) and shared backlog | Expand advanced/per-field mappings and link executable journey evidence |
 | WP-1 observation and context | In progress | Finish origin persistence/actions, import context, transport policy, explicit submission and offline results; both suites |
 | WP-2 shared services | Runtime roles and draft preconditions implemented; writer/adapter migration in progress | External stale-write preconditions, authoring owners, service roles, bridge retirement |
 | WP-3 public operations | Pending | Designs, models, assembly, advanced-method mappings and adapters |
@@ -198,3 +198,14 @@ captured requests; three compatibility bridges remain. The manifest publication
 is atomic, but generated scenario creation and manifest publication are not a
 crash-atomic multi-file transaction. Unreferenced generated inputs after a disk
 failure remain a recovery/cleanup concern; no frozen or run files are rewritten.
+
+## Operation inventory checkpoint
+
+[The maintained matrix](RESEARCH-OPERATION-MATRIX.md) identifies 49 operations,
+their owners, distinct CLI/HTTP/UI surfaces, explicit gaps/restrictions and next
+verification gates. Source links resolve and operation IDs are unique. It records
+the development CLI and installed-app metadata separately; no production app
+or server was exercised. Remaining unverified cells are deliberate work items,
+not assumptions of absence or parity. In particular, the selected-state Swift
+protocol and prompt HTTP routes can answer ok after a swallowed panel refusal;
+truthful explicit request/result adapters remain required work.
