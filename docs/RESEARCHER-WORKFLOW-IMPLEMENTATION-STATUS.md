@@ -209,3 +209,46 @@ or server was exercised. Remaining unverified cells are deliberate work items,
 not assumptions of absence or parity. In particular, the selected-state Swift
 protocol and prompt HTTP routes can answer ok after a swallowed panel refusal;
 truthful explicit request/result adapters remain required work.
+
+## Explicit Swift HTTP protocol authorship
+
+The Swift protocol route now requires a named study, workspace and external file
+digest. A new named manifest read supplies the complete JSON document and its
+file precondition. The adapter builds fields from the reviewed persisted setup,
+uses `StudyProtocolAuthoring` directly, and returns typed success/refusal results.
+It neither selects a study nor updates unsaved native fields or their review tag.
+Exclusion edits share the protocol's single publication, so a failed input pin
+cannot leave separately published rules. The bundled web form sends its displayed
+document's identity, reports failures, and provides explicit discard/reload.
+
+Validation: five focused HTTP adapter tests pass. A real built-CLI loopback server
+passed named read/save, stale 412, missing-precondition 428 and retention of the
+saved edit after refusal, using disposable study data. The full Xcode beta suite passes
+277 SteeringKit and 4,422 ExperimentKit tests (`TEST SUCCEEDED`); full Python
+passes 5,896 with 9 skipped and 8 warnings (140.65 seconds). JavaScript syntax,
+bridge ratchet and `git diff --check` pass. The actual diff was read locally.
+
+The extracted exclusion policy has a reproducible parsed syntax-tree audit:
+`scripts/ci/audit-exclusion-policy.swift` compares the old `updateDraft` closure
+in `ExclusionRules+UI.swift` at `06a8149` with the new policy body in
+`ManifestDraftEdits.swift`. It passes with only trivia excluded; no control flow,
+literals or statements are normalized. Compile with the Xcode host SwiftParser
+and SwiftSyntax libraries using the invocation pattern in BRIDGE-RETIREMENT.md,
+then pass the current and archived baseline checkout paths to the executable.
+The HTTP request/result migration itself intentionally changes behavior and is
+not claimed mechanical.
+
+**WP-7 browser blocker:** the real `/api/state` check stalled in the existing
+`ExperimentPanel.judgeModelOffers` → `JudgeKeyStore.resolveKey` →
+`SecItemCopyMatching` path. A process stack sample captured the main actor waiting
+for Keychain access. The disposable server was stopped; no credential was exposed,
+changed or approved, and the production app was not relaunched. Browser visual
+and interaction qualification therefore remains incomplete. Rendering capability
+choices should not require interactive secret retrieval. This concrete trace
+is not yet evidence that it explains the separate installed-app-open suite hang.
+
+Remaining WP-2 review includes native inventory refresh versus unsaved edit
+snapshots: a refresh must not silently replace the authoring precondition while
+retaining old form fields. The new HTTP route deliberately does not perform such
+a refresh, but other native refresh paths still need their own regression and
+migration. Prompt, condition, design and remaining HTTP operations also remain.

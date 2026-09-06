@@ -166,76 +166,6 @@ public final class SteerLabWebServer: Sendable {
         try? JSONDecoder().decode(type, from: body)
     }
 
-    /// The closed protocol-body vocabulary — the keys
-    /// `POST /api/experiment/protocol` may carry, in its Body's declaration
-    /// order. A default `JSONDecoder` silently ignores keys the Body does not
-    /// declare, so an out-of-vocabulary key used to write nothing while the
-    /// route answered ok — the same silent loss the Python engine's
-    /// `set_protocol` refuses (`experiment_store.PROTOCOL_FIELDS`; that
-    /// vocabulary is the manifest's spellings, this one is the panel's).
-    /// Factored out with `unknownProtocolBodyKeys` so the decision is
-    /// testable without a live ChatService, like `isRequestRefused`.
-    static let protocolBodyKeys: [String] = [
-        "description", "task", "outcomes", "judgeModel", "judgePrompt",
-        "taskPromptsFile", "promptMode", "systemPrompt", "qwenThinkingEnabled",
-        "reasoningEffort", "reasoningMaxTokens",
-        "temperature", "maxTokens", "samplesPerItem", "seedPolicy",
-        "exclusionRules",
-    ]
-
-    /// The body's top-level keys outside the vocabulary, sorted. A body that
-    /// is not a JSON object answers `[]` — the typed decode already refuses
-    /// those as "bad body".
-    static func unknownProtocolBodyKeys(in body: Data) -> [String] {
-        guard let object = (try? JSONSerialization.jsonObject(with: body))
-            as? [String: Any] else { return [] }
-        return object.keys.filter { !protocolBodyKeys.contains($0) }.sorted()
-    }
-
-    /// The protocol route's VALUE gates, as one decision — the sentence to
-    /// answer with, or nil when every declared value is one the manifest can
-    /// hold. Factored out beside `unknownProtocolBodyKeys` for the same
-    /// reason: the decision is testable without a live ChatService.
-    ///
-    /// These run BEFORE anything is applied, because `saveProtocol` reports
-    /// its own refusals as panel notes and this route cannot see them — so a
-    /// bad value passed through would answer ok while writing nothing, the
-    /// silent loss the key check refuses. Every sentence is the STORE
-    /// setter's own (`ExperimentStore.setSamplingProtocol`), so the route and
-    /// the verb say the same thing to the same body.
-    ///
-    /// `temperature` and `maxTokens` used to be assigned unchecked while
-    /// their two neighbours were gated (review round 10, finding 3): a
-    /// negative temperature or a zero maxTokens reached the panel fields, and
-    /// the note the store would have raised went nowhere.
-    static func protocolBodyValueProblem(
-        temperature: Double? = nil, maxTokens: Int? = nil,
-        samplesPerItem: Int? = nil, seedPolicy: String? = nil,
-        exclusionRules: [ExclusionRule]? = nil
-    ) -> String? {
-        if let temperature, !(temperature.isFinite && temperature >= 0) {
-            return "temperature must be a non-negative number — got "
-                + "\(temperature)"
-        }
-        if let maxTokens, maxTokens < 1 {
-            return "maxTokens must be a positive integer — got \(maxTokens)"
-        }
-        if let samplesPerItem, samplesPerItem < 1 {
-            return "samplesPerItem must be ≥ 1 — got \(samplesPerItem)"
-        }
-        if let seedPolicy, !seedPolicy.isEmpty,
-            !ExperimentStore.knownSeedPolicies.contains(seedPolicy)
-        {
-            return "unknown seedPolicy '\(seedPolicy)' — known: "
-                + ExperimentStore.knownSeedPolicies.joined(separator: ", ")
-        }
-        if let exclusionRules {
-            let problems = ExclusionEngine.violations(exclusionRules)
-            if !problems.isEmpty { return problems.joined(separator: "; ") }
-        }
-        return nil
-    }
-
     private static func queryValue(_ name: String, in path: String) -> String? {
         guard let components = URLComponents(string: "http://localhost\(path)") else { return nil }
         return components.queryItems?.first { $0.name == name }?.value
@@ -770,123 +700,15 @@ public final class SteerLabWebServer: Sendable {
             service.experiments.create()
             return .ok()
 
+        case ("GET", let requestPath)
+            where requestPath.split(separator: "?").first == "/api/experiment/manifest":
+            let response = StudyProtocolHTTP.read(
+                name: queryValue("name", in: requestPath), workspaceRoot: ExperimentStore.workspaceRoot)
+            return Response(status: response.status, body: response.body)
+
         case ("POST", "/api/experiment/protocol"):
-            struct Body: Decodable {
-                let description: String?
-                let task: String?
-                let outcomes: String?
-                let judgeModel: String?
-                let judgePrompt: String?
-                let taskPromptsFile: String?
-                let promptMode: ExperimentManifest.PromptMode?
-                let systemPrompt: String?
-                let qwenThinkingEnabled: Bool?
-                let reasoningEffort: String?
-                let reasoningMaxTokens: Int?
-                let temperature: Double?
-                let maxTokens: Int?
-                let samplesPerItem: Int?
-                let seedPolicy: String?
-                let exclusionRules: [ExclusionRule]?
-            }
-            // Refuse, never drop: keys the Body does not declare would be
-            // silently ignored by the decoder below, and the route would
-            // answer ok over a declaration that wrote nothing (the loss
-            // class `armsCleared` exists to refuse). Checked before the
-            // typed decode so nothing is written on refusal.
-            let unknown = unknownProtocolBodyKeys(in: body)
-            guard unknown.isEmpty else {
-                return .error(
-                    "unknown protocol field(s) "
-                        + unknown.map { "'\($0)'" }.joined(separator: ", ")
-                        + " — known: "
-                        + protocolBodyKeys.joined(separator: ", ")
-                        + "; nothing was written")
-            }
-            guard let request = decode(Body.self, from: body) else { return .error("bad body") }
-            // Value gates BEFORE anything is applied (see
-            // `protocolBodyValueProblem`).
-            if let problem = protocolBodyValueProblem(
-                temperature: request.temperature, maxTokens: request.maxTokens,
-                samplesPerItem: request.samplesPerItem,
-                seedPolicy: request.seedPolicy,
-                exclusionRules: request.exclusionRules)
-            {
-                return .error(problem)
-            }
-            if let description = request.description {
-                service.experiments.draft.protocolDescription = description
-            }
-            if let task = request.task {
-                service.experiments.draft.taskDescription = task
-            }
-            if let outcomes = request.outcomes {
-                service.experiments.draft.outcomeMeasures = outcomes
-            }
-            if let judgeModel = request.judgeModel {
-                service.experiments.draft.judgeModel = judgeModel
-            }
-            if let judgePrompt = request.judgePrompt {
-                service.experiments.draft.evaluationPrompt = judgePrompt
-            }
-            if let taskPromptsFile = request.taskPromptsFile {
-                service.experiments.draft.taskPromptsFile = taskPromptsFile
-            }
-            if let promptMode = request.promptMode {
-                service.experiments.draft.promptMode = promptMode
-            }
-            if let systemPrompt = request.systemPrompt {
-                service.experiments.draft.systemPrompt = systemPrompt
-            }
-            if let qwenThinkingEnabled = request.qwenThinkingEnabled {
-                service.experiments.draft.qwenThinkingEnabled = qwenThinkingEnabled
-            }
-            // The effort spelling wins over the legacy boolean when a body
-            // carries both; the joint rules are the panel's own at save.
-            if let reasoningEffort = request.reasoningEffort {
-                service.experiments.draft.reasoningEffort = reasoningEffort
-            }
-            if let reasoningMaxTokens = request.reasoningMaxTokens {
-                service.experiments.draft.reasoningMaxTokens =
-                    reasoningMaxTokens > 0 ? reasoningMaxTokens : nil
-            }
-            if let temperature = request.temperature {
-                service.experiments.draft.runTemperature = temperature
-            }
-            if let maxTokens = request.maxTokens {
-                service.experiments.draft.runMaxTokens = maxTokens
-            }
-            if let samplesPerItem = request.samplesPerItem {
-                service.experiments.draft.samplesPerItemField = samplesPerItem
-            }
-            if let seedPolicy = request.seedPolicy {
-                service.experiments.draft.seedPolicyField = seedPolicy
-            }
-            // This request has no model field, so a headless protocol save is
-            // never a base-model change: adopt the manifest's own model as
-            // the panel's choice before delegating, or a stale panel field
-            // would read as a model change and clear every variant condition
-            // (open-issues §8, residual (b)).
-            service.experiments.adoptSelectedManifestBaseModel()
-            service.experiments.saveProtocol()
-            // Exclusion rules go through their own store setter, AFTER
-            // `saveProtocol`: that save writes the whole manifest from the
-            // panel's copy, so a rules write placed before it would be
-            // overwritten by a document that predates it. The panel keeps no
-            // exclusion-rules field — the setter is the one writer on every
-            // surface (`ExclusionRulesEditorView` uses the same one).
-            if let rules = request.exclusionRules,
-                let name = service.experiments.selected?.name
-            {
-                do {
-                    try ExperimentStore.setExclusionRules(
-                        rules.isEmpty ? nil : rules, experimentName: name)
-                    service.experiments.refresh()
-                } catch {
-                    return .error("\(error)")
-                }
-            }
-            return .ok()
+            let response = StudyProtocolHTTP.apply(body: body, workspaceRoot: ExperimentStore.workspaceRoot)
+            return Response(status: response.status, body: response.body)
 
         case ("POST", "/api/experiment/prompts/load"):
             service.experiments.loadTaskPrompts()
@@ -1286,6 +1108,8 @@ struct StateDTO: Encodable {
             let summary: String
         }
         let name: String
+        let workspaceRoot: String?
+        let manifestFileSHA256: String?
         let status: String
         let modelID: String
         let modelRevision: String?
@@ -1567,9 +1391,18 @@ struct StateDTO: Encodable {
         experiments = panel.experiments.map {
             ExperimentSummaryDTO(name: $0.name, status: $0.status.rawValue)
         }
-        experiment = panel.selected.map { manifest in
-            ExperimentDetailDTO(
+        // The web form renders one persisted snapshot, independent of unsaved
+        // native fields. Its digest travels with those displayed values; a save
+        // never refreshes the native editor's review behind the researcher's back.
+        experiment = panel.selected.flatMap { selection in
+            guard let reviewed = try? DraftAuthoringSnapshot(
+                workspaceRoot: ExperimentStore.workspaceRoot, name: selection.name)
+            else { return nil }
+            let manifest = reviewed.manifest
+            return ExperimentDetailDTO(
                 name: manifest.name,
+                workspaceRoot: reviewed.workspaceRoot.path,
+                manifestFileSHA256: reviewed.file.sha256,
                 status: manifest.status.rawValue,
                 modelID: manifest.modelID,
                 modelRevision: manifest.modelRevision.map { String($0.prefix(12)) },
@@ -1580,11 +1413,11 @@ struct StateDTO: Encodable {
                 promptModes: ExperimentManifest.PromptMode.allCases.map {
                     PromptModeDTO(value: $0.rawValue, label: $0.label)
                 },
-                systemPrompt: panel.draft.systemPrompt,
-                qwenThinkingEnabled: panel.draft.qwenThinkingEnabled,
-                judgeModel: panel.draft.judgeModel,
+                systemPrompt: manifest.systemPrompt ?? "",
+                qwenThinkingEnabled: manifest.resolvedReasoningEffort.isOn,
+                judgeModel: manifest.evaluation?.judgeModel ?? manifest.modelID,
                 judgeModelOptions: panel.judgeModelOptions,
-                judgePrompt: panel.draft.evaluationPrompt,
+                judgePrompt: manifest.evaluation?.judgePrompt ?? "",
                 taskPromptsFile: manifest.taskPromptsFile,
                 taskPromptsHash: manifest.taskPromptsHash.map { String($0.prefix(12)) },
                 taskPromptsText: panel.draft.taskPromptsText,

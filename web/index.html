@@ -156,6 +156,7 @@ let geoReportID = "";
 let geoImportStatus = "";
 let conceptVectorFilter = new Set();
 let conceptVectorSort = "newest";
+let protocolSaveNotice = { key: null, text: "" };
 let readerList = [];    // GET /api/readers snapshot (fetched on demand, not polled)
 const post = (path, body) => fetch(path, {method:"POST", body: JSON.stringify(body||{})});
 const esc = t => t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -1107,6 +1108,7 @@ function renderExperiments() {
   if (p.contains(document.activeElement) || p.dataset.sig === sig) return;
   p.dataset.sig = sig;
   const e = S.experiment;
+  const protocolKey = e ? JSON.stringify([e.workspaceRoot, e.name]) : null;
   p.innerHTML = `
   <div style="background: color-mix(in srgb, var(--warn) 22%, transparent); border: 1px solid var(--warn); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px;">
     <strong>Monitor only.</strong> Study authoring lives in the native SteerLab app —
@@ -1147,7 +1149,8 @@ function renderExperiments() {
       ${(e.judgeModelOptions||[]).map(m => `<option value="${esc(m)}" ${m===(e.judgeModel||"")?"selected":""}>${esc(m)}</option>`).join("")}
     </select></div>
     <div class="row"><textarea id="ex-judge-prompt" class="grow" rows="5" placeholder="paired judge rubric" title="judge rubric. Draft studies save this into the protocol; Results can also use the current text to evaluate an existing immutable run artifact">${esc(e.judgePrompt||"")}</textarea></div>
-    ${e.status === "draft" ? `<button id="ex-save-protocol" title="save model comparison, generation, and evaluation settings into the draft manifest">Save Study Setup</button>` : ""}
+    ${e.status === "draft" ? `<button id="ex-save-protocol" title="save model comparison, generation, and evaluation settings into the draft manifest">Save Study Setup</button> <button id="ex-reload-protocol">Discard edits and reload</button>` : ""}
+    <div id="ex-protocol-status" role="status" class="muted">${esc(protocolSaveNotice.key === protocolKey ? protocolSaveNotice.text : "")}</div>
   </fieldset>
   <fieldset><legend>${esc(e.name)} — ${e.status}</legend>
     <div class="muted" title="runs load exactly this model snapshot; the revision is pinned from the local HF cache by the first extract/validate/sweep or at freeze">model: ${esc(e.modelID)}${e.modelRevision ? ` @ ${esc(e.modelRevision)}…` : " (revision unpinned)"}</div>
@@ -1185,19 +1188,61 @@ function renderExperiments() {
 
   $("ex-sel").onchange = ev => post("/api/experiment/select", {name: ev.target.value || null});
   $("ex-create").onclick = () => { const n = $("ex-new").value.trim(); if (n) post("/api/experiment/create", {name: n, description: $("ex-new-desc").value}); };
-  if ($("ex-save-protocol")) $("ex-save-protocol").onclick = () => post("/api/experiment/protocol", {
-    description: $("ex-desc").value,
-    task: $("ex-task").value,
-    outcomes: $("ex-outcomes").value,
-	    judgeModel: $("ex-judge-model").value,
-	    judgePrompt: $("ex-judge-prompt").value,
-	    taskPromptsFile: $("ex-prompts").value,
-	    promptMode: $("ex-prompt-mode").value,
-	    systemPrompt: $("ex-system").value,
-	    qwenThinkingEnabled: $("ex-think").checked,
-	    temperature: Number($("ex-temp").value),
-    maxTokens: Number($("ex-max").value)
-  });
+  if ($("ex-save-protocol")) $("ex-save-protocol").onclick = async () => {
+    const button = $("ex-save-protocol");
+    button.disabled = true;
+    const status = $("ex-protocol-status");
+    status.textContent = "Saving study setup…";
+    try {
+      const response = await post("/api/experiment/protocol", {
+        name: e.name,
+        workspaceRoot: e.workspaceRoot,
+        manifestFileSHA256: e.manifestFileSHA256,
+        description: $("ex-desc").value,
+        task: $("ex-task").value,
+        outcomes: $("ex-outcomes").value,
+        judgeModel: $("ex-judge-model").value,
+        judgePrompt: $("ex-judge-prompt").value,
+        taskPromptsFile: $("ex-prompts").value,
+        promptMode: $("ex-prompt-mode").value,
+        systemPrompt: $("ex-system").value,
+        qwenThinkingEnabled: $("ex-think").checked,
+        temperature: Number($("ex-temp").value),
+        maxTokens: Number($("ex-max").value)
+      });
+      const result = await response.json();
+      const text = response.ok && result.ok
+        ? "Study setup saved."
+        : [result.error || "Study setup was not saved.", result.repairAction].filter(Boolean).join(" ");
+      protocolSaveNotice = { key: protocolKey, text };
+      status.textContent = text;
+      if (response.ok && result.ok) {
+        // Accept only the tag of our successful save. A refusal never fetches a
+        // replacement tag and retries the old fields behind the researcher's back.
+        e.manifestFileSHA256 = result.manifestFileSHA256;
+        button.blur();
+        p.dataset.sig = "";
+      }
+    } catch (error) {
+      protocolSaveNotice = { key: protocolKey, text: "Study setup was not confirmed saved. Reconnect and review the named study before retrying." };
+      status.textContent = protocolSaveNotice.text;
+    } finally {
+      button.disabled = false;
+    }
+  };
+  if ($("ex-reload-protocol")) $("ex-reload-protocol").onclick = async () => {
+    try {
+      const response = await fetch("/api/state");
+      if (!response.ok) throw new Error("state read failed");
+      S = await response.json();
+      protocolSaveNotice = { key: null, text: "" };
+      document.activeElement?.blur();
+      p.dataset.sig = "";
+      renderExperiments();
+    } catch (error) {
+      $("ex-protocol-status").textContent = "Could not reload the saved study; your edits are still here.";
+    }
+  };
   if ($("ex-load-prompts")) $("ex-load-prompts").onclick = () => post("/api/experiment/prompts/load");
   // Save & Pin removed on purpose (2026-07-19): this page is a monitor. The
   // native app's editor round-trips per-item instrument fields; a text-only

@@ -126,7 +126,7 @@ import Testing
 
 /// The other silent loss on this route: a default `JSONDecoder` ignores keys
 /// the Body does not declare, so an out-of-vocabulary key wrote nothing while
-/// the route answered ok. `unknownProtocolBodyKeys` is the refusal's decision,
+/// the route answered ok. `StudyProtocolHTTP.unknownBodyKeys` is the refusal's decision,
 /// factored out of the connection handling like `isRequestRefused` — the
 /// Python engine's twin gate is `experiment_store.set_protocol` over
 /// `PROTOCOL_FIELDS` (the manifest's key spellings; this route speaks the
@@ -136,7 +136,7 @@ import Testing
     @Test func unknownKeysAreNamedAndSorted() {
         let body = Data(
             #"{"temperature":0.7,"notAField":1,"alsoNot":2}"#.utf8)
-        #expect(SteerLabWebServer.unknownProtocolBodyKeys(in: body)
+        #expect(StudyProtocolHTTP.unknownBodyKeys(in: body)
             == ["alsoNot", "notAField"])
     }
 
@@ -149,56 +149,13 @@ import Testing
              "seedPolicy":"derivedSHA256",
              "exclusionRules":[{"rule":"unparseableEndpoint"}]}
             """#.utf8)
-        #expect(SteerLabWebServer.unknownProtocolBodyKeys(in: body).isEmpty)
+        #expect(StudyProtocolHTTP.unknownBodyKeys(in: body).isEmpty)
     }
 
     /// A body that is not a JSON object is the typed decode's refusal
     /// ("bad body"), not this one's — the helper stays out of its way.
     @Test func nonObjectBodiesAreLeftToTheTypedDecode() {
-        #expect(SteerLabWebServer.unknownProtocolBodyKeys(in: Data("[1]".utf8)).isEmpty)
-        #expect(SteerLabWebServer.unknownProtocolBodyKeys(in: Data("nope".utf8)).isEmpty)
+        #expect(StudyProtocolHTTP.unknownBodyKeys(in: Data("[1]".utf8)).isEmpty)
+        #expect(StudyProtocolHTTP.unknownBodyKeys(in: Data("nope".utf8)).isEmpty)
     }
-
-    /// Review round 10, finding 3: the route gated `samplesPerItem` and
-    /// `seedPolicy` and assigned `temperature`/`maxTokens` unchecked, so a
-    /// negative temperature or a zero maxTokens landed in the panel fields and
-    /// the store's note went nowhere. All four are gated, in the STORE
-    /// setter's own sentences.
-    @Test func temperatureAndMaxTokensAreGatedLikeTheirNeighbours() {
-        #expect(
-            SteerLabWebServer.protocolBodyValueProblem(temperature: -0.5)
-                == "temperature must be a non-negative number — got -0.5")
-        #expect(
-            SteerLabWebServer.protocolBodyValueProblem(
-                temperature: Double.nan) != nil)
-        #expect(
-            SteerLabWebServer.protocolBodyValueProblem(
-                temperature: Double.infinity) != nil)
-        #expect(
-            SteerLabWebServer.protocolBodyValueProblem(maxTokens: 0)
-                == "maxTokens must be a positive integer — got 0")
-        #expect(
-            SteerLabWebServer.protocolBodyValueProblem(maxTokens: -8)
-                == "maxTokens must be a positive integer — got -8")
-        // The neighbours still say what they always said.
-        #expect(
-            SteerLabWebServer.protocolBodyValueProblem(samplesPerItem: 0)
-                == "samplesPerItem must be ≥ 1 — got 0")
-        #expect(
-            SteerLabWebServer.protocolBodyValueProblem(seedPolicy: "diceRoll")?
-                .hasPrefix("unknown seedPolicy 'diceRoll' — known: ") == true)
-
-        // Valid values — including the boundaries — still write.
-        #expect(
-            SteerLabWebServer.protocolBodyValueProblem(
-                temperature: 0, maxTokens: 1, samplesPerItem: 1,
-                seedPolicy: "derivedSHA256") == nil)
-        #expect(
-            SteerLabWebServer.protocolBodyValueProblem(
-                temperature: 0.7, maxTokens: 512, samplesPerItem: 25) == nil)
-        // An absent field is not a bad one: nothing declared, nothing refused.
-        #expect(SteerLabWebServer.protocolBodyValueProblem() == nil)
-        #expect(SteerLabWebServer.protocolBodyValueProblem(seedPolicy: "") == nil)
-    }
-
 }

@@ -74,8 +74,49 @@ This command returns the saved snapshot, seat-edit reset status and advisories,
 or a request to select a scenario. It throws typed admission/field errors without
 publishing the manifest. These are complete setup values, not a sparse patch:
 adapters must deliberately populate the fields they intend to retain. Public
-CLI/HTTP request-schema migration remains part of WP-2/WP-3; the existing app
-HTTP setup adapter currently reaches the command through the panel.
+CLI request-schema migration remains part of WP-2/WP-3. The Swift HTTP setup
+adapter now invokes this command directly, without reading or mutating panel
+fields. An optional exclusion-rule edit is validated and published within that
+same operation; an omitted rule edit preserves the existing declaration.
+
+### Swift HTTP protocol edits
+
+Read `GET /api/experiment/manifest?name=<study>` from the Swift loopback service.
+The response contains `name`, `workspaceRoot`, `manifestFileSHA256`, and the
+complete stored JSON `document`. The digest describes the stored file bytes,
+not the formatting of the response's nested JSON. Review that document before
+posting to `POST /api/experiment/protocol`:
+
+```json
+{
+  "name": "example",
+  "workspaceRoot": "/absolute/workspace",
+  "manifestFileSHA256": "<digest returned by the reviewed read>",
+  "description": "Updated study description"
+}
+```
+
+The three identity fields are required. A missing digest returns 428; a malformed
+digest returns 400; a changed document or serving workspace returns 412 with
+`staleManifest`. Unknown fields and invalid values refuse. Every failure includes
+`ok: false`, `code`, `error`, and `repairAction`; success returns `ok: true`, the
+saved document and its new external digest. The route never silently retries.
+
+Optional edit fields are `description`, `task`, `outcomes`, `judgeModel`,
+`judgePrompt`, `taskPromptsFile`, `promptMode`, `systemPrompt`,
+`qwenThinkingEnabled`, `reasoningEffort`, `reasoningMaxTokens`, `temperature`,
+`maxTokens`, `samplesPerItem`, `seedPolicy`, and `exclusionRules`. Omitted fields
+are derived from the reviewed persisted setup, not another surface's unsaved
+editor values. Empty text clears the corresponding optional text/pin;
+`exclusionRules: []` clears rules. The established reasoning adapter keeps
+nonpositive `reasoningMaxTokens` as an explicit budget clear, and an explicit
+effort takes precedence over the legacy boolean. This route does not select a
+new scenario or change the base model; those remain separate authoring actions.
+
+The bundled web form submits the identity of the document it displayed and shows
+save/refusal feedback. It offers an explicit discard-and-reload action after a
+conflict. No selection-based compatibility fallback remains on the protocol
+route. Other Swift HTTP authoring routes still require migration.
 
 Server draft sync carries the digest read during its earlier identity check;
 it refuses a missing reviewed version instead of inventing one at push time.

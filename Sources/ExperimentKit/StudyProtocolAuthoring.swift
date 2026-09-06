@@ -31,6 +31,36 @@ public struct StudyProtocolFields: Sendable {
     public var acknowledgeUnequalOptionLengths: Bool = false
 
     public init() {}
+
+    /// A sparse transport starts from the persisted document it has reviewed,
+    /// never from unsaved fields held by another authoring surface.
+    public init(manifest: ExperimentManifest) {
+        protocolDescription = manifest.experimentDescription
+        taskDescription = manifest.taskDescription ?? ""
+        outcomeMeasures = manifest.outcomeMeasures ?? ""
+        studyKind = manifest.studyKind
+        baseModelID = manifest.modelID
+        promptMode = manifest.promptMode ?? .chatAssistant
+        systemPrompt = manifest.systemPrompt ?? ""
+        reasoningEffort = manifest.resolvedReasoningEffort.rawValue
+        reasoningMaxTokens = manifest.reasoningMaxTokens
+        dtype = manifest.dtype ?? ""
+        judgeRubricFile = manifest.judgeRubricFile ?? ""
+        judges = manifest.judges ?? []
+        evaluationPrompt = manifest.evaluation?.judgePrompt ?? ""
+        evaluationStructuredPrompt = manifest.evaluation?.structuredPrompt ?? ""
+        let judge = manifest.evaluation?.judgeModel.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        inlineJudgeModel = judge.isEmpty ? manifest.modelID : judge
+        temperature = manifest.temperature
+        maxTokens = manifest.maxTokens
+        multiAgentIncludeBaseline = manifest.multiAgentIncludeBaseline
+        taskPromptsFile = manifest.taskPromptsFile ?? ""
+        phase = manifest.phase ?? ""
+        caseFamily = manifest.caseFamily ?? ""
+        samplesPerItem = manifest.samplesPerItem ?? 1
+        seedPolicy = manifest.seedPolicy ?? ""
+        acknowledgeUnequalOptionLengths = manifest.acknowledgeUnequalOptionLengths ?? false
+    }
 }
 
 /// One decoded input and the hash of exactly those bytes. A caller can capture
@@ -62,7 +92,8 @@ public enum StudyProtocolAuthoring {
 
     public static func save(
         reviewed: DraftAuthoringSnapshot, fields: StudyProtocolFields,
-        scenario selection: StudyProtocolScenario? = nil
+        scenario selection: StudyProtocolScenario? = nil,
+        exclusionRules: [ExclusionRule]? = nil
     ) throws -> Result {
         let root = reviewed.workspaceRoot
         let repository = ExperimentRepository(workspaceRoot: root)
@@ -80,13 +111,13 @@ public enum StudyProtocolAuthoring {
                     "The selected scenario belongs to another workspace.",
                     repair: "Select the scenario in the reviewed study's workspace and apply the edit again.")
             }
-            return try publish(reviewed: reviewed, fields: fields, selection: selection)
+            return try publish(reviewed: reviewed, fields: fields, selection: selection, exclusionRules: exclusionRules)
         }
     }
 
     private static func publish(
         reviewed: DraftAuthoringSnapshot, fields: StudyProtocolFields,
-        selection: StudyProtocolScenario?
+        selection: StudyProtocolScenario?, exclusionRules: [ExclusionRule]?
     ) throws -> Result {
         let root = reviewed.workspaceRoot
         var manifest = reviewed.manifest
@@ -97,6 +128,9 @@ public enum StudyProtocolAuthoring {
         // the setup edit publishes once instead of leaving a partial edit
         // behind if a later policy refuses it.
         let name = manifest.name
+        if let exclusionRules {
+            try ManifestDraftEdits.setExclusionRules(exclusionRules, experimentName: name, manifest: &manifest)
+        }
         try ManifestDraftEdits.setPhase(
             nilIfEmpty(fields.phase), experimentName: name, manifest: &manifest)
         try ManifestDraftEdits.setCaseFamily(

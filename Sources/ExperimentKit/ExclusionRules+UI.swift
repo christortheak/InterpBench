@@ -194,25 +194,7 @@ extension ExperimentStore {
         _ rules: [ExclusionRule]?, experimentName: String
     ) throws -> ExperimentManifest {
         try updateDraft(name: experimentName) { manifest in
-            guard let rules, !rules.isEmpty else {
-                manifest.exclusionRules = nil
-                return
-            }
-            let problems = ExclusionEngine.violations(rules)
-            guard problems.isEmpty else {
-                // A malformed INVOCATION (64), not a refusal: the reason is
-                // the engine's own violation wording, unchanged; only the
-                // classification is typed so the CLI's `set-exclusions`
-                // answers `blocked`/`usage` like every other
-                // out-of-vocabulary value (gate-5 dry run #2, P3).
-                throw ExperimentError.malformed(
-                    problems.joined(separator: "; "),
-                    repair: "steerlab-cli experiment set-exclusions "
-                        + "\(experimentName) <"
-                        + ExclusionEngine.ruleVocabulary.joined(separator: "|")
-                        + ">[,…] [--endpoint <key>] [--min <x>] [--max <x>]")
-            }
-            manifest.exclusionRules = rules
+            try ManifestDraftEdits.setExclusionRules(rules, experimentName: experimentName, manifest: &manifest)
         }
     }
 }
