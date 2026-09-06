@@ -12,6 +12,19 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Shipped scientific method guidance: `science list`, `science guide <method>` and
+  `science operation <operation>` on both `steerlab-cli` and `steerlab`, the same
+  catalog and twelve guides over `GET /api/science/catalog|guide/{method}|operation/{operation}`
+  on the Mac workbench and the Python service, and a Research methods and guides
+  sheet in Studies. Discovery only; it executes nothing. Sources live in
+  `WorkspaceSeed/prompts/method-guides/` and a drift gate checks both packaged copies.
+- Engine `experiment complete-sweep-judgment <study> --awaiting-run <run> --judgments <file>`
+  completes a deferred sweep through the existing intake owner and may repair a
+  missing draft recommendation. `complete-judgment` and `rescore-style` now return
+  full envelopes with `runDirectory`, and the three CPU adapters exit 64/65/66/70
+  (malformed, refused, missing input, failed) instead of a generic 1. Scripts that
+  tested for exit 1 should read the envelope. Scientific bodies are unchanged.
+
 - Model preparation now has Python client and Mac remote plan/install/status/cancel
   adapters over the durable job service, with reviewed target digests, cache-file
   inspection and deployment egress enforcement. The app exposes remote planning;
