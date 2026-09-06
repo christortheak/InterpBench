@@ -132,6 +132,37 @@ Its transport binds that review to the connection and workspace. Model revision
 adoption from the response uses the local document captured for the push, so a
 concurrent change to the local model cannot acquire the old model's revision.
 
+## Prompt editor publication
+
+`TaskPromptsAuthoring.save` accepts a `DraftAuthoringSnapshot`, a workspace-relative
+source path, the exact `TaskPromptsFileReview` that supplied the editor, and its
+edited text. A missing source review permits only a new, absent source path.
+Existing files must be loaded and reviewed explicitly; saving never borrows their
+latest metadata behind an old textarea. Study admission precedes any dataset write.
+A changed study, changed source, mismatched workspace or unsafe path refuses.
+
+The command preserves full JSONL records through `TaskPromptsDocument` and uses
+the same parser/hash helper as the store pin operation. It publishes the resulting
+bytes at `prompts/tasks/versions/<sha256>.jsonl`, then pins that path and exact hash
+in the reviewed draft under the shared manifest lock. Existing input files remain
+unchanged, including versions referenced by other studies. A matching prepared
+version is reused; differing bytes at that destination refuse. The returned study
+and prompt reviews advance the initiating editor after success.
+
+This is immutable-input preparation followed by atomic manifest publication, not
+a crash-atomic two-file transaction. A process interruption or manifest publication
+failure can leave an unreferenced prepared input version. It must not be deleted
+merely because a caller saw a failure: another operation may already reference it.
+Garbage collection requires separate reference/custody checks. Existing raw-file
+imports and other input writers still require migration; this service does not
+claim to impose file immutability on unrelated tools or external editors.
+
+The native editor explains that saving creates a new version and updates its path.
+Seven regression tests cover stale study/input refusal, full-record preservation,
+consecutive saves, explicit source review, workspace ownership, output collisions,
+and symlink/run-directory restrictions. Public HTTP/CLI prompt-edit adapters remain
+part of the next surface migration.
+
 ## Remaining migration gate
 
 This is an implemented foundation, not a declaration that WP-2 is complete.

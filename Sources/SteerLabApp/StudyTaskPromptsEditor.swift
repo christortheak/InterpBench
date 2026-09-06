@@ -21,7 +21,7 @@ struct StudyTaskPromptsEditor: View {
                 .disabled(manifest.status != .draft)
                 .help(
                     "relative path to a {\"text\": ...}-per-line JSONL file. "
-                        + "Save & Pin Prompts pins its current hash into the manifest")
+                        + "Save & Pin Prompts creates a new version and pins its hash into the study")
             // Phase 3 item 12: the no-typing route — pick the file, the
             // path lands workspace-relative, and the pin is made on
             // selection through the same validating pin path.
@@ -69,8 +69,8 @@ struct StudyTaskPromptsEditor: View {
         // What Save & Pin actually DOES, visible — not hover-only
         // (2026-07-20 researcher round, item 2a).
         Text(
-            "Save & Pin writes this editor's text back to the file named "
-                + "above, then re-pins the file's new hash into the study."
+            "Save & Pin creates a new prompt version and updates this draft's path and hash. "
+                + "The original file remains available to studies that already use it."
         )
         .font(.caption2)
         .foregroundStyle(.secondary)

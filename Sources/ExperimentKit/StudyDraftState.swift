@@ -139,6 +139,7 @@ public final class StudyDraftState {
     /// edited blocks against these so per-item instrument fields survive.
     var taskPromptsDocument: TaskPromptsDocument?
     var taskPromptsDocumentFile: String?
+    var taskPromptsReview: TaskPromptsFileReview?
     var syncedSelection: String?
     /// Session-only stash of judge fields per row and per kind (field bug
     /// 2026-08-07): switching a judge's kind swaps the row to that kind's
@@ -272,6 +273,7 @@ public final class StudyDraftState {
             taskPromptsInstrumentSummary = nil
             taskPromptsDocument = nil
             taskPromptsDocumentFile = nil
+            taskPromptsReview = nil
             // Workspace-scoped default: the active workspace's model choice
             // (server target → the selected/loaded SERVER model), falling
             // back to that workspace's inventory — never a local MLX id
@@ -339,6 +341,7 @@ public final class StudyDraftState {
             taskPromptsInstrumentSummary = nil
             taskPromptsDocument = nil
             taskPromptsDocumentFile = nil
+            taskPromptsReview = nil
         }
         promptMode = manifest.promptMode ?? .chatAssistant
         systemPrompt = manifest.systemPrompt ?? ""

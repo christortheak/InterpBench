@@ -5196,6 +5196,15 @@ public enum ExperimentStore {
                     + "then steerlab-cli experiment pin-prompts "
                     + "\(manifest.name) \(file)")
         }
+        return try pinTaskPrompts(file, data: data, into: &manifest)
+    }
+
+    /// Validate and pin exactly the bytes an authoring transaction will publish.
+    /// The caller owns filesystem publication; this helper performs no I/O.
+    @discardableResult
+    public static func pinTaskPrompts(
+        _ file: String, data: Data, into manifest: inout ExperimentManifest
+    ) throws -> String {
         // Same parser the run loop uses (`{"prompt": …}` or `{"text": …}`
         // rows plus science-layer keys) — the historical text-only loader
         // refused valid choice files the run loop accepts. The hash is the

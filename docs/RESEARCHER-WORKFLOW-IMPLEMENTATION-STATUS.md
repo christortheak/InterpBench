@@ -275,3 +275,33 @@ Prompt-file publication still needs its own early admission and file preconditio
 refusing a manifest write after a prompt file was already replaced is too late.
 Remaining asynchronous authoring callbacks must also retain the request's review
 at operation start rather than look up a newer review when their work completes.
+
+## Prompt authoring protects reviewed inputs and publishes new versions
+
+Two regressions reproduced lost input updates: a stale study save changed its
+prompt bytes before refusal, and an independently edited prompt file was silently
+overwritten and repinned. `TaskPromptsAuthoring` now owns the explicit study/input
+review, early draft admission, full-record edit, run-parser validation and pin.
+The native panel captures values and presents the authoritative result.
+
+Edited records are prepared as a content-addressed version in
+`prompts/tasks/versions/`; the source remains unchanged for every existing consumer.
+The draft receives the new path and exact hash. The UI explains this behavior.
+A changed or unreviewed source refuses, as do workspace mismatches, differing
+bytes at an existing version destination, path escapes and run-directory aliases.
+Source-read and output-publication locks are acquired separately under the study
+lock, avoiding a lock-order cycle when two studies edit different input versions.
+The two-file crash boundary and possible unreferenced prepared version are stated
+in DRAFT-AUTHORING-PRECONDITIONS.md; broad garbage collection is not implied.
+
+Seven focused regressions pass; both lost-update cases fail on the preceding
+implementation. Final Xcode beta passes 277 SteeringKit and 4,431 ExperimentKit
+tests (`TEST SUCCEEDED`). Full Python passes 5,896 with 9 skipped and 8 warnings
+(156.40 seconds). The bridge ratchet and diff whitespace checks pass; the actual
+source/test diff was read. This intentionally changes publication semantics and
+is not claimed as an unchanged-body mechanical move. Main remains at bfd13a5.
+
+Remaining: explicit prompt HTTP/CLI adapters, raw JSONL/tabular imports and other
+input writers, followed by the remaining authoring/bridge and workflow packages.
+The legacy Swift HTTP prompt routes still use selected panel state and answer ok
+after calling a method that can refuse. They are the next adapter migration.

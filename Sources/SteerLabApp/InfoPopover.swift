@@ -453,13 +453,11 @@ enum StudyInfo {
         """
 
     static let taskPromptsSavePin = """
-        Save & Pin writes this editor's text back to the file named \
-        above — the file on disk is replaced by what you see here (one \
-        prompt per block, blocks separated by a line containing only \
-        ---; per-item instrument fields like options/target are \
-        preserved byte-faithfully) — and then re-pins the file's new \
-        SHA-256 into the study. Saving IS a file write plus a re-pin, \
-        not an app-internal save.
+        Save & Pin creates a new prompt version and pins its path and SHA-256 \
+        in this draft. Existing files remain unchanged. Enter one prompt per \
+        block, separated by a line containing only ---. Per-item instrument \
+        fields such as options and target are preserved. If the study or loaded \
+        file changed, reload and review before saving again.
         """
 
     static let importRecordStructure = """

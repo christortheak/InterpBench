@@ -2309,11 +2309,13 @@ public final class ExperimentPanel {
             draft.taskPromptsInstrumentSummary = nil
             draft.taskPromptsDocument = nil
             draft.taskPromptsDocumentFile = nil
+            draft.taskPromptsReview = nil
             return
         }
         do {
-            let url = try VectorCatalog.projectFile(file)
-            let data = try Data(contentsOf: url)
+            let review = try TaskPromptsFileReview(path: file, workspaceRoot: ExperimentStore.workspaceRoot)
+            let data = review.file.data
+            draft.taskPromptsReview = review
             let document = try TaskPromptsDocument.load(data)
             draft.taskPromptsDocument = document
             draft.taskPromptsDocumentFile = file
@@ -2324,12 +2326,16 @@ public final class ExperimentPanel {
                 "loaded \(document.count) prompt\(document.count == 1 ? "" : "s")"
                 + " @ \(hash.prefix(12))…"
         } catch {
+            draft.taskPromptsDocument = nil
+            draft.taskPromptsDocumentFile = nil
+            draft.taskPromptsReview = nil
+            draft.taskPromptsInstrumentSummary = nil
             draft.taskPromptsStatus = "\(error)"
         }
     }
 
     public func saveTaskPrompts() {
-        guard var manifest = selected, manifest.status == .draft else { return }
+        guard let manifest = selected, manifest.status == .draft else { return }
         let file = draft.taskPromptsFile.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !file.isEmpty else {
             draft.taskPromptsStatus = "choose a task prompts file first"
@@ -2341,31 +2347,18 @@ public final class ExperimentPanel {
             return
         }
         do {
-            let url = try VectorCatalog.projectFile(file)
-            // Round-trip the FULL records: pair edited blocks with the loaded
-            // document so `options`/`target`/unknown keys survive the save.
-            // If the editor was never loaded for THIS file but the file
-            // exists, load it now — never blind-overwrite an instrument file
-            // with text-only lines.
-            var document: TaskPromptsDocument
-            if let loaded = draft.taskPromptsDocument, draft.taskPromptsDocumentFile == file {
-                document = loaded
-            } else if let data = try? Data(contentsOf: url),
-                let loaded = try? TaskPromptsDocument.load(data)
-            {
-                document = loaded
-            } else {
-                document = TaskPromptsDocument.fromTexts([])
-            }
-            document = document.applyingEditedTexts(prompts)
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try document.serialized().write(to: url, options: [.atomic])
-            let hash = try ExperimentStore.pinTaskPrompts(file, into: &manifest)
-            try management.persistReviewedDraft(manifest)
+            let reviewed = try management.reviewedDraft(named: manifest.name)
+            let result = try TaskPromptsAuthoring.save(
+                reviewed: reviewed, path: file, source: draft.taskPromptsReview,
+                editorText: draft.taskPromptsText)
+            management.acceptAuthoringResult(result.study)
             refresh()
+            let document = try TaskPromptsDocument.load(result.prompts.file.data)
+            let hash = result.prompts.file.sha256
+            draft.taskPromptsFile = result.prompts.path
+            draft.taskPromptsReview = result.prompts
             draft.taskPromptsDocument = document
-            draft.taskPromptsDocumentFile = file
+            draft.taskPromptsDocumentFile = result.prompts.path
             draft.taskPromptsText = document.editorText
             draft.taskPromptsInstrumentSummary = document.instrumentSummary
             // P1: report metadata-preserved and instruments-enabled as two
@@ -2377,7 +2370,7 @@ public final class ExperimentPanel {
             draft.taskPromptsStatus =
                 "saved and pinned \(prompts.count) prompt\(prompts.count == 1 ? "" : "s")"
                 + " @ \(hash.prefix(12))… — \(activation)"
-            note("saved task prompts and pinned their hash — \(activation)", severity: .success)
+            note("saved a new prompt version and pinned its hash — \(activation)", severity: .success)
         } catch {
             draft.taskPromptsStatus = "\(error)"
             note(
