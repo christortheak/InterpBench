@@ -157,6 +157,7 @@ let geoImportStatus = "";
 let conceptVectorFilter = new Set();
 let conceptVectorSort = "newest";
 let protocolSaveNotice = { key: null, text: "" };
+const promptPreviews = new Map();
 let readerList = [];    // GET /api/readers snapshot (fetched on demand, not polled)
 const post = (path, body) => fetch(path, {method:"POST", body: JSON.stringify(body||{})});
 const esc = t => t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -1133,9 +1134,9 @@ function renderExperiments() {
 	    <div class="row">
 	      <button id="ex-load-prompts" title="read the JSONL prompt file into the viewer below">Load Prompts</button>
 	    </div>
-	    <div class="row"><textarea id="ex-prompt-text" class="grow" rows="8" readonly placeholder="load the prompt file to view it" title="read-only view of the task prompts. Edit and Save &amp; Pin in the native app's Studies panel — it round-trips per-item instrument fields (options/target) that a plain text save would destroy">${esc(e.taskPromptsText||"")}</textarea></div>
-	    <div class="muted">Prompt editing is disabled here: per-item instrument fields (<code>options</code>/<code>target</code>) need the app's field-preserving editor. Use Save &amp; Pin Prompts in the native app.</div>
-	    ${e.taskPromptsStatus ? `<div class="muted">${esc(e.taskPromptsStatus)}</div>` : ""}
+	    <div class="row"><textarea id="ex-prompt-text" class="grow" rows="8" readonly placeholder="load the prompt file to view it" title="read-only view of the named prompt file. Use the native app’s Studies editor to edit and pin a new version.">${esc(promptPreviews.get(JSON.stringify([e.workspaceRoot,e.name,e.taskPromptsFile||""]))?.text||"")}</textarea></div>
+	    <div class="muted">Use Save &amp; Pin Prompts in the native app to edit a new version while preserving instrument fields. This web view reads the named file without changing an open editor.</div>
+	    <div id="ex-prompt-preview-status" class="muted">${esc(promptPreviews.get(JSON.stringify([e.workspaceRoot,e.name,e.taskPromptsFile||""]))?.status||"")}</div>
 	    <div class="row"><label title="chat assistant uses the model chat template with user/assistant roles; raw completion sends literal text without role wrapping">Mode</label><select id="ex-prompt-mode" class="grow" ${e.status!=="draft"?"disabled":""}>
 	      ${(e.promptModes||[]).map(m => `<option value="${esc(m.value)}" ${m.value===(e.promptMode||"chatAssistant")?"selected":""}>${esc(m.label)}</option>`).join("")}
 	    </select></div>
@@ -1243,7 +1244,26 @@ function renderExperiments() {
       $("ex-protocol-status").textContent = "Could not reload the saved study; your edits are still here.";
     }
   };
-  if ($("ex-load-prompts")) $("ex-load-prompts").onclick = () => post("/api/experiment/prompts/load");
+  if ($("ex-load-prompts")) $("ex-load-prompts").onclick = async () => {
+    const key = JSON.stringify([e.workspaceRoot, e.name, $("ex-prompts").value]);
+    const target = {name: e.name, workspaceRoot: e.workspaceRoot, file: $("ex-prompts").value};
+    const button = $("ex-load-prompts");
+    button.disabled = true;
+    try {
+      const response = await post("/api/experiment/prompts/load", target);
+      const result = await response.json();
+      const preview = response.ok && result.ok
+        ? {text: result.prompts.text, status: `Loaded ${result.prompts.count} prompts @ ${result.prompts.promptsFileSHA256.slice(0,12)}…`}
+        : {text: "", status: [result.error || "Prompts were not loaded.", result.repairAction].filter(Boolean).join(" ")};
+      promptPreviews.set(key, preview);
+      if (button === $("ex-load-prompts") && JSON.stringify([e.workspaceRoot, e.name, $("ex-prompts")?.value]) === key) {
+        $("ex-prompt-text").value = preview.text;
+        $("ex-prompt-preview-status").textContent = preview.status;
+      }
+    } catch (error) {
+      if (button === $("ex-load-prompts")) $("ex-prompt-preview-status").textContent = "Prompt read failed; reconnect and load the named source again.";
+    } finally { button.disabled = false; }
+  };
   // Save & Pin removed on purpose (2026-07-19): this page is a monitor. The
   // native app's editor round-trips per-item instrument fields; a text-only
   // save from here could still restructure or drop items.

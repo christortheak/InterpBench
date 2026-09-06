@@ -305,3 +305,40 @@ Remaining: explicit prompt HTTP/CLI adapters, raw JSONL/tabular imports and othe
 input writers, followed by the remaining authoring/bridge and workflow packages.
 The legacy Swift HTTP prompt routes still use selected panel state and answer ok
 after calling a method that can refuse. They are the next adapter migration.
+
+## Named prompt HTTP operations and isolated web previews
+
+The Swift prompt load/save routes now name the study, workspace and source file.
+Saves require the previously reviewed study and source digests (or explicit source
+absence) and invoke `TaskPromptsAuthoring`. Responses carry the authoritative study
+and prompt version or a typed refusal. No selection-based fallback, native editor
+mutation or unconditional success response remains on these two routes.
+
+The web monitor retains a read-only preview using the named read. Its asynchronous
+handler checks the originating render and path before updating visible content;
+a late response can be cached for its own identity but cannot appear in another
+study's preview. Four JavaScript handler cases exercise success, rerender, path
+change and typed refusal against the actual bundled handler. They do not substitute
+for interactive browser qualification, which still has the separate `/api/state`
+Keychain blocker recorded above.
+
+Five focused HTTP tests pass. A disposable built-CLI loopback server passed exact
+source digest/read, versioned save with preserved instrument fields, stale 412,
+missing-review 428 and refusal of an empty selected-state request. Its process was
+stopped afterward. Full Xcode beta passes 277 SteeringKit and 4,436 ExperimentKit
+tests (`TEST SUCCEEDED`). The unchanged Python implementation's most recent full
+result is 5,896 passed, 9 skipped and 8 warnings at the preceding checkpoint.
+JavaScript syntax/handler tests, bridge ratchet and diff whitespace checks pass;
+the actual diff was read locally. Main is untouched.
+
+Common HTTP response/document types and error classification now live in
+`StudyAuthoringHTTP`, with intentional internal names and no compatibility aliases.
+`scripts/ci/audit-authoring-http-results.swift` compares their parsed syntax trees
+with `StudyProtocolHTTP.swift` at `89a75a3`: all member/error bodies match exactly
+apart from trivia. Compile with the Xcode host SwiftParser/SwiftSyntax libraries
+as documented in BRIDGE-RETIREMENT.md and pass current and archived baseline paths.
+The new request semantics and browser handler are not claimed mechanical.
+
+WP-2 remains open for other selected-state HTTP actions, asynchronous/whole-document
+writers, imports and three compatibility bridges. WP-3 through WP-7 also remain in
+scope; this checkpoint closes the named prompt-edit adapter, not the overall plan.

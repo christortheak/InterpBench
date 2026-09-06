@@ -16,7 +16,7 @@ import Testing
         return try JSONSerialization.data(withJSONObject: object)
     }
 
-    private func object(_ response: StudyProtocolHTTP.Response) throws -> [String: Any] {
+    private func object(_ response: StudyAuthoringHTTP.Response) throws -> [String: Any] {
         try #require(JSONSerialization.jsonObject(with: response.body) as? [String: Any])
     }
 

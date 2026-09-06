@@ -160,8 +160,31 @@ claim to impose file immutability on unrelated tools or external editors.
 The native editor explains that saving creates a new version and updates its path.
 Seven regression tests cover stale study/input refusal, full-record preservation,
 consecutive saves, explicit source review, workspace ownership, output collisions,
-and symlink/run-directory restrictions. Public HTTP/CLI prompt-edit adapters remain
-part of the next surface migration.
+and symlink/run-directory restrictions. The named Swift HTTP adapter is described
+below; dedicated CLI prompt-edit and raw-import adapters remain migration work.
+
+### Swift HTTP prompt reads and versioned edits
+
+`POST /api/experiment/prompts/load` takes exactly `name`, absolute `workspaceRoot`,
+and workspace-relative `file`. It returns `ok`, `study` (the named document and
+its external digest), and `prompts` (`file`, `promptsFileSHA256`, plain editor
+`text`, `count`, and `instrumentSummary`). Reading never selects a study or loads
+text into another open native editor. Review both returned study and source.
+
+`POST /api/experiment/prompts/save` takes those three target fields, the returned
+`manifestFileSHA256`, `promptsFileSHA256`, and edited `text`. For a new, absent
+source path, use `sourceAbsent: true` instead of a prompt digest. Existing files
+cannot be authorized by claiming absence. The server reconstructs metadata only
+from bytes matching the supplied source digest and then calls the shared owner.
+Success has the same shape as a read, with the authoritative saved study and new
+prompt path/digests. Subsequent edits use those returned identities.
+
+Missing reviews return 428, stale study/source or workspace returns 412, and
+malformed/unknown fields return 400. Each refusal includes a code, error and
+repair action. A frozen study refuses through normal lifecycle admission.
+Neither route has a selected-study fallback. The web monitor's read-only preview
+uses this explicit read; a late response cannot overwrite a different render or
+source selection. Agent/API writes preserve the same full records as native edits.
 
 ## Remaining migration gate
 

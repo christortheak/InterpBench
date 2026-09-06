@@ -711,21 +711,12 @@ public final class SteerLabWebServer: Sendable {
             return Response(status: response.status, body: response.body)
 
         case ("POST", "/api/experiment/prompts/load"):
-            service.experiments.loadTaskPrompts()
-            return .ok()
+            let response = TaskPromptsHTTP.perform(body: body, saving: false, workspaceRoot: ExperimentStore.workspaceRoot)
+            return Response(status: response.status, body: response.body)
 
         case ("POST", "/api/experiment/prompts/save"):
-            struct Body: Decodable {
-                let file: String?
-                let text: String
-            }
-            guard let request = decode(Body.self, from: body) else { return .error("bad body") }
-            if let file = request.file {
-                service.experiments.draft.taskPromptsFile = file
-            }
-            service.experiments.draft.taskPromptsText = request.text
-            service.experiments.saveTaskPrompts()
-            return .ok()
+            let response = TaskPromptsHTTP.perform(body: body, saving: true, workspaceRoot: ExperimentStore.workspaceRoot)
+            return Response(status: response.status, body: response.body)
 
         case ("POST", "/api/experiment/attach"):
             struct Body: Decodable { let concept: String }

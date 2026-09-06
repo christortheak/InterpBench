@@ -29,56 +29,14 @@ enum StudyProtocolHTTP {
         return object.keys.filter { !bodyKeys.contains($0) }.sorted()
     }
 
-    struct Response {
-        let status: String
-        let body: Data
-        var succeeded: Bool { status == "200 OK" }
-
-        static func json(_ object: some Encodable, status: String = "200 OK") -> Self {
-            do { return .init(status: status, body: try JSONEncoder().encode(object)) }
-            catch {
-                return .init(status: "500 Internal Server Error",
-                             body: Data(#"{"ok":false,"code":"encodingFailed","error":"Could not encode the operation result."}"#.utf8))
-            }
-        }
-
-        static func failure(_ code: String, _ reason: String, repair: String,
-                            status: String = "400 Bad Request") -> Self {
-            struct Failure: Encodable {
-                let ok = false
-                let code: String
-                let error: String
-                let repairAction: String
-            }
-            return .json(Failure(code: code, error: reason, repairAction: repair), status: status)
-        }
-    }
-
-    private struct Document: Encodable {
-        let ok = true
-        let name: String
-        let workspaceRoot: String
-        let manifestFileSHA256: String
-        let document: JSONValue
-        var advisories: [String] = []
-
-        init(_ snapshot: DraftAuthoringSnapshot, advisories: [String] = []) throws {
-            name = snapshot.manifest.name
-            workspaceRoot = snapshot.workspaceRoot.path
-            manifestFileSHA256 = snapshot.file.sha256
-            document = try JSONDecoder().decode(JSONValue.self, from: snapshot.file.data)
-            self.advisories = advisories
-        }
-    }
-
-    static func read(name: String?, workspaceRoot: URL) -> Response {
+    static func read(name: String?, workspaceRoot: URL) -> StudyAuthoringHTTP.Response {
         guard let name, !name.isEmpty else {
             return .failure("targetRequired", "Name the study to read.",
                             repair: "GET /api/experiment/manifest?name=<study>")
         }
         do {
-            return .json(try Document(DraftAuthoringSnapshot(workspaceRoot: workspaceRoot, name: name)))
-        } catch { return failure(error) }
+            return .json(try StudyAuthoringHTTP.Document(DraftAuthoringSnapshot(workspaceRoot: workspaceRoot, name: name)))
+        } catch { return StudyAuthoringHTTP.failure(error) }
     }
 
     private struct Body: Decodable {
@@ -103,7 +61,7 @@ enum StudyProtocolHTTP {
         let exclusionRules: [ExclusionRule]?
     }
 
-    static func apply(body: Data, workspaceRoot: URL) -> Response {
+    static func apply(body: Data, workspaceRoot: URL) -> StudyAuthoringHTTP.Response {
         let unknown = unknownBodyKeys(in: body)
         guard unknown.isEmpty else {
             return .failure("unknownProtocolField", "unknown protocol field(s) "
@@ -170,31 +128,12 @@ enum StudyProtocolHTTP {
                 reviewed: reviewed, fields: fields, exclusionRules: request.exclusionRules)
             {
             case .saved(let saved, _, let advisories):
-                return .json(try Document(saved, advisories: advisories))
+                return .json(try StudyAuthoringHTTP.Document(saved, advisories: advisories))
             case .requiresScenario:
                 return .failure("missingPrerequisite", "Select and pin a scenario before saving this multi-agent setup.",
                                 repair: "Use the panel authoring/casting operation, then read and review the study again.",
                                 status: "409 Conflict")
             }
-        } catch { return failure(error) }
-    }
-
-    private static func failure(_ error: Error) -> Response {
-        if let error = error as? ExperimentError {
-            if let refusal = error.lifecycleRefusal {
-                return .failure(refusal.gate.rawValue, refusal.reason, repair: refusal.repairAction,
-                                status: refusal.gate == .staleManifest ? "412 Precondition Failed" : "409 Conflict")
-            }
-            return .failure(error.malformedInvocation == nil ? "authoringFailed" : "usage", error.reason,
-                            repair: error.malformedInvocation?.repairAction ?? "Check the named study and its input files, then read and review it again.",
-                            status: error.malformedInvocation == nil ? "409 Conflict" : "400 Bad Request")
-        }
-        if let error = error as? CocoaError, error.code == .fileReadNoSuchFile {
-            return .failure("notFound", "The named study or input file does not exist.",
-                            repair: "Check the workspace and study name before retrying.", status: "404 Not Found")
-        }
-        return .failure("authoringFailed", String(describing: error),
-                        repair: "Check workspace and input-file access; read and review the document before retrying.",
-                        status: "500 Internal Server Error")
+        } catch { return StudyAuthoringHTTP.failure(error) }
     }
 }
