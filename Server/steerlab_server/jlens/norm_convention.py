@@ -138,12 +138,18 @@ def observe(norm_module) -> dict:
     eps = eps_of(norm_module)
 
     generator = torch.Generator().manual_seed(_PROBE_SEED)
-    x = torch.randn(w.numel(), generator=generator) * 3.0
+    # Pin the probe's dtype. ``torch.randn`` otherwise takes the PROCESS default,
+    # and the model loader's library flips that default to the load dtype for
+    # the duration of every ``from_pretrained`` — so a load running in another
+    # thread turned this probe bf16 and a fake norm's ``type_as`` output missed
+    # the fold by a half-ulp (2026-09-06, seen once in a full suite run). The
+    # observation must not depend on process-wide state.
+    x = torch.randn(w.numel(), generator=generator, dtype=torch.float32) * 3.0
     try:
         probe = copy.deepcopy(norm_module).to(device="cpu",
                                               dtype=torch.float32)
         with torch.no_grad():
-            out = probe(x).detach().to(torch.float32).reshape(-1)
+            out = probe(x.to(torch.float32)).detach().to(torch.float32).reshape(-1)
     except Exception as exc:  # noqa: BLE001 — remapped to an actionable error
         raise JLensError(
             f"could not run a float32 copy of {name} to observe its "

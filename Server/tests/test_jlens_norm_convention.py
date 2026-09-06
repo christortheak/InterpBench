@@ -99,6 +99,26 @@ def test_the_observer_reads_a_bf16_module_through_a_float32_copy():
     assert module.weight.dtype == torch.bfloat16
 
 
+def test_the_observer_does_not_depend_on_the_process_default_dtype():
+    """The model loader's library sets ``torch.set_default_dtype`` for the
+    duration of every load; a load in another thread once turned the probe
+    vector bf16 and a ``type_as`` norm missed the fold by a half-ulp
+    (2026-09-06). Reproduce the mechanism deterministically: the observation
+    must be identical whatever the process default is."""
+    w = _weights()
+    baseline = norm_convention.observe(_RMSNorm(w, offset=True))
+    original = torch.get_default_dtype()
+    torch.set_default_dtype(torch.bfloat16)
+    try:
+        offset = norm_convention.observe(_RMSNorm(w, offset=True))
+        direct = norm_convention.observe(_RMSNorm(w, offset=False))
+    finally:
+        torch.set_default_dtype(original)
+    assert offset["convention"] == "offset" and direct["convention"] == "direct"
+    assert offset["agreement"] < 1e-5 and direct["agreement"] < 1e-5
+    assert offset["agreement"] == baseline["agreement"]
+
+
 @pytest.mark.parametrize("module, reason", [
     (_LayerNormWithBias(8), "carries a bias"),
     (_CenteringNorm(8), "matches neither"),
