@@ -86,6 +86,30 @@ errors and a lost rename repair. A subsequent complete run passed implementation
 tests but found generated-reference drift. Keep those failures in the validation
 history rather than citing only a filtered green run.
 
+## Independent review and documentation follow-up
+
+The maintainer's reviewing agent independently reviewed `d674fcd` and reproduced
+both full suites: 277 SteeringKit + 4,551 ExperimentKit; 5,928 Python passed,
+9 skipped, 8 warnings. The verdict was landable after the stale reference
+sentence F1 was corrected. This documentation-only follow-up corrects F1 and
+adds the cross-references requested in F3: Swift attachment requires three
+reviewed-file digests; the engine form does not accept those flags. The existing
+server-only execution restriction is preserved.
+
+The nonblocking notes remain explicit follow-up work:
+
+- **F2 — fresh-launch residency:** check the indicator before and after explicit
+  credential resolution in the interactive pass. Observation deliberately does
+  not access the Keychain; unknown residency retains the run-path backstop.
+- **F4 — auto-pin diagnostics:** preserve draft creation with verification issues,
+  but consider returning each failed pin's original cause alongside those issues.
+  Do not turn a failed pin into a fabricated hash or a false readiness claim.
+
+The reference consistency check and diff review validate this prose correction;
+no executable code, tests or generated reference region changed. The independent
+suite results above apply to the unchanged implementation. Landing and deployment
+remain with the designated reviewing/integration agent.
+
 ## Review and landing
 
 The maintainer, through the designated reviewing/integration agent, must read the

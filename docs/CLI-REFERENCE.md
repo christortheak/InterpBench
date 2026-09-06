@@ -949,6 +949,14 @@ steerlab-cli experiment duplicate <name> <new-name>
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-experiment-authoring END -->
 
+**Vector attachment contracts:** `steerlab-cli experiment inspect-artifact`
+returns both vector-file digests. Supply those and the reviewed study digest to
+`steerlab-cli experiment attach-artifact` using `--artifact-sha256`,
+`--sidecar-sha256` and `--manifest-sha256`, alongside `--artifact`. The Python
+engine's [`steerlab-server` form (§4.3)](#43-experiment-verb-name) requires only
+`--artifact`; it does not accept these three reviewed-file flags. Use the
+contract for the product being invoked.
+
 Two spellings the synopsis above cannot show: `declare-condition … --baseline`
 takes no `--slots` (it is the explicit no-intervention arm) but still requires
 `--alpha-units`, and
@@ -3114,6 +3122,13 @@ engine.
 list** — see §7.3.
 
 **`attach-artifact` — pinning a concept by artifact instead of by recipe.**
+
+This section describes `steerlab-server`. For Mac authoring, use the
+[`steerlab-cli` form (§3.3)](#33-experiment-lifecycle-authoring), whose required
+`--artifact-sha256`, `--sidecar-sha256` and `--manifest-sha256` bind the reviewed
+vector pair and study. The engine form below requires only `--artifact` and
+does not accept those three precondition flags.
+
 Every other attach pins *stimuli* and lets each run re-derive the vector. Some
 legitimate directions have no such recipe: they are derived post-hoc from other
 artifacts (family-grand-mean centring, for example, re-references a set of
@@ -5361,8 +5376,10 @@ API) — including, since 2026-08-10, the artifact-pin AUTHORING half of
 "pinnedArtifact"` + `vectorArtifact`), the attach refusals, the verify hash
 re-checks, and the optvec validate-gate exemption + eval-run advisory
 (`ExperimentStore.attachArtifact`; the app's Data → OptVec tool is the UI).
-There is still no Swift `attach-artifact` CLI verb, and the
-`extract`/`validate`/`sweep`/`run` of an artifact-pinned study remain
+Swift now exposes `steerlab-cli experiment attach-artifact` (§3.3), requiring
+`--artifact` plus the reviewed `--artifact-sha256`, `--sidecar-sha256` and
+`--manifest-sha256`; the engine's `steerlab-server` form (§4.3) requires only
+`--artifact`. The `extract`/`validate`/`sweep`/`run` of an artifact-pinned study remain
 server-only — Swift's extract refuses pinnedArtifact concepts loudly. The
 pinned bytes are substrate-stamped anyway, so that is where such a study
 belongs; the Mac authors and freezes it.
