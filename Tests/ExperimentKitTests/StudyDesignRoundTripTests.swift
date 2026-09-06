@@ -395,12 +395,12 @@ import Testing
             panel.saveSelectedStudyBackToDesign()
 
             #expect(panel.draft.formErrors[.template] == nil)
-            #expect(panel.templates.count == 1)
+            #expect(panel.management.designs.templates.count == 1)
             // The design took the settings…
-            #expect(panel.templates.first?.study.maxTokens == 4096)
+            #expect(panel.management.designs.templates.first?.study.maxTokens == 4096)
             // …and none of the lifecycle stamps: a design is never frozen.
-            #expect(panel.templates.first?.study.status == .draft)
-            #expect(panel.templates.first?.study.freezeHash == nil)
+            #expect(panel.management.designs.templates.first?.study.status == .draft)
+            #expect(panel.management.designs.templates.first?.study.freezeHash == nil)
             // The frozen study is byte-for-byte what it was.
             let reloaded = try ExperimentStore.load(name: draft.name)
             #expect(reloaded.status == .frozen)
@@ -439,15 +439,15 @@ import Testing
             panel.saveSelectedStudyBackToDesign()
 
             #expect(panel.draft.formErrors[.template] == nil)
-            #expect(panel.templates.count == 1)
-            #expect(panel.templates.first?.study.maxTokens == 4096)
-            #expect(panel.selectedTemplateName == design.name)
+            #expect(panel.management.designs.templates.count == 1)
+            #expect(panel.management.designs.templates.first?.study.maxTokens == 4096)
+            #expect(panel.management.designs.selectedTemplateName == design.name)
             let status = try #require(panel.status)
             #expect(status.hasPrefix("updated design '\(design.name)' in place"))
             #expect(status.contains("keep their original lineage stamps"))
             // And the claim the message makes is true: the earlier instance
             // still reads as matching the design it was minted from.
-            let lineage = try #require(panel.designLineage[earlier.name])
+            let lineage = try #require(panel.management.designs.designLineage[earlier.name])
             #expect(lineage.agreement == .matches)
             // The second, independent fact — without which "matches" would
             // quietly claim this study replicates the recipe now filed under
@@ -507,7 +507,7 @@ import Testing
 
             let panel = makePanel(root: root)
             panel.newDesignFromStudy(named: draft.name)
-            #expect(panel.templates.count == 2)
+            #expect(panel.management.designs.templates.count == 2)
             // The original design is untouched by the minting path.
             #expect(
                 StudyTemplateStore.hash(

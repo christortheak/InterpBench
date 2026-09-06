@@ -104,7 +104,7 @@ struct StudyManagementSection: View {
                 HStack(spacing: 8) {
                     Button("New Study") { startNewStudy(panel: panel) }
                         .help(
-                            panel.newStudyDesign.designName == nil
+                            panel.management.designs.newStudyDesign.designName == nil
                                 ? "creates a draft pinned to the currently selected "
                                     + "model under a placeholder name, and opens "
                                     + "Rename so you can name it now"
@@ -223,7 +223,7 @@ struct StudyManagementSection: View {
         // with that design. Consumed on CHANGE (the same-tab paths) and on
         // APPEAR (the cross-section handoff — this view is not on screen when
         // Templates sets it).
-        .onChange(of: panel.templateInstantiationInvitation) {
+        .onChange(of: panel.management.designs.templateInstantiationInvitation) {
             consumeInstantiationInvitation(panel: panel)
         }
         .onAppear {
@@ -247,7 +247,7 @@ struct StudyManagementSection: View {
         @Bindable var panel = panel
         @Bindable var designs = panel.management.designs
         Picker("Start from", selection: $designs.newStudyDesign) {
-            ForEach(StudyDesignChoice.choices(designs: panel.templates)) { choice in
+            ForEach(StudyDesignChoice.choices(designs: panel.management.designs.templates)) { choice in
                 Text(choice.label).tag(choice)
             }
         }
@@ -256,7 +256,7 @@ struct StudyManagementSection: View {
                 + "opens the new-studies table, prefilled with that design's "
                 + "task file and pins, instruments, sampling policy and judges "
                 + "— so the only thing left to decide is the casting.")
-        if panel.templates.isEmpty {
+        if panel.management.designs.templates.isEmpty {
             HStack(spacing: 6) {
                 Text("No saved designs yet.")
                 Button("Open Templates") { openTemplates() }
@@ -269,7 +269,7 @@ struct StudyManagementSection: View {
 
     /// "New Study" does one of the two things the design picker selected.
     private func startNewStudy(panel: ExperimentPanel) {
-        if let design = panel.newStudyDesign.designName {
+        if let design = panel.management.designs.newStudyDesign.designName {
             openInstantiation(design, panel: panel)
         } else {
             panel.newStudy()
@@ -305,9 +305,9 @@ struct StudyManagementSection: View {
     /// One-shot handoff from the Templates tab (and from any in-tab path that
     /// resolves a design): open the flow on it, then clear the flag.
     private func consumeInstantiationInvitation(panel: ExperimentPanel) {
-        guard let invited = panel.templateInstantiationInvitation else { return }
-        panel.templateInstantiationInvitation = nil
-        panel.newStudyDesign = .design(invited.design)
+        guard let invited = panel.management.designs.templateInstantiationInvitation else { return }
+        panel.management.designs.templateInstantiationInvitation = nil
+        panel.management.designs.newStudyDesign = .design(invited.design)
         openInstantiation(
             invited.design, panel: panel, permuting: invited.permuting)
     }

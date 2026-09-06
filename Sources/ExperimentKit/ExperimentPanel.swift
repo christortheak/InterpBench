@@ -750,7 +750,7 @@ public final class ExperimentPanel {
                 experimentName: manifest.name)
             refreshTemplates()
             for warning in mint.warnings { note(warning, severity: .warning) }
-            templateInstantiationInvitation = TemplateInstantiationInvitation(
+            management.designs.templateInstantiationInvitation = TemplateInstantiationInvitation(
                 design: mint.template.name,
                 permuting: state.assignment.ordered)
             note(

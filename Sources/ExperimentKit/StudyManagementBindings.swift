@@ -31,38 +31,6 @@ extension ExperimentPanel {
         set { management.renameInvitation = newValue }
     }
 
-    public var templates: [StudyTemplate] {
-        management.designs.templates
-    }
-
-    public var selectedTemplateName: String? {
-        get { management.designs.selectedTemplateName }
-        set { management.designs.selectedTemplateName = newValue }
-    }
-
-    public var templateInstantiationInvitation: TemplateInstantiationInvitation? {
-        get { management.designs.templateInstantiationInvitation }
-        set { management.designs.templateInstantiationInvitation = newValue }
-    }
-
-    public var templateSourceStudyName: String? {
-        get { management.designs.templateSourceStudyName }
-        set { management.designs.templateSourceStudyName = newValue }
-    }
-
-    public var newStudyDesign: StudyDesignChoice {
-        get { management.designs.newStudyDesign }
-        set { management.designs.newStudyDesign = newValue }
-    }
-
-    public var selectedTemplate: StudyTemplate? {
-        management.designs.selectedTemplate
-    }
-
-    public var designLineage: [String: StudyTemplateStore.DesignLineage] {
-        management.designs.designLineage
-    }
-
     public var deleteSelectedStudyRefusal: String? {
         management.deleteSelectedStudyRefusal
     }

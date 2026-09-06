@@ -3,27 +3,42 @@ import SwiftParser
 import SwiftSyntax
 import SwiftSyntaxBuilder
 
-// Usage: audit-panel-owner-access <current-checkout> <baseline-checkout>
+// Usage: audit-panel-owner-access <current-checkout> <baseline-checkout> [design]
 // Compile with SwiftParser/SwiftSyntax from the selected Xcode host libraries.
 // This is a parsed syntax-tree audit, paired with the ordinary compiler and
 // suites. It does not claim compiler-resolved symbol/type equivalence.
-guard CommandLine.arguments.count == 3 else {
-    fatalError("usage: audit-panel-owner-access <current-checkout> <baseline-checkout>")
+guard (3...4).contains(CommandLine.arguments.count) else {
+    fatalError("usage: audit-panel-owner-access <current-checkout> <baseline-checkout> [design]")
 }
 let root = URL(fileURLWithPath: CommandLine.arguments[1]).resolvingSymlinksInPath()
 let beforeRoot = URL(fileURLWithPath: CommandLine.arguments[2]).resolvingSymlinksInPath()
-let bridge = "Sources/ExperimentKit/StudyPanelBindings.swift"
-guard !FileManager.default.fileExists(atPath: root.appendingPathComponent(bridge).path) else {
-    fatalError("the property bridge must be retired before this audit passes")
-}
+let designMode = CommandLine.arguments.count == 4 && CommandLine.arguments[3] == "design"
+guard CommandLine.arguments.count == 3 || designMode else { fatalError("unknown migration mode") }
+let bridge = "Sources/ExperimentKit/" + (designMode ? "StudyManagementBindings.swift" : "StudyPanelBindings.swift")
 let forwarding = try String(contentsOf: beforeRoot.appendingPathComponent(bridge), encoding: .utf8)
-let accessor = try NSRegularExpression(pattern: #"var (\w+):[^\n]+\{\s*get \{ (\w+)\.\1 \}\s*set \{ \2\.\1 = newValue \}"#)
+let currentBridge = designMode ? try String(contentsOf: root.appendingPathComponent(bridge), encoding: .utf8) : ""
 var mapping: [String: String] = [:]
-for match in accessor.matches(in: forwarding, range: NSRange(forwarding.startIndex..., in: forwarding)) {
-    let name = String(forwarding[Range(match.range(at: 1), in: forwarding)!])
-    mapping[name] = String(forwarding[Range(match.range(at: 2), in: forwarding)!])
+if designMode {
+    let accessor = try NSRegularExpression(pattern: #"public var (\w+):[^\n]+\{\s*(?:get \{ )?management\.designs\.\1\b"#)
+    for match in accessor.matches(in: forwarding, range: NSRange(forwarding.startIndex..., in: forwarding)) {
+        let name = String(forwarding[Range(match.range(at: 1), in: forwarding)!])
+        mapping[name] = "management.designs"
+    }
+    guard mapping.count == 7 else { fatalError("unexpected baseline design property census") }
+    for name in mapping.keys {
+        guard !currentBridge.contains("public var " + name + ":") else { fatalError("forwarding property remains: " + name) }
+    }
+} else {
+    guard !FileManager.default.fileExists(atPath: root.appendingPathComponent(bridge).path) else {
+        fatalError("the property bridge must be retired before this audit passes")
+    }
+    let accessor = try NSRegularExpression(pattern: #"var (\w+):[^\n]+\{\s*get \{ (\w+)\.\1 \}\s*set \{ \2\.\1 = newValue \}"#)
+    for match in accessor.matches(in: forwarding, range: NSRange(forwarding.startIndex..., in: forwarding)) {
+        let name = String(forwarding[Range(match.range(at: 1), in: forwarding)!])
+        mapping[name] = String(forwarding[Range(match.range(at: 2), in: forwarding)!])
+    }
+    guard mapping.count == 109 else { fatalError("unexpected baseline forwarding property census") }
 }
-guard mapping.count == 109 else { fatalError("unexpected baseline forwarding property census") }
 
 func matches(_ pattern: String, _ source: String) -> [String] {
     let r = try! NSRegularExpression(pattern: pattern)
@@ -53,7 +68,7 @@ final class FieldAccessRewriter: SyntaxRewriter {
             + matches(#"\b(?:var|let)\s+(\w+)\s*=\s*ExperimentPanel\s*\("#, source)
             + matches(#"\b(?:var|let)\s+(\w+)\s*=\s*[\w.]+\.experiments\b"#, source)
             + matches(#"\b(\w+)\s*:\s*ExperimentPanel\b"#, source))
-        let pattern = try! NSRegularExpression(pattern: #"@Bindable\s+var\s+(\w+)\s*=\s*(\w+)\.(draft|localJobs|results|remoteJobs|submission)\b"#)
+        let pattern = try! NSRegularExpression(pattern: #"@Bindable\s+var\s+(\w+)\s*=\s*(\w+)\.(draft|localJobs|results|remoteJobs|submission|management\.designs)\b"#)
         var aliases: [String: (receiver: String, owner: String)] = [:]
         for match in pattern.matches(in: source, range: NSRange(source.startIndex..., in: source)) {
             func part(_ index: Int) -> String { String(source[Range(match.range(at: index), in: source)!]) }
@@ -92,10 +107,18 @@ final class FieldAccessRewriter: SyntaxRewriter {
                 replacement.base = ExprSyntax(DeclReferenceExprSyntax(baseName: .identifier("$" + alias.receiver)))
                 return ExprSyntax(replacement)
             }
-            if  let nested = base.as(MemberAccessExprSyntax.self),
-                nested.declName.baseName.text == owner, let receiver = nested.base,
-                isReceiver(receiver, at: node) {
-                var replacement = node; replacement.base = receiver
+            var candidate = base
+            var ownerMatched = true
+            for component in owner.split(separator: ".").reversed() {
+                guard let member = candidate.as(MemberAccessExprSyntax.self),
+                    member.declName.baseName.text == component, let parent = member.base else {
+                    ownerMatched = false
+                    break
+                }
+                candidate = parent
+            }
+            if ownerMatched, isReceiver(candidate, at: node) {
+                var replacement = node; replacement.base = candidate
                 return ExprSyntax(replacement)
             }
             if  base.trimmedDescription == owner, inPanel(node) {
@@ -155,6 +178,23 @@ guard paths == sources(beforeRoot) else {
 func structure(_ node: Syntax) -> String {
     if let token = node.as(TokenSyntax.self) { return "token:\(token.tokenKind)" }
     return "\(node.kind)[" + node.children(viewMode: .sourceAccurate).map(structure).joined(separator: ",") + "]"
+}
+// Only the seven forwarding variable declarations may disappear from the bridge.
+final class RemoveRetiredProperties: SyntaxRewriter {
+    override func visit(_ node: MemberBlockItemListSyntax) -> MemberBlockItemListSyntax {
+        super.visit(node).filter { item in
+            guard let declaration = item.decl.as(VariableDeclSyntax.self), declaration.bindings.count == 1,
+                let name = declaration.bindings.first?.pattern.as(IdentifierPatternSyntax.self)?.identifier.text else { return true }
+            return mapping[name] == nil
+        }
+    }
+}
+if designMode {
+    let oldBridge = RemoveRetiredProperties(viewMode: .sourceAccurate).rewrite(Parser.parse(source: forwarding))
+    let newBridge = Parser.parse(source: currentBridge)
+    guard structure(oldBridge) == structure(Syntax(newBridge)) else {
+        fatalError("the bridge changed beyond retirement of the seven design properties")
+    }
 }
 var changed = 0
 var differences = 0

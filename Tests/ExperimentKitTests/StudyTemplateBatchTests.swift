@@ -647,8 +647,8 @@ import Testing
                 fileURL: root.appending(component: "notices.jsonl"))
             panel.refresh()
             panel.renameTemplate(template.name, to: "Vignette Wave 3")
-            #expect(panel.templates.map(\.name) == ["vignette-wave-3"])
-            #expect(panel.selectedTemplateName == "vignette-wave-3")
+            #expect(panel.management.designs.templates.map(\.name) == ["vignette-wave-3"])
+            #expect(panel.management.designs.selectedTemplateName == "vignette-wave-3")
             // Provenance records what was true when it was written.
             let reloaded = try ExperimentStore.load(name: minted.name)
             #expect(reloaded.templateProvenance?.template == template.name)
@@ -667,8 +667,8 @@ import Testing
                 fileURL: root.appending(component: "notices.jsonl"))
             panel.refresh()
             panel.deleteTemplate(template.name)
-            #expect(panel.templates.isEmpty)
-            #expect(panel.selectedTemplateName == nil)
+            #expect(panel.management.designs.templates.isEmpty)
+            #expect(panel.management.designs.selectedTemplateName == nil)
             let survivor = try ExperimentStore.load(name: minted.name)
             #expect(survivor.templateProvenance?.template == template.name)
         }

@@ -153,7 +153,7 @@ import Testing
             let panel = makePanel(root: root)
             panel.updateTemplateDescription(design.name, to: "wave 3, re-run for the appendix")
             #expect(
-                panel.templates.first?.templateDescription
+                panel.management.designs.templates.first?.templateDescription
                     == "wave 3, re-run for the appendix")
             #expect(StudyTemplateStore.agreement(of: minted) == .matches)
         }
@@ -189,7 +189,7 @@ import Testing
             var minted = try StudyTemplateStore.instantiate(
                 templateName: design.name, cell: .agents([]))
             let panel = makePanel(root: root)
-            #expect(panel.designLineage[minted.name]?.agreement == .matches)
+            #expect(panel.management.designs.designLineage[minted.name]?.agreement == .matches)
 
             // Change the study on disk WITHOUT refreshing. A per-call
             // implementation would notice; a cached one must not.
@@ -197,10 +197,10 @@ import Testing
             try ExperimentStore.save(minted)
             let stale = try #require(panel.templateLineage(minted))
             #expect(!stale.contains("diverged"))
-            #expect(panel.designLineage[minted.name]?.agreement == .matches)
+            #expect(panel.management.designs.designLineage[minted.name]?.agreement == .matches)
 
             panel.refresh()
-            #expect(panel.designLineage[minted.name]?.agreement == .diverged)
+            #expect(panel.management.designs.designLineage[minted.name]?.agreement == .diverged)
         }
     }
 
@@ -213,8 +213,8 @@ import Testing
             // The hand-authored source study has no lineage, so it is absent
             // rather than stored as ".noLineage" — nothing should pay for a
             // per-study file read it cannot use.
-            #expect(panel.designLineage["vignette"] == nil)
-            #expect(panel.designLineage.count == 1)
+            #expect(panel.management.designs.designLineage["vignette"] == nil)
+            #expect(panel.management.designs.designLineage.count == 1)
         }
     }
 
@@ -232,7 +232,7 @@ import Testing
                 templateName: design.name, cell: .agents([]))
 
             let panel = makePanel(root: root)
-            let before = try #require(panel.designLineage[minted.name])
+            let before = try #require(panel.management.designs.designLineage[minted.name])
             #expect(before.agreement == .matches)
             #expect(!before.designRevised)
             let cleanLine = try #require(panel.templateLineage(minted))
@@ -244,7 +244,7 @@ import Testing
             try StudyTemplateStore.save(revised)
 
             panel.refresh()
-            let after = try #require(panel.designLineage[minted.name])
+            let after = try #require(panel.management.designs.designLineage[minted.name])
             // Fact (a) is unchanged — the study did not move, and saying it
             // did would blame it for an edit made to the library.
             #expect(after.agreement == .matches)
@@ -274,7 +274,7 @@ import Testing
             try StudyTemplateStore.save(revised)
 
             let panel = makePanel(root: root)
-            let lineage = try #require(panel.designLineage[minted.name])
+            let lineage = try #require(panel.management.designs.designLineage[minted.name])
             #expect(lineage.agreement == .diverged)
             #expect(lineage.designRevised)
 
@@ -296,7 +296,7 @@ import Testing
             let minted = try StudyTemplateStore.instantiate(
                 templateName: design.name, cell: .agents([]))
             let panel = makePanel(root: root)
-            panel.selectedTemplateName = nil
+            panel.management.designs.selectedTemplateName = nil
             let before = panel.status
 
             // An unchanged INSTANCE of a live design says nothing at all: the
@@ -304,7 +304,7 @@ import Testing
             // existed IS the answer.
             panel.newDesignFromStudy(named: minted.name)
             #expect(panel.status == before)
-            #expect(panel.selectedTemplateName == design.name)
+            #expect(panel.management.designs.selectedTemplateName == design.name)
             #expect(StudyTemplateStore.list().count == 1)
         }
     }
@@ -325,7 +325,7 @@ import Testing
             #expect(status.hasPrefix("created design"))
             #expect(status.contains("had diverged from '\(design.name)'"))
             #expect(StudyTemplateStore.list().count == 2)
-            #expect(panel.selectedTemplateName != design.name)
+            #expect(panel.management.designs.selectedTemplateName != design.name)
         }
     }
 
@@ -363,12 +363,12 @@ import Testing
         try withTempWorkspace { root in
             let design = try makeDesign()
             let panel = makePanel(root: root)
-            panel.newStudyDesign = .design(design.name)
+            panel.management.designs.newStudyDesign = .design(design.name)
             panel.refresh()
-            #expect(panel.newStudyDesign == .design(design.name))
+            #expect(panel.management.designs.newStudyDesign == .design(design.name))
 
             panel.deleteTemplate(design.name)
-            #expect(panel.newStudyDesign == .fromScratch)
+            #expect(panel.management.designs.newStudyDesign == .fromScratch)
         }
     }
 

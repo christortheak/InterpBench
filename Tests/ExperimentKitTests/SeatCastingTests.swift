@@ -449,7 +449,7 @@ import Testing
 
             panel.startPermutedSiblings()
             #expect(panel.draft.formErrors[.template] == nil)
-            let invitation = try #require(panel.templateInstantiationInvitation)
+            let invitation = try #require(panel.management.designs.templateInstantiationInvitation)
             #expect(invitation.permuting.count == 2)
             #expect(invitation.permuting.contains(.baseline))
             let agentPath = try agentArtifactPath("sympathy-agent")
@@ -494,7 +494,7 @@ import Testing
             try makeUncastStudy()
             let panel = makePanel(root: root, selecting: "allocation-study")
             panel.startPermutedSiblings()
-            #expect(panel.templateInstantiationInvitation == nil)
+            #expect(panel.management.designs.templateInstantiationInvitation == nil)
             let refusal = try #require(panel.draft.formErrors[.template])
             #expect(refusal.contains("Save the seats first"))
         }

@@ -535,3 +535,23 @@ Full Xcode beta passes 277 SteeringKit and 4,478 ExperimentKit tests
 (150.09 seconds). The bridge ratchet and whitespace checks pass; the actual
 source/test/document diff was read. No mechanical body move is claimed.
 Interactive composer qualification remains outstanding. Main is unchanged.
+
+
+## Direct design-state ownership
+
+Seven remaining design-state forwarding properties have been removed from the
+management bridge. App and test consumers now read the design owner directly;
+SwiftUI selection bindings use a directly bound design owner. The mechanical
+change does not alter study/design behavior or file formats. Other members in
+the three remaining bridges still require migration.
+
+The shared SwiftSyntax auditor's `design` mode derives the seven accessor mappings
+from baseline `4fea25f` and checks complete syntax trees, source census and exact
+bridge declaration retirement. It passes with zero normalized differences for
+seven changed consumer files. Its original mode still passes the historical
+109-property retirement; a deliberately unrelated declaration in a disposable
+copy fails the new mode. Full Xcode beta passes 277 SteeringKit and 4,478
+ExperimentKit tests (`TEST SUCCEEDED`); full Python passes 5,896 with 9 skipped
+and 8 warnings (146.47 seconds). The bridge ratchet and whitespace checks pass,
+and the actual source/test/document diff was read. This is a mechanical owner
+access migration; substantive design storage/authorship remains separate work.

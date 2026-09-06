@@ -23,6 +23,27 @@ with a reviewed snapshot and shares validation/publication with
 removed from `StudyRemoteCoordinationBindings.swift`; that file still contains
 other migration seams. This is a semantic concurrency fix, not a mechanical move.
 
+Seven design-state properties have also been retired from
+`StudyManagementBindings.swift`: the template list/selection, instantiation
+invitation, template source, new-study design and lineage map now resolve through
+`StudyDesignLibrary`. The shared syntax auditor has a `design` mode pinned to the
+seven baseline accessors. Against baseline `4fea25f`, it checks complete normalized
+syntax trees for every source/test file, checks the source census, and permits
+only those seven declarations to disappear from the bridge. It passed for seven
+changed consumer files; an unrelated declaration added in a disposable copy was
+rejected. The original 109-property audit still passes for its historical commits.
+
+To audit this design-property checkpoint, use the auditor compilation command in this document and
+run it against a snapshot of the checkpoint and a baseline checkout of `4fea25f`:
+
+```sh
+"$audit_scratch/audit" "$design_checkpoint_checkout" "$design_baseline_checkout" design
+```
+
+The mode is required: the original invocation still audits the complete property
+bridge retirement. Future semantic changes should be checked independently, not
+normalized away to keep either historical audit green.
+
 The historical inventory below remains the ratchet baseline. Its old property
 bridge file/count describes what was removed, not an existing compatibility API.
 No baseline allowance was expanded.

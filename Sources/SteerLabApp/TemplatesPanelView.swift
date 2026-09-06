@@ -41,10 +41,10 @@ struct TemplatesPanelView: View {
     /// Reloads the description editor when the selection changes, so one
     /// design's unsaved text never lands on another.
     private func syncDescriptionDraft() {
-        let selected = panel.selectedTemplateName
+        let selected = panel.management.designs.selectedTemplateName
         guard descriptionOwner != selected else { return }
         descriptionOwner = selected
-        descriptionDraft = panel.selectedTemplate?.templateDescription ?? ""
+        descriptionDraft = panel.management.designs.selectedTemplate?.templateDescription ?? ""
     }
 
     var body: some View {
@@ -52,7 +52,7 @@ struct TemplatesPanelView: View {
         Form {
             newDesignSection(panel: panel)
             librarySection(panel: panel)
-            if let template = panel.selectedTemplate {
+            if let template = panel.management.designs.selectedTemplate {
                 metadataSection(template, panel: panel)
                 designSummarySection(template, panel: panel)
                 actionsSection(template, panel: panel)
@@ -71,7 +71,7 @@ struct TemplatesPanelView: View {
             panel.refresh()
             syncDescriptionDraft()
         }
-        .onChange(of: panel.selectedTemplateName) { syncDescriptionDraft() }
+        .onChange(of: panel.management.designs.selectedTemplateName) { syncDescriptionDraft() }
         .alert(
             "Rename design",
             isPresented: Binding(
@@ -109,6 +109,7 @@ struct TemplatesPanelView: View {
     @ViewBuilder
     private func newDesignSection(panel: ExperimentPanel) -> some View {
         @Bindable var panel = panel
+        @Bindable var designs = panel.management.designs
         Section("New Design") {
             HStack(spacing: 8) {
                 Button {
@@ -124,7 +125,7 @@ struct TemplatesPanelView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Divider()
-            Picker("Study", selection: $panel.templateSourceStudyName) {
+            Picker("Study", selection: $designs.templateSourceStudyName) {
                 Text("select…").tag(String?.none)
                 ForEach(panel.experiments, id: \.name) { manifest in
                     Text(studyPickerLabel(manifest, panel: panel))
@@ -133,12 +134,12 @@ struct TemplatesPanelView: View {
             }
             HStack(spacing: 8) {
                 Button {
-                    guard let name = panel.templateSourceStudyName else { return }
+                    guard let name = panel.management.designs.templateSourceStudyName else { return }
                     panel.newDesignFromStudy(named: name)
                 } label: {
                     Label("New from Study", systemImage: "square.on.square")
                 }
-                .disabled(panel.templateSourceStudyName == nil)
+                .disabled(panel.management.designs.templateSourceStudyName == nil)
                 .help(Self.newFromStudyHelp)
             }
             if let refusal = panel.draft.formErrors[.template] {
@@ -171,8 +172,9 @@ struct TemplatesPanelView: View {
     @ViewBuilder
     private func librarySection(panel: ExperimentPanel) -> some View {
         @Bindable var panel = panel
+        @Bindable var designs = panel.management.designs
         Section("Designs") {
-            if panel.templates.isEmpty {
+            if panel.management.designs.templates.isEmpty {
                 Text("No designs yet. Save a study you intend to repeat — the "
                     + "design keeps its task file and pins, instruments, "
                     + "judges and sampling policy, and holds no agents.")
@@ -180,9 +182,9 @@ struct TemplatesPanelView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Picker("Design", selection: $panel.selectedTemplateName) {
+                Picker("Design", selection: $designs.selectedTemplateName) {
                     Text("select…").tag(String?.none)
-                    ForEach(panel.templates, id: \.name) { template in
+                    ForEach(panel.management.designs.templates, id: \.name) { template in
                         Text(templateRowLabel(template))
                             .tag(String?.some(template.name))
                     }
@@ -275,7 +277,7 @@ struct TemplatesPanelView: View {
                     // Cross-section handoff: Studies opens the new-studies
                     // table on this design (consumed on appear as well as on
                     // change — Studies is not on screen when this is set).
-                    panel.templateInstantiationInvitation =
+                    panel.management.designs.templateInstantiationInvitation =
                         TemplateInstantiationInvitation(design: template.name)
                     navigate(.studies)
                 }
