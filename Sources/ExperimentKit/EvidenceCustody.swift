@@ -35,9 +35,64 @@ struct CapturedEvidenceArchive: Sendable {
     let sha256: String
 }
 
+/// Discovery verifies receipt identity only. Archive/file verification is an
+/// explicit operation so listing remains cheap and does not imply current custody.
+public struct EvidenceCustodyInventory: Codable, Sendable {
+    public struct Entry: Codable, Sendable, Identifiable {
+        public var id: String { receiptSHA256 }
+        public let receiptSHA256: String
+        public let createdAt: String
+        public let archiveSHA256: String
+        public let origin: EvidenceImportOrigin?
+        public let evidenceComplete: Bool?
+        public let failureRecorded: Bool
+    }
+    public let runID: String
+    public let entries: [Entry]
+    public let issues: [String]
+}
+
 public enum EvidenceCustodyStore {
     private static let archiveDirectory = ".steerlab/evidence-archives"
     private static let receiptDirectory = ".steerlab/evidence-custody"
+
+    public static func inventory(runID: String, workspaceRoot: URL) throws -> EvidenceCustodyInventory {
+        guard EvidenceBundleImporter.isSafeComponent(runID) else {
+            throw ChatServiceError(reason: "invalid run ID for custody discovery")
+        }
+        let root = try canonicalRoot(workspaceRoot)
+        let directory = root.appending(path: receiptDirectory)
+        let fm = FileManager.default
+        // Absence is an empty inventory, not a reason to create workspace state.
+        var componentURL = root
+        for component in receiptDirectory.split(separator: "/") {
+            componentURL.append(component: String(component))
+            do {
+                guard try fm.attributesOfItem(atPath: componentURL.path)[.type] as? FileAttributeType == .typeDirectory else {
+                    throw ChatServiceError(reason: "custody discovery requires ordinary workspace directories")
+                }
+            } catch CocoaError.fileReadNoSuchFile {
+                return .init(runID: runID, entries: [], issues: [])
+            }
+        }
+        var entries: [EvidenceCustodyInventory.Entry] = []
+        var issues: [String] = []
+        for name in try fm.contentsOfDirectory(atPath: directory.path).sorted() where name.hasSuffix(".json") {
+            let digest = String(name.dropLast(5))
+            do {
+                let receipt = try loadReceipt(receiptSHA256: digest, root: root)
+                guard receipt.importedRunIDs.contains(runID) else { continue }
+                entries.append(.init(receiptSHA256: digest, createdAt: receipt.createdAt,
+                    archiveSHA256: receipt.archiveSHA256, origin: receipt.origin,
+                    evidenceComplete: receipt.evidenceComplete, failureRecorded: receipt.failureRecorded))
+            } catch {
+                issues.append("Could not inspect receipt \(name): \(error)")
+            }
+        }
+        return .init(runID: runID, entries: entries.sorted {
+            $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt > $1.createdAt
+        }, issues: issues)
+    }
 
     /// Capture ordinary file bytes before extraction. Content-addressed copies
     /// retain every archive member, including metadata and unexpanded logs.
@@ -140,15 +195,23 @@ public enum EvidenceCustodyStore {
     public static func loadVerified(
         receiptSHA256: String, workspaceRoot: URL
     ) throws -> EvidenceCustodyReceipt {
-        guard isDigest(receiptSHA256) else { throw ChatServiceError(reason: "invalid custody receipt digest") }
         let root = try canonicalRoot(workspaceRoot)
+        let receipt = try loadReceipt(receiptSHA256: receiptSHA256, root: root)
+        try verify(receipt, workspaceRoot: root)
+        return receipt
+    }
+
+    private static func loadReceipt(receiptSHA256: String, root: URL) throws -> EvidenceCustodyReceipt {
+        guard isDigest(receiptSHA256) else { throw ChatServiceError(reason: "invalid custody receipt digest") }
         let relative = receiptDirectory + "/" + receiptSHA256 + ".json"
-        guard try localFileHash(relative, root: root) == receiptSHA256 else {
+        let bytes = try Data(contentsOf: localFileURL(relative, root: root))
+        guard ManifestFileTransaction.digest(bytes) == receiptSHA256 else {
             throw ChatServiceError(reason: "custody receipt content hash mismatch")
         }
-        let receipt = try JSONDecoder().decode(EvidenceCustodyReceipt.self,
-            from: Data(contentsOf: root.appending(path: relative)))
-        try verify(receipt, workspaceRoot: root)
+        let receipt = try JSONDecoder().decode(EvidenceCustodyReceipt.self, from: bytes)
+        guard receipt.schemaVersion == 1, receipt.workspaceRoot.path == root.path else {
+            throw ChatServiceError(reason: "custody receipt identity does not match this workspace")
+        }
         return receipt
     }
 
@@ -202,6 +265,10 @@ public enum EvidenceCustodyStore {
     }
 
     private static func localFileHash(_ path: String, root: URL) throws -> String {
+        try hashFile(localFileURL(path, root: root))
+    }
+
+    private static func localFileURL(_ path: String, root: URL) throws -> URL {
         let components = path.split(separator: "/", omittingEmptySubsequences: false)
         guard !components.isEmpty, components.allSatisfy({ EvidenceBundleImporter.isSafeComponent(String($0)) }) else {
             throw ChatServiceError(reason: "unsafe custody file path")
@@ -214,7 +281,7 @@ public enum EvidenceCustodyStore {
                 throw ChatServiceError(reason: "custody requires ordinary local files: \(path)")
             }
         }
-        return try hashFile(url)
+        return url
     }
 
     /// Archives can be large; hashing must not load the whole bundle into RAM.

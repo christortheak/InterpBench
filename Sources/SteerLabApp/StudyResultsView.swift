@@ -48,6 +48,9 @@ struct StudyResultsView<JudgeControls: View>: View {
                     }
                 }
 
+                EvidenceCustodyView(runDirectory: URL(fileURLWithPath: detail.item.path))
+                    .id(detail.item.path)
+
                 artifactLinks(detail)
 
                 // F10: the browser item is built ONCE per selection by the

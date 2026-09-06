@@ -330,7 +330,7 @@ import Testing
             #expect(data.exitCode == 1)
             #expect(
                 renderedStandardError(data)
-                    == "steerlab-cli data: usage: data check <experiment> | verify-custody <receipt-sha256>\n")
+                    == "steerlab-cli data: usage: data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>\n")
 
             let workspace = await invoke("workspace", [], recorder: recorder)
             #expect(workspace.exitCode == 1)

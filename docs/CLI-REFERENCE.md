@@ -783,7 +783,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   init [--home <dir>]                           Create the home layout's Workspaces/ and Sites/.
   workspace init <path>                         Create and seed a data workspace.
   experiment <verb> <name> …                    The study lifecycle.
-  data check <experiment> | verify-custody <receipt-sha256>  Study-data readiness and local evidence custody.
+  data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>  Study-data readiness and local evidence custody.
   vectors <verb> …                              Vector artifacts.
   remote <verb> (--site <id> | --url <server>)  Cluster client.
   cluster <verb> …                              Cluster lifecycle.
@@ -1727,6 +1727,7 @@ entries. `--no-control` omits the control condition.
 
 ```
 steerlab-cli data check <experiment>
+steerlab-cli data custody <run-id>
 steerlab-cli data verify-custody <receipt-sha256>
 steerlab-cli vectors compare <a.safetensors> <b.safetensors> [--threshold <ratio>]
 steerlab-cli vectors backfill-norms <runDir/name> [--corpus <path>] [--model <id>] [--redenominate]
@@ -1736,6 +1737,7 @@ steerlab-cli vectors mirror-poles <runDir/name> --concept <name> [--output-name 
 | Verb | Purpose |
 |---|---|
 | `data check` | Report which study-data inputs the manifest still needs. |
+| `data custody` | List local import receipts for a run; use verify-custody to check current archive and evidence bytes. |
 | `data verify-custody` | Verify a retained evidence archive and imported files against a local custody receipt; no network or cleanup. |
 | `vectors compare` | Compare two vector artifacts and refuse below the cosine threshold. |
 | `vectors backfill-norms` | Measure per-layer residual norms for an existing artifact into a new artifact, stamped with the current denominator convention (the opt-in migration for legacy unstamped artifacts). |

@@ -485,3 +485,32 @@ verification/refusal. Generated CLI reference, shipped contract equality, bridge
 ratchet and whitespace checks pass. The actual source/test/document diff was read.
 No mechanical body move is claimed. Main remains untouched; this is an isolated
 branch checkpoint, not a landing or release qualification.
+
+
+## Custody discovery and workbench adapters
+
+`data custody <run-id>` discovers receipts from individual or chain imports,
+including pipeline archives carrying that run. Discovery validates receipt
+identity but does not claim current file verification; damaged receipts surface
+as inventory issues. Discovery of absent state writes nothing, and linked
+storage or unsafe run IDs refuse. Receipt bytes are hashed and decoded from one
+captured read.
+
+The Swift workbench exposes explicit custody list/verify HTTP operations. Both
+name the workspace, reject unknown/missing fields, and capture the served root
+before background work. The local study Results view uses the same inventory and
+verifier under “Evidence retained locally,” with its root captured from the run
+path. View replacement cancels publication of late results; refresh clears the
+previous verification message. See [the custody contract](EVIDENCE-CUSTODY.md) for
+commands, endpoint fields and limitations.
+
+Validation: full Xcode beta passes 277 SteeringKit and 4,474 ExperimentKit tests
+(`TEST SUCCEEDED`); full Python passes 5,896 with 9 skipped and 8 warnings
+(151.89 seconds). The focused suite passes 22 tests. A compiled CLI and
+disposable Swift workbench wire test agree on discovery, verify without selecting
+a study or connecting compute, and return typed refusals for wrong/unnamed
+workspaces and later evidence loss. The SwiftUI path compiles but interactive
+qualification is still outstanding. Python receipt parity and managed remote
+cleanup remain work; no remote deletion is enabled. Generated reference, shipped
+contract equality, bridge ratchet and whitespace checks pass. The actual source,
+test and document diff was read. No mechanical move is claimed; main is unchanged.

@@ -706,6 +706,14 @@ public final class SteerLabWebServer: Sendable {
                 name: queryValue("name", in: requestPath), workspaceRoot: ExperimentStore.workspaceRoot)
             return Response(status: response.status, body: response.body)
 
+        case ("POST", "/api/evidence/custody/list"), ("POST", "/api/evidence/custody/verify"):
+            let root = ExperimentStore.workspaceRoot
+            let verifying = path == "/api/evidence/custody/verify"
+            let response = await Task.detached {
+                EvidenceCustodyHTTP.perform(body: body, verifying: verifying, workspaceRoot: root)
+            }.value
+            return Response(status: response.status, body: response.body)
+
         case ("POST", "/api/experiment/protocol"):
             let response = StudyProtocolHTTP.apply(body: body, workspaceRoot: ExperimentStore.workspaceRoot)
             return Response(status: response.status, body: response.body)

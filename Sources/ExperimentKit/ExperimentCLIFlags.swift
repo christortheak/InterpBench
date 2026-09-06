@@ -292,6 +292,9 @@ public enum ExperimentCLIParser {
             purpose: "Report which study-data inputs the manifest still needs."),
 
         .init(
+            namespace: "data", verb: "custody", positional: "<run-id>",
+            purpose: "List local import receipts for a run; use verify-custody to check current archive and evidence bytes."),
+        .init(
             namespace: "data", verb: "verify-custody", positional: "<receipt-sha256>",
             purpose: "Verify a retained evidence archive and imported files against a local custody receipt; no network or cleanup."),
 

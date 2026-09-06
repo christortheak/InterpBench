@@ -602,7 +602,7 @@ public enum ExperimentCLIHelp {
                 synopsis: "experiment <verb> <name> …",
                 purpose: "The study lifecycle."),
             .init(
-                synopsis: "data check <experiment> | verify-custody <receipt-sha256>",
+                synopsis: "data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>",
                 purpose: "Study-data readiness and local evidence custody."),
             .init(
                 synopsis: "vectors <verb> …", purpose: "Vector artifacts."),

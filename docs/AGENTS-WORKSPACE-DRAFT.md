@@ -548,6 +548,11 @@ rationale. Fastest way to find what is missing. Blockers are a refusal:
 `state: "refused"`, exit **65 in both modes** (the one verb whose human exit
 has migrated — §5).
 
+**`data custody <run-id>`** discovers receipts for an imported run, including
+receipts for a pipeline archive that carried that run. Discovery lists recorded
+imports; it does not verify current evidence bytes. Use `data verify-custody`
+on a returned digest for that check. Both operations work offline.
+
 **`data verify-custody <receipt-sha256>`** rechecks a local evidence archive
 and its imported files without contacting a server. Use the digest returned by
 `remote import --json`, in the originating workspace. Missing or changed bytes

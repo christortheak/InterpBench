@@ -15,6 +15,18 @@ Logs or other members not expanded into a run remain in the retained archive.
 
 `steerlab-cli remote import` returns `custodyReceipt`, `custodyReceiptSHA256` and
 `archiveSHA256` in its JSON result. Keep the receipt digest from that result.
+For later discovery, including receipts created by a chain import, use the run ID:
+
+```sh
+steerlab-cli data custody <run-id> --json
+```
+
+`result.inventory.entries` lists matching receipts, including archives carrying
+that run as a pipeline stage. `issues` reports unreadable/corrupt receipts instead
+of silently hiding them. An empty inventory does not establish that evidence is
+missing: local runs and older imports may have no receipt. Listing validates the
+receipt identity but does not read and verify all evidence bytes.
+
 Then, with the originating workspace selected:
 
 ```sh
@@ -32,6 +44,27 @@ scientific validity, all possible study outputs, or permission to remove a remot
 copy. A partial archive can have valid custody. Unknown remote origin cannot
 establish the source identity required for cleanup. Use the digest from the import
 result or import ledger; a hand-authored JSON document is not an import receipt.
+
+## App and workbench HTTP
+
+In the study's local Runs & Results, expand **Evidence retained locally** for the
+selected run, then choose **Verify retained evidence**. The view uses the local
+workspace from that displayed run's path, independent of compute selection.
+Discovery and hashing run off the UI actor; a replaced view does not publish a
+late verification result into a different run. Refresh clears the previous check.
+
+The Swift workbench exposes the same read-only operations:
+
+- `POST /api/evidence/custody/list`, body `workspaceRoot` (absolute path) and `runID`.
+  Returns `ok` and `inventory`, with the same inventory as the CLI.
+- `POST /api/evidence/custody/verify`, body `workspaceRoot` and `receiptSHA256`.
+  Returns `ok`, `verified`, `receiptSHA256` and `receipt` on success.
+
+Both require exactly the named fields. An invalid request returns 400
+`invalidCustodyRequest`; a different workspace returns 409
+`custodyWorkspaceChanged`; failed verification returns 409 `custodyUnverified`.
+Each refusal includes a repair action. These routes never select a study, connect
+compute or delete files. They capture the served workspace before background work.
 
 ## Storage and failure behavior
 
@@ -51,10 +84,10 @@ result or import ledger; a hand-authored JSON document is not an import receipt.
 
 ## Remaining adapters and lifecycle work
 
-Chain imports persist receipts through the shared importer, but their summaries
-still report run outcomes rather than receipt digests. Some older panel paths
-cannot yet supply complete remote origins. Dedicated HTTP and SwiftUI custody
-inspection, Python receipt parity, managed cleanup plan/apply, dependency checks,
-and the complete remote acceptance journey remain implementation work. No cleanup
+Chain import summaries still report run outcomes rather than receipt digests;
+`data custody` discovers their receipts afterward. Some older panel paths cannot
+yet supply complete remote origins. Python receipt parity, managed cleanup
+plan/apply, dependency checks, interactive UI qualification and the complete
+remote acceptance journey remain implementation work. No cleanup
 operation is enabled by this change. Never improvise deletion inside immutable
 `runs/` directories.

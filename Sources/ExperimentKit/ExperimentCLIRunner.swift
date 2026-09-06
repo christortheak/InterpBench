@@ -756,6 +756,22 @@ public struct ExperimentCLIRunner: Sendable {
     {
         let args = invocation.args
         switch args.first {
+        case "custody":
+            guard args.count == 2 else {
+                throw ExperimentError.malformed("A run ID is required.", repair: "steerlab-cli data custody <run-id> --json")
+            }
+            let inventory: EvidenceCustodyInventory
+            do { inventory = try EvidenceCustodyStore.inventory(runID: args[1], workspaceRoot: ExperimentStore.workspaceRoot) }
+            catch {
+                throw ExperimentCLIStop(exitCode: 65, state: .refused, code: "custodyUnverified",
+                    reason: String(describing: error), repairAction: "Check the originating workspace and run ID before inspecting custody again.")
+            }
+            let payload = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(inventory))
+            sink.out("\(inventory.entries.count) import receipt(s); verify a receipt to check current local evidence.")
+            for entry in inventory.entries { sink.out("\(entry.createdAt)  \(entry.receiptSHA256)") }
+            for issue in inventory.issues { sink.err(issue + "\n") }
+            return ExperimentCLIResult(message: "Import receipts listed; current byte custody has not been checked.",
+                payload: ["inventory": payload])
         case "verify-custody":
             guard args.count == 2 else {
                 throw ExperimentError.malformed("A custody receipt digest is required.",
@@ -838,7 +854,7 @@ public struct ExperimentCLIRunner: Sendable {
             return ExperimentCLIResult(
                 message: summary.line, payload: payload)
         default:
-            throw ExperimentError(reason: "usage: data check <experiment> | verify-custody <receipt-sha256>")
+            throw ExperimentError(reason: "usage: data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>")
         }
     }
 

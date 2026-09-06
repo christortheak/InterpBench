@@ -240,6 +240,80 @@ struct EvidenceImportAtomicityTests {
         }
     }
 
+    @Test func custodyDiscoveryIsReadOnlyAndDoesNotClaimCurrentVerification() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "custody-discovery") { root in
+            let fm = FileManager.default
+            #expect(try EvidenceCustodyStore.inventory(runID: "run", workspaceRoot: root).entries.isEmpty)
+            #expect(!fm.fileExists(atPath: root.appending(component: ".steerlab").path))
+            let archive = try bundle(runID: "run", files: ["records.jsonl": "{}\n"])
+            defer { try? fm.removeItem(at: archive) }
+            let imported = try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root)
+            // Discovery names a past import, even after later local data loss.
+            try fm.removeItem(at: imported.runDirectory.appending(component: "records.jsonl"))
+            let inventory = try EvidenceCustodyStore.inventory(runID: "run", workspaceRoot: root)
+            #expect(inventory.entries.map(\.receiptSHA256) == [imported.receiptSHA256])
+            #expect(inventory.issues.isEmpty)
+            #expect(try EvidenceCustodyStore.inventory(runID: "other", workspaceRoot: root).entries.isEmpty)
+            #expect(throws: (any Error).self) {
+                try EvidenceCustodyStore.loadVerified(receiptSHA256: imported.receiptSHA256, workspaceRoot: root)
+            }
+            try Data("damaged".utf8).write(to: imported.receiptURL)
+            let damaged = try EvidenceCustodyStore.inventory(runID: "run", workspaceRoot: root)
+            #expect(damaged.entries.isEmpty)
+            #expect(damaged.issues.count == 1)
+        }
+    }
+
+    @Test func custodyDiscoveryRefusesLinkedStorageAndUnsafeRunIDs() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "custody-storage") { root in
+            let fm = FileManager.default
+            let outside = root.appending(component: "outside")
+            try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+            try fm.createSymbolicLink(at: root.appending(component: ".steerlab"), withDestinationURL: outside)
+            #expect(throws: (any Error).self) {
+                try EvidenceCustodyStore.inventory(runID: "run", workspaceRoot: root)
+            }
+            #expect(throws: (any Error).self) {
+                try EvidenceCustodyStore.inventory(runID: "../run", workspaceRoot: root)
+            }
+        }
+    }
+
+    @Test func custodyHTTPAndCLIShareDiscoveryAndVerification() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "custody-http") { root in
+            let archive = try bundle(runID: "run", files: ["records.jsonl": "{}\n"])
+            defer { try? FileManager.default.removeItem(at: archive) }
+            let imported = try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root)
+            func request(_ fields: [String: Any], verifying: Bool) throws -> EvidenceCustodyHTTP.Response {
+                EvidenceCustodyHTTP.perform(body: try JSONSerialization.data(withJSONObject: fields),
+                    verifying: verifying, workspaceRoot: root)
+            }
+            let list = try request(["workspaceRoot": root.path, "runID": "run"], verifying: false)
+            #expect(list.status == "200 OK")
+            struct Listed: Decodable { let inventory: EvidenceCustodyInventory }
+            let listed = try JSONDecoder().decode(Listed.self, from: list.body)
+            #expect(listed.inventory.entries.map(\.receiptSHA256) == [imported.receiptSHA256])
+            let invocation = try ExperimentCLIParser.parse(namespace: "data", ["custody", "run", "--json"])
+            let cli = try ExperimentCLIRunner(sink: .discarding).runDataCommand(invocation)
+            #expect(!cli.changed)
+            #expect(try cli.payload["inventory"] == JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(listed.inventory)))
+            var fields: [String: Any] = ["workspaceRoot": root.path, "receiptSHA256": imported.receiptSHA256]
+            #expect(try request(fields, verifying: true).status == "200 OK")
+            fields["workspaceRoot"] = root.appending(component: "other").path
+            let wrongRoot = try request(fields, verifying: true)
+            #expect(wrongRoot.status == "409 Conflict")
+            #expect(String(decoding: wrongRoot.body, as: UTF8.self).contains("custodyWorkspaceChanged"))
+            fields["workspaceRoot"] = root.path
+            fields["force"] = true
+            #expect(try request(fields, verifying: true).status == "400 Bad Request")
+            fields.removeValue(forKey: "force")
+            try FileManager.default.removeItem(at: imported.runDirectory.appending(component: "records.jsonl"))
+            let missing = try request(fields, verifying: true)
+            #expect(missing.status == "409 Conflict")
+            #expect(String(decoding: missing.body, as: UTF8.self).contains("custodyUnverified"))
+        }
+    }
+
     @Test func custodyCannotBeReboundToAnotherWorkspace() throws {
         try ExperimentRootOverrideLock.withTempRoot(prefix: "custody-workspace") { root in
             let archive = try bundle(runID: "run", files: ["records.jsonl": "{}\n"])
