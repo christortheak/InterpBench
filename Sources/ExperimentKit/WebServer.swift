@@ -341,7 +341,7 @@ public final class SteerLabWebServer: Sendable {
             }
             let allowed = Set(["generations.jsonl", "judgments.jsonl", "report.json", "judge-report.json"])
             guard allowed.contains(filename) else { return .error("file not downloadable") }
-            guard let detail = service.experiments.selectedResult else {
+            guard let detail = service.experiments.results.selectedResult else {
                 return .error("select a result artifact first")
             }
             let item = detail.item
@@ -765,8 +765,8 @@ public final class SteerLabWebServer: Sendable {
                 let description: String?
             }
             guard let request = decode(Body.self, from: body) else { return .error("bad body") }
-            service.experiments.newName = request.name
-            service.experiments.newDescription = request.description ?? ""
+            service.experiments.draft.newName = request.name
+            service.experiments.draft.newDescription = request.description ?? ""
             service.experiments.create()
             return .ok()
 
@@ -815,52 +815,52 @@ public final class SteerLabWebServer: Sendable {
                 return .error(problem)
             }
             if let description = request.description {
-                service.experiments.protocolDescription = description
+                service.experiments.draft.protocolDescription = description
             }
             if let task = request.task {
-                service.experiments.taskDescription = task
+                service.experiments.draft.taskDescription = task
             }
             if let outcomes = request.outcomes {
-                service.experiments.outcomeMeasures = outcomes
+                service.experiments.draft.outcomeMeasures = outcomes
             }
             if let judgeModel = request.judgeModel {
-                service.experiments.judgeModel = judgeModel
+                service.experiments.draft.judgeModel = judgeModel
             }
             if let judgePrompt = request.judgePrompt {
-                service.experiments.evaluationPrompt = judgePrompt
+                service.experiments.draft.evaluationPrompt = judgePrompt
             }
             if let taskPromptsFile = request.taskPromptsFile {
-                service.experiments.taskPromptsFile = taskPromptsFile
+                service.experiments.draft.taskPromptsFile = taskPromptsFile
             }
             if let promptMode = request.promptMode {
-                service.experiments.promptMode = promptMode
+                service.experiments.draft.promptMode = promptMode
             }
             if let systemPrompt = request.systemPrompt {
-                service.experiments.systemPrompt = systemPrompt
+                service.experiments.draft.systemPrompt = systemPrompt
             }
             if let qwenThinkingEnabled = request.qwenThinkingEnabled {
-                service.experiments.qwenThinkingEnabled = qwenThinkingEnabled
+                service.experiments.draft.qwenThinkingEnabled = qwenThinkingEnabled
             }
             // The effort spelling wins over the legacy boolean when a body
             // carries both; the joint rules are the panel's own at save.
             if let reasoningEffort = request.reasoningEffort {
-                service.experiments.reasoningEffort = reasoningEffort
+                service.experiments.draft.reasoningEffort = reasoningEffort
             }
             if let reasoningMaxTokens = request.reasoningMaxTokens {
-                service.experiments.reasoningMaxTokens =
+                service.experiments.draft.reasoningMaxTokens =
                     reasoningMaxTokens > 0 ? reasoningMaxTokens : nil
             }
             if let temperature = request.temperature {
-                service.experiments.runTemperature = temperature
+                service.experiments.draft.runTemperature = temperature
             }
             if let maxTokens = request.maxTokens {
-                service.experiments.runMaxTokens = maxTokens
+                service.experiments.draft.runMaxTokens = maxTokens
             }
             if let samplesPerItem = request.samplesPerItem {
-                service.experiments.samplesPerItemField = samplesPerItem
+                service.experiments.draft.samplesPerItemField = samplesPerItem
             }
             if let seedPolicy = request.seedPolicy {
-                service.experiments.seedPolicyField = seedPolicy
+                service.experiments.draft.seedPolicyField = seedPolicy
             }
             // This request has no model field, so a headless protocol save is
             // never a base-model change: adopt the manifest's own model as
@@ -899,9 +899,9 @@ public final class SteerLabWebServer: Sendable {
             }
             guard let request = decode(Body.self, from: body) else { return .error("bad body") }
             if let file = request.file {
-                service.experiments.taskPromptsFile = file
+                service.experiments.draft.taskPromptsFile = file
             }
-            service.experiments.taskPromptsText = request.text
+            service.experiments.draft.taskPromptsText = request.text
             service.experiments.saveTaskPrompts()
             return .ok()
 
@@ -914,14 +914,14 @@ public final class SteerLabWebServer: Sendable {
         case ("POST", "/api/experiment/capture"):
             struct Body: Decodable { let name: String? }
             guard let request = decode(Body.self, from: body) else { return .error("bad body") }
-            service.experiments.conditionName = request.name ?? ""
+            service.experiments.draft.conditionName = request.name ?? ""
             service.experiments.captureCondition()
             return .ok()
 
         case ("POST", "/api/experiment/baseline"):
             struct Body: Decodable { let name: String? }
             guard let request = decode(Body.self, from: body) else { return .error("bad body") }
-            service.experiments.conditionName = request.name ?? ""
+            service.experiments.draft.conditionName = request.name ?? ""
             service.experiments.addBaselineCondition()
             return .ok()
 
@@ -942,7 +942,7 @@ public final class SteerLabWebServer: Sendable {
         case ("POST", "/api/experiment/result/select"):
             struct Body: Decodable { let id: String? }
             guard let request = decode(Body.self, from: body) else { return .error("bad body") }
-            service.experiments.selectedResultID = request.id
+            service.experiments.results.selectedResultID = request.id
             return .ok()
 
         case ("POST", "/api/experiment/results/refresh"):
@@ -964,10 +964,10 @@ public final class SteerLabWebServer: Sendable {
             }
             if let request = decode(Body.self, from: body) {
                 if let judgeModel = request.judgeModel {
-                    service.experiments.judgeModel = judgeModel
+                    service.experiments.draft.judgeModel = judgeModel
                 }
                 if let judgePrompt = request.judgePrompt {
-                    service.experiments.evaluationPrompt = judgePrompt
+                    service.experiments.draft.evaluationPrompt = judgePrompt
                 }
             }
             Task { @MainActor in await service.experiments.runPairedJudgeEvaluation() }
@@ -1580,29 +1580,29 @@ struct StateDTO: Encodable {
                 promptModes: ExperimentManifest.PromptMode.allCases.map {
                     PromptModeDTO(value: $0.rawValue, label: $0.label)
                 },
-                systemPrompt: panel.systemPrompt,
-                qwenThinkingEnabled: panel.qwenThinkingEnabled,
-                judgeModel: panel.judgeModel,
+                systemPrompt: panel.draft.systemPrompt,
+                qwenThinkingEnabled: panel.draft.qwenThinkingEnabled,
+                judgeModel: panel.draft.judgeModel,
                 judgeModelOptions: panel.judgeModelOptions,
-                judgePrompt: panel.evaluationPrompt,
+                judgePrompt: panel.draft.evaluationPrompt,
                 taskPromptsFile: manifest.taskPromptsFile,
                 taskPromptsHash: manifest.taskPromptsHash.map { String($0.prefix(12)) },
-                taskPromptsText: panel.taskPromptsText,
-                taskPromptsStatus: panel.taskPromptsStatus,
+                taskPromptsText: panel.draft.taskPromptsText,
+                taskPromptsStatus: panel.draft.taskPromptsStatus,
                 temperature: manifest.temperature,
                 maxTokens: manifest.maxTokens,
-                isValidating: panel.isValidating,
-                isRunning: panel.isRunning,
-                isEvaluating: panel.isEvaluating,
-                lastValidationDirectory: panel.lastValidationDirectory,
-                lastRunDirectory: panel.lastRunDirectory,
-                lastEvaluationDirectory: panel.lastEvaluationDirectory,
-                liveRunDirectory: panel.liveRunDirectory,
-                liveEvaluationDirectory: panel.liveEvaluationDirectory,
-                liveActiveGeneration: panel.liveActiveGeneration,
-                liveActiveJudgment: panel.liveActiveJudgment,
-                liveGenerations: panel.liveGenerations,
-                liveJudgments: panel.liveJudgments,
+                isValidating: panel.localJobs.isValidating,
+                isRunning: panel.localJobs.isRunning,
+                isEvaluating: panel.localJobs.isEvaluating,
+                lastValidationDirectory: panel.localJobs.lastValidationDirectory,
+                lastRunDirectory: panel.localJobs.lastRunDirectory,
+                lastEvaluationDirectory: panel.localJobs.lastEvaluationDirectory,
+                liveRunDirectory: panel.localJobs.liveRunDirectory,
+                liveEvaluationDirectory: panel.localJobs.liveEvaluationDirectory,
+                liveActiveGeneration: panel.localJobs.liveActiveGeneration,
+                liveActiveJudgment: panel.localJobs.liveActiveJudgment,
+                liveGenerations: panel.localJobs.liveGenerations,
+                liveJudgments: panel.localJobs.liveJudgments,
                 freezeHash: manifest.freezeHash.map { String($0.prefix(16)) },
                 gitCommit: manifest.gitCommit.map { String($0.prefix(8)) },
                 concepts: manifest.concepts.map {
@@ -1629,9 +1629,9 @@ struct StateDTO: Encodable {
                 },
                 violations: panel.violations,
                 attachable: panel.attachableConcepts,
-                resultRuns: panel.resultRuns,
-                selectedResultID: panel.selectedResultID,
-                selectedResult: panel.selectedResult)
+                resultRuns: panel.results.resultRuns,
+                selectedResultID: panel.results.selectedResultID,
+                selectedResult: panel.results.selectedResult)
         }
         experimentStatus = panel.status
 

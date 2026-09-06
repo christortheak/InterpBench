@@ -457,8 +457,8 @@ struct OptimizationRunsView: View {
         if panel.experiments.contains(where: { $0.name == name }) {
             panel.selectedName = name
         }
-        panel.remoteVerb = "sweep"
-        panel.remoteDryRun = false
+        panel.submission.remoteVerb = "sweep"
+        panel.submission.remoteDryRun = false
         panel.pendingRevealRemoteControls = true
         navigate(.studies)
     }
@@ -662,15 +662,15 @@ struct OptimizationRunsView: View {
                 }
             }
             .disabled(sweepDisabledReason(optimization) != nil)
-            if panel.isSweeping {
+            if panel.localJobs.isSweeping {
                 ProgressView()
                     .controlSize(.small)
             }
-            if panel.isSweeping || panel.activeSweepJob != nil {
+            if panel.localJobs.isSweeping || panel.remoteJobs.activeSweepJob != nil {
                 Button("Cancel Optimization", role: .destructive) {
                     Task { await panel.cancelSweep() }
                 }
-                .disabled(panel.activeSweepJob == nil && panel.sweepCancelRequested)
+                .disabled(panel.remoteJobs.activeSweepJob == nil && panel.localJobs.sweepCancelRequested)
                 .help(
                     "requests cancellation; the engine stops after the "
                         + "current generation — partial rows stay in the "
@@ -710,10 +710,10 @@ struct OptimizationRunsView: View {
     /// Why Run Sweep is disabled, in one plain sentence — nil means runnable.
     /// A silently gray button is a bug, not a state.
     private func sweepDisabledReason(_ optimization: OptimizationItem) -> String? {
-        if panel.isSweeping {
+        if panel.localJobs.isSweeping {
             return "a sweep is already running — follow it in the activity pane"
         }
-        if panel.isRunning || panel.isValidating {
+        if panel.localJobs.isRunning || panel.localJobs.isValidating {
             return "another study task is running — wait for it to finish"
         }
         if optimization.source == .local {
@@ -1891,7 +1891,7 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         // refusal from `setSweepSpec` — which used to speak ONLY into the
         // panel-top notice area (finding 11a), several hundred points above
         // this button.
-        if let refusal = formError ?? panel.formErrors[.sweepSpec] {
+        if let refusal = formError ?? panel.draft.formErrors[.sweepSpec] {
             Label(refusal, systemImage: "exclamationmark.triangle.fill")
                 .font(.caption)
                 .foregroundStyle(.orange)

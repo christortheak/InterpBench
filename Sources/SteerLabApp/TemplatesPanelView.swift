@@ -141,7 +141,7 @@ struct TemplatesPanelView: View {
                 .disabled(panel.templateSourceStudyName == nil)
                 .help(Self.newFromStudyHelp)
             }
-            if let refusal = panel.formErrors[.template] {
+            if let refusal = panel.draft.formErrors[.template] {
                 Label(refusal, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)

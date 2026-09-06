@@ -121,3 +121,27 @@ fixtures held a semaphore across asynchronous work while sharing the main actor.
 The affected suite is now serialized; full validation also uses the repository's
 required nonparallel Xcode invocation. This observation does not establish the
 cause of the separate installed-app-open hang reported in the audit.
+
+## Property bridge retirement and lock interoperability
+
+`a9545df` corrects the Swift lock key to use a POSIX real path, matching Python.
+An additional cross-language check exposed the earlier Foundation `/tmp` alias
+mismatch despite the existing suites passing. The regression starts Python's
+actual transaction implementation while Swift holds the lock and verifies one
+shared lock inode and serialized entry. A separate real Swift CLI edit was also
+verified waiting for Python to release the lock before publication. The original
+key comparison failed before the fix; both directions now pass.
+
+The subsequent property migration removes all 109 forwarding properties from
+`StudyPanelBindings.swift`, with 45 source/test callers retargeted to their actual
+owners. The other three bridges remain. A parsed syntax-tree audit against
+`a9545df` is supplied with its reproducible invocation in
+[Bridge retirement](BRIDGE-RETIREMENT.md). It reports zero differences after its
+explicit owner-access/binding normalizations. The actual changes and SwiftUI
+binding adjustments were reviewed locally; independent review is still pending.
+
+Latest validation: 277 SteeringKit and 4,412 ExperimentKit tests passed under
+Xcode beta (`TEST SUCCEEDED`), and 5,896 Python tests passed with 9 skipped and
+8 warnings (149.44 seconds). The new cross-language subset passed four tests.
+The bridge dependency ratchet passes without a budget increase. These results
+qualify this checkpoint, not all of WP-2 or the remaining work packages.

@@ -88,15 +88,15 @@ struct ActivityFeedColumn: View {
                     id: "robustness", label: "robustness check",
                     systemImage: "checklist.checked"))
         }
-        if service.experiments.isValidating {
+        if service.experiments.localJobs.isValidating {
             states.append(
                 .init(id: "validate", label: "validating study", systemImage: "seal"))
         }
-        if service.experiments.isRunning {
+        if service.experiments.localJobs.isRunning {
             states.append(
                 .init(id: "study", label: "study run", systemImage: "play.circle"))
         }
-        if service.experiments.isEvaluating {
+        if service.experiments.localJobs.isEvaluating {
             states.append(
                 .init(id: "judge", label: "evaluating", systemImage: "scale.3d"))
         }
@@ -106,7 +106,7 @@ struct ActivityFeedColumn: View {
                     id: "multi-agent", label: "multi-agent run",
                     systemImage: "person.3.sequence"))
         }
-        if let job = service.experiments.activeServerJob {
+        if let job = service.experiments.remoteJobs.activeServerJob {
             states.append(
                 .init(
                     id: "server-job", label: "server \(job.verb) job \(job.id)",
@@ -202,7 +202,7 @@ struct ResultsRunSummaryColumn: View {
             // the source toggle (2026-08-03), so a remote-only column here
             // would show an empty pane beside a populated local browser.
             if service.experiments.resultsSource == .remoteServer,
-                service.experiments.selectedRemoteResultsRun != nil
+                service.experiments.results.selectedRemoteResultsRun != nil
             {
                 remoteBody
             } else if let run = service.selectedResultsRun {
@@ -215,12 +215,12 @@ struct ResultsRunSummaryColumn: View {
         }
         .onAppear { refreshPreview() }
         .onChange(of: service.selectedResultsRun?.id) { refreshPreview() }
-        .onChange(of: service.experiments.selectedResultsFile?.id) { refreshPreview() }
+        .onChange(of: service.experiments.results.selectedResultsFile?.id) { refreshPreview() }
     }
 
     @ViewBuilder
     private var remoteBody: some View {
-        if let run = service.experiments.selectedRemoteResultsRun {
+        if let run = service.experiments.results.selectedRemoteResultsRun {
             RemoteRunSummaryPane(service: service, run: run)
         } else {
             emptyState
@@ -245,7 +245,7 @@ struct ResultsRunSummaryColumn: View {
     /// parser. The Results detail pane owns the file list and selection.
     @ViewBuilder
     private var filePreview: some View {
-        if let file = service.experiments.selectedResultsFile, let preview {
+        if let file = service.experiments.results.selectedResultsFile, let preview {
             RunFilePreviewBox(name: file.name, size: file.size, preview: preview)
         } else {
             Text("Select a file in the Results pane to preview its contents here.")
@@ -316,7 +316,7 @@ struct ResultsRunSummaryColumn: View {
 
     private func refreshPreview() {
         guard service.selectedResultsRun != nil,
-            let file = service.experiments.selectedResultsFile
+            let file = service.experiments.results.selectedResultsFile
         else {
             preview = nil
             return

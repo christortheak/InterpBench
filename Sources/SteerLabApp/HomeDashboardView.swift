@@ -194,8 +194,8 @@ struct HomeDashboardView: View {
             items.append(
                 .init(id: "robust", label: "robustness check", systemImage: "checklist.checked"))
         }
-        if service.experiments.isRunning || service.experiments.isValidating
-            || service.experiments.isEvaluating
+        if service.experiments.localJobs.isRunning || service.experiments.localJobs.isValidating
+            || service.experiments.localJobs.isEvaluating
         {
             items.append(.init(id: "study", label: "study task", systemImage: "checkmark.seal"))
         }
@@ -203,7 +203,7 @@ struct HomeDashboardView: View {
             items.append(
                 .init(id: "scenario", label: "multi-agent run", systemImage: "person.3.sequence"))
         }
-        if let job = service.experiments.activeServerJob {
+        if let job = service.experiments.remoteJobs.activeServerJob {
             items.append(
                 .init(
                     id: "server-\(job.id)",

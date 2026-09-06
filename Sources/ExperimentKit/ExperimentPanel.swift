@@ -33,7 +33,7 @@ public final class ExperimentPanel {
     public func setStudyType(_ type: StudyIntent) {
         studyFocusOverride = type
         guard let manifest = selected, manifest.status == .draft else { return }
-        studyKind = type.mappedKind
+        draft.studyKind = type.mappedKind
         do {
             try ExperimentStore.setStudyType(type, experimentName: manifest.name)
             refresh()
@@ -97,7 +97,7 @@ public final class ExperimentPanel {
             if let promoted = confirmableAgents.first(where: {
                 $0.artifact.promotion?.experiment == screenName
             }) {
-                confirmAgentID = promoted.id
+                draft.confirmAgentID = promoted.id
             }
             let poolNote = screen.taskPromptsHash == nil
                 ? " The screen study has no pinned task prompts, so no "
@@ -145,7 +145,7 @@ public final class ExperimentPanel {
         _ field: FormField, _ message: String,
         severity: PanelNotice.Severity = .error
     ) {
-        formErrors[field] = message
+        draft.formErrors[field] = message
         note(message, severity: severity)
     }
 
@@ -183,7 +183,7 @@ public final class ExperimentPanel {
     /// raise the flag the sweep observes between generations; partial rows
     /// stay in the run directory either way.
     public func cancelSweep() async {
-        if let job = activeSweepJob {
+        if let job = remoteJobs.activeSweepJob {
             loadStoredRemoteToken()
             guard let client = remoteClient else {
                 note("invalid server URL", severity: .error)
@@ -336,8 +336,8 @@ public final class ExperimentPanel {
         let wasMissing = serverHasSelectedStudy == false
         serverHasSelectedStudy = resident
         if !resident, !wasMissing {
-            remoteVerb = "run"
-            remoteDryRun = false
+            submission.remoteVerb = "run"
+            submission.remoteDryRun = false
         }
     }
 
@@ -349,7 +349,7 @@ public final class ExperimentPanel {
     }
 
     public var submitBundleButtonLabel: String {
-        Self.bundleSubmitLabel(verb: remoteVerb, dryRun: remoteDryRun)
+        Self.bundleSubmitLabel(verb: submission.remoteVerb, dryRun: submission.remoteDryRun)
     }
 
     /// Post-submission status: what was submitted and where to watch it.
@@ -403,7 +403,7 @@ public final class ExperimentPanel {
     public var judgeModelOffers: JudgeModelOffers.Offers {
         var candidates: [JudgeModelOffers.Candidate] = []
         if let model = selected?.modelID { candidates.append(.cached(model)) }
-        candidates.append(.cached(studyBaseModelID))
+        candidates.append(.cached(draft.studyBaseModelID))
         if let model = host?.selectedModelID { candidates.append(.cached(model)) }
         let scanned = localModelScanOverrideForTesting
             ?? SteeredContainerLoader.localModelIDs()
@@ -411,7 +411,7 @@ public final class ExperimentPanel {
         candidates += ChatService.availableModels.map { .curated($0.id) }
         candidates.append(.curated(ClaudePairedJudge.defaultModel))
         return JudgeModelOffers.compose(
-            selected: judgeModel,
+            selected: draft.judgeModel,
             candidates: candidates,
             openRouterKeyPresent: judgeKeyPresenceOverrideForTesting
                 ?? (JudgeKeyStore.resolveKey(kind: "openrouter") != nil),
@@ -431,7 +431,7 @@ public final class ExperimentPanel {
     /// The ad-hoc judge selection parsed — what the pane keys its OpenRouter
     /// fields off, so the pane never re-implements the spelling.
     public var adHocJudgeSelection: JudgeModelSpelling.Selection? {
-        JudgeModelSpelling.parse(judgeModel)
+        JudgeModelSpelling.parse(draft.judgeModel)
     }
 
     public var adHocOpenRouterModel: String {
@@ -442,7 +442,7 @@ public final class ExperimentPanel {
             }
         }
         set {
-            judgeModel = JudgeModelSpelling.spellOpenRouter(
+            draft.judgeModel = JudgeModelSpelling.spellOpenRouter(
                 model: newValue, provider: adHocOpenRouterProvider)
         }
     }
@@ -455,7 +455,7 @@ public final class ExperimentPanel {
             return ""
         }
         set {
-            judgeModel = JudgeModelSpelling.spellOpenRouter(
+            draft.judgeModel = JudgeModelSpelling.spellOpenRouter(
                 model: adHocOpenRouterModel, provider: newValue)
         }
     }
@@ -473,8 +473,8 @@ public final class ExperimentPanel {
     /// `claude` kind still WORKS — it is simply no longer the default, and
     /// the app no longer offers it for new judges.
     public func addJudge() {
-        let index = judges.count + 1
-        judges.append(
+        let index = draft.judges.count + 1
+        draft.judges.append(
             .init(
                 name: "judge-\(index)",
                 kind: index == 1 ? "openrouter" : "local",
@@ -482,15 +482,15 @@ public final class ExperimentPanel {
     }
 
     public func removeJudge(at index: Int) {
-        guard judges.indices.contains(index) else { return }
-        judges.remove(at: index)
+        guard draft.judges.indices.contains(index) else { return }
+        draft.judges.remove(at: index)
         // The kind stash is keyed by row index — shift the entries above
         // the removed row down so each remaining row keeps ITS stash.
         var shifted: [Int: [String: JudgeKindStash]] = [:]
-        for (row, stash) in judgeKindStashes where row != index {
+        for (row, stash) in draft.judgeKindStashes where row != index {
             shifted[row > index ? row - 1 : row] = stash
         }
-        judgeKindStashes = shifted
+        draft.judgeKindStashes = shifted
     }
 
     /// One kind's field set for one judge row, held while the row wears a
@@ -552,9 +552,9 @@ public final class ExperimentPanel {
     }
 
     private func managementSelectionChanged() {
-        selectedResultID = nil
-        selectedResult = nil
-        selectedResultBrowserItem = nil
+        results.selectedResultID = nil
+        results.selectedResult = nil
+        results.selectedResultBrowserItem = nil
         freezeCoordinator.resetSelection()
         // Pipeline listings belong to the previous selection —
         // clear immediately, refresh in the background (sixth
@@ -620,14 +620,14 @@ public final class ExperimentPanel {
         // The editor's type wins over the stored one for READING, so the
         // section appears the moment the type picker says multi-agent rather
         // than one save later.
-        manifest.studyKind = studyKind
-        let record = selectedMultiAgentScenarioID.flatMap { id in
+        manifest.studyKind = draft.studyKind
+        let record = draft.selectedMultiAgentScenarioID.flatMap { id in
             multiAgentScenarioOptions.first { $0.id == id }
         }
         return SeatCasting.state(
             of: manifest,
             selected: record.map { ($0.scenario, relativeProjectPath(for: $0.url)) },
-            overlay: seatCastingEdits)
+            overlay: draft.seatCastingEdits)
     }
 
     /// Agents a seat may be cast with: the library filtered to the study's
@@ -665,7 +665,7 @@ public final class ExperimentPanel {
     }
 
     public func setSeatAgent(_ agentID: String?, seat: String) {
-        seatCastingEdits[seat] = seatOccupant(forAgentID: agentID)
+        draft.seatCastingEdits[seat] = seatOccupant(forAgentID: agentID)
     }
 
     /// Why the seat casting cannot be saved right now, or nil.
@@ -705,7 +705,7 @@ public final class ExperimentPanel {
                 state.assignment, semantic: state.semantic,
                 semanticPath: state.semanticPath, into: &manifest)
             try management.persistReviewedDraft(manifest)
-            seatCastingEdits = [:]
+            draft.seatCastingEdits = [:]
             refresh()
             let cast = state.assignment.ordered.filter { $0 != .baseline }.count
             note(
@@ -792,7 +792,7 @@ public final class ExperimentPanel {
             seen.insert(trimmed)
             options.append(trimmed)
         }
-        append(studyBaseModelID)
+        append(draft.studyBaseModelID)
         append(selected?.modelID)
         append(host?.selectedModelID)
         for model in ChatService.availableModels.map(\.id) { append(model) }
@@ -803,7 +803,7 @@ public final class ExperimentPanel {
     public var availableVariantsForStudy: [ModelVariantRecord] {
         let attached = Set(selected?.variantConditions.map(\.artifactPath) ?? [])
         return ModelVariantStore.scan().filter {
-            $0.artifact.baseModelID == studyBaseModelID
+            $0.artifact.baseModelID == draft.studyBaseModelID
                 && !attached.contains(ModelVariantStore.relativePath(for: $0))
         }
     }
@@ -828,7 +828,7 @@ public final class ExperimentPanel {
     public var confirmableAgents: [ModelVariantRecord] {
         ModelVariantStore.scan()
             .filter {
-                $0.artifact.baseModelID == studyBaseModelID
+                $0.artifact.baseModelID == draft.studyBaseModelID
                     && $0.artifact.adapters.isEmpty
                     && $0.artifact.injections.count == 1
             }
@@ -854,12 +854,12 @@ public final class ExperimentPanel {
     /// code path as `steerlab-cli experiment confirm`.
     public func attachPerturbations() {
         guard let name = selectedName else { return }
-        guard let record = confirmableAgents.first(where: { $0.id == confirmAgentID })
+        guard let record = confirmableAgents.first(where: { $0.id == draft.confirmAgentID })
         else {
             note("select an agent to confirm", severity: .info)
             return
         }
-        let deltas = confirmDeltasText
+        let deltas = draft.confirmDeltasText
             .split(separator: ",")
             .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
         guard !deltas.isEmpty else {
@@ -871,7 +871,7 @@ public final class ExperimentPanel {
                 experimentName: name,
                 agent: record.url.path,
                 deltas: deltas,
-                includeControl: confirmIncludeControl,
+                includeControl: draft.confirmIncludeControl,
                 log: { _ in })
             let generated = manifest.conditions.filter {
                 ConfirmationStudy.isGeneratedName(
@@ -879,7 +879,7 @@ public final class ExperimentPanel {
             }
             note("attached perturbation policy for '\(record.artifact.name)' "
                 + "— \(generated.count) conditions (anchor, ±δ"
-                + (confirmIncludeControl ? ", matched-norm control)" : ")"), severity: .success)
+                + (draft.confirmIncludeControl ? ", matched-norm control)" : ")"), severity: .success)
             refresh()
         } catch {
             note("confirm failed: \(error)", severity: .error)
@@ -1116,7 +1116,7 @@ public final class ExperimentPanel {
     /// Server workspace: submitted as a durable server job for the
     /// SERVER-RESIDENT copy, followed in the shared display.
     public func runSweep(experimentName name: String) async {
-        guard !isSweeping, !isRunning, !isValidating else { return }
+        guard !localJobs.isSweeping, !localJobs.isRunning, !localJobs.isValidating else { return }
         // Busy-chat preflight (both routes): a sweep contends for the same
         // model slot as a live chat generation — locally the load itself,
         // on the server the loaded-slot registry (observed live as
@@ -1154,16 +1154,16 @@ public final class ExperimentPanel {
     public func testRemoteConnection() async {
         loadStoredRemoteToken()
         guard let remoteClient else {
-            remoteStatus = "invalid server URL"
+            remoteJobs.remoteStatus = "invalid server URL"
             return
         }
         do {
             let caps = try await remoteClient.capabilities()
             cluster?.persistToken()
-            remoteProfileSummary = Self.profileSummary(caps)
-            remoteStatus = "connected: \(caps.engine ?? "server") \(caps.serverVersion ?? "")"
+            remoteJobs.remoteProfileSummary = Self.profileSummary(caps)
+            remoteJobs.remoteStatus = "connected: \(caps.engine ?? "server") \(caps.serverVersion ?? "")"
         } catch {
-            remoteStatus = "remote connection failed: \(error)"
+            remoteJobs.remoteStatus = "remote connection failed: \(error)"
         }
     }
 
@@ -1204,9 +1204,9 @@ public final class ExperimentPanel {
             siteGPUTypes = slurm.gpuTypes
         }
         let fixed = ModelJobSubmissionPreflight.fixedOptions(
-            executor: remoteExecutor, gres: remoteGres, siteGPUTypes: siteGPUTypes)
-        remoteExecutor = fixed.executor
-        remoteGres = fixed.gres
+            executor: submission.remoteExecutor, gres: submission.remoteGres, siteGPUTypes: siteGPUTypes)
+        submission.remoteExecutor = fixed.executor
+        submission.remoteGres = fixed.gres
         pendingRevealRemoteControls = true
         note(
             "Remote options now request a GPU (executor slurm"
@@ -1226,7 +1226,7 @@ public final class ExperimentPanel {
         // disclosure, which may be collapsed — a submission that failed
         // must be loud wherever the user pressed the button.
         guard let manifest = selected else {
-            remoteStatus = "select a study first"
+            remoteJobs.remoteStatus = "select a study first"
             note("select a study first", severity: .info)
             return
         }
@@ -1290,7 +1290,7 @@ public final class ExperimentPanel {
         study: String, awaiting: ClusterClient.AwaitingSweepJudgment
     ) async {
         guard let client = remoteClient else {
-            remoteStatus = "no server connection for judging"
+            remoteJobs.remoteStatus = "no server connection for judging"
             return
         }
         guard !isJudgingSweep else { return }
@@ -1300,9 +1300,9 @@ public final class ExperimentPanel {
             let judgmentRun = try await SweepJudgmentRunner.judgeAndComplete(
                 client: client, experiment: study, awaiting: awaiting,
                 onProgress: { [weak self] progress in
-                    await MainActor.run { self?.remoteStatus = progress }
+                    await MainActor.run { self?.remoteJobs.remoteStatus = progress }
                 })
-            remoteStatus = awaiting.isEvaluate
+            remoteJobs.remoteStatus = awaiting.isEvaluate
                 ? "evaluation judged on this Mac → judge report completed "
                     + "(\(judgmentRun))"
                 : "sweep judged on this Mac → selection completed "
@@ -1310,7 +1310,7 @@ public final class ExperimentPanel {
             await refreshAwaitingSweepJudgments(study: study)
             refresh()
         } catch {
-            remoteStatus = "sweep judging failed: "
+            remoteJobs.remoteStatus = "sweep judging failed: "
                 + String(describing: error)
         }
     }
@@ -1358,11 +1358,11 @@ public final class ExperimentPanel {
         }
         do {
             remoteRuns = try await remoteClient.runs()
-            remoteStatus = "listed \(remoteRuns.count) server run"
+            remoteJobs.remoteStatus = "listed \(remoteRuns.count) server run"
                 + (remoteRuns.count == 1 ? "" : "s")
         } catch {
             remoteRuns = []
-            remoteStatus = "could not list server runs: \(error)"
+            remoteJobs.remoteStatus = "could not list server runs: \(error)"
         }
     }
 
@@ -1452,17 +1452,17 @@ public final class ExperimentPanel {
     public func importEvidence(fromServerRun run: RemoteStampedRunRecord) async {
         loadStoredRemoteToken()
         guard let remoteClient else {
-            remoteResultsStatus = "invalid server URL"
+            results.remoteResultsStatus = "invalid server URL"
             return
         }
         guard let bundleName = Self.evidenceBundleFileName(in: run.files) else {
-            remoteResultsStatus = "run \(run.id) carries no evidence bundle — "
+            results.remoteResultsStatus = "run \(run.id) carries no evidence bundle — "
                 + "import from the producing job instead (Compute section)"
             return
         }
         let workspaceRoot = ExperimentStore.workspaceRoot
         do {
-            remoteResultsStatus = "downloading evidence from \(run.id)..."
+            results.remoteResultsStatus = "downloading evidence from \(run.id)..."
             let downloads = workspaceRoot
                 .appending(components: ".steerlab", "downloads")
             let bundlePath = run.path.hasSuffix("/")
@@ -1472,10 +1472,10 @@ public final class ExperimentPanel {
             let imported = try await Task.detached {
                 try EvidenceBundleImporter.importEvidenceBundle(localBundle, workspaceRoot: workspaceRoot)
             }.value
-            remoteImportedRunDirectory = imported.path
+            remoteJobs.remoteImportedRunDirectory = imported.path
             let importedMessage = "evidence from \(run.id) imported → "
                 + "runs/\(imported.lastPathComponent) (hashes verified)"
-            remoteResultsStatus = importedMessage
+            results.remoteResultsStatus = importedMessage
             note(importedMessage, severity: .success)
             noteEvidenceRevisionAdoption(forImportedRun: imported)
             refreshResults(selecting: imported.lastPathComponent)
@@ -1483,7 +1483,7 @@ public final class ExperimentPanel {
             // — the round trip is visible without a manual refresh.
             await refreshPipelineRuns()
         } catch {
-            remoteResultsStatus = "evidence import failed: \(error)"
+            results.remoteResultsStatus = "evidence import failed: \(error)"
         }
     }
 
@@ -1640,8 +1640,8 @@ public final class ExperimentPanel {
     }
 
     public func downloadRemoteEvidence() async {
-        guard let remoteJobID else {
-            remoteStatus = "no remote job selected"
+        guard let remoteJobID = remoteJobs.remoteJobID else {
+            remoteJobs.remoteStatus = "no remote job selected"
             return
         }
         await importEvidence(fromJobID: remoteJobID)
@@ -1720,7 +1720,7 @@ public final class ExperimentPanel {
     public func importEvidence(fromJobID jobID: String) async {
         loadStoredRemoteToken()
         guard let remoteClient else {
-            remoteStatus = "invalid server URL"
+            remoteJobs.remoteStatus = "invalid server URL"
             return
         }
         do {
@@ -1733,7 +1733,7 @@ public final class ExperimentPanel {
                     ?? Self.findString(in: .object(result), keyPath: ["evidenceBundle", "bundlePath"])
             else {
                 let pendingMessage = "job \(jobID) has no evidence bundle yet"
-                remoteStatus = pendingMessage
+                remoteJobs.remoteStatus = pendingMessage
                 note(pendingMessage, severity: .info)
                 return
             }
@@ -1741,17 +1741,17 @@ public final class ExperimentPanel {
             let expectedSHA = Self.findString(
                 in: .object(result), keyPath: ["runResult", "evidenceBundle", "bundleSha256"])
                 ?? Self.findString(in: .object(result), keyPath: ["evidenceBundle", "bundleSha256"])
-            remoteStatus = "downloading evidence..."
+            remoteJobs.remoteStatus = "downloading evidence..."
             let downloads = workspaceRoot.appending(components: ".steerlab", "downloads")
             let localBundle = try await remoteClient.downloadArtifact(path: bundlePath, to: downloads)
             // Extraction + per-file hashing off the main actor.
             let imported = try await Task.detached {
                 try EvidenceBundleImporter.importEvidenceBundle(localBundle, expectedSHA256: expectedSHA, workspaceRoot: workspaceRoot)
             }.value
-            remoteImportedRunDirectory = imported.path
+            remoteJobs.remoteImportedRunDirectory = imported.path
             let importedMessage = "evidence from job \(jobID) imported → "
                 + "runs/\(imported.lastPathComponent) (hashes verified)"
-            remoteStatus = importedMessage
+            remoteJobs.remoteStatus = importedMessage
             note(importedMessage, severity: .success)
             noteEvidenceRevisionAdoption(forImportedRun: imported)
             refreshResults(selecting: imported.lastPathComponent)
@@ -1760,7 +1760,7 @@ public final class ExperimentPanel {
             await refreshPipelineRuns()
         } catch {
             let failureMessage = "evidence import failed: \(error)"
-            remoteStatus = failureMessage
+            remoteJobs.remoteStatus = failureMessage
             note(failureMessage, severity: .error)
         }
     }
@@ -1790,7 +1790,7 @@ public final class ExperimentPanel {
     private func applyStudyBaseModelChoice(
         to manifest: inout ExperimentManifest
     ) -> Bool {
-        let requested = studyBaseModelID.trimmingCharacters(
+        let requested = draft.studyBaseModelID.trimmingCharacters(
             in: .whitespacesAndNewlines)
         guard !requested.isEmpty, requested != manifest.modelID else {
             return false
@@ -1808,26 +1808,26 @@ public final class ExperimentPanel {
     /// panel last synced — which can silently drop every variant condition
     /// (open-issues §8, residual (b)).
     public func adoptSelectedManifestBaseModel() {
-        if let modelID = selected?.modelID { studyBaseModelID = modelID }
+        if let modelID = selected?.modelID { draft.studyBaseModelID = modelID }
     }
 
     public func saveProtocol() {
         guard var manifest = selected, manifest.status == .draft else { return }
         do {
-            manifest.experimentDescription = protocolDescription
-            manifest.taskDescription = nilIfEmpty(taskDescription)
-            manifest.outcomeMeasures = nilIfEmpty(outcomeMeasures)
-            manifest.studyKind = studyKind
+            manifest.experimentDescription = draft.protocolDescription
+            manifest.taskDescription = nilIfEmpty(draft.taskDescription)
+            manifest.outcomeMeasures = nilIfEmpty(draft.outcomeMeasures)
+            manifest.studyKind = draft.studyKind
             let baseModelChanged = applyStudyBaseModelChoice(to: &manifest)
-            manifest.promptMode = promptMode
-            manifest.systemPrompt = nilIfEmpty(systemPrompt)
+            manifest.promptMode = draft.promptMode
+            manifest.systemPrompt = nilIfEmpty(draft.systemPrompt)
             // The panel writes the effort spelling and drops the legacy
             // boolean, exactly as `setSamplingProtocol` does; the joint
             // rules (budget beside a non-off effort, on a family with a
             // thinking mode) are refused HERE with the store's sentences so
             // a draft the run would refuse is never saved.
             let reasoningProblems = ReasoningEffort.protocolViolations(
-                effort: reasoningEffort, reasoningMaxTokens: reasoningMaxTokens,
+                effort: draft.reasoningEffort, reasoningMaxTokens: draft.reasoningMaxTokens,
                 modelID: manifest.modelID)
             guard reasoningProblems.isEmpty else {
                 throw ExperimentError.malformed(
@@ -1835,20 +1835,20 @@ public final class ExperimentPanel {
                     repair: "declare a reasoning budget beside a non-off "
                         + "effort (or set the effort to off)")
             }
-            manifest.reasoningEffort = reasoningEffort
-            manifest.reasoningMaxTokens = reasoningMaxTokens
+            manifest.reasoningEffort = draft.reasoningEffort
+            manifest.reasoningMaxTokens = draft.reasoningMaxTokens
             manifest.qwenThinkingEnabled = nil
-            manifest.dtype = nilIfEmpty(studyDtypeField)
+            manifest.dtype = nilIfEmpty(draft.studyDtypeField)
             // Judge-rubric versioning: pin the selected rubric file at its
             // CURRENT hash ("" clears the pin — draft-only inline text).
-            let rubricFile = judgeRubricFile.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rubricFile = draft.judgeRubricFile.trimmingCharacters(in: .whitespacesAndNewlines)
             if rubricFile.isEmpty {
                 manifest.judgeRubricFile = nil
                 manifest.judgeRubricHash = nil
             } else {
                 try JudgeRubricStore.pin(rubricFile, into: &manifest)
             }
-            let panelJudges = judges
+            let panelJudges = draft.judges
                 .map {
                     ExperimentManifest.JudgeRef(
                         name: $0.name.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1880,8 +1880,8 @@ public final class ExperimentPanel {
             manifest.evaluation = Self.evaluationDeclaration(
                 judges: panelJudges,
                 rubricFile: rubricFile,
-                inlineRubric: evaluationPrompt,
-                structuredPrompt: nilIfEmpty(evaluationStructuredPrompt),
+                inlineRubric: draft.evaluationPrompt,
+                structuredPrompt: nilIfEmpty(draft.evaluationStructuredPrompt),
                 inlineJudgeModel: resolvedInlineJudgeModel())
             // Saving as one study type NEVER deletes the other type's
             // configuration (the Study Type picker's "switching never
@@ -1894,10 +1894,10 @@ public final class ExperimentPanel {
             // Sampling settings are assigned BEFORE the scenario branch: a
             // compiled scenario binds them, so a recompile must read the values
             // this save is writing, not the previous ones.
-            manifest.temperature = runTemperature
-            manifest.maxTokens = runMaxTokens
-            if studyKind == .multiAgent {
-                let selection = selectedMultiAgentScenarioID.flatMap { id in
+            manifest.temperature = draft.runTemperature
+            manifest.maxTokens = draft.runMaxTokens
+            if draft.studyKind == .multiAgent {
+                let selection = draft.selectedMultiAgentScenarioID.flatMap { id in
                     multiAgentScenarioOptions.first { $0.id == id }
                 }
                 let casting = SeatCasting.state(
@@ -1905,7 +1905,7 @@ public final class ExperimentPanel {
                     selected: selection.map {
                         ($0.scenario, relativeProjectPath(for: $0.url))
                     },
-                    overlay: seatCastingEdits)
+                    overlay: draft.seatCastingEdits)
                 switch casting?.form {
                 case .uncast, .cast:
                     // The compile inputs are manifest fields, so the scenario is
@@ -1929,7 +1929,7 @@ public final class ExperimentPanel {
                         try SeatCasting.compile(
                             assignment, semantic: casting.semantic,
                             semanticPath: casting.semanticPath, into: &manifest)
-                        seatCastingEdits = [:]
+                        draft.seatCastingEdits = [:]
                     }
                 case .legacyBound:
                     // A hand-bound scenario is pinned as it stands — its casting
@@ -1945,9 +1945,9 @@ public final class ExperimentPanel {
                     note("select a scenario first", severity: .info)
                     return
                 }
-                manifest.multiAgentIncludeBaseline = multiAgentIncludeBaseline
-            } else if !taskPromptsFile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                _ = try ExperimentStore.pinTaskPrompts(taskPromptsFile, into: &manifest)
+                manifest.multiAgentIncludeBaseline = draft.multiAgentIncludeBaseline
+            } else if !draft.taskPromptsFile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                _ = try ExperimentStore.pinTaskPrompts(draft.taskPromptsFile, into: &manifest)
             } else {
                 // An EMPTIED prompts field on a model-output study is the
                 // one explicit clear this save performs.
@@ -1961,15 +1961,15 @@ public final class ExperimentPanel {
             // case family + option-length acknowledgment (Evaluation).
             // After save(manifest): these load-modify-save by name.
             try ExperimentStore.setPhase(
-                nilIfEmpty(phaseField), experimentName: manifest.name)
+                nilIfEmpty(draft.phaseField), experimentName: manifest.name)
             try ExperimentStore.setCaseFamily(
-                nilIfEmpty(caseFamilyField), experimentName: manifest.name)
+                nilIfEmpty(draft.caseFamilyField), experimentName: manifest.name)
             try ExperimentStore.setSamplingPolicy(
-                samplesPerItem: samplesPerItemField <= 1 ? nil : samplesPerItemField,
-                seedPolicy: nilIfEmpty(seedPolicyField),
+                samplesPerItem: draft.samplesPerItemField <= 1 ? nil : draft.samplesPerItemField,
+                seedPolicy: nilIfEmpty(draft.seedPolicyField),
                 experimentName: manifest.name)
             try ExperimentStore.setAcknowledgeUnequalOptionLengths(
-                acknowledgeUnequalOptionLengthsField, experimentName: manifest.name)
+                draft.acknowledgeUnequalOptionLengthsField, experimentName: manifest.name)
             refresh()
             note("saved protocol notes and run defaults", severity: .success)
         } catch {
@@ -1993,7 +1993,7 @@ public final class ExperimentPanel {
     /// Items in the pinned prompt set that carry categorical `options` —
     /// what the DATA supports, independent of what is enabled.
     public var detectedOptionsItemCount: Int {
-        taskPromptsDocument?.optionsItemCount ?? 0
+        draft.taskPromptsDocument?.optionsItemCount ?? 0
     }
 
     public var detectedCapabilitiesLine: String? {
@@ -2004,7 +2004,7 @@ public final class ExperimentPanel {
     /// Option-carrying items whose declared `responseFormat` the
     /// answer-token instruments cannot read.
     public var detectedUnscorableOptionItemCount: Int {
-        taskPromptsDocument?.unscorableOptionItemCount ?? 0
+        draft.taskPromptsDocument?.unscorableOptionItemCount ?? 0
     }
 
     /// The prominent pre-run warning (P1): options present, no categorical
@@ -2116,7 +2116,7 @@ public final class ExperimentPanel {
     /// `saveProtocol` from their new homes.)
     public func savePromotionRule() {
         guard let name = selectedName else { return }
-        let fdrText = promotionFDRText.trimmingCharacters(in: .whitespaces)
+        let fdrText = draft.promotionFDRText.trimmingCharacters(in: .whitespaces)
         if !fdrText.isEmpty, Double(fdrText) == nil {
             note("promotion rule not saved: FDR threshold must be a number in (0, 1)", severity: .error)
             return
@@ -2125,9 +2125,9 @@ public final class ExperimentPanel {
             try ExperimentStore.setPromotionRule(
                 ExperimentManifest.PromotionRule(
                     fdrThreshold: Double(fdrText),
-                    doseMonotone: promotionDoseMonotone ? true : nil,
-                    exceedsRandomFloor: promotionExceedsRandomFloor ? true : nil,
-                    capabilityGate: nilIfEmpty(promotionCapabilityGateText)),
+                    doseMonotone: draft.promotionDoseMonotone ? true : nil,
+                    exceedsRandomFloor: draft.promotionExceedsRandomFloor ? true : nil,
+                    capabilityGate: nilIfEmpty(draft.promotionCapabilityGateText)),
                 experimentName: name)
             refresh()
             note("saved promotion rule (screen→confirm gate)", severity: .success)
@@ -2146,7 +2146,7 @@ public final class ExperimentPanel {
         guard let name = selectedName else { return }
         do {
             try ExperimentStore.clearHumanBaseline(experimentName: name)
-            humanBaselinePathField = ""
+            draft.humanBaselinePathField = ""
             refresh()
             note("human baseline unpinned", severity: .success)
         } catch {
@@ -2163,7 +2163,7 @@ public final class ExperimentPanel {
         guard let name = selectedName else { return }
         do {
             let pinned = try ExperimentStore.pinHumanBaseline(
-                path: humanBaselinePathField, experimentName: name)
+                path: draft.humanBaselinePathField, experimentName: name)
             refresh()
             note("pinned human baseline \(pinned.path) @ \(pinned.hash.prefix(12))…", severity: .success)
         } catch {
@@ -2187,19 +2187,19 @@ public final class ExperimentPanel {
     /// negative α is legal (a one-field direction control).
     public func addVectorCondition() {
         guard let name = selectedName else { return }
-        let concept = conditionConcept.trimmingCharacters(in: .whitespaces)
+        let concept = draft.conditionConcept.trimmingCharacters(in: .whitespaces)
         guard !concept.isEmpty else {
             refuse(.addCondition, "pick a concept for the condition", severity: .info)
             return
         }
-        let isAblation = conditionMode == .ablate
+        let isAblation = draft.conditionMode == .ablate
         // Ablation does not take a layer: it covers the whole network, and the
         // form hides the field. Parse it only when steering, so a stale value
         // left in the box cannot refuse an ablation that never needed it.
         var layer = 0
         if !isAblation {
             guard let parsed = Int(
-                conditionLayerText.trimmingCharacters(in: .whitespaces)),
+                draft.conditionLayerText.trimmingCharacters(in: .whitespaces)),
                 parsed >= 0
             else {
                 refuse(.addCondition, "condition layer must be a non-negative integer")
@@ -2207,7 +2207,7 @@ public final class ExperimentPanel {
             }
             layer = parsed
         }
-        guard let alpha = Double(conditionAlphaText.trimmingCharacters(in: .whitespaces)),
+        guard let alpha = Double(draft.conditionAlphaText.trimmingCharacters(in: .whitespaces)),
             alpha.isFinite, alpha != 0
         else {
             refuse(
@@ -2221,11 +2221,11 @@ public final class ExperimentPanel {
                     : "condition α must be a nonzero number (negative = direction control)")
             return
         }
-        let conditionTitle = conditionName.isEmpty
+        let conditionTitle = draft.conditionName.isEmpty
             ? (isAblation
                 ? "\(concept)-ablate-l\(SweepSpecForm.numberListText([alpha]))"
                 : "\(concept)-L\(layer)-a\(SweepSpecForm.numberListText([alpha]))")
-            : conditionName
+            : draft.conditionName
         do {
             try ExperimentStore.upsertCondition(
                 .init(
@@ -2238,9 +2238,9 @@ public final class ExperimentPanel {
                     bandWidth: 1,
                     // λ is never in residual-norm units; recording the flag as
                     // true would claim a conversion the run loop does not do.
-                    alphaInNormUnits: isAblation ? false : conditionAlphaInNormUnits),
+                    alphaInNormUnits: isAblation ? false : draft.conditionAlphaInNormUnits),
                 experimentName: name)
-            conditionName = ""
+            draft.conditionName = ""
             refresh()
             clearFormError(.addCondition)
             note(
@@ -2248,7 +2248,7 @@ public final class ExperimentPanel {
                     ? "added condition '\(conditionTitle)' — ablates \(concept) "
                         + "at λ\(alpha) across every layer"
                     : "added condition '\(conditionTitle)' (\(concept) L\(layer) "
-                        + "α\(alpha)\(conditionAlphaInNormUnits ? " norm-units" : ""))",
+                        + "α\(alpha)\(draft.conditionAlphaInNormUnits ? " norm-units" : ""))",
                 severity: .success)
         } catch {
             refuse(
@@ -2273,7 +2273,7 @@ public final class ExperimentPanel {
 
     public func addValidationControl() {
         guard let name = selectedName else { return }
-        let concept = controlConcept.trimmingCharacters(in: .whitespaces)
+        let concept = draft.controlConcept.trimmingCharacters(in: .whitespaces)
         guard !concept.isEmpty else {
             refuse(.validationControl, "pick a concept to use as a control",
                    severity: .info)
@@ -2282,13 +2282,13 @@ public final class ExperimentPanel {
         do {
             try ExperimentStore.attachValidationControl(
                 concept: concept,
-                options: .init(method: controlMethod),
+                options: .init(method: draft.controlMethod),
                 experimentName: name)
-            controlConcept = ""
+            draft.controlConcept = ""
             refresh()
             clearFormError(.validationControl)
             note("declared '\(concept)' as a discriminant control "
-                + "(\(controlMethod.rawValue), stimulus hash pinned)",
+                + "(\(draft.controlMethod.rawValue), stimulus hash pinned)",
                 severity: .success)
         } catch {
             refuse(
@@ -2314,7 +2314,7 @@ public final class ExperimentPanel {
     /// Response formats present in the loaded task prompts, with row counts —
     /// what a scope can actually select over.
     public var availableResponseFormats: [(format: String, count: Int)] {
-        guard let document = taskPromptsDocument else { return [] }
+        guard let document = draft.taskPromptsDocument else { return [] }
         var counts: [String: Int] = [:]
         for item in document.responseFormatItems where item.hasOptions {
             counts[item.format?.rawValue ?? "(undeclared)", default: 0] += 1
@@ -2406,14 +2406,14 @@ public final class ExperimentPanel {
             }
             clearFormError(.addCondition)
             note(parts.joined(separator: " · "), severity: .info)
-            lastControlMatrixNotes = result.notes
+            draft.lastControlMatrixNotes = result.notes
         } catch {
             refuse(
                 .addCondition,
                 "Couldn't scaffold the control matrix — no conditions were "
                     + "changed; the study must still be a draft. "
                     + "Details: \(error)")
-            lastControlMatrixNotes = []
+            draft.lastControlMatrixNotes = []
         }
     }
 
@@ -2423,15 +2423,15 @@ public final class ExperimentPanel {
     /// what happened and WHERE to look.
     public func loadTaskPromptsInteractively() {
         loadTaskPrompts()
-        if taskPromptsDocument != nil {
+        if draft.taskPromptsDocument != nil {
             note(
-                (taskPromptsStatus ?? "task prompts loaded")
+                (draft.taskPromptsStatus ?? "task prompts loaded")
                     + " — edit them in the Input Data section below",
                 severity: .info)
         } else {
             note(
                 "task prompts could not be loaded: "
-                    + (taskPromptsStatus ?? "unknown error")
+                    + (draft.taskPromptsStatus ?? "unknown error")
                     + " — if the file does not exist yet, use Create from "
                     + "template in Data Readiness",
                 severity: .error)
@@ -2439,42 +2439,42 @@ public final class ExperimentPanel {
     }
 
     public func loadTaskPrompts() {
-        let file = taskPromptsFile.trimmingCharacters(in: .whitespacesAndNewlines)
+        let file = draft.taskPromptsFile.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !file.isEmpty else {
-            taskPromptsText = ""
-            taskPromptsStatus = "choose a task prompts file first"
-            taskPromptsInstrumentSummary = nil
-            taskPromptsDocument = nil
-            taskPromptsDocumentFile = nil
+            draft.taskPromptsText = ""
+            draft.taskPromptsStatus = "choose a task prompts file first"
+            draft.taskPromptsInstrumentSummary = nil
+            draft.taskPromptsDocument = nil
+            draft.taskPromptsDocumentFile = nil
             return
         }
         do {
             let url = try VectorCatalog.projectFile(file)
             let data = try Data(contentsOf: url)
             let document = try TaskPromptsDocument.load(data)
-            taskPromptsDocument = document
-            taskPromptsDocumentFile = file
-            taskPromptsText = document.editorText
-            taskPromptsInstrumentSummary = document.instrumentSummary
+            draft.taskPromptsDocument = document
+            draft.taskPromptsDocumentFile = file
+            draft.taskPromptsText = document.editorText
+            draft.taskPromptsInstrumentSummary = document.instrumentSummary
             let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-            taskPromptsStatus =
+            draft.taskPromptsStatus =
                 "loaded \(document.count) prompt\(document.count == 1 ? "" : "s")"
                 + " @ \(hash.prefix(12))…"
         } catch {
-            taskPromptsStatus = "\(error)"
+            draft.taskPromptsStatus = "\(error)"
         }
     }
 
     public func saveTaskPrompts() {
         guard var manifest = selected, manifest.status == .draft else { return }
-        let file = taskPromptsFile.trimmingCharacters(in: .whitespacesAndNewlines)
+        let file = draft.taskPromptsFile.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !file.isEmpty else {
-            taskPromptsStatus = "choose a task prompts file first"
+            draft.taskPromptsStatus = "choose a task prompts file first"
             return
         }
-        let prompts = TaskPromptsDocument.editorBlocks(taskPromptsText)
+        let prompts = TaskPromptsDocument.editorBlocks(draft.taskPromptsText)
         guard !prompts.isEmpty else {
-            taskPromptsStatus = "add at least one prompt"
+            draft.taskPromptsStatus = "add at least one prompt"
             return
         }
         do {
@@ -2485,7 +2485,7 @@ public final class ExperimentPanel {
             // exists, load it now — never blind-overwrite an instrument file
             // with text-only lines.
             var document: TaskPromptsDocument
-            if let loaded = taskPromptsDocument, taskPromptsDocumentFile == file {
+            if let loaded = draft.taskPromptsDocument, draft.taskPromptsDocumentFile == file {
                 document = loaded
             } else if let data = try? Data(contentsOf: url),
                 let loaded = try? TaskPromptsDocument.load(data)
@@ -2501,22 +2501,22 @@ public final class ExperimentPanel {
             let hash = try ExperimentStore.pinTaskPrompts(file, into: &manifest)
             try management.persistReviewedDraft(manifest)
             refresh()
-            taskPromptsDocument = document
-            taskPromptsDocumentFile = file
-            taskPromptsText = document.editorText
-            taskPromptsInstrumentSummary = document.instrumentSummary
+            draft.taskPromptsDocument = document
+            draft.taskPromptsDocumentFile = file
+            draft.taskPromptsText = document.editorText
+            draft.taskPromptsInstrumentSummary = document.instrumentSummary
             // P1: report metadata-preserved and instruments-enabled as two
             // separate facts — preserved fields are NOT enabled measurement.
             let activation = InstrumentActivation.savePinSummary(
                 optionsItemCount: document.optionsItemCount,
                 itemCount: document.count,
                 instruments: selected?.outcomeInstruments)
-            taskPromptsStatus =
+            draft.taskPromptsStatus =
                 "saved and pinned \(prompts.count) prompt\(prompts.count == 1 ? "" : "s")"
                 + " @ \(hash.prefix(12))… — \(activation)"
             note("saved task prompts and pinned their hash — \(activation)", severity: .success)
         } catch {
-            taskPromptsStatus = "\(error)"
+            draft.taskPromptsStatus = "\(error)"
             note(
                 "Couldn't save the task prompts — nothing was pinned; check "
                     + "the file path stays inside the workspace and the study "
@@ -2543,7 +2543,7 @@ public final class ExperimentPanel {
         _ text: String, replacingExisting: Bool = false
     ) -> Bool {
         guard var manifest = selected, manifest.status == .draft else {
-            taskPromptsStatus =
+            draft.taskPromptsStatus =
                 "select a draft study first — import writes the file and pins "
                 + "its hash into the draft manifest"
             return false
@@ -2553,25 +2553,25 @@ public final class ExperimentPanel {
                 text: text, manifest: &manifest,
                 replacingExisting: replacingExisting,
                 persist: { try self.management.persistReviewedDraft($0) })
-            taskPromptsFile = result.file
+            draft.taskPromptsFile = result.file
             refresh()
             // Re-read through the document loader so the editor, the
             // instrument badge, and the loaded-document pairing all reflect
             // the imported file.
             loadTaskPrompts()
-            taskPromptsStatus =
+            draft.taskPromptsStatus =
                 "imported \(result.recordCount) record\(result.recordCount == 1 ? "" : "s")"
                 + " → \(result.file), pinned @ \(result.hash.prefix(12))…"
             note("imported task-prompt JSONL and pinned its hash", severity: .success)
             return true
         } catch {
-            taskPromptsStatus = "\(error)"
+            draft.taskPromptsStatus = "\(error)"
             return false
         }
     }
 
     public func runStudy() async {
-        guard let name = selectedName, !isRunning else { return }
+        guard let name = selectedName, !localJobs.isRunning else { return }
         if isServerWorkspace {
             await runStudyOnActiveServer(verb: "run")
             return
@@ -2580,7 +2580,7 @@ public final class ExperimentPanel {
     }
 
     public func validateStudy() async {
-        guard let name = selectedName, !isValidating else { return }
+        guard let name = selectedName, !localJobs.isValidating else { return }
         if isServerWorkspace {
             // Mac-authority mode (2026-07-21): on a KNOWN-unpaired server
             // the direct verb would execute whatever same-named copy the
@@ -2636,7 +2636,7 @@ public final class ExperimentPanel {
     /// reported (recovered by newest-`-extract` lookup — the task API
     /// prints but does not return it).
     public func extractStudy() async {
-        guard let name = selectedName, !isExtracting else { return }
+        guard let name = selectedName, !localJobs.isExtracting else { return }
         if isServerWorkspace {
             await runStudyOnActiveServer(verb: "extract")
             return
@@ -2648,10 +2648,10 @@ public final class ExperimentPanel {
     /// or — sensible default — the study's LATEST completed run when the
     /// selection is empty or a non-run artifact (validation, judge output).
     public var pairedJudgeTarget: StudyRunListItem? {
-        if let item = selectedResult?.item, item.kind == .run {
+        if let item = results.selectedResult?.item, item.kind == .run {
             return item
         }
-        return resultRuns.first { $0.kind == .run }
+        return results.resultRuns.first { $0.kind == .run }
     }
 
     /// Why Run Paired Judge is disabled, in one plain sentence — nil means
@@ -2667,23 +2667,23 @@ public final class ExperimentPanel {
     /// not hold passed here and reached the loader, which downloads. A green
     /// button followed by a refusal is this gate lying about the run.
     public var pairedJudgeDisabledReason: String? {
-        if isEvaluating || isRunning || isValidating || isExtracting {
+        if localJobs.isEvaluating || localJobs.isRunning || localJobs.isValidating || localJobs.isExtracting {
             return "another study task is running — wait for it to finish"
         }
         guard selectedName != nil else { return "select a study first" }
         guard pairedJudgeTarget != nil else {
             return "no completed study run to judge yet — Run Study first"
         }
-        let hasRubricFile = !judgeRubricFile
+        let hasRubricFile = !draft.judgeRubricFile
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasInlineRubric = !evaluationPrompt
+        let hasInlineRubric = !draft.evaluationPrompt
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if !hasRubricFile, !hasInlineRubric {
             return "no judge rubric — pin a rubric file or enter inline rubric text above"
         }
         return Self.judgeDisabledReason(
-            judges: judges,
-            adHocJudgeModel: judgeModel,
+            judges: draft.judges,
+            adHocJudgeModel: draft.judgeModel,
             claudeKeyPresent: claudeKeyPresenceOverrideForTesting
                 ?? (ClaudeStimulusGenerator.apiKey != nil),
             openRouterKeyPresent: judgeKeyPresenceOverrideForTesting
@@ -2752,19 +2752,19 @@ public final class ExperimentPanel {
     }
 
     public func runPairedJudgeEvaluation() async {
-        guard let name = selectedName, !isEvaluating else { return }
+        guard let name = selectedName, !localJobs.isEvaluating else { return }
         guard let item = pairedJudgeTarget else {
             note("no completed study run to judge yet — Run Study first", severity: .info)
             return
         }
         // Make the defaulted target visible: judging always operates on the
         // run the Results picker shows.
-        if selectedResultID != item.id {
-            selectedResultID = item.id
+        if results.selectedResultID != item.id {
+            results.selectedResultID = item.id
         }
         await localJobs.runPairedJudgeEvaluation(experimentName: name, sourceRun: item,
             evaluation: evaluationSpecFromDraft(),
-            hasPinnedRubric: !judgeRubricFile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            hasPinnedRubric: !draft.judgeRubricFile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     public func clearLiveViewer() {
@@ -2823,7 +2823,7 @@ public final class ExperimentPanel {
     /// corpus). Draft-only; the store's immutability refusal surfaces here.
     public func attachConceptFromPicker() {
         guard let experiment = selectedName else { return }
-        let concept = attachConceptName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let concept = draft.attachConceptName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !concept.isEmpty else {
             note("pick a concept to attach", severity: .warning)
             return
@@ -2835,7 +2835,7 @@ public final class ExperimentPanel {
         // hours later on a run. Raw declares nothing at all.
         let declaredRendering: ExtractionRendering?
         do {
-            declaredRendering = try attachRendering.declared()
+            declaredRendering = try draft.attachRendering.declared()
         } catch let error as ExtractionRendering.DeclarationError {
             note("\(error.reason) — repair: \(error.repair)", severity: .error)
             return
@@ -2854,24 +2854,24 @@ public final class ExperimentPanel {
         }
         // WHERE it is read, as the cross-engine label. nil for the recipe
         // default, which keeps the manifest byte-identical.
-        let declaredPosition = attachReadingPositionChoice.declarationLabel(
-            parameter: attachReadingPositionParameter)
-        let corpus = attachCorpusText
+        let declaredPosition = draft.attachReadingPositionChoice.declarationLabel(
+            parameter: draft.attachReadingPositionParameter)
+        let corpus = draft.attachCorpusText
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         do {
             let manifest = try ExperimentStore.attachConcept(
                 concept,
-                method: attachMethod,
+                method: draft.attachMethod,
                 corpusConcepts: corpus,
-                reference: attachReferenceName.isEmpty ? nil : attachReferenceName,
+                reference: draft.attachReferenceName.isEmpty ? nil : draft.attachReferenceName,
                 extractionRendering: declaredRendering,
                 readingPosition: declaredPosition,
                 experimentName: experiment)
             refresh()
-            attachConceptName = ""
-            if attachMethod == .emotionGrandMean {
+            draft.attachConceptName = ""
+            if draft.attachMethod == .emotionGrandMean {
                 let hash = manifest.grandMeanCorpus?.hashes[concept] ?? ""
                 note(
                     "pinned \(concept) @ \(hash.prefix(12))… (emotionGrandMean, "
@@ -2955,7 +2955,7 @@ public final class ExperimentPanel {
         // added must be checked against the model the researcher CHOSE, not
         // the one last saved (same reset rules as `saveProtocol`).
         applyStudyBaseModelChoice(to: &manifest)
-        guard let id = id ?? selectedVariantToAddID,
+        guard let id = id ?? draft.selectedVariantToAddID,
             let record = ModelVariantStore.scan().first(where: { $0.id == id })
         else {
             note("select an agent to add", severity: .info)
@@ -2970,7 +2970,7 @@ public final class ExperimentPanel {
             // instantiation (`ExperimentStore.attachAgent`).
             try ExperimentStore.attachAgent(record, into: &manifest)
             try management.persistReviewedDraft(manifest)
-            selectedVariantToAddID = nil
+            draft.selectedVariantToAddID = nil
             refresh()
             note("added agent '\(record.artifact.name)'", severity: .success)
         } catch {
@@ -3072,7 +3072,7 @@ public final class ExperimentPanel {
     /// through the same bundle path as every remote run (executor and
     /// resources come from Remote options).
     public func runPipelineRemotely() async {
-        remoteVerb = "pipeline"
+        submission.remoteVerb = "pipeline"
         await submitSelectedStudyRemotely()
     }
 
@@ -3117,8 +3117,8 @@ public final class ExperimentPanel {
     /// not yet attached are pinned automatically at their current hashes.
     public func captureCondition() {
         guard let host, var manifest = selected else { return }
-        let name = conditionName.isEmpty ? "condition-\(manifest.conditions.count + 1)"
-            : conditionName
+        let name = draft.conditionName.isEmpty ? "condition-\(manifest.conditions.count + 1)"
+            : draft.conditionName
         var slots: [ExperimentManifest.Condition.Slot] = []
         do {
             for slot in host.slots where slot.enabled {
@@ -3163,7 +3163,7 @@ public final class ExperimentPanel {
                     neutralPCBasisHash: neutralBasisHash))
             ExperimentStore.pinNeutralCorpus(into: &manifest)  // norm denominator
             try management.persistReviewedDraft(manifest)
-            conditionName = ""
+            draft.conditionName = ""
             refresh()
             note("captured '\(name)' (\(slots.count) slot\(slots.count == 1 ? "" : "s"))", severity: .success)
         } catch {
@@ -3178,13 +3178,13 @@ public final class ExperimentPanel {
     /// it means "same task and sampling settings, no activation edits."
     public func addBaselineCondition() {
         guard var manifest = selected, manifest.status == .draft else { return }
-        let name = conditionName.isEmpty ? "baseline" : conditionName
+        let name = draft.conditionName.isEmpty ? "baseline" : draft.conditionName
         do {
             manifest.conditions.removeAll { $0.name == name }
             manifest.conditions.append(
                 .init(name: name, slots: [], bandWidth: 1, alphaInNormUnits: true))
             try management.persistReviewedDraft(manifest)
-            conditionName = ""
+            draft.conditionName = ""
             refresh()
             clearFormError(.addCondition)
             note("added no-steer baseline '\(name)'", severity: .success)
@@ -3252,19 +3252,19 @@ public final class ExperimentPanel {
     }
 
     private func evaluationSpecFromDraft() -> ExperimentManifest.EvaluationSpec? {
-        let prompt = evaluationPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = draft.evaluationPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return nil }
         return ExperimentManifest.EvaluationSpec(
             kind: .pairedJudge,
             judgeModel: resolvedInlineJudgeModel(),
             judgePrompt: prompt,
-            structuredPrompt: nilIfEmpty(evaluationStructuredPrompt))
+            structuredPrompt: nilIfEmpty(draft.evaluationStructuredPrompt))
     }
 
     /// The ad-hoc judge model the inline (scratchpad) evaluation spec
     /// carries: the panel field, else the study-model default.
     private func resolvedInlineJudgeModel() -> String {
-        let trimmed = judgeModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = draft.judgeModel.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? defaultJudgeModel(for: selected) : trimmed
     }
 
@@ -3793,7 +3793,7 @@ extension ExperimentPanel {
             let hash = try ExperimentStore.pinTaskPrompts(
                 relativePath, into: &manifest)
             try management.persistReviewedDraft(manifest)
-            taskPromptsFile = relativePath
+            draft.taskPromptsFile = relativePath
             refresh()
             loadTaskPrompts()
             note(
@@ -3828,10 +3828,10 @@ extension ExperimentPanel {
             let result = try TabularImport.importTaskPrompts(
                 table: table, mapping: mapping, manifest: &manifest,
                 persist: { try self.management.persistReviewedDraft($0) })
-            taskPromptsFile = result.file
+            draft.taskPromptsFile = result.file
             refresh()
             loadTaskPrompts()
-            taskPromptsStatus =
+            draft.taskPromptsStatus =
                 "imported \(result.recordCount) row\(result.recordCount == 1 ? "" : "s")"
                 + " → \(result.file), pinned @ \(result.hash.prefix(12))…"
             note(
@@ -3861,7 +3861,7 @@ extension ExperimentPanel {
         do {
             let pinned = try TabularImport.importHumanBaseline(
                 table: table, mapping: mapping, experimentName: name)
-            humanBaselinePathField = pinned.path
+            draft.humanBaselinePathField = pinned.path
             refresh()
             note(
                 "imported human baseline → \(pinned.path), pinned @ "

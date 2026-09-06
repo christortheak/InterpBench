@@ -60,11 +60,11 @@ struct ExperimentsPanelView: View {
                 // WHO sits in each seat of the chosen scenario. Only
                 // multi-agent studies have seats, and a scenario that declares
                 // none has nothing to show.
-                if panel.studyKind == .multiAgent {
+                if panel.draft.studyKind == .multiAgent {
                     StudySeatsSection(manifest: manifest, panel: panel)
                 }
 
-                if panel.studyKind == .modelOutput,
+                if panel.draft.studyKind == .modelOutput,
                     panel.studyFocus == .conceptStudy
                 {
                     StudyConceptsSection(manifest: manifest, panel: panel)
@@ -83,7 +83,7 @@ struct ExperimentsPanelView: View {
                     onEditTaskPrompts: { panel.loadTaskPromptsInteractively() },
                     relevantCategories: panel.studyFocus.relevantDataCategories,
                     panel: panel,
-                    taskPromptsEditor: panel.studyKind == .modelOutput
+                    taskPromptsEditor: panel.draft.studyKind == .modelOutput
                         ? {
                             AnyView(
                                 StudyTaskPromptsEditor(
@@ -186,7 +186,7 @@ struct ExperimentsPanelView: View {
                     // — new, rename, duplicate, delete — belong together, not
                     // split across the page from the run actions.
 
-                    if panel.studyKind == .modelOutput {
+                    if panel.draft.studyKind == .modelOutput {
                         StudyPreparationControlsView(service: service, manifest: manifest,
                             pendingModelJob: $pendingModelJob, runOnServerExpanded: $runOnServerExpanded)
                     }
@@ -267,7 +267,7 @@ struct ExperimentsPanelView: View {
                 // researcher had to guess. Same content, one roof,
                 // subheaded by WHERE the runs live and at what granularity.
                 Section("Runs & Results") {
-                    if !panel.recentServerJobs.isEmpty {
+                    if !panel.remoteJobs.recentServerJobs.isEmpty {
                         StudyRecentJobsView(jobs: panel.remoteJobs,
                             resume: { await panel.resubmitRemoteJob($0) },
                             importEvidence: { await panel.importEvidence(fromJobID: $0) },
@@ -301,7 +301,7 @@ struct ExperimentsPanelView: View {
                     Text(status).font(.caption).foregroundStyle(.secondary)
                     // A durable server job in flight gets a visible cancel
                     // control right here — not buried in a disclosure.
-                    if let job = panel.activeServerJob {
+                    if let job = panel.remoteJobs.activeServerJob {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
                             Text("server \(job.verb) job \(job.id) — '\(job.study)'")
@@ -373,7 +373,7 @@ struct ExperimentsPanelView: View {
                     panel.importTaskPromptsJSONL(
                         text, replacingExisting: replace)
                 },
-                statusLine: { panel.taskPromptsStatus })
+                statusLine: { panel.draft.taskPromptsStatus })
         }
     }
 
@@ -447,7 +447,7 @@ struct ExperimentsPanelView: View {
     private func pairedJudgeControls(panel: ExperimentPanel) -> some View {
         let reason = panel.pairedJudgeDisabledReason
         HStack(spacing: 8) {
-            Button(panel.isEvaluating ? "Judging…" : "Run Paired Judge") {
+            Button(panel.localJobs.isEvaluating ? "Judging…" : "Run Paired Judge") {
                 Task { await panel.runPairedJudgeEvaluation() }
             }
             .disabled(reason != nil)
@@ -456,11 +456,11 @@ struct ExperimentsPanelView: View {
                     + "its same-prompt baseline, shuffling A/B labels, asking the "
                     + "current judge prompt, and writing a separate evaluate artifact")
             // A1: paired judging is cancellable between judgments.
-            if panel.isEvaluating {
+            if panel.localJobs.isEvaluating {
                 ProgressView().controlSize(.small)
                 Button("Stop", role: .destructive) { panel.cancelPairedJudge() }
                     .controlSize(.small)
-                    .disabled(panel.evaluationCancelRequested)
+                    .disabled(panel.localJobs.evaluationCancelRequested)
                     .help(
                         "stops after the current judgment; completed judgments "
                             + "stay in judgments.jsonl, no judge report is written "
@@ -472,7 +472,7 @@ struct ExperimentsPanelView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         } else if let target = panel.pairedJudgeTarget,
-            panel.selectedResult?.item.id != target.id
+            panel.results.selectedResult?.item.id != target.id
         {
             Text("no run selected — will judge the latest completed run: \(target.directoryName)")
                 .font(.caption2)

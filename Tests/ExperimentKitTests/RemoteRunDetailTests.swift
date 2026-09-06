@@ -172,7 +172,7 @@ struct RemoteRunDetailTests {
             return RemoteRunFileHead(data: generations)
         }
         // The failure is attributable in the existing status surface…
-        let status = try #require(panel.remoteResultsStatus)
+        let status = try #require(panel.results.remoteResultsStatus)
         #expect(status.contains("report.json"))
         #expect(status.contains("could not fetch"))
         // …and the rest of the detail still renders (partial, not nil).
@@ -193,13 +193,13 @@ struct RemoteRunDetailTests {
         struct Boom: Error {}
         let panel = ExperimentPanel()
         _ = await panel.loadRemoteRunDetail(run: run) { _, _ in throw Boom() }
-        #expect(panel.remoteResultsStatus?.contains("could not fetch") == true)
+        #expect(panel.results.remoteResultsStatus?.contains("could not fetch") == true)
 
         let payload = await panel.loadRemoteRunDetail(run: run) { _, _ in
             RemoteRunFileHead(data: generations)
         }
         #expect(payload.model?.records.count == 1)
-        #expect(panel.remoteResultsStatus == nil)  // stale error gone
+        #expect(panel.results.remoteResultsStatus == nil)  // stale error gone
     }
 
     // MARK: - Server head metadata (the raised-cap contract)
@@ -225,7 +225,7 @@ struct RemoteRunDetailTests {
         #expect(model.report?.conditions["baseline"]?.generations == 1)
         #expect(
             model.report?.conditions["baseline"]?.meanMarkerDensity?["fear"] == 0.02)
-        #expect(panel.remoteResultsStatus == nil)
+        #expect(panel.results.remoteResultsStatus == nil)
     }
 
     @Test func serverMetadataProvesCompletenessDespiteFalsyZeroListing() async throws {

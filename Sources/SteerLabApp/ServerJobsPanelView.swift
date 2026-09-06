@@ -791,7 +791,7 @@ struct ServerJobsPanelView: View {
         // No bundle in the job's result payload — fall back to the panel
         // path, which reports its own reason.
         await service.experiments.importEvidence(fromJobID: job.id)
-        status = service.experiments.remoteStatus ?? status
+        status = service.experiments.remoteJobs.remoteStatus ?? status
     }
 
     /// Manual resume of a checkpointed job: the server re-sbatches the

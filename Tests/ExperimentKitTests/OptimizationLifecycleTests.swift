@@ -472,7 +472,7 @@ extension ExperimentStoreTests {
             spec.alphas = [0.1, 0.05]
             #expect(!panel.setSweepSpec(spec, for: "grid"))
             #expect(panel.status?.contains("does not ascend") == true)
-            #expect(panel.formErrors[.sweepSpec] == panel.status)
+            #expect(panel.draft.formErrors[.sweepSpec] == panel.status)
             #expect(try ExperimentStore.load(name: "grid").sweep == nil)
 
             // A repeated layer fraction: strict ascent, same twin text.
@@ -485,7 +485,7 @@ extension ExperimentStoreTests {
             // The ascending declaration saves through the same gated verb,
             // clearing the inline refusal.
             #expect(panel.setSweepSpec(.init(), for: "grid"))
-            #expect(panel.formErrors[.sweepSpec] == nil)
+            #expect(panel.draft.formErrors[.sweepSpec] == nil)
             #expect(try ExperimentStore.load(name: "grid").sweep != nil)
         }
     }
@@ -594,13 +594,13 @@ extension ExperimentStoreTests {
             var bad = ExperimentManifest.SweepSpec()
             bad.alphas = []
             #expect(!panel.setSweepSpec(bad, for: "form"))
-            let inline = try #require(panel.formErrors[.sweepSpec])
+            let inline = try #require(panel.draft.formErrors[.sweepSpec])
             #expect(inline == panel.status)
 
             // A subsequent SUCCESS must clear it — a stale refusal under a
             // now-saved spec is its own paper cut.
             #expect(panel.setSweepSpec(.init(), for: "form"))
-            #expect(panel.formErrors[.sweepSpec] == nil)
+            #expect(panel.draft.formErrors[.sweepSpec] == nil)
         }
     }
 
@@ -612,12 +612,12 @@ extension ExperimentStoreTests {
             let panel = ExperimentPanel()
             panel.refresh()
             panel.selectedName = "cond"
-            panel.conditionConcept = "fear"
-            panel.conditionLayerText = "41"
-            panel.conditionAlphaText = "0"
+            panel.draft.conditionConcept = "fear"
+            panel.draft.conditionLayerText = "41"
+            panel.draft.conditionAlphaText = "0"
             panel.addVectorCondition()
 
-            let inline = try #require(panel.formErrors[.addCondition])
+            let inline = try #require(panel.draft.formErrors[.addCondition])
             #expect(inline.contains("nonzero"))
             #expect(try ExperimentStore.load(name: "cond").conditions.isEmpty)
         }

@@ -70,7 +70,7 @@ struct JudgeKindFieldOwnershipTests {
     @MainActor
     @Test func kindSwitchRoundTripRestoresEachKindsFields() {
         let panel = ExperimentPanel()
-        panel.judges = [
+        panel.draft.judges = [
             .init(name: "judge-1", kind: "openrouter",
                   model: "google/gemma-3-27b-it", provider: "google-ai-studio")
         ]
@@ -78,41 +78,41 @@ struct JudgeKindFieldOwnershipTests {
         // openrouter → local: the row swaps to local's (empty) field set —
         // nothing of the OpenRouter past renders or saves under local.
         panel.setJudgeKind(at: 0, to: "local")
-        #expect(panel.judges[0].kind == "local")
-        #expect(panel.judges[0].model == nil)
-        #expect(panel.judges[0].provider == nil)
+        #expect(panel.draft.judges[0].kind == "local")
+        #expect(panel.draft.judges[0].model == nil)
+        #expect(panel.draft.judges[0].provider == nil)
 
         // The researcher configures the local kind.
-        panel.judges[0].model = "other/judge-12b"
-        panel.judges[0].revision = "cafe01"
-        panel.judges[0].dtype = "bfloat16"
+        panel.draft.judges[0].model = "other/judge-12b"
+        panel.draft.judges[0].revision = "cafe01"
+        panel.draft.judges[0].dtype = "bfloat16"
 
         // local → openrouter: the hand-discovered provider slug is restored
         // — losing it to an exploratory toggle would be hostile.
         panel.setJudgeKind(at: 0, to: "openrouter")
-        #expect(panel.judges[0].model == "google/gemma-3-27b-it")
-        #expect(panel.judges[0].provider == "google-ai-studio")
-        #expect(panel.judges[0].revision == nil)
-        #expect(panel.judges[0].dtype == nil)
+        #expect(panel.draft.judges[0].model == "google/gemma-3-27b-it")
+        #expect(panel.draft.judges[0].provider == "google-ai-studio")
+        #expect(panel.draft.judges[0].revision == nil)
+        #expect(panel.draft.judges[0].dtype == nil)
 
         // openrouter → local again: the local entries came back too.
         panel.setJudgeKind(at: 0, to: "local")
-        #expect(panel.judges[0].model == "other/judge-12b")
-        #expect(panel.judges[0].revision == "cafe01")
-        #expect(panel.judges[0].dtype == "bfloat16")
-        #expect(panel.judges[0].provider == nil)
+        #expect(panel.draft.judges[0].model == "other/judge-12b")
+        #expect(panel.draft.judges[0].revision == "cafe01")
+        #expect(panel.draft.judges[0].dtype == "bfloat16")
+        #expect(panel.draft.judges[0].provider == nil)
 
         // Same-kind and stale-index writes are no-ops, not traps.
         panel.setJudgeKind(at: 0, to: "local")
-        #expect(panel.judges[0].model == "other/judge-12b")
+        #expect(panel.draft.judges[0].model == "other/judge-12b")
         panel.setJudgeKind(at: 7, to: "openrouter")
-        #expect(panel.judges.count == 1)
+        #expect(panel.draft.judges.count == 1)
     }
 
     @MainActor
     @Test func removingAJudgeRowShiftsTheStashWithTheRows() {
         let panel = ExperimentPanel()
-        panel.judges = [
+        panel.draft.judges = [
             .init(name: "a", kind: "openrouter", model: "slug/a", provider: "pa"),
             .init(name: "b", kind: "openrouter", model: "slug/b", provider: "pb"),
         ]
@@ -120,12 +120,12 @@ struct JudgeKindFieldOwnershipTests {
         panel.setJudgeKind(at: 1, to: "local")
 
         panel.removeJudge(at: 0)
-        #expect(panel.judges.map(\.name) == ["b"])
+        #expect(panel.draft.judges.map(\.name) == ["b"])
         // Row b kept ITS stash under its new index: toggling back restores
         // b's fields, not a's.
         panel.setJudgeKind(at: 0, to: "openrouter")
-        #expect(panel.judges[0].model == "slug/b")
-        #expect(panel.judges[0].provider == "pb")
+        #expect(panel.draft.judges[0].model == "slug/b")
+        #expect(panel.draft.judges[0].provider == "pb")
     }
 
     // MARK: - The write funnel (saveProtocol)

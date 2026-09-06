@@ -49,8 +49,8 @@ struct RemoteSubmissionLabelTests {
         // verify + dryRun defaults betrayed the "run my study" intent: the
         // submission prepared a dry run and appeared to do nothing.
         let panel = ExperimentPanel()
-        #expect(panel.remoteVerb == "run")
-        #expect(panel.remoteDryRun == false)
+        #expect(panel.submission.remoteVerb == "run")
+        #expect(panel.submission.remoteDryRun == false)
         #expect(panel.submitBundleButtonLabel == "Submit Bundle: run")
     }
 
@@ -59,7 +59,7 @@ struct RemoteSubmissionLabelTests {
         // researcher asked for by submitting it — the panel's toggle ships
         // ON with the server's default restart cap prefilled (editable).
         let panel = ExperimentPanel()
-        #expect(panel.remoteResumePolicy.autoResubmit == true)
-        #expect(panel.remoteResumePolicy.limit == RemoteResumePolicy.serverDefaultLimit)
+        #expect(panel.submission.remoteResumePolicy.autoResubmit == true)
+        #expect(panel.submission.remoteResumePolicy.limit == RemoteResumePolicy.serverDefaultLimit)
     }
 }

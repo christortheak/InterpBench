@@ -74,7 +74,7 @@ struct StudyConceptsSection: View {
             .font(.caption2)
             .foregroundStyle(.secondary)
         } else {
-            let selectedSource = sources.first { $0.name == panel.attachConceptName }
+            let selectedSource = sources.first { $0.name == panel.draft.attachConceptName }
             Picker("Attach Concept…", selection: $draft.attachConceptName) {
                 Text("select…").tag("")
                 ForEach(sources, id: \.name) { source in
@@ -86,14 +86,14 @@ struct StudyConceptsSection: View {
                     + "labels say what each can support (paired stimulus set, "
                     + "grand-mean stories)"
             )
-            .onChange(of: panel.attachConceptName) {
+            .onChange(of: panel.draft.attachConceptName) {
                 // Snap the method to something the chosen concept's data can
                 // actually support.
-                if let source = sources.first(where: { $0.name == panel.attachConceptName }),
-                    !source.supportedMethods.contains(panel.attachMethod),
+                if let source = sources.first(where: { $0.name == panel.draft.attachConceptName }),
+                    !source.supportedMethods.contains(panel.draft.attachMethod),
                     let first = source.supportedMethods.first
                 {
-                    panel.attachMethod = first
+                    panel.draft.attachMethod = first
                 }
             }
             HStack(spacing: 8) {
@@ -124,7 +124,7 @@ struct StudyConceptsSection: View {
                         + "inside a rendered turn, so they need the chat "
                         + "template beside this")
                 Button("Attach") { panel.attachConceptFromPicker() }
-                    .disabled(panel.attachConceptName.isEmpty)
+                    .disabled(panel.draft.attachConceptName.isEmpty)
                     .help(
                         "pins the concept at its CURRENT stimulus hash plus the "
                             + "measurement-side validation pin — same write as "
@@ -145,7 +145,7 @@ struct StudyConceptsSection: View {
                         + "why the choice is pinned rather than inferred")
                 Spacer(minLength: 0)
             }
-            if panel.attachMethod == .designatedReference {
+            if panel.draft.attachMethod == .designatedReference {
                 Picker("reference", selection: $draft.attachReferenceName) {
                     Text("select reference…").tag("")
                     ForEach(sources.filter(\.hasStories), id: \.name) { source in
@@ -159,7 +159,7 @@ struct StudyConceptsSection: View {
                         + "pooled from token 50 — the reference pins into the "
                         + "recipe beside the concept")
             }
-            if panel.attachMethod == .emotionGrandMean {
+            if panel.draft.attachMethod == .emotionGrandMean {
                 TextField(
                     "extra corpus members (comma-separated; targets are always members)",
                     text: $draft.attachCorpusText

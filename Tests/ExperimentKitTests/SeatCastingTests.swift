@@ -217,7 +217,7 @@ import Testing
             let agentID = try agentRecord(named: "sympathy-agent").id
 
             // The picker points at the semantic scenario the study pins.
-            #expect(panel.selectedMultiAgentScenarioID
+            #expect(panel.draft.selectedMultiAgentScenarioID
                 == (try scenarioID(named: "allocation-panel")))
             #expect(panel.availableAgentsForSeats.map(\.artifact.name)
                 == ["sympathy-agent"])
@@ -273,7 +273,7 @@ import Testing
             } else {
                 Issue.record("seat-proposer came back baseline")
             }
-            #expect(reopened.selectedMultiAgentScenarioID
+            #expect(reopened.draft.selectedMultiAgentScenarioID
                 == (try scenarioID(named: "allocation-panel")))
             #expect(reopened.seatAgentID(for: "seat-proposer") == agentID)
         }
@@ -296,8 +296,8 @@ import Testing
                 ExperimentStore.load(name: "allocation-study")
                     .multiAgentScenarioPath)
 
-            panel.runMaxTokens = 999
-            panel.runTemperature = 0
+            panel.draft.runMaxTokens = 999
+            panel.draft.runTemperature = 0
             panel.saveProtocol()
 
             let saved = try ExperimentStore.load(name: "allocation-study")
@@ -326,7 +326,7 @@ import Testing
                 try agentRecord(named: "sympathy-agent").id, seat: "seat-proposer")
             panel.saveSeatCasting()
 
-            panel.studyBaseModelID = "other/model"
+            panel.draft.studyBaseModelID = "other/model"
             panel.saveProtocol()
 
             let saved = try ExperimentStore.load(name: "allocation-study")
@@ -357,7 +357,7 @@ import Testing
             try MultiAgentScenarioStore.save(semanticScenario())
 
             let panel = makePanel(root: root, selecting: "fresh-panel")
-            panel.selectedMultiAgentScenarioID = try scenarioID(
+            panel.draft.selectedMultiAgentScenarioID = try scenarioID(
                 named: "allocation-panel")
             panel.saveProtocol()
 
@@ -389,7 +389,7 @@ import Testing
             try ExperimentStore.save(manifest)
 
             let panel = makePanel(root: root, selecting: "legacy-setup")
-            panel.selectedMultiAgentScenarioID = try #require(
+            panel.draft.selectedMultiAgentScenarioID = try #require(
                 MultiAgentScenarioStore.scan().first {
                     $0.url.lastPathComponent == record.url.lastPathComponent
                 }).id
@@ -448,7 +448,7 @@ import Testing
             panel.saveSeatCasting()
 
             panel.startPermutedSiblings()
-            #expect(panel.formErrors[.template] == nil)
+            #expect(panel.draft.formErrors[.template] == nil)
             let invitation = try #require(panel.templateInstantiationInvitation)
             #expect(invitation.permuting.count == 2)
             #expect(invitation.permuting.contains(.baseline))
@@ -495,7 +495,7 @@ import Testing
             let panel = makePanel(root: root, selecting: "allocation-study")
             panel.startPermutedSiblings()
             #expect(panel.templateInstantiationInvitation == nil)
-            let refusal = try #require(panel.formErrors[.template])
+            let refusal = try #require(panel.draft.formErrors[.template])
             #expect(refusal.contains("Save the seats first"))
         }
     }

@@ -77,7 +77,7 @@ struct StudyPreparationControlsView: View {
             studyNotOnServerCallout(panel: panel)
         }
 
-        if let validationDirectory = panel.lastValidationDirectory {
+        if let validationDirectory = panel.localJobs.lastValidationDirectory {
             Text(validationDirectory)
                 .font(.caption2.monospaced())
                 .foregroundStyle(.secondary)
@@ -98,14 +98,14 @@ struct StudyPreparationControlsView: View {
             panel.isServerWorkspace
             && panel.serverHasSelectedStudy == false
         let busy =
-            panel.isExtracting || panel.isRunning || panel.isValidating
-            || panel.isSweeping
+            panel.localJobs.isExtracting || panel.localJobs.isRunning || panel.localJobs.isValidating
+            || panel.localJobs.isSweeping
         let reason = ExperimentPanel.extractDisabledReason(
             busy: busy,
             hasViolations: !panel.violations.isEmpty,
             missingOnServer: missingOnServer)
         HStack(spacing: 8) {
-            Button(panel.isExtracting ? "Extracting…" : "Extract Vectors") {
+            Button(panel.localJobs.isExtracting ? "Extracting…" : "Extract Vectors") {
                 // Item 2: same no-GPU-session gate as Run/Validate —
                 // extraction loads the pinned model on the server.
                 let panel = panel
@@ -117,11 +117,11 @@ struct StudyPreparationControlsView: View {
             .buttonStyle(.bordered)
             .disabled(reason != nil)
             .help(StudyControlCopy.extractHelp)
-            if panel.isExtracting, !panel.isServerWorkspace {
+            if panel.localJobs.isExtracting, !panel.isServerWorkspace {
                 ProgressView().controlSize(.small)
                 Button("Stop", role: .destructive) { panel.cancelExtract() }
                     .controlSize(.small)
-                    .disabled(panel.extractCancelRequested)
+                    .disabled(panel.localJobs.extractCancelRequested)
                     .help(
                         "stops after the current concept; completed vectors "
                             + "stay in the run directory, marked cancelled")
@@ -145,7 +145,7 @@ struct StudyPreparationControlsView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        if let extractDirectory = panel.lastExtractDirectory {
+        if let extractDirectory = panel.localJobs.lastExtractDirectory {
             Text(extractDirectory)
                 .font(.caption2.monospaced())
                 .foregroundStyle(.secondary)

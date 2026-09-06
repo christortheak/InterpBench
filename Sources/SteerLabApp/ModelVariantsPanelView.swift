@@ -1798,7 +1798,7 @@ struct ModelVariantsPanelView: View {
         // rewrites the study's model to that field when they differ (clearing
         // attached variants) — the guard above already ensured the study's
         // model matches this agent, so this makes the attach a pure attach.
-        service.experiments.studyBaseModelID = record.artifact.baseModelID
+        service.experiments.draft.studyBaseModelID = record.artifact.baseModelID
         service.experiments.addVariantCondition(record.id)
         navigate(.studies)
     }

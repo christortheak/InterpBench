@@ -42,7 +42,7 @@ struct StudySetupSection: View {
                 "what you will measure: flips, scores, cooperation rate, "
                     + "style markers, capability battery, degeneration")
 
-            if panel.studyKind == .modelOutput {
+            if panel.draft.studyKind == .modelOutput {
                 // Workspace-scoped model choice (same strict rule as
                 // the chat's WorkspaceModelPicker): a server target
                 // offers ONLY that server's installed models; a
@@ -51,32 +51,32 @@ struct StudySetupSection: View {
                 // pickable anew. The chosen server id flows into the
                 // manifest exactly as local ids do.
                 Picker(
-                    panel.studyKind == .multiAgent
+                    panel.draft.studyKind == .multiAgent
                         ? "Default model for seats"
                         : "Baseline model",
                     selection: $draft.studyBaseModelID
                 ) {
-                    if panel.studyBaseModelID.isEmpty {
+                    if panel.draft.studyBaseModelID.isEmpty {
                         Text("select model…").tag("")
                     }
                     ForEach(panel.modelOptions, id: \.self) { model in
                         Text(model).tag(model)
                     }
                     if WorkspaceScoping.selectionOutsideInventory(
-                        panel.studyBaseModelID, inventory: panel.modelOptions)
+                        panel.draft.studyBaseModelID, inventory: panel.modelOptions)
                     {
                         Text(
                             panel.isServerWorkspace
-                                ? "\(panel.studyBaseModelID) (not installed)"
-                                : panel.studyBaseModelID
+                                ? "\(panel.draft.studyBaseModelID) (not installed)"
+                                : panel.draft.studyBaseModelID
                         )
-                        .tag(panel.studyBaseModelID)
+                        .tag(panel.draft.studyBaseModelID)
                         .selectionDisabled()
                     }
                 }
                 .disabled(manifest.status != .draft)
                 .help(
-                    panel.studyKind == .multiAgent
+                    panel.draft.studyKind == .multiAgent
                         ? "used only by panel seats that name no base model of "
                             + "their own. Seats may each carry a different "
                             + "model; every turn records the one it ran on, and "
@@ -157,7 +157,7 @@ struct StudySetupSection: View {
                         + "budget, and a LEVEL only where the model's capability "
                         + "record — probed from its chat template, shown in the "
                         + "Compute section — says the template accepts it.")
-                if panel.qwenThinkingEnabled {
+                if panel.draft.qwenThinkingEnabled {
                     TextField(
                         "Reasoning max tokens",
                         value: $draft.reasoningMaxTokens,
@@ -184,7 +184,7 @@ struct StudySetupSection: View {
             .disabled(manifest.status != .draft)
             .help("study-wide per-response token cap for baseline and agents")
 
-            if panel.studyKind == .multiAgent {
+            if panel.draft.studyKind == .multiAgent {
                 Picker(
                     "Scenario",
                     selection: $draft.selectedMultiAgentScenarioID
@@ -202,7 +202,7 @@ struct StudySetupSection: View {
                         + "pin it — Save study setup compiles the seat "
                         + "casting below and writes the pin, which is "
                         + "what Data & Prompts checks.")
-                if panel.selectedMultiAgentScenarioID != nil,
+                if panel.draft.selectedMultiAgentScenarioID != nil,
                     manifest.multiAgentScenarioPath == nil
                 {
                     Text(
@@ -222,7 +222,7 @@ struct StudySetupSection: View {
                         + "intervention removed — adapters and steering "
                         + "vectors stripped, base models unchanged. This "
                         + "is the control the measurement subtracts.")
-                if !panel.multiAgentIncludeBaseline {
+                if !panel.draft.multiAgentIncludeBaseline {
                     // Not a style preference: without the control arm
                     // there is nothing to difference against, so the
                     // whole analysis layer goes quiet.

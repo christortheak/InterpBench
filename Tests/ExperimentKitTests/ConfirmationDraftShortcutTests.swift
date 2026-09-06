@@ -198,7 +198,7 @@ extension ExperimentStoreTests {
         // agent preselected in the confirm controls.
         #expect(panel.selectedName == "screen-study-confirm")
         let preselected = panel.confirmableAgents.first {
-            $0.id == panel.confirmAgentID
+            $0.id == panel.draft.confirmAgentID
         }
         #expect(preselected?.artifact.name == "screen-agent")
 

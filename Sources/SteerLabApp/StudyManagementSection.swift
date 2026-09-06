@@ -146,7 +146,7 @@ struct StudyManagementSection: View {
                         }
                     }
                 }
-                if let refusal = panel.formErrors[.rename] {
+                if let refusal = panel.draft.formErrors[.rename] {
                     Label(refusal, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
@@ -194,7 +194,7 @@ struct StudyManagementSection: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         Button("Create Draft") { panel.create() }
-                            .disabled(panel.newName.isEmpty)
+                            .disabled(panel.draft.newName.isEmpty)
                     }
                 }
             }
@@ -285,8 +285,8 @@ struct StudyManagementSection: View {
         panel.clearFormError(.template)
         templateSheet = TemplateInstantiationRequest(
             templateName: name,
-            shardsPerStudy: max(1, panel.remoteParallelJobs),
-            jobNoun: panel.remoteExecutor == "slurm" ? "Slurm jobs" : "jobs",
+            shardsPerStudy: max(1, panel.submission.remoteParallelJobs),
+            jobNoun: panel.submission.remoteExecutor == "slurm" ? "Slurm jobs" : "jobs",
             canSubmit: panel.canSubmitBundles,
             permuting: permuting)
     }

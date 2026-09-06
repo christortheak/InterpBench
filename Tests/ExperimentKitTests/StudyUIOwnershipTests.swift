@@ -54,19 +54,19 @@ struct StudyUIOwnershipTests {
             let panel = ExperimentPanel()
             let changed = Mutex(false)
             withObservationTracking {
-                _ = panel.taskDescription
+                _ = panel.draft.taskDescription
             } onChange: {
                 changed.withLock { $0 = true }
             }
             panel.draft.taskDescription = "through owner"
             #expect(changed.withLock { $0 })
-            #expect(panel.taskDescription == "through owner")
-            panel.taskDescription = "through compatibility binding"
+            #expect(panel.draft.taskDescription == "through owner")
+            panel.draft.taskDescription = "through compatibility binding"
             #expect(panel.draft.taskDescription == "through compatibility binding")
-            panel.formErrors[.addCondition] = "old refusal"
-            panel.conditionMode = .ablate
+            panel.draft.formErrors[.addCondition] = "old refusal"
+            panel.draft.conditionMode = .ablate
             #expect(panel.draft.conditionAlphaText == "1")
-            #expect(panel.formErrors[.addCondition] == nil)
+            #expect(panel.draft.formErrors[.addCondition] == nil)
         }
     }
 

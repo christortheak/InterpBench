@@ -219,15 +219,15 @@ struct WorkbenchViewerTranscriptTests {
         let runURL = URL(fileURLWithPath: "/tmp/old-workspace/runs/2026-01-01-run")
         service.selectedResultsRun = RunBrowser.Item(
             url: runURL, name: "2026-01-01-run", runType: "study")
-        service.experiments.selectedResultsFile = RunBrowser.FileEntry(
+        service.experiments.results.selectedResultsFile = RunBrowser.FileEntry(
             url: runURL.appending(path: "report.json"), name: "report.json",
             size: 10, isDirectory: false)
 
         service.resetSectionViewers()
 
         #expect(service.selectedResultsRun == nil)
-        #expect(service.experiments.selectedResultsFile == nil)
-        #expect(service.experiments.selectedRemoteResultsRun == nil)
+        #expect(service.experiments.results.selectedResultsFile == nil)
+        #expect(service.experiments.results.selectedRemoteResultsRun == nil)
         #expect(service.geometry.result == nil)
         #expect(service.geometry.activeMatrix == nil)
         #expect(service.geometry.serverMatrix == nil)

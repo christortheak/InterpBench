@@ -15,7 +15,7 @@ struct StudySamplingControls: View {
         @Bindable var panel = panel
         @Bindable var draft = panel.draft
         let isDraft = manifest.status == .draft
-        let isPanel = panel.studyKind == .multiAgent
+        let isPanel = panel.draft.studyKind == .multiAgent
         LabeledContent(isPanel ? "Play-throughs (transcripts)" : "Samples per item") {
             HStack(spacing: 6) {
                 TextField(
@@ -47,7 +47,7 @@ struct StudySamplingControls: View {
         HStack(spacing: 6) {
             Picker("Seed policy", selection: $draft.seedPolicyField) {
                 Text("Fixed seed list (default)").tag("")
-                if panel.seedPolicyField == "manifestSeeds" {
+                if panel.draft.seedPolicyField == "manifestSeeds" {
                     Text("Fixed seed list (declared — same behavior)")
                         .tag("manifestSeeds")
                 }
@@ -64,14 +64,14 @@ struct StudySamplingControls: View {
         // The list the fixed-list policy indexes into (audit 2026-08-01:
         // the policy had a picker; the list had no editor). Hidden under
         // the derived policy, which never reads it.
-        if panel.seedPolicyField != "derivedSHA256" {
+        if panel.draft.seedPolicyField != "derivedSHA256" {
             SeedsListControls(manifest: manifest, panel: panel)
         }
         // Gentle advisory (never a blocker): a stochastic design with the
         // fixed list loses per-record reproducibility; samples > 1
         // additionally requires the derived policy at verify.
-        if panel.runTemperature > 0 || panel.samplesPerItemField > 1,
-            panel.seedPolicyField != "derivedSHA256"
+        if panel.draft.runTemperature > 0 || panel.draft.samplesPerItemField > 1,
+            panel.draft.seedPolicyField != "derivedSHA256"
         {
             Label(
                 "this design is stochastic (temperature > 0 or several "
@@ -87,7 +87,7 @@ struct StudySamplingControls: View {
         // The server-only-stochastic rule, surfaced exactly like the
         // temperature rule: local target + samplesPerItem > 1 explains
         // itself inline instead of failing later.
-        if panel.samplesPerItemField > 1, !panel.isServerWorkspace {
+        if panel.draft.samplesPerItemField > 1, !panel.isServerWorkspace {
             Label(
                 "samplesPerItem > 1 is a stochastic design — it runs on the "
                     + "Python server, which seeds PyTorch per record; the "

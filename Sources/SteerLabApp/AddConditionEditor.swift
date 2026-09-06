@@ -13,8 +13,9 @@ struct AddConditionEditor: View {
     @Bindable var panel: ExperimentPanel
 
     var body: some View {
+        @Bindable var draft = panel.draft
         inputRow(label: "Condition name") {
-            TextField("optional", text: $panel.conditionName)
+            TextField("optional", text: $draft.conditionName)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 200)
         }
@@ -23,7 +24,7 @@ struct AddConditionEditor: View {
             caption: "the attached concept whose direction this condition "
                 + "injects"
         ) {
-            Picker("", selection: $panel.conditionConcept) {
+            Picker("", selection: $draft.conditionConcept) {
                 ForEach(panel.conditionConceptOptions, id: \.self) { concept in
                     Text(concept).tag(concept)
                 }
@@ -33,13 +34,13 @@ struct AddConditionEditor: View {
         }
         inputRow(
             label: "What it does",
-            caption: panel.conditionMode == .ablate
+            caption: panel.draft.conditionMode == .ablate
                 ? "Ablate REMOVES whatever of the concept the model is "
                     + "representing, and adds nothing"
                 : "Steer ADDS the concept whether or not the model was "
                     + "already representing it"
         ) {
-            Picker("", selection: $panel.conditionMode) {
+            Picker("", selection: $draft.conditionMode) {
                 Text("Steer").tag(InterventionPlan.Mode.add)
                 Text("Ablate").tag(InterventionPlan.Mode.ablate)
             }
@@ -51,13 +52,13 @@ struct AddConditionEditor: View {
         // The two modes take different inputs, so the rows are SWAPPED rather
         // than disabled: a greyed-out Layer box next to an ablation would
         // suggest the layer means something here.
-        if panel.conditionMode == .add {
+        if panel.draft.conditionMode == .add {
             inputRow(
                 label: "Layer",
                 caption: "which transformer layer the steering applies at — the "
                     + "middle third of the network is the usual sweet spot"
             ) {
-                TextField("e.g. 14", text: $panel.conditionLayerText)
+                TextField("e.g. 14", text: $draft.conditionLayerText)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 72)
                     .multilineTextAlignment(.trailing)
@@ -68,7 +69,7 @@ struct AddConditionEditor: View {
                     + "negative pushes the opposite way (a direction control, "
                     + "not an error)"
             ) {
-                TextField("e.g. 0.5", text: $panel.conditionAlphaText)
+                TextField("e.g. 0.5", text: $draft.conditionAlphaText)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 90)
                     .multilineTextAlignment(.trailing)
@@ -80,7 +81,7 @@ struct AddConditionEditor: View {
                     + "concepts); off: raw activation units"
             ) {
                 HStack(spacing: 6) {
-                    Toggle("", isOn: $panel.conditionAlphaInNormUnits)
+                    Toggle("", isOn: $draft.conditionAlphaInNormUnits)
                         .toggleStyle(.checkbox)
                         .labelsHidden()
                     InfoButton(text: StudyInfo.strengthLayerNorm)
@@ -90,9 +91,9 @@ struct AddConditionEditor: View {
             inputRow(
                 label: "Strength (λ)",
                 caption: InjectionModeCopy.lambdaLabel(
-                    Double(panel.conditionAlphaText) ?? 1)
+                    Double(panel.draft.conditionAlphaText) ?? 1)
             ) {
-                TextField("1", text: $panel.conditionAlphaText)
+                TextField("1", text: $draft.conditionAlphaText)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 90)
                     .multilineTextAlignment(.trailing)
@@ -112,7 +113,7 @@ struct AddConditionEditor: View {
         HStack(spacing: 8) {
             Button("Add Condition") { panel.addVectorCondition() }
                 .help(
-                    panel.conditionMode == .ablate
+                    panel.draft.conditionMode == .ablate
                         ? "adds a single-slot ablation condition from the "
                             + "fields above. For a dose-response, add further "
                             + "conditions at other λ (0.5 partial, 1 full, "
@@ -123,15 +124,15 @@ struct AddConditionEditor: View {
         // Editing any input the refusal named clears it — a stale refusal
         // sitting under a field the researcher has already corrected is its
         // own paper cut.
-        .onChange(of: panel.conditionConcept) { panel.clearFormError(.addCondition) }
-        .onChange(of: panel.conditionLayerText) { panel.clearFormError(.addCondition) }
-        .onChange(of: panel.conditionAlphaText) { panel.clearFormError(.addCondition) }
+        .onChange(of: panel.draft.conditionConcept) { panel.clearFormError(.addCondition) }
+        .onChange(of: panel.draft.conditionLayerText) { panel.clearFormError(.addCondition) }
+        .onChange(of: panel.draft.conditionAlphaText) { panel.clearFormError(.addCondition) }
         // Finding 11a: a refusal here used to appear ONLY in the panel-top
         // notice area, several hundred points above these fields — an α = 0
         // refusal read as "the button does nothing" (observed 2026-07-26).
         // The notice feed still records it; this renders it where the
         // researcher is looking.
-        if let refusal = panel.formErrors[.addCondition] {
+        if let refusal = panel.draft.formErrors[.addCondition] {
             Label(refusal, systemImage: "exclamationmark.triangle.fill")
                 .font(.caption)
                 .foregroundStyle(.orange)
@@ -152,7 +153,7 @@ struct AddConditionEditor: View {
                         + "names what still needs authoring (ⓘ for details)")
             InfoButton(text: StudyInfo.controls)
         }
-        ForEach(panel.lastControlMatrixNotes, id: \.self) { note in
+        ForEach(panel.draft.lastControlMatrixNotes, id: \.self) { note in
             Label(note, systemImage: "hand.point.right")
                 .font(.caption2)
                 .foregroundStyle(.secondary)

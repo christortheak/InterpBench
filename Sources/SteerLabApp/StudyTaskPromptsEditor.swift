@@ -87,7 +87,7 @@ struct StudyTaskPromptsEditor: View {
         // (options/target lost). Offer the Import JSONL path — never
         // silently reinterpret.
         if manifest.status == .draft,
-            TaskPromptsImport.looksLikeJSONL(panel.taskPromptsText)
+            TaskPromptsImport.looksLikeJSONL(panel.draft.taskPromptsText)
         {
             HStack(spacing: 8) {
                 Label(
@@ -99,13 +99,13 @@ struct StudyTaskPromptsEditor: View {
                 .font(.caption2)
                 .foregroundStyle(.orange)
                 Button("Import as JSONL…") {
-                    importJSONLText = panel.taskPromptsText
+                    importJSONLText = panel.draft.taskPromptsText
                     showImportJSONL = true
                 }
                 .controlSize(.small)
             }
         }
-        if let instrumentSummary = panel.taskPromptsInstrumentSummary {
+        if let instrumentSummary = panel.draft.taskPromptsInstrumentSummary {
             Label(instrumentSummary, systemImage: "list.bullet.rectangle")
                 .font(.caption2)
                 .foregroundStyle(.orange)
@@ -114,7 +114,7 @@ struct StudyTaskPromptsEditor: View {
                         + "target, …) that the text editor does not show — "
                         + "they are preserved byte-faithfully on save")
         }
-        if let promptStatus = panel.taskPromptsStatus {
+        if let promptStatus = panel.draft.taskPromptsStatus {
             Text(promptStatus)
                 .font(.caption2)
                 .foregroundStyle(.secondary)

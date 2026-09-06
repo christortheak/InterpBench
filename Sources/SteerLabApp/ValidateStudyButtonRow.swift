@@ -30,32 +30,32 @@ struct ValidateStudyButtonRow: View {
     private var bundleOptions: ModelJobSubmissionPreflight.BundleOptions? {
         guard bundleValidate else { return nil }
         return ModelJobSubmissionPreflight.BundleOptions(
-            executor: panel.remoteExecutor,
-            gres: panel.remoteGres,
+            executor: panel.submission.remoteExecutor,
+            gres: panel.submission.remoteGres,
             verb: "validate",
             dryRun: false)
     }
 
     private var disabled: Bool {
-        panel.isValidating || panel.isRunning || panel.isExtracting
+        panel.localJobs.isValidating || panel.localJobs.isRunning || panel.localJobs.isExtracting
             || !panel.violations.isEmpty
             || missingOnServer
     }
 
     var body: some View {
         HStack(spacing: 8) {
-            Button(panel.isValidating ? "Validating Study…" : "Validate Study") {
+            Button(panel.localJobs.isValidating ? "Validating Study…" : "Validate Study") {
                 submit()
             }
             .buttonStyle(.bordered)
             .disabled(disabled)
             .help(help)
             // A1: local validation is cancellable between units of work.
-            if panel.isValidating, !panel.isServerWorkspace {
+            if panel.localJobs.isValidating, !panel.isServerWorkspace {
                 ProgressView().controlSize(.small)
                 Button("Stop", role: .destructive) { panel.cancelValidation() }
                     .controlSize(.small)
-                    .disabled(panel.validationCancelRequested)
+                    .disabled(panel.localJobs.validationCancelRequested)
                     .help(
                         "stops after the current unit of work; partial artifacts "
                             + "stay marked cancelled and NO validation evidence is "

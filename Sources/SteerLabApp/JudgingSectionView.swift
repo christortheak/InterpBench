@@ -39,16 +39,16 @@ struct JudgingSectionControls: View {
     /// through these three: a stale read renders a blank placeholder for at
     /// most one frame, a stale write is dropped.
     private func judge(_ index: Int) -> ExperimentManifest.JudgeRef {
-        panel.judges.indices.contains(index)
-            ? panel.judges[index]
+        panel.draft.judges.indices.contains(index)
+            ? panel.draft.judges[index]
             : .init(name: "", kind: "openrouter")
     }
 
     private func withJudge(
         _ index: Int, _ mutate: (inout ExperimentManifest.JudgeRef) -> Void
     ) {
-        guard panel.judges.indices.contains(index) else { return }
-        mutate(&panel.judges[index])
+        guard panel.draft.judges.indices.contains(index) else { return }
+        mutate(&panel.draft.judges[index])
     }
 
     private func judgeBinding<Value>(
@@ -62,13 +62,14 @@ struct JudgingSectionControls: View {
     }
 
     var body: some View {
+        @Bindable var draft = panel.draft
         HStack(spacing: 6) {
             Text("Judging (optional)")
                 .font(.caption.bold())
             InfoButton(text: StudyInfo.judges)
         }
 
-        if panel.judges.isEmpty {
+        if panel.draft.judges.isEmpty {
             // The explicit none-state: a valid design, not an empty list.
             Text(
                 manifest.studyKind == .multiAgent
@@ -90,12 +91,12 @@ struct JudgingSectionControls: View {
             // judging — Save Evaluation Settings writes the explicit
             // evaluation block; judges without a rubric file declare
             // nothing the evaluate stage could run with.
-            let rubricFile = panel.judgeRubricFile
+            let rubricFile = panel.draft.judgeRubricFile
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if rubricFile.isEmpty {
                 Text(
-                    "Judging incomplete — \(panel.judges.count) "
-                        + "judge\(panel.judges.count == 1 ? "" : "s") pinned "
+                    "Judging incomplete — \(panel.draft.judges.count) "
+                        + "judge\(panel.draft.judges.count == 1 ? "" : "s") pinned "
                         + "but no rubric file chosen; the declaration needs "
                         + "both. Choose a rubric file below, or remove the "
                         + "judges.")
@@ -104,8 +105,8 @@ struct JudgingSectionControls: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text(
-                    "Paired judging declared — \(panel.judges.count) "
-                        + "judge\(panel.judges.count == 1 ? "" : "s"), rubric "
+                    "Paired judging declared — \(panel.draft.judges.count) "
+                        + "judge\(panel.draft.judges.count == 1 ? "" : "s"), rubric "
                         + URL(filePath: rubricFile).lastPathComponent
                         + ". Save Evaluation Settings writes this "
                         + "declaration into the study.")
@@ -122,7 +123,7 @@ struct JudgingSectionControls: View {
             }
         }
 
-        ForEach(panel.judges.indices, id: \.self) { index in
+        ForEach(panel.draft.judges.indices, id: \.self) { index in
             judgeRow(index: index)
         }
         if isDraft {
@@ -138,7 +139,7 @@ struct JudgingSectionControls: View {
         // unpinned judge from it for Results' Run Paired Judge). With a
         // pinned panel it is ignored by resolution, so it is hidden — the
         // panel state keeps its value either way.
-        if panel.judges.isEmpty {
+        if panel.draft.judges.isEmpty {
             JudgeModelPicker(
                 title: "Ad-hoc judge model",
                 help:
@@ -146,7 +147,7 @@ struct JudgingSectionControls: View {
                     + "are pinned above — one unpinned judge for "
                     + "exploratory judging, never freeze-grade evidence",
                 offers: panel.judgeModelOffers,
-                selection: $panel.judgeModel,
+                selection: $draft.judgeModel,
                 openRouterModel: $panel.adHocOpenRouterModel,
                 openRouterProvider: $panel.adHocOpenRouterProvider)
         }
@@ -156,7 +157,7 @@ struct JudgingSectionControls: View {
         HStack(alignment: .top, spacing: 6) {
             TextField(
                 "structured fields for judge JSON",
-                text: $panel.evaluationStructuredPrompt,
+                text: $draft.evaluationStructuredPrompt,
                 axis: .vertical
             )
             .lineLimit(3 ... 8)

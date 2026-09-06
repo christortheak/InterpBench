@@ -158,7 +158,7 @@ struct PipelineComposerSection: View {
                 verb: "pipeline",
                 target: .server,
                 serverLabel: "the active server",
-                dryRun: panel.remoteDryRun,
+                dryRun: panel.submission.remoteDryRun,
                 declaredPipelineStages: ShardedSubmission.declaredPipelineStages(
                     manifest.pipeline)))
         Button(runButtonLabel) {
@@ -173,7 +173,7 @@ struct PipelineComposerSection: View {
         // The submission's live outcome, INLINE where the button was
         // pressed (2026-07-19 paper cut: failures previously surfaced
         // only inside the collapsed Remote options).
-        if let status = panel.remoteStatus, !status.isEmpty {
+        if let status = panel.remoteJobs.remoteStatus, !status.isEmpty {
             Text(status)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -293,24 +293,25 @@ struct PipelineComposerSection: View {
     /// Manifest) — fields disabled when frozen, save offered on drafts.
     @ViewBuilder
     private var promotionRuleEditor: some View {
+        @Bindable var draft = panel.draft
         @Bindable var panel = panel
         HStack(spacing: 8) {
             TextField(
                 "promotion FDR threshold (e.g. 0.05)",
-                text: $panel.promotionFDRText)
+                text: $draft.promotionFDRText)
                 .frame(maxWidth: 220)
-            Toggle("dose-monotone", isOn: $panel.promotionDoseMonotone)
+            Toggle("dose-monotone", isOn: $draft.promotionDoseMonotone)
                 .toggleStyle(.checkbox)
             Toggle(
                 "exceeds random floor",
-                isOn: $panel.promotionExceedsRandomFloor)
+                isOn: $draft.promotionExceedsRandomFloor)
                 .toggleStyle(.checkbox)
             InfoButton(text: Self.promotionInfo)
         }
         .disabled(!isDraft)
         TextField(
             "capability gate (free text, e.g. battery within 0.05 of baseline)",
-            text: $panel.promotionCapabilityGateText)
+            text: $draft.promotionCapabilityGateText)
             .disabled(!isDraft)
         if isDraft {
             Button("Save Promotion Rule") { panel.savePromotionRule() }

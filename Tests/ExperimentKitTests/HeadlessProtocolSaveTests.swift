@@ -42,7 +42,7 @@ import Testing
     private func makePanel(selecting name: String) -> ExperimentPanel {
         let panel = ExperimentPanel()
         panel.selectedName = name
-        panel.taskPromptsFile = ""
+        panel.draft.taskPromptsFile = ""
         return panel
     }
 
@@ -58,8 +58,8 @@ import Testing
             let panel = makePanel(selecting: "kept")
             // The stale field: whatever the panel last synced (a previous
             // selection, a workspace default) — NOT this study's model.
-            panel.studyBaseModelID = "some/other-model"
-            panel.protocolDescription = "described headlessly"
+            panel.draft.studyBaseModelID = "some/other-model"
+            panel.draft.protocolDescription = "described headlessly"
 
             // What POST /api/experiment/protocol does before delegating.
             panel.adoptSelectedManifestBaseModel()
@@ -80,7 +80,7 @@ import Testing
         try ExperimentRootOverrideLock.withTempRoot(prefix: "headless") { _ in
             try variantDraft(named: "unset")
             let panel = makePanel(selecting: "unset")
-            panel.studyBaseModelID = "   "
+            panel.draft.studyBaseModelID = "   "
             panel.saveProtocol()
 
             let saved = try ExperimentStore.load(name: "unset")
@@ -101,7 +101,7 @@ import Testing
             try ExperimentStore.save(draft)
 
             let panel = makePanel(selecting: "rebased")
-            panel.studyBaseModelID = "new/model"
+            panel.draft.studyBaseModelID = "new/model"
             panel.saveProtocol()
 
             let saved = try ExperimentStore.load(name: "rebased")

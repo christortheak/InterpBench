@@ -657,7 +657,7 @@ struct JudgePickerPanelSurfaceTests {
             "vendor/chat-model-small", "vendor/dictionary-artifact",
         ]
         panel.judgeKeyPresenceOverrideForTesting = false
-        panel.judgeModel = ""
+        panel.draft.judgeModel = ""
 
         let offers = panel.judgeModelOffers
         #expect(!offers.models.map(\.id).contains("vendor/dictionary-artifact"))

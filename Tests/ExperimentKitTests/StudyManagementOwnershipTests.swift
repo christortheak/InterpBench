@@ -149,7 +149,7 @@ struct StudyManagementOwnershipTests {
             #expect(changed.withLock { $0 })
             #expect(panel.selected?.name == "two")
             #expect(panel.draft.protocolDescription == "Second")
-            #expect(panel.selectedResultID != "old-result")
+            #expect(panel.results.selectedResultID != "old-result")
             #expect(panel.localJobs.isRunning)
             #expect(panel.localJobs.liveActiveGeneration?.output == "partial")
         }

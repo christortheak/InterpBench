@@ -21,13 +21,13 @@ struct StudyArmsSection: View {
         @Bindable var draft = panel.draft
         let isDraft = manifest.status == .draft
         Section {
-            if panel.studyKind == .multiAgent {
+            if panel.draft.studyKind == .multiAgent {
                 // The picker itself now lives in Study Setup, beside Save —
                 // pinning happens on save, and having the two in different
                 // sections meant selecting a panel here looked like it had
                 // taken effect when nothing had been written yet.
                 Text(
-                    panel.selectedMultiAgentScenarioID == nil
+                    panel.draft.selectedMultiAgentScenarioID == nil
                         ? "No scenario selected. Choose one in Study Setup, cast "
                             + "its seats below, then save to pin it."
                         : "Scenario selected in Study Setup; its seats are cast in "
@@ -36,7 +36,7 @@ struct StudyArmsSection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 Text(
-                    panel.multiAgentIncludeBaseline
+                    panel.draft.multiAgentIncludeBaseline
                         ? "Two arms: the configured panel, and a baseline of the "
                             + "same panel with every intervention stripped."
                         : "One arm only: the configured panel. No baseline to "
@@ -54,7 +54,7 @@ struct StudyArmsSection: View {
                             }
                         }
                         Button("Add") { panel.addVariantCondition() }
-                            .disabled(panel.selectedVariantToAddID == nil)
+                            .disabled(panel.draft.selectedVariantToAddID == nil)
                     }
                     .help("add a saved agent that uses the selected baseline model")
                     if !manifest.concepts.isEmpty {
@@ -82,7 +82,7 @@ struct StudyArmsSection: View {
                 // when the funnel phase says confirm — or a policy is
                 // already attached.
                 if isDraft, panel.studyFocus == .conceptStudy,
-                    panel.phaseField == "confirm"
+                    panel.draft.phaseField == "confirm"
                         || manifest.perturbationPolicy != nil
                 {
                     confirmationControls(panel: panel)
@@ -154,12 +154,12 @@ struct StudyArmsSection: View {
                         + "strength — same norm, deterministic random "
                         + "direction")
                 Button("Attach Policy") { panel.attachPerturbations() }
-                    .disabled(panel.confirmAgentID == nil)
+                    .disabled(panel.draft.confirmAgentID == nil)
             }
             // Non-blocking: confirmation of a hand-created agent stays legal,
             // but the evidence path runs through sweep-promoted agents.
             if let record = panel.confirmableAgents.first(where: {
-                $0.id == panel.confirmAgentID
+                $0.id == panel.draft.confirmAgentID
             }), record.artifact.promotion == nil {
                 Text(
                     "hand-created agent: confirmation of an undeclared "

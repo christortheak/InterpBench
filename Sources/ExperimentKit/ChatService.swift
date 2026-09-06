@@ -1216,8 +1216,8 @@ public final class ChatService {
     /// blanking the only window onto it would lose the run, not orphan it.
     public func resetSectionViewers() {
         selectedResultsRun = nil
-        experiments.selectedResultsFile = nil
-        experiments.selectedRemoteResultsRun = nil
+        experiments.results.selectedResultsFile = nil
+        experiments.results.selectedRemoteResultsRun = nil
         geometry.clearLocal()
         geometry.clearServer()
         if !fineTuning.isRobustnessRunning {

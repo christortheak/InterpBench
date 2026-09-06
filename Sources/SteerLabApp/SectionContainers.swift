@@ -646,7 +646,7 @@ struct ResultsPanelView: View {
                     // selection so the viewer column follows the browser
                     // the researcher is actually looking at.
                     if remoteWorkspaceSource == .local {
-                        service.experiments.selectedRemoteResultsRun = nil
+                        service.experiments.results.selectedRemoteResultsRun = nil
                     }
                 }
             } else {
@@ -817,7 +817,7 @@ struct ResultsPanelView: View {
     private func syncSelection() {
         service.selectedResultsRun = selectedItem
         if selectedItem == nil {
-            service.experiments.selectedResultsFile = nil
+            service.experiments.results.selectedResultsFile = nil
         }
     }
 }
@@ -904,9 +904,9 @@ private struct RunDetailView: View {
                 ForEach(previewable) { file in
                     SelectableRunFileRow(
                         file: file,
-                        isSelected: service.experiments.selectedResultsFile?.id == file.id,
+                        isSelected: service.experiments.results.selectedResultsFile?.id == file.id,
                         select: {
-                            service.experiments.selectedResultsFile = file
+                            service.experiments.results.selectedResultsFile = file
                         },
                         quickLook: { quickLookURL = file.url })
                 }
@@ -979,9 +979,9 @@ private struct RunDetailView: View {
         // Keep a still-valid focused file across reloads; otherwise focus the
         // top-priority file so the viewer shows content as soon as a run is
         // selected (never an empty viewer next to a populated list).
-        let currentID = service.experiments.selectedResultsFile?.id
+        let currentID = service.experiments.results.selectedResultsFile?.id
         if currentID == nil || !shown.contains(where: { $0.id == currentID }) {
-            service.experiments.selectedResultsFile = shown.first
+            service.experiments.results.selectedResultsFile = shown.first
         }
     }
 }
@@ -1310,7 +1310,7 @@ private struct RemoteResultsBrowserView: View {
     @State private var runTypeFilter: String?
 
     private var runs: [RemoteStampedRunRecord] {
-        service.experiments.remoteResultsRuns
+        service.experiments.results.remoteResultsRuns
     }
 
     var body: some View {
@@ -1363,7 +1363,7 @@ private struct RemoteResultsBrowserView: View {
 
     private var headerCaption: String {
         let counts = "\(filtered.count) of \(runs.count) shown · read-only, newest first"
-        guard let status = service.experiments.remoteResultsStatus else { return counts }
+        guard let status = service.experiments.results.remoteResultsStatus else { return counts }
         return "\(counts) · \(status)"
     }
 
@@ -1373,7 +1373,7 @@ private struct RemoteResultsBrowserView: View {
         } label: {
             Label("Refresh", systemImage: "arrow.clockwise")
         }
-        .disabled(service.experiments.isLoadingRemoteResults)
+        .disabled(service.experiments.results.isLoadingRemoteResults)
     }
 
     /// Run types present in the remote stamps — same filter mechanics as the
@@ -1416,9 +1416,9 @@ private struct RemoteResultsBrowserView: View {
 
     private var selectionBinding: Binding<String?> {
         Binding(
-            get: { service.experiments.selectedRemoteResultsRun?.id },
+            get: { service.experiments.results.selectedRemoteResultsRun?.id },
             set: { newID in
-                service.experiments.selectedRemoteResultsRun =
+                service.experiments.results.selectedRemoteResultsRun =
                     runs.first { $0.id == newID }
             })
     }
@@ -1441,7 +1441,7 @@ private struct RemoteResultsBrowserView: View {
 
     @ViewBuilder
     private var detailPane: some View {
-        if let run = service.experiments.selectedRemoteResultsRun {
+        if let run = service.experiments.results.selectedRemoteResultsRun {
             RemoteRunDetailView(service: service, run: run)
         } else {
             ContentUnavailableView {
@@ -1463,7 +1463,7 @@ private struct RemoteResultsBrowserView: View {
     }
 
     private var emptyDescription: String {
-        if let status = service.experiments.remoteResultsStatus {
+        if let status = service.experiments.results.remoteResultsStatus {
             return "This unpaired server reported nothing to browse. \(status)"
         }
         return "Connect to \(serverLabel) to browse its immutable runs/ tree read-only."
@@ -1600,7 +1600,7 @@ private struct RemoteRunDetailView: View {
 
     @ViewBuilder
     private var importStatusText: some View {
-        if let status = service.experiments.remoteResultsStatus,
+        if let status = service.experiments.results.remoteResultsStatus,
             status.contains("evidence")
         {
             Text(status)

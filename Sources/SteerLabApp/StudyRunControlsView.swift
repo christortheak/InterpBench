@@ -61,7 +61,7 @@ struct StudyRunControlsView: View {
         let requiresGreedy =
             decision.selection == .thisMac
             && plan.samplingIsOperative
-            && (manifest.temperature != 0 || panel.runTemperature != 0)
+            && (manifest.temperature != 0 || panel.draft.runTemperature != 0)
         substratePickerRow(decision: decision)
         runNoteRows(decision: decision)
         // A declared sampling setting this plan will never read. Advisory,
@@ -99,14 +99,14 @@ struct StudyRunControlsView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        if let runDirectory = panel.lastRunDirectory {
+        if let runDirectory = panel.localJobs.lastRunDirectory {
             Text(runDirectory)
                 .font(.caption2.monospaced())
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
                 .help("latest completed study run directory")
         }
-        if let serverRunDirectory = panel.lastServerRunDirectory {
+        if let serverRunDirectory = panel.remoteJobs.lastServerRunDirectory {
             Text("server run: \(serverRunDirectory)")
                 .font(.caption2.monospaced())
                 .foregroundStyle(.secondary)
@@ -172,24 +172,24 @@ struct StudyRunControlsView: View {
         decision: SubstrateRouting.Decision,
         requiresGreedy: Bool
     ) -> some View {
-        let busy = panel.isRunning || panel.isExtracting || runner.isSubmitting
+        let busy = panel.localJobs.isRunning || panel.localJobs.isExtracting || runner.isSubmitting
         // Finding 11c: what this button will ACTUALLY submit, stated before
         // it is pressed — the verb lives in a collapsed disclosure and does
         // not consult the Pipeline Composer's declared chain.
         ExecutionPlanEchoRow(
             plan: ExecutionPlanEcho.describe(
-                verb: panel.remoteVerb,
+                verb: panel.submission.remoteVerb,
                 target: decision.selection,
                 serverLabel: decision.serverLabel,
-                dryRun: panel.remoteDryRun,
+                dryRun: panel.submission.remoteDryRun,
                 declaredPipelineStages: ShardedSubmission.declaredPipelineStages(
                     manifest.pipeline)),
             revealOptions: { runOnServerExpanded = true })
         HStack(spacing: 8) {
             Button(
                 SubstrateRouting.runButtonLabel(
-                    decision: decision, verb: panel.remoteVerb,
-                    dryRun: panel.remoteDryRun, isBusy: busy)
+                    decision: decision, verb: panel.submission.remoteVerb,
+                    dryRun: panel.submission.remoteDryRun, isBusy: busy)
             ) {
                 let runner = runner
                 let cluster = service.cluster
@@ -210,13 +210,13 @@ struct StudyRunControlsView: View {
                 // local runs.
                 if decision.selection == .server {
                     ModelJobGPUGate.submit(
-                        "study \(panel.remoteVerb)", service: service,
+                        "study \(panel.submission.remoteVerb)", service: service,
                         pending: $pendingModelJob,
                         bundleOptions: ModelJobSubmissionPreflight.BundleOptions(
-                            executor: panel.remoteExecutor,
-                            gres: panel.remoteGres,
-                            verb: panel.remoteVerb,
-                            dryRun: panel.remoteDryRun),
+                            executor: panel.submission.remoteExecutor,
+                            gres: panel.submission.remoteGres,
+                            verb: panel.submission.remoteVerb,
+                            dryRun: panel.submission.remoteDryRun),
                         fixOptions: {
                             panel.applyGPUAllocationFix()
                             runOnServerExpanded = true
@@ -236,11 +236,11 @@ struct StudyRunControlsView: View {
                     ? StudyControlCopy.runHelp : StudyControlCopy.unifiedRemoteRunHelp)
             // A1: a LOCAL in-process run is cancellable between generations
             // (server-routed runs get the Cancel Server Job control instead).
-            if panel.isRunning {
+            if panel.localJobs.isRunning {
                 ProgressView().controlSize(.small)
                 Button("Stop", role: .destructive) { panel.cancelStudyRun() }
                     .controlSize(.small)
-                    .disabled(panel.studyRunCancelRequested)
+                    .disabled(panel.localJobs.studyRunCancelRequested)
                     .help(
                         "stops after the current generation; completed "
                             + "generations stay in the run directory, marked "
@@ -347,7 +347,7 @@ struct StudyRunControlsView: View {
                     .help(
                         "shared server connection — edit the URL and bearer token in the "
                             + "window toolbar's substrate selector")
-                if let summary = panel.remoteProfileSummary {
+                if let summary = panel.remoteJobs.remoteProfileSummary {
                     LabeledContent("Backend", value: summary)
                         .font(.caption)
                         .help(
@@ -398,10 +398,10 @@ struct StudyRunControlsView: View {
                         "Resume automatically if the run checkpoints",
                         isOn: $options.remoteResumePolicy.autoResubmit)
                     Stepper(value: $options.remoteResumePolicy.limit, in: 1...50) {
-                        Text("up to \(panel.remoteResumePolicy.limit) restarts")
+                        Text("up to \(panel.submission.remoteResumePolicy.limit) restarts")
                             .font(.caption)
                     }
-                    .disabled(!panel.remoteResumePolicy.autoResubmit)
+                    .disabled(!panel.submission.remoteResumePolicy.autoResubmit)
                 }
                 .help(
                     "when a Slurm run exits at the walltime margin with a clean "
@@ -418,7 +418,7 @@ struct StudyRunControlsView: View {
                 // (finding 5: the server shards only run and run-FIRST
                 // pipelines — a stepper the server would ignore must say so).
                 let shardingReason = ShardedSubmission.shardingUnavailableReason(
-                    verb: panel.remoteVerb, executor: panel.remoteExecutor,
+                    verb: panel.submission.remoteVerb, executor: panel.submission.remoteExecutor,
                     declaredPipelineStages: ShardedSubmission.declaredPipelineStages(
                         manifest.pipeline))
                 Stepper(
@@ -426,8 +426,8 @@ struct StudyRunControlsView: View {
                     in: 1...ShardedSubmission.stepperCap(siteMax: siteMaxParallelGPUJobs)
                 ) {
                     Text(
-                        panel.remoteParallelJobs > 1
-                            ? "Parallel GPU jobs: \(panel.remoteParallelJobs)"
+                        panel.submission.remoteParallelJobs > 1
+                            ? "Parallel GPU jobs: \(panel.submission.remoteParallelJobs)"
                             : "Parallel GPU jobs: 1 (no sharding)"
                     )
                     .font(.caption)
@@ -449,9 +449,9 @@ struct StudyRunControlsView: View {
                 HStack {
                     Button("Test Connection") { Task { await panel.testRemoteConnection() } }
                     Button("Cancel Job") { Task { await panel.cancelRemoteJob() } }
-                        .disabled(panel.remoteJobID == nil)
+                        .disabled(panel.remoteJobs.remoteJobID == nil)
                     Button("Import Evidence") { Task { await panel.downloadRemoteEvidence() } }
-                        .disabled(panel.remoteJobID == nil)
+                        .disabled(panel.remoteJobs.remoteJobID == nil)
                 }
                 Text(StudyControlCopy.remoteOptionsCaption)
                     .font(.caption2)
@@ -467,42 +467,42 @@ struct StudyRunControlsView: View {
                         Task { await panel.reconnectRemoteJob(reconnectJobID) }
                     }
                     .disabled(reconnectJobID.trimmingCharacters(in: .whitespaces).isEmpty)
-                    if !panel.remoteLogLines.isEmpty {
+                    if !panel.remoteJobs.remoteLogLines.isEmpty {
                         Button("Stop Log") { panel.stopRemoteLogStream() }
                     }
                 }
                 .help(
                     "resume watching a running or finished job by its id after an app or session restart"
                 )
-                if let job = panel.remoteJobID {
+                if let job = panel.remoteJobs.remoteJobID {
                     LabeledContent("Remote job", value: job)
                         .font(.caption)
                         .textSelection(.enabled)
                 }
-                if let uploaded = panel.remoteLastUploadedBundle {
+                if let uploaded = panel.remoteJobs.remoteLastUploadedBundle {
                     LabeledContent("Uploaded bundle", value: uploaded)
                         .font(.caption2.monospaced())
                         .textSelection(.enabled)
                 }
-                if let imported = panel.remoteImportedRunDirectory {
+                if let imported = panel.remoteJobs.remoteImportedRunDirectory {
                     LabeledContent("Imported run", value: imported)
                         .font(.caption2.monospaced())
                         .textSelection(.enabled)
                 }
-                if let status = panel.remoteStatus {
+                if let status = panel.remoteJobs.remoteStatus {
                     Text(status)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
-                if !panel.remoteLogLines.isEmpty {
+                if !panel.remoteJobs.remoteLogLines.isEmpty {
                     // The log is always titled with the job id verbatim so it can
                     // be copied and reconnected to later.
-                    Text("job log — \(panel.remoteJobID ?? "?")")
+                    Text("job log — \(panel.remoteJobs.remoteJobID ?? "?")")
                         .font(.caption.monospaced())
                         .textSelection(.enabled)
                     ScrollView {
-                        Text(panel.remoteLogLines.joined(separator: "\n"))
+                        Text(panel.remoteJobs.remoteLogLines.joined(separator: "\n"))
                             .font(.caption2.monospaced())
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)

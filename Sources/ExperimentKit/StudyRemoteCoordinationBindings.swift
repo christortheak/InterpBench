@@ -65,7 +65,7 @@ extension ExperimentPanel {
                     severity: .warning)
                 return
             }
-            self.remoteVerb = "pipeline"
+            self.submission.remoteVerb = "pipeline"
             _ = await self.submitCapturedStudyBundle(
                 manifest, request: request.replacingVerb("pipeline"), followLog: true)
         }
@@ -77,7 +77,7 @@ extension ExperimentPanel {
     ) async -> Result<String, StudyBatchSubmission.Failure> {
         cluster?.loadStoredToken()
         guard let client = cluster?.client else {
-            remoteStatus = "invalid server URL"
+            remoteJobs.remoteStatus = "invalid server URL"
             let refusal =
                 "remote submit refused: no server connection — connect a "
                 + "server in the substrate selector first"

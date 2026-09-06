@@ -25,7 +25,7 @@ struct DiscriminantControlsSection: View {
             explanation
             declaredControls
             if isDraft { controlEditor }
-            if let refusal = panel.formErrors[.validationControl] {
+            if let refusal = panel.draft.formErrors[.validationControl] {
                 Label(refusal, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -89,17 +89,18 @@ struct DiscriminantControlsSection: View {
 
     @ViewBuilder
     private var controlEditor: some View {
+        @Bindable var draft = panel.draft
         let candidates = panel.validationControlCandidates
         if candidates.isEmpty {
             Text("no other concepts in this workspace to use as controls")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         } else {
-            Picker("Concept", selection: $panel.controlConcept) {
+            Picker("Concept", selection: $draft.controlConcept) {
                 Text("select…").tag("")
                 ForEach(candidates, id: \.self) { Text($0).tag($0) }
             }
-            Picker("Extraction method", selection: $panel.controlMethod) {
+            Picker("Extraction method", selection: $draft.controlMethod) {
                 // Recipe methods only: a control re-derives its vector, so
                 // pinnedArtifact/optvec (bytes, not recipes) can't be one.
                 ForEach(
@@ -114,7 +115,7 @@ struct DiscriminantControlsSection: View {
                     + "extraction read by a paired method is measured at a "
                     + "position it was never authored for")
             Button("Declare control") { panel.addValidationControl() }
-                .disabled(panel.controlConcept.isEmpty)
+                .disabled(panel.draft.controlConcept.isEmpty)
             Text("the stimulus hash is read from the concept's files and "
                 + "pinned automatically")
                 .font(.caption2)

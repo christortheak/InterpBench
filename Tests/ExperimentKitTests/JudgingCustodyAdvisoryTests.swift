@@ -102,6 +102,6 @@ struct JudgingCustodyAdvisoryTests {
         // reports which backend actually served the verdict.
         let panel = ExperimentPanel()
         panel.addJudge()
-        #expect(panel.judges.first?.kind == "openrouter")
+        #expect(panel.draft.judges.first?.kind == "openrouter")
     }
 }

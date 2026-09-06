@@ -338,6 +338,7 @@ struct DataReadinessSection: View {
     /// explicit button (never a side effect of an emptied text field).
     @ViewBuilder
     private func humanBaselineControls(panel: ExperimentPanel) -> some View {
+        @Bindable var draft = panel.draft
         @Bindable var panel = panel
         let isDraft = manifest.status == .draft
         // The row ABOVE tracks the currently pinned CSV (if any); this
@@ -351,7 +352,7 @@ struct DataReadinessSection: View {
         HStack(spacing: 8) {
             TextField(
                 "human-baseline CSV path (prompts/baselines/…)",
-                text: $panel.humanBaselinePathField)
+                text: $draft.humanBaselinePathField)
             // Phase 3 item 12: pick the CSV instead of typing its path —
             // the choice writes the workspace-relative path AND makes the
             // pin through the same shape-validating pin flow.
@@ -361,14 +362,14 @@ struct DataReadinessSection: View {
                 allowedTypes: [.commaSeparatedText, .plainText],
                 startingSubdirectory: "prompts/baselines",
                 onChoose: { relativePath in
-                    panel.humanBaselinePathField = relativePath
+                    panel.draft.humanBaselinePathField = relativePath
                     panel.repinHumanBaseline()
                 },
                 onProblem: { message = $0 })
                 .disabled(!isDraft)
             Button("Pin") { panel.repinHumanBaseline() }
                 .disabled(!isDraft
-                    || panel.humanBaselinePathField
+                    || panel.draft.humanBaselinePathField
                         .trimmingCharacters(in: .whitespaces).isEmpty)
                 .help(
                     "pins the file at its CURRENT SHA-256 — drift afterwards "

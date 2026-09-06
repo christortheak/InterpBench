@@ -221,7 +221,7 @@ struct RunSemanticSectionsView: View {
                 $0.name == name
             })
         else { return }
-        service.experiments.selectedResultsFile = file
+        service.experiments.results.selectedResultsFile = file
     }
 }
 

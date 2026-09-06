@@ -357,12 +357,12 @@ import Testing
 
             let panel = ExperimentPanel()
             panel.selectedName = "ui-decl"
-            panel.taskPromptsFile = ""  // no prompt pin in this fixture
-            panel.judges = [
+            panel.draft.taskPromptsFile = ""  // no prompt pin in this fixture
+            panel.draft.judges = [
                 .init(name: "j-1", kind: "claude", model: nil),
                 .init(name: "j-2", kind: "claude", model: nil),
             ]
-            panel.judgeRubricFile = "prompts/rubrics/r.md"
+            panel.draft.judgeRubricFile = "prompts/rubrics/r.md"
             panel.saveProtocol()
 
             var saved = try ExperimentStore.load(name: "ui-decl")
@@ -372,7 +372,7 @@ import Testing
             #expect(saved.judges?.count == 2)
 
             // Removing every judge clears the declaration coherently.
-            panel.judges = []
+            panel.draft.judges = []
             panel.saveProtocol()
             saved = try ExperimentStore.load(name: "ui-decl")
             #expect(saved.evaluation == nil)

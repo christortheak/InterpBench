@@ -26,7 +26,7 @@ extension ExperimentPanel {
                 design: design, manifest: &manifest,
                 replacingExisting: replacingExisting,
                 persist: { try self.management.persistReviewedDraft($0) })
-            taskPromptsFile = result.file
+            draft.taskPromptsFile = result.file
             refresh()
             loadTaskPrompts()
             note(

@@ -182,8 +182,8 @@ import Testing
             name: name, description: "", modelID: Self.model)
         panel.refresh()
         panel.selectedName = name
-        panel.attachConceptName = "french"
-        panel.attachMethod = .meanDifference
+        panel.draft.attachConceptName = "french"
+        panel.draft.attachMethod = .meanDifference
         return manifest
     }
 
@@ -198,8 +198,8 @@ import Testing
     @Test func defaultSelectionsDeclareNothingAndKeepTheManifestBytes() throws {
         try withPanel { panel, _ in
             try draft(panel, named: "picker-default")
-            #expect(panel.attachReadingPositionChoice == .recipeDefault)
-            #expect(panel.attachRendering.isRaw)
+            #expect(panel.draft.attachReadingPositionChoice == .recipeDefault)
+            #expect(panel.draft.attachRendering.isRaw)
             panel.attachConceptFromPicker()
 
             let ref = try #require(
@@ -230,9 +230,9 @@ import Testing
     @Test func aDeclaredPositionAndRenderingReachTheStore() throws {
         try withPanel { panel, _ in
             try draft(panel, named: "picker-declared")
-            panel.attachReadingPositionChoice = .contentOffset
-            panel.attachReadingPositionParameter = 2
-            panel.attachRendering = ExtractionRenderingChoice(mode: .chatTemplate)
+            panel.draft.attachReadingPositionChoice = .contentOffset
+            panel.draft.attachReadingPositionParameter = 2
+            panel.draft.attachRendering = ExtractionRenderingChoice(mode: .chatTemplate)
             panel.attachConceptFromPicker()
 
             let ref = try #require(
@@ -253,7 +253,7 @@ import Testing
     @Test func aTemplateAwarePositionUnderRawRenderingLandsInTheNotices() throws {
         try withPanel { panel, _ in
             try draft(panel, named: "picker-refused-position")
-            panel.attachReadingPositionChoice = .lastContentToken
+            panel.draft.attachReadingPositionChoice = .lastContentToken
             panel.attachConceptFromPicker()
 
             #expect(try ExperimentStore.load(name: "picker-refused-position")
@@ -273,7 +273,7 @@ import Testing
     @Test func theAssistantVoiceRefusalReachesTheNoticeAndNothingIsAttached() throws {
         try withPanel { panel, _ in
             try draft(panel, named: "picker-refused-voice")
-            panel.attachRendering = ExtractionRenderingChoice(
+            panel.draft.attachRendering = ExtractionRenderingChoice(
                 mode: .chatTemplate, voice: .assistant)
             panel.attachConceptFromPicker()
 

@@ -23,7 +23,7 @@ struct RubricFileControls: View {
     private var isDraft: Bool { manifest.status == .draft }
 
     private var selectedFile: String {
-        panel.judgeRubricFile.trimmingCharacters(in: .whitespacesAndNewlines)
+        panel.draft.judgeRubricFile.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static var rubricTypes: [UTType] {
@@ -37,10 +37,10 @@ struct RubricFileControls: View {
                 .foregroundStyle(.secondary)
             Menu {
                 ForEach(panel.rubricFileOptions, id: \.self) { file in
-                    Button(file) { panel.judgeRubricFile = file }
+                    Button(file) { panel.draft.judgeRubricFile = file }
                 }
                 if !selectedFile.isEmpty {
-                    Button("clear (no rubric file)") { panel.judgeRubricFile = "" }
+                    Button("clear (no rubric file)") { panel.draft.judgeRubricFile = "" }
                 }
             } label: {
                 Text(selectedFile.isEmpty ? "choose…" : selectedFile)
@@ -58,7 +58,7 @@ struct RubricFileControls: View {
                 message: "Choose a judge rubric file inside the workspace",
                 allowedTypes: Self.rubricTypes,
                 startingSubdirectory: JudgeRubricStore.relativeDirectory,
-                onChoose: { panel.judgeRubricFile = $0 },
+                onChoose: { panel.draft.judgeRubricFile = $0 },
                 onProblem: { templateStatus = $0 }
             )
             .disabled(!isDraft)
@@ -94,6 +94,7 @@ struct RubricFileControls: View {
     /// scaffold, and the draft scratchpad with its write-to-file exit.
     @ViewBuilder
     private var noFileState: some View {
+        @Bindable var draft = panel.draft
         Text(
             "no rubric file chosen — freezing a judge-evaluated study "
                 + "requires one (pinned by hash); without judging declared, "
@@ -118,7 +119,7 @@ struct RubricFileControls: View {
         HStack(alignment: .top, spacing: 6) {
             TextField(
                 "Rubric scratchpad (unpinned — write it to a file to keep it)",
-                text: $panel.evaluationPrompt,
+                text: $draft.evaluationPrompt,
                 axis: .vertical
             )
             .lineLimit(4 ... 10)
@@ -129,7 +130,7 @@ struct RubricFileControls: View {
             InfoButton(text: StudyInfo.rubricDraft)
         }
         if isDraft,
-            !panel.evaluationPrompt
+            !panel.draft.evaluationPrompt
                 .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             Button("Save scratchpad as rubric file") { saveScratchpadAsFile() }
@@ -156,7 +157,7 @@ struct RubricFileControls: View {
         do {
             let created = try StudyDataReadiness.scaffold(
                 requirement: requirement, in: VectorCatalog.projectRoot)
-            panel.judgeRubricFile = destination
+            panel.draft.judgeRubricFile = destination
             templateStatus = "created \(created.path) — replace the example "
                 + "criteria with your study's, then Save Evaluation Settings "
                 + "pins it by hash"
@@ -169,14 +170,14 @@ struct RubricFileControls: View {
     /// identical bytes are idempotent (just select), differing bytes
     /// refuse — a scratchpad save never silently replaces a file.
     private func saveScratchpadAsFile() {
-        let text = panel.evaluationPrompt
+        let text = panel.draft.evaluationPrompt
             .trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
         let url = VectorCatalog.projectRoot.appending(path: destination)
         let data = Data(text.utf8)
         do {
             if let existing = try? Data(contentsOf: url) {
                 if existing == data {
-                    panel.judgeRubricFile = destination
+                    panel.draft.judgeRubricFile = destination
                     templateStatus = "\(destination) already holds exactly "
                         + "this text — selected it; Save Evaluation Settings "
                         + "pins it by hash"
@@ -192,7 +193,7 @@ struct RubricFileControls: View {
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
-            panel.judgeRubricFile = destination
+            panel.draft.judgeRubricFile = destination
             templateStatus = "wrote \(destination) and selected it — Save "
                 + "Evaluation Settings pins it by hash"
         } catch {
@@ -233,9 +234,10 @@ struct CaseFamilyField: View {
     ]
 
     var body: some View {
+        @Bindable var draft = panel.draft
         HStack(spacing: 6) {
             LabeledContent("Case family") {
-                TextField("not declared", text: $panel.caseFamilyField)
+                TextField("not declared", text: $draft.caseFamilyField)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 180)
                 Menu {
@@ -244,9 +246,9 @@ struct CaseFamilyField: View {
                             Self.familyDescriptions[family].map {
                                 "\(family) — \($0)"
                             } ?? family
-                        ) { panel.caseFamilyField = family }
+                        ) { panel.draft.caseFamilyField = family }
                     }
-                    Button("clear (not declared)") { panel.caseFamilyField = "" }
+                    Button("clear (not declared)") { panel.draft.caseFamilyField = "" }
                 } label: {
                     Image(systemName: "chevron.down.circle")
                 }

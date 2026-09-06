@@ -89,7 +89,7 @@ import Testing
         service.experiments.refresh()
         // After the refresh: it re-syncs the draft fields from the (absent)
         // selection, so seeding the model first would be undone.
-        service.experiments.studyBaseModelID = "test/model"
+        service.experiments.draft.studyBaseModelID = "test/model"
         return service
     }
 
@@ -325,7 +325,7 @@ import Testing
             #expect(panel.experiments.contains { $0.name == opened })
             let status = try #require(panel.status)
             #expect(status.contains("Save back to design"))
-            #expect(panel.formErrors[.template] == nil)
+            #expect(panel.draft.formErrors[.template] == nil)
         }
     }
 
@@ -334,7 +334,7 @@ import Testing
             try makeDesign()
             let panel = makePanel(root: root)
             #expect(panel.editDesign("no-such-design") == nil)
-            #expect(panel.formErrors[.template] != nil)
+            #expect(panel.draft.formErrors[.template] != nil)
         }
     }
 
@@ -394,7 +394,7 @@ import Testing
             panel.selectedName = draft.name
             panel.saveSelectedStudyBackToDesign()
 
-            #expect(panel.formErrors[.template] == nil)
+            #expect(panel.draft.formErrors[.template] == nil)
             #expect(panel.templates.count == 1)
             // The design took the settings…
             #expect(panel.templates.first?.study.maxTokens == 4096)
@@ -438,7 +438,7 @@ import Testing
             panel.selectedName = draft.name
             panel.saveSelectedStudyBackToDesign()
 
-            #expect(panel.formErrors[.template] == nil)
+            #expect(panel.draft.formErrors[.template] == nil)
             #expect(panel.templates.count == 1)
             #expect(panel.templates.first?.study.maxTokens == 4096)
             #expect(panel.selectedTemplateName == design.name)
@@ -464,7 +464,7 @@ import Testing
             let panel = makePanel(root: root)
             panel.selectedName = "vignette"  // no lineage
             panel.saveSelectedStudyBackToDesign()
-            #expect(panel.formErrors[.template] != nil)
+            #expect(panel.draft.formErrors[.template] != nil)
             // Nothing was written: the design is byte-for-byte what it was.
             #expect(
                 StudyTemplateStore.hash(

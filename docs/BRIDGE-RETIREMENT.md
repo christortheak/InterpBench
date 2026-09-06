@@ -5,6 +5,49 @@ criterion is removal of all four transitional bridge files, with callers using
 focused owners or intentional panel commands. No compatibility bridge may ship
 in 1.0 or in the codebase linked from the launch blog.
 
+## Current implementation status
+
+The workflow implementation has retired `StudyPanelBindings.swift`: all 109
+forwarding properties are gone. The app, local HTTP handlers and tests now read
+and mutate `StudyDraftState`, local/remote job controllers, result state and
+submission state directly. SwiftUI edits bind to the relevant observable owner.
+The other three bridges and the substantive panel-authoring migration remain;
+the 1.0 retirement gate is not yet satisfied.
+
+The historical inventory below remains the ratchet baseline. Its old property
+bridge file/count describes what was removed, not an existing compatibility API.
+No baseline allowance was expanded.
+
+The property-access migration has a reproducible parsed syntax-tree audit against
+`a9545df`. `scripts/ci/audit-panel-owner-access.swift` derives all 109 accessor
+mappings from that baseline and requires the source-file census to differ only
+by deletion of the bridge. It compares complete syntax trees after normalizing
+those owner accesses, equivalent `@Bindable` aliases, and the explicit initializer
+for one formerly shorthand optional binding. Trivia is excluded; statement,
+literal, argument, control-flow and declaration structure otherwise remain.
+This is a syntax audit, not compiler-resolved type proof; the compiler and both
+suites remain required. The audit passed for 45 changed source/test files.
+
+To reproduce from this checkout (all scratch stays outside the workspace):
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
+export TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.920.1
+audit_scratch=$(mktemp -d /private/tmp/panel-owner-audit.XXXXXX)
+mkdir "$audit_scratch/before"
+git archive a9545df | tar -x -C "$audit_scratch/before"
+audit_host="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host"
+xcrun swiftc -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
+  -target arm64-apple-macosx15.0 -I "$audit_host" -L "$audit_host" \
+  -Xlinker -rpath -Xlinker "$audit_host" \
+  scripts/ci/audit-panel-owner-access.swift -o "$audit_scratch/audit"
+"$audit_scratch/audit" "$PWD" "$audit_scratch/before"
+```
+
+This checkpoint audit intentionally flags subsequent semantic work; rerun it on
+the property-retirement commit for its original proof, rather than weakening its
+comparison to accommodate later features.
+
 ## Baseline and callers
 
 | File under `Sources/ExperimentKit/` | Members scanned | Caller files |

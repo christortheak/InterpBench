@@ -15,7 +15,7 @@ struct StudyEvaluationSection<JudgingEditor: View>: View {
             // multi-agent studies judge transcripts — their
             // Evaluation pane shows judging only (2026-07-19 type
             // parity cleanup).
-            if panel.studyKind == .modelOutput {
+            if panel.draft.studyKind == .modelOutput {
                 instrumentActivationControls(
                     manifest: manifest, panel: panel)
             }
