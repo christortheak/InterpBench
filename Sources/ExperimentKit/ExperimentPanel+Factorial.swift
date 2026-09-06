@@ -25,7 +25,7 @@ extension ExperimentPanel {
             let result = try FactorialImport.generateIntoStudy(
                 design: design, manifest: &manifest,
                 replacingExisting: replacingExisting,
-                persist: { try ExperimentStore.save($0) })
+                persist: { try self.management.persistReviewedDraft($0) })
             taskPromptsFile = result.file
             refresh()
             loadTaskPrompts()

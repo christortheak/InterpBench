@@ -697,7 +697,7 @@ import Testing
             "remote resubmit",
             "remote fetch", "remote import", "remote import-chain",
             "remote variants", "remote chat",
-            "experiment list", "experiment create", "experiment attach",
+            "experiment list", "experiment manifest", "experiment create", "experiment attach",
             // `attach`'s inverse — the one authoring pin that could be added
             // and never removed, so a draft carried whatever it was first
             // attached with.
@@ -798,8 +798,8 @@ import Testing
         // the design lived in a command line rather than in the artifact
         // chain the evidence travels in.
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 29,
-            "the experiment lifecycle is twenty-nine verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
+            declared.filter { $0.hasPrefix("experiment ") }.count == 30,
+            "the experiment lifecycle is thirty verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
     }
 
     @Test func everySpecIsInARunnerOwnedNamespace() {

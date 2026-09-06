@@ -118,7 +118,7 @@ def test_lifecycle_gate_vocabulary_matches_the_swift_literal():
         "sweepSelectionRule", "sweepJudgeCapacity", "dataReadiness",
         "samplingPolicy", "thinkingModeConflict", "inertConditions",
         "responseFormat", "confirmationPool", "confirmationAgentShape",
-        "parityThreshold", "missingPrerequisite", "armsCleared",
+        "parityThreshold", "missingPrerequisite", "armsCleared", "staleManifest",
         "conceptInUse", "sweepGridRule", "lengthStopped",
     ]
     assert list(lifecycle_gates.LIFECYCLE_GATE_IDS) == contract

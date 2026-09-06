@@ -133,6 +133,9 @@ public enum LifecycleGate: String, CaseIterable, Sendable, Codable {
     /// `clearing_arms`).
     case armsCleared
 
+    /// An external file precondition no longer matches; unrelated to scientific pin drift.
+    case staleManifest
+
     /// A concept pin cannot be removed because the manifest still DECLARES
     /// something that reads it by name: an injection condition's slot, a
     /// per-concept sweep-selection instrument, a variant condition's
@@ -478,6 +481,11 @@ public enum RefusalSiteRegistry {
             repairAction: "steerlab-cli experiment duplicate <name> <name>-v2 "
                 + "&& steerlab-cli experiment pin-prompts <name>-v2 "
                 + "prompts/…/file.jsonl && steerlab-cli experiment freeze <name>-v2"),
+        .init(
+            gate: .staleManifest,
+            verbs: ["experiment attach", "experiment declare-condition", "panel compile"],
+            origin: "ManifestFileTransaction.requireCurrent — external draft-write precondition",
+            repairAction: "steerlab-cli experiment manifest <name> --json; review the intervening changes and submit with manifestFileSHA256."),
         .init(
             gate: .armsCleared,
             // Every verb that reaches `save` with a WHOLE document it did not

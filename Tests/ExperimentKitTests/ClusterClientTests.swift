@@ -153,13 +153,14 @@ import Testing
                 #expect(request.httpMethod == "PUT")
                 #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
                 #expect(Self.bodyData(from: request) == document)
+                #expect(request.value(forHTTPHeaderField: "If-Match") == "\"" + String(repeating: "a", count: 64) + "\"")
                 return (
                     Data(#"{"name":"case1","status":"draft","canonicalBodyHash":"abc123"}"#.utf8),
                     200)
             })
 
         let result = try await client.replaceExperimentManifest(
-            name: "case1", manifestBody: document)
+            name: "case1", manifestBody: document, expectedFileSHA256: String(repeating: "a", count: 64))
 
         #expect(result.name == "case1")
         #expect(result.status == "draft")
@@ -180,7 +181,7 @@ import Testing
             })
         do {
             _ = try await client.replaceExperimentManifest(
-                name: "case1", manifestBody: Data(#"{"name":"case1"}"#.utf8))
+                name: "case1", manifestBody: Data(#"{"name":"case1"}"#.utf8), expectedFileSHA256: String(repeating: "a", count: 64))
             Issue.record("expected the frozen refusal")
         } catch let error as ClusterClient.ClientError {
             guard case .badResponse(400, let detail) = error else {
@@ -240,7 +241,7 @@ import Testing
 
         // (2) Push the local document as the server's draft copy.
         let pushed = try await client.replaceExperimentManifest(
-            name: "case1", manifestBody: localDocument)
+            name: "case1", manifestBody: localDocument, expectedFileSHA256: ManifestFileTransaction.digest(before))
         #expect(pushed.canonicalBodyHash == "feed")
 
         // (3) Re-check: the server now serves the pushed document.

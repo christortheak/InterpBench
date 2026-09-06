@@ -593,7 +593,7 @@ public final class ExperimentPanel {
                 requirement: requirement, createdPath: relative,
                 into: &manifest, workspaceRoot: VectorCatalog.projectRoot)
             else { return false }
-            try ExperimentStore.save(manifest)
+            try management.persistReviewedDraft(manifest)
             refresh()
             note("pinned \(relative)", severity: .info)
             return true
@@ -704,7 +704,7 @@ public final class ExperimentPanel {
             let compiled = try SeatCasting.compile(
                 state.assignment, semantic: state.semantic,
                 semanticPath: state.semanticPath, into: &manifest)
-            try ExperimentStore.save(manifest)
+            try management.persistReviewedDraft(manifest)
             seatCastingEdits = [:]
             refresh()
             let cast = state.assignment.ordered.filter { $0 != .baseline }.count
@@ -1954,7 +1954,7 @@ public final class ExperimentPanel {
                 manifest.taskPromptsFile = nil
                 manifest.taskPromptsHash = nil
             }
-            try ExperimentStore.save(manifest)
+            try management.persistReviewedDraft(manifest)
             // Formerly "Science Manifest" fields (that section is
             // dissolved), saved through the same store setters from their
             // new homes: funnel phase + sampling policy (Study Setup),
@@ -2499,7 +2499,7 @@ public final class ExperimentPanel {
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try document.serialized().write(to: url, options: [.atomic])
             let hash = try ExperimentStore.pinTaskPrompts(file, into: &manifest)
-            try ExperimentStore.save(manifest)
+            try management.persistReviewedDraft(manifest)
             refresh()
             taskPromptsDocument = document
             taskPromptsDocumentFile = file
@@ -2552,7 +2552,7 @@ public final class ExperimentPanel {
             let result = try TaskPromptsImport.importIntoStudy(
                 text: text, manifest: &manifest,
                 replacingExisting: replacingExisting,
-                persist: { try ExperimentStore.save($0) })
+                persist: { try self.management.persistReviewedDraft($0) })
             taskPromptsFile = result.file
             refresh()
             // Re-read through the document loader so the editor, the
@@ -2937,7 +2937,7 @@ public final class ExperimentPanel {
                 ExperimentStore.makeConceptRef(
                     name: name, stimulusSetHash: stimuli.hash, options: options))
             ExperimentStore.pinNeutralCorpus(into: &manifest)  // norm denominator
-            try ExperimentStore.save(manifest)
+            try management.persistReviewedDraft(manifest)
             refresh()
             note("pinned \(name) @ \(stimuli.hash.prefix(12))…", severity: .success)
         } catch {
@@ -2969,7 +2969,7 @@ public final class ExperimentPanel {
             // The one agent → condition path, shared with template
             // instantiation (`ExperimentStore.attachAgent`).
             try ExperimentStore.attachAgent(record, into: &manifest)
-            try ExperimentStore.save(manifest)
+            try management.persistReviewedDraft(manifest)
             selectedVariantToAddID = nil
             refresh()
             note("added agent '\(record.artifact.name)'", severity: .success)
@@ -2986,7 +2986,7 @@ public final class ExperimentPanel {
         guard var manifest = selected, manifest.status == .draft else { return }
         manifest.variantConditions.removeAll { $0.name == name }
         do {
-            try ExperimentStore.save(manifest)
+            try management.persistReviewedDraft(manifest)
             refresh()
             note("removed agent '\(name)'", severity: .success)
         } catch {
@@ -3102,7 +3102,7 @@ public final class ExperimentPanel {
                     systemPrompt: ""),
                 fromPromotion: .init(concept: concept)))
         do {
-            try ExperimentStore.save(manifest)
+            try management.persistReviewedDraft(manifest)
             refresh()
             note(
                 "declared '\(conditionName)' — the agent this study's sweep "
@@ -3162,7 +3162,7 @@ public final class ExperimentPanel {
                     neutralPCBasisLabel: neutralBasis?.label,
                     neutralPCBasisHash: neutralBasisHash))
             ExperimentStore.pinNeutralCorpus(into: &manifest)  // norm denominator
-            try ExperimentStore.save(manifest)
+            try management.persistReviewedDraft(manifest)
             conditionName = ""
             refresh()
             note("captured '\(name)' (\(slots.count) slot\(slots.count == 1 ? "" : "s"))", severity: .success)
@@ -3183,7 +3183,7 @@ public final class ExperimentPanel {
             manifest.conditions.removeAll { $0.name == name }
             manifest.conditions.append(
                 .init(name: name, slots: [], bandWidth: 1, alphaInNormUnits: true))
-            try ExperimentStore.save(manifest)
+            try management.persistReviewedDraft(manifest)
             conditionName = ""
             refresh()
             clearFormError(.addCondition)
@@ -3200,7 +3200,7 @@ public final class ExperimentPanel {
         guard var manifest = selected, manifest.status == .draft else { return }
         manifest.conditions.removeAll { $0.name == name }
         do {
-            try ExperimentStore.save(manifest)
+            try management.persistReviewedDraft(manifest)
             refresh()
         } catch {
             note("\(error)", severity: .error)
@@ -3792,7 +3792,7 @@ extension ExperimentPanel {
         do {
             let hash = try ExperimentStore.pinTaskPrompts(
                 relativePath, into: &manifest)
-            try ExperimentStore.save(manifest)
+            try management.persistReviewedDraft(manifest)
             taskPromptsFile = relativePath
             refresh()
             loadTaskPrompts()
@@ -3827,7 +3827,7 @@ extension ExperimentPanel {
         do {
             let result = try TabularImport.importTaskPrompts(
                 table: table, mapping: mapping, manifest: &manifest,
-                persist: { try ExperimentStore.save($0) })
+                persist: { try self.management.persistReviewedDraft($0) })
             taskPromptsFile = result.file
             refresh()
             loadTaskPrompts()

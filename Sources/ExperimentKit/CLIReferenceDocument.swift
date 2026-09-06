@@ -61,7 +61,7 @@ public enum CLIReferenceDocument {
         .init(
             id: "swift-experiment-authoring",
             verbLabels: [
-                "experiment list", "experiment create", "experiment attach",
+                "experiment list", "experiment manifest", "experiment create", "experiment attach",
                 "experiment detach",
                 "experiment pin-prompts", "experiment pin-rubric",
                 "experiment declare-condition", "experiment set-sweep-selection",

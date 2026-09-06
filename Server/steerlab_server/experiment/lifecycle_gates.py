@@ -91,6 +91,8 @@ MISSING_PREREQUISITE = "missingPrerequisite"
 #: manifest it did not just write. Declaring the intent (``clearing_arms`` /
 #: ``mayClearArms``) is how a deliberate clear says so.
 ARMS_CLEARED = "armsCleared"
+#: An external authoring file precondition changed; not a scientific pin.
+STALE_MANIFEST = "staleManifest"
 #: A concept pin cannot be removed because the manifest still DECLARES
 #: something that reads it by name: an injection condition's slot, a
 #: per-concept sweep-selection instrument, a variant condition's
@@ -138,6 +140,7 @@ LIFECYCLE_GATE_IDS: tuple[str, ...] = (
     PARITY_THRESHOLD,
     MISSING_PREREQUISITE,
     ARMS_CLEARED,
+    STALE_MANIFEST,
     CONCEPT_IN_USE,
     SWEEP_GRID_RULE,
     LENGTH_STOPPED,

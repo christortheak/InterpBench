@@ -76,6 +76,19 @@ import Testing
         ExperimentCLIRenderer.standardErrorText(outcome) ?? ""
     }
 
+    @Test func manifestReadReturnsExactFilePreconditionWithoutWriting() async throws {
+        try await withTempRoot { root in
+            _ = try ExperimentStore.create(name: "readable", description: "purpose", modelID: "test/model")
+            let storage = ExperimentRepository(workspaceRoot: root)
+            let before = try storage.snapshot(name: "readable")
+            let result = await invoke("experiment", ["manifest", "readable"], recorder: ExperimentCLIRecorder())
+            #expect(result.exitCode == 0)
+            #expect(result.envelope.result?["manifestFileSHA256"] == .string(before.sha256))
+            #expect(result.envelope.result?["document"] == (try JSONDecoder().decode(JSONValue.self, from: before.data)))
+            #expect(try storage.snapshot(name: "readable").data == before.data)
+        }
+    }
+
     // MARK: `experiment list` on an empty workspace
 
     @Test func listOnAnEmptyWorkspaceSaysSoAndSucceeds() async throws {

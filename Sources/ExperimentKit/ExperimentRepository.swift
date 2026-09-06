@@ -29,6 +29,13 @@ public struct ExperimentRepository: Sendable {
             .sorted { $0.createdAt > $1.createdAt }
     }
 
+    public func snapshot(name: String) throws -> ManifestFileSnapshot {
+        guard !name.isEmpty, name != ".", name != "..",
+            !name.contains("/"), !name.contains("\\"), !name.contains("\0")
+        else { throw ExperimentError(reason: "experiment name must be one path component") }
+        return try ManifestFileTransaction.snapshot(at: manifestURL(name))
+    }
+
     public func load(name: String) throws -> ExperimentManifest {
         let data = try Data(contentsOf: manifestURL(name))
         return try JSONDecoder().decode(ExperimentManifest.self, from: data)
@@ -42,6 +49,6 @@ public struct ExperimentRepository: Sendable {
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(manifest).write(to: url)
+        try encoder.encode(manifest).write(to: url, options: .atomic)
     }
 }

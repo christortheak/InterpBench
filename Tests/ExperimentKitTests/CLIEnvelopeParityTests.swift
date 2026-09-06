@@ -94,7 +94,7 @@ import Testing
             "sweepSelectionRule", "sweepJudgeCapacity", "dataReadiness",
             "samplingPolicy", "thinkingModeConflict", "inertConditions",
             "responseFormat", "confirmationPool", "confirmationAgentShape",
-            "parityThreshold", "missingPrerequisite", "armsCleared",
+            "parityThreshold", "missingPrerequisite", "armsCleared", "staleManifest",
             "conceptInUse", "sweepGridRule", "lengthStopped",
         ]
         #expect(LifecycleGate.vocabulary == serverLiteral)

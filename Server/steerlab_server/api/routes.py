@@ -3114,13 +3114,16 @@ def build_router(state: ServiceState) -> APIRouter:
         if not os.path.exists(path):
             path = os.path.join(directory, f"{name}.json")
         try:
-            with open(path, encoding="utf-8") as handle:
-                return json.load(handle)
+            with open(path, "rb") as handle:
+                data = handle.read()
+            json.loads(data)
+            return Response(content=data, media_type="application/json", headers={
+                "ETag": '"' + hashlib.sha256(data).hexdigest() + '"'})
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail=f"no experiment {name!r}")
 
     @router.put("/api/experiment/{name}/manifest")
-    def experiment_manifest_replace(name: str, body: dict):
+    def experiment_manifest_replace(name: str, body: dict, request: Request):
         """One-click server-draft sync (2026-07-21 incident, part 3): the
         write half of the remote-freeze identity check. When that check
         blocks ("the server's copy is NOT the manifest you are looking
@@ -3132,9 +3135,30 @@ def build_router(state: ServiceState) -> APIRouter:
         Mutating authoring surface — token-gated exactly like POST
         /api/experiment/* (the middleware treats PUT the same)."""
         _safe_name(name)
-        from ..experiment import experiment_store
+        from ..experiment import experiment_store, manifest_files
+        match = request.headers.get("if-match")
+        absent = request.headers.get("if-none-match")
+        if match is None and absent is None:
+            raise HTTPException(status_code=428, detail={
+                "code": "manifest_precondition_required",
+                "message": "A manifest replacement requires an external file precondition.",
+                "repairAction": "GET this manifest, review its current bytes, then send its ETag as If-Match. For creation use If-None-Match: *."})
+        if absent == "*" and match is None:
+            expected = None
+        elif (absent is None and isinstance(match, str) and len(match) == 66
+              and match[0] == match[-1] == '"'
+              and all(character in "0123456789abcdef" for character in match[1:-1])):
+            expected = match[1:-1]
+        else:
+            raise HTTPException(status_code=400, detail={
+                "code": "invalid_manifest_precondition",
+                "message": "Use one strong SHA-256 If-Match tag or If-None-Match: *.",
+                "repairAction": "Read the current manifest and use its ETag unchanged."})
         try:
-            return experiment_store.replace_draft_manifest(name, body)
+            return experiment_store.replace_draft_manifest(name, body, expected_file_sha256=expected)
+        except manifest_files.StaleManifestError as exc:
+            raise HTTPException(status_code=412, detail={
+                "code": exc.code, "message": str(exc), "repairAction": exc.repair_action})
         except experiment_store.ExperimentStoreError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 

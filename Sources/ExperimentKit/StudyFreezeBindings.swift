@@ -29,7 +29,7 @@ extension ExperimentPanel {
 
     private func freezeRequest(name: String) -> StudyFreezeRequest {
         StudyFreezeRequest(
-            name: name, localData: ExperimentStore.manifestData(name: name),
+            workspaceRoot: ExperimentStore.workspaceRoot, name: name, localData: ExperimentStore.manifestData(name: name),
             localIsDraft: selected?.status == .draft,
             substrate: cluster?.substrateLabel ?? "server",
             workspacePaired: cluster?.activeServerPairing == .paired)

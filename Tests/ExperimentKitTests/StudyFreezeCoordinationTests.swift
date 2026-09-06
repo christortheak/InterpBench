@@ -3,6 +3,7 @@ import Testing
 
 @testable import ExperimentKit
 
+@Suite(.serialized)
 @MainActor
 struct StudyFreezeCoordinationTests {
     private func withWorkspace(_ body: (ExperimentManifest) async throws -> Void) async throws {
@@ -24,7 +25,7 @@ struct StudyFreezeCoordinationTests {
     private func request(_ manifest: ExperimentManifest, paired: Bool = false) -> StudyFreezeRequest
     {
         .init(
-            name: manifest.name, localData: ExperimentStore.manifestData(name: manifest.name),
+            workspaceRoot: ExperimentStore.workspaceRoot, name: manifest.name, localData: ExperimentStore.manifestData(name: manifest.name),
             localIsDraft: manifest.status == .draft, substrate: "test server",
             workspacePaired: paired)
     }
@@ -37,7 +38,7 @@ struct StudyFreezeCoordinationTests {
                 Issue.record("freeze should not be submitted")
                 throw CancellationError()
             },
-            replace: { _, _ in
+            replace: { _, _, _ in
                 Issue.record("manifest should not be pushed")
                 throw CancellationError()
             })
@@ -117,7 +118,8 @@ struct StudyFreezeCoordinationTests {
             let owner = StudyFreezeController()
             var io = transport(manifest)
             var pushed: Data?
-            io.replace = { name, bytes in
+            io.replace = { name, bytes, expectedDigest in
+                #expect(expectedDigest.count == 64)
                 pushed = bytes
                 return .init(
                     name: name, status: "draft",
@@ -132,11 +134,12 @@ struct StudyFreezeCoordinationTests {
                 return try JSONEncoder().encode(serverCopy)
             }
             let original = request(manifest)
+            await owner.freezeOnServer(request: original, transport: io)
             await owner.pushManifest(request: original, transport: io)
             #expect(pushed == original.localData)
             let persisted = try ExperimentStore.load(name: manifest.name)
             #expect(persisted.modelRevision == "server-revision")
-            #expect(bodyFetches == 1)
+            #expect(bodyFetches == 2)
             #expect(owner.remoteFreezeIdentityWarning == nil)
             #expect(owner.remoteFreezeIdentityNote != nil)
             #expect(!owner.isSyncingServerDraft)
@@ -231,7 +234,7 @@ struct StudyFreezeCoordinationTests {
             let owner = StudyFreezeController()
             var current = true
             var io = transport(manifest)
-            io.replace = { name, _ in
+            io.replace = { name, _, _ in
                 current = false
                 return .init(
                     name: name, status: "draft",
@@ -239,6 +242,10 @@ struct StudyFreezeCoordinationTests {
                         modelRevision: "wrong-workspace-revision", conditions: nil,
                         capabilityBattery: nil))
             }
+            var different = manifest
+            different.maxTokens += 1
+            io.manifestBody = { _ in try JSONEncoder().encode(different) }
+            await owner.freezeOnServer(request: request(manifest), transport: io)
             await owner.pushManifest(
                 request: request(manifest), transport: io, isCurrent: { current })
             let persisted = try ExperimentStore.load(name: manifest.name)
@@ -267,4 +274,34 @@ struct StudyFreezeCoordinationTests {
             #expect(owner.freezeReadiness == nil)
         }
     }
+    @Test func syncWithoutReviewedServerVersionDoesNotSendAWrite() async throws {
+        try await withWorkspace { manifest in
+            let owner = StudyFreezeController()
+            var messages: [String] = []
+            owner.presentation.note = { message, _ in messages.append(message) }
+            await owner.pushManifest(request: request(manifest), transport: transport(manifest))
+            #expect(messages.contains { $0.contains("reviewed file version is unavailable") })
+        }
+    }
+
+    @Test func concurrentLocalEditPreventsAdoptingTheServersPreservedPin() async throws {
+        try await withWorkspace { manifest in
+            let owner = StudyFreezeController()
+            var different = manifest
+            different.maxTokens += 1
+            var io = transport(different)
+            io.replace = { name, _, _ in
+                try ExperimentStore.updateDraft(name: name) { $0.modelID = "changed/model" }
+                return .init(name: name, status: "draft", preserved: .init(
+                    modelRevision: "previous-model-revision", conditions: nil, capabilityBattery: nil))
+            }
+            let original = request(manifest)
+            await owner.freezeOnServer(request: original, transport: io)
+            await owner.pushManifest(request: original, transport: io)
+            let local = try ExperimentStore.load(name: manifest.name)
+            #expect(local.modelID == "changed/model")
+            #expect(local.modelRevision == nil)
+        }
+    }
+
 }

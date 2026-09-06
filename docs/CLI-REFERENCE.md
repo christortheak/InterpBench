@@ -888,6 +888,7 @@ subverb errors with the usage line.
 
 ```
 steerlab-cli experiment list
+steerlab-cli experiment manifest <name>
 steerlab-cli experiment create <name> [--description <text>] --model <id> [--revision <commit>]
 steerlab-cli experiment attach <name> <concept>… [--corpus <a,b,c>] [--extraction-rendering <json>] [--method <name>] [--pool-from <k>] [--project-neutral <k>] [--reading-position <label>] [--reference <concept>]
 steerlab-cli experiment detach <name> <concept>…
@@ -912,6 +913,7 @@ steerlab-cli experiment duplicate <name> <new-name>
 | Verb | Purpose |
 |---|---|
 | `experiment list` | List this workspace's experiments with their status. |
+| `experiment manifest` | Read the complete manifest and its external file SHA-256 for guarded authoring. |
 | `experiment create` | Create a draft manifest pinned to a model. |
 | `experiment attach` | Pin each named concept's stimulus hash and extraction options. |
 | `experiment detach` | Remove each named concept's pin from a draft — refused while a declaration still names one. |

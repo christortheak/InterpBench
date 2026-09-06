@@ -149,7 +149,7 @@ def test_manifest_put_replaces_draft_and_reports_hash(tmp_path, monkeypatch):
 
     pushed = {"name": "demo", "status": "draft", "modelID": "org/new",
               "conditions": [{"name": "baseline"}], "unknownFutureKey": True}
-    resp = client.put("/api/experiment/demo/manifest", json=pushed)
+    resp = client.put("/api/experiment/demo/manifest", headers=manifest_headers("/api/experiment/demo/manifest"), json=pushed)
     assert resp.status_code == 200
     body = resp.json()
     assert body["name"] == "demo" and body["status"] == "draft"
@@ -163,7 +163,7 @@ def test_manifest_put_replaces_draft_and_reports_hash(tmp_path, monkeypatch):
 
     # A missing server copy is created (first sync to an unpaired server).
     fresh = {"name": "fresh", "status": "draft", "modelID": "org/m"}
-    created = client.put("/api/experiment/fresh/manifest", json=fresh)
+    created = client.put("/api/experiment/fresh/manifest", headers=manifest_headers("/api/experiment/fresh/manifest"), json=fresh)
     assert created.status_code == 200
     assert client.get("/api/experiment/fresh/manifest").json() == fresh
 
@@ -178,7 +178,7 @@ def test_manifest_put_refuses_frozen_copy_and_non_draft_push(tmp_path, monkeypat
         encoding="utf-8")
 
     # Frozen server copy: refuse in the bundle-import wording family.
-    resp = client.put("/api/experiment/iced/manifest",
+    resp = client.put("/api/experiment/iced/manifest", headers=manifest_headers("/api/experiment/iced/manifest"),
                       json={"name": "iced", "status": "draft",
                             "modelID": "org/m2"})
     assert resp.status_code == 400
@@ -192,14 +192,14 @@ def test_manifest_put_refuses_frozen_copy_and_non_draft_push(tmp_path, monkeypat
     (other / "experiment.json").write_text(
         _json.dumps({"name": "pushy", "status": "draft", "modelID": "org/m"}),
         encoding="utf-8")
-    resp = client.put("/api/experiment/pushy/manifest",
+    resp = client.put("/api/experiment/pushy/manifest", headers=manifest_headers("/api/experiment/pushy/manifest"),
                       json={"name": "pushy", "status": "frozen",
                             "modelID": "org/m"})
     assert resp.status_code == 400
     assert "only a DRAFT manifest" in resp.json()["detail"]
 
     # Name mismatch between route and body: ambiguous, refused.
-    resp = client.put("/api/experiment/pushy/manifest",
+    resp = client.put("/api/experiment/pushy/manifest", headers=manifest_headers("/api/experiment/pushy/manifest"),
                       json={"name": "other", "status": "draft"})
     assert resp.status_code == 400
     assert "ambiguous" in resp.json()["detail"]
@@ -228,7 +228,7 @@ def test_manifest_put_merges_server_auto_pins(tmp_path, monkeypatch):
 
     pushed = {"name": "demo", "status": "draft", "modelID": "org/m",
               "conditions": [{"name": "baseline"}]}
-    resp = client.put("/api/experiment/demo/manifest", json=pushed)
+    resp = client.put("/api/experiment/demo/manifest", headers=manifest_headers("/api/experiment/demo/manifest"), json=pushed)
     assert resp.status_code == 200
     preserved = resp.json()["preserved"]
     assert preserved["modelRevision"] == "005ad3404e59"
@@ -250,7 +250,7 @@ def test_manifest_put_merges_server_auto_pins(tmp_path, monkeypatch):
                                "selection": {"sweepRun": "newer",
                                              "winningCell": {"layer": 3,
                                                              "alpha": 2.0}}}]}
-    resp = client.put("/api/experiment/demo/manifest", json=cleared)
+    resp = client.put("/api/experiment/demo/manifest", headers=manifest_headers("/api/experiment/demo/manifest"), json=cleared)
     assert resp.status_code == 200
     body = resp.json()
     assert "modelRevision" not in body.get("preserved", {})
@@ -557,3 +557,11 @@ def test_runs_listing_carries_stamps_and_file_entries(tmp_path, monkeypatch):
     assert run["files"] == ["config.json", "metrics.csv"]
     sizes = {e["name"]: e["size"] for e in run["fileEntries"]}
     assert sizes["metrics.csv"] == len("a,b\n1,2\n")
+
+
+def manifest_headers(path):
+    response = client.get(path)
+    if response.status_code == 404:
+        return {"If-None-Match": "*"}
+    assert response.status_code == 200
+    return {"If-Match": response.headers["etag"]}

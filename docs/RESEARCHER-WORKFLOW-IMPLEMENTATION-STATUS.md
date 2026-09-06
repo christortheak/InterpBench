@@ -13,7 +13,7 @@ completion; a passing focused test does not establish release or scientific qual
 |---|---|---|
 | WP-0 operation inventory | Started: this shared backlog | Maintained per-operation surface matrix and owner census |
 | WP-1 observation and context | In progress | Finish origin persistence/actions, import context, transport policy, explicit submission and offline results; both suites |
-| WP-2 shared services | Runtime service-role enforcement implemented; remaining services pending | External stale-write preconditions, authoring owners, service roles, bridge retirement |
+| WP-2 shared services | Runtime roles and draft preconditions implemented; writer/adapter migration in progress | External stale-write preconditions, authoring owners, service roles, bridge retirement |
 | WP-3 public operations | Pending | Designs, models, assembly, advanced-method mappings and adapters |
 | WP-4 research guidance | Extraction contract and control interpretation corrected; full guides pending | Shipped method guides, prompt resources, scientific wording and executable examples |
 | WP-5 cluster coauthoring | Pending, in scope | Prompt, fact/question schema, validation and common preview |
@@ -89,3 +89,35 @@ runners select runner. Workbench remains the existing engine default. Deployment
 profile integration and UI capability presentation belong to the remaining public
 operation/context work. Both suites passing does not establish production numerical
 qualification or completion of journeys A–H.
+
+## WP-2 authoring checkpoint (in progress)
+
+See [Draft authoring preconditions](DRAFT-AUTHORING-PRECONDITIONS.md) for the
+implemented read/review/apply protocol, HTTP status codes, and remaining migration.
+Python raw saves carry external file digests; Swift has explicit snapshot and
+replacement owners. Panel whole-document writes use their reviewed snapshots.
+Fresh Swift field setters and both freeze owners use the shared lock. The HTTP
+sync adapter requires the server version read during identity checking. A response
+cannot adopt a model revision over a concurrent local edit. No concurrency key
+is encoded in a manifest; frozen files are not rewritten as a migration.
+
+The first full validation after these changes found only the CLI verb census's
+old expected list/count; it was updated for the new public manifest read command.
+That run passed 277 SteeringKit tests and exercised 4,411 ExperimentKit tests,
+with two assertions failing in the single census test. The final rerun passed 277 SteeringKit and 4,411 ExperimentKit tests
+(`TEST SUCCEEDED`), and 5,896 Python tests with 9 skipped and 8 warnings
+(147.51 seconds). The actual diff was read locally; independent maintainer
+review remains pending. The bridge dependency ratchet and `git diff --check`
+passed. Python freeze body AST comparison against `75b14cb` passed inside
+the new lock, with only its docstring excluded. A separate whitespace-normalized
+Swift source check found only atomic publication changed inside the wrapped
+freeze body; this is a source check, not a Swift AST audit. The transaction
+changes are semantic and are not claimed as mechanical refactoring. A focused Swift run passed 94 tests across
+three suites before the later local snapshot/freeze integration. The earlier
+full Python run passed 5,896 tests, with 9 skipped.
+
+The initial focused Swift test invocation stalled because workspace-override
+fixtures held a semaphore across asynchronous work while sharing the main actor.
+The affected suite is now serialized; full validation also uses the repository's
+required nonparallel Xcode invocation. This observation does not establish the
+cause of the separate installed-app-open hang reported in the audit.

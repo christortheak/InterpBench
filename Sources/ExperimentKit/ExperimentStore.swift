@@ -692,13 +692,21 @@ public enum ExperimentStore {
     /// Server twin: `experiment_store.save_raw(clearing_arms=…)`.
     public static func save(
         _ manifest: ExperimentManifest, allowCreate: Bool = false,
-        mayClearArms: Bool = false, workspaceRoot: URL? = nil
+        mayClearArms: Bool = false, workspaceRoot: URL? = nil,
+        expectedFile: ManifestFilePrecondition? = nil
     ) throws {
         let storage = ExperimentRepository(workspaceRoot: workspaceRoot ?? Self.workspaceRoot)
-        try ManifestMutationPolicy.admitSave(
-            manifest, existing: try? storage.load(name: manifest.name),
-            allowCreate: allowCreate, mayClearArms: mayClearArms)
-        try storage.persistAdmitted(manifest)
+        try ManifestFileTransaction.withLock(
+            manifestURL: storage.manifestURL(manifest.name), workspaceRoot: storage.workspaceRoot
+        ) {
+            if let expectedFile {
+                try ManifestFileTransaction.requireCurrent(expectedFile, at: storage.manifestURL(manifest.name))
+            }
+            try ManifestMutationPolicy.admitSave(
+                manifest, existing: try? storage.load(name: manifest.name),
+                allowCreate: allowCreate, mayClearArms: mayClearArms)
+            try storage.persistAdmitted(manifest)
+        }
     }
 
     // MARK: - Draft science-manifest setters (App gap A2)
@@ -800,11 +808,18 @@ public enum ExperimentStore {
         _ mutate: (inout ExperimentManifest) throws -> Void
     ) throws -> ExperimentManifest {
         let root = workspaceRoot ?? Self.workspaceRoot
-        var manifest = try ExperimentRepository(workspaceRoot: root).load(name: name)
-        try ManifestMutationPolicy.admitDraftEdit(manifest)
-        try mutate(&manifest)
-        try save(manifest, mayClearArms: mayClearArms, workspaceRoot: root)
-        return manifest
+        let storage = ExperimentRepository(workspaceRoot: root)
+        return try ManifestFileTransaction.withLock(
+            manifestURL: storage.manifestURL(name), workspaceRoot: root
+        ) {
+            let snapshot = try storage.snapshot(name: name)
+            var manifest = try JSONDecoder().decode(ExperimentManifest.self, from: snapshot.data)
+            try ManifestMutationPolicy.admitDraftEdit(manifest)
+            try mutate(&manifest)
+            try save(manifest, mayClearArms: mayClearArms, workspaceRoot: root,
+                     expectedFile: .sha256(snapshot.sha256))
+            return manifest
+        }
     }
 
     /// THE repair for an arms-cleared refusal (open-issues §8), as runnable
@@ -7146,218 +7161,223 @@ public enum ExperimentStore {
         name: String, force: Bool = false,
         runSubstrate: String = ExperimentStore.evidenceSubstrate
     ) throws -> ExperimentManifest {
-        var manifest = try load(name: name)
-        try ManifestMutationPolicy.admitFreeze(manifest)
-        // Pin the revision the local cache would actually run, if not set.
-        if manifest.modelRevision == nil {
-            manifest.modelRevision = SteeredContainerLoader.cachedRevision(
-                for: manifest.modelID)
-        }
-        // Variant studies pin the capability battery (default preset battery
-        // if none chosen) so the frozen manifest names the exact battery its
-        // validation evidence scored.
-        // Every model-output-only PIN is scoped the same way the gates are: a
-        // panel carrying agents or concepts across a kind switch must not have
-        // a battery, marker rubric, training provenance or parser registry
-        // stamped into its frozen manifest for configuration it never
-        // executes (external review round 14). The predicate governs the whole
-        // freeze transaction, not just gate evaluation.
-        let modelOutputSurfaces = modelOutputSurfacesOperative(manifest)
-        if modelOutputSurfaces, !manifest.variantConditions.isEmpty,
-            manifest.capabilityBatteryFile == nil
-        {
-            pinCapabilityBattery(into: &manifest)
-        }
-        // Local-judge revision pin (cross-engine key "judges[].revision",
-        // 2026-07-23): a local judge that resolves to the STUDY model
-        // inherits the study's pinned revision when its own is blank — the
-        // judging path then loads exactly the pinned bytes. Different-model
-        // local judges keep a blank revision (no study pin to inherit); a
-        // declared revision is never overwritten.
-        if let studyRevision = manifest.modelRevision, var judges = manifest.judges {
-            for index in judges.indices
-            where judges[index].kind.trimmingCharacters(in: .whitespacesAndNewlines)
-                == "local" && (judges[index].revision ?? "").isEmpty
+        let storage = ExperimentRepository(workspaceRoot: workspaceRoot)
+        return try ManifestFileTransaction.withLock(
+            manifestURL: storage.manifestURL(name), workspaceRoot: storage.workspaceRoot
+        ) {
+            var manifest = try load(name: name)
+            try ManifestMutationPolicy.admitFreeze(manifest)
+            // Pin the revision the local cache would actually run, if not set.
+            if manifest.modelRevision == nil {
+                manifest.modelRevision = SteeredContainerLoader.cachedRevision(
+                    for: manifest.modelID)
+            }
+            // Variant studies pin the capability battery (default preset battery
+            // if none chosen) so the frozen manifest names the exact battery its
+            // validation evidence scored.
+            // Every model-output-only PIN is scoped the same way the gates are: a
+            // panel carrying agents or concepts across a kind switch must not have
+            // a battery, marker rubric, training provenance or parser registry
+            // stamped into its frozen manifest for configuration it never
+            // executes (external review round 14). The predicate governs the whole
+            // freeze transaction, not just gate evaluation.
+            let modelOutputSurfaces = modelOutputSurfacesOperative(manifest)
+            if modelOutputSurfaces, !manifest.variantConditions.isEmpty,
+                manifest.capabilityBatteryFile == nil
             {
-                let declared = (judges[index].model ?? "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if declared.isEmpty || declared == manifest.modelID {
-                    judges[index].revision = studyRevision
+                pinCapabilityBattery(into: &manifest)
+            }
+            // Local-judge revision pin (cross-engine key "judges[].revision",
+            // 2026-07-23): a local judge that resolves to the STUDY model
+            // inherits the study's pinned revision when its own is blank — the
+            // judging path then loads exactly the pinned bytes. Different-model
+            // local judges keep a blank revision (no study pin to inherit); a
+            // declared revision is never overwritten.
+            if let studyRevision = manifest.modelRevision, var judges = manifest.judges {
+                for index in judges.indices
+                where judges[index].kind.trimmingCharacters(in: .whitespacesAndNewlines)
+                    == "local" && (judges[index].revision ?? "").isEmpty
+                {
+                    let declared = (judges[index].model ?? "")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if declared.isEmpty || declared == manifest.modelID {
+                        judges[index].revision = studyRevision
+                    }
+                }
+                manifest.judges = judges
+            }
+            // Measurement-side markers pin: the frozen manifest names the exact
+            // scoring rubrics its runs will read. Only pinned when absent — a
+            // pinned-but-drifted markersHash must surface as a verify violation
+            // below, never be silently re-pinned.
+            if modelOutputSurfaces, manifest.markersHash == nil {
+                manifest.markersHash = liveMarkersHash(manifest)
+            }
+            // Adapter training-provenance pin (cross-engine key
+            // "variantConditions[].trainingProvenance", LoRA readiness §0
+            // amendment 1): freeze is the pin moment for a trained adapter's
+            // DATASET — stamped from the adapter's own v2 sidecar, BEFORE the
+            // freeze hash, so the frozen manifest is self-describing and later
+            // drift in the training data is a verify violation. Usually a no-op
+            // here: the sidecar is a server artifact (see the asymmetry note on
+            // `pinTrainingProvenance`).
+            if modelOutputSurfaces {
+                pinTrainingProvenance(into: &manifest)
+            }
+            // Numeric-parser registry pin (cross-engine key "parserRegistryHash"):
+            // freeze is the pin moment for the registry the named parser reads —
+            // stamped only when absent, BEFORE the freeze hash, so later drift is
+            // a verify violation, never a silent re-pin. A study that names no
+            // parser gets no new key (legacy bytes unchanged).
+            if modelOutputSurfaces, manifest.numericParser != nil,
+                manifest.parserRegistryHash == nil
+            {
+                manifest.parserRegistryHash = ParserRegistry.liveHash()
+            }
+            // Sweep-input pins (cross-engine keys "sweep.devPromptsHash" +
+            // "sweep.batteryHash", firewall closure 2026-07-20): freeze is the
+            // pin moment for the files the sweep SELECTS on — stamped only when
+            // absent and the file exists, BEFORE the freeze hash, so later
+            // drift is a verify violation, never a silent re-pin. Only an
+            // OPERATIVE declared sweep gains keys (legacy bytes unchanged
+            // elsewhere). The ex-post provenance stamp
+            // (selection.devPromptsHash) is unchanged — sweep start refuses on
+            // a pin mismatch, so pin and provenance can only agree.
+            if conceptMachineryOperative(manifest) {
+                pinSweepInputs(into: &manifest)
+                // A sweep input that could not be pinned (missing file) REFUSES
+                // the freeze, force included: this is pin-surface integrity —
+                // the never-skippable class, like verify() itself — not an
+                // evidence gate. A forced freeze with an absent pin would leave
+                // the sweep-start legacy-unpinned fallback open to whatever
+                // bytes later appear at the path, and no `forcedGatesSkipped`
+                // stamp can neutralize data accepted silently at run time.
+                // Carried-inert sweeps (this whole branch) neither pin nor
+                // block, exactly as before.
+                let missingSweepInputs = missingSweepInputRefusals(manifest)
+                guard missingSweepInputs.isEmpty else {
+                    throw ExperimentError(
+                        reason: "cannot freeze '\(name)':\n  - "
+                            + missingSweepInputs.joined(separator: "\n  - "))
                 }
             }
-            manifest.judges = judges
-        }
-        // Measurement-side markers pin: the frozen manifest names the exact
-        // scoring rubrics its runs will read. Only pinned when absent — a
-        // pinned-but-drifted markersHash must surface as a verify violation
-        // below, never be silently re-pinned.
-        if modelOutputSurfaces, manifest.markersHash == nil {
-            manifest.markersHash = liveMarkersHash(manifest)
-        }
-        // Adapter training-provenance pin (cross-engine key
-        // "variantConditions[].trainingProvenance", LoRA readiness §0
-        // amendment 1): freeze is the pin moment for a trained adapter's
-        // DATASET — stamped from the adapter's own v2 sidecar, BEFORE the
-        // freeze hash, so the frozen manifest is self-describing and later
-        // drift in the training data is a verify violation. Usually a no-op
-        // here: the sidecar is a server artifact (see the asymmetry note on
-        // `pinTrainingProvenance`).
-        if modelOutputSurfaces {
-            pinTrainingProvenance(into: &manifest)
-        }
-        // Numeric-parser registry pin (cross-engine key "parserRegistryHash"):
-        // freeze is the pin moment for the registry the named parser reads —
-        // stamped only when absent, BEFORE the freeze hash, so later drift is
-        // a verify violation, never a silent re-pin. A study that names no
-        // parser gets no new key (legacy bytes unchanged).
-        if modelOutputSurfaces, manifest.numericParser != nil,
-            manifest.parserRegistryHash == nil
-        {
-            manifest.parserRegistryHash = ParserRegistry.liveHash()
-        }
-        // Sweep-input pins (cross-engine keys "sweep.devPromptsHash" +
-        // "sweep.batteryHash", firewall closure 2026-07-20): freeze is the
-        // pin moment for the files the sweep SELECTS on — stamped only when
-        // absent and the file exists, BEFORE the freeze hash, so later
-        // drift is a verify violation, never a silent re-pin. Only an
-        // OPERATIVE declared sweep gains keys (legacy bytes unchanged
-        // elsewhere). The ex-post provenance stamp
-        // (selection.devPromptsHash) is unchanged — sweep start refuses on
-        // a pin mismatch, so pin and provenance can only agree.
-        if conceptMachineryOperative(manifest) {
-            pinSweepInputs(into: &manifest)
-            // A sweep input that could not be pinned (missing file) REFUSES
-            // the freeze, force included: this is pin-surface integrity —
-            // the never-skippable class, like verify() itself — not an
-            // evidence gate. A forced freeze with an absent pin would leave
-            // the sweep-start legacy-unpinned fallback open to whatever
-            // bytes later appear at the path, and no `forcedGatesSkipped`
-            // stamp can neutralize data accepted silently at run time.
-            // Carried-inert sweeps (this whole branch) neither pin nor
-            // block, exactly as before.
-            let missingSweepInputs = missingSweepInputRefusals(manifest)
-            guard missingSweepInputs.isEmpty else {
+            let violations = verify(manifest)
+            guard violations.isEmpty else {
                 throw ExperimentError(
                     reason: "cannot freeze '\(name)':\n  - "
-                        + missingSweepInputs.joined(separator: "\n  - "))
+                        + violations.joined(separator: "\n  - "))
             }
-        }
-        let violations = verify(manifest)
-        guard violations.isEmpty else {
-            throw ExperimentError(
-                reason: "cannot freeze '\(name)':\n  - "
-                    + violations.joined(separator: "\n  - "))
-        }
-        let autoCommit = freezeAutoCommitIsEnabled()
-        // The nested-workspace safety-skip is LOUD: silently not committing
-        // would look identical to "there was nothing to commit", and the
-        // cleanliness gate's refusal moments later would read as a mystery.
-        if !autoCommit, rootOverride == nil,
-            let enclosing = nestedWorkspaceRepositoryRoot(
-                of: VectorCatalog.projectRoot.standardizedFileURL)
-        {
-            print(
-                nestedWorkspaceAutoCommitAdvisory(
-                    freezing: name,
-                    workspace: VectorCatalog.projectRoot.standardizedFileURL,
-                    repository: enclosing))
-        }
-        // ONE gate table drives both branches (WP0 step 2). Under --force
-        // every gate is still EVALUATED — each failure is logged loudly and
-        // recorded in the frozen manifest ("freezeForced" +
-        // "forcedGatesSkipped"), so a forced freeze can never pass as a
-        // clean one. Without force the FIRST failure refuses, with its prose
-        // unchanged, now carrying the gate id it always computed and dropped.
-        var forcedGateFailures: [String] = []
-        func recordForcedFailure(_ id: String, _ reason: String) {
-            forcedGateFailures.append(id)
-            print("⚠︎ freeze --force: skipping gate '\(id)' which would have failed — \(reason)")
-        }
-        let gateFailures = freezeGateTable(
-            name: name, autoCommit: autoCommit, runSubstrate: runSubstrate
-        ).compactMap { $0.evaluate(manifest) }
-        if !force {
-            if let refusal = freezeRefusal(gateFailures) { throw refusal }
-        } else {
-            for failure in gateFailures {
-                recordForcedFailure(failure.gate.rawValue, failure.forced)
+            let autoCommit = freezeAutoCommitIsEnabled()
+            // The nested-workspace safety-skip is LOUD: silently not committing
+            // would look identical to "there was nothing to commit", and the
+            // cleanliness gate's refusal moments later would read as a mystery.
+            if !autoCommit, rootOverride == nil,
+                let enclosing = nestedWorkspaceRepositoryRoot(
+                    of: VectorCatalog.projectRoot.standardizedFileURL)
+            {
+                print(
+                    nestedWorkspaceAutoCommitAdvisory(
+                        freezing: name,
+                        workspace: VectorCatalog.projectRoot.standardizedFileURL,
+                        repository: enclosing))
             }
-        }
-
-        // Frozen studies must be self-contained: pinned scenario/variant
-        // inputs that live under gitignored runs/ are copied into the
-        // experiment directory (byte-identical, hash-checked by the
-        // re-verify) so the git-tracked manifest never points at an
-        // unversioned file. Happens BEFORE the freeze hash is stamped
-        // because it rewrites the pinned paths.
-        try pinExternalInputs(into: &manifest)
-        // Full pinned snapshot: every pinned input, byte-copied into
-        // experiments/<name>/pinned/ — the no-git reproducibility floor.
-        try snapshotPinnedInputs(for: manifest)
-        let postPinViolations = verify(manifest)
-        guard postPinViolations.isEmpty else {
-            throw ExperimentError(
-                reason: "cannot freeze (after pinning inputs):\n  - "
-                    + postPinViolations.joined(separator: "\n  - "))
-        }
-
-        // Freeze = commit + stamp as one gesture (shipped-app semantics):
-        // the workspace is committed BEFORE the gitCommit stamp is read, so
-        // the stamped commit contains the pinned bytes and the snapshot. If
-        // the workspace is not a git tree this is a silent skip (the pinned/
-        // snapshot is the floor); if the commit fails, the cleanliness gate
-        // below fires loudly.
-        if autoCommit {
-            autoCommitWorkspace(freezing: manifest.name)
-            // The same table entry as the pre-transaction gate, evaluated at
-            // the only moment it can speak here — after the auto-commit.
-            if let failure = freezeGitCleanGate(name: name).evaluate(manifest) {
-                if !force {
-                    if let refusal = freezeRefusal([failure]) { throw refusal }
-                } else {
+            // ONE gate table drives both branches (WP0 step 2). Under --force
+            // every gate is still EVALUATED — each failure is logged loudly and
+            // recorded in the frozen manifest ("freezeForced" +
+            // "forcedGatesSkipped"), so a forced freeze can never pass as a
+            // clean one. Without force the FIRST failure refuses, with its prose
+            // unchanged, now carrying the gate id it always computed and dropped.
+            var forcedGateFailures: [String] = []
+            func recordForcedFailure(_ id: String, _ reason: String) {
+                forcedGateFailures.append(id)
+                print("⚠︎ freeze --force: skipping gate '\(id)' which would have failed — \(reason)")
+            }
+            let gateFailures = freezeGateTable(
+                name: name, autoCommit: autoCommit, runSubstrate: runSubstrate
+            ).compactMap { $0.evaluate(manifest) }
+            if !force {
+                if let refusal = freezeRefusal(gateFailures) { throw refusal }
+            } else {
+                for failure in gateFailures {
                     recordForcedFailure(failure.gate.rawValue, failure.forced)
                 }
             }
-        }
 
-        manifest.appVersion = SteerLabVersion.current
-        if force {
-            // Ordered by the fixed vocabulary so the stamp is stable across
-            // engines and re-freezes.
-            manifest.freezeForced = true
-            manifest.forcedGatesSkipped =
-                FreezeGate.vocabulary.filter(forcedGateFailures.contains)
-        }
-        manifest.status = .frozen
-        manifest.frozenAt = ISO8601DateFormatter().string(from: Date())
-        manifest.frozenBy = "swift"
-        manifest.freezeHash = manifestHash(manifest)
-        manifest.gitCommit = currentGitCommit()
+            // Frozen studies must be self-contained: pinned scenario/variant
+            // inputs that live under gitignored runs/ are copied into the
+            // experiment directory (byte-identical, hash-checked by the
+            // re-verify) so the git-tracked manifest never points at an
+            // unversioned file. Happens BEFORE the freeze hash is stamped
+            // because it rewrites the pinned paths.
+            try pinExternalInputs(into: &manifest)
+            // Full pinned snapshot: every pinned input, byte-copied into
+            // experiments/<name>/pinned/ — the no-git reproducibility floor.
+            try snapshotPinnedInputs(for: manifest)
+            let postPinViolations = verify(manifest)
+            guard postPinViolations.isEmpty else {
+                throw ExperimentError(
+                    reason: "cannot freeze (after pinning inputs):\n  - "
+                        + postPinViolations.joined(separator: "\n  - "))
+            }
 
-        // A9: export the freeze-time settings summary beside the frozen
-        // manifest — generated at the freeze instant from the frozen
-        // manifest so it cannot disagree with what was frozen (the server's
-        // `_write_preregistration` twin: same sections, facts, and
-        // destination rule; byte-identity across engines is a non-goal).
-        // Best-effort like the server's — a failed export never un-freezes
-        // a stamped manifest. BEFORE the manifest is written, because the
-        // export stamps its own two freeze stamps into it, and a stamp that
-        // lands after the write is a stamp nobody can read back.
-        exportPreregistration(
-            into: directory.appending(component: manifest.name), &manifest)
-        // Bypass the frozen-immutability guard for this one transition.
-        let url = manifestURL(manifest.name)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(manifest).write(to: url)
-        // The stamped manifest cannot be inside the commit it stamps (a
-        // commit cannot contain its own hash), so a managed workspace gets a
-        // follow-up stamp commit — freeze leaves the tree clean. The
-        // gitCommit field still names the commit holding the pinned bytes.
-        if autoCommit {
-            autoCommitWorkspace(freezing: "\(manifest.name) (stamp)")
+            // Freeze = commit + stamp as one gesture (shipped-app semantics):
+            // the workspace is committed BEFORE the gitCommit stamp is read, so
+            // the stamped commit contains the pinned bytes and the snapshot. If
+            // the workspace is not a git tree this is a silent skip (the pinned/
+            // snapshot is the floor); if the commit fails, the cleanliness gate
+            // below fires loudly.
+            if autoCommit {
+                autoCommitWorkspace(freezing: manifest.name)
+                // The same table entry as the pre-transaction gate, evaluated at
+                // the only moment it can speak here — after the auto-commit.
+                if let failure = freezeGitCleanGate(name: name).evaluate(manifest) {
+                    if !force {
+                        if let refusal = freezeRefusal([failure]) { throw refusal }
+                    } else {
+                        recordForcedFailure(failure.gate.rawValue, failure.forced)
+                    }
+                }
+            }
+
+            manifest.appVersion = SteerLabVersion.current
+            if force {
+                // Ordered by the fixed vocabulary so the stamp is stable across
+                // engines and re-freezes.
+                manifest.freezeForced = true
+                manifest.forcedGatesSkipped =
+                    FreezeGate.vocabulary.filter(forcedGateFailures.contains)
+            }
+            manifest.status = .frozen
+            manifest.frozenAt = ISO8601DateFormatter().string(from: Date())
+            manifest.frozenBy = "swift"
+            manifest.freezeHash = manifestHash(manifest)
+            manifest.gitCommit = currentGitCommit()
+
+            // A9: export the freeze-time settings summary beside the frozen
+            // manifest — generated at the freeze instant from the frozen
+            // manifest so it cannot disagree with what was frozen (the server's
+            // `_write_preregistration` twin: same sections, facts, and
+            // destination rule; byte-identity across engines is a non-goal).
+            // Best-effort like the server's — a failed export never un-freezes
+            // a stamped manifest. BEFORE the manifest is written, because the
+            // export stamps its own two freeze stamps into it, and a stamp that
+            // lands after the write is a stamp nobody can read back.
+            exportPreregistration(
+                into: directory.appending(component: manifest.name), &manifest)
+            // Bypass the frozen-immutability guard for this one transition.
+            let url = manifestURL(manifest.name)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(manifest).write(to: url, options: .atomic)
+            // The stamped manifest cannot be inside the commit it stamps (a
+            // commit cannot contain its own hash), so a managed workspace gets a
+            // follow-up stamp commit — freeze leaves the tree clean. The
+            // gitCommit field still names the commit holding the pinned bytes.
+            if autoCommit {
+                autoCommitWorkspace(freezing: "\(manifest.name) (stamp)")
+            }
+            return manifest
         }
-        return manifest
     }
 
     /// The generated preregistration's self-identification line — both

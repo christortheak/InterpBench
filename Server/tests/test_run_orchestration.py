@@ -1156,7 +1156,8 @@ def test_the_whole_machine_runs_against_a_managed_runner(managed_runner,
     gained = _workspace_runs(workspace) - runs_before
     assert all("bundle-" in name for name in gained), sorted(gained)
     assert not os.path.exists(os.path.join(workspace, ".steelab"))
-    assert not os.path.exists(os.path.join(workspace, ".steerlab"))
+    # Authoring may retain external write locks, but no runner state.
+    assert os.listdir(os.path.join(workspace, ".steerlab")) == ["manifest-locks"]
     assert not os.path.exists(os.path.join(
         workspace, client_cli.RUNNER_TOKEN_FILENAME))
     assert _manifest_bytes_named(workspace, MANAGED_STUDY) == before

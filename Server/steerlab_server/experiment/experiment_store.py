@@ -28,7 +28,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from . import lifecycle_gates, paths, prompt_render
+from . import lifecycle_gates, paths, prompt_render, manifest_files
 from . import manifest_mutation_policy, freeze_policy
 from ..build_identity import engine_version
 from .manifest import KNOWN_ORDINAL_AGGREGATIONS as KNOWN_ORDINAL_AGGREGATIONS  # noqa: F401
@@ -87,9 +87,13 @@ def _path(name: str, root: str | None) -> str:
     return nested if os.path.exists(nested) else (flat if os.path.exists(flat) else nested)
 
 
-def load_raw(name: str, root: str | None = None) -> dict:
-    with open(_path(name, root), encoding="utf-8") as handle:
-        return json.load(handle)
+def load_raw(name: str, root: str | None = None) -> manifest_files.Document:
+    """Read JSON with an external exact-file precondition for subsequent edits."""
+    path = _path(name, root)
+    with open(path, "rb") as handle:
+        data = handle.read()
+    return manifest_files.Document(json.loads(data), source_path=path,
+                                   source_digest=manifest_files.digest_bytes(data))
 
 
 #: The manifest keys that carry the study's measured surface. Named once so
@@ -105,7 +109,7 @@ from .manifest_mutation_policy import clears_every_arm
 
 
 def save_raw(d: dict, root: str | None = None, *, freeze_transition: bool = False,
-             clearing_arms: bool = False) -> None:
+             clearing_arms: bool = False, expected_file_sha256: str | None = None) -> manifest_files.Document:
     """Persist a manifest.
 
     ``clearing_arms`` is the caller DECLARING that dropping every concept and
@@ -117,27 +121,37 @@ def save_raw(d: dict, root: str | None = None, *, freeze_transition: bool = Fals
     happened, and only by luck.
     """
     name = d["name"]
-    path = _path(name, root)
-    existing = load_raw(name, root) if os.path.exists(path) and not freeze_transition else None
-    manifest_mutation_policy.admit_save(
-        d, existing, freeze_transition=freeze_transition, clearing_arms=clearing_arms)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    # ATOMIC (engineer review 2026-07-18): a kill mid-write must never leave
-    # experiment.json as invalid JSON — everything downstream (including the
-    # judgment-projection recovery path) starts with Manifest.load, so a
-    # torn manifest is unrecoverable without hand surgery.
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path),
-                               prefix=".experiment-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(d, handle, indent=2, sort_keys=True)
-        os.replace(tmp, path)
-    except BaseException:
+    captured_root = root or paths.project_root()
+    path = _path(name, captured_root)
+    expected = (d.expected_for(path) if isinstance(d, manifest_files.Document)
+                else expected_file_sha256)
+    with manifest_files.transaction(path, workspace_root=captured_root):
+        manifest_files.require_current(path, expected)
+        existing = load_raw(name, captured_root) if os.path.exists(path) and not freeze_transition else None
+        manifest_mutation_policy.admit_save(
+            d, existing, freeze_transition=freeze_transition, clearing_arms=clearing_arms)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        # ATOMIC (engineer review 2026-07-18): a kill mid-write must never leave
+        # experiment.json as invalid JSON — everything downstream (including the
+        # judgment-projection recovery path) starts with Manifest.load, so a
+        # torn manifest is unrecoverable without hand surgery.
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path),
+                                   prefix=".experiment-", suffix=".tmp")
         try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(d, handle, indent=2, sort_keys=True)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        digest = manifest_files.file_digest(path)
+        if isinstance(d, manifest_files.Document):
+            d.source_digest = digest
+            return d
+        return manifest_files.Document(d, source_path=path, source_digest=digest)
 
 
 def _now() -> str:
@@ -158,8 +172,7 @@ def create(name: str, *, model_id: str, revision: str | None = None,
         "variantConditions": [], "promptMode": "chatAssistant", "temperature": 0.0,
         "maxTokens": 512, "seeds": [0], "reasoningEffort": "off",
     }
-    save_raw(manifest, root)
-    return manifest
+    return save_raw(manifest, root)
 
 
 def _reading_position_codable(method_opts: dict, position=None) -> dict:
@@ -2392,7 +2405,8 @@ def remove_condition(name: str, condition_name: str, root: str | None = None) ->
 
 
 def replace_draft_manifest(name: str, document: object,
-                           root: str | None = None) -> dict:
+                           root: str | None = None, *,
+                           expected_file_sha256: str | None) -> dict:
     """One-click server-draft sync (2026-07-21 incident, part 3): install the
     caller's manifest document as this server's DRAFT copy of ``name``.
 
@@ -2427,28 +2441,32 @@ def replace_draft_manifest(name: str, document: object,
     engine's canonical body hash (sha256 of the sorted-key compact JSON of
     the MERGED document, informational: the app re-fetches and compares
     documents itself)."""
-    manifest_mutation_policy.admit_draft_document(name, document)
-    path = _path(name, root)
-    existing = None
-    if os.path.exists(path):
-        try:
-            existing = load_raw(name, root)
-        except (OSError, ValueError):
-            existing = None
-    manifest_mutation_policy.admit_draft_replacement(name, existing)
-    document = dict(document)
-    preserved = merge_server_pins(document, existing)
-    save_raw(document, root)
-    canonical = json.dumps(
-        document, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    result = {
-        "name": name,
-        "status": document.get("status"),
-        "canonicalBodyHash": hashlib.sha256(canonical).hexdigest(),
-    }
-    if preserved:
-        result["preserved"] = preserved
-    return result
+    captured_root = root or paths.project_root()
+    path = _path(name, captured_root)
+    with manifest_files.transaction(path, workspace_root=captured_root):
+        manifest_files.require_current(path, expected_file_sha256)
+        manifest_mutation_policy.admit_draft_document(name, document)
+        existing = None
+        if os.path.exists(path):
+            try:
+                existing = load_raw(name, captured_root)
+            except (OSError, ValueError):
+                existing = None
+        manifest_mutation_policy.admit_draft_replacement(name, existing)
+        document = dict(document)
+        preserved = merge_server_pins(document, existing)
+        save_raw(document, captured_root, expected_file_sha256=(
+            existing.source_digest if isinstance(existing, manifest_files.Document) else None))
+        canonical = json.dumps(
+            document, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        result = {
+            "name": name,
+            "status": document.get("status"),
+            "canonicalBodyHash": hashlib.sha256(canonical).hexdigest(),
+        }
+        if preserved:
+            result["preserved"] = preserved
+        return result
 
 
 def adopt_evidence_revision(run_directory: str,
@@ -2525,8 +2543,7 @@ def duplicate(name: str, new_name: str, root: str | None = None) -> dict:
                 # verify demand a file the copy never had.
                 PREREG_AUTHORED_HASH_KEY, PREREG_GENERATED_HASH_KEY):
         copy.pop(key, None)
-    save_raw(copy, root)
-    return copy
+    return save_raw(copy, root)
 
 
 def _complete_validate_runs(scope_hash: str, root: str | None):
@@ -3352,205 +3369,207 @@ def freeze(name: str, *, force: bool = False, cached_revision=None,
     ends CLEAN. gitCommit deliberately stays the step-3 commit — the one that
     contains the pinned bytes it vouches for.
     """
-    d = load_raw(name, root)
-    manifest_mutation_policy.admit_freeze(name, d)
-    if not d.get("modelRevision") and cached_revision is not None:
-        d["modelRevision"] = cached_revision(d["modelID"])
-    # A frozen variant study must NAME the battery it relied on: an unpinned
-    # manifest gates against the live default, and the default file can later
-    # change with no pin to flag the drift. Pin the default (mirrors Swift and
-    # the validate-time auto-pin) BEFORE the scope/freeze hashes are computed,
-    # so the frozen manifest is self-describing.
-    # Every model-output-only PIN is scoped the same way the gates are: a
-    # panel that carries agents or concepts across a kind switch must not have
-    # a battery, marker rubric, training provenance or parser registry stamped
-    # into its frozen manifest for configuration it never executes (external
-    # review round 14). The predicate governs the whole freeze transaction,
-    # not just gate evaluation.
-    model_output = model_output_surfaces_operative(d)
-    if model_output and d.get("variantConditions") and not d.get("capabilityBatteryHash"):
-        from . import battery as battery_mod
-        digest = battery_mod.live_hash(battery_mod.DEFAULT_BATTERY_FILE, root)
-        if digest is not None:
-            d.setdefault("capabilityBatteryFile", battery_mod.DEFAULT_BATTERY_FILE)
-            d["capabilityBatteryHash"] = digest
-    # Local-judge revision pin (cross-engine contract key
-    # "judges[].revision", 2026-07-23): a local judge resolving to the STUDY
-    # model inherits the study's pinned revision when its own is blank —
-    # the judging path then loads exactly the pinned bytes. Stamped BEFORE
-    # the freeze hash so the frozen manifest is self-describing.
-    pin_local_judge_revisions(d)
-    # Measurement-side pin (cross-engine contract key "markersHash"): freeze
-    # is the pin moment for the score-time markers rubric — stamp the
-    # aggregate hash of every attached concept's markers.json (null when none
-    # exists) BEFORE the freeze hash is computed, so the frozen manifest is
-    # self-describing and later drift is a verify() violation.
-    from .manifest import markers_aggregate_hash
-    # Pin only when the key is ABSENT. A confirmation draft inherits its
-    # parent's pin, and re-pinning at freeze would recompute the hash from the
-    # CURRENT bytes — so markers.json drifting between the two freezes was
-    # silently overwritten and the verify() violation erased by the very act
-    # of freezing. Swift has always guarded this (`markersHash == nil`) and
-    # says so in a comment; the server did not (external review round 15).
-    #
-    # `not in` rather than `is None`: an explicitly pinned null means "no
-    # markers existed at pin time", and a later-appearing markers.json is a
-    # violation, not something to quietly pin now.
-    if model_output and "markersHash" not in d:
-        d["markersHash"] = markers_aggregate_hash(
-            [c.get("name") for c in d.get("concepts") or [] if c.get("name")],
-            root)
-    # Adapter training-provenance pin (cross-engine contract key
-    # "variantConditions[].trainingProvenance", LoRA readiness §0 amendment 1):
-    # freeze is the pin moment for a trained adapter's DATASET — stamped from
-    # the adapter's own sidecar, BEFORE the freeze hash, so the frozen
-    # manifest is self-describing and later drift in the training data is a
-    # verify() violation.
-    if model_output:
-        _pin_training_provenance(d, root)
-    # Numeric-parser registry pin (cross-engine contract key
-    # "parserRegistryHash"): freeze is the pin moment for the registry the
-    # named parser reads — stamped only when absent, BEFORE the freeze hash,
-    # so later drift is a verify() violation, never a silent re-pin. A study
-    # that names no parser gets no new key (legacy bytes unchanged).
-    if model_output and d.get("numericParser") and not d.get("parserRegistryHash"):
-        from . import parser_registry
-        digest = parser_registry.registry_live_hash(root)
-        if digest is not None:
-            d["parserRegistryHash"] = digest
-    # Sweep-input pins (cross-engine contract keys "sweep.devPromptsHash" +
-    # "sweep.batteryHash", firewall closure 2026-07-20): freeze is the pin
-    # moment for the files the sweep SELECTS on — stamped only when the key
-    # is absent and the file exists, BEFORE the freeze hash, so later drift
-    # is a verify() violation, never a silent re-pin. Only an OPERATIVE,
-    # declared sweep block gains keys (legacy bytes unchanged elsewhere);
-    # paths resolve declared-or-default exactly as the sweep run resolves
-    # them. The ex-post provenance hash (selection.devPromptsHash) is
-    # unchanged — sweep start refuses on a pin mismatch, so pin and
-    # provenance can only agree. A MISSING input file REFUSES the freeze
-    # (second pass, 2026-07-20), force included: this is pin-surface
-    # integrity — the never-skippable class, like verify() itself — not an
-    # evidence gate. Freezing with an absent pin would leave sweep start's
-    # legacy-unpinned fallback open to whatever bytes later appear at the
-    # path, and no forcedGatesSkipped stamp can neutralize data accepted
-    # silently at run time. Legacy manifests already frozen with absent
-    # hashes keep verifying clean — only NEW freezes refuse. Carried-inert
-    # sweeps (machinery not operative) neither pin nor block, as before.
-    from .manifest import (concept_machinery_operative,
-                           sweep_choice_pin_entries, sweep_input_pin_surface)
-    if isinstance(d.get("sweep"), dict) and concept_machinery_operative(d):
-        sweep_block = d["sweep"]
-        missing_sweep_inputs: list[str] = []
-
-        def _file_hash(rel: str) -> str | None:
-            try:
-                with open(paths.resolve(rel, root), "rb") as handle:
-                    return hashlib.sha256(handle.read()).hexdigest()
-            except OSError:
-                return None
-
-        for file_key, hash_key, default, label in sweep_input_pin_surface():
-            if hash_key in sweep_block:
-                continue  # never silently re-pin
-            rel = sweep_block.get(file_key) or default
-            digest = _file_hash(rel)
+    root = root or paths.project_root()
+    with manifest_files.transaction(_path(name, root), workspace_root=root):
+        d = load_raw(name, root)
+        manifest_mutation_policy.admit_freeze(name, d)
+        if not d.get("modelRevision") and cached_revision is not None:
+            d["modelRevision"] = cached_revision(d["modelID"])
+        # A frozen variant study must NAME the battery it relied on: an unpinned
+        # manifest gates against the live default, and the default file can later
+        # change with no pin to flag the drift. Pin the default (mirrors Swift and
+        # the validate-time auto-pin) BEFORE the scope/freeze hashes are computed,
+        # so the frozen manifest is self-describing.
+        # Every model-output-only PIN is scoped the same way the gates are: a
+        # panel that carries agents or concepts across a kind switch must not have
+        # a battery, marker rubric, training provenance or parser registry stamped
+        # into its frozen manifest for configuration it never executes (external
+        # review round 14). The predicate governs the whole freeze transaction,
+        # not just gate evaluation.
+        model_output = model_output_surfaces_operative(d)
+        if model_output and d.get("variantConditions") and not d.get("capabilityBatteryHash"):
+            from . import battery as battery_mod
+            digest = battery_mod.live_hash(battery_mod.DEFAULT_BATTERY_FILE, root)
             if digest is not None:
-                sweep_block[hash_key] = digest
-            else:
-                missing_sweep_inputs.append(
-                    f"{label} file '{rel}' is missing, so freeze cannot "
-                    f"pin it — an operative sweep selects on that file; "
-                    f"create the file, or remove/repoint the sweep's "
-                    f"{file_key}, before freezing")
-        # Choice instruments (review 2026-08-02, P1: the files that
-        # determine the WINNING CELL were the one sweep input not pinned at
-        # freeze). Same contract: pin-when-absent, never re-pin, a missing
-        # file refuses the freeze — force included.
-        for concept, rel, pinned, label in sweep_choice_pin_entries(sweep_block):
-            if pinned:
-                continue
-            digest = _file_hash(rel)
-            if digest is None:
-                missing_sweep_inputs.append(
-                    f"{label} file '{rel}' is missing, so freeze cannot "
-                    f"pin it — an operative sweep selects on that file; "
-                    "create the file, or remove/repoint the declaration, "
-                    "before freezing")
-                continue
-            objective = sweep_block["selection"]["objective"]
-            if concept is None:
-                objective["choicePromptsHash"] = digest
-            else:
-                objective.setdefault("choicePromptsHashes", {})[concept] = digest
-        if missing_sweep_inputs:
+                d.setdefault("capabilityBatteryFile", battery_mod.DEFAULT_BATTERY_FILE)
+                d["capabilityBatteryHash"] = digest
+        # Local-judge revision pin (cross-engine contract key
+        # "judges[].revision", 2026-07-23): a local judge resolving to the STUDY
+        # model inherits the study's pinned revision when its own is blank —
+        # the judging path then loads exactly the pinned bytes. Stamped BEFORE
+        # the freeze hash so the frozen manifest is self-describing.
+        pin_local_judge_revisions(d)
+        # Measurement-side pin (cross-engine contract key "markersHash"): freeze
+        # is the pin moment for the score-time markers rubric — stamp the
+        # aggregate hash of every attached concept's markers.json (null when none
+        # exists) BEFORE the freeze hash is computed, so the frozen manifest is
+        # self-describing and later drift is a verify() violation.
+        from .manifest import markers_aggregate_hash
+        # Pin only when the key is ABSENT. A confirmation draft inherits its
+        # parent's pin, and re-pinning at freeze would recompute the hash from the
+        # CURRENT bytes — so markers.json drifting between the two freezes was
+        # silently overwritten and the verify() violation erased by the very act
+        # of freezing. Swift has always guarded this (`markersHash == nil`) and
+        # says so in a comment; the server did not (external review round 15).
+        #
+        # `not in` rather than `is None`: an explicitly pinned null means "no
+        # markers existed at pin time", and a later-appearing markers.json is a
+        # violation, not something to quietly pin now.
+        if model_output and "markersHash" not in d:
+            d["markersHash"] = markers_aggregate_hash(
+                [c.get("name") for c in d.get("concepts") or [] if c.get("name")],
+                root)
+        # Adapter training-provenance pin (cross-engine contract key
+        # "variantConditions[].trainingProvenance", LoRA readiness §0 amendment 1):
+        # freeze is the pin moment for a trained adapter's DATASET — stamped from
+        # the adapter's own sidecar, BEFORE the freeze hash, so the frozen
+        # manifest is self-describing and later drift in the training data is a
+        # verify() violation.
+        if model_output:
+            _pin_training_provenance(d, root)
+        # Numeric-parser registry pin (cross-engine contract key
+        # "parserRegistryHash"): freeze is the pin moment for the registry the
+        # named parser reads — stamped only when absent, BEFORE the freeze hash,
+        # so later drift is a verify() violation, never a silent re-pin. A study
+        # that names no parser gets no new key (legacy bytes unchanged).
+        if model_output and d.get("numericParser") and not d.get("parserRegistryHash"):
+            from . import parser_registry
+            digest = parser_registry.registry_live_hash(root)
+            if digest is not None:
+                d["parserRegistryHash"] = digest
+        # Sweep-input pins (cross-engine contract keys "sweep.devPromptsHash" +
+        # "sweep.batteryHash", firewall closure 2026-07-20): freeze is the pin
+        # moment for the files the sweep SELECTS on — stamped only when the key
+        # is absent and the file exists, BEFORE the freeze hash, so later drift
+        # is a verify() violation, never a silent re-pin. Only an OPERATIVE,
+        # declared sweep block gains keys (legacy bytes unchanged elsewhere);
+        # paths resolve declared-or-default exactly as the sweep run resolves
+        # them. The ex-post provenance hash (selection.devPromptsHash) is
+        # unchanged — sweep start refuses on a pin mismatch, so pin and
+        # provenance can only agree. A MISSING input file REFUSES the freeze
+        # (second pass, 2026-07-20), force included: this is pin-surface
+        # integrity — the never-skippable class, like verify() itself — not an
+        # evidence gate. Freezing with an absent pin would leave sweep start's
+        # legacy-unpinned fallback open to whatever bytes later appear at the
+        # path, and no forcedGatesSkipped stamp can neutralize data accepted
+        # silently at run time. Legacy manifests already frozen with absent
+        # hashes keep verifying clean — only NEW freezes refuse. Carried-inert
+        # sweeps (machinery not operative) neither pin nor block, as before.
+        from .manifest import (concept_machinery_operative,
+                               sweep_choice_pin_entries, sweep_input_pin_surface)
+        if isinstance(d.get("sweep"), dict) and concept_machinery_operative(d):
+            sweep_block = d["sweep"]
+            missing_sweep_inputs: list[str] = []
+
+            def _file_hash(rel: str) -> str | None:
+                try:
+                    with open(paths.resolve(rel, root), "rb") as handle:
+                        return hashlib.sha256(handle.read()).hexdigest()
+                except OSError:
+                    return None
+
+            for file_key, hash_key, default, label in sweep_input_pin_surface():
+                if hash_key in sweep_block:
+                    continue  # never silently re-pin
+                rel = sweep_block.get(file_key) or default
+                digest = _file_hash(rel)
+                if digest is not None:
+                    sweep_block[hash_key] = digest
+                else:
+                    missing_sweep_inputs.append(
+                        f"{label} file '{rel}' is missing, so freeze cannot "
+                        f"pin it — an operative sweep selects on that file; "
+                        f"create the file, or remove/repoint the sweep's "
+                        f"{file_key}, before freezing")
+            # Choice instruments (review 2026-08-02, P1: the files that
+            # determine the WINNING CELL were the one sweep input not pinned at
+            # freeze). Same contract: pin-when-absent, never re-pin, a missing
+            # file refuses the freeze — force included.
+            for concept, rel, pinned, label in sweep_choice_pin_entries(sweep_block):
+                if pinned:
+                    continue
+                digest = _file_hash(rel)
+                if digest is None:
+                    missing_sweep_inputs.append(
+                        f"{label} file '{rel}' is missing, so freeze cannot "
+                        f"pin it — an operative sweep selects on that file; "
+                        "create the file, or remove/repoint the declaration, "
+                        "before freezing")
+                    continue
+                objective = sweep_block["selection"]["objective"]
+                if concept is None:
+                    objective["choicePromptsHash"] = digest
+                else:
+                    objective.setdefault("choicePromptsHashes", {})[concept] = digest
+            if missing_sweep_inputs:
+                raise ExperimentStoreError(
+                    "cannot freeze:\n  - " + "\n  - ".join(missing_sweep_inputs))
+
+        manifest = Manifest.from_dict(d)
+        violations = manifest.verify(root)
+        if violations:
+            raise ExperimentStoreError("cannot freeze:\n  - " + "\n  - ".join(violations))
+        # Non-blocking advisories, printed BEFORE the gates so a refusal (e.g.
+        # "no validate run matches") still explains why foreign-looking evidence
+        # was not counted. Loud, never a refusal (parallel to Swift's
+        # freeze-readiness advisories).
+        for advisory in freeze_advisories(d, root):
+            print(f"freeze '{name}' advisory: {advisory}", file=sys.stderr)
+        # Evaluate EVERY gate even under force, so what force skips is known,
+        # printed, and stamped — a silent force freeze is indistinguishable from
+        # a clean one, which is exactly the non-citability hole being closed.
+        gate_failures = _evaluate_freeze_gates(name, d, manifest, root)
+        if force:
+            for gate_id, message in gate_failures:
+                print(f"freeze '{name}' FORCE WARNING: skipping failing gate "
+                      f"'{gate_id}' — {message}", file=sys.stderr)
+        freeze_policy.admit_failures(name, gate_failures, force=force)
+
+        # Frozen studies must be self-contained: pinned scenario/variant inputs
+        # that live under gitignored runs/ are copied into the experiment
+        # directory (byte-identical, hash-checked) so the git-tracked manifest
+        # never points at an unversioned file. Happens BEFORE the freeze hash is
+        # stamped because it rewrites the pinned paths.
+        _pin_external_inputs(name, d, root)
+        manifest = Manifest.from_dict(d)
+        violations = manifest.verify(root)
+        if violations:
             raise ExperimentStoreError(
-                "cannot freeze:\n  - " + "\n  - ".join(missing_sweep_inputs))
+                "cannot freeze (after pinning inputs):\n  - " + "\n  - ".join(violations))
 
-    manifest = Manifest.from_dict(d)
-    violations = manifest.verify(root)
-    if violations:
-        raise ExperimentStoreError("cannot freeze:\n  - " + "\n  - ".join(violations))
-    # Non-blocking advisories, printed BEFORE the gates so a refusal (e.g.
-    # "no validate run matches") still explains why foreign-looking evidence
-    # was not counted. Loud, never a refusal (parallel to Swift's
-    # freeze-readiness advisories).
-    for advisory in freeze_advisories(d, root):
-        print(f"freeze '{name}' advisory: {advisory}", file=sys.stderr)
-    # Evaluate EVERY gate even under force, so what force skips is known,
-    # printed, and stamped — a silent force freeze is indistinguishable from
-    # a clean one, which is exactly the non-citability hole being closed.
-    gate_failures = _evaluate_freeze_gates(name, d, manifest, root)
-    if force:
-        for gate_id, message in gate_failures:
-            print(f"freeze '{name}' FORCE WARNING: skipping failing gate "
-                  f"'{gate_id}' — {message}", file=sys.stderr)
-    freeze_policy.admit_failures(name, gate_failures, force=force)
+        # No-git reproducibility floor: snapshot EVERY pinned input into
+        # experiments/<name>/pinned/ (verification bytes; the manifest keeps
+        # pointing at the canonical prompts/ paths — hashes prove identity),
+        # then make freeze = commit + stamp in one gesture when the artifact
+        # root is its own git work tree, so the gitCommit stamped below
+        # actually CONTAINS the pinned bytes. Runs under force too (2026-07-13):
+        # a forced freeze must not ALSO lose its reproducibility floor (Swift
+        # keeps both; the engines now agree).
+        _snapshot_pinned_inputs(name, d, root)
+        _auto_commit_workspace(name, root)
 
-    # Frozen studies must be self-contained: pinned scenario/variant inputs
-    # that live under gitignored runs/ are copied into the experiment
-    # directory (byte-identical, hash-checked) so the git-tracked manifest
-    # never points at an unversioned file. Happens BEFORE the freeze hash is
-    # stamped because it rewrites the pinned paths.
-    _pin_external_inputs(name, d, root)
-    manifest = Manifest.from_dict(d)
-    violations = manifest.verify(root)
-    if violations:
-        raise ExperimentStoreError(
-            "cannot freeze (after pinning inputs):\n  - " + "\n  - ".join(violations))
-
-    # No-git reproducibility floor: snapshot EVERY pinned input into
-    # experiments/<name>/pinned/ (verification bytes; the manifest keeps
-    # pointing at the canonical prompts/ paths — hashes prove identity),
-    # then make freeze = commit + stamp in one gesture when the artifact
-    # root is its own git work tree, so the gitCommit stamped below
-    # actually CONTAINS the pinned bytes. Runs under force too (2026-07-13):
-    # a forced freeze must not ALSO lose its reproducibility floor (Swift
-    # keeps both; the engines now agree).
-    _snapshot_pinned_inputs(name, d, root)
-    _auto_commit_workspace(name, root)
-
-    d["status"] = "frozen"
-    d["frozenAt"] = _now()
-    d["freezeHash"] = manifest.content_hash()
-    d["frozenBy"] = "server"
-    d["appVersion"] = engine_version()
-    d["gitCommit"] = _git_commit(root)
-    if force:
-        # Freeze stamps (excluded from the canonical payload, like frozenAt):
-        # what force skipped, permanently. An empty list means force was used
-        # but every gate would have passed anyway.
-        d["freezeForced"] = True
-        d["forcedGatesSkipped"] = [gate_id for gate_id, _ in gate_failures]
-    # BEFORE the manifest is written: the preregistration export stamps its
-    # own freeze stamps into ``d`` (the preserved authored file's hash and
-    # the generated summary's), and a stamp that lands after the write is a
-    # stamp nobody can read back.
-    _write_preregistration(d, root)
-    save_raw(d, root, freeze_transition=True)
-    _write_freeze_canonical(name, d, root)
-    _auto_commit_workspace(name, root,
-                           message=f"freeze {name} (stamp)", quiet=True)
-    return d
+        d["status"] = "frozen"
+        d["frozenAt"] = _now()
+        d["freezeHash"] = manifest.content_hash()
+        d["frozenBy"] = "server"
+        d["appVersion"] = engine_version()
+        d["gitCommit"] = _git_commit(root)
+        if force:
+            # Freeze stamps (excluded from the canonical payload, like frozenAt):
+            # what force skipped, permanently. An empty list means force was used
+            # but every gate would have passed anyway.
+            d["freezeForced"] = True
+            d["forcedGatesSkipped"] = [gate_id for gate_id, _ in gate_failures]
+        # BEFORE the manifest is written: the preregistration export stamps its
+        # own freeze stamps into ``d`` (the preserved authored file's hash and
+        # the generated summary's), and a stamp that lands after the write is a
+        # stamp nobody can read back.
+        _write_preregistration(d, root)
+        save_raw(d, root, freeze_transition=True)
+        _write_freeze_canonical(name, d, root)
+        _auto_commit_workspace(name, root,
+                               message=f"freeze {name} (stamp)", quiet=True)
+        return d
 
 
 def _write_freeze_canonical(name: str, d: dict, root: str | None) -> None:

@@ -50,7 +50,10 @@ public final class StudyFreezeController {
     @ObservationIgnored var presentation = StudyFreezePresentation()
     @ObservationIgnored private var activeOperation = UUID()
 
+    @ObservationIgnored private var reviewedServer: (name: String, digest: String, origin: RemoteJobOrigin?)?
+
     public func resetSelection() {
+        reviewedServer = nil
         activeOperation = UUID()
         remoteFreezeGateFailure = nil
         remoteFreezeAdvisories = []
@@ -186,10 +189,14 @@ public final class StudyFreezeController {
         // volatile freeze stamps excluded — deliberately NOT an invented
         // cross-engine byte-canonical hash) before anything is stamped.
         // Block/proceed rules live in `FreezeRouting.remoteFreezePrecheck`.
-        let localData = ExperimentStore.manifestData(name: name)
+        let localData = request.localData
+        reviewedServer = nil
         let identity = await remoteFreezeManifestIdentity(
             transport: transport, name: name, substrate: substrate, localData: localData,
-            serverReportedStatus: serverReportedStatus)
+            serverReportedStatus: serverReportedStatus, recordRead: { bytes in
+                guard current() else { return }
+                self.reviewedServer = (name, ManifestFileTransaction.digest(bytes), transport.origin)
+            })
         guard current() else { return }
         let precheck = FreezeRouting.remoteFreezePrecheck(
             identity: identity,
@@ -209,7 +216,7 @@ public final class StudyFreezeController {
                     + "manifest on screen", severity: .error)
             return
         }
-        guard ExperimentStore.manifestData(name: name) == localData else {
+        guard (try? ExperimentRepository(workspaceRoot: request.workspaceRoot).snapshot(name: name).data) == localData else {
             let warning =
                 "The local manifest changed during the identity check — review it and click Freeze again."
             remoteFreezeIdentityWarning = warning
@@ -232,7 +239,7 @@ public final class StudyFreezeController {
                 + "(frozenBy: server"
                 + (result.manifest.gitCommit.map { ", git \($0.prefix(8))" } ?? "")
                 + ")"
-            if (try? ExperimentStore.load(name: name))?.status != .frozen {
+            if (try? ExperimentRepository(workspaceRoot: request.workspaceRoot).load(name: name))?.status != .frozen {
                 line +=
                     " — the frozen manifest is in \(substrate)'s workspace; "
                     + "the local copy is untouched"
@@ -268,10 +275,11 @@ public final class StudyFreezeController {
     /// in `FreezeRouting.remoteFreezePrecheck` — this only does the IO.
     private func remoteFreezeManifestIdentity(
         transport: StudyFreezeTransport, name: String, substrate: String, localData: Data?,
-        serverReportedStatus: String?
+        serverReportedStatus: String?, recordRead: (Data) -> Void
     ) async -> FreezeRouting.RemoteManifestIdentity {
         do {
             let serverBody = try await transport.manifestBody(name)
+            recordRead(serverBody)
             guard let localData else {
                 return .localMissing(
                     serverStatus: serverReportedStatus,
@@ -335,7 +343,13 @@ public final class StudyFreezeController {
         defer { if operation == activeOperation { isSyncingServerDraft = false } }
         do {
             note("updating \(substrate)'s copy of '\(name)'…", severity: .info)
-            let result = try await transport.replace(name, localData)
+            guard let reviewed = reviewedServer, reviewed.name == name,
+                reviewed.origin == transport.origin
+            else {
+                note("Check the server manifest again before syncing; its reviewed file version is unavailable for this connection.", severity: .warning)
+                return
+            }
+            let result = try await transport.replace(name, localData, reviewed.digest)
             guard current() else { return }
             // Merge semantics (2026-08-06): the server KEEPS auto-pins the
             // pushed document omitted (its resolved model revision, sweep
@@ -346,15 +360,18 @@ public final class StudyFreezeController {
             // instead of re-flagging a difference the researcher never
             // authored. Anything else preserved is reported honestly.
             adoptPreservedServerPins(
-                result.preserved, study: name,
+                result.preserved, request: request,
                 substrate: substrate)
             // Re-run the SAME identity check the freeze precheck uses — the
             // affordance's claim is "now verified equal", never "pushed, so
             // it must match".
             let identity = await remoteFreezeManifestIdentity(
                 transport: transport, name: name, substrate: substrate,
-                localData: ExperimentStore.manifestData(name: name),
-                serverReportedStatus: result.status)
+                localData: try? ExperimentRepository(workspaceRoot: request.workspaceRoot).snapshot(name: name).data,
+                serverReportedStatus: result.status, recordRead: { bytes in
+                    guard current() else { return }
+                    self.reviewedServer = (name, ManifestFileTransaction.digest(bytes), transport.origin)
+                })
             guard current() else { return }
             let outcome = FreezeRouting.serverDraftSyncOutcome(
                 recheck: identity,
@@ -398,17 +415,21 @@ public final class StudyFreezeController {
     /// which carries only their names.
     private func adoptPreservedServerPins(
         _ preserved: ClusterClient.RemoteManifestReplaceResult.PreservedPins?,
-        study name: String,
+        request: StudyFreezeRequest,
         substrate: String
     ) {
         guard let preserved else { return }
+        let name = request.name
         if let revision = preserved.modelRevision, !revision.isEmpty {
-            let local = try? ExperimentStore.load(name: name)
-            if let local, local.modelRevision == nil, local.status == .draft {
+            let reviewed = request.localData.flatMap {
+                try? DraftAuthoringSnapshot(workspaceRoot: request.workspaceRoot, name: name,
+                                            file: ManifestFileSnapshot(data: $0))
+            }
+            let local = reviewed?.manifest
+            if var local, local.modelRevision == nil, local.status == .draft, let reviewed {
                 do {
-                    try ExperimentStore.updateDraft(name: name) {
-                        $0.modelRevision = revision
-                    }
+                    local.modelRevision = revision
+                    try DraftAuthoringTransaction.replace(local, reviewed: reviewed)
                     refresh()
                     note(
                         "\(substrate) kept its auto-pinned model revision "

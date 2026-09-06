@@ -43,7 +43,7 @@ def _armed_study(root, name="armed-study"):
 
 def _shell_of(document):
     """The same manifest with its arms gone — a stale/skeleton document."""
-    shell = dict(document)
+    shell = document.copy()
     shell["concepts"] = []
     shell["conditions"] = []
     return shell
@@ -63,7 +63,8 @@ def test_server_draft_sync_cannot_strip_every_arm(tmp_path):
     root = str(tmp_path)
     armed = _armed_study(root)
     with pytest.raises(es.ExperimentStoreError) as exc:
-        es.replace_draft_manifest("armed-study", _shell_of(armed), root=root)
+        es.replace_draft_manifest("armed-study", _shell_of(armed), root=root,
+                                  expected_file_sha256=armed.source_digest)
     assert exc.value.gate == lifecycle_gates.ARMS_CLEARED
     assert "steerlab-cli" in exc.value.repair_action
     # The disk copy is intact — the refusal happened before any write.
@@ -131,7 +132,7 @@ def test_losing_only_the_concepts_is_not_the_guarded_transition(tmp_path):
     arm set is ordinary authoring."""
     root = str(tmp_path)
     armed = _armed_study(root)
-    partial = dict(armed)
+    partial = armed.copy()
     partial["concepts"] = []
     es.save_raw(partial, root)
     assert es.load_raw("armed-study", root)["conditions"]

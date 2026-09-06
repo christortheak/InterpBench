@@ -450,6 +450,9 @@ public enum ExperimentCLIParser {
             namespace: "experiment", verb: "list",
             purpose: "List this workspace's experiments with their status."),
         .init(
+            namespace: "experiment", verb: "manifest", positional: "<name>",
+            purpose: "Read the complete manifest and its external file SHA-256 for guarded authoring."),
+        .init(
             namespace: "experiment", verb: "create", positional: "<name>",
             purpose: "Create a draft manifest pinned to a model.",
             valueFlags: ["--model", "--revision", "--description"],

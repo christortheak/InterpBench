@@ -20,18 +20,38 @@ public final class StudyManagementController {
     public var selected: ExperimentManifest? {
         experiments.first { $0.name == selectedName }
     }
+    @ObservationIgnored private var reviewedDrafts: [String: DraftAuthoringSnapshot] = [:]
     @ObservationIgnored var presentation = StudyManagementPresentation()
 
     public init(draft: StudyDraftState) { self.draft = draft }
 
     public func refresh() {
-        experiments = ExperimentStore.list()
+        let root = ExperimentStore.workspaceRoot
+        let storage = ExperimentRepository(workspaceRoot: root)
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: storage.directory.path)) ?? []
+        let snapshots = names.compactMap { try? DraftAuthoringSnapshot(workspaceRoot: root, name: $0) }
+        reviewedDrafts = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.manifest.name, $0) })
+        experiments = snapshots.map(\.manifest).sorted { $0.createdAt > $1.createdAt }
         displayLabels = ExperimentStore.displayLabels(experiments)
         refreshTemplates()
         if let selectedName, !experiments.contains(where: { $0.name == selectedName }) {
             self.selectedName = nil
         }
         presentation.refreshed()
+    }
+
+    /// Persist the document shown by this owner, using the exact read that
+    /// supplied the displayed manifest. The target does not follow selection
+    /// or a workspace switch during an operation.
+    func persistReviewedDraft(_ manifest: ExperimentManifest) throws {
+        guard let reviewed = reviewedDrafts[manifest.name],
+            reviewed.workspaceRoot == ExperimentStore.workspaceRoot.standardizedFileURL
+        else {
+            throw ExperimentError.refusing(.staleManifest,
+                "The reviewed draft is unavailable in this workspace.",
+                repair: "Refresh the study, review the current document, and apply the edit again.")
+        }
+        reviewedDrafts[manifest.name] = try DraftAuthoringTransaction.replace(manifest, reviewed: reviewed)
     }
 
     public func refreshTemplates() { designs.refresh(experiments: experiments) }

@@ -2640,6 +2640,17 @@ public struct ExperimentCLIRunner: Sendable {
                         }),
                 ])
 
+        case "manifest":
+            guard args.count >= 2 else {
+                throw ExperimentError(reason: "usage: experiment manifest <name>")
+            }
+            let repository = ExperimentRepository(workspaceRoot: ExperimentStore.workspaceRoot)
+            let snapshot = try repository.snapshot(name: args[1])
+            let document = try JSONDecoder().decode(JSONValue.self, from: snapshot.data)
+            sink.out(String(decoding: snapshot.data, as: UTF8.self))
+            return ExperimentCLIResult(
+                message: "manifest '\(args[1])' with external file precondition",
+                payload: ["document": document, "manifestFileSHA256": .string(snapshot.sha256)])
         case "create":
             guard args.count >= 2, let model = flag("--model") else {
                 throw ExperimentError(

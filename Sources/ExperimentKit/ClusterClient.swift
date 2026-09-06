@@ -2619,12 +2619,13 @@ public struct ClusterClient: Sendable {
     /// returned hash is the server's own canonicalization, informational
     /// only.
     public func replaceExperimentManifest(
-        name: String, manifestBody: Data
+        name: String, manifestBody: Data, expectedFileSHA256: String
     ) async throws -> RemoteManifestReplaceResult {
         let safeName = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
         var request = try makeRequest(
             path: "/api/experiment/\(safeName)/manifest", method: "PUT")
         request.httpBody = manifestBody
+        request.setValue("\"\(expectedFileSHA256)\"", forHTTPHeaderField: "If-Match")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         do {
             let (data, response) = try await session.data(for: request)

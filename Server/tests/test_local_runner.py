@@ -488,7 +488,8 @@ def test_the_whole_round_trip_runs_against_a_managed_local_runner(
     for name in os.listdir(os.path.join(workspace, "runs")):
         assert "uploaded-bundle" not in name and "submit-bundle" not in name, \
             f"engine staging landed in the client workspace: {name}"
-    assert not os.path.exists(os.path.join(workspace, ".steerlab"))
+    # Authoring may retain external write locks, but no runner state.
+    assert os.listdir(os.path.join(workspace, ".steerlab")) == ["manifest-locks"]
     assert not os.path.exists(os.path.join(workspace,
                                            client_cli.RUNNER_TOKEN_FILENAME))
 
