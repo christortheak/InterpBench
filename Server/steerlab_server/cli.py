@@ -178,7 +178,7 @@ _AGENT_FAMILY_ORDER = ("experiment", "jobs", "study", "vectors", "data",
 EXPERIMENT_VERBS = (
     "list", "verify", "attach-artifact", "extract", "extract-stability",
     "validate", "sweep", "run",
-    "pipeline", "evaluate", "judge-worker", "complete-judgment", "analyze",
+    "pipeline", "evaluate", "judge-worker", "complete-judgment", "complete-sweep-judgment", "analyze",
     "rescore-style", "promote", "confirm", "preflight-endpoints",
 )
 
@@ -217,8 +217,6 @@ _EXPERIMENT_PASSTHROUGH_FLAGS: dict = {
     "judge-worker": {"--awaiting-run": True, "--model": True, "--out": True,
                      "--record": True, "--revision": True, "--dtype": True,
                      "--device": True},
-    "complete-judgment": {"--awaiting-run": True, "--judgments": True},
-    "rescore-style": {"--source": True, "--allow-unverified-epoch": False},
     "preflight-endpoints": {"--baseline-run": True, "--out": True,
                             "--json": False, "--band": True,
                             "--min-cell-items": True, "--min-items": True},
@@ -2607,37 +2605,9 @@ def _experiment(args: list[str]):
                 record_count=result.get("judgments"))
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
-    if verb == "complete-judgment":
-        # Phase 2 of a deferred evaluate, headless (2026-08-10): hand a
-        # judging client's completed judgments to
-        # tasks.complete_evaluate_judgment — the same intake the HTTP route
-        # runs, which verifies every emission pin (packets/map/source
-        # hashes, rubric + structured prompt, experiment epoch, judge
-        # panel, full coverage, winner-consistent verdicts) and aggregates
-        # the inline judgments.jsonl + judge-report.json shapes. CPU-only;
-        # idempotent (a completed run prints its existing directory).
-        awaiting = _flag(rest, "--awaiting-run")
-        judgments_path = _flag(rest, "--judgments")
-        if not (awaiting and judgments_path):
-            sys.stderr.write(
-                "usage: experiment complete-judgment <name> "
-                "--awaiting-run <run-dir-or-basename> --judgments <file>\n"
-                "  (<file>: a JSON list, a {\"judgments\": [...], "
-                "\"instructionsSha256\": …} object, or JSONL of\n"
-                "   {packetID, judge, winner: A|B|tie, model, "
-                "annotatorModel?, …} rows)\n")
-            return 64
-        evaluate_run = os.path.basename(os.path.normpath(awaiting))
-        try:
-            judgments, instructions_sha = _load_judgments(judgments_path)
-            run_directory = tasks.complete_evaluate_judgment(
-                name, evaluate_run, judgments, root=root,
-                instructions_sha256=instructions_sha)
-        except (OSError, ValueError, RuntimeError) as exc:
-            sys.stderr.write(f"ERROR: {exc}\n")
-            return 1
-        print(run_directory)
-        return 0
+    if verb in ("complete-judgment", "complete-sweep-judgment"):
+        from .experiment.scientific_commands import complete_judgment
+        return complete_judgment(name, rest, root=root, sweep=verb == "complete-sweep-judgment", load_judgments=_load_judgments)
     if verb == "analyze":
         # Statistics + reporting over a prior run (paired effect sizes with
         # bootstrap CIs, FDR/Holm correction, alien residuals, promotion
@@ -2724,10 +2694,9 @@ def _experiment(args: list[str]):
         # taxonomy — NEW files (reasoning-style.csv + reasoning-style.json)
         # in a fresh run directory; the source run is never mutated.
         # Epoch-guarded like analyze. Pure CPU.
-        tasks.rescore_style(
-            name, root, _flag(rest, "--source"),
-            allow_unverified_epoch=("--allow-unverified-epoch" in rest))
-        return 0
+        from .experiment.scientific_commands import rescore_style
+        return rescore_style(name, root=root, source=_flag(rest, "--source"),
+                            allow_unverified_epoch=("--allow-unverified-epoch" in rest))
     if verb == "promote":
         # Headless Promote: mint an agent (variant artifact) from the sweep-
         # selected cell. --cell L:ALPHA is the loud manual override.

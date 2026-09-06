@@ -710,14 +710,14 @@ def test_no_authoring_verb_accepts_a_server_locator():
     excluded = ({spec.family for spec in client_cli.CLIENT_VERB_SPECS}
                 - set(client_cli.AUTHORING_FAMILIES))
     assert excluded == {client_cli.RUNNER_FAMILY, client_cli.RUN_FAMILY,
-                        client_cli.AUTHORING_PROMPT_FAMILY}
+                        client_cli.AUTHORING_PROMPT_FAMILY, "science"}
     assert len(authoring) >= 16
     # The exclusion must not become a HOLE: `authoring` is checked against the
     # same locator words, because "it writes nothing" is a reason not to call
     # it authoring, never a reason to let it hold a server address.
     checked = authoring + [spec for spec in client_cli.CLIENT_VERB_SPECS
                            if spec.family
-                           == client_cli.AUTHORING_PROMPT_FAMILY]
+                           in (client_cli.AUTHORING_PROMPT_FAMILY, "science")]
     for spec in checked:
         for flag in spec.declared_flags:
             lowered = flag.lower()
@@ -736,7 +736,7 @@ def test_the_client_table_is_separate_from_the_engines_twin_literal():
     do not belong to an authoring client."""
     engine = {spec.label for spec in cli_envelope.VERB_SPECS}
     client = {spec.label for spec in client_cli.CLIENT_VERB_SPECS}
-    assert len(cli_envelope.VERB_SPECS) == 21
+    assert len(cli_envelope.VERB_SPECS) == 24
     assert {"jobs recovery", "jobs recover"} <= engine
     assert not {"jobs recovery", "jobs recover"} & client
     assert "battery run" in engine and "battery run" not in client

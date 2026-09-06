@@ -875,7 +875,9 @@ def _jlens_supported() -> list[dict]:
 
 
 def build_router(state: ServiceState) -> APIRouter:
+    from .science_routes import build_science_router
     router = APIRouter()
+    router.include_router(build_science_router())
 
     @router.get("/healthz")
     def healthz():

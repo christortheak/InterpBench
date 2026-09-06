@@ -11,6 +11,46 @@ here is built or compiled.
 
 ---
 
+## Find the method before authoring its data
+
+Both installed clients expose the same shipped references. Use
+`steerlab-cli science list --json` on the Mac or `steerlab science list --json`
+with the Python client. Then `science guide <method> --json` returns the
+method-specific dataset schemas, coworker author prompt and independent
+review prompt; `science operation <operation> --json` names exact supported
+CLI/API paths, outputs and restrictions. These commands only read guidance.
+The app's Studies → Research methods and guides displays the same text.
+`GET /api/science/catalog`, `/api/science/guide/<method>` and
+`/api/science/operation/<operation>` return it from either workbench HTTP
+implementation; the engine also serves these reads in runner role.
+
+Method IDs: `extraction`, `readers`, `optimization`, `finetuning`, `jlens`,
+`jspace`, `sae`, `stability`, `batteries`, `judging`, `style`, `multi-agent`.
+Choose the method, comparison, split roles, model/revision and claim with the
+researcher. Ask about unresolved scientific decisions; obtain pins through
+inspection/import operations. Give independent coworkers the method guide and
+author/reviewer prompts. A valid file is not scientific validation.
+
+The catalog distinguishes engine-only execution from an absent interface:
+standalone `steerlab-server experiment extract-stability` and `battery run`
+have no HTTP/bundle submission route. Run them in an approved compute
+environment with reviewed inputs; do not invent a client study verb or a
+scheduler script. OptVec's nine listed verbs include exploratory `jspace`
+analysis and `gradient`; J-space is not an optimization/training operation.
+Discovery or a passing source test does not qualify a numerical claim.
+
+CPU completion is available through
+`steerlab-server experiment complete-sweep-judgment <study> --awaiting-run
+<run> --judgments <file> --json` or `experiment complete-judgment` for an
+evaluation. Preserve the original packet, judge and epoch requirements.
+The sweep may project a recommendation into a draft; repeated evaluation
+completion reuses evidence. Read `result.runDirectory`, `reused` and `changed`.
+For style use `steerlab-cli experiment rescore-style <study> --run <run>` on
+the Mac and `steerlab-server experiment rescore-style <study> --source <run>`
+on the engine, with `--json`. New reports preserve the source run. The
+engine's three CPU verbs now return typed envelopes and 64/65/66/70 for
+usage/refusal/missing input/failure; do not depend on the old catch-all exit 1.
+
 ## 1. What this folder is
 
 A workspace is a plain folder that is its own git repository, created with an

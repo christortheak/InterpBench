@@ -329,13 +329,14 @@ def test_the_declared_verbs_are_the_audits_fourteen_plus_site_qualify():
     assert labels == sorted([
         "battery run", "data check", "experiment analyze",
         "experiment confirm", "experiment evaluate", "experiment extract",
-        "experiment extract-stability",
+        "experiment extract-stability", "experiment rescore-style",
+        "experiment complete-judgment", "experiment complete-sweep-judgment",
         "experiment list", "experiment promote", "experiment run",
         "experiment sweep", "experiment validate", "experiment verify",
         "jobs list", "jobs recovery", "jobs recover", "model capabilities", "site qualify", "study submit",
         "vectors compare", "vectors mirror-poles",
     ])
-    assert len(cli_envelope.VERB_SPECS) == 21
+    assert len(cli_envelope.VERB_SPECS) == 24
 
 
 # =============================================================================

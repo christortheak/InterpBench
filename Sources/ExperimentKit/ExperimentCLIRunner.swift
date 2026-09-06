@@ -109,7 +109,7 @@ public struct ExperimentCLIRunner: Sendable {
     /// nothing is dispatched twice.
     public static let namespaces: Set<String> = [
         "init", "workspace", "data", "vectors", "remote", "experiment", "docs",
-        "install", "panel", "authoring", "model", "design", "agent", "pack",
+        "install", "panel", "authoring", "model", "design", "agent", "pack", "science",
     ]
 
     /// The top-level spelling of `install version`. `--version` is what a
@@ -190,6 +190,7 @@ public struct ExperimentCLIRunner: Sendable {
             case "pack": result = try StudyPackCLI.run(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
             case "design": result = try StudyDesignCLI.run(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
             case "docs": result = try runDocsCommand(invocation)
+            case "science": result = try ScienceCatalog.run(invocation, sink: sink)
             case "authoring": result = try runAuthoringCommand(invocation)
             case "install": result = try runInstallCommand(invocation)
             case "panel": result = try runPanelCommand(invocation)

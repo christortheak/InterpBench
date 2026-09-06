@@ -1,0 +1,344 @@
+{
+  "schemaVersion": 1,
+  "methods": [
+    {
+      "id": "extraction",
+      "title": "Choose and extract a steering direction",
+      "purpose": "Compare declared activation populations before testing an intervention.",
+      "guide": "extraction.md"
+    },
+    {
+      "id": "readers",
+      "title": "Train and use an activation reader",
+      "purpose": "Measure an activation-based instrument separately from an intervention.",
+      "guide": "readers.md"
+    },
+    {
+      "id": "optimization",
+      "title": "Optimize a steering vector",
+      "purpose": "Train an intervention against a declared objective and evaluate it on separate data.",
+      "guide": "optimization.md"
+    },
+    {
+      "id": "finetuning",
+      "title": "Prepare and compare fine-tuned adapters",
+      "purpose": "Separate training-recipe choices from subsequent study claims.",
+      "guide": "finetuning.md"
+    },
+    {
+      "id": "jlens",
+      "title": "Acquire and qualify a J-lens",
+      "purpose": "Inspect a lens under its model, layer and token constraints.",
+      "guide": "jlens.md"
+    },
+    {
+      "id": "jspace",
+      "title": "Inspect an intervention in J-space",
+      "purpose": "Separate arithmetic fidelity, readout predictiveness and causal evidence.",
+      "guide": "jspace.md"
+    },
+    {
+      "id": "sae",
+      "title": "Analyze and import SAE features",
+      "purpose": "Preserve feature identity and the import/normalization convention.",
+      "guide": "sae.md"
+    },
+    {
+      "id": "stability",
+      "title": "Diagnose extraction stability",
+      "purpose": "Check sensitivity to resampling without mistaking it for behavioral validation.",
+      "guide": "stability.md"
+    },
+    {
+      "id": "batteries",
+      "title": "Measure capability and generation health",
+      "purpose": "Keep the standalone floor battery distinct from a study control.",
+      "guide": "batteries.md"
+    },
+    {
+      "id": "judging",
+      "title": "Complete deferred judgments",
+      "purpose": "Maintain blinding, packet identity and the declared judge panel.",
+      "guide": "judging.md"
+    },
+    {
+      "id": "style",
+      "title": "Rescore recorded generations",
+      "purpose": "Compute declared style features without rerunning generation.",
+      "guide": "style.md"
+    },
+    {
+      "id": "multi-agent",
+      "title": "Design a multi-agent study",
+      "purpose": "Declare interaction structure and controls before casting agents.",
+      "guide": "multi-agent.md"
+    }
+  ],
+  "operations": [
+    {
+      "id": "stability",
+      "method": "stability",
+      "title": "Extraction stability",
+      "engineCLI": "steerlab-server experiment extract-stability <study> <concept> --json",
+      "mac": "Invoke the Python engine; native numerical parity is not claimed.",
+      "http": null,
+      "compute": "model",
+      "outputs": [
+        "Diagnostic path and per-layer stability summary"
+      ],
+      "restriction": "Python engine CLI only; capture activations where the model is available. No native Mac diagnostic, HTTP execution route, bundle verb or automatic scheduler allocation."
+    },
+    {
+      "id": "battery",
+      "method": "batteries",
+      "title": "Standalone capability battery",
+      "engineCLI": "steerlab-server battery run <battery-file> --agent baseline --model <model> --revision <revision> --json",
+      "mac": "Invoke the Python engine; existing robustness controls are a separate per-agent reading.",
+      "http": null,
+      "compute": "model",
+      "outputs": [
+        "runDirectory",
+        "battery.jsonl",
+        "battery-report.json"
+      ],
+      "restriction": "Python engine CLI only; format 3 is not a study-pinnable control. Stage reviewed inputs on the compute host; no standalone HTTP/bundle submission route."
+    },
+    {
+      "id": "rescore-style",
+      "method": "style",
+      "title": "Rescore recorded style",
+      "engineCLI": "steerlab-server experiment rescore-style <study> --source <run> --json",
+      "mac": "steerlab-cli experiment rescore-style <study> --run <run> --json",
+      "http": null,
+      "compute": "cpu",
+      "outputs": [
+        "runDirectory",
+        "reasoning-style.csv",
+        "reasoning-style.json"
+      ],
+      "restriction": "Pinned taxonomy and source epoch admission; permitted measurement-only drift is recorded by the owner. Source run is never rewritten."
+    },
+    {
+      "id": "sweep-judgment",
+      "method": "judging",
+      "title": "Sweep Judgment",
+      "engineCLI": "steerlab-server experiment complete-sweep-judgment <study> --awaiting-run <run> --judgments <file> --json",
+      "mac": "Read this guide; use the named existing pane/API or engine CLI.",
+      "http": "POST /api/experiment/{name}/sweep/complete-judgment",
+      "compute": "existingOwner",
+      "outputs": [
+        "See the selected operation public response and immutable artifact records."
+      ],
+      "restriction": "CPU; can append a recommendation to a draft."
+    },
+    {
+      "id": "evaluate-judgment",
+      "method": "judging",
+      "title": "Evaluate Judgment",
+      "engineCLI": "steerlab-server experiment complete-judgment <study> --awaiting-run <run> --judgments <file> --json",
+      "mac": "Read this guide; use the named existing pane/API or engine CLI.",
+      "http": "POST /api/experiment/{name}/evaluate/complete-judgment",
+      "compute": "existingOwner",
+      "outputs": [
+        "See the selected operation public response and immutable artifact records."
+      ],
+      "restriction": "CPU; preserve packet/instruction pins and full judge coverage."
+    },
+    {
+      "id": "reader-fit",
+      "method": "readers",
+      "title": "Reader Fit",
+      "engineCLI": null,
+      "mac": "Read this guide; use the named existing pane/API or engine CLI.",
+      "http": "POST /api/reader/fit",
+      "compute": "existingOwner",
+      "outputs": [
+        "See the selected operation public response and immutable artifact records."
+      ],
+      "restriction": "Workbench role; reader training is separate from held-out scoring."
+    },
+    {
+      "id": "reader-score",
+      "method": "readers",
+      "title": "Reader Score",
+      "engineCLI": null,
+      "mac": "Read this guide; use the named existing pane/API or engine CLI.",
+      "http": "POST /api/reader/score",
+      "compute": "existingOwner",
+      "outputs": [
+        "See the selected operation public response and immutable artifact records."
+      ],
+      "restriction": "Workbench role; use the exact fitted reader/model identity."
+    },
+    {
+      "id": "finetune",
+      "method": "finetuning",
+      "title": "Finetune",
+      "engineCLI": "steerlab-server finetune --help",
+      "mac": "Read this guide; use the named existing pane/API or engine CLI.",
+      "http": "POST /api/finetune/plan; POST /api/finetune/train; POST /api/finetune/submit",
+      "compute": "existingOwner",
+      "outputs": [
+        "See the selected operation public response and immutable artifact records."
+      ],
+      "restriction": "Plan is workbench authorship; train/submit are execution. Model recipes differ."
+    },
+    {
+      "id": "jlens",
+      "method": "jlens",
+      "title": "Jlens",
+      "engineCLI": "steerlab-server jlens --help",
+      "mac": "Read this guide; use the named existing pane/API or engine CLI.",
+      "http": "GET /api/jlens/lenses; POST /api/jlens/lenses/acquire; POST /api/jlens/lenses/import; POST /api/jlens/token-options; POST /api/jlens/decode-tokens; POST /api/jlens/directions/derive; POST /api/jlens/qualify; POST /api/jlens/g0; POST /api/jlens/probe; POST /api/jlens/report; POST /api/jlens/support",
+      "compute": "existingOwner",
+      "outputs": [
+        "See the selected operation public response and immutable artifact records."
+      ],
+      "restriction": "Existing J-lens workbench; qualify model/lens/layer/token applicability."
+    },
+    {
+      "id": "gemmascope",
+      "method": "sae",
+      "title": "Gemmascope",
+      "engineCLI": "steerlab-server gemmascope import-id --help",
+      "mac": "Read this guide; use the named existing pane/API or engine CLI.",
+      "http": "GET /api/gemmascope/info; POST /api/gemmascope/run; POST /api/gemmascope/import; POST /api/gemmascope/import-id",
+      "compute": "existingOwner",
+      "outputs": [
+        "See the selected operation public response and immutable artifact records."
+      ],
+      "restriction": "Existing Gemma Scope workbench; preserve import convention and qualification."
+    },
+    {
+      "id": "sae",
+      "method": "sae",
+      "title": "Sae",
+      "engineCLI": "steerlab-server sae --help",
+      "mac": "Read this guide; use the named existing pane/API or engine CLI.",
+      "http": null,
+      "compute": "existingOwner",
+      "outputs": [
+        "See the selected operation public response and immutable artifact records."
+      ],
+      "restriction": "Engine CLI; use the selected subcommand help. No generic submitted-study replacement."
+    },
+    {
+      "id": "optvec-train",
+      "method": "optimization",
+      "title": "OptVec train",
+      "engineCLI": "steerlab-server optvec train --help",
+      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
+      "http": null,
+      "compute": "existingOwner",
+      "outputs": [
+        "Operation report and its provenance; inspect the declared run/config output."
+      ],
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+    },
+    {
+      "id": "optvec-eval",
+      "method": "optimization",
+      "title": "OptVec eval",
+      "engineCLI": "steerlab-server optvec eval --help",
+      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
+      "http": null,
+      "compute": "existingOwner",
+      "outputs": [
+        "Operation report and its provenance; inspect the declared run/config output."
+      ],
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+    },
+    {
+      "id": "optvec-geometry",
+      "method": "optimization",
+      "title": "OptVec geometry",
+      "engineCLI": "steerlab-server optvec geometry --help",
+      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
+      "http": null,
+      "compute": "existingOwner",
+      "outputs": [
+        "Operation report and its provenance; inspect the declared run/config output."
+      ],
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+    },
+    {
+      "id": "optvec-interpret",
+      "method": "optimization",
+      "title": "OptVec interpret",
+      "engineCLI": "steerlab-server optvec interpret --help",
+      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
+      "http": null,
+      "compute": "existingOwner",
+      "outputs": [
+        "Operation report and its provenance; inspect the declared run/config output."
+      ],
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+    },
+    {
+      "id": "optvec-family",
+      "method": "optimization",
+      "title": "OptVec family",
+      "engineCLI": "steerlab-server optvec family --help",
+      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
+      "http": null,
+      "compute": "existingOwner",
+      "outputs": [
+        "Operation report and its provenance; inspect the declared run/config output."
+      ],
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+    },
+    {
+      "id": "optvec-fracture",
+      "method": "optimization",
+      "title": "OptVec fracture",
+      "engineCLI": "steerlab-server optvec fracture --help",
+      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
+      "http": null,
+      "compute": "existingOwner",
+      "outputs": [
+        "Operation report and its provenance; inspect the declared run/config output."
+      ],
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+    },
+    {
+      "id": "optvec-campaign",
+      "method": "optimization",
+      "title": "OptVec campaign",
+      "engineCLI": "steerlab-server optvec campaign --help",
+      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
+      "http": null,
+      "compute": "existingOwner",
+      "outputs": [
+        "Operation report and its provenance; inspect the declared run/config output."
+      ],
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+    },
+    {
+      "id": "optvec-jspace",
+      "method": "jspace",
+      "title": "OptVec jspace",
+      "engineCLI": "steerlab-server optvec jspace --help",
+      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
+      "http": null,
+      "compute": "existingOwner",
+      "outputs": [
+        "Operation report and its provenance; inspect the declared run/config output."
+      ],
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+    },
+    {
+      "id": "optvec-gradient",
+      "method": "optimization",
+      "title": "OptVec gradient",
+      "engineCLI": "steerlab-server optvec gradient --help",
+      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
+      "http": null,
+      "compute": "existingOwner",
+      "outputs": [
+        "Operation report and its provenance; inspect the declared run/config output."
+      ],
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+    }
+  ],
+  "scope": "Discovery and guidance, not execution or scientific qualification. engineCLI is a command reference or null; http lists existing method/path references or is null. Null means no direct interface. mac describes the supported Mac command or app/engine handoff. Engine-only operations require that engine and its declared compute environment."
+}

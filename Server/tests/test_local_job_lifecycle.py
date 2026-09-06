@@ -204,9 +204,12 @@ record, run_dir, marker = sys.argv[1], sys.argv[2], sys.argv[3]
 os.makedirs(run_dir, exist_ok=True)
 open(os.path.join(run_dir, "generations.jsonl"), "w").write('{"id":1}\n')
 os.makedirs(os.path.dirname(record), exist_ok=True)
-json.dump({"schemaVersion": 1, "kind": "bundle-execute:run", "status": "running",
-           "result": {"runDirectory": run_dir, "partialEvidence": True}},
-          open(record, "w"))
+# The parent cancels once this path exists. Publish a complete record, not
+# an empty/truncated file that a cancellation can interrupt mid-json.dump.
+with open(record + ".tmp", "w") as handle:
+    json.dump({"schemaVersion": 1, "kind": "bundle-execute:run", "status": "running",
+               "result": {"runDirectory": run_dir, "partialEvidence": True}}, handle)
+os.replace(record + ".tmp", record)
 print("record written", flush=True)
 time.sleep(120)
 open(marker, "w").write("the child ran to completion")

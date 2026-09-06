@@ -763,6 +763,14 @@ public final class SteerLabWebServer: Sendable {
             if response.succeeded { service.experiments.refresh() }
             return Response(status: response.status, body: response.body)
 
+        case ("GET", "/api/science/catalog"):
+            let response = ScienceCatalog.http(kind: "catalog", id: nil)
+            return Response(status: response.status, body: response.body)
+        case ("GET", let route) where route.hasPrefix("/api/science/guide/") || route.hasPrefix("/api/science/operation/"):
+            let parts = route.split(separator: "/", omittingEmptySubsequences: false)
+            let response = ScienceCatalog.http(kind: parts.count == 5 ? String(parts[3]) : "invalid", id: parts.last.map(String.init))
+            return Response(status: response.status, body: response.body)
+
         case ("POST", "/api/authoring/study"):
             struct Request: Decodable { let intent: String }
             guard let raw = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],

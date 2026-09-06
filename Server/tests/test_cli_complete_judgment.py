@@ -100,9 +100,9 @@ def test_cli_surfaces_the_engines_refusal_and_exits_nonzero(
     rc = cli.main(["experiment", "complete-judgment", "ev",
                    "--awaiting-run", os.path.basename(eval_dir),
                    "--judgments", judgments_file, "--root", root])
-    assert rc == 1
+    assert rc == 65
     err = capsys.readouterr().err
-    assert "ERROR:" in err and "full coverage" in err
+    assert "full coverage" in err
     # The run still awaits — nothing was half-written.
     assert [a["run"] for a in tasks.list_awaiting_evaluate_judgment(
         "ev", root)] == [os.path.basename(eval_dir)]
@@ -125,7 +125,7 @@ def test_cli_refuses_malformed_inputs_loudly(tmp_path, monkeypatch, capsys):
     rc = cli.main(["experiment", "complete-judgment", "ev",
                    "--awaiting-run", os.path.basename(eval_dir),
                    "--judgments", empty, "--root", root])
-    assert rc == 1
+    assert rc == 64
     assert "non-empty list" in capsys.readouterr().err
 
     garbage = os.path.join(root, "garbage.txt")
@@ -134,7 +134,7 @@ def test_cli_refuses_malformed_inputs_loudly(tmp_path, monkeypatch, capsys):
     rc = cli.main(["experiment", "complete-judgment", "ev",
                    "--awaiting-run", os.path.basename(eval_dir),
                    "--judgments", garbage, "--root", root])
-    assert rc == 1
+    assert rc == 64
     assert "neither JSON nor JSONL" in capsys.readouterr().err
 
     # A missing file is an ordinary loud failure, not a traceback.
@@ -142,5 +142,5 @@ def test_cli_refuses_malformed_inputs_loudly(tmp_path, monkeypatch, capsys):
                    "--awaiting-run", os.path.basename(eval_dir),
                    "--judgments", os.path.join(root, "no-such.json"),
                    "--root", root])
-    assert rc == 1
-    assert "ERROR:" in capsys.readouterr().err
+    assert rc == 66
+    assert "no-such.json" in capsys.readouterr().err

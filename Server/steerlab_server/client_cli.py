@@ -114,7 +114,7 @@ import os
 import sys
 
 from . import cli_envelope as envelope
-from .client import study_assembly, design_commands, authoring_commands, model_commands
+from .client import study_assembly, design_commands, authoring_commands, model_commands, science_commands
 from .cli_envelope import (HELP_FLAG, JSON_FLAG, OUT_FLAG, CLIResult,
                            UsageError, VerbSpec)
 
@@ -251,6 +251,7 @@ def _authoring_prompt_kinds():
 
 
 CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
+    *science_commands.VERB_SPECS,
     *study_assembly.VERB_SPECS,
     *design_commands.VERB_SPECS,
     *authoring_commands.VERB_SPECS,
@@ -512,7 +513,7 @@ _SPECS_BY_LABEL = {spec.label: spec for spec in CLIENT_VERB_SPECS}
 
 #: Families this binary dispatches, in the order ``--help`` prints them.
 FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "pack", "design", "agent", "model",
-                             "authoring", "runner", "run")
+                             "authoring", "runner", "run", "science")
 
 #: Families whose ENTIRE surface is one verb, spelled as the family name and
 #: nothing after it: ``steerlab run <experiment>``. Maps family → the verb its
@@ -559,7 +560,7 @@ RUN_FAMILY = "run"
 #: shipped one, so a caller with no workspace still gets the shipped prompt
 #: rather than a refusal about a study they never named.
 WORKSPACE_OPTIONAL_FAMILIES: frozenset = frozenset(
-    {RUNNER_FAMILY, AUTHORING_PROMPT_FAMILY})
+    {RUNNER_FAMILY, AUTHORING_PROMPT_FAMILY, "science"})
 
 #: The global flag that names the workspace. Declared here rather than on each
 #: spec because it is lifted before the family is chosen — every verb takes it,
@@ -4093,7 +4094,7 @@ def _iso(value) -> str | None:
         return None
 
 
-HANDLERS = {"experiment": _experiment, "concept": _concept, "bundle": _bundle,
+HANDLERS = {"science": science_commands.run, "experiment": _experiment, "concept": _concept, "bundle": _bundle,
             "pack": study_assembly.run, "design": design_commands.run, "agent": lambda i: authoring_commands.run(i) if i.spec.verb == "list" else design_commands.run(i), "panel": authoring_commands.run,
             "model": _model,
             "authoring": _authoring_prompt, "runner": _runner, "run": _run}

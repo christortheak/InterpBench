@@ -170,3 +170,19 @@ Next work remains method guidance and advanced-operation coverage, the bounded
 cluster onboarding/remote lifecycle work, and interactive/live scientific
 qualification. Passing these source-level journeys does not qualify numerical
 behavior, a live cluster, a real model download or interactive UI operation.
+
+## Maintainer notes on ae6d928
+
+Panel compilation intentionally converts the reviewed draft: both `studyKind`
+and `studyType` become `multiAgent`, including when the source was a concept
+study. Review the converted protocol before submission.
+
+A model preparation plan digest includes the absolute `cacheRoot` and
+`workspaceRoot`. It binds the deployment's mount view; it is not a portable
+model identity or authorization to install on a differently mounted server.
+Re-plan and review on the intended endpoint when either root changes.
+
+Deployment remains a separate maintainer action: rebuild/install the app first,
+deploy the engine after ongoing work finishes, then regenerate the approved
+site environment to carry the egress declaration. This follow-up deploys none
+of those components.

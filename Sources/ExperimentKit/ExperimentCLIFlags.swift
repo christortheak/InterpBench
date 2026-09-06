@@ -268,6 +268,9 @@ public enum ExperimentCLIParser {
     /// reference document's flag rows from it, and a switch statement cannot
     /// be enumerated.
     public static let specs: [ExperimentCLIVerbSpec] = [
+        .init(namespace: "science", verb: "list", purpose: "List shipped methods, supported operation interfaces and engine restrictions; does not execute."),
+        .init(namespace: "science", verb: "guide", positional: "<method>", purpose: "Read the shared method guide, dataset schemas and coworker/reviewer instructions."),
+        .init(namespace: "science", verb: "operation", positional: "<operation>", purpose: "Inspect exact public execution paths, outputs and restrictions for one operation."),
         // init — the home layout (GENERAL-DISTRIBUTION-WORK-PLAN decision 8,
         // work item (a)). The one BARE verb: a git repository cannot ship its
         // own parent directory, so the home folder that holds `Workspaces/`,

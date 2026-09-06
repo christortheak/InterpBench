@@ -644,6 +644,9 @@ public enum ExperimentCLIHelp {
                 purpose: "This build's identity and the integrity of its "
                     + "install."),
             .init(
+                synopsis: "science list | guide <method> | operation <operation>",
+                purpose: "Shared method guidance and supported execution interfaces."),
+            .init(
                 synopsis: "authoring study <intent> | prompt <kind> …",
                 purpose: "Generation prompts for missing study data."),
             .init(

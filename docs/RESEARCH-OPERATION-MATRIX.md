@@ -9,6 +9,26 @@ audit counts are not a coverage or release score. Update the affected rows with
 each operation change; add a row when an operation has a different authority,
 artifact, or recovery contract.
 
+## Scientific workflow discovery follow-up
+
+`science list/guide/operation` now ships in both clients. The Mac app's Studies
+panel opens the same catalog/guides, with design and optimization cross-links;
+both HTTP services expose the matching read paths. The maintained source is
+`WorkspaceSeed/prompts/method-guides/`, checked against packaged Python and
+compiled Swift. See [the slice handoff](SCIENTIFIC-WORKFLOWS-HANDOFF.md).
+
+EXEC-03/04/05 and METHOD-01 through METHOD-06 now have explicit shipped
+operation mappings and method/author/reviewer guidance. Engine style rescoring
+and evaluation completion now return full CLI envelopes; sweep completion has
+a first-class engine CLI adapter over the existing owner. These are source
+interface tests, not live model qualification or interactive UI QA.
+
+Standalone stability and floor batteries remain **engine CLI only**, with no
+HTTP/bundle submission path. OptVec J-space is exploratory analysis, not
+training. The catalog states these restrictions; a guide does not grant an
+unsupported engine capability. The detailed rows below retain their broader
+qualification tasks until live journeys are observed.
+
 ## How to read the matrix
 
 - **Present:** source entry point and owner identified; this alone does not prove
@@ -73,7 +93,7 @@ or authorize new agent tasks. The source groups below provide navigable owners.
 | METHOD-02 optimized vectors | OptVec owners | Restricted execution; artifact consumers | Engine optvec family | Submission coverage unverified by operation | Optimization | Index train/eval/geometry/family/interpret/fracture/campaign paths; identify envelope gaps |
 | METHOD-03 fine-tune adapters | FineTuneStore, Python fine-tune owners | Authoring/artifact surface; execution restricted | Engine finetune plan/train/submit | Python plan/train/submit | Adapters | Workbench plan versus runner train/submit authority must remain explicit |
 | METHOD-04 J-lens acquisition/qualification/readout | J-lens owners | Restricted execution, app rendering | Engine jlens family | Python J-lens workbench routes | J-lens | Publish all supported verbs, qualification and model/token/layer constraints |
-| METHOD-05 J-space optimization | OptVec J-space owner | Restricted execution | Engine optvec jspace | Exact API mapping unverified | Exact UI mapping unverified | Separate from J-lens readout and ordinary paired extraction; add accessible discovery |
+| METHOD-05 J-space exploratory analysis | OptVec J-space owner | Restricted execution | Engine optvec jspace | Exact API mapping unverified | Exact UI mapping unverified | Separate from J-lens readout and ordinary paired extraction; add accessible discovery |
 | METHOD-06 SAE/Gemma Scope analysis/import/qualification | SAE/Gemma Scope owners | Restricted execution; artifact attachment | Client pin-sae; Engine sae/Gemma Scope | Python Gemma Scope routes | SAE/adapter coverage mixed | Preserve convention/qualification stamps and distinguish feature-ID versus report-ranked imports |
 | METHOD-07 vector parity/mirror/norm operations | Vector owners | Present vector family | Engine vectors; Client gap | Python vector operations | Exact controls unverified | Existing artifact writes need immutable-evidence admission audit; never relax it for parity |
 | CHAT-01 local and remote exploratory generation | Chat/variant services | Remote chat present; local CLI gap | Client mapping restricted | Swift chat; Python generate/variant | Playground | API-accessible; explicitly distinguish exploration from frozen study execution |

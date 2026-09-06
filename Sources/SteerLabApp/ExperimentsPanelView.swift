@@ -23,6 +23,7 @@ struct ExperimentsPanelView: View {
     /// Import JSONL… (Input Data): sheet visibility and its pasted/loaded
     /// text. Parsing/preview/import rules live in `TaskPromptsImport`
     /// (ExperimentKit, unit-tested); the sheet renders them.
+    @State private var showScienceGuides = false
     @State private var showImportJSONL = false
     @State private var importJSONLReview: DraftAuthoringSnapshot?
     private var importJSONLPresented: Binding<Bool> {
@@ -47,6 +48,7 @@ struct ExperimentsPanelView: View {
     var body: some View {
         @Bindable var panel = service.experiments
         Form {
+            Button("Research methods and guides", systemImage: "book") { showScienceGuides = true }
             StudyManagementSection(panel: panel, openTemplates: openTemplates)
 
             if let manifest = panel.management.selected {
@@ -382,6 +384,9 @@ struct ExperimentsPanelView: View {
             if let study = panel.management.selectedName {
                 await panel.refreshAwaitingSweepJudgments(study: study)
             }
+        }
+        .sheet(isPresented: $showScienceGuides) {
+            ScienceGuidesView(openOptimizations: openOptimizations, openTemplates: openTemplates)
         }
         .sheet(isPresented: $showImportJSONL) {
             if let reviewed = importJSONLReview {

@@ -46,6 +46,9 @@ R, W, B = Role.RUNNER, Role.WORKBENCH, Role.BOTH
 
 #: THE CENSUS. Every (method, template) the app serves must appear here.
 CENSUS: tuple[RouteRole, ...] = (
+    _r("GET", "/api/science/catalog", B, "Read shipped method guidance and explicit supported operation mappings; no execution."),
+    _r("GET", "/api/science/guide/{method}", B, "Read one shipped method guide; no workspace access."),
+    _r("GET", "/api/science/operation/{operation}", B, "Read an operation's public interfaces and restrictions; no execution."),
 
     # ── Liveness, identity, and the generated API surface ──────────────────
     _r("GET", "/healthz", B,

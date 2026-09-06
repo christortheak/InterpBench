@@ -1101,3 +1101,61 @@ not establish memory fit or numerical qualification. Enabling the new server
 egress gate requires rematerializing the approved site profile at deployment;
 no live configuration was changed here. Reviewed file preconditions remain
 outside scientific manifest bytes, and existing frozen studies/runs are intact.
+
+## Scientific workflows and shared method guidance — 2026-09-06
+
+Branch `codex/scientific-workflows`, based on landed main `b369693`.
+See [the slice handoff](SCIENTIFIC-WORKFLOWS-HANDOFF.md) for the scope, exact
+interfaces, auditor-note follow-ups and remaining execution restrictions.
+
+Final validation:
+
+- Python: **6,043 passed, 9 skipped, 8 warnings**, 164.44 seconds; `/private/tmp/science-python-final.log`.
+- Serial Xcode beta: **277 SteeringKit + 4,583 ExperimentKit passed**,
+  `TEST SUCCEEDED`; `/private/tmp/science-swift-final.log`. The real Python
+  process verified catalog, guide text and digest equality against the Mac
+  owners and HTTP response payloads.
+- The wheel built offline with `pip wheel --no-deps --no-build-isolation`.
+  An isolated interpreter imported the client and all twelve guides directly
+  from that wheel, outside the checkout, with no torch/transformers imports;
+  the twenty operation references were present. No environment was installed
+  or modified by that check.
+- Resource/interview parity, client reference, all 17 compiled Swift reference
+  regions, role census, shipped contract, bridge gates normal and `--release`,
+  public scan and whitespace checks pass. New files were staged for the scan.
+- Historical public-boundary AST proof passes at `a7536f9` (3,436 function
+  bodies); lazy-import and task-prompt-parser audits and negative controls
+  pass. Extraction stability, battery execution, analysis/rescoring and both
+  judgment-completion owners are byte-unchanged from `b369693`. The new CLI
+  adapters are intentional semantic additions, not claimed mechanical moves.
+- The compiled Mac CLI was also exercised as a real process from a temporary
+  workspace: guide output exits 0; unknown method and invented execution exit
+  64 with one typed JSON envelope and repair.
+- The actual implementation diff was read locally. Independent maintainer
+  review through the user remains the landing gate.
+
+The full commands use the same interpreter and Xcode/Metal environment as the
+preceding entry, with external `/private/tmp` derived data, serial testing,
+`CLANG_COVERAGE_MAPPING=NO`, offline Python model resolution, and the interpreter
+exported before Xcode as `TEST_RUNNER_STEERLAB_TEST_PYTHON`.
+
+Earlier checks caught incomplete verb censuses, the new Swift test using a
+human-mode outcome field instead of the JSON envelope's exit code, and CPU
+CLI results that needed explicit human-mode exit codes. Those were corrected.
+The catalog's unavailable CLI interfaces now encode explicit nulls in both
+clients, rather than putting prose in a command field.
+
+One later Python run hit the pre-existing local cancellation test's missing
+`runDirectory` assertion (6,042 passed, one failed). Its isolated study/bundle
+rerun passed. Inspection found the fixture wrote JSON directly to the path
+whose mere existence triggers cancellation, exposing an empty/partial file.
+The fixture now closes a temporary file and atomically publishes it before
+cancellation can observe it. Assertions and production cancellation code are
+unchanged; the complete Python suite was rerun after that repair. Earlier
+failure log: `/private/tmp/science-python-release.log`.
+
+These are software/interface checks. No live scientific/model execution,
+interactive app QA, cluster operation, app installation or engine deployment
+was performed. No main checkout changes or merge were made. Existing frozen
+studies and run artifacts were not migrated; the new operation catalog grants
+no unsupported execution authority.

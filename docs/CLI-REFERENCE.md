@@ -192,6 +192,9 @@ The command table below is checked against the declared client verb specs.
 <!-- BEGIN CLIENT-STUDY-ASSEMBLY -->
 
 ```text
+steerlab science list
+steerlab science guide <method>
+steerlab science operation <operation>
 steerlab pack preview <file>
 steerlab pack apply <file> --review-sha256 <digest>
 steerlab pack export <study>
@@ -847,6 +850,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   remote <verb> (--site <id> | --url <server>)  Cluster client.
   cluster <verb> …                              Cluster lifecycle.
   install version | stamp | verify              This build's identity and the integrity of its install.
+  science list | guide <method> | operation <operation>  Shared method guidance and supported execution interfaces.
   authoring study <intent> | prompt <kind> …    Generation prompts for missing study data.
   docs cli-reference [--check | --write]        Regenerate the reference document.
   panel <verb> …                                Panel scenarios and seat casting.
@@ -2819,12 +2823,18 @@ every pass, steered ≠ baseline, and α=0 reproduces baseline exactly.
 ```
 steerlab-cli authoring prompt <kind> [--concept <name>] [--count <n>] [--decision <text>] [--held-out <n>] [--name <name>] [--negative <text>] [--positive <text>] [--shape <contentPair|singleStimulus>] [--template-id <id>] [--validation-count <n>]
 steerlab-cli authoring study <intent>
+steerlab-cli science list
+steerlab-cli science guide <method>
+steerlab-cli science operation <operation>
 ```
 
 | Verb | Purpose |
 |---|---|
 | `authoring prompt` | Emit the generation prompt for one kind of missing study data, with its audit battery as numbers. |
 | `authoring study` | Emit the same conceptual study interview and pack instructions used by SwiftUI. |
+| `science list` | List shipped methods, supported operation interfaces and engine restrictions; does not execute. |
+| `science guide` | Read the shared method guide, dataset schemas and coworker/reviewer instructions. |
+| `science operation` | Inspect exact public execution paths, outputs and restrictions for one operation. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-authoring END -->
@@ -3121,6 +3131,9 @@ steerlab-server experiment evaluate <name> [--allow-unverified-epoch] [--resume-
 steerlab-server experiment analyze <name> [--adjudicated-endpoint <file>] [--allow-unverified-epoch] [--source <run-dir>]
 steerlab-server experiment promote <name> <concept> [--agent-name <name>] [--cell <layer>:<alpha>] [--expect-artifact <runDir/name>] [--expect-artifact-hash <sha256>] [--expect-cell <layer>:<alpha>] [--expect-epoch <sha256>] [--qualification <path>] [--reason <text>] [--sweep-run <run-dir>]
 steerlab-server experiment confirm <name> --agent <name-or-path> [--deltas <d1,d2>] [--no-control]
+steerlab-server experiment rescore-style <name> [--allow-unverified-epoch] [--source <run-dir>]
+steerlab-server experiment complete-judgment <name> --awaiting-run <value> --judgments <value>
+steerlab-server experiment complete-sweep-judgment <name> --awaiting-run <value> --judgments <value>
 ```
 
 | Verb | Purpose |
@@ -3136,6 +3149,9 @@ steerlab-server experiment confirm <name> --agent <name-or-path> [--deltas <d1,d
 | `experiment analyze` | Compute paired effect sizes from a completed run into a fresh run directory. |
 | `experiment promote` | Mint a variant artifact from the sweep-selected cell, with its birth certificate. |
 | `experiment confirm` | Expand a perturbation policy around a promoted agent into hashed conditions. |
+| `experiment rescore-style` | Rescore recorded style through the pinned taxonomy into a new run; preserve the source. |
+| `experiment complete-judgment` | Complete a deferred evaluation through its packet, instruction, epoch and coverage gates. |
+| `experiment complete-sweep-judgment` | Complete a deferred sweep through its original packet and epoch gates; may append a draft recommendation. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:server-experiment END -->

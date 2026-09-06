@@ -486,6 +486,15 @@ VERB_SPECS: tuple[VerbSpec, ...] = (
              # in `required_flags`, because `--source` is optional on every
              # other analyze.
              value_flags=frozenset({"--source", "--adjudicated-endpoint"})),
+    VerbSpec("experiment", "rescore-style", positional="<name>",
+             purpose="Rescore recorded style through the pinned taxonomy into a new run; preserve the source.",
+             boolean_flags=frozenset({"--allow-unverified-epoch"}), value_flags=frozenset({"--source"})),
+    VerbSpec("experiment", "complete-judgment", positional="<name>",
+             purpose="Complete a deferred evaluation through its packet, instruction, epoch and coverage gates.",
+             value_flags=frozenset({"--awaiting-run", "--judgments"}), required_flags=frozenset({"--awaiting-run", "--judgments"})),
+    VerbSpec("experiment", "complete-sweep-judgment", positional="<name>",
+             purpose="Complete a deferred sweep through its original packet and epoch gates; may append a draft recommendation.",
+             value_flags=frozenset({"--awaiting-run", "--judgments"}), required_flags=frozenset({"--awaiting-run", "--judgments"})),
     VerbSpec("experiment", "promote", positional="<name> <concept>",
              purpose="Mint a variant artifact from the sweep-selected cell, "
                      "with its birth certificate.",
