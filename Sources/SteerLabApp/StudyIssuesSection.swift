@@ -25,7 +25,7 @@ struct StudyIssuesSection: View {
     @State private var dataBlockers: [DataRequirement] = []
 
     private var advisories: [String] {
-        var lines = panel.freezeReadiness?.advisories ?? []
+        var lines = panel.freezeCoordinator.freezeReadiness?.advisories ?? []
         if let pipeline = PipelineDraft.parse(manifest.pipeline),
             pipeline.isGateless
         {

@@ -774,7 +774,9 @@ public final class SteerLabWebServer: Sendable {
             return .ok()
 
         case ("POST", "/api/experiment/freeze"):
-            service.experiments.freeze()
+            service.experiments.freezeCoordinator.freeze(
+                name: service.experiments.management.selectedName,
+                runSubstrate: service.experiments.freezeEvidenceRunSubstrate)
             return .ok()
 
         case ("POST", "/api/experiment/duplicate"):

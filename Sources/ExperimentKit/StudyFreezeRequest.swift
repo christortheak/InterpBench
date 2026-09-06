@@ -12,13 +12,15 @@ struct StudyFreezeRequest {
 @MainActor
 struct StudyFreezeTransport {
     let origin: RemoteJobOrigin?
+    var serverOrigin: EvidenceImportOrigin? = nil
     var status: (String) async throws -> String?
     var manifestBody: (String) async throws -> Data
     var freeze: (String) async throws -> RemoteFreezeResult
     var replace: (String, Data, String) async throws -> ClusterClient.RemoteManifestReplaceResult
 
-    init(client: ClusterClient) {
-        origin = RemoteJobOrigin(connection: client.profile, workspaceRoot: WorkspaceRoot.current)
+    init(client: ClusterClient, workspaceRoot: URL, serverOrigin: EvidenceImportOrigin?) {
+        self.serverOrigin = serverOrigin
+        origin = RemoteJobOrigin(connection: client.profile, workspaceRoot: workspaceRoot)
         status = { try await client.experimentDetail(name: $0).status }
         manifestBody = { try await client.experimentManifestBody(name: $0) }
         freeze = { try await client.freezeExperiment(name: $0) }

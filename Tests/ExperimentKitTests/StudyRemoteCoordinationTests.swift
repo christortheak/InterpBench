@@ -286,9 +286,10 @@ struct StudyRemoteCoordinationTests {
     @Test func deferredPipelineActionRefusesChangedManifest() async throws {
         try await withWorkspace { manifest in
             let panel = ExperimentPanel()
-            let submit = panel.pipelineSubmissionAction(
-                manifest: manifest,
-                request: panel.submission.snapshot)
+            let submit = panel.bundleSubmission.pipelineSubmissionAction(
+                manifest: manifest, request: panel.submission.snapshot,
+                options: panel.submission, execution: panel.serverExecution,
+                in: panel.operationEnvironment)
             var changed = manifest
             changed.maxTokens += 1
             try ExperimentStore.save(changed)

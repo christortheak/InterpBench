@@ -381,11 +381,11 @@ public struct PipelineDraft: Equatable, Sendable {
 public enum LocalPipelineCatalog {
 
     public static func summaries(
-        experiment: String
+        experiment: String, workspaceRoot: URL = ExperimentStore.workspaceRoot
     ) -> [ClusterClient.PipelineRunSummary] {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
-            at: ExperimentStore.runsDirectory,
+            at: workspaceRoot.appending(component: "runs"),
             includingPropertiesForKeys: [.isDirectoryKey])
         else { return [] }
         return entries

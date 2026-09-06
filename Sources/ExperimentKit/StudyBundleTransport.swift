@@ -22,14 +22,13 @@ struct StudyBundleTransport {
         self.submit = submit
     }
 
-    init(client: ClusterClient) {
-        origin = RemoteJobOrigin(connection: client.profile, workspaceRoot: ExperimentStore.workspaceRoot)
+    init(client: ClusterClient, workspaceRoot: URL) {
+        origin = RemoteJobOrigin(connection: client.profile, workspaceRoot: workspaceRoot)
         frozenConflict = { manifest in
             await client.frozenOnServerConflict(study: manifest.name, localStatus: manifest.status)
         }
-        let workspaceRoot = ExperimentStore.workspaceRoot
         package = { manifest in
-            guard ExperimentStore.workspaceRoot == workspaceRoot else {
+            guard ExperimentStore.workspaceRoot.standardizedFileURL == workspaceRoot.standardizedFileURL else {
                 throw ChatServiceError(reason: "The workspace changed before packaging; submit from the intended workspace.")
             }
             let source = RunBundlePackager.captureSource(manifest)

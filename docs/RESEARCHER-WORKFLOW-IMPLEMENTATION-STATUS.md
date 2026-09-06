@@ -74,7 +74,7 @@ The full earlier checkpoint/test ledger is preserved in the
 [validation history](RESEARCHER-WORKFLOW-VALIDATION-HISTORY.md). Its results are
 historical evidence, not a substitute for testing the current branch.
 
-## Current authoring checkpoint: management bridge retirement
+## Management checkpoint: `64102bf`
 
 Removed `StudyManagementBindings.swift` and redirected its six properties and
 sixteen commands to their management/design owners across 27 caller files.
@@ -102,19 +102,41 @@ Verification on 2026-09-06:
 This new checkpoint awaits the designated agent's independent diff review and
 validation; the approval of `95d14aa` does not cover it.
 
-This completes the management bridge slice of WP-2. Freeze coordination and
-remote coordination are the next bridge slices; retained writer preconditions,
+This completed the management bridge slice of WP-2. The next checkpoint below
+also retires freeze and remote coordination; retained writer preconditions,
 context coverage and public-surface parity remain separate acceptance work.
 The earlier audit's non-blocking observation about logging first allocation
 capture, and live accounting qualification, remain follow-up notes.
 
+## Current checkpoint: all four Swift bridges retired
+
+Freeze, draft sync, named server execution, delayed pipeline submission and
+pipeline ledger observation now enter their focused controllers directly.
+The panel supplies explicit runtime context and credential resolution.
+Workspace, connection and serving-root changes cannot redirect admitted work;
+selection and reviewed bytes additionally guard freeze and delayed pipeline
+operations. Observation does not read Keychain credentials. The server digest
+review used by draft sync is bound to the serving root, not just the endpoint.
+
+This is semantic coordination work; the management AST proof remains pinned to
+`64102bf`. Both bridge checks now pass without changing their baseline inventory.
+See the [consolidated audit handoff](RESEARCHER-WORKFLOW-AUTHORING-AUDIT-HANDOFF.md)
+for current test evidence, the full review range and remaining qualification.
+
+Current verification: **277 SteeringKit + 4,539 ExperimentKit passed** in the
+full serial Xcode beta suite; **5,928 Python tests passed, 9 skipped**. The
+management checkpoint AST audit reproduced with zero differences across
+30 files. Both bridge gates and whitespace checks pass. The new serving-root
+regression caught a missing comparison in the first full Swift run; after the
+correction the entire Swift suite passed. This checkpoint still awaits the
+maintainer's designated independent review and integration process.
+
 ## What remains to implement the vision
 
 1. **Finish shared authoring and context ownership (WP-1/2).** Complete the
-   remaining draft writer/adapter migration and retire the two remaining
-   Swift bridges. Observation, auxiliary jobs and delayed actions still need
-   end-to-end context coverage. The normal bridge ratchet passes; the 1.0
-   release gate must refuse until all bridges are removed.
+   remaining draft writer/adapter migration. All four Swift bridges are
+   retired, and normal/release bridge checks pass. Observation, auxiliary jobs
+   and delayed actions outside this slice still need end-to-end context coverage.
 2. **Complete public surface equivalence (WP-3/4).** Fill cross-platform design,
    model preparation, study assembly and advanced-method gaps; ship practical
    method guides, dataset templates and coworker prompts. Every supported

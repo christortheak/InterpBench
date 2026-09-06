@@ -11,6 +11,28 @@ public final class StudyServerJobCoordinator {
         jobs.presentation.note(text, severity)
     }
 
+    public func run(
+        experimentName name: String, verb: String, in environment: StudyOperationEnvironment
+    ) async {
+        guard let context = environment.current(), context.isServer else {
+            note("no server workspace active — switch the substrate selector first", severity: .info)
+            return
+        }
+        guard environment.isCurrent(context) else { return }
+        guard let client = environment.connect() else {
+            note("invalid server URL", severity: .error)
+            return
+        }
+        guard environment.isCurrent(context), client.profile == context.client?.profile else {
+            note("server run stopped because the workspace or server changed; review it and try again", severity: .warning)
+            return
+        }
+        await run(
+            experimentName: name, verb: verb, substrate: context.substrate,
+            transport: StudyServerJobTransport(client: client, jobs: jobs, workspaceRoot: context.workspaceRoot),
+            isCurrent: { environment.isCurrent(context) })
+    }
+
     func run(
         experimentName name: String, verb: String,
         substrate: String, transport: StudyServerJobTransport,
@@ -178,8 +200,8 @@ struct StudyServerJobTransport {
         self.refreshRecentJobs = refreshRecentJobs
     }
 
-    init(client: ClusterClient, jobs: StudyRemoteJobController) {
-        origin = RemoteJobOrigin(connection: client.profile, workspaceRoot: ExperimentStore.workspaceRoot)
+    init(client: ClusterClient, jobs: StudyRemoteJobController, workspaceRoot: URL) {
+        origin = RemoteJobOrigin(connection: client.profile, workspaceRoot: workspaceRoot)
         experimentNames = { try await client.experimentNames() }
         submit = { try await client.submitExperimentJob(experiment: $0, verb: $1) }
         follow = { id, title, label, mirror in

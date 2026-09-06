@@ -284,6 +284,32 @@ struct StudyFreezeCoordinationTests {
         }
     }
 
+    @Test(arguments: [false, true])
+    func reviewedServerVersionIsScopedToTheServingRoot(changed: Bool) async throws {
+        try await withWorkspace { manifest in
+            let owner = StudyFreezeController()
+            var different = manifest
+            different.maxTokens += 1
+            var io = transport(different)
+            io.serverOrigin = .init(serverIdentity: "fixture", remoteRoot: "/remote/first",
+                workspaceRoot: ExperimentStore.workspaceRoot)
+            var writes = 0
+            io.replace = { name, _, _ in
+                writes += 1
+                return .init(name: name, status: "draft", preserved: nil)
+            }
+            let captured = request(manifest)
+            await owner.freezeOnServer(request: captured, transport: io)
+            if changed {
+                // Same endpoint, pairing and local workspace; another serving root must re-review.
+                io.serverOrigin = .init(serverIdentity: "fixture", remoteRoot: "/remote/second",
+                    workspaceRoot: ExperimentStore.workspaceRoot)
+            }
+            await owner.pushManifest(request: captured, transport: io)
+            #expect(writes == (changed ? 0 : 1))
+        }
+    }
+
     @Test func concurrentLocalEditPreventsAdoptingTheServersPreservedPin() async throws {
         try await withWorkspace { manifest in
             let owner = StudyFreezeController()

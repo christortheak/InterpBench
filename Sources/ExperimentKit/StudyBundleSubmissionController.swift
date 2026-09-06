@@ -18,6 +18,72 @@ public final class StudyBundleSubmissionController {
         return .failure(.init(reason: reason))
     }
 
+    /// Capture the intended workspace, bytes and options before presenting a GPU warning.
+    public func pipelineSubmissionAction(
+        manifest: ExperimentManifest, request: StudySubmissionRequest,
+        options: StudySubmissionOptions, execution: StudyServerJobCoordinator,
+        in environment: StudyOperationEnvironment
+    ) -> @MainActor () async -> Void {
+        let context = environment.current()
+        let manifestData = context?.manifestData(name: manifest.name)
+        return { [weak self] in
+            guard let self else { return }
+            guard let context, environment.isCurrent(context, selection: true),
+                let manifestData,
+                context.manifestData(name: manifest.name) == manifestData else {
+                self.note(
+                    "pipeline submission stopped because the workspace, server or study changed; review it and submit again",
+                    severity: .warning)
+                return
+            }
+            options.remoteVerb = "pipeline"
+            _ = await self.submit(
+                manifest, request: request.replacingVerb("pipeline"), followLog: true,
+                execution: execution, in: environment,
+                admission: {
+                    environment.isCurrent(context, selection: true)
+                        && context.manifestData(name: manifest.name) == manifestData
+                })
+        }
+    }
+
+    @discardableResult
+    public func submit(
+        _ manifest: ExperimentManifest, request: StudySubmissionRequest, followLog: Bool,
+        execution: StudyServerJobCoordinator, in environment: StudyOperationEnvironment,
+        admission: @escaping @MainActor () -> Bool = { true }
+    ) async -> Result<String, StudyBatchSubmission.Failure> {
+        guard let context = environment.current(), environment.isCurrent(context), admission() else {
+            return contextChanged()
+        }
+        guard let client = environment.connect() else {
+            jobs.remoteStatus = "invalid server URL"
+            let refusal = "remote submit refused: no server connection — connect a "
+                + "server in the substrate selector first"
+            note(refusal, severity: .error)
+            return .failure(.init(reason: refusal))
+        }
+        guard environment.isCurrent(context), client.profile == context.client?.profile, admission() else {
+            return contextChanged()
+        }
+        let isCurrent: @MainActor () -> Bool = { environment.isCurrent(context) && admission() }
+        var follower: (@MainActor (String, String, String, Bool) -> Void)?
+        if followLog {
+            follower = { [weak self, weak execution] id, verb, study, dryRun in
+                self?.jobs.follow { [weak execution] in
+                    await execution?.followBundle(
+                        jobID: id, verb: verb, study: study, dryRun: dryRun,
+                        client: client, hasDisplay: context.hasDisplay, isCurrent: isCurrent)
+                }
+            }
+        }
+        return await submit(
+            manifest, request: request, capabilities: context.capabilities,
+            substrate: context.substrate,
+            transport: StudyBundleTransport(client: client, workspaceRoot: context.workspaceRoot),
+            isCurrent: isCurrent, follow: follower)
+    }
+
     @discardableResult
     func submit(
         _ manifest: ExperimentManifest,

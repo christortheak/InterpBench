@@ -1,9 +1,44 @@
 # Swift bridge retirement: required before 1.0
 
-The next substantive Swift refactor is the panel-authoring migration. Its exit
-criterion is removal of all four transitional bridge files, with callers using
-focused owners or intentional panel commands. No compatibility bridge may ship
-in 1.0 or in the codebase linked from the launch blog.
+All four transitional bridge files are removed on
+`codex/researcher-workflow-authoring`. Callers use focused owners directly;
+there is no replacement forwarding layer. Both normal and release-mode bridge
+checks pass. This satisfies the source-retirement gate; independent review,
+interactive qualification and integration remain outstanding. No compatibility
+bridge may ship in 1.0 or in the codebase linked from the launch blog.
+
+## Freeze and remote coordination retirement
+
+The final slice removes `StudyFreezeBindings.swift` and
+`StudyRemoteCoordinationBindings.swift`. Freeze admission belongs to
+`StudyFreezeController`, server-copy dispatch to `StudyServerJobCoordinator`,
+bundle and delayed pipeline submission to `StudyBundleSubmissionController`,
+and ledger observation to `StudyPipelineController`. The panel supplies
+`StudyOperationEnvironment`: a weak surface-context reader and an explicit
+credential resolver. It owns no new command dispatch or forwarding aliases.
+
+This is a **semantic coordination migration**, not a mechanically equivalent
+move. Deliberate changes requiring review:
+
+- Capture selection, workspace, connection profile and serving identity before
+  credential resolution; recheck before network work. Observation reads the
+  in-memory client without resolving credentials.
+- Freeze and delayed pipeline actions retain selection. Named server runs and
+  batch submissions retain their named target, independently of UI selection.
+- Pipeline warnings retain the reviewed file bytes through credential
+  resolution and submission admission; missing files no longer compare as two
+  equal optional values. Byte preconditions remain outside scientific JSON.
+- Draft sync requires an active server workspace and unchanged local bytes at
+  admission. A reviewed server digest is scoped to its serving identity/root,
+  so a new root on the same endpoint cannot reuse it.
+- Local pipeline listings and transport origins receive the captured workspace
+  explicitly. Bundle packaging still uses the existing store adapter, guarded
+  against a changed process workspace before capturing its package source.
+
+The existing scientific gate, lifecycle and evidence tests remain required,
+as do the new environment and serving-root regressions. The
+[consolidated audit handoff](RESEARCHER-WORKFLOW-AUTHORING-AUDIT-HANDOFF.md)
+records the review range, validation and remaining limitations.
 
 ## Management bridge retirement (follow-up to 95d14aa)
 
@@ -31,14 +66,15 @@ Reproduce with Xcode beta and scratch outside the checkout:
 export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
 export TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.920.1
 management_scratch=$(mktemp -d /private/tmp/management-owner-audit.XXXXXX)
-mkdir "$management_scratch/before"
+mkdir "$management_scratch/before" "$management_scratch/after"
 git archive 95d14aa Sources Tests | tar -x -C "$management_scratch/before"
+git archive 64102bf Sources Tests | tar -x -C "$management_scratch/after"
 management_host="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host"
 xcrun swiftc -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
   -target arm64-apple-macosx15.0 -I "$management_host" -L "$management_host" \
   -Xlinker -rpath -Xlinker "$management_host" \
   scripts/ci/audit-study-management.swift -o "$management_scratch/audit"
-"$management_scratch/audit" "$PWD" "$management_scratch/before"
+"$management_scratch/audit" "$management_scratch/after" "$management_scratch/before"
 ```
 
 This audit describes the management-retirement checkpoint. Subsequent semantic
@@ -46,10 +82,9 @@ changes must be audited at their own checkpoint rather than weakening this
 comparison. The older inventory and audit instructions below are historical;
 they preserve the baseline and proof for the previous migrations.
 
-**Two bridges remain:** `StudyFreezeBindings.swift` and
-`StudyRemoteCoordinationBindings.swift`. Their context acquisition and delayed
-operations require their own migration and review. The normal ratchet must pass;
-the 1.0 release gate must still refuse until both are retired.
+At `64102bf`, two bridges remained and the release gate correctly refused.
+The final slice above retires them; this historical audit remains pinned to
+`64102bf` rather than normalizing away subsequent semantic changes.
 
 ## Earlier implementation checkpoints
 

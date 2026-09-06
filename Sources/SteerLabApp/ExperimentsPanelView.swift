@@ -113,7 +113,9 @@ struct ExperimentsPanelView: View {
                         submitAction: {
                             let panel = panel
                             let request = panel.submission.snapshot(verb: "pipeline")
-                            let submit = panel.pipelineSubmissionAction(manifest: manifest, request: request)
+                            let submit = panel.bundleSubmission.pipelineSubmissionAction(
+                                manifest: manifest, request: request, options: panel.submission,
+                                execution: panel.serverExecution, in: panel.operationEnvironment)
                             ModelJobGPUGate.submit(
                                 "study pipeline", service: service,
                                 pending: $pendingModelJob,
@@ -177,9 +179,13 @@ struct ExperimentsPanelView: View {
                                 serverHasSelectedStudy: panel.serverHasSelectedStudy,
                                 workspaceKnownUnpaired: panel.isKnownUnpairedServerWorkspace),
                             violations: panel.violations,
-                            freezeLocally: { panel.freeze() },
-                            freezeOnServer: { await panel.freezeOnActiveServer() },
-                            syncDraft: { await panel.pushManifestToActiveServer() })
+                            freezeLocally: {
+                                panel.freezeCoordinator.freeze(
+                                    name: panel.management.selectedName,
+                                    runSubstrate: panel.freezeEvidenceRunSubstrate)
+                            },
+                            freezeOnServer: { await panel.freezeCoordinator.freezeOnServer(in: panel.operationEnvironment) },
+                            syncDraft: { await panel.freezeCoordinator.pushManifest(in: panel.operationEnvironment) })
                     }
                     // Duplicate as Draft and Delete moved UP to the Study
                     // section (2026-08-06): the four things you do TO a study
@@ -290,7 +296,7 @@ struct ExperimentsPanelView: View {
                     if service.cluster.computeTarget == .server || !panel.pipelines.localPipelineRuns.isEmpty {
                         StudyPipelinesView(pipelines: panel.pipelines,
                             substrateLabel: service.cluster.substrateLabel,
-                            refresh: { await panel.refreshPipelineRuns() },
+                            refresh: { await panel.pipelines.refresh(in: panel.operationEnvironment) },
                             duplicateStudy: { panel.management.duplicateSelected() })
                     }
                 }

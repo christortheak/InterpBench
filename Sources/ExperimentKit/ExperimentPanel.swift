@@ -251,6 +251,27 @@ public final class ExperimentPanel {
     /// rest of the app is connected to.
     public var cluster: ClusterConnectionStore? { host?.cluster }
 
+    /// Surface context for focused controllers. Reading it never prompts for credentials.
+    public var operationEnvironment: StudyOperationEnvironment {
+        StudyOperationEnvironment(
+            current: { [weak self] in
+                guard let self else { return nil }
+                return StudyOperationContext(
+                    workspaceRoot: ExperimentStore.workspaceRoot,
+                    selectedName: self.management.selectedName,
+                    selectedIsDraft: self.management.selected?.status == .draft,
+                    serverURL: self.cluster?.serverURL, isServer: self.isServerWorkspace,
+                    pairing: self.cluster?.activeServerPairing,
+                    substrate: self.cluster?.substrateLabel ?? "server",
+                    capabilities: self.cluster?.capabilities, client: self.cluster?.client,
+                    hasDisplay: self.host != nil, serverOrigin: self.cluster?.evidenceImportOrigin)
+            },
+            connect: { [weak self] in
+                self?.cluster?.loadStoredToken()
+                return self?.cluster?.client
+            })
+    }
+
     private var remoteClient: ClusterClient? { cluster?.client }
 
     private func loadStoredRemoteToken() {
@@ -573,7 +594,7 @@ public final class ExperimentPanel {
         studyFocusOverride = nil
         refresh()
         syncDraftFieldsFromSelection(force: true)
-        Task { await refreshPipelineRuns() }
+        Task { await pipelines.refresh(in: operationEnvironment) }
     }
 
     /// Pin a file the Data Readiness checklist just scaffolded, and persist it.
@@ -1141,7 +1162,7 @@ public final class ExperimentPanel {
             return
         }
         if isServerWorkspace {
-            await runExperimentVerbOnActiveServer(experimentName: name, verb: "sweep")
+            await serverExecution.run(experimentName: name, verb: "sweep", in: operationEnvironment)
             return
         }
         await localJobs.runSweep(experimentName: name)
@@ -1240,8 +1261,9 @@ public final class ExperimentPanel {
             note("select a study first", severity: .info)
             return
         }
-        _ = await submitStudyRemotely(
-            manifest, verbOverride: verbOverride, followLog: true)
+        _ = await bundleSubmission.submit(
+            manifest, request: submission.snapshot(verb: verbOverride), followLog: true,
+            execution: serverExecution, in: operationEnvironment)
     }
 
     /// Whether a bundle submission has anywhere to go. Read by the batch UI so
@@ -1265,7 +1287,8 @@ public final class ExperimentPanel {
                 StudyBatchSubmission.Failure(
                     reason: "study '\(name)' is no longer in this workspace"))
         }
-        return await submitStudyRemotely(manifest, followLog: false)
+        return await bundleSubmission.submit(manifest, request: submission.snapshot, followLog: false,
+            execution: serverExecution, in: operationEnvironment)
     }
 
     // MARK: Two-phase sweep judgment (key-custody design 2026-07-18)
@@ -1339,7 +1362,7 @@ public final class ExperimentPanel {
             note("select a study first", severity: .info)
             return
         }
-        await runExperimentVerbOnActiveServer(experimentName: name, verb: verb)
+        await serverExecution.run(experimentName: name, verb: verb, in: operationEnvironment)
     }
 
     /// Refreshes recent-job states from the server (`client.jobs()`,
@@ -1491,7 +1514,7 @@ public final class ExperimentPanel {
             refreshResults(selecting: imported.lastPathComponent)
             // An imported chain appears under Imported / local immediately
             // — the round trip is visible without a manual refresh.
-            await refreshPipelineRuns()
+            await pipelines.refresh(in: operationEnvironment)
         } catch {
             results.remoteResultsStatus = "evidence import failed: \(error)"
         }
@@ -1767,7 +1790,7 @@ public final class ExperimentPanel {
             refreshResults(selecting: imported.lastPathComponent)
             // An imported chain appears under Imported / local immediately
             // — the round trip is visible without a manual refresh.
-            await refreshPipelineRuns()
+            await pipelines.refresh(in: operationEnvironment)
         } catch {
             let failureMessage = "evidence import failed: \(error)"
             remoteJobs.remoteStatus = failureMessage

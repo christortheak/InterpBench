@@ -17,15 +17,16 @@ public final class StudyPipelineController {
         pipelineRuns = []
         localPipelineRuns = []
     }
-    func refresh(name: String?, client: ClusterClient?, isCurrent: @escaping @MainActor () -> Bool)
-        async
-    {
+    public func refresh(in environment: StudyOperationEnvironment) async {
+        guard let context = environment.current() else { return }
+        let client = context.isServer ? context.client : nil
         await refresh(
-            name: name, local: { LocalPipelineCatalog.summaries(experiment: $0) },
+            name: context.selectedName,
+            local: { LocalPipelineCatalog.summaries(experiment: $0, workspaceRoot: context.workspaceRoot) },
             remote: client.map { client in
                 { name in try await client.pipelineRuns(experiment: name) }
             },
-            isCurrent: isCurrent)
+            isCurrent: { environment.isCurrent(context, selection: true) })
     }
     func refresh(
         name: String?,

@@ -36,6 +36,13 @@ migration that rewrites frozen bytes.
 
 ### Changed
 
+- Freeze, draft-sync, server-run and pipeline consumers now call focused Swift
+  controllers directly; the remaining two coordination bridges are removed.
+  Operations capture and recheck their workspace and server before credential
+  resolution can redirect them. Delayed pipeline actions retain reviewed bytes
+  and selection; ledger observation uses its captured root without credential
+  access. Server-draft reviews are also scoped to the serving directory.
+
 - Swift study-management consumers now call `StudyManagementController` and
   `StudyDesignLibrary` directly. The management compatibility bridge and its
   six property/sixteen command forwards are removed; study creation supplies
@@ -83,8 +90,9 @@ migration that rewrites frozen bytes.
   428 requirement. Coordinate other manifest PUT clients before engine rollout.
 - Choose a deployment's service role separately. This branch does not change
   private launch profiles, install an app, or deploy an engine.
-- Two of four Swift compatibility bridges are retired; two remain blocked from
-  1.0 by the release gate. Complete journey/UI/GPU qualification and the remaining
+- All four Swift compatibility bridges are retired; independent review and
+  interactive qualification remain required before 1.0. The bridge release
+  gate passes. Complete journey/UI/GPU qualification and the remaining
   [implementation scope](docs/RESEARCHER-WORKFLOW-IMPLEMENTATION-STATUS.md)
   before claiming the researcher workflow vision is complete.
 

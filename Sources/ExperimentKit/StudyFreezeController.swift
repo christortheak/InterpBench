@@ -50,7 +50,7 @@ public final class StudyFreezeController {
     @ObservationIgnored var presentation = StudyFreezePresentation()
     @ObservationIgnored private var activeOperation = UUID()
 
-    @ObservationIgnored private var reviewedServer: (name: String, digest: String, origin: RemoteJobOrigin?)?
+    @ObservationIgnored private var reviewedServer: (name: String, digest: String, origin: RemoteJobOrigin?, serverOrigin: EvidenceImportOrigin?)?
 
     public func resetSelection() {
         reviewedServer = nil
@@ -95,6 +95,72 @@ public final class StudyFreezeController {
             serverFreezeCrossSubstrateAdvisory = ExperimentStore.crossSubstrateValidationAdvisory(
                 for: manifest, perspective: WorkspaceScoping.serverSubstrate)
         }
+    }
+
+    public func freezeOnServer(in environment: StudyOperationEnvironment) async {
+        guard let context = environment.current(), let name = context.selectedName else {
+            note("select a study first")
+            return
+        }
+        guard context.isServer else {
+            note("no server workspace active — switch the substrate selector first")
+            return
+        }
+        let request = request(name: name, context: context)
+        guard environment.isCurrent(context, selection: true) else { return }
+        guard let client = environment.connect() else {
+            note("invalid server URL", severity: .error)
+            return
+        }
+        guard environment.isCurrent(context, selection: true),
+            client.profile == context.client?.profile,
+            context.manifestData(name: name) == request.localData else {
+            note("freeze stopped because the workspace, server or study changed; review it and try again", severity: .warning)
+            return
+        }
+        await freezeOnServer(
+            request: request,
+            transport: StudyFreezeTransport(client: client, workspaceRoot: context.workspaceRoot, serverOrigin: context.serverOrigin),
+            isCurrent: { environment.isCurrent(context, selection: true) })
+    }
+
+    public func pushManifest(in environment: StudyOperationEnvironment) async {
+        guard let context = environment.current(), let name = context.selectedName else {
+            note("select a study first")
+            return
+        }
+        guard context.selectedIsDraft else {
+            note("only a DRAFT manifest can be pushed as the server's copy — "
+                + "frozen studies are read-only; duplicate to iterate")
+            return
+        }
+        guard context.isServer else {
+            note("no server workspace active — switch the substrate selector first")
+            return
+        }
+        let request = request(name: name, context: context)
+        guard environment.isCurrent(context, selection: true) else { return }
+        guard let client = environment.connect() else {
+            note("invalid server URL", severity: .error)
+            return
+        }
+        guard environment.isCurrent(context, selection: true),
+            client.profile == context.client?.profile,
+            context.manifestData(name: name) == request.localData else {
+            note("draft sync stopped because the workspace, server or study changed; review it and try again", severity: .warning)
+            return
+        }
+        await pushManifest(
+            request: request,
+            transport: StudyFreezeTransport(client: client, workspaceRoot: context.workspaceRoot, serverOrigin: context.serverOrigin),
+            isCurrent: { environment.isCurrent(context, selection: true) })
+    }
+
+    private func request(name: String, context: StudyOperationContext) -> StudyFreezeRequest {
+        StudyFreezeRequest(
+            workspaceRoot: context.workspaceRoot, name: name,
+            localData: context.manifestData(name: name), localIsDraft: context.selectedIsDraft,
+            substrate: context.substrate, workspacePaired: context.pairing == .paired)
     }
 
     public func freeze(name: String?, runSubstrate: String) {
@@ -195,7 +261,7 @@ public final class StudyFreezeController {
             transport: transport, name: name, substrate: substrate, localData: localData,
             serverReportedStatus: serverReportedStatus, recordRead: { bytes in
                 guard current() else { return }
-                self.reviewedServer = (name, ManifestFileTransaction.digest(bytes), transport.origin)
+                self.reviewedServer = (name, ManifestFileTransaction.digest(bytes), transport.origin, transport.serverOrigin)
             })
         guard current() else { return }
         let precheck = FreezeRouting.remoteFreezePrecheck(
@@ -344,7 +410,8 @@ public final class StudyFreezeController {
         do {
             note("updating \(substrate)'s copy of '\(name)'…", severity: .info)
             guard let reviewed = reviewedServer, reviewed.name == name,
-                reviewed.origin == transport.origin
+                reviewed.origin == transport.origin,
+                reviewed.serverOrigin == transport.serverOrigin
             else {
                 note("Check the server manifest again before syncing; its reviewed file version is unavailable for this connection.", severity: .warning)
                 return
@@ -370,7 +437,7 @@ public final class StudyFreezeController {
                 localData: try? ExperimentRepository(workspaceRoot: request.workspaceRoot).snapshot(name: name).data,
                 serverReportedStatus: result.status, recordRead: { bytes in
                     guard current() else { return }
-                    self.reviewedServer = (name, ManifestFileTransaction.digest(bytes), transport.origin)
+                    self.reviewedServer = (name, ManifestFileTransaction.digest(bytes), transport.origin, transport.serverOrigin)
                 })
             guard current() else { return }
             let outcome = FreezeRouting.serverDraftSyncOutcome(
