@@ -281,7 +281,8 @@ struct PipelineComposerSection: View {
     • Dose-monotone: the effect must grow with α across the sweep's \
     ladder, not appear at one cell only.
     • Exceeds random floor: the effect must beat the matched-norm random \
-    control's — proof it is the DIRECTION, not perturbation energy.
+    control’s. This tests specificity against that comparator; it does not \
+    establish direction-specific causality by itself.
     • Capability gate (free text): the capability-battery condition the \
     promoted agent must hold, e.g. "battery within 0.05 of baseline".
 

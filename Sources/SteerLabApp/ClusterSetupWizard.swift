@@ -19,6 +19,7 @@ struct ClusterSetupWizard: View {
     @State private var selectedEntryID: ClusterConnectionStore.ServerEntry.ID?
     @State private var showingNewSiteEditor = false
     @State private var showingSiteImporter = false
+    @State private var showingProfileCoauthoring = false
     @State private var siteImportConfirmation: SiteImportConfirmation?
     @State private var editingEntry: SiteEditTarget?
     @State private var stepError: String?
@@ -59,6 +60,9 @@ struct ClusterSetupWizard: View {
                 onSaved: { entry in
                     provisioner.selectSite(entry.resolvedSite)
                 })
+        }
+        .sheet(isPresented: $showingProfileCoauthoring) {
+            ClusterProfileCoauthoringSheet(onImport: { importSite($0) })
         }
         .fileImporter(
             isPresented: $showingSiteImporter, allowedContentTypes: [.json]
@@ -297,6 +301,8 @@ struct ClusterSetupWizard: View {
             }
             HStack {
                 Button("New Site…") { showingNewSiteEditor = true }
+                    .controlSize(.small)
+                Button("From documentation…") { showingProfileCoauthoring = true }
                     .controlSize(.small)
                 // WP5 §4.2: a real site arrives as JSON, so the wizard's first
                 // step has to be able to accept one. Same canonical registry,

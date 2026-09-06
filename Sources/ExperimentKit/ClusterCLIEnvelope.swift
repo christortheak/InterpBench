@@ -181,6 +181,8 @@ public struct ClusterCLIEnvelope: Encodable, Sendable, Equatable {
     /// secret value (the token is the `$(cat …)` indirection the env file
     /// carries).
     public var preview: ClusterSitePreview?
+    public var authoringGuide: ClusterProfileCoauthoring.Guide?
+    public var profileAuthoring: ClusterProfileCoauthoring.Review?
     /// `cluster import`'s report.
     public var importSummary: ImportSummary?
     public var error: Failure?
@@ -321,6 +323,18 @@ public enum ClusterCLIRenderer {
         // copies the env file out of the terminal, and a leading two spaces
         // would corrupt every line of it.
         if let preview = envelope.preview { lines += preview.humanLines }
+        if let guide = envelope.authoringGuide {
+            lines += [guide.authorPrompt, "Independent reviewer:", guide.reviewerPrompt]
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            if let data = try? encoder.encode(guide.draftExample) {
+                lines += ["Companion format (incomplete example):", String(decoding: data, as: UTF8.self)]
+            }
+        }
+        if let review = envelope.profileAuthoring {
+            lines += review.blockers.map { "  blocked: " + $0 }
+            lines += review.questions.map { "  question (" + $0.path + "): " + $0.question }
+        }
         if let layers = envelope.layers {
             lines.append("  layers:")
             for layer in layers { lines.append("    \(layer.layer): \(layer.state)") }

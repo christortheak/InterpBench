@@ -30,6 +30,8 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
     case sitesShow = "sites show"
     case sitesExport = "sites export"
     case sitesImport = "sites import"
+    case sitesGuide = "sites guide"
+    case sitesReview = "sites review"
     /// WP5 §3.3: read the complete generated environment and scheduler
     /// commands BEFORE anything runs. Read-only and offline — it touches no
     /// shell, no scheduler, and no network; it renders the saved profile.
@@ -74,11 +76,10 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
     /// The words that select it, in order.
     public var words: [String] { rawValue.split(separator: " ").map(String.init) }
 
-    /// Whether `--site` is required. Only the two verbs that operate on the
-    /// registry as a whole are exempt.
+    /// Registry-wide and offline document-authoring commands need no saved site.
     public var requiresSite: Bool {
         switch self {
-        case .sitesList, .sitesImport: false
+        case .sitesList, .sitesImport, .sitesGuide, .sitesReview: false
         default: true
         }
     }
@@ -88,7 +89,7 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
     /// per-site lock.
     public var isReadOnly: Bool {
         switch self {
-        case .sitesList, .sitesShow, .sitesExport, .preview, .status, .diagnose,
+        case .sitesList, .sitesShow, .sitesExport, .sitesGuide, .sitesReview, .preview, .status, .diagnose,
             .authCommand, .authStatus, .bootstrapStatus, .controllerStatus,
             .controllerLogs, .tunnelStatus, .plan:
             true
@@ -173,7 +174,7 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
         // profile data, so accepting one here would show an environment the
         // stored site does not imply — the exact confusion the preview exists
         // to remove.
-        case .sitesList, .sitesShow, .sitesExport, .sitesImport, .preview,
+        case .sitesList, .sitesShow, .sitesExport, .sitesImport, .sitesGuide, .sitesReview, .preview,
             .authCommand, .authOpen, .authStatus, .authClose,
             // `import` reads the site's declared storage roots and its ssh
             // transport, and nothing else the provisioning overrides carry
@@ -201,9 +202,13 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
     }
 
     /// The one positional argument the verb takes, spelled as the usage text
-    /// prints it. Empty for the twenty-seven that take none.
+    /// prints it. Empty for verbs that take none.
     public var positional: String {
-        self == .sitesImport ? "<profile.json>" : ""
+        switch self {
+        case .sitesImport: "<profile.json>"
+        case .sitesReview: "<draft.json>"
+        default: ""
+        }
     }
 
     /// One line saying what running the verb does. CONTRACT TEXT (WP0 step
@@ -216,6 +221,8 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
         case .sitesShow: "Print one site's registry record without probing it."
         case .sitesExport: "Write the site's profile — never a credential — to a file."
         case .sitesImport: "Upsert a site profile by its canonical remote identity."
+        case .sitesGuide: "Print cluster-document authoring and review prompts with the companion format."
+        case .sitesReview: "Check a sourced profile draft and render its plan without importing or connecting."
         case .preview:
             "Render the environment and scheduler commands this site will run."
         case .status: "Report each lifecycle layer's state, read-only."
@@ -249,7 +256,7 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
 
     /// The verb's declared flags, sorted, with the universal ones included.
     /// `--site` is listed only where it applies, which is what makes the
-    /// generated usage honest about the two registry-wide verbs.
+    /// generated usage honest about registry-wide and document-authoring verbs.
     public var declaredFlags: [String] {
         var flags = booleanFlags.union(valueFlags)
         if requiresSite { flags.insert("--site") }
@@ -736,6 +743,10 @@ public enum ClusterCLIParser {
         case .sitesImport where invocation.positional == nil:
             throw ClusterCLIError.missingArgument(
                 verb: matched.verb, what: "a profile JSON path")
+        case .sitesReview where invocation.positional == nil:
+            throw ClusterCLIError.missingArgument(verb: matched.verb, what: "a companion draft JSON path")
+        case .sitesGuide where invocation.positional != nil:
+            throw ClusterCLIError.unexpectedArgument(invocation.positional!)
         case .sitesExport where invocation.outPath == nil:
             throw ClusterCLIError.missingArgument(
                 verb: matched.verb, what: "--out <file>")

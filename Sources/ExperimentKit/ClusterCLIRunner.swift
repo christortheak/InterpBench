@@ -130,7 +130,9 @@ public struct ClusterCLIRunner: Sendable {
         // canonical registry already held it, goes out on the diagnostic
         // channel before any verb runs (`emit` is stdout in human mode and
         // stderr in JSON mode, so the one-document invariant survives).
-        if let summary = (try? repository.migrateLegacyStoresIfNeeded(now: now()))?
+        // Offline coauthoring neither consults nor migrates the private registry.
+        if invocation.verb != .sitesGuide, invocation.verb != .sitesReview,
+            let summary = (try? repository.migrateLegacyStoresIfNeeded(now: now()))?
             .summary {
             emit("site registry: \(summary)")
         }
@@ -215,6 +217,37 @@ public struct ClusterCLIRunner: Sendable {
         case .sitesShow: return try sitesShow(invocation)
         case .sitesExport: return try sitesExport(invocation)
         case .sitesImport: return try sitesImport(invocation)
+        case .sitesGuide:
+            var envelope = ClusterCLIEnvelope(verb: invocation.verb.displayName, state: .ready,
+                message: "Use the prompts and companion format to coauthor a profile from documentation.", observedAt: now())
+            envelope.authoringGuide = try ClusterProfileCoauthoring.guide()
+            return envelope
+        case .sitesReview:
+            guard let path = invocation.positional else {
+                throw ClusterCLIError.missingArgument(verb: invocation.verb, what: "a companion draft JSON path")
+            }
+            let review: ClusterProfileCoauthoring.Review
+            do {
+                review = try await ClusterProfileCoauthoring.review(data: Data(contentsOf: URL(filePath: path)))
+            } catch {
+                return .failure(verb: invocation.verb.displayName, code: "invalidProfileDraft",
+                    reason: "Could not read the companion/profile: \(error.localizedDescription)",
+                    repairAction: "Use `steerlab-cli cluster sites guide --json`; correct the companion schema and supported profile vocabulary, then review again.",
+                    state: .blocked)
+            }
+            var envelope = ClusterCLIEnvelope(verb: invocation.verb.displayName,
+                state: review.readyForImport ? .ready : .blocked,
+                message: review.readyForImport
+                    ? "Profile declarations are consistent; review the cited facts and rendered plan before importing."
+                    : "Resolve the profile's blockers and questions before importing.", observedAt: now())
+            if !review.readyForImport {
+                envelope.error = .init(code: "profileQuestions", reason: envelope.message,
+                    repairAction: "Resolve profileAuthoring.blockers/questions using cited documentation or researcher answers; run cluster sites review again before importing.")
+            }
+            envelope.advisories = review.advisories
+            envelope.profileAuthoring = review
+            envelope.preview = review.preview
+            return envelope
         case .preview: return try previewVerb(invocation)
         case .status, .diagnose: return try await statusOrDiagnose(invocation)
         case .authCommand: return try authCommand(invocation)

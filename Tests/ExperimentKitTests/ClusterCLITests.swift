@@ -819,6 +819,28 @@ struct ClusterCLIRunnerTests {
     /// unresolved facts, which default set applied, and the profile's schema —
     /// produced without touching the cluster, because a preview that needed a
     /// live cluster could not be read BEFORE anything runs.
+    @Test func profileCoauthoringReturnsQuestionsAndNeverTouchesTheClusterOrRegistry() async throws {
+        let harness = try makeHarness("coauthor")
+        let before = try harness.repository.sites()
+        let guide = await harness.runner.run(ClusterCLIInvocation(verb: .sitesGuide))
+        #expect(guide.exitCode == 0)
+        let example = try #require(guide.envelope.authoringGuide?.draftExample)
+        let path = harness.root.appending(component: "draft.json")
+        try JSONEncoder().encode(example).write(to: path)
+        let review = await harness.runner.run(ClusterCLIInvocation(verb: .sitesReview, positional: path.path))
+        #expect(review.envelope.state == "blocked")
+        #expect(review.envelope.error?.code == "profileQuestions")
+        #expect(review.envelope.profileAuthoring?.readyForImport == false)
+        #expect(review.envelope.changed == false)
+        #expect(review.envelope.preview == review.envelope.profileAuthoring?.preview)
+        try Data("{}".utf8).write(to: path)
+        let malformed = await harness.runner.run(ClusterCLIInvocation(verb: .sitesReview, positional: path.path))
+        #expect(malformed.envelope.error?.code == "invalidProfileDraft")
+        #expect(malformed.envelope.error?.repairAction.contains("sites guide") == true)
+        #expect(await harness.shell.joinedCalls().isEmpty)
+        #expect(try harness.repository.sites() == before)
+    }
+
     @Test func previewRendersTheWholeEnvironmentWithoutTouchingTheCluster() async throws {
         let harness = try makeHarness("preview", storedToken: Self.secretToken)
         let outcome = await harness.runner.run(invocation(harness, .preview))

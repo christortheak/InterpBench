@@ -342,3 +342,42 @@ The new request semantics and browser handler are not claimed mechanical.
 WP-2 remains open for other selected-state HTTP actions, asynchronous/whole-document
 writers, imports and three compatibility bridges. WP-3 through WP-7 also remain in
 scope; this checkpoint closes the named prompt-edit adapter, not the overall plan.
+
+## Cluster-document coauthoring is available through shipped commands and the wizard
+
+`cluster sites guide --json` now supplies author/reviewer prompts and an incomplete
+companion example generated from the current profile types. `cluster sites review
+<draft.json> --json` binds source evidence to exact profile values, names unresolved
+questions, refuses unknown/missing critical policies and uses the existing profile
+editor's validation rules plus `ClusterSitePreview`. Slurm and external-server
+requirements differ so an external service does not demand irrelevant allocation
+or installation facts. Invalid companion/profile input returns `invalidProfileDraft`;
+unresolved declarations return `profileQuestions` with an actionable repair.
+
+These two commands skip legacy registry migration, do not authenticate/connect,
+and do not import anything. The wizard's **From documentation…** sheet copies the
+same packet, reviews the companion, displays connection/source facts and the shared
+preview, and uses the existing import path only after an explicit import action.
+A review result describes consistency and admission; it does not verify citation
+truth, authorize execution or qualify hardware. The private companion preserves
+source/retention evidence separately from the profile and scientific artifacts.
+
+The generated workspace contract discovers the guide; the CLI reference is updated
+from the declarative table. CLUSTER-PROFILE-COAUTHORING.md documents the workflow,
+format, evidence semantics and qualification limits. The pipeline control wording
+also now describes the random-floor comparison without claiming causal proof.
+
+Validation: ten focused coauthoring cases plus an offline CLI-runner regression
+are in the full suite. Final Xcode beta passes 277 SteeringKit and 4,447 ExperimentKit
+tests (`TEST SUCCEEDED`), including generated reference/contract checks. Full Python
+passes 5,896 with 9 skipped and 8 warnings (150.84 seconds). Built CLI smoke checks
+passed guide discovery, blocked incomplete draft, ready sourced external-service
+fixture, changed/unknown policy refusal and malformed-input repair; no site was
+imported or contacted. Bridge ratchet and diff whitespace checks pass. The actual
+source/test diff was read; this is new functionality, not a mechanical body move.
+
+WP-5's bounded Mac coauthoring path is implemented. A real-document agent interview,
+interactive SwiftUI qualification and any additional cross-platform adapter remain
+explicit matrix/journey work. WP-1/WP-2 residual ownership/authoring work, WP-3/WP-4
+remaining operations/guides, WP-6 managed cleanup and WP-7 qualification remain in
+scope. No merge, install, production-app relaunch or remote allocation was performed.

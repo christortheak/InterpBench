@@ -2220,6 +2220,8 @@ steerlab-cli cluster sites list [--help] [--json]
 steerlab-cli cluster sites show [--help] [--json] --site <id>
 steerlab-cli cluster sites export [--help] [--json] [--out <file>] --site <id>
 steerlab-cli cluster sites import <profile.json> [--force] [--help] [--json]
+steerlab-cli cluster sites guide [--help] [--json]
+steerlab-cli cluster sites review <draft.json> [--help] [--json]
 steerlab-cli cluster preview [--help] [--job-class <class>] [--json] --site <id>
 steerlab-cli cluster status [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--refresh] [--remote-repo <path>] --site <id> [--squeue <command>]
 steerlab-cli cluster diagnose [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--redact] [--remote-repo <path>] --site <id> [--squeue <command>]
@@ -2253,6 +2255,8 @@ steerlab-cli cluster ensure [--allow-bootstrap] [--allow-controller-start] [--al
 | `cluster sites show` | Print one site's registry record without probing it. |
 | `cluster sites export` | Write the site's profile — never a credential — to a file. |
 | `cluster sites import` | Upsert a site profile by its canonical remote identity. |
+| `cluster sites guide` | Print cluster-document authoring and review prompts with the companion format. |
+| `cluster sites review` | Check a sourced profile draft and render its plan without importing or connecting. |
 | `cluster preview` | Render the environment and scheduler commands this site will run. |
 | `cluster status` | Report each lifecycle layer's state, read-only. |
 | `cluster diagnose` | Report status plus the auth command, log path, and last operations. |
