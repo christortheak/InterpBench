@@ -294,7 +294,7 @@ import Testing
             try ExperimentStore.save(manifest, allowCreate: true)
 
             let panel = ExperimentPanel()
-            panel.selectedName = "f3-reader"
+            panel.management.selectedName = "f3-reader"
             #expect(panel.auxiliaryOutcomeInstruments == ["repeReaderScore"])
             #expect(panel.effectiveRecordKindsNote == nil)
 
@@ -302,7 +302,7 @@ import Testing
             // [repeReaderScore, answerTokenLogprob]; the picker HOLDS.
             panel.setOutcomeMode(.answerTokenProbability)
             #expect(
-                panel.selected?.outcomeInstruments
+                panel.management.selected?.outcomeInstruments
                     == ["repeReaderScore", "answerTokenLogprob"])
             #expect(panel.outcomeMode == .answerTokenProbability)
             // The mode now understates the run — the note states both
@@ -312,13 +312,13 @@ import Testing
             // Reselecting rewrites nothing (idempotent — no rewrite loop).
             panel.setOutcomeMode(.answerTokenProbability)
             #expect(
-                panel.selected?.outcomeInstruments
+                panel.management.selected?.outcomeInstruments
                     == ["repeReaderScore", "answerTokenLogprob"])
 
             // Removing the reader writes through the store and enables a
             // genuinely logprob-only run.
             panel.removeAuxiliaryInstrument("repeReaderScore")
-            #expect(panel.selected?.outcomeInstruments == ["answerTokenLogprob"])
+            #expect(panel.management.selected?.outcomeInstruments == ["answerTokenLogprob"])
             #expect(panel.outcomeMode == .answerTokenProbability)
             #expect(panel.auxiliaryOutcomeInstruments.isEmpty)
             #expect(panel.effectiveRecordKindsNote == nil)
@@ -328,7 +328,7 @@ import Testing
             #expect(panel.canAddReaderInstrument)
             panel.addReaderInstrument()
             #expect(
-                panel.selected?.outcomeInstruments
+                panel.management.selected?.outcomeInstruments
                     == ["answerTokenLogprob", "repeReaderScore"])
             #expect(!panel.canAddReaderInstrument)
             #expect(panel.outcomeMode == .answerTokenProbability)
@@ -346,11 +346,11 @@ import Testing
             manifest.outcomeInstruments = ["answerTokenLogprob"]
             try ExperimentStore.save(manifest, allowCreate: true)
             let panel = ExperimentPanel()
-            panel.selectedName = "f3-noreader"
+            panel.management.selectedName = "f3-noreader"
             #expect(!panel.canAddReaderInstrument)
             // The guarded method is a no-op, not an error.
             panel.addReaderInstrument()
-            #expect(panel.selected?.outcomeInstruments == ["answerTokenLogprob"])
+            #expect(panel.management.selected?.outcomeInstruments == ["answerTokenLogprob"])
         }
     }
 }

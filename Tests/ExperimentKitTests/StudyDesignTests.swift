@@ -168,14 +168,14 @@ import Testing
                 templateName: design.name, cell: .agents([]))
             let panel = makePanel(root: root)
             let clean = try #require(
-                panel.templateLineage(try ExperimentStore.load(name: minted.name)))
+                panel.management.designs.templateLineage(try ExperimentStore.load(name: minted.name), experiments: panel.management.experiments))
             #expect(clean.hasPrefix("from design '\(design.name)'"))
 
             minted.maxTokens = 4096
             try ExperimentStore.save(minted)  // edits are never blocked
             panel.refresh()
             let reloaded = try ExperimentStore.load(name: minted.name)
-            let line = try #require(panel.templateLineage(reloaded))
+            let line = try #require(panel.management.designs.templateLineage(reloaded, experiments: panel.management.experiments))
             #expect(line.hasPrefix("diverged from design '\(design.name)'"))
             #expect(line.contains("edits are allowed"))
         }
@@ -195,7 +195,7 @@ import Testing
             // implementation would notice; a cached one must not.
             minted.maxTokens = 4096
             try ExperimentStore.save(minted)
-            let stale = try #require(panel.templateLineage(minted))
+            let stale = try #require(panel.management.designs.templateLineage(minted, experiments: panel.management.experiments))
             #expect(!stale.contains("diverged"))
             #expect(panel.management.designs.designLineage[minted.name]?.agreement == .matches)
 
@@ -235,7 +235,7 @@ import Testing
             let before = try #require(panel.management.designs.designLineage[minted.name])
             #expect(before.agreement == .matches)
             #expect(!before.designRevised)
-            let cleanLine = try #require(panel.templateLineage(minted))
+            let cleanLine = try #require(panel.management.designs.templateLineage(minted, experiments: panel.management.experiments))
             #expect(!cleanLine.contains("has since been revised"))
 
             // Revise the DESIGN, leaving the study untouched.
@@ -251,7 +251,7 @@ import Testing
             // Fact (b) is new, and independent.
             #expect(after.designRevised)
 
-            let line = try #require(panel.templateLineage(minted))
+            let line = try #require(panel.management.designs.templateLineage(minted, experiments: panel.management.experiments))
             #expect(line.hasPrefix("from design '\(design.name)'"))
             #expect(line.contains("matches its design as minted"))
             #expect(line.contains("the design has since been revised"))
@@ -279,7 +279,7 @@ import Testing
             #expect(lineage.designRevised)
 
             let line = try #require(
-                panel.templateLineage(try ExperimentStore.load(name: minted.name)))
+                panel.management.designs.templateLineage(try ExperimentStore.load(name: minted.name), experiments: panel.management.experiments))
             #expect(line.hasPrefix("diverged from design '\(design.name)'"))
             #expect(line.contains("the design has since been revised too"))
             #expect(line.contains("edits are allowed"))
@@ -367,7 +367,7 @@ import Testing
             panel.refresh()
             #expect(panel.management.designs.newStudyDesign == .design(design.name))
 
-            panel.deleteTemplate(design.name)
+            panel.management.deleteTemplate(design.name)
             #expect(panel.management.designs.newStudyDesign == .fromScratch)
         }
     }
@@ -445,16 +445,16 @@ import Testing
         try withTempWorkspace { root in
             try makeDesign(from: "vignette")
             let panel = makePanel(root: root)
-            #expect(panel.deleteSelectedStudyRefusal == "select a study first")
+            #expect(panel.management.deleteSelectedStudyRefusal == "select a study first")
 
-            panel.selectedName = "vignette"
-            #expect(panel.deleteSelectedStudyRefusal == nil)
+            panel.management.selectedName = "vignette"
+            #expect(panel.management.deleteSelectedStudyRefusal == nil)
 
             var manifest = try ExperimentStore.load(name: "vignette")
             manifest.status = .frozen
             try ExperimentStore.save(manifest)
             panel.refresh()
-            let refusal = try #require(panel.deleteSelectedStudyRefusal)
+            let refusal = try #require(panel.management.deleteSelectedStudyRefusal)
             #expect(refusal.contains("frozen"))
             #expect(refusal.contains("immutable"))
             #expect(refusal.contains("duplicate as a draft"))

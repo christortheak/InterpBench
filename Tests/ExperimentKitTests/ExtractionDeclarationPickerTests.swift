@@ -181,7 +181,7 @@ import Testing
         let manifest = try ExperimentStore.create(
             name: name, description: "", modelID: Self.model)
         panel.refresh()
-        panel.selectedName = name
+        panel.management.selectedName = name
         panel.draft.attachConceptName = "french"
         panel.draft.attachMethod = .meanDifference
         return manifest

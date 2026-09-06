@@ -554,7 +554,7 @@ extension ExperimentStoreTests {
             try ExperimentStore.save(manifest, allowCreate: true)
 
             let panel = ExperimentPanel()
-            panel.selectedName = "or-save"
+            panel.management.selectedName = "or-save"
             panel.saveProtocol()
 
             let reloaded = try ExperimentStore.load(name: "or-save")

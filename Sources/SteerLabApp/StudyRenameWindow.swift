@@ -73,7 +73,7 @@ struct RenameStudyWindow: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                 Button("Rename") {
-                    panel.renameSelected(
+                    panel.management.renameSelected(
                         canonicalName: sheet.isDraft ? canonicalName : nil,
                         label: label)
                     dismiss()

@@ -120,7 +120,7 @@ import Testing
         panel.notices = PanelNotices(
             fileURL: root.appending(component: "notices.jsonl"))
         panel.refresh()
-        panel.selectedName = study
+        panel.management.selectedName = study
         return panel
     }
 

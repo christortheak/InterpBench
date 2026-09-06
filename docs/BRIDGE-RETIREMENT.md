@@ -5,7 +5,53 @@ criterion is removal of all four transitional bridge files, with callers using
 focused owners or intentional panel commands. No compatibility bridge may ship
 in 1.0 or in the codebase linked from the launch blog.
 
-## Current implementation status
+## Management bridge retirement (follow-up to 95d14aa)
+
+`StudyManagementBindings.swift` is removed. Its six inventory/selection properties
+and sixteen management/design commands now have callers at their actual owners:
+`panel.management` and `panel.management.designs`. No forwarding replacement was
+introduced. Study creation passes `panel.studyCreationContext` explicitly; the
+accessor still resolves the host's workspace model choices with its original
+body. UI bindings already use the observable management owner directly.
+
+The new [syntax audit](../scripts/ci/audit-study-management.swift) checks the
+reviewed baseline's forwarding bodies, the context accessor relocation, the
+source-file census, and all source/test syntax trees after normalizing only the
+proven owner accesses and added context/inventory arguments. Against `95d14aa`,
+all 27 changed caller files plus three files with comment-reference updates have
+zero normalized differences. The management and
+design implementation bodies are unchanged. Deliberately changing a management
+body, dropping creation context, or selecting the wrong owner makes it fail.
+This is syntax evidence paired with the compiler and both full suites, not
+compiler-resolved symbol equivalence or new scientific qualification.
+
+Reproduce with Xcode beta and scratch outside the checkout:
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
+export TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.920.1
+management_scratch=$(mktemp -d /private/tmp/management-owner-audit.XXXXXX)
+mkdir "$management_scratch/before"
+git archive 95d14aa Sources Tests | tar -x -C "$management_scratch/before"
+management_host="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host"
+xcrun swiftc -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
+  -target arm64-apple-macosx15.0 -I "$management_host" -L "$management_host" \
+  -Xlinker -rpath -Xlinker "$management_host" \
+  scripts/ci/audit-study-management.swift -o "$management_scratch/audit"
+"$management_scratch/audit" "$PWD" "$management_scratch/before"
+```
+
+This audit describes the management-retirement checkpoint. Subsequent semantic
+changes must be audited at their own checkpoint rather than weakening this
+comparison. The older inventory and audit instructions below are historical;
+they preserve the baseline and proof for the previous migrations.
+
+**Two bridges remain:** `StudyFreezeBindings.swift` and
+`StudyRemoteCoordinationBindings.swift`. Their context acquisition and delayed
+operations require their own migration and review. The normal ratchet must pass;
+the 1.0 release gate must still refuse until both are retired.
+
+## Earlier implementation checkpoints
 
 The workflow implementation has retired `StudyPanelBindings.swift`: all 109
 forwarding properties are gone. The app, local HTTP handlers and tests now read

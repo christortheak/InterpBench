@@ -725,7 +725,7 @@ public enum OptimizationComposer {
     // MARK: - Declare
 
     /// Creates the real optimization manifest: create the draft study, stamp
-    /// the same defaults `ExperimentPanel.create()` stamps, attach every
+    /// the same defaults `StudyManagementController.create(context:)` stamps, attach every
     /// concept pin at its CURRENT hash (recomputed here — freeze verify
     /// demands file truth), pin the neutral corpus (norm denominator), pin
     /// judge rubric + judges for a judgeScore objective, save, and THEN set
@@ -853,7 +853,7 @@ public enum OptimizationComposer {
         var manifest = try ExperimentStore.create(
             name: name, description: description, modelID: plan.modelID)
         do {
-            // Same defaults ExperimentPanel.create() stamps.
+            // Same defaults StudyManagementController.create(context:) stamps.
             manifest.studyKind = .modelOutput
             manifest.temperature = 0
             manifest.maxTokens = 2048

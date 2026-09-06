@@ -98,7 +98,7 @@ struct TemplatesPanelView: View {
             Button("Cancel", role: .cancel) { renamingTemplate = nil }
             Button("Rename") {
                 if let old = renamingTemplate {
-                    panel.renameTemplate(old, to: templateRenameText)
+                    panel.management.renameTemplate(old, to: templateRenameText)
                 }
                 renamingTemplate = nil
             }
@@ -129,7 +129,7 @@ struct TemplatesPanelView: View {
         Section("New Design") {
             HStack(spacing: 8) {
                 Button {
-                    guard panel.newDesignDraft() != nil else { return }
+                    guard panel.management.newDesignDraft(context: panel.studyCreationContext) != nil else { return }
                     navigate(.studies)
                 } label: {
                     Label("New Template", systemImage: "plus.square.on.square")
@@ -143,7 +143,7 @@ struct TemplatesPanelView: View {
             Divider()
             Picker("Study", selection: $designs.templateSourceStudyName) {
                 Text("select…").tag(String?.none)
-                ForEach(panel.experiments, id: \.name) { manifest in
+                ForEach(panel.management.experiments, id: \.name) { manifest in
                     Text(studyPickerLabel(manifest, panel: panel))
                         .tag(String?.some(manifest.name))
                 }
@@ -180,7 +180,7 @@ struct TemplatesPanelView: View {
     ) -> String {
         // Display label leads, canonical name stays visible: run directories
         // and CLI arguments speak the canonical one.
-        let display = panel.displayName(manifest)
+        let display = panel.management.displayName(manifest)
         return display == manifest.name
             ? "\(manifest.name)  [\(manifest.status.rawValue)]"
             : "\(display)  ·  \(manifest.name)  [\(manifest.status.rawValue)]"
@@ -277,7 +277,7 @@ struct TemplatesPanelView: View {
         _ template: StudyTemplate, panel: ExperimentPanel
     ) -> some View {
         Section("Design") {
-            ForEach(panel.designSummary(template)) { row in
+            ForEach(panel.management.designs.designSummary(template)) { row in
                 LabeledContent(row.label) {
                     Text(row.value)
                         .font(.caption.monospaced())
@@ -319,7 +319,7 @@ struct TemplatesPanelView: View {
                     // The round trip's first leg. The draft is ORDINARY — full
                     // editor, no special mode — and the second leg is the
                     // Studies tab's "Save back to design".
-                    guard panel.editDesign(template.name) != nil else { return }
+                    guard panel.management.editDesign(template.name) != nil else { return }
                     navigate(.studies)
                 }
                 .help(Self.editDesignHelp)
@@ -334,7 +334,7 @@ struct TemplatesPanelView: View {
                         titleVisibility: .visible
                     ) {
                         Button("Delete '\(template.name)'", role: .destructive) {
-                            panel.deleteTemplate(template.name)
+                            panel.management.deleteTemplate(template.name)
                         }
                     } message: {
                         Text("Removes templates/\(template.name)/. Studies "

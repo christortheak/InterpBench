@@ -153,7 +153,7 @@ struct JudgeKindFieldOwnershipTests {
             try ExperimentStore.save(manifest, allowCreate: true)
 
             let panel = ExperimentPanel()
-            panel.selectedName = "kind-owned"
+            panel.management.selectedName = "kind-owned"
             panel.saveProtocol()
 
             let reloaded = try ExperimentStore.load(name: "kind-owned")

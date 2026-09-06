@@ -143,7 +143,7 @@ struct StudyManagementOwnershipTests {
                 name: "two", description: "Second", modelID: "test/model")
             let panel = ExperimentPanel()
             panel.notices = PanelNotices(fileURL: root.appending(component: "notices.jsonl"))
-            panel.selectedName = "one"
+            panel.management.selectedName = "one"
             panel.draft.protocolDescription = "unsaved"
             panel.refresh()
             #expect(panel.draft.protocolDescription == "unsaved")
@@ -155,13 +155,13 @@ struct StudyManagementOwnershipTests {
             panel.results.selectedResultID = "old-result"
             let changed = Mutex(false)
             withObservationTracking {
-                _ = panel.selectedName
+                _ = panel.management.selectedName
             } onChange: {
                 changed.withLock { $0 = true }
             }
             panel.management.selectedName = "two"
             #expect(changed.withLock { $0 })
-            #expect(panel.selected?.name == "two")
+            #expect(panel.management.selected?.name == "two")
             #expect(panel.draft.protocolDescription == "Second")
             #expect(panel.results.selectedResultID != "old-result")
             #expect(panel.localJobs.isRunning)

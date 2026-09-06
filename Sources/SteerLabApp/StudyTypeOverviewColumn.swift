@@ -57,7 +57,7 @@ struct StudyManifestJSONColumn: View {
     private var panel: ExperimentPanel { service.experiments }
 
     var body: some View {
-        if let json = panel.selectedStudyJSON, let manifest = panel.selected {
+        if let json = panel.selectedStudyJSON, let manifest = panel.management.selected {
             VStack(spacing: 0) {
                 header(for: manifest)
                 Divider()
@@ -129,7 +129,7 @@ struct StudyTypeOverviewColumn: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                if let manifest = panel.selected {
+                if let manifest = panel.management.selected {
                     guide(for: panel.studyFocus, manifest: manifest)
                 } else {
                     emptyState

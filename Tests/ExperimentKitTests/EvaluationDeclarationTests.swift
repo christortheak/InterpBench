@@ -356,7 +356,7 @@ import Testing
             try ExperimentStore.save(draft)
 
             let panel = ExperimentPanel()
-            panel.selectedName = "ui-decl"
+            panel.management.selectedName = "ui-decl"
             panel.draft.taskPromptsFile = ""  // no prompt pin in this fixture
             panel.draft.judges = [
                 .init(name: "j-1", kind: "claude", model: nil),

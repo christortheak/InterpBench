@@ -17,12 +17,12 @@ extension ExperimentPanel {
     }
 
     public func freeze() {
-        freezeCoordinator.freeze(name: selectedName, runSubstrate: freezeEvidenceRunSubstrate)
+        freezeCoordinator.freeze(name: management.selectedName, runSubstrate: freezeEvidenceRunSubstrate)
     }
 
     private var freezeContextIdentity: StudyFreezeContextIdentity {
         StudyFreezeContextIdentity(
-            study: selectedName, root: VectorCatalog.projectRoot.standardizedFileURL,
+            study: management.selectedName, root: VectorCatalog.projectRoot.standardizedFileURL,
             serverURL: cluster?.serverURL, isServer: isServerWorkspace,
             pairing: cluster?.activeServerPairing)
     }
@@ -30,13 +30,13 @@ extension ExperimentPanel {
     private func freezeRequest(name: String) -> StudyFreezeRequest {
         StudyFreezeRequest(
             workspaceRoot: ExperimentStore.workspaceRoot, name: name, localData: ExperimentStore.manifestData(name: name),
-            localIsDraft: selected?.status == .draft,
+            localIsDraft: management.selected?.status == .draft,
             substrate: cluster?.substrateLabel ?? "server",
             workspacePaired: cluster?.activeServerPairing == .paired)
     }
 
     public func freezeOnActiveServer() async {
-        guard let name = selectedName else {
+        guard let name = management.selectedName else {
             note("select a study first", severity: .info)
             return
         }
@@ -57,7 +57,7 @@ extension ExperimentPanel {
     }
 
     public func pushManifestToActiveServer() async {
-        guard let name = selectedName, let manifest = selected else {
+        guard let name = management.selectedName, let manifest = management.selected else {
             note("select a study first", severity: .info)
             return
         }

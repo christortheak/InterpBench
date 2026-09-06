@@ -242,7 +242,7 @@ struct HomeDashboardView: View {
     // MARK: Studies
 
     private var recentStudies: [ExperimentManifest] {
-        Array(service.experiments.experiments.prefix(4))
+        Array(service.experiments.management.experiments.prefix(4))
     }
 
     private var studiesSection: some View {
@@ -267,7 +267,7 @@ struct HomeDashboardView: View {
     /// Studies with the study selected, never a bare navigate.
     private func studyRow(_ manifest: ExperimentManifest) -> some View {
         Button {
-            service.experiments.selectedName = manifest.name
+            service.experiments.management.selectedName = manifest.name
             navigate(.studies)
         } label: {
             studyRowLabel(manifest)
@@ -279,7 +279,7 @@ struct HomeDashboardView: View {
     private func studyRowLabel(_ manifest: ExperimentManifest) -> some View {
         // A display label leads; the canonical name stays visible because
         // run directories and logs speak only that.
-        let display = service.experiments.displayName(manifest)
+        let display = service.experiments.management.displayName(manifest)
         return HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(display)

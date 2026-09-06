@@ -23,6 +23,14 @@ public final class ExperimentPanel {
 
     public internal(set) weak var host: ChatService?
 
+    /// Workspace model choices passed explicitly to the management owner.
+    public var studyCreationContext: StudyCreationContext? {
+        guard let host else { return nil }
+        return StudyCreationContext(
+            workspaceDefaultModelID: host.workspaceSelectedModelID ?? host.selectedModelID,
+            modelOptions: modelOptions)
+    }
+
     /// THE study-type setter (2026-07-19 second pass): one control answers
     /// "what kind of study is this?". Sets the view classification AND —
     /// on drafts — PERSISTS the declared type into the manifest
@@ -32,7 +40,7 @@ public final class ExperimentPanel {
     /// lens only.
     public func setStudyType(_ type: StudyIntent) {
         studyFocusOverride = type
-        guard let manifest = selected, manifest.status == .draft else { return }
+        guard let manifest = management.selected, manifest.status == .draft else { return }
         draft.studyKind = type.mappedKind
         do {
             try ExperimentStore.setStudyType(type, experimentName: manifest.name)
@@ -89,7 +97,7 @@ public final class ExperimentPanel {
             _ = try ExperimentStore.createConfirmationDraft(
                 fromScreen: screenName, named: candidate)
             refresh()
-            selectedName = candidate
+            management.selectedName = candidate
             studyFocusOverride = .conceptStudy
             // Preselect the agent this screen study promoted when it is in
             // the library (the caller knows the optimization; the birth
@@ -304,7 +312,7 @@ public final class ExperimentPanel {
     /// (study, server workspace). The view calls this when the selection or
     /// the active workspace changes.
     public func refreshServerResidency() async {
-        guard isServerWorkspace, let name = selectedName else {
+        guard isServerWorkspace, let name = management.selectedName else {
             serverHasSelectedStudy = nil
             serverResidencyKey = nil
             return
@@ -402,7 +410,7 @@ public final class ExperimentPanel {
     /// stored selection that fails is flagged rather than dropped.
     public var judgeModelOffers: JudgeModelOffers.Offers {
         var candidates: [JudgeModelOffers.Candidate] = []
-        if let model = selected?.modelID { candidates.append(.cached(model)) }
+        if let model = management.selected?.modelID { candidates.append(.cached(model)) }
         candidates.append(.cached(draft.studyBaseModelID))
         if let model = host?.selectedModelID { candidates.append(.cached(model)) }
         let scanned = localModelScanOverrideForTesting
@@ -512,7 +520,7 @@ public final class ExperimentPanel {
         serverExecution = StudyServerJobCoordinator(jobs: remoteJobs)
         serverExecution.presentation = StudyServerJobPresentation(
             residency: { [weak self] name, resident in
-                guard let self, self.selectedName == name else { return }
+                guard let self, self.management.selectedName == name else { return }
                 self.noteServerResidency(resident)
             },
             refreshResidency: { [weak self] in
@@ -533,7 +541,7 @@ public final class ExperimentPanel {
             note: { [weak self] text, severity in self?.note(text, severity: severity) },
             refresh: { [weak self] in self?.refresh() },
             residency: { [weak self] name, resident in
-                guard let self, self.selectedName == name else { return }
+                guard let self, self.management.selectedName == name else { return }
                 self.noteServerResidency(resident)
             })
         let presentation = StudyJobPresentation(
@@ -541,7 +549,7 @@ public final class ExperimentPanel {
             status: { [weak self] text in self?.status = text },
             refresh: { [weak self] in self?.refresh() },
             selectResult: { [weak self] study, id in
-                guard let self, self.selectedName == study else { return }
+                guard let self, self.management.selectedName == study else { return }
                 self.refreshResults(selecting: id)
             },
             startLog: { [weak self] title, line in self?.host?.startLiveLog(title: title, initialLine: line) },
@@ -580,7 +588,7 @@ public final class ExperimentPanel {
     public func pinScaffoldedFile(
         requirement: DataRequirement, createdPath: String
     ) -> Bool {
-        guard var manifest = selected, manifest.status == .draft else { return false }
+        guard var manifest = management.selected, manifest.status == .draft else { return false }
         // Paths are stored workspace-relative; the checklist hands back an
         // absolute one.
         let root = VectorCatalog.projectRoot.standardizedFileURL.path
@@ -616,7 +624,7 @@ public final class ExperimentPanel {
     /// study with no scenario chosen yet — there is nothing to cast until a
     /// scenario names some seats.
     public var seatCasting: SeatCasting.State? {
-        guard var manifest = selected else { return nil }
+        guard var manifest = management.selected else { return nil }
         // The editor's type wins over the stored one for READING, so the
         // section appears the moment the type picker says multi-agent rather
         // than one save later.
@@ -639,7 +647,7 @@ public final class ExperimentPanel {
     /// has not been saved yet would offer a cast that the compile then binds to
     /// the previous model.
     public var availableAgentsForSeats: [ModelVariantRecord] {
-        guard let model = selected?.modelID, !model.isEmpty else { return [] }
+        guard let model = management.selected?.modelID, !model.isEmpty else { return [] }
         return ModelVariantStore.scan().filter { $0.artifact.baseModelID == model }
     }
 
@@ -670,7 +678,7 @@ public final class ExperimentPanel {
 
     /// Why the seat casting cannot be saved right now, or nil.
     public func seatCastingRefusal(_ state: SeatCasting.State) -> String? {
-        guard let manifest = selected else { return "no study selected" }
+        guard let manifest = management.selected else { return "no study selected" }
         guard manifest.status == .draft else {
             return "'\(manifest.name)' is \(manifest.status.rawValue) — its "
                 + "scenario is part of the record. Duplicate it as a draft to "
@@ -695,7 +703,7 @@ public final class ExperimentPanel {
     /// bound scenario that the run loop, the freeze packager and the Python
     /// engine already understand.
     public func saveSeatCasting() {
-        guard var manifest = selected, let state = seatCasting else { return }
+        guard var manifest = management.selected, let state = seatCasting else { return }
         if let refusal = seatCastingRefusal(state) {
             note("Couldn't save the seats — " + refusal, severity: .error)
             return
@@ -735,7 +743,7 @@ public final class ExperimentPanel {
     /// offers mint-only or mint-and-submit.
     public func startPermutedSiblings() {
         clearFormError(.template)
-        guard let manifest = selected, let state = seatCasting else { return }
+        guard let manifest = management.selected, let state = seatCasting else { return }
         guard state.form == .cast else {
             refuse(
                 .template,
@@ -750,7 +758,7 @@ public final class ExperimentPanel {
             let saved = try StudyDesignSaving.create(from: source)
             let mint = StudyTemplateStore.Mint(template: saved.snapshot.template, hash: StudyTemplateStore.hash(saved.snapshot.template),
                 minted: saved.created, divergedFrom: saved.created ? manifest.templateProvenance?.template : nil, warnings: saved.warnings)
-            refreshTemplates()
+            management.refreshTemplates()
             for warning in mint.warnings { note(warning, severity: .warning) }
             management.designs.templateInstantiationInvitation = TemplateInstantiationInvitation(
                 design: mint.template.name,
@@ -795,7 +803,7 @@ public final class ExperimentPanel {
             options.append(trimmed)
         }
         append(draft.studyBaseModelID)
-        append(selected?.modelID)
+        append(management.selected?.modelID)
         append(host?.selectedModelID)
         for model in ChatService.availableModels.map(\.id) { append(model) }
         for variant in ModelVariantStore.scan() { append(variant.artifact.baseModelID) }
@@ -803,7 +811,7 @@ public final class ExperimentPanel {
     }
 
     public var availableVariantsForStudy: [ModelVariantRecord] {
-        let attached = Set(selected?.variantConditions.map(\.artifactPath) ?? [])
+        let attached = Set(management.selected?.variantConditions.map(\.artifactPath) ?? [])
         return ModelVariantStore.scan().filter {
             $0.artifact.baseModelID == draft.studyBaseModelID
                 && !attached.contains(ModelVariantStore.relativePath(for: $0))
@@ -812,14 +820,14 @@ public final class ExperimentPanel {
 
     /// Concepts on disk not yet attached to the selected experiment.
     public var attachableConcepts: [String] {
-        let attached = Set(selected?.concepts.map(\.name) ?? [])
+        let attached = Set(management.selected?.concepts.map(\.name) ?? [])
         return VectorCatalog.conceptNames().filter { !attached.contains($0) }
     }
 
     /// Sweep-recommended conditions carrying selection provenance — the
     /// promotable cells (screening's outputs, confirmation's inputs).
     public var promotableRecommendations: [ExperimentManifest.Condition] {
-        selected?.conditions.filter { $0.selection != nil } ?? []
+        management.selected?.conditions.filter { $0.selection != nil } ?? []
     }
 
     /// Agents eligible for a confirmation study on the selected draft:
@@ -844,7 +852,7 @@ public final class ExperimentPanel {
     /// control) — shown so the condition machinery stays visible, never
     /// hidden behind the agent vocabulary.
     public var generatedConfirmationConditions: [ExperimentManifest.Condition] {
-        guard let manifest = selected,
+        guard let manifest = management.selected,
               let agent = manifest.perturbationPolicy?.sourceAgent.name
         else { return [] }
         return manifest.conditions.filter {
@@ -855,7 +863,7 @@ public final class ExperimentPanel {
     /// Attach the declared perturbation policy to the selected draft — same
     /// code path as `steerlab-cli experiment confirm`.
     public func attachPerturbations() {
-        guard let name = selectedName else { return }
+        guard let name = management.selectedName else { return }
         guard let record = confirmableAgents.first(where: { $0.id == draft.confirmAgentID })
         else {
             note("select an agent to confirm", severity: .info)
@@ -891,7 +899,7 @@ public final class ExperimentPanel {
     /// Mint an agent (variant artifact) from the concept's sweep-selected
     /// cell — same code path as `steerlab-cli experiment promote`.
     public func promoteRecommended(concept: String) {
-        guard let name = selectedName else { return }
+        guard let name = management.selectedName else { return }
         promote(experimentName: name, concept: concept)
     }
 
@@ -955,7 +963,7 @@ public final class ExperimentPanel {
     /// Nil in a server workspace, where the server checks its own.
     public func localManifestHash(_ experimentName: String) -> String? {
         guard !isServerWorkspace else { return nil }
-        return experiments.first { $0.name == experimentName }
+        return management.experiments.first { $0.name == experimentName }
             .map(ExperimentStore.manifestHash)
     }
 
@@ -1144,9 +1152,9 @@ public final class ExperimentPanel {
     }
 
     private func refreshStudyDetails() {
-        violations = selected.map(ExperimentStore.verify) ?? []
+        violations = management.selected.map(ExperimentStore.verify) ?? []
         freezeCoordinator.refreshReadiness(
-            manifest: selected, violations: violations,
+            manifest: management.selected, violations: violations,
             runSubstrate: freezeEvidenceRunSubstrate,
             serverPaired: isServerWorkspace && cluster?.activeServerPairing == .paired)
         syncDraftFieldsFromSelection()
@@ -1227,7 +1235,7 @@ public final class ExperimentPanel {
         // paper cut): remoteStatus renders inside the Remote options
         // disclosure, which may be collapsed — a submission that failed
         // must be loud wherever the user pressed the button.
-        guard let manifest = selected else {
+        guard let manifest = management.selected else {
             remoteJobs.remoteStatus = "select a study first"
             note("select a study first", severity: .info)
             return
@@ -1252,7 +1260,7 @@ public final class ExperimentPanel {
     public func submitStudyBundle(
         named name: String
     ) async -> Result<String, StudyBatchSubmission.Failure> {
-        guard let manifest = experiments.first(where: { $0.name == name }) else {
+        guard let manifest = management.experiments.first(where: { $0.name == name }) else {
             return .failure(
                 StudyBatchSubmission.Failure(
                     reason: "study '\(name)' is no longer in this workspace"))
@@ -1327,7 +1335,7 @@ public final class ExperimentPanel {
     /// The hash-pinned bundle upload (`submitSelectedStudyRemotely`) remains
     /// the remote-cluster path.
     public func runStudyOnActiveServer(verb: String = "run") async {
-        guard let name = selectedName else {
+        guard let name = management.selectedName else {
             note("select a study first", severity: .info)
             return
         }
@@ -1802,7 +1810,7 @@ public final class ExperimentPanel {
     /// panel last synced — which can silently drop every variant condition
     /// (open-issues §8, residual (b)).
     public func adoptSelectedManifestBaseModel() {
-        if let modelID = selected?.modelID { draft.studyBaseModelID = modelID }
+        if let modelID = management.selected?.modelID { draft.studyBaseModelID = modelID }
     }
 
     /// Explicitly discard the editor's unsaved fields and start a new review.
@@ -1814,7 +1822,7 @@ public final class ExperimentPanel {
     }
 
     public func saveProtocol() {
-        guard let manifest = selected, manifest.status == .draft else { return }
+        guard let manifest = management.selected, manifest.status == .draft else { return }
         do {
             let reviewed = try management.reviewedDraft(named: manifest.name)
             let selection = draft.selectedMultiAgentScenarioID.flatMap { id in
@@ -1852,7 +1860,7 @@ public final class ExperimentPanel {
     /// (single source of truth — the picker writes through
     /// `setOutcomeMode`, never a shadow field).
     public var outcomeMode: InstrumentActivation.OutcomeMode {
-        InstrumentActivation.OutcomeMode.from(selected?.outcomeInstruments)
+        InstrumentActivation.OutcomeMode.from(management.selected?.outcomeInstruments)
     }
 
     /// Items in the pinned prompt set that carry categorical `options` —
@@ -1877,7 +1885,7 @@ public final class ExperimentPanel {
     public var instrumentActivationWarning: String? {
         InstrumentActivation.activationWarning(
             optionsItemCount: detectedOptionsItemCount,
-            instruments: selected?.outcomeInstruments,
+            instruments: management.selected?.outcomeInstruments,
             unscorableOptionItemCount: detectedUnscorableOptionItemCount)
     }
 
@@ -1885,7 +1893,7 @@ public final class ExperimentPanel {
     /// through the store (draft-only; never auto-enabled — the method
     /// belongs in provenance).
     public func setOutcomeMode(_ mode: InstrumentActivation.OutcomeMode) {
-        guard let name = selectedName else { return }
+        guard let name = management.selectedName else { return }
         guard mode != .notDeclared else {
             // "not declared" is the read-back of an ABSENT declaration; the
             // picker never clears an explicit one silently.
@@ -1893,7 +1901,7 @@ public final class ExperimentPanel {
         }
         do {
             let instruments = InstrumentActivation.applying(
-                mode, to: selected?.outcomeInstruments)
+                mode, to: management.selected?.outcomeInstruments)
             try ExperimentStore.setOutcomeInstruments(
                 instruments, experimentName: name)
             refresh()
@@ -1911,7 +1919,7 @@ public final class ExperimentPanel {
     /// picker does not own (today: `repeReaderScore`), rendered as their
     /// own Evaluation rows with the sampling implication stated.
     public var auxiliaryOutcomeInstruments: [String] {
-        InstrumentActivation.auxiliaryInstruments(of: selected?.outcomeInstruments)
+        InstrumentActivation.auxiliaryInstruments(of: management.selected?.outcomeInstruments)
     }
 
     /// The effective-record-kinds note for the pre-run warning area (F3):
@@ -1919,7 +1927,7 @@ public final class ExperimentPanel {
     /// auxiliary forces sampled generation anyway.
     public var effectiveRecordKindsNote: String? {
         InstrumentActivation.effectiveRecordKindsNote(
-            instruments: selected?.outcomeInstruments)
+            instruments: management.selected?.outcomeInstruments)
     }
 
     /// Remove one auxiliary instrument from `outcomeInstruments` (F3) —
@@ -1927,9 +1935,9 @@ public final class ExperimentPanel {
     /// `setOutcomeInstruments` like every other instrument edit. Removing
     /// the reader is what makes a genuinely logprob-only run possible.
     public func removeAuxiliaryInstrument(_ id: String) {
-        guard let name = selectedName else { return }
+        guard let name = management.selectedName else { return }
         do {
-            let remaining = (selected?.outcomeInstruments ?? []).filter { $0 != id }
+            let remaining = (management.selected?.outcomeInstruments ?? []).filter { $0 != id }
             try ExperimentStore.setOutcomeInstruments(
                 remaining.isEmpty ? nil : remaining, experimentName: name)
             refresh()
@@ -1949,7 +1957,7 @@ public final class ExperimentPanel {
     /// `repeReaderScore` with no pinned reader is an immediate verify
     /// violation, so the affordance hides instead of inviting one.
     public var canAddReaderInstrument: Bool {
-        guard let manifest = selected, manifest.status == .draft else { return false }
+        guard let manifest = management.selected, manifest.status == .draft else { return false }
         return !(manifest.readerRefs ?? []).isEmpty
             && !(manifest.outcomeInstruments ?? []).contains("repeReaderScore")
     }
@@ -1957,9 +1965,9 @@ public final class ExperimentPanel {
     /// Add `repeReaderScore` back alongside the current mode (F3) —
     /// draft-only, through the store.
     public func addReaderInstrument() {
-        guard let name = selectedName, canAddReaderInstrument else { return }
+        guard let name = management.selectedName, canAddReaderInstrument else { return }
         do {
-            let instruments = (selected?.outcomeInstruments ?? []) + ["repeReaderScore"]
+            let instruments = (management.selected?.outcomeInstruments ?? []) + ["repeReaderScore"]
             try ExperimentStore.setOutcomeInstruments(
                 instruments, experimentName: name)
             refresh()
@@ -1980,7 +1988,7 @@ public final class ExperimentPanel {
     /// studies. (The former Science Manifest's other fields save through
     /// `saveProtocol` from their new homes.)
     public func savePromotionRule() {
-        guard let name = selectedName else { return }
+        guard let name = management.selectedName else { return }
         let fdrText = draft.promotionFDRText.trimmingCharacters(in: .whitespaces)
         if !fdrText.isEmpty, Double(fdrText) == nil {
             note("promotion rule not saved: FDR threshold must be a number in (0, 1)", severity: .error)
@@ -2008,7 +2016,7 @@ public final class ExperimentPanel {
     /// old path of emptying a text field and pressing a distant save was
     /// too easy to do by accident).
     public func clearHumanBaseline() {
-        guard let name = selectedName else { return }
+        guard let name = management.selectedName else { return }
         do {
             try ExperimentStore.clearHumanBaseline(experimentName: name)
             draft.humanBaselinePathField = ""
@@ -2025,7 +2033,7 @@ public final class ExperimentPanel {
     /// Re-pin the human baseline at its CURRENT bytes (explicit action —
     /// drift stays a visible finding otherwise).
     public func repinHumanBaseline() {
-        guard let name = selectedName else { return }
+        guard let name = management.selectedName else { return }
         do {
             let pinned = try ExperimentStore.pinHumanBaseline(
                 path: draft.humanBaselinePathField, experimentName: name)
@@ -2045,13 +2053,13 @@ public final class ExperimentPanel {
     /// Concepts a vector condition may reference: the draft's attached
     /// concepts (conditions must reference pinned concepts).
     public var conditionConceptOptions: [String] {
-        selected?.concepts.map(\.name) ?? []
+        management.selected?.concepts.map(\.name) ?? []
     }
 
     /// Add a single-slot vector condition from the editor row's fields —
     /// negative α is legal (a one-field direction control).
     public func addVectorCondition() {
-        guard let name = selectedName else { return }
+        guard let name = management.selectedName else { return }
         let concept = draft.conditionConcept.trimmingCharacters(in: .whitespaces)
         guard !concept.isEmpty else {
             refuse(.addCondition, "pick a concept for the condition", severity: .info)
@@ -2129,15 +2137,15 @@ public final class ExperimentPanel {
     /// Concepts on disk that are neither study concepts nor already declared
     /// controls — the candidates for the picker.
     public var validationControlCandidates: [String] {
-        let pinned = Set(selected?.concepts.map(\.name) ?? [])
-        let declared = Set((selected?.validationControls ?? []).map(\.concept))
+        let pinned = Set(management.selected?.concepts.map(\.name) ?? [])
+        let declared = Set((management.selected?.validationControls ?? []).map(\.concept))
         return VectorCatalog.conceptNames()
             .filter { !pinned.contains($0) && !declared.contains($0) }
             .sorted()
     }
 
     public func addValidationControl() {
-        guard let name = selectedName else { return }
+        guard let name = management.selectedName else { return }
         let concept = draft.controlConcept.trimmingCharacters(in: .whitespaces)
         guard !concept.isEmpty else {
             refuse(.validationControl, "pick a concept to use as a control",
@@ -2165,7 +2173,7 @@ public final class ExperimentPanel {
     }
 
     public func removeValidationControl(_ concept: String) {
-        guard let name = selectedName else { return }
+        guard let name = management.selectedName else { return }
         do {
             try ExperimentStore.removeValidationControl(
                 concept: concept, experimentName: name)
@@ -2188,7 +2196,7 @@ public final class ExperimentPanel {
     }
 
     public func declareOutcomeInstrumentScope(_ formats: [String]) {
-        guard let name = selectedName else { return }
+        guard let name = management.selectedName else { return }
         do {
             try ExperimentStore.declareOutcomeInstrumentScope(
                 responseFormats: formats, experimentName: name)
@@ -2211,8 +2219,8 @@ public final class ExperimentPanel {
 
     /// One-click negative-α counterpart for an existing condition.
     public func addSignControl(for conditionNamed: String) {
-        guard let name = selectedName,
-            let source = selected?.conditions.first(where: { $0.name == conditionNamed })
+        guard let name = management.selectedName,
+            let source = management.selected?.conditions.first(where: { $0.name == conditionNamed })
         else { return }
         do {
             let control = ExperimentStore.signControlCondition(for: source)
@@ -2229,8 +2237,8 @@ public final class ExperimentPanel {
 
     /// One-click matched-norm random control for an existing condition.
     public func addMatchedNormRandomControl(for conditionNamed: String) {
-        guard let name = selectedName,
-            let source = selected?.conditions.first(where: { $0.name == conditionNamed })
+        guard let name = management.selectedName,
+            let source = management.selected?.conditions.first(where: { $0.name == conditionNamed })
         else { return }
         do {
             let control = ExperimentStore.randomControlCondition(for: source)
@@ -2257,7 +2265,7 @@ public final class ExperimentPanel {
     /// One-click Step-5 control-matrix scaffold; the result line names what
     /// was added, what already existed, and what stays manual.
     public func scaffoldControlMatrix() {
-        guard let name = selectedName else { return }
+        guard let name = management.selectedName else { return }
         do {
             let result = try ExperimentStore.scaffoldControlMatrix(experimentName: name)
             refresh()
@@ -2337,7 +2345,7 @@ public final class ExperimentPanel {
     }
 
     public func saveTaskPrompts() {
-        guard let manifest = selected, manifest.status == .draft else { return }
+        guard let manifest = management.selected, manifest.status == .draft else { return }
         let file = draft.taskPromptsFile.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !file.isEmpty else {
             draft.taskPromptsStatus = "choose a task prompts file first"
@@ -2368,7 +2376,7 @@ public final class ExperimentPanel {
             let activation = InstrumentActivation.savePinSummary(
                 optionsItemCount: document.optionsItemCount,
                 itemCount: document.count,
-                instruments: selected?.outcomeInstruments)
+                instruments: management.selected?.outcomeInstruments)
             draft.taskPromptsStatus =
                 "saved and pinned \(prompts.count) prompt\(prompts.count == 1 ? "" : "s")"
                 + " @ \(hash.prefix(12))… — \(activation)"
@@ -2400,7 +2408,7 @@ public final class ExperimentPanel {
     public func importTaskPromptsJSONL(
         _ text: String, replacingExisting: Bool = false
     ) -> Bool {
-        guard var manifest = selected, manifest.status == .draft else {
+        guard var manifest = management.selected, manifest.status == .draft else {
             draft.taskPromptsStatus =
                 "select a draft study first — import writes the file and pins "
                 + "its hash into the draft manifest"
@@ -2429,7 +2437,7 @@ public final class ExperimentPanel {
     }
 
     public func runStudy() async {
-        guard let name = selectedName, !localJobs.isRunning else { return }
+        guard let name = management.selectedName, !localJobs.isRunning else { return }
         if isServerWorkspace {
             await runStudyOnActiveServer(verb: "run")
             return
@@ -2438,7 +2446,7 @@ public final class ExperimentPanel {
     }
 
     public func validateStudy() async {
-        guard let name = selectedName, !localJobs.isValidating else { return }
+        guard let name = management.selectedName, !localJobs.isValidating else { return }
         if isServerWorkspace {
             // Mac-authority mode (2026-07-21): on a KNOWN-unpaired server
             // the direct verb would execute whatever same-named copy the
@@ -2494,7 +2502,7 @@ public final class ExperimentPanel {
     /// reported (recovered by newest-`-extract` lookup — the task API
     /// prints but does not return it).
     public func extractStudy() async {
-        guard let name = selectedName, !localJobs.isExtracting else { return }
+        guard let name = management.selectedName, !localJobs.isExtracting else { return }
         if isServerWorkspace {
             await runStudyOnActiveServer(verb: "extract")
             return
@@ -2528,7 +2536,7 @@ public final class ExperimentPanel {
         if localJobs.isEvaluating || localJobs.isRunning || localJobs.isValidating || localJobs.isExtracting {
             return "another study task is running — wait for it to finish"
         }
-        guard selectedName != nil else { return "select a study first" }
+        guard management.selectedName != nil else { return "select a study first" }
         guard pairedJudgeTarget != nil else {
             return "no completed study run to judge yet — Run Study first"
         }
@@ -2610,7 +2618,7 @@ public final class ExperimentPanel {
     }
 
     public func runPairedJudgeEvaluation() async {
-        guard let name = selectedName, !localJobs.isEvaluating else { return }
+        guard let name = management.selectedName, !localJobs.isEvaluating else { return }
         guard let item = pairedJudgeTarget else {
             note("no completed study run to judge yet — Run Study first", severity: .info)
             return
@@ -2680,7 +2688,7 @@ public final class ExperimentPanel {
     /// (stimulus hash + validationHash + neutral corpus + grand-mean
     /// corpus). Draft-only; the store's immutability refusal surfaces here.
     public func attachConceptFromPicker() {
-        guard let experiment = selectedName else { return }
+        guard let experiment = management.selectedName else { return }
         let concept = draft.attachConceptName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !concept.isEmpty else {
             note("pick a concept to attach", severity: .warning)
@@ -2705,7 +2713,7 @@ public final class ExperimentPanel {
         // answered here, where the study's model id is known (the parser
         // cannot see one). Server twin: `experiment_store.attach`.
         if let problem = ExtractionRendering.thinkingModeProblem(
-            declaredRendering, modelID: selected?.modelID ?? "")
+            declaredRendering, modelID: management.selected?.modelID ?? "")
         {
             note(problem.message, severity: .error)
             return
@@ -2772,7 +2780,7 @@ public final class ExperimentPanel {
     /// the same manifest. Store-refused for frozen studies and for a concept
     /// any declaration still names (see `ExperimentStore.conceptDependents`).
     public func detachConcept(_ concept: String) {
-        guard let experiment = selectedName else { return }
+        guard let experiment = management.selectedName else { return }
         do {
             try ExperimentStore.detachConcept(concept, experimentName: experiment)
             refresh()
@@ -2785,7 +2793,7 @@ public final class ExperimentPanel {
     /// Pins the concept at its current stimulus hash, using the concepts
     /// panel's current extraction options (method, pooling).
     public func attachConcept(_ name: String) {
-        guard var manifest = selected, manifest.status == .draft else { return }
+        guard var manifest = management.selected, manifest.status == .draft else { return }
         do {
             let directory = VectorCatalog.conceptsDirectory.appending(component: name)
             let stimuli = try StimulusSet(directory: directory)
@@ -2808,7 +2816,7 @@ public final class ExperimentPanel {
     }
 
     public func addVariantCondition(reviewedAgent artifact: AgentArtifactSnapshot) {
-        guard let manifest = selected, manifest.status == .draft else { return }
+        guard let manifest = management.selected, manifest.status == .draft else { return }
         do {
             let reviewed = try management.reviewedDraft(named: manifest.name)
             let saved = try StudyAgentAuthoring.attach(artifact, reviewed: reviewed, baseModelChoice: draft.studyBaseModelID)
@@ -2826,7 +2834,7 @@ public final class ExperimentPanel {
     }
 
     public func removeVariantCondition(_ name: String) {
-        guard var manifest = selected, manifest.status == .draft else { return }
+        guard var manifest = management.selected, manifest.status == .draft else { return }
         manifest.variantConditions.removeAll { $0.name == name }
         do {
             try management.persistReviewedDraft(manifest)
@@ -2848,14 +2856,14 @@ public final class ExperimentPanel {
     /// the manifest actually contains.
     public var studyFocus: StudyIntent {
         studyFocusOverride
-            ?? selected.map(StudyIntent.derive(from:))
+            ?? management.selected.map(StudyIntent.derive(from:))
             ?? .conceptStudy
     }
 
     /// The selected study as one pasteable JSON document (the same
     /// experiment.json every engine reads). Nil (with a notice) on failure.
     public func exportSelectedStudyJSON() -> String? {
-        guard let manifest = selected else {
+        guard let manifest = management.selected else {
             note("select a study first", severity: .info)
             return nil
         }
@@ -2874,7 +2882,7 @@ public final class ExperimentPanel {
     /// experiment.json — but SILENT: a display pane re-reads on every render,
     /// and "select a study first" is the empty state there, not a notice.
     public var selectedStudyJSON: String? {
-        guard let manifest = selected else { return nil }
+        guard let manifest = management.selected else { return nil }
         return try? ExperimentStore.exportStudyJSON(manifest)
     }
 
@@ -2886,7 +2894,7 @@ public final class ExperimentPanel {
             let (manifest, violations, filesWritten) =
                 try ExperimentStore.importStudyJSON(text)
             refresh()
-            selectedName = manifest.name
+            management.selectedName = manifest.name
             let filesNote = filesWritten.isEmpty
                 ? ""
                 : " (+ \(filesWritten.count) data file(s) written: "
@@ -2924,7 +2932,7 @@ public final class ExperimentPanel {
     /// agent exists. Data-only: the SERVER resolves it at run time from the
     /// promotion birth certificate and pins path + hash as run evidence.
     public func addForwardReferencedCondition(concept: String) {
-        guard var manifest = selected, manifest.status == .draft else { return }
+        guard var manifest = management.selected, manifest.status == .draft else { return }
         guard manifest.concepts.contains(where: { $0.name == concept }) else {
             note("attach concept '\(concept)' first", severity: .info)
             return
@@ -2959,7 +2967,7 @@ public final class ExperimentPanel {
     /// Serializes the live steering boxes into a named condition. Concepts
     /// not yet attached are pinned automatically at their current hashes.
     public func captureCondition() {
-        guard let host, var manifest = selected else { return }
+        guard let host, var manifest = management.selected else { return }
         let name = draft.conditionName.isEmpty ? "condition-\(manifest.conditions.count + 1)"
             : draft.conditionName
         var slots: [ExperimentManifest.Condition.Slot] = []
@@ -3020,7 +3028,7 @@ public final class ExperimentPanel {
     /// Adds an explicit no-intervention condition. Baseline is domain-neutral:
     /// it means "same task and sampling settings, no activation edits."
     public func addBaselineCondition() {
-        guard var manifest = selected, manifest.status == .draft else { return }
+        guard var manifest = management.selected, manifest.status == .draft else { return }
         let name = draft.conditionName.isEmpty ? "baseline" : draft.conditionName
         do {
             manifest.conditions.removeAll { $0.name == name }
@@ -3040,7 +3048,7 @@ public final class ExperimentPanel {
     }
 
     public func removeCondition(_ name: String) {
-        guard var manifest = selected, manifest.status == .draft else { return }
+        guard var manifest = management.selected, manifest.status == .draft else { return }
         manifest.conditions.removeAll { $0.name == name }
         do {
             try management.persistReviewedDraft(manifest)
@@ -3051,7 +3059,7 @@ public final class ExperimentPanel {
     }
 
     private func syncDraftFieldsFromSelection(force: Bool = false) {
-        let manifest = selected
+        let manifest = management.selected
         if let manifest, !force, draft.syncedSelection == manifest.name { return }
         // Resolve workspace/library facts here; the editor owns only their values.
         let scenarioID: MultiAgentScenarioRecord.ID?
@@ -3109,7 +3117,7 @@ public final class ExperimentPanel {
     /// carries: the panel field, else the study-model default.
     private func resolvedInlineJudgeModel() -> String {
         let trimmed = draft.judgeModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? defaultJudgeModel(for: selected) : trimmed
+        return trimmed.isEmpty ? defaultJudgeModel(for: management.selected) : trimmed
     }
 
     /// The explicit `evaluation` block a draft save writes (2026-07-22
@@ -3154,7 +3162,7 @@ public final class ExperimentPanel {
     }
 
     public func refreshResults(selecting preferredID: String? = nil) {
-        results.refresh(experimentName: selectedName, repository: StudyResultRepository(workspaceRoot: ExperimentStore.workspaceRoot), selecting: preferredID)
+        results.refresh(experimentName: management.selectedName, repository: StudyResultRepository(workspaceRoot: ExperimentStore.workspaceRoot), selecting: preferredID)
     }
 
 }
@@ -3626,7 +3634,7 @@ extension ExperimentPanel {
     /// editor. No file is written — choosing an existing JSONL pins it as
     /// it is.
     public func pinChosenTaskPromptsFile(_ relativePath: String) {
-        guard var manifest = selected, manifest.status == .draft else {
+        guard var manifest = management.selected, manifest.status == .draft else {
             note(
                 "select a draft study first — choosing a prompts file pins "
                     + "it into the draft manifest",
@@ -3664,7 +3672,7 @@ extension ExperimentPanel {
     public func importTaskPromptsTable(
         table: TabularImport.Table, mapping: [String: String]
     ) -> String? {
-        guard var manifest = selected, manifest.status == .draft else {
+        guard var manifest = management.selected, manifest.status == .draft else {
             return "select a draft study first — import writes the file and "
                 + "pins its hash into the draft manifest"
         }
@@ -3698,7 +3706,7 @@ extension ExperimentPanel {
     public func importHumanBaselineTable(
         table: TabularImport.Table, mapping: [String: String]
     ) -> String? {
-        guard let name = selectedName else {
+        guard let name = management.selectedName else {
             return "select a study first — the baseline pins into the "
                 + "selected draft's manifest"
         }

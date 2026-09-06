@@ -34,12 +34,12 @@ extension ExperimentPanel {
 
     public func refreshPipelineRuns() async {
         let context = remoteContextIdentity
-        let name = selectedName
+        let name = management.selectedName
         await pipelines.refresh(
             name: name, client: isServerWorkspace ? cluster?.client : nil,
             isCurrent: { [weak self] in
                 guard let self else { return false }
-                return self.selectedName == name && self.remoteContextIdentity == context
+                return self.management.selectedName == name && self.remoteContextIdentity == context
             })
     }
 

@@ -1,6 +1,8 @@
 # Researcher workflow implementation status
 
-Branch: `codex/researcher-workflow-implementation`, based on main `bfd13a5`.
+Current branch: `codex/researcher-workflow-authoring`, based on the independently
+approved `95d14aa`. The preceding `codex/researcher-workflow-implementation` branch
+remains at that reviewed tip, based on main `bfd13a5`.
 The branch is a review artifact. Main, the installed app, and live services
 remain unchanged. The [implementation plan](RESEARCHER-WORKFLOW-IMPLEMENTATION-PLAN.md)
 is authoritative; WP-5 and WP-6 remain in scope.
@@ -63,16 +65,53 @@ Verification on 2026-09-06:
 
 No live cluster, real model download, GPU study or app installation is part of
 these checks. The code changes in this follow-up are semantic fixes; no new
-mechanical-move claim is made. Independent review of this follow-up is pending.
+mechanical-move claim is made. The maintainer supplied an independent re-review of `95d14aa` on 2026-09-06:
+all four blockers were closed and both full suites independently reproduced.
+That tip is approved for the designated integration process. Approval does not
+extend automatically to the subsequent management-retirement checkpoint below.
 
 The full earlier checkpoint/test ledger is preserved in the
 [validation history](RESEARCHER-WORKFLOW-VALIDATION-HISTORY.md). Its results are
 historical evidence, not a substitute for testing the current branch.
 
+## Current authoring checkpoint: management bridge retirement
+
+Removed `StudyManagementBindings.swift` and redirected its six properties and
+sixteen commands to their management/design owners across 27 caller files.
+Creation now receives the same workspace model context explicitly, and lineage
+queries receive the owner's inventory explicitly. No management implementation,
+study semantics or artifact schema changed. No substitute forwarding bridge was
+added. The [reproducible syntax audit](BRIDGE-RETIREMENT.md#management-bridge-retirement-follow-up-to-95d14aa)
+checks those constraints against the approved tip.
+
+Verification on 2026-09-06:
+
+- Full serial Xcode beta suite: **277 SteeringKit + 4,529 ExperimentKit passed**
+  (`TEST SUCCEEDED`); `/private/tmp/interpbench-management-xcode.log`.
+- Full Python suite: **5,928 passed, 9 skipped, 8 warnings** (179.91 seconds);
+  `/private/tmp/interpbench-management-python.log`.
+- Syntax audit: six properties, sixteen commands, **30 changed source/test
+  files, zero differences** after the allowed normalization. This includes
+  27 caller migrations and three additional files whose comments were updated
+  to name the surviving owner. Implementation bodies remain unchanged.
+- Negative audit controls: rejected an altered management body, missing
+  creation context and wrong target owner.
+- Compiler, bridge ratchet and whitespace checks passed. The release gate
+  still correctly refuses the two remaining bridges.
+
+This new checkpoint awaits the designated agent's independent diff review and
+validation; the approval of `95d14aa` does not cover it.
+
+This completes the management bridge slice of WP-2. Freeze coordination and
+remote coordination are the next bridge slices; retained writer preconditions,
+context coverage and public-surface parity remain separate acceptance work.
+The earlier audit's non-blocking observation about logging first allocation
+capture, and live accounting qualification, remain follow-up notes.
+
 ## What remains to implement the vision
 
 1. **Finish shared authoring and context ownership (WP-1/2).** Complete the
-   remaining draft writer/adapter migration and retire the three remaining
+   remaining draft writer/adapter migration and retire the two remaining
    Swift bridges. Observation, auxiliary jobs and delayed actions still need
    end-to-end context coverage. The normal bridge ratchet passes; the 1.0
    release gate must refuse until all bridges are removed.

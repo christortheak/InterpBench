@@ -95,7 +95,7 @@ struct OptimizationRunsView: View {
     /// The lens predicate, local arm: a declared sweep spec, or
     /// provenance-bearing conditions from an already-executed sweep.
     private var localOptimizationManifests: [ExperimentManifest] {
-        panel.experiments.filter { manifest in
+        panel.management.experiments.filter { manifest in
             manifest.sweep != nil
                 || manifest.conditions.contains { $0.selection != nil }
         }
@@ -214,7 +214,7 @@ struct OptimizationRunsView: View {
     /// EVERY compute mode; the compute target only decides where the sweep
     /// later executes.
     private var declarableDraftNames: [String] {
-        panel.experiments
+        panel.management.experiments
             .filter { $0.status == .draft && $0.sweep == nil }
             .map(\.name)
     }
@@ -454,8 +454,8 @@ struct OptimizationRunsView: View {
     /// asks the Studies view to open its Run-on-Server disclosure — one
     /// click away from submitting the RIGHT verb for the RIGHT study.
     private func openStudiesForBundleSweep(study name: String) {
-        if panel.experiments.contains(where: { $0.name == name }) {
-            panel.selectedName = name
+        if panel.management.experiments.contains(where: { $0.name == name }) {
+            panel.management.selectedName = name
         }
         panel.submission.remoteVerb = "sweep"
         panel.submission.remoteDryRun = false
@@ -544,7 +544,7 @@ struct OptimizationRunsView: View {
     /// it", rather than leaving the researcher to resolve it themselves.
     @ViewBuilder
     private func resolvedSweepSection(_ optimization: OptimizationItem) -> some View {
-        if let manifest = panel.experiments.first(where: { $0.name == optimization.name }),
+        if let manifest = panel.management.experiments.first(where: { $0.name == optimization.name }),
             let resolved = SweepPanelModel.resolve(manifest: manifest)
         {
             SweepPanelSection(resolved: resolved)
@@ -1517,7 +1517,7 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         var seededMap = initial.selection?.objective?.choicePromptsFiles ?? [:]
         let manifestSingular = (initial.selection?.objective?.choicePromptsFile ?? "")
             .trimmingCharacters(in: .whitespaces)
-        let manifest = panel.experiments.first { $0.name == experimentName }
+        let manifest = panel.management.experiments.first { $0.name == experimentName }
         let manifestConcepts = (manifest?.concepts ?? []).map(\.name)
         // Model id AND pinned revision: the depth this editor displays
         // absolute layers against must be the depth of the revision the
@@ -1785,7 +1785,7 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
     /// The manifest's attached concepts — drives one instrument row each
     /// under logprobShift.
     private var attachedConcepts: [String] {
-        (panel.experiments.first { $0.name == experimentName }?.concepts ?? [])
+        (panel.management.experiments.first { $0.name == experimentName }?.concepts ?? [])
             .map(\.name).sorted()
     }
 
@@ -1828,7 +1828,7 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
     /// unsurprising.
     @ViewBuilder
     private var judgePinRows: some View {
-        let manifest = panel.experiments.first { $0.name == experimentName }
+        let manifest = panel.management.experiments.first { $0.name == experimentName }
         let rubricFile = manifest?.judgeRubricFile
         let rubricHash = manifest?.judgeRubricHash
         let judges = manifest?.judges ?? []

@@ -611,7 +611,7 @@ extension ExperimentStoreTests {
                 name: "cond", description: "", modelID: "test/model")
             let panel = ExperimentPanel()
             panel.refresh()
-            panel.selectedName = "cond"
+            panel.management.selectedName = "cond"
             panel.draft.conditionConcept = "fear"
             panel.draft.conditionLayerText = "41"
             panel.draft.conditionAlphaText = "0"

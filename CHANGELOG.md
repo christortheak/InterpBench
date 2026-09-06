@@ -36,6 +36,12 @@ migration that rewrites frozen bytes.
 
 ### Changed
 
+- Swift study-management consumers now call `StudyManagementController` and
+  `StudyDesignLibrary` directly. The management compatibility bridge and its
+  six property/sixteen command forwards are removed; study creation supplies
+  workspace model context explicitly. Store behavior and scientific artifacts
+  are unchanged by this caller migration.
+
 - **Manifest write API compatibility:** GET manifest returns the exact bytes
   with an ETag. PUT requires a strong `If-Match` digest, or `If-None-Match: *`
   for creation. Missing preconditions return 428; stale preconditions return 412.
@@ -77,7 +83,7 @@ migration that rewrites frozen bytes.
   428 requirement. Coordinate other manifest PUT clients before engine rollout.
 - Choose a deployment's service role separately. This branch does not change
   private launch profiles, install an app, or deploy an engine.
-- One of four Swift compatibility bridges is retired; three remain blocked from
+- Two of four Swift compatibility bridges are retired; two remain blocked from
   1.0 by the release gate. Complete journey/UI/GPU qualification and the remaining
   [implementation scope](docs/RESEARCHER-WORKFLOW-IMPLEMENTATION-STATUS.md)
   before claiming the researcher workflow vision is complete.

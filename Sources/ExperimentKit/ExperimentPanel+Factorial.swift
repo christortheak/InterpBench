@@ -17,7 +17,7 @@ extension ExperimentPanel {
     public func generateFactorialTaskPrompts(
         design: FactorialDesign, replacingExisting: Bool
     ) -> String? {
-        guard var manifest = selected, manifest.status == .draft else {
+        guard var manifest = management.selected, manifest.status == .draft else {
             return "select a draft study first — the generated prompts file "
                 + "pins into the draft manifest"
         }

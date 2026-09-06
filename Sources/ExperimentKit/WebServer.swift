@@ -692,7 +692,7 @@ public final class SteerLabWebServer: Sendable {
         case ("POST", "/api/experiment/select"):
             struct Body: Decodable { let name: String? }
             guard let request = decode(Body.self, from: body) else { return .error("bad body") }
-            service.experiments.selectedName = request.name
+            service.experiments.management.selectedName = request.name
             return .ok()
 
         case ("POST", "/api/experiment/create"):
@@ -703,7 +703,7 @@ public final class SteerLabWebServer: Sendable {
             guard let request = decode(Body.self, from: body) else { return .error("bad body") }
             service.experiments.draft.newName = request.name
             service.experiments.draft.newDescription = request.description ?? ""
-            service.experiments.create()
+            service.experiments.management.create(context: service.experiments.studyCreationContext)
             return .ok()
 
         case ("GET", let requestPath)
@@ -778,7 +778,7 @@ public final class SteerLabWebServer: Sendable {
             return .ok()
 
         case ("POST", "/api/experiment/duplicate"):
-            service.experiments.duplicateSelected()
+            service.experiments.management.duplicateSelected()
             return .ok()
 
         case ("POST", "/api/experiment/result/select"):
@@ -1409,13 +1409,13 @@ struct StateDTO: Encodable {
         alphaDefault = service.alphaDefaultDecision.map(AlphaDefaultDTO.init)
 
         let panel = service.experiments
-        experiments = panel.experiments.map {
+        experiments = panel.management.experiments.map {
             ExperimentSummaryDTO(name: $0.name, status: $0.status.rawValue)
         }
         // The web form renders one persisted snapshot, independent of unsaved
         // native fields. Its digest travels with those displayed values; a save
         // never refreshes the native editor's review behind the researcher's back.
-        experiment = panel.selected.flatMap { selection in
+        experiment = panel.management.selected.flatMap { selection in
             guard let reviewed = try? DraftAuthoringSnapshot(
                 workspaceRoot: ExperimentStore.workspaceRoot, name: selection.name)
             else { return nil }

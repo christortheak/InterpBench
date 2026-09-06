@@ -41,7 +41,7 @@ import Testing
     /// missing default prompts file and silently test nothing).
     private func makePanel(selecting name: String) -> ExperimentPanel {
         let panel = ExperimentPanel()
-        panel.selectedName = name
+        panel.management.selectedName = name
         panel.draft.taskPromptsFile = ""
         return panel
     }

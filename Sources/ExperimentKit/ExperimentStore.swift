@@ -684,7 +684,7 @@ public enum ExperimentStore {
     /// condition is the point of this write (open-issues §8). Without it, such
     /// a save is refused. The reason is that `save` writes the WHOLE document
     /// and several callers hold a manifest they read some time ago —
-    /// `ExperimentPanel.selected` is a cache refreshed on selection, and the
+    /// `StudyManagementController.selected` is a cache refreshed on selection, and the
     /// run paths hold a copy for the length of a sweep — so a document that
     /// arrives at both-empty over a populated draft is far more often a stale
     /// copy than an intentional reset, and the loss is silent: the only reason

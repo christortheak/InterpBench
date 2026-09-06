@@ -11,7 +11,7 @@ import Testing
 /// turned out NOT to be a rewrite — that file was born a shell and never
 /// touched again. But the writer census found the shape is reachable here, and
 /// by a route with no equivalent on the server: `ExperimentStore.save` writes
-/// the WHOLE document, and the app's `ExperimentPanel.selected` is an
+/// the WHOLE document, and the app's `StudyManagementController.selected` is an
 /// in-memory cache with no file watcher, refreshed only on selection. A
 /// manifest attached to from a terminal while the panel is open, then saved
 /// from the panel, is written back as the panel last read it.

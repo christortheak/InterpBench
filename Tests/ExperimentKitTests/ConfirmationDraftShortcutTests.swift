@@ -196,7 +196,7 @@ extension ExperimentStoreTests {
 
         // The panel lands on the new draft with the SCREEN study's promoted
         // agent preselected in the confirm controls.
-        #expect(panel.selectedName == "screen-study-confirm")
+        #expect(panel.management.selectedName == "screen-study-confirm")
         let preselected = panel.confirmableAgents.first {
             $0.id == panel.draft.confirmAgentID
         }
@@ -205,7 +205,7 @@ extension ExperimentStoreTests {
         // Running the shortcut again suffixes — never overwrites the first
         // confirmation draft.
         panel.createConfirmationDraft(from: "screen-study")
-        #expect(panel.selectedName == "screen-study-confirm-2")
+        #expect(panel.management.selectedName == "screen-study-confirm-2")
         #expect((try? ExperimentStore.load(name: "screen-study-confirm-2")) != nil)
         // And the first draft still exists, untouched.
         #expect((try? ExperimentStore.load(name: "screen-study-confirm")) != nil)
@@ -222,7 +222,7 @@ extension ExperimentStoreTests {
         panel.createConfirmationDraft(from: "no-such-study")
         // Nothing created, nothing selected.
         #expect((try? ExperimentStore.load(name: "no-such-study-confirm")) == nil)
-        #expect(panel.selectedName == nil)
+        #expect(panel.management.selectedName == nil)
         #expect(panel.status?.contains("no-such-study") == true)
     }
 }

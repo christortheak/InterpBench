@@ -158,7 +158,7 @@ struct StudyPreparationControlsView: View {
         VStack(alignment: .leading, spacing: 6) {
             Label(
                 ExperimentPanel.residencyCalloutMessage(
-                    study: panel.selectedName ?? "study",
+                    study: panel.management.selectedName ?? "study",
                     substrate: service.cluster.substrateLabel),
                 systemImage: "exclamationmark.triangle"
             )

@@ -74,7 +74,7 @@ import Testing
         return panel
     }
 
-    /// A hosted panel, for the one path that needs one: `ExperimentPanel.create`
+    /// A hosted panel, for the one path that needs one: `StudyManagementController.create(context:)`
     /// seeds the new draft's model from the host and returns silently without
     /// it. The SERVICE is returned, not just its panel — `host` is a weak
     /// reference, so a service that went out of scope would leave the panel
@@ -319,10 +319,10 @@ import Testing
         try withTempWorkspace { root in
             let design = try makeDesign()
             let panel = makePanel(root: root)
-            let opened = try #require(panel.editDesign(design.name))
+            let opened = try #require(panel.management.editDesign(design.name))
             #expect(opened == "\(design.name)-edit")
-            #expect(panel.selectedName == opened)
-            #expect(panel.experiments.contains { $0.name == opened })
+            #expect(panel.management.selectedName == opened)
+            #expect(panel.management.experiments.contains { $0.name == opened })
             let status = try #require(panel.status)
             #expect(status.contains("Save back to design"))
             #expect(panel.draft.formErrors[.template] == nil)
@@ -333,7 +333,7 @@ import Testing
         try withTempWorkspace { root in
             try makeDesign()
             let panel = makePanel(root: root)
-            #expect(panel.editDesign("no-such-design") == nil)
+            #expect(panel.management.editDesign("no-such-design") == nil)
             #expect(panel.draft.formErrors[.template] != nil)
         }
     }
@@ -353,13 +353,13 @@ import Testing
             let panel = makePanel(root: root)
 
             let minted = try ExperimentStore.load(name: draft.name)
-            #expect(panel.saveBackToDesignTarget(for: minted) == design.name)
-            #expect(panel.saveBackToDesignRefusal(for: minted) == nil)
+            #expect(panel.management.designs.saveBackToDesignTarget(for: minted) == design.name)
+            #expect(panel.management.designs.saveBackToDesignRefusal(for: minted) == nil)
 
             // No lineage: no target, and the refusal points at the sibling path.
             let source = try ExperimentStore.load(name: "vignette")
-            #expect(panel.saveBackToDesignTarget(for: source) == nil)
-            let noLineage = try #require(panel.saveBackToDesignRefusal(for: source))
+            #expect(panel.management.designs.saveBackToDesignTarget(for: source) == nil)
+            let noLineage = try #require(panel.management.designs.saveBackToDesignRefusal(for: source))
             #expect(noLineage.contains("Save as new design"))
 
             // Frozen and complete are offered too.
@@ -370,8 +370,8 @@ import Testing
                 panel.refresh()
                 let reloaded = try ExperimentStore.load(name: draft.name)
                 #expect(reloaded.status == status)
-                #expect(panel.saveBackToDesignTarget(for: reloaded) == design.name)
-                #expect(panel.saveBackToDesignRefusal(for: reloaded) == nil)
+                #expect(panel.management.designs.saveBackToDesignTarget(for: reloaded) == design.name)
+                #expect(panel.management.designs.saveBackToDesignRefusal(for: reloaded) == nil)
             }
         }
     }
@@ -391,7 +391,7 @@ import Testing
             try ExperimentStore.save(draft)
 
             let panel = makePanel(root: root)
-            panel.selectedName = draft.name
+            panel.management.selectedName = draft.name
             panel.management.updateDesign(
                 reviewedSource: try panel.management.reviewDesignSource(named: try #require(panel.management.selectedName)),
                 reviewedDesign: try panel.management.designs.reviewedDesign(named: design.name))
@@ -418,8 +418,8 @@ import Testing
             try StudyTemplateStore.delete(name: design.name)
             let panel = makePanel(root: root)
             let minted = try ExperimentStore.load(name: draft.name)
-            #expect(panel.saveBackToDesignTarget(for: minted) == nil)
-            let refusal = try #require(panel.saveBackToDesignRefusal(for: minted))
+            #expect(panel.management.designs.saveBackToDesignTarget(for: minted) == nil)
+            let refusal = try #require(panel.management.designs.saveBackToDesignRefusal(for: minted))
             #expect(refusal.contains("no longer in the library"))
         }
     }
@@ -437,7 +437,7 @@ import Testing
             try ExperimentStore.save(draft)
 
             let panel = makePanel(root: root)
-            panel.selectedName = draft.name
+            panel.management.selectedName = draft.name
             panel.management.updateDesign(
                 reviewedSource: try panel.management.reviewDesignSource(named: try #require(panel.management.selectedName)),
                 reviewedDesign: try panel.management.designs.reviewedDesign(named: design.name))
@@ -466,7 +466,7 @@ import Testing
         try withTempWorkspace { root in
             let design = try makeDesign()
             let panel = makePanel(root: root)
-            panel.selectedName = "vignette"  // no lineage
+            panel.management.selectedName = "vignette"  // no lineage
             panel.management.updateDesign(
                 reviewedSource: try panel.management.reviewDesignSource(named: try #require(panel.management.selectedName)),
                 reviewedDesign: try panel.management.designs.reviewedDesign(named: design.name))
@@ -490,14 +490,14 @@ import Testing
             let service = try makeHostedService(
                 root: root, suite: "steerlab.tests.design-round-trip")
             let panel = service.experiments
-            let name = try #require(panel.newDesignDraft())
+            let name = try #require(panel.management.newDesignDraft(context: panel.studyCreationContext))
             let draft = try ExperimentStore.load(name: name)
             #expect(draft.status == .draft)
             #expect(draft.templateProvenance == nil)
             #expect(StudyTemplateStore.agreement(of: draft) == .noLineage)
-            #expect(panel.templateLineage(draft) == nil)
+            #expect(panel.management.designs.templateLineage(draft, experiments: panel.management.experiments) == nil)
             // The rename invitation is what the Studies tab consumes on appear.
-            #expect(panel.renameInvitation == name)
+            #expect(panel.management.renameInvitation == name)
         }
     }
 

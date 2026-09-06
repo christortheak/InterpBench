@@ -1788,7 +1788,7 @@ struct ModelVariantsPanelView: View {
     }
 
     private func canAddSelectedAgentToStudy(_ record: ModelVariantRecord) -> Bool {
-        guard let study = service.experiments.selected else { return false }
+        guard let study = service.experiments.management.selected else { return false }
         return study.status == .draft
             && study.modelID == record.artifact.baseModelID
     }
@@ -1809,7 +1809,7 @@ struct ModelVariantsPanelView: View {
     }
 
     private func addToStudyHelp(_ record: ModelVariantRecord) -> String {
-        guard let study = service.experiments.selected else {
+        guard let study = service.experiments.management.selected else {
             return "select a draft study in Studies first"
         }
         guard study.status == .draft else {

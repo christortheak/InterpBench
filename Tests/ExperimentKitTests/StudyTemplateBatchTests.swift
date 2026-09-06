@@ -622,16 +622,16 @@ import Testing
                 fileURL: root.appending(component: "notices.jsonl"))
             panel.refresh()
             let first = try ExperimentStore.load(name: try #require(mint.minted.first))
-            let lineage = try #require(panel.templateLineage(first))
+            let lineage = try #require(panel.management.designs.templateLineage(first, experiments: panel.management.experiments))
             #expect(lineage.contains("from design '\(template.name)'"))
             #expect(!lineage.contains("diverged"))
             #expect(lineage.contains(mint.batchGroup))
             #expect(lineage.contains("3 studies minted together"))
-            #expect(panel.batchSiblings(first).count == 2)
+            #expect(panel.management.batchSiblings(first).count == 2)
 
             // A hand-authored study has no lineage line at all.
             let source = try ExperimentStore.load(name: "allocation-study")
-            #expect(panel.templateLineage(source) == nil)
+            #expect(panel.management.designs.templateLineage(source, experiments: panel.management.experiments) == nil)
         }
     }
 
@@ -646,7 +646,7 @@ import Testing
             panel.notices = PanelNotices(
                 fileURL: root.appending(component: "notices.jsonl"))
             panel.refresh()
-            panel.renameTemplate(template.name, to: "Vignette Wave 3")
+            panel.management.renameTemplate(template.name, to: "Vignette Wave 3")
             #expect(panel.management.designs.templates.map(\.name) == ["vignette-wave-3"])
             #expect(panel.management.designs.selectedTemplateName == "vignette-wave-3")
             // Provenance records what was true when it was written.
@@ -666,7 +666,7 @@ import Testing
             panel.notices = PanelNotices(
                 fileURL: root.appending(component: "notices.jsonl"))
             panel.refresh()
-            panel.deleteTemplate(template.name)
+            panel.management.deleteTemplate(template.name)
             #expect(panel.management.designs.templates.isEmpty)
             #expect(panel.management.designs.selectedTemplateName == nil)
             let survivor = try ExperimentStore.load(name: minted.name)

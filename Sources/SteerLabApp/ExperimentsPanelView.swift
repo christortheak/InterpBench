@@ -35,7 +35,7 @@ struct ExperimentsPanelView: View {
         Form {
             StudyManagementSection(panel: panel, openTemplates: openTemplates)
 
-            if let manifest = panel.selected {
+            if let manifest = panel.management.selected {
                 // THE classifier, FIRST on the page: one "Study type"
                 // control (2026-07-19 second pass — replaces the old
                 // Study stage / Study Focus duo, whose disagreement plus
@@ -195,7 +195,7 @@ struct ExperimentsPanelView: View {
                 }
 
                 if !panel.awaitingSweepJudgments.isEmpty,
-                    let studyName = panel.selectedName
+                    let studyName = panel.management.selectedName
                 {
                     Section("Awaiting judgment") {
                         ForEach(panel.awaitingSweepJudgments) { awaiting in
@@ -291,7 +291,7 @@ struct ExperimentsPanelView: View {
                         StudyPipelinesView(pipelines: panel.pipelines,
                             substrateLabel: service.cluster.substrateLabel,
                             refresh: { await panel.refreshPipelineRuns() },
-                            duplicateStudy: { panel.duplicateSelected() })
+                            duplicateStudy: { panel.management.duplicateSelected() })
                     }
                 }
             }
@@ -359,14 +359,14 @@ struct ExperimentsPanelView: View {
         // does not hammer the experiment listing).
         .task(id: residencyTaskKey) {
             await panel.refreshServerResidency()
-            if let study = panel.selectedName {
+            if let study = panel.management.selectedName {
                 await panel.refreshAwaitingSweepJudgments(study: study)
             }
         }
         .sheet(isPresented: $showImportJSONL) {
             ImportJSONLSheet(
                 text: $importJSONLText,
-                destination: panel.selected.map {
+                destination: panel.management.selected.map {
                     DataTemplates.taskPromptsDestination(experiment: $0.name)
                 },
                 onImport: { text, replace in
@@ -379,7 +379,7 @@ struct ExperimentsPanelView: View {
 
     /// Change key for the residency preflight: selection + active substrate.
     private var residencyTaskKey: String {
-        let name = panel.selectedName ?? ""
+        let name = panel.management.selectedName ?? ""
         let substrate = service.cluster.substrateLabel
         return "\(name)|\(substrate)|\(panel.isServerWorkspace)"
     }

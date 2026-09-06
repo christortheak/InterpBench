@@ -48,7 +48,7 @@ struct StudyManagementSection: View {
         // A display label leads, but never REPLACES the canonical name: run
         // directories, config.json stamps and CLI arguments all speak the
         // canonical one, so it has to stay correlatable here.
-        let display = panel.displayName(manifest)
+        let display = panel.management.displayName(manifest)
         var label =
             display == manifest.name
             ? "\(manifest.name)  [\(manifest.status.rawValue)]"
@@ -77,7 +77,7 @@ struct StudyManagementSection: View {
             Picker("Draft", selection: $management.selectedName) {
                 Text("select…").tag(String?.none)
                 let families = duplicateFamilyLabels
-                ForEach(panel.experiments, id: \.name) { manifest in
+                ForEach(panel.management.experiments, id: \.name) { manifest in
                     // Optimization badge (mirrors Home's studyRowLabel):
                     // Studies reads as inventory/provenance; optimization
                     // authoring lives in Agents → Optimizations.
@@ -110,7 +110,7 @@ struct StudyManagementSection: View {
                                     + "Rename so you can name it now"
                                 : "opens the new-studies table on this design — one "
                                     + "ordinary draft per casting")
-                    if let manifest = panel.selected {
+                    if let manifest = panel.management.selected {
                         Button {
                             openRename(manifest)
                         } label: {
@@ -128,8 +128,8 @@ struct StudyManagementSection: View {
                                 experimentName: manifest.name)
                             confirmDeleteDraft = true
                         }
-                        .disabled(panel.deleteSelectedStudyRefusal != nil)
-                        .help(panel.deleteSelectedStudyRefusal ?? StudyControlCopy.deleteStudyHelp)
+                        .disabled(panel.management.deleteSelectedStudyRefusal != nil)
+                        .help(panel.management.deleteSelectedStudyRefusal ?? StudyControlCopy.deleteStudyHelp)
                         .confirmationDialog(
                             "Delete draft '\(manifest.name)'?",
                             isPresented: $confirmDeleteDraft,
@@ -193,7 +193,7 @@ struct StudyManagementSection: View {
                         )
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                        Button("Create Draft") { panel.create() }
+                        Button("Create Draft") { panel.management.create(context: panel.studyCreationContext) }
                             .disabled(panel.draft.newName.isEmpty)
                     }
                 }
@@ -201,7 +201,7 @@ struct StudyManagementSection: View {
             // New Study mints a placeholder name and asks for the rename
             // immediately — the one-click flow is only an improvement if
             // naming follows it.
-            .onChange(of: panel.renameInvitation) {
+            .onChange(of: panel.management.renameInvitation) {
                 consumeRenameInvitation(panel: panel)
             }
         } header: {
@@ -272,7 +272,7 @@ struct StudyManagementSection: View {
         if let design = panel.management.designs.newStudyDesign.designName {
             openInstantiation(design, panel: panel)
         } else {
-            panel.newStudy()
+            panel.management.newStudy(context: panel.studyCreationContext)
         }
     }
 
@@ -295,10 +295,10 @@ struct StudyManagementSection: View {
     /// Consumed on change (the in-tab New Study path) and on appear (Templates'
     /// New Template, which creates the draft in another section).
     private func consumeRenameInvitation(panel: ExperimentPanel) {
-        guard let invited = panel.renameInvitation,
-            let manifest = panel.experiments.first(where: { $0.name == invited })
+        guard let invited = panel.management.renameInvitation,
+            let manifest = panel.management.experiments.first(where: { $0.name == invited })
         else { return }
-        panel.renameInvitation = nil
+        panel.management.renameInvitation = nil
         openRename(manifest)
     }
 
@@ -334,11 +334,11 @@ struct StudyManagementSection: View {
     /// (which always targets the selection) cannot act on another study.
     private func openRename(_ manifest: ExperimentManifest) {
         panel.clearFormError(.rename)
-        panel.selectedName = manifest.name
+        panel.management.selectedName = manifest.name
         renameSheet = RenameStudySheet(
             name: manifest.name,
             status: manifest.status,
-            label: panel.displayLabels[manifest.name] ?? "",
+            label: panel.management.displayLabels[manifest.name] ?? "",
             runsStamped: ExperimentStore.runsStamped(experimentName: manifest.name))
     }
 }
