@@ -609,3 +609,29 @@ The actual diff was read; the bridge ratchet and whitespace checks pass.
 No mechanical-move claim is made. This is a bounded observation fix: other native readiness badges,
 settings appearance handlers and execution preflights still retrieve credentials;
 the whole app is not yet qualified as non-interactive during observation.
+
+## Design instantiation derives scope before publishing
+
+`OutcomeInstrumentScopeAuthoring` now owns scope vocabulary checks, clearing,
+item selection and zero-item refusal for both the declaration command and design
+instantiation. Instantiation checks and derives that scope before any casting
+output or study publication. A bad scope no longer leaves a newly saved draft
+behind. The prompt bytes checked against the design pin are reused for scope
+selection, so a second read cannot silently select a different item set.
+
+The destination manifest is held under the shared file lock, with an absent-file
+precondition both before preparation and at publication. The fully derived draft
+is saved once. Design inspection, prompt reads, semantic-panel reads, scenario
+compilation and manifest publication use the captured workspace where those
+owners accept it. This does not complete the migration of agent-library paths,
+reviewed batch commands or all design writers. Nor does it claim crash-atomic
+rollback of every compiled scenario file if a later filesystem write fails.
+
+Three focused tests pass, including parameterized unknown-format/empty-selection
+refusals, unchanged source/design bytes, successful scope and provenance, explicit
+workspace reads and reuse of reviewed input bytes. Full Swift tests pass 277
+SteeringKit and 4,491 ExperimentKit tests (`TEST SUCCEEDED`, 43.667 seconds).
+Full Python passes 5,896 with 9 skipped and 8 warnings (151.70 seconds).
+The actual source/test/document diff was read; the bridge ratchet and whitespace
+checks pass. This is a semantic publication change; there is no claim of a
+mechanical body move.

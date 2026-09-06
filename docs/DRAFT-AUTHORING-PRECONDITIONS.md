@@ -225,3 +225,13 @@ creation/rename and adapter audit; remove selection-dependent authoring and the
 three remaining compatibility bridges. Do not treat a lock around publication alone as
 protection against a stale read. The complete acceptance gate remains in the
 [implementation plan](RESEARCHER-WORKFLOW-IMPLEMENTATION-PLAN.md).
+
+### Design instantiation publication
+
+A new study's outcome-instrument scope is derived before publication through
+`OutcomeInstrumentScopeAuthoring`, the same rule used by the declaration command.
+Invalid or zero-item scope declarations leave no study draft. Instantiation uses
+the prompt bytes checked against the design pin and saves the fully derived
+manifest once under the shared destination lock, requiring an absent destination.
+This does not yet provide a reviewed batch API or transaction-wide rollback of
+all compiled scenario files. Existing studies and design hashes are not rewritten.

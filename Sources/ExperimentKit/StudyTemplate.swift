@@ -627,7 +627,8 @@ public enum StudyTemplateStore {
         studyName: String? = nil,
         batchGroup: String? = nil
     ) throws -> ExperimentManifest {
-        let template = try load(name: templateName)
+        let root = ExperimentStore.workspaceRoot
+        let template = try StudyDesignSnapshot(workspaceRoot: root, name: templateName).template
         let templateHash = hash(template)
 
         var draft = template.study
@@ -645,38 +646,43 @@ public enum StudyTemplateStore {
         }
         draft.name = name
 
-        try refuseDriftedTaskPrompts(draft)
-
-        switch cell {
-        case .agents(let records):
-            // The SAME path the Studies panel's "Add agent" uses, so a minted
-            // arm and a clicked arm are byte-identical.
-            for record in records {
-                try ExperimentStore.attachAgent(record, into: &draft)
+        let storage = ExperimentRepository(workspaceRoot: root)
+        return try ManifestFileTransaction.withLock(manifestURL: storage.manifestURL(name), workspaceRoot: root) {
+            try ManifestFileTransaction.requireCurrent(.absent, at: storage.manifestURL(name))
+            let prompts = try reviewedTaskPrompts(draft, workspaceRoot: root)
+            if let scope = draft.outcomeInstrumentScope {
+                try OutcomeInstrumentScopeAuthoring.apply(responseFormats: scope.responseFormats,
+                    into: &draft, workspaceRoot: root, reviewedPrompts: prompts)
             }
-        case .seating(let assignment):
-            guard let ref = template.semanticScenario else {
-                throw ExperimentError(
-                    reason: "template '\(templateName)' declares no semantic "
-                        + "panel — a seat casting has nothing to compile against")
-            }
-            let semantic = try loadSemanticPanel(ref)
-            // The ONE compile-and-pin (`SeatCasting.compile`), shared with the
-            // Studies editor's Seats section — a minted casting and a
-            // hand-cast one are the same write, including the provenance that
-            // lets the study's seats be re-listed and re-cast later.
-            try SeatCasting.compile(
-                assignment, semantic: semantic, semanticPath: ref.path,
-                into: &draft)
-        }
 
-        try ExperimentStore.save(draft, allowCreate: true)
-        // Re-pin the derived scope through the ordinary declaration path.
-        if let scope = draft.outcomeInstrumentScope {
-            return try ExperimentStore.declareOutcomeInstrumentScope(
-                responseFormats: scope.responseFormats, experimentName: name)
+            switch cell {
+            case .agents(let records):
+                // The SAME path the Studies panel's "Add agent" uses, so a minted
+                // arm and a clicked arm are byte-identical.
+                for record in records {
+                    try ExperimentStore.attachAgent(record, into: &draft)
+                }
+            case .seating(let assignment):
+                guard let ref = template.semanticScenario else {
+                    throw ExperimentError(
+                        reason: "template '\(templateName)' declares no semantic "
+                            + "panel — a seat casting has nothing to compile against")
+                }
+                let semantic = try loadSemanticPanel(ref, workspaceRoot: root)
+                // The ONE compile-and-pin (`SeatCasting.compile`), shared with the
+                // Studies editor's Seats section — a minted casting and a
+                // hand-cast one are the same write, including the provenance that
+                // lets the study's seats be re-listed and re-cast later.
+                try SeatCasting.compile(
+                    assignment, semantic: semantic, semanticPath: ref.path,
+                    into: &draft, workspaceRoot: root)
+            }
+
+            // Publish only the fully derived draft. A competing creation at the
+            // chosen name cannot be overwritten by an upsert.
+            try ExperimentStore.save(draft, allowCreate: true, workspaceRoot: root, expectedFile: .absent)
+            return draft
         }
-        return draft
     }
 
     // MARK: - The scratch draft "Edit design…" opens
@@ -793,9 +799,10 @@ public enum StudyTemplateStore {
     // MARK: - Helpers
 
     private static func loadSemanticPanel(
-        _ ref: StudyTemplate.SemanticScenarioRef
+        _ ref: StudyTemplate.SemanticScenarioRef,
+        workspaceRoot: URL = ExperimentStore.workspaceRoot
     ) throws -> MultiAgentScenario {
-        let url = ExperimentStore.resolveProjectPath(ref.path)
+        let url = ExperimentStore.resolveProjectPath(ref.path, root: workspaceRoot)
         guard let data = try? Data(contentsOf: url) else {
             throw ExperimentError(reason: "semantic panel not found: \(url.path)")
         }
@@ -816,11 +823,11 @@ public enum StudyTemplateStore {
     /// launder drift: the minted study would verify cleanly while measuring
     /// items the template never described. Refusing sends the researcher back
     /// to re-mint the template deliberately.
-    private static func refuseDriftedTaskPrompts(_ draft: ExperimentManifest) throws {
+    private static func reviewedTaskPrompts(_ draft: ExperimentManifest, workspaceRoot: URL) throws -> Data? {
         guard let file = draft.taskPromptsFile, !file.isEmpty,
             let pinned = draft.taskPromptsHash
-        else { return }
-        let url = ExperimentStore.resolveProjectPath(file)
+        else { return nil }
+        let url = ExperimentStore.resolveProjectPath(file, root: workspaceRoot)
         guard let data = try? Data(contentsOf: url) else {
             throw ExperimentError(
                 reason: "the template's task prompts are missing: \(url.path)")
@@ -833,5 +840,6 @@ public enum StudyTemplateStore {
                     + "re-mint the template rather than minting a study whose "
                     + "pins are already stale")
         }
+        return data
     }
 }

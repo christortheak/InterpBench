@@ -1789,72 +1789,10 @@ public enum ExperimentStore {
     public static func declareOutcomeInstrumentScope(
         responseFormats: [String], experimentName: String
     ) throws -> ExperimentManifest {
-        try updateDraft(name: experimentName) { manifest in
-            // The vocabulary gate, ahead of the file read: `Scope.includes`
-            // compares raw strings, so an unrecognised format selects
-            // nothing and the pin silently becomes "zero items" — the same
-            // loss class `setOutcomeInstruments` refuses an unknown
-            // instrument for. Malformed (64), not a refusal: the caller
-            // typed a value the field cannot hold.
-            if let unknown = responseFormats.first(where: {
-                ResponseFormat(rawValue: $0) == nil
-            }) {
-                throw ExperimentError.malformed(
-                    "unknown responseFormat '\(unknown)' — known: "
-                        + knownResponseFormats.joined(separator: ", "),
-                    repair: "steerlab-cli experiment set-instrument-scope "
-                        + "\(experimentName) <"
-                        + knownResponseFormats.joined(separator: "|")
-                        + ">[,…]  (\"\" clears the declaration)")
-            }
-            // CLEARING comes first, before the prompts-file guard and the
-            // read (review round 10, finding 10). Clearing derives nothing
-            // from the prompts — it removes a declaration — and requiring the
-            // pin to be present, resolvable, and loadable made `""` refuse in
-            // exactly the states that make clearing necessary: a stale scope
-            // left behind when the pin was dropped, a pin whose file has
-            // moved, a pin that drifted. The instrument's own scope was then
-            // unremovable except by hand-editing the manifest, which is the
-            // one repair this store exists to make unnecessary. DECLARING
-            // (non-empty) still requires the pin and still reads it: a scope
-            // is a selection over those rows and cannot be checked without
-            // them.
-            guard !responseFormats.isEmpty else {
-                manifest.outcomeInstrumentScope = nil
-                return
-            }
-            guard let file = manifest.taskPromptsFile, !file.isEmpty else {
-                throw ExperimentError(
-                    reason: "declare the task prompts first ('steerlab-cli "
-                        + "experiment pin-prompts \(experimentName) "
-                        + "prompts/…/file.jsonl') — the scope pins which of "
-                        + "THEIR rows the instrument reads")
-            }
-            let data = try Data(contentsOf: resolveProjectPath(file))
-            let document = try TaskPromptsDocument.load(data)
-            let items = document.responseFormatItems
-            let pin = ResponseFormat.Scope.pin(
-                responseFormats: responseFormats, items: items)
-            // A scope that selects NOTHING is refused at the declaration,
-            // not left to the run. `ResponseFormat.refusal` already owns the
-            // sentence for what such a scope does — "the instrument would
-            // run on nothing and silently produce zero records" — and a
-            // declaration guaranteed to reach that refusal is the same shape
-            // as a `set-exclusions` bound aimed at no rule: malformed (64),
-            // never written and reported as success. Thrown INSIDE
-            // `updateDraft`, so nothing is saved.
-            guard pin.itemCount > 0 else {
-                throw ExperimentError.malformed(
-                    "the declared outcomeInstrumentScope selects zero task "
-                        + "items of '\(file)' — the instruments would run on "
-                        + "nothing and silently produce zero records",
-                    repair: "steerlab-cli experiment set-instrument-scope "
-                        + "\(experimentName) <"
-                        + knownResponseFormats.joined(separator: "|")
-                        + ">[,…]  (a format the pinned items actually "
-                        + "declare), or \"\" to clear the declaration")
-            }
-            manifest.outcomeInstrumentScope = pin
+        let root = workspaceRoot
+        return try updateDraft(name: experimentName, workspaceRoot: root) { manifest in
+            try OutcomeInstrumentScopeAuthoring.apply(responseFormats: responseFormats,
+                into: &manifest, workspaceRoot: root)
         }
     }
 
