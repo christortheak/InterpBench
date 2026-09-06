@@ -68,8 +68,8 @@ public enum LifecycleGate: String, CaseIterable, Sendable, Codable {
     /// ("hand-creation wearing a promotion badge").
     case promotionEvidence
 
-    /// A pinned vector artifact's bytes are missing, unreadable, or hash
-    /// differently than the pin claims.
+    /// Artifact bytes are missing, unreadable, differ from a pin, or no
+    /// longer describe the agent selected for attachment.
     case artifactPin
 
     /// A sweep input (dev prompts, capability battery, choice prompts) drifted
@@ -298,7 +298,7 @@ public enum RefusalSiteRegistry {
         .init(
             gate: .statusImmutable,
             verbs: [
-                "experiment attach", "experiment detach",
+                "experiment attach", "experiment detach", "experiment attach-agent",
                 "experiment pin-prompts",
                 "experiment pin-rubric", "experiment declare-condition",
                 "experiment set-sweep-selection", "experiment set-sweep-grid",
@@ -354,10 +354,9 @@ public enum RefusalSiteRegistry {
                 + "&& steerlab-cli experiment promote <name> <concept>"),
         .init(
             gate: .artifactPin,
-            verbs: ["experiment promote"],
-            origin: "AgentPromotion.promote — vector-artifact byte pins",
-            repairAction: "steerlab-cli experiment extract <name> "
-                + "&& steerlab-cli experiment promote <name> <concept>"),
+            verbs: ["experiment promote", "agent inspect", "experiment attach-agent"],
+            origin: "AgentPromotion.promote — vector-artifact byte pins; AgentArtifactSnapshot / StudyAgentAuthoring / ExperimentStore.agentCondition — reviewed agent bytes and model compatibility",
+            repairAction: "For promotion: steerlab-cli experiment extract <name> && steerlab-cli experiment promote <name> <concept>. For agent inspection/attachment: steerlab-cli agent inspect <path> --json; then steerlab-cli experiment manifest <name> --json; review both and reconstruct the attachment request."),
         .init(
             gate: .sweepInputDrift,
             verbs: ["experiment sweep"],
@@ -483,7 +482,7 @@ public enum RefusalSiteRegistry {
                 + "prompts/…/file.jsonl && steerlab-cli experiment freeze <name>-v2"),
         .init(
             gate: .staleManifest,
-            verbs: ["experiment attach", "experiment declare-condition", "panel compile"],
+            verbs: ["experiment attach", "experiment attach-agent", "experiment declare-condition", "panel compile"],
             origin: "ManifestFileTransaction.requireCurrent — external draft-write precondition",
             repairAction: "steerlab-cli experiment manifest <name> --json; review the intervening changes and submit with manifestFileSHA256."),
         .init(

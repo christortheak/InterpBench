@@ -1864,13 +1864,40 @@ public enum ExperimentStore {
     /// would drift, and the one the researcher clicks is not the one the
     /// paper's mint used — so both go through here.
     public static func agentCondition(
-        for record: ModelVariantRecord
+        for record: ModelVariantRecord, workspaceRoot: URL? = nil,
+        expectedArtifactFileSHA256: String? = nil
     ) throws -> ExperimentManifest.VariantCondition {
-        ExperimentManifest.VariantCondition(
-            name: record.artifact.name,
-            artifactPath: ModelVariantStore.relativePath(for: record),
-            artifactHash: try ModelVariantStore.hash(record.url),
-            artifact: record.artifact)
+        let data: Data
+        let artifact: ModelVariantArtifact
+        do {
+            data = try Data(contentsOf: record.url)
+            artifact = try JSONDecoder().decode(ModelVariantArtifact.self, from: data)
+        } catch {
+            throw ExperimentError.refusing(.artifactPin,
+                "the selected agent '\(record.artifact.name)' cannot be read as an agent artifact",
+                repair: "Reload the agent library and inspect the named artifact before attaching it. Restore missing immutable evidence from its verified archive; do not rewrite it.")
+        }
+        let digest = sha256Hex(data)
+        guard artifact == record.artifact,
+            expectedArtifactFileSHA256 == nil || expectedArtifactFileSHA256 == digest else {
+            throw ExperimentError.refusing(.artifactPin,
+                "the selected agent '\(record.artifact.name)' changed after it was displayed; no condition was attached",
+                repair: "Reload the agent library and review the changed artifact before selecting it again.")
+        }
+        // The inline artifact and its pin must come from one read. Hashing the
+        // live file alongside an older picker record can otherwise stamp two
+        // different interventions as though they were one artifact.
+        let artifactPath: String
+        if let root = workspaceRoot {
+            let prefix = try ManifestFileTransaction.canonicalPath(root) + "/"
+            let path = try ManifestFileTransaction.canonicalPath(record.url)
+            artifactPath = path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path
+        } else { artifactPath = ModelVariantStore.relativePath(for: record) }
+        return ExperimentManifest.VariantCondition(
+            name: artifact.name,
+            artifactPath: artifactPath,
+            artifactHash: digest,
+            artifact: artifact)
     }
 
     /// Appends (or replaces) one agent arm. Replacement matches the panel's
@@ -1882,15 +1909,18 @@ public enum ExperimentStore {
     /// arms of a comparison must differ by the intervention, not by which
     /// model produced the text.
     public static func attachAgent(
-        _ record: ModelVariantRecord, into manifest: inout ExperimentManifest
+        _ record: ModelVariantRecord, into manifest: inout ExperimentManifest,
+        workspaceRoot: URL? = nil, expectedArtifactFileSHA256: String? = nil
     ) throws {
         guard record.artifact.baseModelID == manifest.modelID else {
-            throw ExperimentError(
-                reason: "agent '\(record.artifact.name)' uses "
+            throw ExperimentError.refusing(.artifactPin,
+                "agent '\(record.artifact.name)' uses "
                     + "\(record.artifact.baseModelID), not this study's base "
-                    + "model \(manifest.modelID)")
+                    + "model \(manifest.modelID)",
+                repair: "Choose an agent for this study's base model, or deliberately revise the draft's model before attaching it.")
         }
-        let condition = try agentCondition(for: record)
+        let condition = try agentCondition(for: record, workspaceRoot: workspaceRoot,
+            expectedArtifactFileSHA256: expectedArtifactFileSHA256)
         manifest.variantConditions.removeAll {
             $0.artifactPath == condition.artifactPath || $0.name == condition.name
         }

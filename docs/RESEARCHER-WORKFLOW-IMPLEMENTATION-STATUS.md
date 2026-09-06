@@ -11,10 +11,10 @@ completion; a passing focused test does not establish release or scientific qual
 
 | Package | Status | Remaining gate |
 |---|---|---|
-| WP-0 operation inventory | [51-operation matrix](RESEARCH-OPERATION-MATRIX.md) and shared backlog | Expand advanced/per-field mappings and link executable journey evidence |
+| WP-0 operation inventory | [52-operation matrix](RESEARCH-OPERATION-MATRIX.md) and shared backlog | Expand advanced/per-field mappings and link executable journey evidence |
 | WP-1 observation and context | In progress | Finish origin persistence/actions, import context, transport policy, explicit submission and offline results; both suites |
 | WP-2 shared services | Runtime roles and draft preconditions implemented; writer/adapter migration in progress | External stale-write preconditions, authoring owners, service roles, bridge retirement |
-| WP-3 public operations | Design inspection/description adapters implemented; in progress | Designs, models, assembly, advanced-method mappings and adapters |
+| WP-3 public operations | Design inspection/description and reviewed agent attachment implemented; in progress | Designs, models, assembly, advanced-method mappings and adapters |
 | WP-4 research guidance | Extraction contract and control interpretation corrected; full guides pending | Shipped method guides, prompt resources, scientific wording and executable examples |
 | WP-5 cluster coauthoring | Mac guide, sourced-fact review and shared preview implemented | Real documentation-to-profile journey, interactive qualification and cross-platform adapter mapping |
 | WP-6 remote lifecycle | Origin-aware import and durable archive custody implemented; in progress | Composed recovery, receipt adapters and bounded cleanup plan/apply with dependency checks |
@@ -635,3 +635,36 @@ Full Python passes 5,896 with 9 skipped and 8 warnings (151.70 seconds).
 The actual source/test/document diff was read; the bridge ratchet and whitespace
 checks pass. This is a semantic publication change; there is no claim of a
 mechanical body move.
+
+
+## Reviewed agent inspection and attachment across surfaces
+
+`agent list/inspect` exposes the recognized local library, exact artifact document
+and file digest. `experiment attach-agent` and the named Swift HTTP adapter require
+both reviewed file digests. `StudyAgentAuthoring` publishes through the draft
+transaction, with model compatibility and artifact-version checks before writing.
+The embedded artifact and its condition hash come from the same read; changed
+picker records, missing artifacts and malformed artifacts now carry a typed
+`artifactPin` refusal. No artifact or frozen study is rewritten.
+
+The native study picker captures its artifact review on selection and reloads
+explicitly; the Agent Library validates its displayed record before attachment.
+Both call the same owner with the management owner's retained study review.
+The optional unsaved model choice remains an explicit native input, not a default
+in CLI/HTTP. See [the public attachment contract](REVIEWED-AGENT-ATTACHMENT.md).
+
+Validation: eight focused tests pass, including parameterized artifact failures,
+plus compiled CLI and disposable HTTP checks for discovery, exact inspection,
+attachment, stale/missing preconditions, changed artifacts and wrong contexts.
+Full Xcode tests pass 277 SteeringKit and 4,499 ExperimentKit tests
+(`TEST SUCCEEDED`, 41.951 seconds). Full Python passes 5,896 with 9 skipped and
+8 warnings (156.32 seconds). The generated CLI reference, bridge ratchet and
+whitespace checks pass; the actual diff was read. Broad checks first found the
+new command's multiline contract span and a duplicate refusal-registry entry;
+both were corrected, and the complete Swift suite rerun. A newly introduced
+compatibility-property reference was replaced with direct owner access.
+
+Generic artifact/reader attachment, Python parity, reviewed design batches and
+interactive UI qualification remain. Discovery uses the existing store's
+recognition rules and is not a complete malformed-file census. This semantic
+change does not claim a mechanical body move.

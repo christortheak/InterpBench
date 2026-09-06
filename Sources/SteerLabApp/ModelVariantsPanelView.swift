@@ -1799,8 +1799,13 @@ struct ModelVariantsPanelView: View {
         // attached variants) — the guard above already ensured the study's
         // model matches this agent, so this makes the attach a pure attach.
         service.experiments.draft.studyBaseModelID = record.artifact.baseModelID
-        service.experiments.addVariantCondition(record.id)
-        navigate(.studies)
+        do {
+            let reviewed = try AgentArtifactSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, reviewedRecord: record)
+            service.experiments.addVariantCondition(reviewedAgent: reviewed)
+            navigate(.studies)
+        } catch {
+            service.experiments.note("Couldn't attach the agent: \(error)", severity: .error)
+        }
     }
 
     private func addToStudyHelp(_ record: ModelVariantRecord) -> String {

@@ -298,6 +298,13 @@ public enum ExperimentCLIParser {
             namespace: "data", verb: "verify-custody", positional: "<receipt-sha256>",
             purpose: "Verify a retained evidence archive and imported files against a local custody receipt; no network or cleanup."),
 
+        .init(namespace: "agent", verb: "list", purpose: "List discoverable local agent artifacts and their file digests."),
+        .init(namespace: "agent", verb: "inspect", positional: "<path>", purpose: "Inspect a workspace agent artifact before attachment."),
+        .init(namespace: "experiment", verb: "attach-agent", positional: "<name>",
+            purpose: "Attach an agent using the reviewed study and artifact file versions.",
+            valueFlags: ["--artifact", "--artifact-sha256", "--manifest-sha256"],
+            requiredFlags: ["--artifact", "--artifact-sha256", "--manifest-sha256"]),
+
         .init(namespace: "design", verb: "list", purpose: "List the workspace's designs and report unreadable entries."),
         .init(namespace: "design", verb: "inspect", positional: "<name>", purpose: "Read a design and its external file digest for reviewed edits."),
         .init(namespace: "design", verb: "describe", positional: "<name>", purpose: "Save a design description against the reviewed file version.",

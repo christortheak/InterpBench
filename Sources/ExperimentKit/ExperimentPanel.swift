@@ -2805,30 +2805,15 @@ public final class ExperimentPanel {
         }
     }
 
-    public func addVariantCondition(_ id: ModelVariantRecord.ID? = nil) {
-        guard var manifest = selected, manifest.status == .draft else { return }
-        // An unsaved picker change lands here too: the agent about to be
-        // added must be checked against the model the researcher CHOSE, not
-        // the one last saved (same reset rules as `saveProtocol`).
-        applyStudyBaseModelChoice(to: &manifest)
-        guard let id = id ?? draft.selectedVariantToAddID,
-            let record = ModelVariantStore.scan().first(where: { $0.id == id })
-        else {
-            note("select an agent to add", severity: .info)
-            return
-        }
-        guard record.artifact.baseModelID == manifest.modelID else {
-            note("agent uses \(record.artifact.baseModelID), not study base model \(manifest.modelID)", severity: .info)
-            return
-        }
+    public func addVariantCondition(reviewedAgent artifact: AgentArtifactSnapshot) {
+        guard let manifest = selected, manifest.status == .draft else { return }
         do {
-            // The one agent → condition path, shared with template
-            // instantiation (`ExperimentStore.attachAgent`).
-            try ExperimentStore.attachAgent(record, into: &manifest)
-            try management.persistReviewedDraft(manifest)
+            let reviewed = try management.reviewedDraft(named: manifest.name)
+            let saved = try StudyAgentAuthoring.attach(artifact, reviewed: reviewed, baseModelChoice: draft.studyBaseModelID)
+            management.acceptAuthoringResult(saved)
             draft.selectedVariantToAddID = nil
             refresh()
-            note("added agent '\(record.artifact.name)'", severity: .success)
+            note("added agent '\(artifact.record.artifact.name)'", severity: .success)
         } catch {
             note(
                 "Couldn't add the agent — check it uses this study's "

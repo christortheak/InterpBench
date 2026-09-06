@@ -241,7 +241,7 @@ import Testing
         // that emits the prompt, and a contract that described the rule
         // without the command would send an agent back to improvising one.
         let namespaces: Set<String> = [
-            "workspace", "data", "experiment", "panel", "authoring", "design",
+            "workspace", "data", "experiment", "panel", "authoring", "design", "agent",
         ]
         let code = Self.codeText(in: AgentContract.body)
         var missing: [String] = []

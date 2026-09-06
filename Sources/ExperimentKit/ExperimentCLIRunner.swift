@@ -107,7 +107,7 @@ public struct ExperimentCLIRunner: Sendable {
     /// nothing is dispatched twice.
     public static let namespaces: Set<String> = [
         "init", "workspace", "data", "vectors", "remote", "experiment", "docs",
-        "install", "panel", "authoring", "model", "design",
+        "install", "panel", "authoring", "model", "design", "agent",
     ]
 
     /// The top-level spelling of `install version`. `--version` is what a
@@ -184,6 +184,7 @@ public struct ExperimentCLIRunner: Sendable {
             case "vectors": result = try await runVectorsCommand(invocation)
             case "remote": result = try await runRemoteCommand(invocation)
             case "experiment": result = try await runExperimentCommand(invocation)
+            case "agent": result = try StudyAgentCLI.run(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
             case "design": result = try StudyDesignCLI.run(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
             case "docs": result = try runDocsCommand(invocation)
             case "authoring": result = try runAuthoringCommand(invocation)
@@ -2657,6 +2658,8 @@ public struct ExperimentCLIRunner: Sendable {
         }
 
         switch args.first {
+        case "attach-agent":
+            return try StudyAgentCLI.attach(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
         case "list":
             let manifests = ExperimentStore.list()
             if manifests.isEmpty { sink.out("no experiments") }

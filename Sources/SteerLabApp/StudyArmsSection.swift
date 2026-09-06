@@ -9,6 +9,17 @@ struct StudyArmsSection: View {
     let robustnessEvidence: [AgentEvidence.RobustnessEvidence]
     let currentSubstrate: String
     let availableVariants: [ModelVariantRecord]
+    @State private var agentReview: AgentArtifactSnapshot?
+    @State private var agentReviewMessage: String?
+
+    private func reviewAgentSelection(_ id: String?) {
+        panel.draft.selectedVariantToAddID = id
+        agentReview = nil
+        agentReviewMessage = nil
+        guard let id, let record = panel.availableVariantsForStudy.first(where: { $0.id == id }) else { return }
+        do { agentReview = try AgentArtifactSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, reviewedRecord: record) }
+        catch { agentReviewMessage = String(describing: error) }
+    }
 
     /// ONE Conditions section, content by study type: the ARMS of the
     /// study. Agents for a comparison; the scenario for multi-agent; the
@@ -47,16 +58,23 @@ struct StudyArmsSection: View {
             } else {
                 if isDraft {
                     HStack {
-                        Picker("Add agent", selection: $draft.selectedVariantToAddID) {
+                        Picker("Add agent", selection: Binding(get: { draft.selectedVariantToAddID }, set: reviewAgentSelection)) {
                             Text("select…").tag(String?.none)
                             ForEach(panel.availableVariantsForStudy) { variant in
                                 Text(variant.artifact.name).tag(String?.some(variant.id))
                             }
                         }
-                        Button("Add") { panel.addVariantCondition() }
-                            .disabled(panel.draft.selectedVariantToAddID == nil)
+                        Button("Add") {
+                            if let agentReview { panel.addVariantCondition(reviewedAgent: agentReview) }
+                        }
+                        .disabled(agentReview == nil || draft.selectedVariantToAddID == nil)
+                        Button("Reload agent selection") { reviewAgentSelection(draft.selectedVariantToAddID) }
+                            .disabled(draft.selectedVariantToAddID == nil)
                     }
                     .help("add a saved agent that uses the selected baseline model")
+                    .onChange(of: panel.management.selectedName) { reviewAgentSelection(nil) }
+                    .onChange(of: ExperimentStore.workspaceRoot.path) { reviewAgentSelection(nil) }
+                    if let agentReviewMessage { Text(agentReviewMessage).font(.caption).foregroundStyle(.orange) }
                     if !manifest.concepts.isEmpty {
                         Menu("Add sweep-created agent…") {
                             ForEach(manifest.concepts, id: \.name) { concept in

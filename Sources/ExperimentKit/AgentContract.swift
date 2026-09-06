@@ -906,6 +906,13 @@ rationale. Fastest way to find what is missing. Blockers are a refusal:
 `state: "refused"`, exit **65 in both modes** (the one verb whose human exit
 has migrated — §5).
 
+**Agent attachment:** `steerlab-cli agent list --json` lists discoverable local
+agents; `steerlab-cli agent inspect <path> --json` returns the artifact and
+`artifactFileSHA256`. Inspect the target with `steerlab-cli experiment manifest <name> --json`, then use `steerlab-cli experiment attach-agent <name> --artifact <path> --artifact-sha256 <digest> --manifest-sha256 <digest> --json`. Both digests
+come from the reviewed files. The service computes the condition's pin; never
+invent one. A changed file refuses, as does a frozen study or wrong base model.
+Inspect and review the changes before reconstructing an attachment request.
+
 **Study designs:** `steerlab-cli design list --json` reports the design library
 and unreadable entries. `steerlab-cli design inspect <name> --json` returns the
 complete design document and `designFileSHA256`. To edit its description, use

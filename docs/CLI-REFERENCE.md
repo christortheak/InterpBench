@@ -783,6 +783,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   init [--home <dir>]                           Create the home layout's Workspaces/ and Sites/.
   workspace init <path>                         Create and seed a data workspace.
   experiment <verb> <name> …                    The study lifecycle.
+  agent list | inspect <path>                   Inspect local agents for reviewed attachment.
   design list | inspect | describe …            Inspect designs and edit reviewed descriptions.
   data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>  Study-data readiness and local evidence custody.
   vectors <verb> …                              Vector artifacts.
@@ -893,6 +894,7 @@ steerlab-cli experiment manifest <name>
 steerlab-cli experiment create <name> [--description <text>] --model <id> [--revision <commit>]
 steerlab-cli experiment attach <name> <concept>… [--corpus <a,b,c>] [--extraction-rendering <json>] [--method <name>] [--pool-from <k>] [--project-neutral <k>] [--reading-position <label>] [--reference <concept>]
 steerlab-cli experiment detach <name> <concept>…
+steerlab-cli experiment attach-agent <name> --artifact <value> --artifact-sha256 <value> --manifest-sha256 <value>
 steerlab-cli experiment pin-prompts <name> <prompts/…/file.jsonl>
 steerlab-cli experiment pin-rubric <name> <prompts/rubrics/file.md> [--judge-pin <judge-name>=<revision>[:<dtype>]] [--judges <spec>]
 steerlab-cli experiment declare-condition <name> <condition> [--alpha-units <norm|raw>] [--band-width <k>] [--baseline] [--control <name>] [--slots <spec>]
@@ -918,6 +920,7 @@ steerlab-cli experiment duplicate <name> <new-name>
 | `experiment create` | Create a draft manifest pinned to a model. |
 | `experiment attach` | Pin each named concept's stimulus hash and extraction options. |
 | `experiment detach` | Remove each named concept's pin from a draft — refused while a declaration still names one. |
+| `experiment attach-agent` | Attach an agent using the reviewed study and artifact file versions. |
 | `experiment pin-prompts` | Pin the measured task-prompt file and its hash ("" clears the pin). |
 | `experiment pin-rubric` | Pin the judging rubric, the judge panel, and the evaluation declaration they imply; --judge-pin declares a local judge's revision and dtype (repeat per judge). |
 | `experiment declare-condition` | Declare one experimental arm, or the explicit baseline. |
@@ -2199,6 +2202,28 @@ custody receipt. `remote import --json` reports its digest; use
 archive and expanded files without contacting a server. This proves possession
 of bytes, not scientific validity or cleanup authorization. See
 [Local evidence custody](EVIDENCE-CUSTODY.md) for the contract and current limits.
+
+### Local agent library (`agent`)
+
+<!-- GENERATED:swift-agent BEGIN -->
+<!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
+
+```
+steerlab-cli agent list
+steerlab-cli agent inspect <path>
+```
+
+| Verb | Purpose |
+|---|---|
+| `agent list` | List discoverable local agent artifacts and their file digests. |
+| `agent inspect` | Inspect a workspace agent artifact before attachment. |
+
+Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
+<!-- GENERATED:swift-agent END -->
+
+Use the artifact digest from inspection and the study digest from `experiment
+manifest` with `experiment attach-agent`. Both are external write preconditions;
+the service computes and records the actual artifact pin. Frozen studies refuse.
 
 ### Study design library (`design`)
 

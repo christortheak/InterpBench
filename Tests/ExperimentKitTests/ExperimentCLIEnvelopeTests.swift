@@ -683,6 +683,7 @@ import Testing
             // moved.
             "init",
             "design list", "design inspect", "design describe",
+            "agent list", "agent inspect", "experiment attach-agent",
             "workspace init", "data check", "data custody", "data verify-custody",
             // POLE MIRRORING: the opposite pole of a contrastive direction as
             // its own artifact. A new verb in an existing family, not a
@@ -799,8 +800,8 @@ import Testing
         // the design lived in a command line rather than in the artifact
         // chain the evidence travels in.
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 30,
-            "the experiment lifecycle is thirty verbs (audit §2.1, §8 P0-3, §9 P3/P13)")
+            declared.filter { $0.hasPrefix("experiment ") }.count == 31,
+            "the experiment lifecycle includes reviewed agent attachment")
     }
 
     @Test func everySpecIsInARunnerOwnedNamespace() {
