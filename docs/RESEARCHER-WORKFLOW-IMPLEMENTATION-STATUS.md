@@ -1,11 +1,27 @@
 # Researcher workflow implementation status
 
-Current branch: `codex/researcher-study-assembly`, based on main `a5db8c3`
-(the independently approved `2662dc8` plus two review documents). The preceding authoring branch remains at that reviewed tip; the earlier
-implementation branch remains at `95d14aa`, originally based on main `bfd13a5`.
-The branch is a review artifact. Main, the installed app, and live services
-remain unchanged. The [implementation plan](RESEARCHER-WORKFLOW-IMPLEMENTATION-PLAN.md)
-is authoritative; WP-5 and WP-6 remain in scope.
+Current branch: `codex/python-authoring-equivalence`, based directly on main
+`ef3dec8`. Main includes the independently reviewed study-assembly work and
+`3ea802a`: submission receipts wait for terminal scheduler jobs, and
+`--reimport-drifted` preserves the original import while creating a sibling.
+The earlier branch tips are retained. This branch does not install the app,
+change live services or authorize landing. The
+[implementation plan](RESEARCHER-WORKFLOW-IMPLEMENTATION-PLAN.md) remains
+authoritative; WP-5 and WP-6 remain in scope.
+
+This checkpoint adds Python client pack preview/apply/export, manifest inspection,
+immutable full-record prompt import and reviewed vector attachment. See the
+[workflow and review handoff](PYTHON-STUDY-ASSEMBLY-WORKFLOW.md) for scope,
+verification and remaining work. Historical checkpoints below describe their
+own original review state, not the current state of main.
+
+Validation for the Python assembly checkpoint: **5,971 Python tests passed,
+9 skipped; 277 SteeringKit + 4,572 ExperimentKit tests passed**. Parser AST,
+reference/contract, normal/release bridge and public-scan gates pass. The real
+Python/Mac pack interchange test passes. See the
+[validation history](RESEARCHER-WORKFLOW-VALIDATION-HISTORY.md) for command
+conditions, logs and corrected test configurations. Independent review remains
+the landing gate.
 
 ## What researchers and agents gain
 
@@ -174,10 +190,10 @@ qualification is claimed. See the audit handoff for review boundaries.
    offline and failure recovery, and scientific/GPU checks. Record unavailable
    checks honestly; unit tests alone do not establish research validity.
 
-**Separate upstream task:** imported submit receipts may contain still-growing
-logs. Preserve that task with the responsible agents; this pass does not change
-its classification. Custody/remote cleanup qualification depends on resolving
-that evidence boundary. Never repair it by modifying imported historical runs.
+**Integrated upstream fix:** main's terminal-job receipt gate and immutable
+sibling reimport are included in this branch. Live scheduler/accounting and
+cleanup qualification remain outstanding; the code defect is no longer an
+unintegrated upstream task. Never repair historical runs in place.
 
 ## Deployment and review
 

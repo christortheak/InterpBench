@@ -1,6 +1,7 @@
 """Study prompt loading and admission; independent of model execution."""
 from __future__ import annotations
 import hashlib
+import io
 import json
 import os
 from . import lifecycle_gates, paths, prompt_render, response_format
@@ -81,123 +82,128 @@ def load_prompts(manifest: Manifest, prompts_file: str | None, root: str | None)
             repair=(f"steerlab-cli experiment duplicate {manifest.name} "
                     f"{manifest.name}-v2 && steerlab-cli experiment "
                     f"pin-prompts {manifest.name}-v2 <the override file>"))
-    prompts = []
-    seen_ids: dict[str, int] = {}  # id → 1-based item ordinal
     with open(path, encoding="utf-8") as handle:
-        for i, raw in enumerate(handle):
-            line = raw.strip()
-            if not line:
-                continue
-            obj = json.loads(line)
-            # Auto-id parity with Swift `parseTaskPrompts` (2026-07-26).
-            # This used to be the 0-based FILE LINE index, blank lines
-            # included, while Swift used the 1-based ordinal of PARSED
-            # prompts. For a file whose rows carry no explicit `id`, the two
-            # engines therefore produced `prompt-0…N-1` and `prompt-1…N`.
-            # Paired statistics key on promptID, so the intersection mapped
-            # one engine's item k+1 onto the other's item k: it did not fail
-            # to join, it joined the WRONG items and dropped one at each end.
-            # A blank line anywhere shifted it further.
-            # Explicit ids must be non-empty STRINGS; null and absent both
-            # take the shared prompt-<ordinal> fallback (review 2026-08-03,
-            # P2: `id: null` used to survive as None here while Swift fell
-            # back — a divergence in the exact vocabulary the scope pin and
-            # paired statistics key on). Message string is the cross-engine
-            # contract (Swift twin: parseTaskPrompts).
-            raw_id = obj.get("id")
-            if raw_id is None:
-                raw_id = f"prompt-{len(prompts) + 1}"
-            elif not isinstance(raw_id, str) or not raw_id.strip():
+        return parse_prompts(handle.read())
+
+
+def parse_prompts(text: str) -> list[dict]:
+    """The run loader's record admission, also used before publishing inputs."""
+    prompts = []
+    seen_ids: dict[str, int] = {}
+    for i, raw in enumerate(io.StringIO(text, newline=None)):
+        line = raw.strip()
+        if not line:
+            continue
+        obj = json.loads(line)
+        # Auto-id parity with Swift `parseTaskPrompts` (2026-07-26).
+        # This used to be the 0-based FILE LINE index, blank lines
+        # included, while Swift used the 1-based ordinal of PARSED
+        # prompts. For a file whose rows carry no explicit `id`, the two
+        # engines therefore produced `prompt-0…N-1` and `prompt-1…N`.
+        # Paired statistics key on promptID, so the intersection mapped
+        # one engine's item k+1 onto the other's item k: it did not fail
+        # to join, it joined the WRONG items and dropped one at each end.
+        # A blank line anywhere shifted it further.
+        # Explicit ids must be non-empty STRINGS; null and absent both
+        # take the shared prompt-<ordinal> fallback (review 2026-08-03,
+        # P2: `id: null` used to survive as None here while Swift fell
+        # back — a divergence in the exact vocabulary the scope pin and
+        # paired statistics key on). Message string is the cross-engine
+        # contract (Swift twin: parseTaskPrompts).
+        raw_id = obj.get("id")
+        if raw_id is None:
+            raw_id = f"prompt-{len(prompts) + 1}"
+        elif not isinstance(raw_id, str) or not raw_id.strip():
+            raise RuntimeError(
+                f"task prompts: item {len(prompts) + 1} declares an "
+                "empty or non-string 'id' — declare a non-empty string, "
+                "or omit the key for the prompt-<ordinal> fallback")
+        entry = {"id": raw_id,
+                 "prompt": obj.get("prompt") or obj.get("text", "")}
+        # Duplicate item ids silently corrupt pairing on BOTH engines
+        # (choice readouts and paired statistics key on promptID), so the
+        # file refuses at LOAD — run/validate/sweep/logprob all inherit
+        # the gate. Checked BEFORE the per-item transcript validation
+        # (cross-engine ordering contract); the message string is the
+        # cross-engine contract (Swift twin:
+        # ExperimentTasks.parseTaskPrompts; fixture:
+        # prompts/fixtures/task-prompts-validation/cases.json).
+        item = len(prompts) + 1
+        first = seen_ids.get(entry["id"])
+        if first is not None:
+            raise RuntimeError(
+                f"task prompts: duplicate item id '{entry['id']}' "
+                f"(items {first} and {item}) — ids must be unique for "
+                "pairing and reporting")
+        seen_ids[entry["id"]] = item
+        # Scripted transcript (the metacognition-study instrument): a
+        # pinned multi-turn conversation — researcher-authored assistant
+        # turns included — whose final user turn the model answers.
+        # Schema-validated at LOAD on both engines (identical messages);
+        # `text`/`prompt` becomes optional (display text derives from the
+        # final user turn). Normalized to {role, content} so records are
+        # cross-engine identical.
+        if "transcript" in obj:
+            violation = prompt_render.transcript_schema_violation(
+                obj["transcript"], entry["id"])
+            if violation:
+                raise RuntimeError(violation)
+            entry["transcript"] = prompt_render.normalize_transcript(
+                obj["transcript"])
+            if not entry["prompt"]:
+                entry["prompt"] = prompt_render.transcript_display_text(
+                    entry["transcript"])
+        # Per-item attention check (the exclusion instrument's first
+        # user): {"expected": …, "grading": <battery grading mode>?},
+        # graded at ANALYSIS time against the record's output with the
+        # capability battery's grading vocabulary. Validated at LOAD with
+        # plain-language, cross-engine-identical messages; items without
+        # a check are untouched (legacy files load unchanged).
+        if "attentionCheck" in obj:
+            from . import exclusions
+            check_violation = exclusions.attention_check_violation(
+                obj["attentionCheck"], entry["id"])
+            if check_violation:
+                raise RuntimeError(check_violation)
+            entry["attentionCheck"] = exclusions.normalized_check(
+                obj["attentionCheck"])
+        # Science-layer item metadata (all optional, carried into records):
+        # answer options + which one the endpoint tracks, the presented
+        # anchor and offense severity (Case 3), and the doctrine arm (Case 1).
+        for key in ("options", "target", "anchorMonths", "severity", "arm", "caseID"):
+            if key in obj:
+                entry[key] = obj[key]
+        # What the prompt asks the model to EMIT — decides whether the
+        # answer-token instruments can read this item at all. Closed
+        # vocabulary, validated at LOAD: an unrecognised value refuses
+        # rather than degrading to "unspecified", which would re-open the
+        # hole `response_format` closes. Twin of Swift parseTaskPrompts.
+        if obj.get("responseFormat") is not None:
+            try:
+                entry["responseFormat"] = response_format.parse(
+                    obj["responseFormat"])
+            except ValueError as exc:
                 raise RuntimeError(
-                    f"task prompts: item {len(prompts) + 1} declares an "
-                    "empty or non-string 'id' — declare a non-empty string, "
-                    "or omit the key for the prompt-<ordinal> fallback")
-            entry = {"id": raw_id,
-                     "prompt": obj.get("prompt") or obj.get("text", "")}
-            # Duplicate item ids silently corrupt pairing on BOTH engines
-            # (choice readouts and paired statistics key on promptID), so the
-            # file refuses at LOAD — run/validate/sweep/logprob all inherit
-            # the gate. Checked BEFORE the per-item transcript validation
-            # (cross-engine ordering contract); the message string is the
-            # cross-engine contract (Swift twin:
-            # ExperimentTasks.parseTaskPrompts; fixture:
-            # prompts/fixtures/task-prompts-validation/cases.json).
-            item = len(prompts) + 1
-            first = seen_ids.get(entry["id"])
-            if first is not None:
+                    f"task prompt '{entry['id']}': {exc}") from exc
+        # Factorial-design cell metadata (factor name → level name, the
+        # generator's `factors` object): validated as a flat
+        # string-to-string map at LOAD (identical message on both
+        # engines) and carried into every record the item produces so
+        # analysis can stratify by declared factors without rejoining
+        # the input file. An empty object is treated as absent.
+        if "factors" in obj:
+            factors = obj["factors"]
+            if (not isinstance(factors, dict) or not all(
+                    isinstance(k, str) and isinstance(v, str)
+                    for k, v in factors.items())):
                 raise RuntimeError(
-                    f"task prompts: duplicate item id '{entry['id']}' "
-                    f"(items {first} and {item}) — ids must be unique for "
-                    "pairing and reporting")
-            seen_ids[entry["id"]] = item
-            # Scripted transcript (the metacognition-study instrument): a
-            # pinned multi-turn conversation — researcher-authored assistant
-            # turns included — whose final user turn the model answers.
-            # Schema-validated at LOAD on both engines (identical messages);
-            # `text`/`prompt` becomes optional (display text derives from the
-            # final user turn). Normalized to {role, content} so records are
-            # cross-engine identical.
-            if "transcript" in obj:
-                violation = prompt_render.transcript_schema_violation(
-                    obj["transcript"], entry["id"])
-                if violation:
-                    raise RuntimeError(violation)
-                entry["transcript"] = prompt_render.normalize_transcript(
-                    obj["transcript"])
-                if not entry["prompt"]:
-                    entry["prompt"] = prompt_render.transcript_display_text(
-                        entry["transcript"])
-            # Per-item attention check (the exclusion instrument's first
-            # user): {"expected": …, "grading": <battery grading mode>?},
-            # graded at ANALYSIS time against the record's output with the
-            # capability battery's grading vocabulary. Validated at LOAD with
-            # plain-language, cross-engine-identical messages; items without
-            # a check are untouched (legacy files load unchanged).
-            if "attentionCheck" in obj:
-                from . import exclusions
-                check_violation = exclusions.attention_check_violation(
-                    obj["attentionCheck"], entry["id"])
-                if check_violation:
-                    raise RuntimeError(check_violation)
-                entry["attentionCheck"] = exclusions.normalized_check(
-                    obj["attentionCheck"])
-            # Science-layer item metadata (all optional, carried into records):
-            # answer options + which one the endpoint tracks, the presented
-            # anchor and offense severity (Case 3), and the doctrine arm (Case 1).
-            for key in ("options", "target", "anchorMonths", "severity", "arm", "caseID"):
-                if key in obj:
-                    entry[key] = obj[key]
-            # What the prompt asks the model to EMIT — decides whether the
-            # answer-token instruments can read this item at all. Closed
-            # vocabulary, validated at LOAD: an unrecognised value refuses
-            # rather than degrading to "unspecified", which would re-open the
-            # hole `response_format` closes. Twin of Swift parseTaskPrompts.
-            if obj.get("responseFormat") is not None:
-                try:
-                    entry["responseFormat"] = response_format.parse(
-                        obj["responseFormat"])
-                except ValueError as exc:
-                    raise RuntimeError(
-                        f"task prompt '{entry['id']}': {exc}") from exc
-            # Factorial-design cell metadata (factor name → level name, the
-            # generator's `factors` object): validated as a flat
-            # string-to-string map at LOAD (identical message on both
-            # engines) and carried into every record the item produces so
-            # analysis can stratify by declared factors without rejoining
-            # the input file. An empty object is treated as absent.
-            if "factors" in obj:
-                factors = obj["factors"]
-                if (not isinstance(factors, dict) or not all(
-                        isinstance(k, str) and isinstance(v, str)
-                        for k, v in factors.items())):
-                    raise RuntimeError(
-                        f"task prompts: item '{entry['id']}' has a "
-                        "'factors' value that is not a flat "
-                        "string-to-string object — factor names and level "
-                        "names must both be strings")
-                if factors:
-                    entry["factors"] = dict(factors)
-            prompts.append(entry)
+                    f"task prompts: item '{entry['id']}' has a "
+                    "'factors' value that is not a flat "
+                    "string-to-string object — factor names and level "
+                    "names must both be strings")
+            if factors:
+                entry["factors"] = dict(factors)
+        prompts.append(entry)
     return prompts
 
 

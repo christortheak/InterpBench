@@ -114,6 +114,7 @@ import os
 import sys
 
 from . import cli_envelope as envelope
+from .client import study_assembly
 from .cli_envelope import (HELP_FLAG, JSON_FLAG, OUT_FLAG, CLIResult,
                            UsageError, VerbSpec)
 
@@ -250,6 +251,7 @@ def _authoring_prompt_kinds():
 
 
 CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
+    *study_assembly.VERB_SPECS,
     VerbSpec("experiment", "create", positional="<name>",
              purpose="Create a draft study in this workspace.",
              value_flags=frozenset({"--model", "--revision", "--description"}),
@@ -506,7 +508,7 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
 _SPECS_BY_LABEL = {spec.label: spec for spec in CLIENT_VERB_SPECS}
 
 #: Families this binary dispatches, in the order ``--help`` prints them.
-FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "model",
+FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "pack", "model",
                              "authoring", "runner", "run")
 
 #: Families whose ENTIRE surface is one verb, spelled as the family name and
@@ -523,7 +525,7 @@ SOLO_FAMILIES: dict = {"run": "run"}
 #: ``runner`` is excluded because addressing a runner is its entire job; it is
 #: a SEPARATE family precisely so the exclusion is a line in a table rather
 #: than a judgement call about a flag name.
-AUTHORING_FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle",
+AUTHORING_FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "pack",
                                        "model")
 
 #: The generation-prompt emitter. NOT in :data:`AUTHORING_FAMILIES` despite
@@ -602,6 +604,10 @@ METAVARS: dict = {
     "--runner-root": "<dir>",
     "--set": "<key>=<json>",
     "--sha256": "<digest>",
+    "--review-sha256": "<digest>",
+    "--manifest-sha256": "<digest>",
+    "--artifact-sha256": "<digest>",
+    "--sidecar-sha256": "<digest>",
     "--side": "<positive|negative>",
     "--slots": "<concept>:<layer>:<alpha>[,…]",
     "--source-concept": "<concept>",
@@ -1163,6 +1169,8 @@ def _parse_slots(spec_text: str) -> list:
 def _experiment(invocation: Invocation) -> CLIResult:
     """The study-authoring verbs. Every call is the one the matching route in
     ``api/routes.py`` makes; every payload key twins the Mac verb's."""
+    if invocation.spec.verb in study_assembly.EXPERIMENT_VERBS:
+        return study_assembly.run(invocation)
     from .experiment import experiment_store as store
     from .experiment.manifest import Manifest
     from .experiment.paths import experiments_directory
@@ -4074,6 +4082,7 @@ def _iso(value) -> str | None:
 
 
 HANDLERS = {"experiment": _experiment, "concept": _concept, "bundle": _bundle,
+            "pack": study_assembly.run,
             "model": _model,
             "authoring": _authoring_prompt, "runner": _runner, "run": _run}
 

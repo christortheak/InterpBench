@@ -14,6 +14,12 @@ migration that rewrites frozen bytes.
 
 ### Added
 
+- Cross-platform client study assembly: `steerlab pack preview/apply/export`,
+  `experiment inspect`, `import-prompts`, `inspect-artifact` and `attach-artifact`.
+  Reviewed writes use external file digests; prompt versions and existing runs
+  remain immutable. Pack results distinguish draft creation from verification,
+  and report failures to pin named inputs. Python/Mac pack interchange is tested.
+
 - Conceptual study interviews, reviewed study-pack preview/apply/export, full-record
   JSONL import, and vector inspection/attachment through the Mac CLI and Swift
   workbench HTTP API. Native pack and vector dialogs use the same owners.

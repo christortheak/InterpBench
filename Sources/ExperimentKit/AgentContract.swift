@@ -939,6 +939,8 @@ inspection alone does not certify attachability. SwiftUI's Attach vector artifac
 uses the same operation. Supply `--source-concept` or `--eval-run` only when
 required by the artifact's provenance, never to bypass a refusal.
 
+**Cross-platform study assembly:** the Python client also supports `steerlab pack preview/apply/export`, `steerlab experiment inspect`, `import-prompts`, `inspect-artifact` and `attach-artifact`. Use the same pack format and reviewed flags shown above; `experiment inspect <study> --json` returns `document` and `manifestFileSHA256`. Keep preview and apply on the same client, in the same workspace: review tokens are authoring preconditions, not portable scientific identifiers. The client preserves complete prompt records and uses its scientific store for vector admission, including substrate restrictions. The Python client does not yet provide the conceptual study interview, design commands or model preparation. See `docs/PYTHON-STUDY-ASSEMBLY-WORKFLOW.md` in the code checkout for the exact client journey and remaining gaps.
+
 **Study designs:** `steerlab-cli design list --json` reports the design library
 and unreadable entries. `steerlab-cli design inspect <name> --json` returns the
 complete design document and `designFileSHA256`. To edit its description, use

@@ -6,9 +6,10 @@ workbench HTTP API share the new pack, prompt-import and vector-attachment
 owners. They use the same saved workspace; switching interfaces does not require
 copying a second study or reconstructing its hashes.
 
-This is the Mac authoring path. The Python `steerlab` client retains its own
-supported authoring/bundle/runner path; it does not yet implement these pack or
-design commands. An imported draft is not a qualified experiment. Scientific
+This guide shows the Mac authoring path. The Python `steerlab` client now
+shares the pack format and reviewed prompt/vector operations; see the
+[Python journey](PYTHON-STUDY-ASSEMBLY-WORKFLOW.md). Python design commands and
+model preparation remain follow-up work. An imported draft is not a qualified experiment. Scientific
 review, prerequisites, freeze and execution remain distinct decisions.
 
 ## 1. Start with the researcher's question

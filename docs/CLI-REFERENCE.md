@@ -160,7 +160,8 @@ same exit codes, same `error.code` / `error.repairAction`. Verb families:
 set-sweep-grid, set-protocol, set-system-prompt, set-parser,
 set-instrument-scope, set-evaluation-sampling, pin-revision,
 set-style-taxonomy, pin-sae-candidates, duplicate,
-verify, freeze, list), `concept import`, `bundle` (package, inspect, import),
+verify, freeze, list, inspect, import-prompts, inspect-artifact, attach-artifact),
+`pack` (preview, apply, export), `concept import`, `bundle` (package, inspect, import),
 `model` (capabilities — show the chat-template capability record, §4.4;
 set-capability — override one detected field with a reason; this client holds
 no tokenizer, so probing is `steerlab-server model capabilities --probe` or
@@ -180,6 +181,29 @@ shipped copy travels inside the wheel, so a `pip install` with no checkout
 beside it renders exactly the same bytes.
 `run` is not an exception: it reads a study out of a workspace and imports
 evidence back into it, so it requires one.
+
+#### Reviewed client study assembly
+
+The client authors its local workspace using the same pack format as the Mac.
+See [the complete client journey](PYTHON-STUDY-ASSEMBLY-WORKFLOW.md) for result
+fields, reviewed writes, refusal repairs and the distinction from run bundles.
+The command table below is checked against the declared client verb specs.
+
+<!-- BEGIN CLIENT-STUDY-ASSEMBLY -->
+
+```text
+steerlab pack preview <file>
+steerlab pack apply <file> --review-sha256 <digest>
+steerlab pack export <study>
+steerlab experiment inspect <name>
+steerlab experiment import-prompts <name> --file <path> --manifest-sha256 <digest>
+steerlab experiment inspect-artifact <path>
+steerlab experiment attach-artifact <name> <concept> --artifact <runs/<run>/<name>> --artifact-sha256 <digest> --manifest-sha256 <digest> --sidecar-sha256 <digest> [--eval-run <run-dir>] [--source-concept <concept>]
+```
+
+All commands accept `--root <directory>` and `--json`; `--out` writes the envelope.
+
+<!-- END CLIENT-STUDY-ASSEMBLY -->
 
 #### The `runner` family (Phase 2)
 

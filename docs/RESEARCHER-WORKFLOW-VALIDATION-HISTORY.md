@@ -917,3 +917,39 @@ were added and the complete Swift suite rerun.
 No app installation, live runner/model/cluster execution or interactive scientific
 qualification occurred. Runtime studies and imported historical evidence were
 not edited. This continuation leaves the previous approved branch tips intact.
+
+
+## Python study assembly — 2026-09-06
+
+Branch `codex/python-authoring-equivalence`, based directly on main `ef3dec8`.
+Main's `3ea802a` receipt gate and immutable sibling reimport are included.
+The [workflow and audit handoff](PYTHON-STUDY-ASSEMBLY-WORKFLOW.md) describes
+this bounded WP-3 slice and the remaining design/model/cluster work.
+
+- Final Python suite: **5,971 passed, 9 skipped, 8 warnings**, 162.52 seconds;
+  `/private/tmp/interpbench-python-parity-final.log`.
+- Final serial Xcode beta suite: **277 SteeringKit + 4,572 ExperimentKit passed**,
+  `TEST SUCCEEDED`; `/private/tmp/interpbench-python-parity-xcode-verified.log`.
+  Xcode beta and the explicit Metal toolchain were selected; derived data was
+  outside the checkout. `TEST_RUNNER_STEERLAB_TEST_PYTHON` selected the configured
+  client environment for the real Python/Mac/Python interchange test.
+- Parser AST audit: record admission matches `ef3dec8` after the explicit
+  file-stream-to-StringIO seam; prior file/hash/frozen gates unchanged. The
+  negative control rejected a changed generated prompt-ID rule.
+- Client assembly reference, Swift generated CLI reference, shipped workspace
+  contract, normal/release bridge gates, public scan and whitespace checks pass.
+- The diff was read locally. Independent review through the maintainer's
+  designated agent is still required; this is not approval to merge or deploy.
+
+The first targeted pass caught missing required flags reaching the handler; the
+adapter now rejects missing/repeated flags and wrong arity explicitly. Full
+Python passed before the final atomic-publication improvement and passed again
+after its two new failure/preservation tests. Swift interchange initially used
+a Python without the client dependencies, then exposed an incomplete test
+workspace override; both fixture configurations were corrected, and the entire
+Swift suite passed. No production Swift behavior was changed to satisfy those
+fixtures. The real round trip preserves prompt bytes, metadata and their pins.
+
+No live GPU/model study, cluster/accounting exercise, app installation or
+interactive UI qualification was performed. Runs and frozen studies remain
+immutable. The previous branch tips and main are unchanged by this branch.

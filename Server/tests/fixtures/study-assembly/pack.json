@@ -1,0 +1,33 @@
+{
+  "study": {
+    "name": "shared-study",
+    "experimentDescription": "Shared authored input",
+    "createdAt": "2026-09-06T00:00:00Z",
+    "modelID": "test/model",
+    "modelRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": "frozen",
+    "freezeHash": "old",
+    "frozenAt": "old",
+    "concepts": [],
+    "conditions": [
+      {
+        "name": "baseline",
+        "slots": [],
+        "bandWidth": 1,
+        "alphaInNormUnits": false
+      }
+    ],
+    "variantConditions": [],
+    "studyKind": "modelOutput",
+    "promptMode": "chatAssistant",
+    "temperature": 0.0,
+    "maxTokens": 32,
+    "seeds": [
+      0
+    ],
+    "taskPromptsFile": "prompts/tasks/shared.jsonl"
+  },
+  "files": {
+    "prompts/tasks/shared.jsonl": "{\"id\":\"item-1\",\"prompt\":\"Choose A or B.\",\"options\":[\"A\",\"B\"],\"target\":\"A\",\"factors\":{\"group\":\"first\"},\"customMetadata\":{\"keep\":true}}\n"
+  }
+}
