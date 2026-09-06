@@ -11,6 +11,7 @@ from ..experiment import experiment_store as store, manifest_files, task_inputs
 def prompt_bytes(text: str) -> bytes:
     # Preserve every record field and its original spelling. Match the Mac
     # document importer: trim blank/outer whitespace, end records with LF.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = [line.strip() for line in text.split("\n") if line.strip()]
     if not lines:
         files.refuse("Nothing to import: supply at least one JSONL prompt record.")

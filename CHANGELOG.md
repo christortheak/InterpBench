@@ -92,6 +92,12 @@ migration that rewrites frozen bytes.
 
 ### Fixed
 
+- Python study-pack verification issues remain in `result.verificationIssues`
+  instead of emitting invalid bare-string envelope advisories.
+- Reviewed prompt import accepts LF, CRLF and CR record separators on both
+  clients and publishes matching LF-normalized versions without changing
+  previously pinned files or escaped JSON content.
+
 - Observing jobs no longer sweeps another controller's work. Recovery claims
   recheck the complete job and owner snapshot atomically; scheduler uncertainty
   is never treated as proof of death, and a known live owner cannot be overridden.

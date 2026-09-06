@@ -15,13 +15,18 @@ immutable full-record prompt import and reviewed vector attachment. See the
 verification and remaining work. Historical checkpoints below describe their
 own original review state, not the current state of main.
 
-Validation for the Python assembly checkpoint: **5,971 Python tests passed,
-9 skipped; 277 SteeringKit + 4,572 ExperimentKit tests passed**. Parser AST,
-reference/contract, normal/release bridge and public-scan gates pass. The real
-Python/Mac pack interchange test passes. See the
-[validation history](RESEARCHER-WORKFLOW-VALIDATION-HISTORY.md) for command
-conditions, logs and corrected test configurations. Independent review remains
-the landing gate.
+Audit follow-up to `06d1f78` corrects the verification-advisory envelope and
+adds shared LF/CRLF/CR prompt-import normalization with direct cross-client
+byte/hash regressions. The Xcode instructions now distinguish the working
+shell environment prefix from an Xcode build setting. Interpreter discovery
+remains unchanged.
+
+Current validation: **5,975 Python tests passed, 9 skipped; 277 SteeringKit +
+4,574 ExperimentKit tests passed**. The full Swift run used the documented
+shell prefix without a worktree venv or symlink. Parser AST, reference/contract,
+normal/release bridge and public-scan gates pass. See the
+[validation history](RESEARCHER-WORKFLOW-VALIDATION-HISTORY.md) for logs and
+review findings. Independent re-review remains the landing gate.
 
 ## What researchers and agents gain
 

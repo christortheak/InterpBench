@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from steerlab_server import client_cli
+from steerlab_server import client_cli, cli_envelope
 from steerlab_server.client import authoring_files, study_inputs, study_packs
 from steerlab_server.experiment import experiment_store as store, manifest_files, task_inputs
 from steerlab_server.experiment.manifest_errors import ExperimentStoreError
@@ -224,16 +224,43 @@ def test_review_and_reference_gates_are_reproducible():
 def test_cli_roundtrip_and_missing_or_extra_arguments(tmp_path, capsys):
     def run(*args):
         code = client_cli.main([*args, "--root", str(tmp_path), "--json"])
-        return code, json.loads(capsys.readouterr().out)
+        document = json.loads(capsys.readouterr().out)
+        for entry in document.get("advisories", []):
+            assert isinstance(entry, dict)
+            assert entry["code"] in cli_envelope.ADVISORY_CODES
+            assert isinstance(entry["detail"], str)
+        return code, document
     code, review = run("pack", "preview", str(FIXTURE))
     assert code == 0 and not review["changed"]
     assert run("pack", "apply", str(FIXTURE))[0] == 64
     assert run("pack", "preview", str(FIXTURE), "extra")[0] == 64
     code, applied = run("pack", "apply", str(FIXTURE), "--review-sha256", review["result"]["reviewSHA256"])
     assert code == 0 and applied["changed"]
+    assert applied["result"]["verificationIssues"]
+    assert applied["state"] == "ready"
+    assert not applied.get("advisories")
     assert run("experiment", "inspect", "shared-study")[1]["result"]["manifestFileSHA256"]
     code, refusal = run("experiment", "import-prompts", "shared-study", "--file", str(FIXTURE), "--manifest-sha256", "0" * 64)
     assert code == 65 and refusal["error"]["repairAction"]
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r", "\r\n\n\r"])
+def test_prompt_import_normalizes_only_record_separators(tmp_path, newline):
+    before = apply(tmp_path)["study"]
+    old_file = tmp_path / before["document"]["taskPromptsFile"]
+    old_bytes = old_file.read_bytes()
+    records = ['{"id":"a","text":"escaped\\r\\ntext","extra":{"keep":true}}',
+               '{"id":"b","transcript":[{"role":"user","content":"next"}]}']
+    text = newline.join(["", "  " + records[0] + "\t", " ", records[1], ""])
+    expected = ("\n".join(records) + "\n").encode()
+    result = study_inputs.import_prompts("shared-study", text, root=tmp_path,
+                                        expected=before["manifestFileSHA256"])
+    assert (tmp_path / result["prompts"]["path"]).read_bytes() == expected
+    assert result["prompts"]["sha256"] == manifest_files.digest_bytes(expected)
+    assert old_file.read_bytes() == old_bytes
+    repeated = study_inputs.import_prompts("shared-study", text, root=tmp_path,
+                                           expected=result["study"]["manifestFileSHA256"])
+    assert not repeated["changed"]
 
 
 def test_new_client_journey_imports_no_science_or_service_packages(tmp_path):

@@ -60,8 +60,7 @@ def run(invocation) -> CLIResult:
             args[0], args[1], one("--artifact"), root=root, expected=one("--manifest-sha256"),
             artifact_sha256=one("--artifact-sha256"), sidecar_sha256=one("--sidecar-sha256"),
             source_concept=one("--source-concept"), eval_run=one("--eval-run")), "changed": True}
-    issues = payload.get("verificationIssues", [])
     changed = payload.get("changed", False)
     print(f"{spec.label}: " + ("draft saved; review verification before execution" if changed else "review complete"))
     return CLIResult(message="Draft saved; inspect verification before execution." if changed else "Review complete.",
-                     changed=changed, payload=payload, advisories=issues)
+                     changed=changed, payload=payload)

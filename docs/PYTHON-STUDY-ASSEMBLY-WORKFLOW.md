@@ -44,8 +44,10 @@ the code checkout and supply `--root <workspace>` or `STEERLAB_WORKSPACE`.
    authoring precondition inside manifest content.
 5. For a revised prompt set, run
    `steerlab experiment import-prompts <study> --file <records.jsonl> --manifest-sha256 <digest> --json`.
-   Full records, including unknown metadata, are preserved. Blank lines and
-   outer record whitespace are normalized; the actual resulting bytes are
+   Full records, including unknown metadata, are preserved. LF, CRLF and CR
+   record separators are normalized to LF on both clients; blank lines and
+   outer record whitespace are removed. Escaped JSON content stays intact.
+   The actual resulting bytes are
    hashed. A new content-addressed file is pinned under
    `prompts/tasks/versions/`; previous inputs remain intact. Repeating the same
    import with the current review reports `changed: false`.
@@ -123,10 +125,34 @@ Recheck main's ancestry before integration and bring in any later fixes first.
 Use Xcode beta, the explicit Metal toolchain and external temporary scratch.
 The real interchange test needs the Python client dependencies (including NumPy):
 it uses `Server/.venv.nosync/bin/python` when available, otherwise `python3`.
-For a worktree using a separate environment, set
-`TEST_RUNNER_STEERLAB_TEST_PYTHON=<environment>/bin/python` on `xcodebuild`;
-Xcode forwards it as `STEERLAB_TEST_PYTHON`. The check fails with a repair
+For a worktree using a separate environment, set the variable in the **shell
+environment before `xcodebuild`**, as in this complete invocation from the
+worktree root (substitute the environment and scratch paths):
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
+TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.920.1 \
+TEST_RUNNER_STEERLAB_TEST_PYTHON="<environment>/bin/python" \
+xcodebuild test -skipMacroValidation -scheme SteerLab-Package \
+  -destination 'platform=macOS' -parallel-testing-enabled NO \
+  -derivedDataPath "/private/tmp/<scratch>/DerivedData" CLANG_COVERAGE_MAPPING=NO
+```
+
+Xcode forwards that environment variable as `STEERLAB_TEST_PYTHON`. Passing
+`TEST_RUNNER_STEERLAB_TEST_PYTHON=...` **after** `xcodebuild` instead supplies an
+Xcode build setting and does not configure the test process. Both forms were
+checked without a worktree venv or symlink: the environment prefix passed; the
+build setting failed with missing NumPy. The test still fails with a repair
 instead of silently skipping when the selected environment is incomplete.
+
+Audit follow-up to `06d1f78`: F1 is corrected by keeping verification issues
+only in the result and checking advisory entries against the closed vocabulary.
+F2 now has direct import-operation regressions for LF, CRLF, CR and mixed
+separators, comparing actual files and hashes across clients. Reproduction
+upgraded it from a coverage note: Swift previously refused valid multi-record
+CRLF input. Normalization is confined to authoring intake; existing pins and
+files are not rewritten. For F4, the environment-prefix/build-setting distinction
+above was reproduced without a worktree venv; interpreter discovery is unchanged.
 
 Validation results for this checkpoint are recorded in
 [the validation history](RESEARCHER-WORKFLOW-VALIDATION-HISTORY.md). No live

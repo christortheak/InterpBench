@@ -9,6 +9,22 @@ import Testing
 /// study reviews are exercised in StudyAssemblySafetyTests.
 struct TaskPromptsImportTests {
 
+    @Test(arguments: ["\n", "\r\n", "\r"])
+    func previewAndDetectorAcceptRecordSeparators(newline: String) {
+        let text = ["", #"{"text":"first"}"#, "", #"{"text":"second"}"#].joined(separator: newline)
+        guard case .preview(let preview) = TaskPromptsImport.preview(text) else {
+            Issue.record("expected a valid preview")
+            return
+        }
+        #expect(preview.recordCount == 2)
+        #expect(TaskPromptsImport.looksLikeJSONL(text))
+        guard case .failure(let line, _) = TaskPromptsImport.preview(text + newline + "{invalid}") else {
+            Issue.record("expected a line-accurate failure")
+            return
+        }
+        #expect(line == 5)
+    }
+
     // MARK: Parse preview
 
     @Test func previewCountsRecordsOptionsAndTargets() {

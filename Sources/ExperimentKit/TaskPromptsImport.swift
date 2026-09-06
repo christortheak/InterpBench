@@ -15,6 +15,14 @@ import Foundation
 /// path for JSONL-looking pastes (it never reinterprets silently).
 public enum TaskPromptsImport {
 
+    /// Normalize record separators at intake, without changing escaped JSON
+    /// content or any already-pinned file. Python prompt intake uses the same
+    /// CRLF/CR -> LF rule. Other Unicode characters are not record separators.
+    static func normalizedLineEndings(_ text: String) -> String {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+    }
+
     // MARK: - Parse preview
 
     public struct Preview: Sendable, Equatable {
@@ -71,7 +79,7 @@ public enum TaskPromptsImport {
         var targets = 0
         var transcripts = 0
         var seenIDs: [String: Int] = [:]  // id → 1-based item ordinal
-        let lines = text.components(separatedBy: "\n")
+        let lines = normalizedLineEndings(text).components(separatedBy: "\n")
         for (index, raw) in lines.enumerated() {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty { continue }
@@ -143,7 +151,7 @@ public enum TaskPromptsImport {
     /// plain prompt text.
     public static func looksLikeJSONL(_ text: String) -> Bool {
         guard
-            let first = text.components(separatedBy: "\n")
+            let first = normalizedLineEndings(text).components(separatedBy: "\n")
                 .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) })
                 .first(where: { !$0.isEmpty })
         else { return false }

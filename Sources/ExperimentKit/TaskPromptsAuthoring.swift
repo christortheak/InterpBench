@@ -78,6 +78,7 @@ public enum TaskPromptsAuthoring {
     /// Import full JSONL records without replacing any previously pinned input.
     /// A new content-addressed version is prepared and pinned in the reviewed draft.
     public static func importJSONL(_ text: String, reviewed: DraftAuthoringSnapshot) throws -> Result {
+        let text = TaskPromptsImport.normalizedLineEndings(text)
         switch TaskPromptsImport.preview(text) {
         case .empty: throw ExperimentError(reason: "nothing to import — no non-empty lines")
         case .failure(let line, let reason):

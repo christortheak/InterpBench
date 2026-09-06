@@ -931,7 +931,8 @@ this bounded WP-3 slice and the remaining design/model/cluster work.
 - Final serial Xcode beta suite: **277 SteeringKit + 4,572 ExperimentKit passed**,
   `TEST SUCCEEDED`; `/private/tmp/interpbench-python-parity-xcode-verified.log`.
   Xcode beta and the explicit Metal toolchain were selected; derived data was
-  outside the checkout. `TEST_RUNNER_STEERLAB_TEST_PYTHON` selected the configured
+  outside the checkout. The shell environment prefix
+  `TEST_RUNNER_STEERLAB_TEST_PYTHON=... xcodebuild ...` selected the configured
   client environment for the real Python/Mac/Python interchange test.
 - Parser AST audit: record admission matches `ef3dec8` after the explicit
   file-stream-to-StringIO seam; prior file/hash/frozen gates unchanged. The
@@ -953,3 +954,47 @@ fixtures. The real round trip preserves prompt bytes, metadata and their pins.
 No live GPU/model study, cluster/accounting exercise, app installation or
 interactive UI qualification was performed. Runs and frozen studies remain
 immutable. The previous branch tips and main are unchanged by this branch.
+
+
+## Study assembly audit corrections — 2026-09-06
+
+Follow-up to `06d1f78` on `codex/python-authoring-equivalence`:
+
+- F1: verification issues stay in `result.verificationIssues`; the client no
+  longer emits bare strings in envelope advisories or changes success state
+  because of those issues. The CLI regression checks the closed advisory
+  vocabulary and explicitly exercises an imported draft with verification issues.
+- F2: direct reproduction found that Swift refused valid multi-record CRLF
+  input while Python accepted it. Reviewed prompt intake now normalizes LF,
+  CRLF, CR and mixed separators consistently. Direct service/CLI interchange
+  tests compare published bytes, hashes and version paths, including unknown
+  metadata, scripted transcripts, escaped JSON content and repeat-import
+  behavior. Prior input files are preserved. No run parser or frozen pin is
+  rewritten by this correction.
+- F4: with no `Server/.venv.nosync` or symlink in the worktree, the shell prefix
+  `TEST_RUNNER_STEERLAB_TEST_PYTHON=... xcodebuild ...` passed the focused test;
+  the same assignment supplied as an Xcode build setting after the command
+  failed with missing NumPy. The workflow now gives the complete working
+  invocation, and the test's error explains the distinction. Interpreter
+  discovery is unchanged.
+
+Final validation after the corrections:
+
+- Full Python: **5,975 passed, 9 skipped, 8 warnings**, 167.26 seconds;
+  `/private/tmp/interpbench-audit-corrections-python-full.log`.
+- Full serial Xcode beta: **277 SteeringKit + 4,574 ExperimentKit passed**,
+  `TEST SUCCEEDED`; `/private/tmp/interpbench-audit-corrections-xcode-full.log`.
+  This run used the shell environment prefix, the explicit Metal toolchain,
+  external derived data and no worktree venv or symlink.
+- Focused tests passed first: 37 Python cases and 10 Swift tests (including
+  parameterized import and line-number cases). The full suites then passed
+  without further production or test changes.
+- The existing parser AST audit, its negative control, both bridge gates,
+  client and Swift CLI-reference checks, shipped-contract tests, public scan
+  and whitespace checks pass. The actual diff was read locally.
+
+The new intake behavior is a semantic fix, not a claimed mechanical move. The
+previous parser extraction's AST proof remains valid. No app installation,
+engine deployment, live scientific study or cluster qualification was performed.
+Independent re-review through the maintainer's designated agent remains the
+landing gate; main remains unchanged by this work.
