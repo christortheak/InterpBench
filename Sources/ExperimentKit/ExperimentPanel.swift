@@ -43,7 +43,9 @@ public final class ExperimentPanel {
         guard let manifest = management.selected, manifest.status == .draft else { return }
         draft.studyKind = type.mappedKind
         do {
-            try ExperimentStore.setStudyType(type, experimentName: manifest.name)
+            try management.editReviewed(named: manifest.name) { reviewedName in
+                try ExperimentStore.setStudyType(type, experimentName: reviewedName)
+            }
             refresh()
         } catch {
             note(
@@ -327,34 +329,33 @@ public final class ExperimentPanel {
     public private(set) var serverHasSelectedStudy: Bool?
     /// Cache key (study + workspace) so selection-driven refreshes don't
     /// hammer `GET /api/experiments` for a selection already checked.
-    private var serverResidencyKey: String?
+    private var serverResidencyContext: StudyOperationContext?
+    private var residencyGeneration = UUID()
+    private var remoteRunsGeneration = UUID()
+    private var remoteOptimizationsGeneration = UUID()
+    private var awaitingJudgmentGeneration = UUID()
+    private var awaitingJudgmentContext: StudyOperationContext?
 
     /// Refresh `serverHasSelectedStudy` for the current selection, cached per
     /// (study, server workspace). The view calls this when the selection or
     /// the active workspace changes.
     public func refreshServerResidency() async {
-        guard isServerWorkspace, let name = management.selectedName else {
+        let environment = operationEnvironment
+        let generation = UUID()
+        residencyGeneration = generation
+        guard let context = environment.current(), context.isServer, let name = context.selectedName else {
             serverHasSelectedStudy = nil
-            serverResidencyKey = nil
+            serverResidencyContext = nil
             return
         }
-        let substrate = cluster?.substrateLabel ?? "server"
-        let key = "\(substrate)::\(name)"
-        if key == serverResidencyKey, serverHasSelectedStudy != nil { return }
-        serverResidencyKey = key
-        loadStoredRemoteToken()
-        guard let client = remoteClient else {
-            serverHasSelectedStudy = nil
-            return
-        }
-        guard let names = try? await client.experimentNames() else {
-            // Listing failed: unknown, not "missing" — don't disable the
-            // button on a transient error; the run-path refusal backstops.
-            serverHasSelectedStudy = nil
-            return
-        }
-        let resident = names.contains(name)
-        noteServerResidency(resident)
+        if let previous = serverResidencyContext, previous.matches(context, selection: true),
+            serverHasSelectedStudy != nil { return }
+        serverResidencyContext = context
+        guard let client = context.client else { serverHasSelectedStudy = nil; return }
+        let names = try? await client.experimentNames()
+        guard generation == residencyGeneration, environment.isCurrent(context, selection: true) else { return }
+        guard let names else { serverHasSelectedStudy = nil; return }
+        noteServerResidency(names.contains(name))
     }
 
     /// Records a residency answer (from the refresh above or the run-path
@@ -545,7 +546,7 @@ public final class ExperimentPanel {
                 self.noteServerResidency(resident)
             },
             refreshResidency: { [weak self] in
-                self?.serverResidencyKey = nil
+                self?.serverResidencyContext = nil
                 await self?.refreshServerResidency()
             },
             refreshRuns: { [weak self] in await self?.refreshRemoteRuns() },
@@ -1046,15 +1047,17 @@ public final class ExperimentPanel {
     /// write so a refusal on either half leaves the manifest untouched.
     @discardableResult
     public func setSweepSpec(
-        _ spec: ExperimentManifest.SweepSpec, for name: String
+        _ spec: ExperimentManifest.SweepSpec, reviewed: DraftAuthoringSnapshot,
+        onSaved: ((DraftAuthoringSnapshot) -> Void)? = nil
     ) -> Bool {
         // Normalize BEFORE validating, so what is checked is what is
         // written: an absolute instrument path inside the workspace becomes
         // the portable workspace-relative form (both declare flows — the
         // composer and the Optimizations editor — funnel through here).
+        let name = reviewed.manifest.name
         let spec = SweepSpecForm.workspaceRelativeNormalized(spec)
         do {
-            let manifest = try ExperimentStore.load(name: name)
+            let manifest = reviewed.manifest
             guard manifest.status == .draft else {
                 refuse(
                     .sweepSpec,
@@ -1074,15 +1077,16 @@ public final class ExperimentPanel {
                 refuse(.sweepSpec, "sweep spec not saved: \(problem)")
                 return false
             }
-            let grid = try ExperimentStore.setSweepGrid(
-                experimentName: name,
-                layerFractions: spec.layerFractions,
-                alphas: spec.alphas,
-                devPromptsFile: spec.devPromptsFile,
-                batteryFile: spec.batteryFile,
-                maxTokens: spec.maxTokens)
-            try ExperimentStore.setSweepSelection(
-                spec.selection, experimentName: name)
+            let (grid, saved) = try DraftAuthoringTransaction.perform(reviewed: reviewed) { name in
+                let grid = try ExperimentStore.setSweepGrid(
+                    experimentName: name, layerFractions: spec.layerFractions,
+                    alphas: spec.alphas, devPromptsFile: spec.devPromptsFile,
+                    batteryFile: spec.batteryFile, maxTokens: spec.maxTokens,
+                    selectionUpdate: .some(spec.selection))
+                return (grid, try DraftAuthoringSnapshot(workspaceRoot: reviewed.workspaceRoot, name: name))
+            }
+            management.acceptAuthoringResult(saved)
+            onSaved?(saved)
             refresh()
             clearFormError(.sweepSpec)
             if case .declaredAhead(let metric) = outcome {
@@ -1302,18 +1306,21 @@ public final class ExperimentPanel {
     public private(set) var isJudgingSweep = false
 
     public func refreshAwaitingSweepJudgments(study: String) async {
-        guard let client = remoteClient else {
+        let environment = operationEnvironment
+        let generation = UUID()
+        awaitingJudgmentGeneration = generation
+        awaitingJudgmentContext = nil
+        guard let context = environment.current(), context.isServer, context.selectedName == study, let client = context.client else {
             awaitingSweepJudgments = []
             return
         }
-        // Evaluate awaiting is best-effort separately: an older server
-        // without the route must not hide judgable sweep work.
-        let sweeps =
-            (try? await client.awaitingSweepJudgments(experiment: study)) ?? []
-        let evaluates =
-            (try? await client.awaitingEvaluateJudgments(experiment: study))
-            ?? []
+        let sweeps = (try? await client.awaitingSweepJudgments(experiment: study)) ?? []
+        guard generation == awaitingJudgmentGeneration, environment.isCurrent(context, selection: true) else { return }
+        // Older servers may not have the evaluation route; keep valid sweep work.
+        let evaluates = (try? await client.awaitingEvaluateJudgments(experiment: study)) ?? []
+        guard generation == awaitingJudgmentGeneration, environment.isCurrent(context, selection: true) else { return }
         awaitingSweepJudgments = sweeps + evaluates
+        awaitingJudgmentContext = context
     }
 
     /// Phase 2 on THIS Mac: fetch the blinded packets (hash-verified), judge
@@ -1322,7 +1329,15 @@ public final class ExperimentPanel {
     public func judgeAwaitingSweep(
         study: String, awaiting: ClusterClient.AwaitingSweepJudgment
     ) async {
-        guard let client = remoteClient else {
+        let environment = operationEnvironment
+        guard let context = awaitingJudgmentContext,
+            context.selectedName == study, environment.isCurrent(context, selection: true), let client = context.client,
+            awaitingSweepJudgments.contains(where: {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                guard let first = try? encoder.encode($0), let second = try? encoder.encode(awaiting) else { return false }
+                return first == second
+            }) else {
             remoteJobs.remoteStatus = "no server connection for judging"
             return
         }
@@ -1333,8 +1348,12 @@ public final class ExperimentPanel {
             let judgmentRun = try await SweepJudgmentRunner.judgeAndComplete(
                 client: client, experiment: study, awaiting: awaiting,
                 onProgress: { [weak self] progress in
-                    await MainActor.run { self?.remoteJobs.remoteStatus = progress }
+                    await MainActor.run {
+                        guard environment.isCurrent(context, selection: true) else { return }
+                        self?.remoteJobs.remoteStatus = progress
+                    }
                 })
+            guard environment.isCurrent(context, selection: true) else { return }
             remoteJobs.remoteStatus = awaiting.isEvaluate
                 ? "evaluation judged on this Mac → judge report completed "
                     + "(\(judgmentRun))"
@@ -1343,6 +1362,7 @@ public final class ExperimentPanel {
             await refreshAwaitingSweepJudgments(study: study)
             refresh()
         } catch {
+            guard environment.isCurrent(context, selection: true) else { return }
             remoteJobs.remoteStatus = "sweep judging failed: "
                 + String(describing: error)
         }
@@ -1383,17 +1403,20 @@ public final class ExperimentPanel {
     /// the server exposes per-run files (`GET /api/runs/{id}/file`) but no
     /// structured results API yet.
     public func refreshRemoteRuns() async {
-        guard let cluster, case .server = cluster.activeWorkspace,
-            let remoteClient
-        else {
+        let environment = operationEnvironment
+        let generation = UUID()
+        remoteRunsGeneration = generation
+        guard let context = environment.current(), context.isServer, let client = context.client else {
             remoteRuns = []
             return
         }
         do {
-            remoteRuns = try await remoteClient.runs()
-            remoteJobs.remoteStatus = "listed \(remoteRuns.count) server run"
-                + (remoteRuns.count == 1 ? "" : "s")
+            let records = try await client.runs()
+            guard generation == remoteRunsGeneration, environment.isCurrent(context) else { return }
+            remoteRuns = records
+            remoteJobs.remoteStatus = "listed \(records.count) server run" + (records.count == 1 ? "" : "s")
         } catch {
+            guard generation == remoteRunsGeneration, environment.isCurrent(context) else { return }
             remoteRuns = []
             remoteJobs.remoteStatus = "could not list server runs: \(error)"
         }
@@ -1465,7 +1488,6 @@ public final class ExperimentPanel {
         fetcher: (@Sendable (_ name: String, _ maxBytes: Int) async throws -> RemoteRunFileHead)? =
             nil
     ) async -> RemoteRunDetailPayload {
-        loadStoredRemoteToken()
         return await results.loadRemoteRunDetail(run: run, client: remoteClient, fetcher: fetcher)
     }
 
@@ -1555,12 +1577,14 @@ public final class ExperimentPanel {
     /// (with verbatim per-condition selection blocks) plus the run listing,
     /// and keep the experiments that screen.
     public func refreshRemoteOptimizations() async {
-        guard isServerWorkspace else {
+        let environment = operationEnvironment
+        let generation = UUID()
+        remoteOptimizationsGeneration = generation
+        guard let context = environment.current(), context.isServer else {
             remoteOptimizations = []
             return
         }
-        loadStoredRemoteToken()
-        guard let client = remoteClient else {
+        guard let client = context.client else {
             remoteOptimizations = []
             note("invalid server URL", severity: .error)
             return
@@ -1569,6 +1593,7 @@ public final class ExperimentPanel {
             async let summaries = client.experimentSummaries()
             async let runList = client.runs()
             let (experiments, runRecords) = try await (summaries, runList)
+            guard generation == remoteOptimizationsGeneration, environment.isCurrent(context) else { return }
             remoteRuns = runRecords
             remoteOptimizations = experiments.filter { record in
                 record.conditions?.contains { $0.selection != nil } == true
@@ -1576,6 +1601,7 @@ public final class ExperimentPanel {
                         experiment: record.name, in: runRecords) != nil
             }
         } catch {
+            guard generation == remoteOptimizationsGeneration, environment.isCurrent(context) else { return }
             remoteOptimizations = []
             let substrate = cluster?.substrateLabel ?? "server"
             note("could not list optimizations on \(substrate): \(error)", severity: .error)
@@ -1588,16 +1614,14 @@ public final class ExperimentPanel {
     /// same entry points. Returns nil (with a status line) when absent or
     /// unreadable — the grid renders its empty state either way.
     public func loadRemoteSweepRun(experiment: String) async -> SweepRunCatalog.SweepRun? {
-        guard isServerWorkspace else { return nil }
-        loadStoredRemoteToken()
-        guard let client = remoteClient else { return nil }
+        let environment = operationEnvironment
+        guard let context = environment.current(), context.isServer, let client = context.client else { return nil }
         do {
-            if remoteRuns.isEmpty {
-                remoteRuns = try await client.runs()
-            }
+            let records = try await client.runs()
+            guard environment.isCurrent(context) else { return nil }
             guard
                 let record = SweepRunCatalog.newestRemoteSweepRunRecord(
-                    experiment: experiment, in: remoteRuns)
+                    experiment: experiment, in: records)
             else { return nil }
             let csv = try await client.runFile(runID: record.id, name: "sweep.csv")
             var recommendations: Data?
@@ -1605,11 +1629,13 @@ public final class ExperimentPanel {
                 recommendations = try await client.runFile(
                     runID: record.id, name: "recommendations.json")
             }
+            guard environment.isCurrent(context) else { return nil }
             return try SweepRunCatalog.remoteSweepRun(
                 runPath: record.path,
                 csvText: String(decoding: csv, as: UTF8.self),
                 recommendationsData: recommendations)
         } catch {
+            guard environment.isCurrent(context) else { return nil }
             let substrate = cluster?.substrateLabel ?? "server"
             note("could not load sweep run for '\(experiment)' from \(substrate): \(error)", severity: .error)
             return nil
@@ -1628,30 +1654,34 @@ public final class ExperimentPanel {
         overrideReason: String? = nil,
         pins: AgentPromotion.Pins? = nil
     ) async {
-        guard isServerWorkspace else {
+        let environment = operationEnvironment
+        guard let context = environment.current(), context.isServer else {
             note("no server workspace active — switch the substrate selector first", severity: .info)
             return
         }
-        loadStoredRemoteToken()
-        guard let client = remoteClient else {
+        guard environment.isCurrent(context) else { return }
+        guard let client = environment.connect() else {
             note("invalid server URL", severity: .error)
             return
         }
-        let substrate = cluster?.substrateLabel ?? "server"
+        guard environment.isCurrent(context), client.profile == context.client?.profile else { return }
+        let substrate = context.substrate
         do {
-            if let names = try? await client.experimentNames(),
-                !names.contains(experimentName)
-            {
+            let names = try? await client.experimentNames()
+            guard environment.isCurrent(context) else { return }
+            if let names, !names.contains(experimentName) {
                 note("study '\(experimentName)' is not in \(substrate)'s workspace — "
                     + "promote mints from the server-resident copy only. Pair "
                     + "the server to this workspace (serve --root <workspace>) "
                     + "or use Submit Bundle, the portable path for remote engines", severity: .info)
                 return
             }
+            guard environment.isCurrent(context) else { return }
             note("promoting '\(concept)' from '\(experimentName)' on \(substrate)…", severity: .info)
             let minted = try await client.promoteExperiment(
                 name: experimentName, concept: concept,
                 cell: cell, overrideReason: overrideReason, pins: pins)
+            guard environment.isCurrent(context) else { return }
             let stamp = cell == nil
                 ? "it carries the sweep-selection birth certificate"
                 : "stamped promotedBy: manualOverride (declared selection bypassed)"
@@ -1662,8 +1692,10 @@ public final class ExperimentPanel {
             // The minted agent references the sweep run's persisted vectors —
             // refresh the vector catalog too so applying it in Playground
             // resolves those refs immediately.
+            guard environment.isCurrent(context) else { return }
             await host?.catalog.refreshRemoteVectors()
         } catch {
+            guard environment.isCurrent(context) else { return }
             note("server promote failed: \(error)", severity: .error)
         }
     }
@@ -1925,8 +1957,10 @@ public final class ExperimentPanel {
         do {
             let instruments = InstrumentActivation.applying(
                 mode, to: management.selected?.outcomeInstruments)
-            try ExperimentStore.setOutcomeInstruments(
-                instruments, experimentName: name)
+            try management.editReviewed(named: name) { reviewedName in
+                try ExperimentStore.setOutcomeInstruments(
+                    instruments, experimentName: reviewedName)
+            }
             refresh()
             note("declared outcome instruments: "
                 + (instruments?.joined(separator: ", ") ?? "none"), severity: .success)
@@ -1961,8 +1995,10 @@ public final class ExperimentPanel {
         guard let name = management.selectedName else { return }
         do {
             let remaining = (management.selected?.outcomeInstruments ?? []).filter { $0 != id }
-            try ExperimentStore.setOutcomeInstruments(
-                remaining.isEmpty ? nil : remaining, experimentName: name)
+            try management.editReviewed(named: name) { reviewedName in
+                try ExperimentStore.setOutcomeInstruments(
+                    remaining.isEmpty ? nil : remaining, experimentName: reviewedName)
+            }
             refresh()
             note(
                 "removed auxiliary instrument \(id) — outcome instruments: "
@@ -1991,8 +2027,10 @@ public final class ExperimentPanel {
         guard let name = management.selectedName, canAddReaderInstrument else { return }
         do {
             let instruments = (management.selected?.outcomeInstruments ?? []) + ["repeReaderScore"]
-            try ExperimentStore.setOutcomeInstruments(
-                instruments, experimentName: name)
+            try management.editReviewed(named: name) { reviewedName in
+                try ExperimentStore.setOutcomeInstruments(
+                    instruments, experimentName: reviewedName)
+            }
             refresh()
             note(
                 "added reader instrument repeReaderScore — sampled generation "
@@ -2018,13 +2056,15 @@ public final class ExperimentPanel {
             return
         }
         do {
-            try ExperimentStore.setPromotionRule(
-                ExperimentManifest.PromotionRule(
-                    fdrThreshold: Double(fdrText),
-                    doseMonotone: draft.promotionDoseMonotone ? true : nil,
-                    exceedsRandomFloor: draft.promotionExceedsRandomFloor ? true : nil,
-                    capabilityGate: nilIfEmpty(draft.promotionCapabilityGateText)),
-                experimentName: name)
+            try management.editReviewed(named: name) { reviewedName in
+                try ExperimentStore.setPromotionRule(
+                    ExperimentManifest.PromotionRule(
+                        fdrThreshold: Double(fdrText),
+                        doseMonotone: draft.promotionDoseMonotone ? true : nil,
+                        exceedsRandomFloor: draft.promotionExceedsRandomFloor ? true : nil,
+                        capabilityGate: nilIfEmpty(draft.promotionCapabilityGateText)),
+                    experimentName: reviewedName)
+            }
             refresh()
             note("saved promotion rule (screen→confirm gate)", severity: .success)
         } catch {
@@ -2041,7 +2081,9 @@ public final class ExperimentPanel {
     public func clearHumanBaseline() {
         guard let name = management.selectedName else { return }
         do {
-            try ExperimentStore.clearHumanBaseline(experimentName: name)
+            try management.editReviewed(named: name) { reviewedName in
+                try ExperimentStore.clearHumanBaseline(experimentName: reviewedName)
+            }
             draft.humanBaselinePathField = ""
             refresh()
             note("human baseline unpinned", severity: .success)
@@ -2058,8 +2100,10 @@ public final class ExperimentPanel {
     public func repinHumanBaseline() {
         guard let name = management.selectedName else { return }
         do {
-            let pinned = try ExperimentStore.pinHumanBaseline(
-                path: draft.humanBaselinePathField, experimentName: name)
+            let pinned = try management.editReviewed(named: name) { reviewedName in
+                try ExperimentStore.pinHumanBaseline(
+                    path: draft.humanBaselinePathField, experimentName: reviewedName)
+            }
             refresh()
             note("pinned human baseline \(pinned.path) @ \(pinned.hash.prefix(12))…", severity: .success)
         } catch {
@@ -2123,19 +2167,21 @@ public final class ExperimentPanel {
                 : "\(concept)-L\(layer)-a\(SweepSpecForm.numberListText([alpha]))")
             : draft.conditionName
         do {
-            try ExperimentStore.upsertCondition(
-                .init(
-                    name: conditionTitle,
-                    slots: [
-                        .init(
-                            concept: concept, layer: layer, alpha: alpha,
-                            mode: isAblation ? .ablate : nil)
-                    ],
-                    bandWidth: 1,
-                    // λ is never in residual-norm units; recording the flag as
-                    // true would claim a conversion the run loop does not do.
-                    alphaInNormUnits: isAblation ? false : draft.conditionAlphaInNormUnits),
-                experimentName: name)
+            try management.editReviewed(named: name) { reviewedName in
+                try ExperimentStore.upsertCondition(
+                    .init(
+                        name: conditionTitle,
+                        slots: [
+                            .init(
+                                concept: concept, layer: layer, alpha: alpha,
+                                mode: isAblation ? .ablate : nil)
+                        ],
+                        bandWidth: 1,
+                        // λ is never in residual-norm units; recording the flag as
+                        // true would claim a conversion the run loop does not do.
+                        alphaInNormUnits: isAblation ? false : draft.conditionAlphaInNormUnits),
+                    experimentName: reviewedName)
+            }
             draft.conditionName = ""
             refresh()
             clearFormError(.addCondition)
@@ -2176,10 +2222,12 @@ public final class ExperimentPanel {
             return
         }
         do {
-            try ExperimentStore.attachValidationControl(
-                concept: concept,
-                options: .init(method: draft.controlMethod),
-                experimentName: name)
+            try management.editReviewed(named: name) { reviewedName in
+                try ExperimentStore.attachValidationControl(
+                    concept: concept,
+                    options: .init(method: draft.controlMethod),
+                    experimentName: reviewedName)
+            }
             draft.controlConcept = ""
             refresh()
             clearFormError(.validationControl)
@@ -2198,8 +2246,10 @@ public final class ExperimentPanel {
     public func removeValidationControl(_ concept: String) {
         guard let name = management.selectedName else { return }
         do {
-            try ExperimentStore.removeValidationControl(
-                concept: concept, experimentName: name)
+            try management.editReviewed(named: name) { reviewedName in
+                try ExperimentStore.removeValidationControl(
+                    concept: concept, experimentName: reviewedName)
+            }
             refresh()
             note("removed control '\(concept)'", severity: .info)
         } catch {
@@ -2221,8 +2271,10 @@ public final class ExperimentPanel {
     public func declareOutcomeInstrumentScope(_ formats: [String]) {
         guard let name = management.selectedName else { return }
         do {
-            try ExperimentStore.declareOutcomeInstrumentScope(
-                responseFormats: formats, experimentName: name)
+            try management.editReviewed(named: name) { reviewedName in
+                try ExperimentStore.declareOutcomeInstrumentScope(
+                    responseFormats: formats, experimentName: reviewedName)
+            }
             refresh()
             clearFormError(.validationControl)
             note(
@@ -2247,7 +2299,9 @@ public final class ExperimentPanel {
         else { return }
         do {
             let control = ExperimentStore.signControlCondition(for: source)
-            try ExperimentStore.upsertCondition(control, experimentName: name)
+            try management.editReviewed(named: name) { reviewedName in
+                try ExperimentStore.upsertCondition(control, experimentName: reviewedName)
+            }
             refresh()
             note("added sign control '\(control.name)' (α negated — direction control)", severity: .success)
         } catch {
@@ -2265,7 +2319,9 @@ public final class ExperimentPanel {
         else { return }
         do {
             let control = ExperimentStore.randomControlCondition(for: source)
-            try ExperimentStore.upsertCondition(control, experimentName: name)
+            try management.editReviewed(named: name) { reviewedName in
+                try ExperimentStore.upsertCondition(control, experimentName: reviewedName)
+            }
             refresh()
             note(
                 control.controlType == "randomDirectionAblation"
@@ -2290,7 +2346,9 @@ public final class ExperimentPanel {
     public func scaffoldControlMatrix() {
         guard let name = management.selectedName else { return }
         do {
-            let result = try ExperimentStore.scaffoldControlMatrix(experimentName: name)
+            let result = try management.editReviewed(named: name) { reviewedName in
+                try ExperimentStore.scaffoldControlMatrix(experimentName: reviewedName)
+            }
             refresh()
             var parts: [String] = []
             parts.append(
@@ -2415,42 +2473,35 @@ public final class ExperimentPanel {
     }
 
     /// The Import JSONL… action: validated full-record import (paste or
-    /// file) that writes to the readiness scaffold's task-prompts
-    /// destination, sets it as this study's prompts file, and pins the hash
-    /// — one action from paste to pinned. The study-pack write rule
-    /// applies: an existing destination with DIFFERING contents refuses
-    /// unless `replacingExisting` (the sheet's explicit "Replace the
-    /// existing file" checkbox) is set. Refusals (bad line, non-draft,
-    /// differing file) surface on `taskPromptsStatus`; returns whether the
-    /// import landed so the sheet can dismiss on success only. The
-    /// manifest save runs INSIDE the import's transaction (its `persist`
-    /// step), so a save refusal — the study frozen on disk since this
-    /// panel loaded its draft copy — rolls back the written file instead
-    /// of orphaning or clobbering it.
+    /// file) that publishes a new task-prompts version, sets it as this
+    /// study's prompts file, and pins the hash
+    /// — one action from paste to a pinned immutable input version. The sheet
+    /// retains its study review; changing study/workspace or file bytes refuses.
     @discardableResult
     public func importTaskPromptsJSONL(
-        _ text: String, replacingExisting: Bool = false
+        _ text: String, reviewed: DraftAuthoringSnapshot
     ) -> Bool {
-        guard var manifest = management.selected, manifest.status == .draft else {
+        guard management.selectedName == reviewed.manifest.name,
+            reviewed.workspaceRoot == ExperimentStore.workspaceRoot.standardizedFileURL,
+            reviewed.manifest.status == .draft else {
             draft.taskPromptsStatus =
                 "select a draft study first — import writes the file and pins "
                 + "its hash into the draft manifest"
             return false
         }
         do {
-            let result = try TaskPromptsImport.importIntoStudy(
-                text: text, manifest: &manifest,
-                replacingExisting: replacingExisting,
-                persist: { try self.management.persistReviewedDraft($0) })
-            draft.taskPromptsFile = result.file
+            let saved = try TaskPromptsAuthoring.importJSONL(text, reviewed: reviewed)
+            management.acceptAuthoringResult(saved.study)
+            let count = try TaskPromptsDocument.load(saved.prompts.file.data).count
+            draft.taskPromptsFile = saved.prompts.path
             refresh()
             // Re-read through the document loader so the editor, the
             // instrument badge, and the loaded-document pairing all reflect
             // the imported file.
             loadTaskPrompts()
             draft.taskPromptsStatus =
-                "imported \(result.recordCount) record\(result.recordCount == 1 ? "" : "s")"
-                + " → \(result.file), pinned @ \(result.hash.prefix(12))…"
+                "imported \(count) record\(count == 1 ? "" : "s")"
+                + " → \(saved.prompts.path), pinned @ \(saved.prompts.file.sha256.prefix(12))…"
             note("imported task-prompt JSONL and pinned its hash", severity: .success)
             return true
         } catch {
@@ -2750,14 +2801,16 @@ public final class ExperimentPanel {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         do {
-            let manifest = try ExperimentStore.attachConcept(
-                concept,
-                method: draft.attachMethod,
-                corpusConcepts: corpus,
-                reference: draft.attachReferenceName.isEmpty ? nil : draft.attachReferenceName,
-                extractionRendering: declaredRendering,
-                readingPosition: declaredPosition,
-                experimentName: experiment)
+            let manifest = try management.editReviewed(named: experiment) { reviewedName in
+                try ExperimentStore.attachConcept(
+                    concept,
+                    method: draft.attachMethod,
+                    corpusConcepts: corpus,
+                    reference: draft.attachReferenceName.isEmpty ? nil : draft.attachReferenceName,
+                    extractionRendering: declaredRendering,
+                    readingPosition: declaredPosition,
+                    experimentName: reviewedName)
+            }
             refresh()
             draft.attachConceptName = ""
             if draft.attachMethod == .emotionGrandMean {
@@ -2805,7 +2858,9 @@ public final class ExperimentPanel {
     public func detachConcept(_ concept: String) {
         guard let experiment = management.selectedName else { return }
         do {
-            try ExperimentStore.detachConcept(concept, experimentName: experiment)
+            try management.editReviewed(named: experiment) { reviewedName in
+                try ExperimentStore.detachConcept(concept, experimentName: reviewedName)
+            }
             refresh()
             note("detached concept '\(concept)' from '\(experiment)'")
         } catch {
@@ -2912,10 +2967,14 @@ public final class ExperimentPanel {
     /// Import pasted study JSON as a NEW DRAFT (freeze metadata stripped —
     /// pasted text cannot mint a preregistered object), select it, and
     /// surface its verify() result loudly.
-    public func importStudyJSON(_ text: String) {
+    @discardableResult
+    public func importStudyJSON(_ text: String, reviewed: StudyPackAuthoring.Preview) -> Bool {
         do {
-            let (manifest, violations, filesWritten) =
-                try ExperimentStore.importStudyJSON(text)
+            let imported = try StudyPackAuthoring.apply(Data(text.utf8),
+                workspaceRoot: URL(fileURLWithPath: reviewed.workspaceRoot), expectedReviewSHA256: reviewed.reviewSHA256)
+            let manifest = imported.study.manifest
+            let violations = imported.violations
+            let filesWritten = imported.filesWritten
             refresh()
             management.selectedName = manifest.name
             let filesNote = filesWritten.isEmpty
@@ -2933,12 +2992,12 @@ public final class ExperimentPanel {
                         + violations.joined(separator: "; "),
                     severity: .error)
             }
+            return true
         } catch {
             note(
-                "Couldn't import the study JSON — nothing was created; check "
-                    + "it is valid JSON and that its \"name\" is not already "
-                    + "in use. Details: \(error)",
+                "Couldn't complete the study import. Inspect the named destination before retrying. Details: \(error)",
                 severity: .error)
+            return false
         }
     }
 
@@ -3684,38 +3743,18 @@ extension ExperimentPanel {
         }
     }
 
-    /// The Import table… flow for task prompts: convert the mapped table
-    /// to JSONL, write it to the study's task-prompts destination (never
-    /// overwriting differing bytes), pin, and reload the editor. Returns
-    /// the plain problem to show in the mapping sheet, or nil when the
-    /// import landed (dismiss). The manifest save happens INSIDE the
-    /// import's transaction (its `persist` step), so a save refusal — the
-    /// study frozen on disk since this panel loaded its draft copy — rolls
-    /// back the written file instead of orphaning it.
+    /// Convert the reviewed table to full records, then use the same immutable
+    /// input publication as JSONL import. A dialog retains its original target.
     public func importTaskPromptsTable(
-        table: TabularImport.Table, mapping: [String: String]
+        table: TabularImport.Table, mapping: [String: String], reviewed: DraftAuthoringSnapshot
     ) -> String? {
-        guard var manifest = management.selected, manifest.status == .draft else {
-            return "select a draft study first — import writes the file and "
-                + "pins its hash into the draft manifest"
-        }
         do {
-            let result = try TabularImport.importTaskPrompts(
-                table: table, mapping: mapping, manifest: &manifest,
-                persist: { try self.management.persistReviewedDraft($0) })
-            draft.taskPromptsFile = result.file
-            refresh()
-            loadTaskPrompts()
-            draft.taskPromptsStatus =
-                "imported \(result.recordCount) row\(result.recordCount == 1 ? "" : "s")"
-                + " → \(result.file), pinned @ \(result.hash.prefix(12))…"
-            note(
-                "imported task-prompt table and pinned its hash",
-                severity: .success)
+            let text = try TabularImport.taskPromptsJSONL(table: table, mapping: mapping)
+            guard importTaskPromptsJSONL(text, reviewed: reviewed) else {
+                return draft.taskPromptsStatus ?? "Prompt import was refused; review the study and retry."
+            }
             return nil
-        } catch {
-            return "\(error)"
-        }
+        } catch { return "\(error)" }
     }
 
     /// The Import table… flow for the human baseline: convert the mapped
@@ -3727,15 +3766,18 @@ extension ExperimentPanel {
     /// `pinHumanBaseline` persists internally (via `updateDraft`), inside
     /// the import's rollback — the whole import is already atomic.
     public func importHumanBaselineTable(
-        table: TabularImport.Table, mapping: [String: String]
+        table: TabularImport.Table, mapping: [String: String], reviewed: DraftAuthoringSnapshot
     ) -> String? {
-        guard let name = management.selectedName else {
+        guard management.selectedName == reviewed.manifest.name else {
             return "select a study first — the baseline pins into the "
                 + "selected draft's manifest"
         }
         do {
-            let pinned = try TabularImport.importHumanBaseline(
-                table: table, mapping: mapping, experimentName: name)
+            let (pinned, saved) = try DraftAuthoringTransaction.perform(reviewed: reviewed) { name in
+                let pinned = try TabularImport.importHumanBaseline(table: table, mapping: mapping, experimentName: name)
+                return (pinned, try DraftAuthoringSnapshot(workspaceRoot: reviewed.workspaceRoot, name: name))
+            }
+            management.acceptAuthoringResult(saved)
             draft.humanBaselinePathField = pinned.path
             refresh()
             note(

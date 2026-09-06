@@ -719,6 +719,14 @@ public final class SteerLabWebServer: Sendable {
             let response = await Task.detached { StudyAgentHTTP.perform(operation, body: body, workspaceRoot: root) }.value
             return Response(status: response.status, body: response.body)
 
+        case ("POST", "/api/pack/preview"), ("POST", "/api/pack/apply"), ("POST", "/api/pack/export"):
+            let operation = StudyPackHTTP.Operation(rawValue: String(path.split(separator: "/").last!))!
+            // Pinning and verification still use synchronous active-workspace stores.
+            // Keep this adapter on the workbench actor through the complete operation.
+            let response = StudyPackHTTP.perform(operation, body: body, workspaceRoot: ExperimentStore.workspaceRoot)
+            if response.succeeded && operation == .apply { service.experiments.refresh() }
+            return Response(status: response.status, body: response.body)
+
         case ("POST", "/api/design/list"), ("POST", "/api/design/inspect"), ("POST", "/api/design/describe"), ("POST", "/api/design/instantiate"), ("POST", "/api/design/batch"), ("POST", "/api/design/save"), ("POST", "/api/design/update"):
             let root = ExperimentStore.workspaceRoot
             let operation = StudyDesignHTTP.Operation(rawValue: String(path.split(separator: "/").last!))!
@@ -737,6 +745,30 @@ public final class SteerLabWebServer: Sendable {
 
         case ("POST", "/api/experiment/protocol"):
             let response = StudyProtocolHTTP.apply(body: body, workspaceRoot: ExperimentStore.workspaceRoot)
+            return Response(status: response.status, body: response.body)
+
+        case ("POST", "/api/experiment/artifact/inspect"), ("POST", "/api/experiment/attach-artifact"):
+            let attaching = path == "/api/experiment/attach-artifact"
+            let response = StudyArtifactHTTP.perform(attach: attaching, body: body, workspaceRoot: ExperimentStore.workspaceRoot)
+            if response.succeeded && attaching { service.experiments.refresh() }
+            return Response(status: response.status, body: response.body)
+
+        case ("POST", "/api/experiment/prompts/import"):
+            let response = StudyInputHTTP.importPrompts(body: body, workspaceRoot: ExperimentStore.workspaceRoot)
+            if response.succeeded { service.experiments.refresh() }
+            return Response(status: response.status, body: response.body)
+
+        case ("POST", "/api/authoring/study"):
+            struct Request: Decodable { let intent: String }
+            guard let raw = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
+                Set(raw.keys) == ["intent"], let request = decode(Request.self, from: body),
+                let intent = StudyIntent.parse(request.intent) else {
+                let response = StudyAuthoringHTTP.Response.failure("invalidStudyIntent", "Choose a supported study intent.",
+                    repair: "Supply intent: conceptStudy, agentComparison or multiAgent.")
+                return Response(status: response.status, body: response.body)
+            }
+            struct Guide: Encodable { let ok = true; let intent: String; let prompt: String }
+            let response = StudyAuthoringHTTP.Response.json(Guide(intent: intent.rawValue, prompt: StudyCoauthoring.prompt(for: intent)))
             return Response(status: response.status, body: response.body)
 
         case ("POST", "/api/experiment/prompts/load"):

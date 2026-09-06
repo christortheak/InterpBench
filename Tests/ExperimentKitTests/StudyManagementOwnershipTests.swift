@@ -67,13 +67,13 @@ struct StudyManagementOwnershipTests {
             let owner = StudyManagementController(draft: StudyDraftState())
             owner.refresh()
             owner.selectedName = original.name
-            owner.renameSelected(canonicalName: "forbidden", label: nil)
+            owner.rename(reviewed: try owner.reviewStudy(named: original.name), canonicalName: "forbidden", label: nil)
             #expect(owner.draft.formErrors[.rename] != nil)
             #expect(owner.selectedName == "original")
-            owner.renameSelected(canonicalName: nil, label: "Readable label")
+            owner.rename(reviewed: try owner.reviewStudy(named: original.name), canonicalName: nil, label: "Readable label")
             #expect(owner.displayName(try #require(owner.selected)) == "Readable label")
             #expect(owner.draft.formErrors[.rename] == nil)
-            owner.deleteSelectedDraft()
+            owner.deleteDraft(reviewed: try owner.reviewStudy(named: try #require(owner.selectedName)))
             #expect(try ExperimentStore.load(name: "original").freezeHash == original.freezeHash)
             #expect(owner.deleteSelectedStudyRefusal != nil)
 
@@ -82,7 +82,7 @@ struct StudyManagementOwnershipTests {
             #expect(copy.name == "original-2")
             #expect(copy.status == .draft)
             #expect(copy.freezeHash == nil)
-            owner.deleteSelectedDraft()
+            owner.deleteDraft(reviewed: try owner.reviewStudy(named: try #require(owner.selectedName)))
             #expect(owner.selectedName == nil)
             #expect(owner.experiments.map(\.name) == ["original"])
         }

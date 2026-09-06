@@ -8,18 +8,15 @@ struct ImportJSONLSheet: View {
     /// Workspace-relative destination the import writes to (nil when no
     /// study is selected — the import button explains instead of failing).
     let destination: String?
-    /// Runs the panel's import (write → set as prompts file → pin hash);
-    /// the Bool is the "Replace the existing file" checkbox (the explicit
-    /// affordance — without it a differing existing file refuses);
-    /// true = landed, dismiss.
-    let onImport: (String, Bool) -> Bool
+    /// Prepares an immutable input version and pins it to the reviewed draft.
+    /// A successful result dismisses the sheet.
+    let onImport: (String) -> Bool
     /// The panel's task-prompts status line (import refusals surface there).
     let statusLine: () -> String?
 
     @Environment(\.dismiss) private var dismiss
     @State private var showFilePicker = false
     @State private var fileReadError: String?
-    @State private var replaceExisting = false
 
     private var preview: TaskPromptsImport.Outcome {
         TaskPromptsImport.preview(text)
@@ -64,18 +61,9 @@ struct ImportJSONLSheet: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                // The study-pack write rule's ONE sanctioned exception:
-                // replacing a differing existing file is an explicit,
-                // per-import choice — never a default.
-                Toggle(
-                    "Replace the existing file if its contents differ",
-                    isOn: $replaceExisting
-                )
-                .font(.caption)
-                .help(
-                    "without this, importing refuses when "
-                        + "\(destination) already exists with different "
-                        + "contents — nothing is overwritten silently")
+                Text("Imports create an immutable input version. Existing prompt files remain unchanged.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } else {
                 Text(
                     "select a draft study first — the import pins into the "
@@ -95,7 +83,7 @@ struct ImportJSONLSheet: View {
                 Spacer()
                 Button("Cancel") { dismiss() }
                 Button("Import & Pin") {
-                    if onImport(text, replaceExisting) { dismiss() }
+                    if onImport(text) { dismiss() }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!importable)

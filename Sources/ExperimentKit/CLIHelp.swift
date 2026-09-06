@@ -44,6 +44,10 @@ public enum CLIFlagVocabulary {
         "--rows": "<batch.json>",
         "--file-sha256": "<sha256>",
         "--manifest-sha256": "<sha256>",
+        "--review-sha256": "<sha256>",
+        "--sidecar-sha256": "<sha256>",
+        "--source-concept": "<concept>",
+        "--eval-run": "<run>",
         "--artifact-sha256": "<sha256>",
         "--study-name": "<name>",
         "--study": "<name>",
@@ -156,11 +160,15 @@ public enum CLIFlagVocabulary {
     /// One line per flag. Imperative, and about the effect rather than the
     /// history.
     private static let purposes: [String: String] = [
+        "--review-sha256": "External digest of the reviewed pack, workspace and input observations, from pack preview.",
+        "--sidecar-sha256": "External SHA-256 of the reviewed vector sidecar, from experiment inspect-artifact.",
+        "--source-concept": "Source dataset concept required by this vector artifact, if applicable.",
+        "--eval-run": "Evaluation run used to establish the attached artifact's validation provenance, if applicable.",
         "--casting": "JSON file containing reviewed agents or explicit seat assignments.",
         "--rows": "JSON batch containing explicit casting rows and optional requested study names.",
         "--file-sha256": "External SHA-256 of the reviewed design file, from design inspect.",
         "--manifest-sha256": "External SHA-256 of the reviewed study file, from experiment manifest.",
-        "--artifact-sha256": "External SHA-256 of the reviewed agent file, from agent inspect.",
+        "--artifact-sha256": "External SHA-256 of the reviewed agent or vector file, from the corresponding inspection.",
         "--study-name": "Requested new study name; an occupied name receives a suffix reported in the result.",
         "--study": "Named source study whose reviewed saved settings update the design.",
         "--agent": "The promoted agent the policy perturbs.",
@@ -615,6 +623,7 @@ public enum ExperimentCLIHelp {
             .init(
                 synopsis: "experiment <verb> <name> …",
                 purpose: "The study lifecycle."),
+            .init(synopsis: "pack preview | apply | export …", purpose: "Review and import study packs, or export text inputs and dependency names."),
             .init(synopsis: "agent list | inspect <path>", purpose: "Inspect local agents for reviewed attachment."),
             .init(synopsis: "design list | inspect | describe | instantiate | batch | save | update …", purpose: "Inspect, save and revise designs, or create studies from reviewed castings."),
             .init(
@@ -631,7 +640,7 @@ public enum ExperimentCLIHelp {
                 purpose: "This build's identity and the integrity of its "
                     + "install."),
             .init(
-                synopsis: "authoring prompt <kind> …",
+                synopsis: "authoring study <intent> | prompt <kind> …",
                 purpose: "Generation prompts for missing study data."),
             .init(
                 synopsis: "docs cli-reference [--check | --write]",

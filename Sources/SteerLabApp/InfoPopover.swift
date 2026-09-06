@@ -475,22 +475,12 @@ enum StudyInfo {
         import with its line number.
         """
 
-    /// Import-destination semantics, stated as the code behaves: the sheet
-    /// import writes the study's standard destination file under the
-    /// study-pack write rule (identical bytes idempotent; differing bytes
-    /// refuse unless the Replace checkbox opts in), points the manifest at
-    /// it, and pins the new hash.
+    /// Full-record imports share immutable publication with the prompt editor.
     static func importDestination(_ destination: String) -> String {
-        """
-        On Import & Pin the records are written to \(destination) — this \
-        study's standard task-prompts file. The study's manifest then \
-        points at that file and pins its SHA-256. If that file already \
-        exists with identical contents the import just re-pins; if its \
-        contents DIFFER the import refuses — imports never overwrite \
-        silently — unless "Replace the existing file" is checked, which \
-        replaces the previous records deliberately (draft studies only — \
-        a frozen study refuses the import entirely).
-        """
+        "Import & Pin saves a new input version under \(destination) and pins its exact bytes "
+            + "in the reviewed draft. Identical records reuse their existing version. "
+            + "Earlier prompt files remain unchanged, including files used by other studies. "
+            + "A changed or frozen study refuses the import; reload and review before retrying."
     }
 
     static let inlineFileEditor = """

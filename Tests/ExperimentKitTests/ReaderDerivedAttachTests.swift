@@ -106,6 +106,88 @@ import Testing
         }
     }
 
+    @Test func reviewedArtifactHTTPPinsTheExactInspectedFiles() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "artifact-surface") { root in
+            try WorkspaceCompute.declare(.localMLX, root: root)
+            _ = try ExperimentStore.create(name: "study", description: "", modelID: "mlx-community/gemma-3-4b-it-4bit")
+            let (reference, _) = try plantDerived(root: root)
+            let inspected = StudyArtifactHTTP.perform(attach: false,
+                body: try JSONSerialization.data(withJSONObject: ["workspaceRoot": root.path, "artifact": reference]), workspaceRoot: root)
+            #expect(inspected.status == "200 OK")
+            let artifact = try JSONDecoder().decode(StudyArtifactAuthoring.Review.self, from: inspected.body)
+            let reviewed = try DraftAuthoringSnapshot(workspaceRoot: root, name: "study")
+            let request = try JSONSerialization.data(withJSONObject: ["workspaceRoot": root.path, "name": "study",
+                "concept": "candour", "artifact": reference, "artifactSHA256": artifact.artifactSHA256,
+                "sidecarSHA256": artifact.sidecarSHA256, "manifestFileSHA256": reviewed.file.sha256])
+            let applied = StudyArtifactHTTP.perform(attach: true, body: request, workspaceRoot: root)
+            #expect(applied.status == "200 OK")
+            #expect(ExperimentStore.verify(try ExperimentStore.load(name: "study")).isEmpty)
+            #expect(StudyArtifactHTTP.perform(attach: true, body: request, workspaceRoot: root).status == "412 Precondition Failed")
+        }
+    }
+
+    @Test(arguments: ["tensor", "sidecar", "study"])
+    func reviewedArtifactRefusesChangedBytes(change: String) throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "artifact-stale") { root in
+            try WorkspaceCompute.declare(.localMLX, root: root)
+            _ = try ExperimentStore.create(name: "study", description: "", modelID: "mlx-community/gemma-3-4b-it-4bit")
+            let (reference, _) = try plantDerived(root: root)
+            let artifact = try StudyArtifactAuthoring.inspect(reference, workspaceRoot: root)
+            let reviewed = try DraftAuthoringSnapshot(workspaceRoot: root, name: "study")
+            let file = change == "study" ? ExperimentStore.manifestURL("study")
+                : root.appending(path: reference).appendingPathExtension(change == "tensor" ? "safetensors" : "json")
+            var bytes = try Data(contentsOf: file)
+            bytes.append(32)
+            try bytes.write(to: file)
+            let before = try Data(contentsOf: ExperimentStore.manifestURL("study"))
+            #expect(throws: ExperimentError.self) {
+                try StudyArtifactAuthoring.attach("candour", artifact: artifact, reviewed: reviewed)
+            }
+            #expect(try Data(contentsOf: ExperimentStore.manifestURL("study")) == before)
+        }
+    }
+
+    @Test func artifactCLIRequiresExactlyTheReviewedStudyAndConcept() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "artifact-cli") { root in
+            try WorkspaceCompute.declare(.localMLX, root: root)
+            _ = try ExperimentStore.create(name: "study", description: "", modelID: "mlx-community/gemma-3-4b-it-4bit")
+            let (reference, _) = try plantDerived(root: root)
+            let inspected = try StudyArtifactCLI.run(ExperimentCLIParser.parse(namespace: "experiment", ["inspect-artifact", reference]),
+                workspaceRoot: root, sink: .discarding)
+            let artifact = try StudyArtifactAuthoring.inspect(reference, workspaceRoot: root)
+            #expect(inspected.payload["artifactSHA256"] == .string(artifact.artifactSHA256))
+            let reviewed = try DraftAuthoringSnapshot(workspaceRoot: root, name: "study")
+            let flags = ["--artifact", reference, "--artifact-sha256", artifact.artifactSHA256,
+                "--sidecar-sha256", artifact.sidecarSHA256, "--manifest-sha256", reviewed.file.sha256]
+            for arguments in [["attach-artifact", "study"] + flags,
+                              ["attach-artifact", "study", "candour", "stray"] + flags] {
+                #expect(throws: ExperimentError.self) {
+                    try StudyArtifactCLI.run(ExperimentCLIParser.parse(namespace: "experiment", arguments), workspaceRoot: root, sink: .discarding)
+                }
+                #expect(try Data(contentsOf: ExperimentStore.manifestURL("study")) == reviewed.file.data)
+            }
+            let attached = try StudyArtifactCLI.run(ExperimentCLIParser.parse(namespace: "experiment", ["attach-artifact", "study", "candour"] + flags),
+                workspaceRoot: root, sink: .discarding)
+            #expect(attached.changed)
+            #expect(ExperimentStore.verify(try ExperimentStore.load(name: "study")).isEmpty)
+        }
+    }
+
+    @Test func reviewedArtifactKeepsScientificNormAdmission() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "artifact-norms") { root in
+            try WorkspaceCompute.declare(.localMLX, root: root)
+            _ = try ExperimentStore.create(name: "study", description: "", modelID: "mlx-community/gemma-3-4b-it-4bit")
+            let (reference, _) = try plantDerived(root: root, backfilled: false)
+            let reviewed = try DraftAuthoringSnapshot(workspaceRoot: root, name: "study")
+            let artifact = try StudyArtifactAuthoring.inspect(reference, workspaceRoot: root)
+            do {
+                _ = try StudyArtifactAuthoring.attach("candour", artifact: artifact, reviewed: reviewed)
+                Issue.record("unmeasured norms must refuse")
+            } catch let error as ExperimentError { #expect(error.reason.contains("residualNormSource")) }
+            #expect(try Data(contentsOf: ExperimentStore.manifestURL("study")) == reviewed.file.data)
+        }
+    }
+
     @Test func readerDerivedVectorRefusesASourceConcept() throws {
         try ExperimentRootOverrideLock.withTempRoot(prefix: "reader-attach") { root in
             try WorkspaceCompute.declare(.localMLX, root: root)

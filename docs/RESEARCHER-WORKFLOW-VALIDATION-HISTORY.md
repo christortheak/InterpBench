@@ -890,3 +890,30 @@ restarting its process requires inspecting the cache and reconstructing an
 explicit request. Failed installs may leave partial files. Cache presence and
 successful fetching do not prove memory fit or scientific correctness. Main,
 installed software, researcher data and live remote jobs were unchanged.
+
+
+## Study assembly continuation — 2026-09-06
+
+Branch `codex/researcher-study-assembly`, based on main `a5db8c3` after importing
+its two review documents. Executable review base remains approved `2662dc8`.
+The [audit handoff](STUDY-ASSEMBLY-AUDIT-HANDOFF.md) records semantic scope and
+remaining qualification. No new mechanical-move claim is made.
+
+The initial compile/test passes exposed obsolete import callers, test isolation
+and fixture errors, missing new-verb census/help/contract entries, a lost rename
+repair and generated-reference drift. These were corrected before the full green
+run. Final diff inspection then found that a missing vector-attachment positional
+could be confused with a flag; strict arity and a positive/negative CLI regression
+were added and the complete Swift suite rerun.
+
+- Final serial Xcode beta: 277 SteeringKit + 4,551 ExperimentKit passed,
+  TEST SUCCEEDED. `/private/tmp/interpbench-assembly-xcode-verified.log`.
+- Python: 5,928 passed, 9 skipped, 8 warnings, 165.80 seconds.
+  `/private/tmp/interpbench-assembly-python-final.log`.
+- Normal/release bridge checks, generated reference/contract tests, public scan
+  and `git diff --check` passed. The diff was read locally; independent review
+  through the designated maintainer agent remains the landing gate.
+
+No app installation, live runner/model/cluster execution or interactive scientific
+qualification occurred. Runtime studies and imported historical evidence were
+not edited. This continuation leaves the previous approved branch tips intact.

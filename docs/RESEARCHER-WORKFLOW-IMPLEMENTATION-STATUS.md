@@ -1,8 +1,8 @@
 # Researcher workflow implementation status
 
-Current branch: `codex/researcher-workflow-authoring`, based on the independently
-approved `95d14aa`. The preceding `codex/researcher-workflow-implementation` branch
-remains at that reviewed tip, based on main `bfd13a5`.
+Current branch: `codex/researcher-study-assembly`, based on main `a5db8c3`
+(the independently approved `2662dc8` plus two review documents). The preceding authoring branch remains at that reviewed tip; the earlier
+implementation branch remains at `95d14aa`, originally based on main `bfd13a5`.
 The branch is a review artifact. Main, the installed app, and live services
 remain unchanged. The [implementation plan](RESEARCHER-WORKFLOW-IMPLEMENTATION-PLAN.md)
 is authoritative; WP-5 and WP-6 remain in scope.
@@ -108,7 +108,7 @@ context coverage and public-surface parity remain separate acceptance work.
 The earlier audit's non-blocking observation about logging first allocation
 capture, and live accounting qualification, remain follow-up notes.
 
-## Current checkpoint: all four Swift bridges retired
+## Approved checkpoint: all four Swift bridges retired
 
 Freeze, draft sync, named server execution, delayed pipeline submission and
 pipeline ledger observation now enter their focused controllers directly.
@@ -128,8 +128,33 @@ full serial Xcode beta suite; **5,928 Python tests passed, 9 skipped**. The
 management checkpoint AST audit reproduced with zero differences across
 30 files. Both bridge gates and whitespace checks pass. The new serving-root
 regression caught a missing comparison in the first full Swift run; after the
-correction the entire Swift suite passed. This checkpoint still awaits the
-maintainer's designated independent review and integration process.
+correction the entire Swift suite passed. The maintainer's designated reviewing agent independently approved `2662dc8`;
+that approval does not cover the subsequent study-assembly changes.
+
+## Current checkpoint: retained authoring and study assembly
+
+The [audit handoff](STUDY-ASSEMBLY-AUDIT-HANDOFF.md) describes the semantic changes
+since `2662dc8`. Native draft commands now retain reviewed versions, sweep grid
+and selection publish together, and lifecycle/import dialogs retain their targets.
+Auxiliary server observations discard changed-origin replies. Pack preview/apply,
+full-record JSONL import and vector inspection/attachment are available through
+shared Mac CLI, Swift HTTP and native owners, with the same saved workspace.
+The [workflow guide](STUDY-ASSEMBLY-WORKFLOW.md) connects these operations to
+existing designs, model preparation, verification and explicit execution.
+
+Public import results distinguish saved drafts from verification/readiness.
+Overwriting raw/table prompt imports were retired in favor of immutable versions.
+This advances WP-2 and the Mac portion of WP-3; it does not close every writer,
+Python parity or scientific/interactive qualification item. The prior approved
+checkpoint and main remain unchanged. This continuation awaits independent review.
+
+Validation on 2026-09-06: full serial Xcode beta **277 SteeringKit + 4,551
+ExperimentKit passed** (`/private/tmp/interpbench-assembly-xcode-verified.log`);
+full Python **5,928 passed, 9 skipped, 8 warnings**, 165.80 seconds
+(`/private/tmp/interpbench-assembly-python-final.log`). Generated CLI-reference
+and workspace-contract gates, both bridge checks, public scan and whitespace
+checks passed. No live model, scientific/GPU study, cluster or interactive app
+qualification is claimed. See the audit handoff for review boundaries.
 
 ## What remains to implement the vision
 

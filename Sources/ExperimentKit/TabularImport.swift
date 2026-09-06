@@ -517,46 +517,12 @@ public enum TabularImport {
         return "\"" + text.replacingOccurrences(of: "\"", with: "\"\"") + "\""
     }
 
-    // MARK: - Import (write to the standard destination + pin)
-
-    /// Converted task prompts land at the readiness scaffold's destination
-    /// and pin through `ExperimentStore.pinTaskPrompts` (the run loop's own
-    /// parser re-checks). Transactional (the study-pack importer's
-    /// discipline): conversion validates BEFORE the write, and a failure
-    /// after the write — the pin OR the caller's `persist` step — rolls
-    /// back a file this import created, never a pre-existing one, so a
-    /// refused import leaves no unpinned file behind.
-    ///
-    /// `pinTaskPrompts` only mutates the in-memory manifest; callers that
-    /// save it afterward (the panel) MUST pass that save as `persist` so
-    /// the whole import is atomic — a manifest frozen on disk between the
-    /// pin and the save (the realistic race) then rolls the write back
-    /// instead of orphaning it. Drafts only, same rule as every pin edit.
-    @discardableResult
-    public static func importTaskPrompts(
-        table: Table, mapping: [String: String],
-        manifest: inout ExperimentManifest,
-        persist: (ExperimentManifest) throws -> Void = { _ in }
-    ) throws -> TaskPromptsImport.ImportResult {
-        let jsonl = try taskPromptsJSONL(table: table, mapping: mapping)
-        let file = DataTemplates.taskPromptsDestination(experiment: manifest.name)
-        let write = try writeRefusingDifferingOverwrite(
-            Data(jsonl.utf8), relativePath: file)
-        do {
-            let hash = try ExperimentStore.pinTaskPrompts(file, into: &manifest)
-            try persist(manifest)
-            return TaskPromptsImport.ImportResult(
-                file: file, recordCount: table.rows.count, hash: hash)
-        } catch {
-            rollBack(write, relativePath: file)
-            throw error
-        }
-    }
+    // MARK: - Baseline import
 
     /// Converted baselines land at `prompts/baselines/<study>-human-
     /// baseline.csv` and pin through `ExperimentStore.pinHumanBaseline`
     /// (shape-validated, drafts only, persisted by the store itself).
-    /// Transactional like `importTaskPrompts`: a pin refusal — e.g. a
+    /// A pin refusal — e.g. a
     /// frozen manifest — rolls back a file this import created, and never
     /// deletes one that already existed.
     @discardableResult

@@ -449,7 +449,7 @@ extension ExperimentStoreTests {
                 objective: .init(metric: "markerDensity"),
                 constraints: .init(capabilityTolerance: 0.2, coherenceFloor: 0.5),
                 controls: .init(matchedNormRandomMargin: 0.05))
-            #expect(panel.setSweepSpec(spec, for: "scr"))
+            #expect(panel.setSweepSpec(spec, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "scr")))
             let loaded = try ExperimentStore.load(name: "scr")
             #expect(loaded.sweep == spec)
         }
@@ -470,7 +470,7 @@ extension ExperimentStoreTests {
             // refusal is inline beside the Save button (finding 11a).
             var spec = ExperimentManifest.SweepSpec()
             spec.alphas = [0.1, 0.05]
-            #expect(!panel.setSweepSpec(spec, for: "grid"))
+            #expect(!panel.setSweepSpec(spec, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "grid")))
             #expect(panel.status?.contains("does not ascend") == true)
             #expect(panel.draft.formErrors[.sweepSpec] == panel.status)
             #expect(try ExperimentStore.load(name: "grid").sweep == nil)
@@ -478,13 +478,13 @@ extension ExperimentStoreTests {
             // A repeated layer fraction: strict ascent, same twin text.
             spec = ExperimentManifest.SweepSpec()
             spec.layerFractions = [0.5, 0.5, 0.7]
-            #expect(!panel.setSweepSpec(spec, for: "grid"))
+            #expect(!panel.setSweepSpec(spec, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "grid")))
             #expect(panel.status?.contains("does not ascend") == true)
             #expect(try ExperimentStore.load(name: "grid").sweep == nil)
 
             // The ascending declaration saves through the same gated verb,
             // clearing the inline refusal.
-            #expect(panel.setSweepSpec(.init(), for: "grid"))
+            #expect(panel.setSweepSpec(.init(), reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "grid")))
             #expect(panel.draft.formErrors[.sweepSpec] == nil)
             #expect(try ExperimentStore.load(name: "grid").sweep != nil)
         }
@@ -499,25 +499,25 @@ extension ExperimentStoreTests {
 
             // Unknown metric: refused, nothing written.
             spec.selection = .init(objective: .init(metric: "vibes"))
-            #expect(!panel.setSweepSpec(spec, for: "scr2"))
+            #expect(!panel.setSweepSpec(spec, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "scr2")))
             #expect(try ExperimentStore.load(name: "scr2").sweep == nil)
 
             // Out-of-range constraint: refused even alongside a legal metric.
             spec.selection = .init(
                 objective: .init(metric: "markerDensity"),
                 constraints: .init(coherenceFloor: 5))
-            #expect(!panel.setSweepSpec(spec, for: "scr2"))
+            #expect(!panel.setSweepSpec(spec, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "scr2")))
 
             // Structurally broken grid: refused.
             spec = ExperimentManifest.SweepSpec()
             spec.alphas = []
-            #expect(!panel.setSweepSpec(spec, for: "scr2"))
+            #expect(!panel.setSweepSpec(spec, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "scr2")))
 
             // judgeScore without the manifest's rubric/judge pins: refused
             // at SAVE (the objective's config comes from MANIFEST pins).
             spec = ExperimentManifest.SweepSpec()
             spec.selection = .init(objective: .init(metric: "judgeScore"))
-            #expect(!panel.setSweepSpec(spec, for: "scr2"))
+            #expect(!panel.setSweepSpec(spec, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "scr2")))
             #expect(panel.status?.contains("pinned judge rubric") == true)
             #expect(try ExperimentStore.load(name: "scr2").sweep == nil)
 
@@ -527,7 +527,7 @@ extension ExperimentStoreTests {
             manifest.judgeRubricHash = String(repeating: "a", count: 64)
             manifest.judges = [.init(name: "j1", kind: "local", model: "org/judge")]
             try ExperimentStore.save(manifest)
-            #expect(panel.setSweepSpec(spec, for: "scr2"))
+            #expect(panel.setSweepSpec(spec, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "scr2")))
             #expect(
                 try ExperimentStore.load(name: "scr2")
                     .sweep?.selection?.objective?.metric == "judgeScore")
@@ -536,7 +536,7 @@ extension ExperimentStoreTests {
             // with one, the declaration saves and keeps the file reference.
             spec = ExperimentManifest.SweepSpec()
             spec.selection = .init(objective: .init(metric: "logprobShift"))
-            #expect(!panel.setSweepSpec(spec, for: "scr2"))
+            #expect(!panel.setSweepSpec(spec, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "scr2")))
             #expect(panel.status?.contains("choicePromptsFile") == true)
             let choicesURL = VectorCatalog.projectRoot
                 .appending(components: "prompts", "dev", "choices.jsonl")
@@ -549,7 +549,7 @@ extension ExperimentStoreTests {
                 objective: .init(
                     metric: "logprobShift",
                     choicePromptsFile: "prompts/dev/choices.jsonl"))
-            #expect(panel.setSweepSpec(spec, for: "scr2"))
+            #expect(panel.setSweepSpec(spec, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "scr2")))
             let saved = try ExperimentStore.load(name: "scr2").sweep?.selection
             #expect(saved?.objective?.metric == "logprobShift")
             #expect(saved?.objective?.choicePromptsFile == "prompts/dev/choices.jsonl")
@@ -570,12 +570,14 @@ extension ExperimentStoreTests {
                 .write(to: ExperimentStore.manifestURL("scr3"))
 
             let panel = ExperimentPanel()
-            #expect(!panel.setSweepSpec(.init(), for: "scr3"))
+            #expect(!panel.setSweepSpec(.init(), reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "scr3")))
             #expect(panel.status?.contains("frozen") == true)
             #expect(try ExperimentStore.load(name: "scr3").sweep == nil)
 
             // Nonexistent experiments refuse with an error, not a crash.
-            #expect(!panel.setSweepSpec(.init(), for: "no-such-study"))
+            #expect(throws: (any Error).self) {
+                try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "no-such-study")
+            }
         }
     }
 
@@ -593,13 +595,13 @@ extension ExperimentStoreTests {
             // A structurally invalid spec (no alphas) refuses.
             var bad = ExperimentManifest.SweepSpec()
             bad.alphas = []
-            #expect(!panel.setSweepSpec(bad, for: "form"))
+            #expect(!panel.setSweepSpec(bad, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "form")))
             let inline = try #require(panel.draft.formErrors[.sweepSpec])
             #expect(inline == panel.status)
 
             // A subsequent SUCCESS must clear it — a stale refusal under a
             // now-saved spec is its own paper cut.
-            #expect(panel.setSweepSpec(.init(), for: "form"))
+            #expect(panel.setSweepSpec(.init(), reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "form")))
             #expect(panel.draft.formErrors[.sweepSpec] == nil)
         }
     }
@@ -650,7 +652,7 @@ extension ExperimentStoreTests {
                 constraints: .init(
                     capabilityTolerance: 0.2, coherenceAbsoluteBackstop: 0.55))
             let panel = ExperimentPanel()
-            #expect(panel.setSweepSpec(spec, for: "form-rt"))
+            #expect(panel.setSweepSpec(spec, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "form-rt")))
 
             // The editor's READ: the resolved default ratio, and the backstop
             // as the one absolute number its field edits.
@@ -666,7 +668,7 @@ extension ExperimentStoreTests {
             resaved.selection?.constraints =
                 SweepSpecForm.editorCoherenceConstraints(
                     capabilityTolerance: 0.2, form: form)
-            #expect(panel.setSweepSpec(resaved, for: "form-rt"))
+            #expect(panel.setSweepSpec(resaved, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "form-rt")))
             let after = try #require(
                 try ExperimentStore.load(name: "form-rt").sweep?.selection?
                     .constraints)
@@ -686,7 +688,7 @@ extension ExperimentStoreTests {
             var legacy = spec
             legacy.selection?.constraints = .init(
                 capabilityTolerance: 0.2, coherenceFloor: 0.5)
-            #expect(panel.setSweepSpec(legacy, for: "form-rt"))
+            #expect(panel.setSweepSpec(legacy, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "form-rt")))
             let legacyForm = SweepSpecForm.editorCoherenceForm(
                 try ExperimentStore.load(name: "form-rt").sweep?.selection?
                     .constraints)
@@ -695,7 +697,7 @@ extension ExperimentStoreTests {
             legacy.selection?.constraints =
                 SweepSpecForm.editorCoherenceConstraints(
                     capabilityTolerance: 0.2, form: legacyForm)
-            #expect(panel.setSweepSpec(legacy, for: "form-rt"))
+            #expect(panel.setSweepSpec(legacy, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "form-rt")))
             let legacyAfter = try #require(
                 try ExperimentStore.load(name: "form-rt").sweep?.selection?
                     .constraints)

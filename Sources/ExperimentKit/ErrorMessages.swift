@@ -92,10 +92,6 @@ extension TaskPromptsDocument.ParseError: LocalizedError {
     public var errorDescription: String? { description }
 }
 
-extension TaskPromptsImport.ImportError: LocalizedError {
-    public var errorDescription: String? { description }
-}
-
 extension ToyConceptFailure: LocalizedError {
     public var errorDescription: String? { description }
 }

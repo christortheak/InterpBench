@@ -251,7 +251,11 @@ struct OptimizationRunsView: View {
                 capabilityTolerance: SweepSelectionRule.defaultCapabilityTolerance,
                 coherenceRatioToBaseline: SweepSelectionRule.defaultCoherenceRatio,
                 coherenceAbsoluteBackstop: SweepSelectionRule.defaultCoherenceBackstop))
-        return panel.setSweepSpec(spec, for: name)
+        guard let reviewed = try? DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: name) else {
+            panel.note("Reload the intended draft before declaring an optimization.", severity: .warning)
+            return false
+        }
+        return panel.setSweepSpec(spec, reviewed: reviewed)
     }
 
     private func refreshOptimizations() {
@@ -1401,6 +1405,7 @@ struct OptimizationRunsView: View {
 /// goes through `ExperimentPanel.setSweepSpec` (draft-only, criterion
 /// validated at save via `SweepSpecForm`).
 private struct SweepSpecEditorSection<RunControls: View>: View {
+    @State private var reviewed: DraftAuthoringSnapshot?
     let experimentName: String
     let panel: ExperimentPanel
     let onSaved: () -> Void
@@ -1497,6 +1502,8 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         self.onSaved = onSaved
         self.runControls = runControls
         let initial = spec ?? ExperimentManifest.SweepSpec()
+        let source = try? DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: experimentName)
+        _reviewed = State(initialValue: (source?.manifest.sweep ?? .init()) == initial ? source : nil)
         _layerFractionsText = State(
             initialValue: SweepSpecForm.numberListText(initial.layerFractions))
         _alphasText = State(
@@ -1996,7 +2003,11 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         // setSweepSpec refuses structural/criterion problems; since 2026-07-26
         // it records them in `panel.formErrors[.sweepSpec]` as well as the
         // notice feed, so `saveControls` can render them next to the button.
-        if panel.setSweepSpec(spec, for: experimentName) {
+        guard let reviewed else {
+            formError = "The displayed sweep is stale or unavailable. Reopen the editor from the intended draft."
+            return
+        }
+        if panel.setSweepSpec(spec, reviewed: reviewed, onSaved: { self.reviewed = $0 }) {
             savedSnapshot = currentSnapshot
             onSaved()
         }

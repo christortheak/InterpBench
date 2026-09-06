@@ -784,6 +784,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   init [--home <dir>]                           Create the home layout's Workspaces/ and Sites/.
   workspace init <path>                         Create and seed a data workspace.
   experiment <verb> <name> …                    The study lifecycle.
+  pack preview | apply | export …               Review and import study packs, or export text inputs and dependency names.
   agent list | inspect <path>                   Inspect local agents for reviewed attachment.
   design list | inspect | describe | instantiate | batch | save | update …  Inspect, save and revise designs, or create studies from reviewed castings.
   data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>  Study-data readiness and local evidence custody.
@@ -791,7 +792,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   remote <verb> (--site <id> | --url <server>)  Cluster client.
   cluster <verb> …                              Cluster lifecycle.
   install version | stamp | verify              This build's identity and the integrity of its install.
-  authoring prompt <kind> …                     Generation prompts for missing study data.
+  authoring study <intent> | prompt <kind> …    Generation prompts for missing study data.
   docs cli-reference [--check | --write]        Regenerate the reference document.
   panel <verb> …                                Panel scenarios and seat casting.
   model plan | install | capabilities | set-capability …  Local model preparation and chat-template capabilities.
@@ -896,6 +897,9 @@ steerlab-cli experiment create <name> [--description <text>] --model <id> [--rev
 steerlab-cli experiment attach <name> <concept>… [--corpus <a,b,c>] [--extraction-rendering <json>] [--method <name>] [--pool-from <k>] [--project-neutral <k>] [--reading-position <label>] [--reference <concept>]
 steerlab-cli experiment detach <name> <concept>…
 steerlab-cli experiment attach-agent <name> --artifact <value> --artifact-sha256 <sha256> --manifest-sha256 <sha256>
+steerlab-cli experiment inspect-artifact <path>
+steerlab-cli experiment attach-artifact <study> <concept> --artifact <value> --artifact-sha256 <sha256> [--eval-run <run>] --manifest-sha256 <sha256> --sidecar-sha256 <sha256> [--source-concept <concept>]
+steerlab-cli experiment import-prompts <study> --file <value> --manifest-sha256 <sha256>
 steerlab-cli experiment pin-prompts <name> <prompts/…/file.jsonl>
 steerlab-cli experiment pin-rubric <name> <prompts/rubrics/file.md> [--judge-pin <judge-name>=<revision>[:<dtype>]] [--judges <spec>]
 steerlab-cli experiment declare-condition <name> <condition> [--alpha-units <norm|raw>] [--band-width <k>] [--baseline] [--control <name>] [--slots <spec>]
@@ -922,6 +926,9 @@ steerlab-cli experiment duplicate <name> <new-name>
 | `experiment attach` | Pin each named concept's stimulus hash and extraction options. |
 | `experiment detach` | Remove each named concept's pin from a draft — refused while a declaration still names one. |
 | `experiment attach-agent` | Attach an agent using the reviewed study and artifact file versions. |
+| `experiment inspect-artifact` | Inspect a vector pair's exact digests and scientific sidecar before attaching. |
+| `experiment attach-artifact` | Attach reviewed vector bytes through scientific admission, preserving their provenance. |
+| `experiment import-prompts` | Import full JSONL records into an immutable input version and pin it to the reviewed draft. |
 | `experiment pin-prompts` | Pin the measured task-prompt file and its hash ("" clears the pin). |
 | `experiment pin-rubric` | Pin the judging rubric, the judge panel, and the evaluation declaration they imply; --judge-pin declares a local judge's revision and dtype (repeat per judge). |
 | `experiment declare-condition` | Declare one experimental arm, or the explicit baseline. |
@@ -2228,6 +2235,27 @@ the service computes and records the actual artifact pin. Frozen studies refuse.
 
 ### Study design library (`design`)
 
+Study packs create drafts from reviewed authored input. They are distinct from
+execution bundles: an export names vector/model dependencies separately.
+
+<!-- GENERATED:swift-pack BEGIN -->
+<!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
+
+```
+steerlab-cli pack preview <file>
+steerlab-cli pack apply <file> --review-sha256 <sha256>
+steerlab-cli pack export <study>
+```
+
+| Verb | Purpose |
+|---|---|
+| `pack preview` | Preview a study pack and its file plan without writing; returns reviewSHA256. |
+| `pack apply` | Create a draft from the reviewed pack, pin inputs and report remaining verification issues. |
+| `pack export` | Export a study pack with text inputs and an explicit list of external artifact dependencies. |
+
+Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
+<!-- GENERATED:swift-pack END -->
+
 <!-- GENERATED:swift-design BEGIN -->
 <!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
 
@@ -2711,11 +2739,13 @@ every pass, steered ≠ baseline, and α=0 reproduces baseline exactly.
 
 ```
 steerlab-cli authoring prompt <kind> [--concept <name>] [--count <n>] [--decision <text>] [--held-out <n>] [--name <name>] [--negative <text>] [--positive <text>] [--shape <contentPair|singleStimulus>] [--template-id <id>] [--validation-count <n>]
+steerlab-cli authoring study <intent>
 ```
 
 | Verb | Purpose |
 |---|---|
 | `authoring prompt` | Emit the generation prompt for one kind of missing study data, with its audit battery as numbers. |
+| `authoring study` | Emit the same conceptual study interview and pack instructions used by SwiftUI. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-authoring END -->

@@ -1127,7 +1127,8 @@ public enum ExperimentStore {
         devPromptsFile: String? = nil,
         batteryFile: String? = nil,
         maxTokens: Int? = nil,
-        layerCount: Int? = nil
+        layerCount: Int? = nil,
+        selectionUpdate: ExperimentManifest.SweepSelection?? = nil
     ) throws -> SweepGridOutcome {
         var depth: Int?
         var resolved: [Int] = []
@@ -1227,6 +1228,18 @@ public enum ExperimentStore {
             if devPromptsFile != nil { spec.devPromptsHash = nil }
             if batteryFile != nil { spec.batteryHash = nil }
             spec = SweepSpecForm.workspaceRelativeNormalized(spec)
+            if let selection = selectionUpdate {
+                spec.selection = selection
+                spec = SweepSpecForm.workspaceRelativeNormalized(spec)
+                if case .invalid(let reason) = SweepSpecForm.validateSelection(spec.selection) {
+                    throw ExperimentError.refusing(.sweepSelectionRule, reason,
+                        repair: "Review the sweep selection declaration before saving it.")
+                }
+                if let reason = SweepSpecForm.validateObjectiveRequirements(spec.selection, manifest: manifest) {
+                    throw ExperimentError.refusing(.sweepSelectionRule, reason,
+                        repair: "Attach the required outcome instrument and review the sweep declaration again.")
+                }
+            }
             manifest.sweep = spec
             if let depth, depth > 0 {
                 resolved = spec.resolvedLayers(layerCount: depth)
@@ -3237,42 +3250,62 @@ public enum ExperimentStore {
     /// exactly as `create` does.
     @discardableResult
     public static func rename(
-        experimentName oldName: String, to newName: String
+        experimentName oldName: String, to newName: String,
+        reviewed: DraftAuthoringSnapshot? = nil
     ) throws -> RenameOutcome {
-        let manifest = try load(name: oldName)
-        guard manifest.status == .draft else {
-            throw ExperimentError(
-                reason: "experiment '\(oldName)' is \(manifest.status.rawValue) — "
-                    + "its name is stamped into every run's provenance and cannot "
-                    + "change; set a display label instead, or duplicate to iterate")
+        let root = reviewed?.workspaceRoot ?? workspaceRoot
+        let storage = ExperimentRepository(workspaceRoot: root)
+        let target = resolvedRenameTarget(newName)
+        guard target.contains(where: { $0.isLetter || $0.isNumber }) else {
+            throw ExperimentError(reason: "empty name — a study name needs at least one letter or digit")
         }
-        let sanitized = resolvedRenameTarget(newName)
-        // `create` accepts anything non-empty after sanitizing, which lets
-        // "   " through as "---". A rename is a deliberate act on an
-        // existing study, so it holds out for a name with substance.
-        guard sanitized.contains(where: { $0.isLetter || $0.isNumber }) else {
-            throw ExperimentError(
-                reason: "empty name — a study name needs at least one letter "
-                    + "or digit (it becomes the experiments/<name>/ directory)")
+        _ = try storage.snapshot(name: oldName) // Validate the source path component before locking.
+        if let reviewed, reviewed.manifest.name != oldName {
+            throw ExperimentError(reason: "rename review identifies another study")
         }
-        guard sanitized != oldName else {
-            return RenameOutcome(
-                oldName: oldName, newName: oldName, runsKeepingOldName: 0)
+        let sourceURL = storage.manifestURL(oldName)
+        let destinationURL = storage.manifestURL(target)
+        let ordered = try [sourceURL, destinationURL].sorted {
+            try ManifestFileTransaction.canonicalPath($0) < ManifestFileTransaction.canonicalPath($1)
         }
-        let destination = directory.appending(component: sanitized)
-        guard (try? load(name: sanitized)) == nil,
-            !FileManager.default.fileExists(atPath: destination.path)
-        else {
-            throw ExperimentError(reason: "experiment '\(sanitized)' already exists")
+        return try ManifestFileTransaction.withLock(manifestURL: ordered[0], workspaceRoot: root) {
+            try ManifestFileTransaction.withLock(manifestURL: ordered[1], workspaceRoot: root) {
+                if let reviewed {
+                    try ManifestFileTransaction.requireCurrent(.sha256(reviewed.file.sha256), at: sourceURL)
+                }
+                let manifest = try storage.load(name: oldName)
+                guard manifest.status == .draft else {
+                    throw ExperimentError(reason: "experiment '\(oldName)' is \(manifest.status.rawValue) — its name is stamped into run provenance; set a display label instead, or duplicate to iterate")
+                }
+                guard target != oldName else {
+                    return RenameOutcome(oldName: oldName, newName: oldName, runsKeepingOldName: 0)
+                }
+                let source = storage.directory.appending(component: oldName)
+                let destination = storage.directory.appending(component: target)
+                guard !FileManager.default.fileExists(atPath: destination.path) else {
+                    throw ExperimentError(reason: "experiment '\(target)' already exists")
+                }
+                // Run provenance is counted and reported, never rewritten.
+                guard root.standardizedFileURL == workspaceRoot.standardizedFileURL else {
+                    throw ExperimentError.refusing(.staleManifest, "The rename workspace changed.",
+                        repair: "Return to the reviewed workspace before renaming.")
+                }
+                let stranded = runsStamped(experimentName: oldName)
+                try FileManager.default.moveItem(at: source, to: destination)
+                do {
+                    var renamed = manifest
+                    renamed.name = target
+                    try save(renamed, workspaceRoot: root)
+                } catch {
+                    do { try FileManager.default.moveItem(at: destination, to: source) }
+                    catch let rollback {
+                        throw ExperimentError(reason: "Rename publication failed and restoration failed: \(rollback). Inspect '\(target)' before retrying.")
+                    }
+                    throw error
+                }
+                return RenameOutcome(oldName: oldName, newName: target, runsKeepingOldName: stranded)
+            }
         }
-        let stranded = runsStamped(experimentName: oldName)
-        try FileManager.default.moveItem(
-            at: directory.appending(component: oldName), to: destination)
-        var renamed = manifest
-        renamed.name = sanitized
-        try save(renamed)
-        return RenameOutcome(
-            oldName: oldName, newName: sanitized, runsKeepingOldName: stranded)
     }
 
     /// A study name not yet taken: `base`, else `base-2`, `base-3`, … (the

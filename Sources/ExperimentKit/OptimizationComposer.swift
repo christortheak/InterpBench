@@ -912,7 +912,7 @@ public enum OptimizationComposer {
                     + "its pins; fix the data and re-declare, or delete the "
                     + "draft in Studies")
         }
-        guard panel.setSweepSpec(spec, for: manifest.name) else {
+        guard panel.setSweepSpec(spec, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: manifest.name)) else {
             throw ExperimentError(
                 reason: (panel.status ?? "sweep spec not saved")
                     + " — draft study '\(manifest.name)' was created with its "

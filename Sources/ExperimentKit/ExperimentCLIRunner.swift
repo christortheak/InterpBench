@@ -109,7 +109,7 @@ public struct ExperimentCLIRunner: Sendable {
     /// nothing is dispatched twice.
     public static let namespaces: Set<String> = [
         "init", "workspace", "data", "vectors", "remote", "experiment", "docs",
-        "install", "panel", "authoring", "model", "design", "agent",
+        "install", "panel", "authoring", "model", "design", "agent", "pack",
     ]
 
     /// The top-level spelling of `install version`. `--version` is what a
@@ -187,6 +187,7 @@ public struct ExperimentCLIRunner: Sendable {
             case "remote": result = try await runRemoteCommand(invocation)
             case "experiment": result = try await runExperimentCommand(invocation)
             case "agent": result = try StudyAgentCLI.run(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
+            case "pack": result = try StudyPackCLI.run(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
             case "design": result = try StudyDesignCLI.run(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
             case "docs": result = try runDocsCommand(invocation)
             case "authoring": result = try runAuthoringCommand(invocation)
@@ -1047,6 +1048,16 @@ public struct ExperimentCLIRunner: Sendable {
             guard let index = args.firstIndex(of: name), args.count > index + 1
             else { return nil }
             return args[index + 1]
+        }
+        if args.first == "study" {
+            guard args.count == 2, let intent = StudyIntent.parse(args[1]) else {
+                throw ExperimentError.malformed("Choose conceptStudy, agentComparison or multiAgent.",
+                    repair: "steerlab-cli authoring study <intent> --json")
+            }
+            let prompt = StudyCoauthoring.prompt(for: intent)
+            sink.out(prompt)
+            return ExperimentCLIResult(message: "Study coauthoring instructions emitted.",
+                payload: ["intent": .string(intent.rawValue), "prompt": .string(prompt)])
         }
         guard args.first == "prompt" else {
             throw ExperimentError(
@@ -2671,6 +2682,10 @@ public struct ExperimentCLIRunner: Sendable {
         }
 
         switch args.first {
+        case "inspect-artifact", "attach-artifact":
+            return try StudyArtifactCLI.run(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
+        case "import-prompts":
+            return try StudyInputCLI.importPrompts(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
         case "attach-agent":
             return try StudyAgentCLI.attach(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
         case "list":

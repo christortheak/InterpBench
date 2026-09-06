@@ -305,6 +305,18 @@ public enum ExperimentCLIParser {
             valueFlags: ["--artifact", "--artifact-sha256", "--manifest-sha256"],
             requiredFlags: ["--artifact", "--artifact-sha256", "--manifest-sha256"]),
 
+        .init(namespace: "authoring", verb: "study", positional: "<intent>", purpose: "Emit the same conceptual study interview and pack instructions used by SwiftUI."),
+        .init(namespace: "experiment", verb: "inspect-artifact", positional: "<path>", purpose: "Inspect a vector pair's exact digests and scientific sidecar before attaching."),
+        .init(namespace: "experiment", verb: "attach-artifact", positional: "<study> <concept>", purpose: "Attach reviewed vector bytes through scientific admission, preserving their provenance.",
+            valueFlags: ["--artifact", "--artifact-sha256", "--sidecar-sha256", "--manifest-sha256", "--source-concept", "--eval-run"],
+            requiredFlags: ["--artifact", "--artifact-sha256", "--sidecar-sha256", "--manifest-sha256"]),
+        .init(namespace: "experiment", verb: "import-prompts", positional: "<study>", purpose: "Import full JSONL records into an immutable input version and pin it to the reviewed draft.",
+            valueFlags: ["--file", "--manifest-sha256"], requiredFlags: ["--file", "--manifest-sha256"]),
+        .init(namespace: "pack", verb: "preview", positional: "<file>", purpose: "Preview a study pack and its file plan without writing; returns reviewSHA256."),
+        .init(namespace: "pack", verb: "apply", positional: "<file>", purpose: "Create a draft from the reviewed pack, pin inputs and report remaining verification issues.",
+            valueFlags: ["--review-sha256"], requiredFlags: ["--review-sha256"]),
+        .init(namespace: "pack", verb: "export", positional: "<study>", purpose: "Export a study pack with text inputs and an explicit list of external artifact dependencies."),
+
         .init(namespace: "design", verb: "list", purpose: "List the workspace's designs and report unreadable entries."),
         .init(namespace: "design", verb: "inspect", positional: "<name>", purpose: "Read a design and its external file digest for reviewed edits."),
         .init(namespace: "design", verb: "save", positional: "<study>", purpose: "Save a reusable design from a reviewed study, reusing an unchanged lineage match.",

@@ -45,6 +45,28 @@ public struct DraftAuthoringSnapshot: Sendable {
 /// snapshot. Callers must reload and review after a refusal, never retry with a
 /// newly fetched tag behind the researcher's back.
 public enum DraftAuthoringTransaction {
+    /// Admit a synchronous store command against the exact document the caller
+    /// reviewed. Store policy remains authoritative. The active-root guard is
+    /// required for store commands that still resolve workspace-scoped inputs.
+    public static func perform<T>(
+        reviewed: DraftAuthoringSnapshot, draftOnly: Bool = true,
+        _ command: (String) throws -> T
+    ) throws -> T {
+        guard ExperimentStore.workspaceRoot.standardizedFileURL == reviewed.workspaceRoot else {
+            throw ExperimentError.refusing(.staleManifest, "The authoring workspace changed.",
+                repair: "Return to the reviewed workspace and reload the study before editing.")
+        }
+        let storage = ExperimentRepository(workspaceRoot: reviewed.workspaceRoot)
+        return try ManifestFileTransaction.withLock(
+            manifestURL: storage.manifestURL(reviewed.manifest.name), workspaceRoot: reviewed.workspaceRoot
+        ) {
+            try ManifestFileTransaction.requireCurrent(.sha256(reviewed.file.sha256),
+                at: storage.manifestURL(reviewed.manifest.name))
+            if draftOnly { try ManifestMutationPolicy.admitDraftEdit(reviewed.manifest) }
+            return try command(reviewed.manifest.name)
+        }
+    }
+
     @discardableResult
     public static func replace(
         _ replacement: ExperimentManifest, reviewed: DraftAuthoringSnapshot,

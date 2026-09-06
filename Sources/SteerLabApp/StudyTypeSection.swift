@@ -14,8 +14,12 @@ struct StudyTypeSection: View {
     let manifest: ExperimentManifest
     let panel: ExperimentPanel
 
+    @State private var artifactStudy: DraftAuthoringSnapshot?
+    @State private var showArtifactSheet = false
     @State private var showPasteSheet = false
     @State private var pasteText = ""
+    @State private var packPreview: StudyPackAuthoring.Preview?
+    @State private var packPreviewError: String?
 
     var body: some View {
         Section {
@@ -46,6 +50,17 @@ struct StudyTypeSection: View {
                 Label(hidden, systemImage: "eye.slash")
                     .font(.caption2)
                     .foregroundStyle(.orange)
+            }
+            if manifest.status == .draft {
+                Button("Attach vector artifact…") {
+                    do {
+                        artifactStudy = try panel.management.reviewStudy(named: manifest.name)
+                        showArtifactSheet = true
+                    } catch { panel.note("Could not review the study: \(error)", severity: .error) }
+                }
+                .sheet(isPresented: $showArtifactSheet) {
+                    if let artifactStudy { StudyArtifactAttachmentSheet(reviewed: artifactStudy, panel: panel) }
+                }
             }
             HStack {
                 Button("Copy Study JSON") {
@@ -124,19 +139,44 @@ struct StudyTypeSection: View {
                 .font(.caption.monospaced())
                 .frame(minWidth: 520, minHeight: 320)
                 .border(.quaternary)
+            if let packPreview {
+                Text("New draft: \(packPreview.name)").font(.subheadline)
+                Text("\(packPreview.files.filter { $0.disposition == "create" }.count) new input files; "
+                    + "\(packPreview.files.filter { $0.disposition == "reuse" }.count) identical files reused.")
+                    .font(.caption)
+                ScrollView {
+                    VStack(alignment: .leading) {
+                        ForEach(packPreview.files, id: \.path) { file in
+                            Text("\(file.disposition): \(file.path)").font(.caption.monospaced())
+                        }
+                    }
+                }.frame(maxHeight: 120)
+                Text("Inputs are pinned and verification issues reported after import. This preview does not certify that the study is ready to run.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let packPreviewError { Text(packPreviewError).font(.caption).foregroundStyle(.red) }
             HStack {
                 Spacer()
                 Button("Cancel") { showPasteSheet = false }
+                Button("Preview") {
+                    do {
+                        packPreview = try StudyPackAuthoring.preview(Data(pasteText.utf8), workspaceRoot: ExperimentStore.workspaceRoot)
+                        packPreviewError = nil
+                    } catch {
+                        packPreview = nil
+                        packPreviewError = String(describing: error)
+                    }
+                }
                 Button("Import as Draft") {
-                    panel.importStudyJSON(pasteText)
-                    showPasteSheet = false
+                    guard let packPreview else { return }
+                    if panel.importStudyJSON(pasteText, reviewed: packPreview) { showPasteSheet = false }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(
-                    pasteText.trimmingCharacters(in: .whitespacesAndNewlines)
-                        .isEmpty)
+                    packPreview == nil || pasteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(16)
+        .onChange(of: pasteText) { _, _ in packPreview = nil; packPreviewError = nil }
     }
 }

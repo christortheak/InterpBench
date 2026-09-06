@@ -680,11 +680,14 @@ public enum StudyCoauthoring {
         }
         ```
 
-        After the block, tell the researcher: paste it via Paste Study \
-        JSON in the app's Studies panel — the files land in the \
-        workspace and named ones are pinned; then attach concepts/\
-        agents there. The Issues box and Data & Prompts pane list \
-        exactly what is still needed.
+        After the block, the agent should save the pack and use \
+        `steerlab-cli pack preview <file> --json`, inspect its file plan, \
+        then apply it with `pack apply <file> --review-sha256 <reviewSHA256> --json`. \
+        The researcher can instead use Paste Study JSON → Preview → Import as Draft \
+        in the app. Both paths create a draft and pin real input bytes. \
+        Resolve the returned verificationIssues and attach the required concepts \
+        or agents before verification, freezing and execution. Import success \
+        alone does not establish readiness or scientific validity.
         """
     }
 }
@@ -723,194 +726,11 @@ extension ExperimentStore {
         _ json: String
     ) throws -> (manifest: ExperimentManifest, violations: [String],
                  filesWritten: [String]) {
-        var manifest: ExperimentManifest
-        var packFiles: [String: String] = [:]
-        let raw = try? JSONSerialization.jsonObject(with: Data(json.utf8))
-        let isPack = (raw as? [String: Any])?["study"] != nil
-        do {
-            if isPack {
-                struct StudyPack: Decodable {
-                    var study: ExperimentManifest
-                    var files: [String: String]?
-                }
-                let pack = try JSONDecoder().decode(
-                    StudyPack.self, from: Data(json.utf8))
-                manifest = pack.study
-                packFiles = pack.files ?? [:]
-            } else {
-                manifest = try JSONDecoder().decode(
-                    ExperimentManifest.self, from: Data(json.utf8))
-            }
-        } catch {
-            throw ExperimentError(
-                reason: "study JSON did not decode: \(error). The document "
-                    + "must be a complete experiment manifest, or a study "
-                    + "pack {\"study\": {…}, \"files\": {…}} (start from "
-                    + "Copy Study JSON on an existing draft)")
-        }
-        // The name becomes an experiments/<name>/ path component — apply
-        // the SAME sanitization create() applies, so a pasted "../escape"
-        // or "a/b" can never write outside the store (and the saved
-        // manifest carries the sanitized name it actually lives under).
-        let name = sanitizedExperimentName(manifest.name)
-        guard !name.isEmpty else {
-            throw ExperimentError(
-                reason: "study JSON has no usable name (after dropping "
-                    + "path-unsafe characters: lowercase letters, digits, "
-                    + "and hyphens survive)")
-        }
-        manifest.name = name
-        if (try? load(name: name)) != nil {
-            throw ExperimentError(
-                reason: "a study named '\(name)' already exists — change "
-                    + "\"name\" in the JSON (freeze-and-iterate duplicates, "
-                    + "never overwrites)")
-        }
-        // Draft-only import: freeze is one-way and GATED — pasted text
-        // cannot mint a preregistered object.
-        manifest.status = .draft
-        manifest.frozenAt = nil
-        manifest.freezeHash = nil
-        manifest.frozenBy = nil
-        manifest.gitCommit = nil
-        manifest.freezeForced = nil
-        manifest.forcedGatesSkipped = nil
-        manifest.preregistrationHash = nil
-        manifest.preregistrationGeneratedHash = nil
-        // Pack files land BEFORE the manifest so pinning sees real bytes.
-        // TRANSACTIONAL (engineer finding 2026-07-19): every path is
-        // validated before the FIRST write, and a later failure —
-        // including the manifest save — rolls the newly created files
-        // back, so a refused import never leaves half a pack behind.
-        let filesWritten = try writePackFiles(packFiles)
-        do {
-            autoPinNamedInputs(into: &manifest)
-            try save(manifest, allowCreate: true)
-        } catch {
-            for path in filesWritten {
-                try? FileManager.default.removeItem(at: resolveProjectPath(path))
-            }
-            throw error
-        }
-        return (manifest, verify(manifest), filesWritten)
-    }
-
-    /// Write a study pack's data files into the workspace, two-phase:
-    /// VALIDATE everything (lexical containment, symlink-real containment,
-    /// collision) before the first write, then write. Existing identical
-    /// files are fine (idempotent re-import); existing DIFFERING files
-    /// refuse — a pasted pack never silently rewrites data another study
-    /// may pin. Containment is checked against RESOLVED paths (engineer
-    /// finding 2026-07-19: lexical checks alone would follow a symlink
-    /// planted under prompts/ out of the workspace).
-    private static func writePackFiles(
-        _ files: [String: String]
-    ) throws -> [String] {
-        guard !files.isEmpty else { return [] }
-        let fm = FileManager.default
-        let entries = files.sorted(by: { $0.key < $1.key })
-        // A symlinked prompts/ root itself is SUPPORTED: containment is
-        // judged between RESOLVED paths, so everything must land inside
-        // wherever prompts/ really lives.
-        let promptsRoot = resolveProjectPath("prompts")
-            .resolvingSymlinksInPath().path
-        var toWrite: [(path: String, url: URL, data: Data)] = []
-        // Phase 1 — validate every entry BEFORE any filesystem effect
-        // (fourth round: creating parent directories before the symlink
-        // check could plant directories OUTSIDE the workspace and leave
-        // them behind). Containment resolves the NEAREST EXISTING
-        // ancestor: the not-yet-existing tail components are plain names
-        // (no "..", checked above) and cannot be symlinks, so if the
-        // existing ancestor resolves inside prompts/, the final parent
-        // will too.
-        for (path, content) in entries {
-            guard !path.hasPrefix("/"), !path.contains(".."),
-                path.hasPrefix("prompts/")
-            else {
-                throw ExperimentError(
-                    reason: "study pack file '\(path)' refused — pack files "
-                        + "must be workspace-relative paths under prompts/ "
-                        + "(no absolute paths, no ..)")
-            }
-            let url = resolveProjectPath(path)
-            // A destination that is itself a symlink is refused outright
-            // (Data(contentsOf:)/write would follow it).
-            if (try? fm.destinationOfSymbolicLink(atPath: url.path)) != nil {
-                throw ExperimentError(
-                    reason: "study pack file '\(path)' refused — the "
-                        + "destination is a symlink")
-            }
-            var ancestor = url.deletingLastPathComponent()
-            while !fm.fileExists(atPath: ancestor.path),
-                ancestor.pathComponents.count > 1
-            {
-                ancestor = ancestor.deletingLastPathComponent()
-            }
-            let ancestorReal = ancestor.resolvingSymlinksInPath().path
-            guard ancestorReal == promptsRoot
-                || ancestorReal.hasPrefix(promptsRoot + "/")
-                || promptsRoot.hasPrefix(ancestorReal + "/")
-            else {
-                throw ExperimentError(
-                    reason: "study pack file '\(path)' refused — its "
-                        + "directory resolves outside the workspace's "
-                        + "prompts/ tree (symlink)")
-            }
-            let data = Data(content.utf8)
-            if fm.fileExists(atPath: url.path) {
-                guard (try? Data(contentsOf: url)) == data else {
-                    throw ExperimentError(
-                        reason: "study pack file '\(path)' differs from the "
-                            + "existing file — packs never overwrite; rename "
-                            + "the pack's path or reconcile by hand")
-                }
-                continue  // identical bytes: idempotent, nothing to write
-            }
-            toWrite.append((path, url, data))
-        }
-        // Phase 2 — create directories and write; roll created files back
-        // on failure (directories created inside prompts/ may remain —
-        // contained and empty, they are harmless).
-        var written: [String] = []
-        do {
-            for (path, url, data) in toWrite {
-                try fm.createDirectory(
-                    at: url.deletingLastPathComponent(),
-                    withIntermediateDirectories: true)
-                try data.write(to: url, options: .atomic)
-                written.append(path)
-            }
-        } catch {
-            for path in written {
-                try? fm.removeItem(at: resolveProjectPath(path))
-            }
-            throw error
-        }
-        return written
-    }
-
-    /// Pin inputs the manifest NAMES but has not pinned, from bytes now on
-    /// disk — an LLM cannot compute hashes, so the app pins on arrival
-    /// (task prompts, judge rubric, capability battery). Every pin goes
-    /// through its validating helper: a file that is present but the wrong
-    /// SHAPE stays UNPINNED, so the problem SURFACES — verify() reports the
-    /// incomplete pin and readiness reports the file as invalid with the
-    /// plain-language detail — instead of pinning garbage that would fail
-    /// much later at run/analyze. A per-input no-op when the file is
-    /// absent, for the same reason: verify() is the honest finding.
-    private static func autoPinNamedInputs(into manifest: inout ExperimentManifest) {
-        if let file = manifest.taskPromptsFile, manifest.taskPromptsHash == nil {
-            _ = try? pinTaskPrompts(file, into: &manifest)
-        }
-        if let file = manifest.judgeRubricFile, manifest.judgeRubricHash == nil {
-            _ = try? JudgeRubricStore.pin(file, into: &manifest)
-        }
-        if let file = manifest.capabilityBatteryFile,
-            manifest.capabilityBatteryHash == nil
-        {
-            // The shared validating pin (Phase 0 item 2) — never a raw
-            // hash of unparsed bytes.
-            _ = try? pinCapabilityBattery(file, into: &manifest)
-        }
+        let data = Data(json.utf8)
+        let root = workspaceRoot
+        let preview = try StudyPackAuthoring.preview(data, workspaceRoot: root)
+        let result = try StudyPackAuthoring.apply(data, workspaceRoot: root,
+            expectedReviewSHA256: preview.reviewSHA256)
+        return (result.study.manifest, result.violations, result.filesWritten)
     }
 }

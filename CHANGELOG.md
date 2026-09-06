@@ -14,6 +14,11 @@ migration that rewrites frozen bytes.
 
 ### Added
 
+- Conceptual study interviews, reviewed study-pack preview/apply/export, full-record
+  JSONL import, and vector inspection/attachment through the Mac CLI and Swift
+  workbench HTTP API. Native pack and vector dialogs use the same owners.
+  Imports report verification issues separately from successful draft creation.
+
 - Shared study authoring operations across the Mac app, `steerlab-cli`, and
   the workbench HTTP API: manifest inspection, reviewed agent attachment,
   agent listing/inspection, and design listing, inspection, description,
@@ -35,6 +40,15 @@ migration that rewrites frozen bytes.
   reported at startup and left unchanged. See [controller recovery](docs/CONTROLLER-RECOVERY.md).
 
 ### Changed
+
+- Native draft commands retain reviewed file versions; sweep grid and selection
+  save together. Rename/delete/import dialogs retain explicit targets. Late
+  auxiliary server observations cannot populate a changed workspace context.
+- Breaking pre-1.0 Swift authoring APIs: raw/table prompt imports publish immutable
+  versions through `TaskPromptsAuthoring`; the overwrite-oriented import helpers
+  are removed. Panel imports, sweep edits and rename/delete commands require
+  retained reviews. New public write routes require external preconditions; no
+  manifest schema or frozen scientific identity changes.
 
 - Freeze, draft-sync, server-run and pipeline consumers now call focused Swift
   controllers directly; the remaining two coordination bridges are removed.

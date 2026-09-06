@@ -49,6 +49,19 @@ public final class StudyManagementController {
         acceptAuthoringResult(try DraftAuthoringTransaction.replace(manifest, reviewed: reviewed))
     }
 
+    /// A form command uses its retained review, including when the catalog was
+    /// refreshed externally. A successful edit advances only that editor's review.
+    @discardableResult
+    func editReviewed<T>(named name: String, _ command: (String) throws -> T) throws -> T {
+        let reviewed = try reviewedDraft(named: name)
+        let (result, saved) = try DraftAuthoringTransaction.perform(reviewed: reviewed) { target in
+            let result = try command(target)
+            return (result, try DraftAuthoringSnapshot(workspaceRoot: reviewed.workspaceRoot, name: target))
+        }
+        acceptAuthoringResult(saved)
+        return result
+    }
+
     /// Advancing the editor's review is explicit: selection/reload starts it,
     /// and a successful command from that editor advances it. Inventory refresh
     /// alone may update the displayed catalog but cannot authorize old fields.
@@ -147,11 +160,10 @@ public final class StudyManagementController {
                         + "'\(carried)' is not available in this workspace",
                     severity: .info)
             }
-            var manifest = try ExperimentStore.create(
-                name: draft.newName,
-                description: draft.newDescription,
-                modelID: seed,
-                modelRevision: revision.isEmpty ? nil : revision)
+            let name = ExperimentStore.sanitizedExperimentName(draft.newName)
+            guard !name.isEmpty else { throw ExperimentError(reason: "empty name") }
+            var manifest = ExperimentManifest(name: name, description: draft.newDescription, modelID: seed)
+            manifest.modelRevision = revision.isEmpty ? nil : revision
             manifest.studyKind = draft.studyKind
             manifest.temperature = 0
             manifest.maxTokens = 2048
@@ -159,7 +171,7 @@ public final class StudyManagementController {
             manifest.qwenThinkingEnabled = nil
             manifest.reasoningEffort = ReasoningEffort.off.rawValue
             manifest.reasoningMaxTokens = nil
-            try ExperimentStore.save(manifest)
+            try ExperimentStore.save(manifest, allowCreate: true, expectedFile: .absent)
             draft.newName = ""
             draft.newDescription = ""
             draft.newRevision = ""
@@ -190,9 +202,21 @@ public final class StudyManagementController {
     ///
     /// The canonical rename runs FIRST so the label lands in the study's
     /// final directory.
-    public func renameSelected(canonicalName: String?, label: String?) {
-        guard let name = selectedName else { return }
+    @discardableResult
+    public func rename(reviewed: DraftAuthoringSnapshot, canonicalName: String?, label: String?) -> Bool {
+        let name = reviewed.manifest.name
         clearFormError(.rename)
+        guard ExperimentStore.workspaceRoot.standardizedFileURL == reviewed.workspaceRoot else {
+            refuse(.rename, "The workspace changed; reopen Rename in the intended workspace.")
+            return false
+        }
+        do {
+            try ManifestFileTransaction.requireCurrent(.sha256(reviewed.file.sha256),
+                at: ExperimentRepository(workspaceRoot: reviewed.workspaceRoot).manifestURL(name))
+        } catch {
+            refuse(.rename, "The study changed; reload and review it before renaming. \(error)")
+            return false
+        }
         var current = name
         var messages: [String] = []
         if let canonicalName,
@@ -200,13 +224,13 @@ public final class StudyManagementController {
         {
             do {
                 let outcome = try ExperimentStore.rename(
-                    experimentName: name, to: canonicalName)
+                    experimentName: name, to: canonicalName, reviewed: reviewed)
                 current = outcome.newName
                 messages.append("renamed '\(outcome.oldName)' → '\(outcome.newName)'")
                 if let runsNote = outcome.runsNote { messages.append(runsNote) }
             } catch {
                 refuse(.rename, "Couldn't rename the study — nothing changed. \(error)")
-                return
+                return false
             }
         }
         if let label {
@@ -218,17 +242,27 @@ public final class StudyManagementController {
                         ? "cleared the display label"
                         : "display label set to \"\(normalized)\"")
             } catch {
-                refuse(
-                    .rename,
-                    "Couldn't save the display label — the study folder must be "
-                        + "writable. Details: \(error)")
-                return
+                refresh()
+                if selectedName == name { selectedName = current }
+                let published = current == name ? "" : "Renamed '\(name)' to '\(current)', but the label was not saved. "
+                refuse(.rename, published + "Couldn't save the display label: \(error). Close this dialog and review '\(current)' before retrying.")
+                return false
             }
         }
-        guard !messages.isEmpty else { return }
+        guard !messages.isEmpty else { return true }
         refresh()
-        selectedName = current
+        if selectedName == name { selectedName = current }
         note(messages.joined(separator: " — "), severity: .success)
+        return true
+    }
+
+    public func reviewStudy(named name: String) throws -> DraftAuthoringSnapshot {
+        guard let reviewed = reviewedDrafts[name],
+            reviewed.workspaceRoot == ExperimentStore.workspaceRoot.standardizedFileURL else {
+            throw ExperimentError.refusing(.staleManifest, "The study review is unavailable.",
+                repair: "Refresh the library and inspect the study before continuing.")
+        }
+        return reviewed
     }
 
     /// Retain the saved source settings displayed by the study catalog.
@@ -453,11 +487,13 @@ public final class StudyManagementController {
     /// Move the selected DRAFT to a `.trash-<timestamp>` sibling (App gap
     /// A12) — never a destructive delete; frozen/completed studies refuse
     /// inside the store with the immutability line.
-    public func deleteSelectedDraft() {
-        guard let name = selectedName else { return }
+    public func deleteDraft(reviewed: DraftAuthoringSnapshot) {
+        let name = reviewed.manifest.name
         do {
-            let destination = try ExperimentStore.moveDraftToTrash(name: name)
-            selectedName = nil
+            let destination = try DraftAuthoringTransaction.perform(reviewed: reviewed) { name in
+                try ExperimentStore.moveDraftToTrash(name: name)
+            }
+            if selectedName == name { selectedName = nil }
             refresh()
             note(
                 "moved draft '\(name)' to "
@@ -473,6 +509,16 @@ public final class StudyManagementController {
         }
     }
 
+    /// Bind a reviewed artifact transaction to the editor's retained state.
+    public func attachArtifact(_ concept: String, artifact: StudyArtifactAuthoring.Review,
+                               reviewed: DraftAuthoringSnapshot, sourceConcept: String?, evalRun: String?) throws {
+        let saved = try StudyArtifactAuthoring.attach(concept, artifact: artifact, reviewed: reviewed,
+            sourceConcept: sourceConcept, evalRun: evalRun)
+        acceptAuthoringResult(saved)
+        refresh()
+        note("Vector attached to '\(saved.manifest.name)'; verify before freezing.", severity: .success)
+    }
+
     public func duplicateSelected() {
         guard let name = selectedName else { return }
         var candidate = "\(name)-2"
@@ -482,7 +528,10 @@ public final class StudyManagementController {
             candidate = "\(name)-\(counter)"
         }
         do {
-            let copy = try ExperimentStore.duplicate(name: name, as: candidate)
+            let reviewed = try reviewStudy(named: name)
+            let copy = try DraftAuthoringTransaction.perform(reviewed: reviewed, draftOnly: false) { name in
+                try ExperimentStore.duplicate(name: name, as: candidate)
+            }
             refresh()
             selectedName = copy.name
             note("created draft '\(copy.name)'", severity: .success)

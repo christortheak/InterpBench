@@ -8,6 +8,7 @@ struct StudyManagementSection: View {
     var openTemplates: () -> Void
     /// A12: delete-draft confirmation (move-to-trash, never destructive).
     @State private var confirmDeleteDraft = false
+    @State private var deleteReview: DraftAuthoringSnapshot?
     /// Runs stamped with the study being deleted, read at click time (never
     /// per frame — it scans runs/) so the confirmation can say what is at stake.
     @State private var deleteDraftRunCount = 0
@@ -126,20 +127,21 @@ struct StudyManagementSection: View {
                         Button("Delete…", role: .destructive) {
                             deleteDraftRunCount = ExperimentStore.runsStamped(
                                 experimentName: manifest.name)
-                            confirmDeleteDraft = true
+                            deleteReview = try? management.reviewStudy(named: manifest.name)
+                            confirmDeleteDraft = deleteReview != nil
                         }
                         .disabled(panel.management.deleteSelectedStudyRefusal != nil)
                         .help(panel.management.deleteSelectedStudyRefusal ?? StudyControlCopy.deleteStudyHelp)
                         .confirmationDialog(
-                            "Delete draft '\(manifest.name)'?",
+                            "Delete draft '\(deleteReview?.manifest.name ?? manifest.name)'?",
                             isPresented: $confirmDeleteDraft,
                             titleVisibility: .visible
                         ) {
                             Button(
-                                "Move '\(manifest.name)' to trash",
+                                "Move '\(deleteReview?.manifest.name ?? manifest.name)' to trash",
                                 role: .destructive
                             ) {
-                                management.deleteSelectedDraft()
+                                if let deleteReview { management.deleteDraft(reviewed: deleteReview) }
                             }
                         } message: {
                             Text(deleteDraftMessage(manifest))
@@ -335,8 +337,12 @@ struct StudyManagementSection: View {
     private func openRename(_ manifest: ExperimentManifest) {
         panel.clearFormError(.rename)
         panel.management.selectedName = manifest.name
+        guard let reviewed = try? panel.management.reviewStudy(named: manifest.name) else {
+            panel.note("Reload the study before opening Rename.", severity: .warning)
+            return
+        }
         renameSheet = RenameStudySheet(
-            name: manifest.name,
+            reviewed: reviewed, name: manifest.name,
             status: manifest.status,
             label: panel.management.displayLabels[manifest.name] ?? "",
             runsStamped: ExperimentStore.runsStamped(experimentName: manifest.name))

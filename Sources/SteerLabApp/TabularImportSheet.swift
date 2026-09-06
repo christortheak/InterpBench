@@ -16,6 +16,7 @@ struct TabularImportRequest: Identifiable {
     let target: TabularImport.Target
     let fileName: String
     let table: TabularImport.Table
+    let reviewed: DraftAuthoringSnapshot
 }
 
 /// The affordance: choose a .json/.csv file, parse it, then present the
@@ -50,10 +51,10 @@ struct TabularImportButton: View {
                 switch request.target {
                 case .taskPrompts:
                     return panel.importTaskPromptsTable(
-                        table: request.table, mapping: mapping)
+                        table: request.table, mapping: mapping, reviewed: request.reviewed)
                 case .humanBaseline:
                     return panel.importHumanBaselineTable(
-                        table: request.table, mapping: mapping)
+                        table: request.table, mapping: mapping, reviewed: request.reviewed)
                 }
             }
         }
@@ -61,6 +62,11 @@ struct TabularImportButton: View {
 
     private func choose() {
         problem = nil
+        guard let name = panel.management.selectedName,
+            let reviewed = try? panel.management.reviewStudy(named: name) else {
+            problem = "Select and review a draft before importing a table."
+            return
+        }
         guard
             let (fileName, data) = WorkspaceFileChooser.readAnyFile(
                 message: "Choose a JSON array or CSV table to import "
@@ -70,7 +76,7 @@ struct TabularImportButton: View {
         do {
             let table = try TabularImport.parseTable(data, fileName: fileName)
             request = TabularImportRequest(
-                target: target, fileName: fileName, table: table)
+                target: target, fileName: fileName, table: table, reviewed: reviewed)
         } catch {
             problem = "\(error)"
         }

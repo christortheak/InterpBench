@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 struct RenameStudySheet: Identifiable {
     let id = UUID()
+    let reviewed: DraftAuthoringSnapshot
     let name: String
     let status: ExperimentManifest.Status
     let label: String
@@ -73,10 +74,9 @@ struct RenameStudyWindow: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                 Button("Rename") {
-                    panel.management.renameSelected(
+                    if panel.management.rename(reviewed: sheet.reviewed,
                         canonicalName: sheet.isDraft ? canonicalName : nil,
-                        label: label)
-                    dismiss()
+                        label: label) { dismiss() }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!hasChange)

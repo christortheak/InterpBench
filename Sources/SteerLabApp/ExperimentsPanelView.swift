@@ -24,6 +24,20 @@ struct ExperimentsPanelView: View {
     /// text. Parsing/preview/import rules live in `TaskPromptsImport`
     /// (ExperimentKit, unit-tested); the sheet renders them.
     @State private var showImportJSONL = false
+    @State private var importJSONLReview: DraftAuthoringSnapshot?
+    private var importJSONLPresented: Binding<Bool> {
+        Binding(get: { showImportJSONL }, set: { presented in
+            if presented {
+                guard let name = panel.management.selectedName,
+                    let review = try? panel.management.reviewStudy(named: name) else {
+                    panel.note("Select and review a draft study before importing prompts.", severity: .warning)
+                    return
+                }
+                importJSONLReview = review
+            }
+            showImportJSONL = presented
+        })
+    }
     @State private var importJSONLText = ""
     /// Item 2 (cluster-testing): a model-running server submission parked
     /// while the shared no-GPU-session dialog asks.
@@ -88,7 +102,7 @@ struct ExperimentsPanelView: View {
                             AnyView(
                                 StudyTaskPromptsEditor(
                                     manifest: manifest, panel: panel,
-                                    showImportJSONL: $showImportJSONL, importJSONLText: $importJSONLText))
+                                    showImportJSONL: importJSONLPresented, importJSONLText: $importJSONLText))
                         }
                         : nil)
 
@@ -370,16 +384,13 @@ struct ExperimentsPanelView: View {
             }
         }
         .sheet(isPresented: $showImportJSONL) {
-            ImportJSONLSheet(
-                text: $importJSONLText,
-                destination: panel.management.selected.map {
-                    DataTemplates.taskPromptsDestination(experiment: $0.name)
-                },
-                onImport: { text, replace in
-                    panel.importTaskPromptsJSONL(
-                        text, replacingExisting: replace)
-                },
-                statusLine: { panel.draft.taskPromptsStatus })
+            if let reviewed = importJSONLReview {
+                ImportJSONLSheet(
+                    text: $importJSONLText,
+                    destination: "prompts/tasks/versions/",
+                    onImport: { text in panel.importTaskPromptsJSONL(text, reviewed: reviewed) },
+                    statusLine: { panel.draft.taskPromptsStatus })
+            }
         }
     }
 

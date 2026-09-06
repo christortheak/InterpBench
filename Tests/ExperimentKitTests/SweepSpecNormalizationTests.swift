@@ -154,7 +154,7 @@ extension ExperimentStoreTests {
                 objective: .init(
                     metric: "logprobShift",
                     choicePromptsFile: choicesURL.path))
-            #expect(panel.setSweepSpec(spec, for: "norm-funnel"))
+            #expect(panel.setSweepSpec(spec, reviewed: try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: "norm-funnel")))
             let loaded = try ExperimentStore.load(name: "norm-funnel")
             #expect(
                 loaded.sweep?.selection?.objective?.choicePromptsFile

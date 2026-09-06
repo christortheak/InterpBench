@@ -30,6 +30,7 @@ public enum TaskPromptsAuthoring {
     public struct Result: Sendable {
         public let study: DraftAuthoringSnapshot
         public let prompts: TaskPromptsFileReview
+        public let changed: Bool
     }
 
     public static func save(
@@ -70,13 +71,40 @@ public enum TaskPromptsAuthoring {
                 }
                 return document.applyingEditedTexts(blocks).serialized()
             }
+            return try publish(data, reviewed: reviewed)
+        }
+    }
+
+    /// Import full JSONL records without replacing any previously pinned input.
+    /// A new content-addressed version is prepared and pinned in the reviewed draft.
+    public static func importJSONL(_ text: String, reviewed: DraftAuthoringSnapshot) throws -> Result {
+        switch TaskPromptsImport.preview(text) {
+        case .empty: throw ExperimentError(reason: "nothing to import — no non-empty lines")
+        case .failure(let line, let reason):
+            throw ExperimentError(reason: "refusing to import: line \(line) — \(reason)")
+        case .preview: break
+        }
+        let document = try TaskPromptsDocument.load(Data(text.utf8))
+        return try publish(document.serialized(), reviewed: reviewed)
+    }
+
+    private static func publish(_ data: Data, reviewed: DraftAuthoringSnapshot) throws -> Result {
+        let root = reviewed.workspaceRoot
+        let storage = ExperimentRepository(workspaceRoot: root)
+        return try ManifestFileTransaction.withLock(
+            manifestURL: storage.manifestURL(reviewed.manifest.name), workspaceRoot: root
+        ) {
+            try ManifestFileTransaction.requireCurrent(.sha256(reviewed.file.sha256),
+                at: storage.manifestURL(reviewed.manifest.name))
+            try ManifestMutationPolicy.admitDraftEdit(reviewed.manifest)
             let hash = ManifestFileTransaction.digest(data)
             let outputPath = "prompts/tasks/versions/\(hash).jsonl"
             let outputURL = try resolve(outputPath, workspaceRoot: root)
             var manifest = reviewed.manifest
             try ExperimentStore.pinTaskPrompts(outputPath, data: data, into: &manifest)
             return try ManifestFileTransaction.withLock(manifestURL: outputURL, workspaceRoot: root) {
-                if FileManager.default.fileExists(atPath: outputURL.path) {
+                let existed = FileManager.default.fileExists(atPath: outputURL.path)
+                if existed {
                     guard try Data(contentsOf: outputURL) == data else { throw inputChanged() }
                 } else {
                     try FileManager.default.createDirectory(
@@ -85,7 +113,8 @@ public enum TaskPromptsAuthoring {
                 }
                 let saved = try DraftAuthoringTransaction.replace(manifest, reviewed: reviewed)
                 return Result(study: saved,
-                    prompts: TaskPromptsFileReview(path: outputPath, workspaceRoot: root, data: data))
+                    prompts: TaskPromptsFileReview(path: outputPath, workspaceRoot: root, data: data),
+                    changed: !existed || saved.file.data != reviewed.file.data)
             }
         }
     }

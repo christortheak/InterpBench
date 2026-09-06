@@ -771,7 +771,8 @@ import Testing
             // question about a KIND of data rather than about a study — and
             // it is on the agent path because an agent meets missing data far
             // more often than it meets a missing verb.
-            "authoring prompt",
+            "authoring prompt", "authoring study", "pack preview", "pack apply", "pack export",
+            "experiment import-prompts", "experiment inspect-artifact", "experiment attach-artifact",
         ]
         #expect(declared == expected)
         // The audit's sixteen lifecycle verbs, the three headless authoring
@@ -800,8 +801,8 @@ import Testing
         // the design lived in a command line rather than in the artifact
         // chain the evidence travels in.
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 31,
-            "the experiment lifecycle includes reviewed agent attachment")
+            declared.filter { $0.hasPrefix("experiment ") }.count == 34,
+            "the experiment lifecycle includes reviewed agent/vector attachment and prompt import")
     }
 
     @Test func everySpecIsInARunnerOwnedNamespace() {
