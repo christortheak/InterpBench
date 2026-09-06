@@ -22,6 +22,7 @@ public struct ClusterRemoteSiteResolution: Sendable {
     public var siteID: String
     public var siteName: String
     public var baseURL: URL
+    public var serverIdentity: String
     /// The bearer token. Present so the transport can authenticate; NEVER for
     /// display. `tokenSource` is what a report gets to say about it.
     public var token: String?
@@ -30,12 +31,13 @@ public struct ClusterRemoteSiteResolution: Sendable {
     public var tokenAvailable: Bool { token != nil }
 
     public init(
-        siteID: String, siteName: String, baseURL: URL, token: String?,
+        siteID: String, siteName: String, baseURL: URL, serverIdentity: String, token: String?,
         tokenSource: String?
     ) {
         self.siteID = siteID
         self.siteName = siteName
         self.baseURL = baseURL
+        self.serverIdentity = serverIdentity
         self.token = token
         self.tokenSource = tokenSource
     }
@@ -101,6 +103,7 @@ extension ClusterRemoteSiteResolver {
         {
             return ClusterRemoteSiteResolution(
                 siteID: site.id, siteName: site.displayName, baseURL: url,
+                serverIdentity: ClusterConnectionStore.registryKey(forProfile: site.profile),
                 token: token, tokenSource: token == nil ? nil : "keychain")
         }
 
@@ -138,6 +141,7 @@ extension ClusterRemoteSiteResolver {
         }
         return ClusterRemoteSiteResolution(
             siteID: site.id, siteName: site.displayName, baseURL: url,
+                serverIdentity: ClusterConnectionStore.registryKey(forProfile: site.profile),
             token: token, tokenSource: "keychain")
     }
 }

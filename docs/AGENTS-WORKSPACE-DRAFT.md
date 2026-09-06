@@ -548,6 +548,13 @@ rationale. Fastest way to find what is missing. Blockers are a refusal:
 `state: "refused"`, exit **65 in both modes** (the one verb whose human exit
 has migrated — §5).
 
+**`data verify-custody <receipt-sha256>`** rechecks a local evidence archive
+and its imported files without contacting a server. Use the digest returned by
+`remote import --json`, in the originating workspace. Missing or changed bytes
+refuse with `custodyUnverified` and a repair action (exit 65). A verified receipt
+proves local possession of those bytes, not scientific validity or permission
+to delete remote evidence. See `docs/EVIDENCE-CUSTODY.md` in the source checkout.
+
 ### 4.13 The rest of the surface, and how to find it
 
 <!-- Draft-only: this document is the human source of truth; the shipping copy is the AgentContract constant, held byte-equal to it by test. -->

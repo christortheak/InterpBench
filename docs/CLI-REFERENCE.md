@@ -783,7 +783,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   init [--home <dir>]                           Create the home layout's Workspaces/ and Sites/.
   workspace init <path>                         Create and seed a data workspace.
   experiment <verb> <name> …                    The study lifecycle.
-  data check <experiment>                       Study-data readiness.
+  data check <experiment> | verify-custody <receipt-sha256>  Study-data readiness and local evidence custody.
   vectors <verb> …                              Vector artifacts.
   remote <verb> (--site <id> | --url <server>)  Cluster client.
   cluster <verb> …                              Cluster lifecycle.
@@ -1727,6 +1727,7 @@ entries. `--no-control` omits the control condition.
 
 ```
 steerlab-cli data check <experiment>
+steerlab-cli data verify-custody <receipt-sha256>
 steerlab-cli vectors compare <a.safetensors> <b.safetensors> [--threshold <ratio>]
 steerlab-cli vectors backfill-norms <runDir/name> [--corpus <path>] [--model <id>] [--redenominate]
 steerlab-cli vectors mirror-poles <runDir/name> --concept <name> [--output-name <value>]
@@ -1735,6 +1736,7 @@ steerlab-cli vectors mirror-poles <runDir/name> --concept <name> [--output-name 
 | Verb | Purpose |
 |---|---|
 | `data check` | Report which study-data inputs the manifest still needs. |
+| `data verify-custody` | Verify a retained evidence archive and imported files against a local custody receipt; no network or cleanup. |
 | `vectors compare` | Compare two vector artifacts and refuse below the cosine threshold. |
 | `vectors backfill-norms` | Measure per-layer residual norms for an existing artifact into a new artifact, stamped with the current denominator convention (the opt-in migration for legacy unstamped artifacts). |
 | `vectors mirror-poles` | Mint the opposite pole of a contrastive direction as a new artifact — every layer negated bit-exactly, under a required new concept name, with a negatedFrom stamp. |
@@ -2187,6 +2189,13 @@ authored.
 - Output is a per-directory summary (imported /
   skipped-failure-record / FAILED) plus a totals line, derived from run ids
   and outcomes only — never the endpoint, token, or server paths.
+
+A Swift import retains the exact evidence archive and publishes a separate local
+custody receipt. `remote import --json` reports its digest; use
+`steerlab-cli data verify-custody <receipt-sha256> --json` to recheck the retained
+archive and expanded files without contacting a server. This proves possession
+of bytes, not scientific validity or cleanup authorization. See
+[Local evidence custody](EVIDENCE-CUSTODY.md) for the contract and current limits.
 
 ### 3.9 Cluster lifecycle (`cluster`)
 

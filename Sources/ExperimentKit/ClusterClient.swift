@@ -4700,19 +4700,15 @@ public enum EvidenceBundleImporter {
     ///   evidence file and portable ledger matches. Existing bytes are never
     ///   overwritten; directory presence alone is not evidence custody.
     public static func importEvidenceBundle(
-        _ bundle: URL, expectedSHA256: String? = nil,
+        _ sourceBundle: URL, expectedSHA256: String? = nil,
         workspaceRoot: URL = ExperimentStore.workspaceRoot,
-        verifyExistingRun: Bool = false
-    ) throws -> URL {
+        verifyExistingRun: Bool = false, origin: EvidenceImportOrigin? = nil
+    ) throws -> EvidenceImportResult {
         let runsDirectory = workspaceRoot.appending(component: "runs")
         let fm = FileManager.default
-        if let expectedSHA256, !expectedSHA256.isEmpty {
-            let actual = sha256(try Data(contentsOf: bundle))
-            guard actual == expectedSHA256 else {
-                throw ChatServiceError(
-                    reason: "evidence bundle hash mismatch: expected \(expectedSHA256.prefix(12)), got \(actual.prefix(12))")
-            }
-        }
+        let archive = try EvidenceCustodyStore.captureArchive(
+            sourceBundle, workspaceRoot: workspaceRoot, expectedSHA256: expectedSHA256)
+        let bundle = archive.url
         // STAGING IS A SIBLING OF THE DESTINATION (open-issues §3, 2026-08-18).
         // This used to extract into `VectorCatalog.projectRoot/.steerlab/
         // imports/<uuid>` while publishing into `runsDirectory`
@@ -4745,6 +4741,7 @@ public enum EvidenceBundleImporter {
         guard process.terminationStatus == 0 else {
             throw ChatServiceError(reason: "tar failed while extracting evidence bundle")
         }
+        try ensureRegularArchiveTree(temp)
         let evidenceURL = temp.appending(component: "steerlab-evidence.json")
         let data = try Data(contentsOf: evidenceURL)
         let meta = try JSONDecoder().decode(CodableValue.self, from: data)
@@ -4800,6 +4797,7 @@ public enum EvidenceBundleImporter {
                 }
             } else { [] }
         var moves: [(source: URL, target: URL)] = []
+        var importedRunIDs: Set<String> = [runID]
         for sibling in siblingIDs {
             let source = temp.appending(components: "runs", sibling)
             var siblingIsDir: ObjCBool = false
@@ -4818,6 +4816,7 @@ public enum EvidenceBundleImporter {
                         + "refusing an inconsistent bundle")
             }
             try ensureAllVerified(under: source, verified: verified)
+            importedRunIDs.insert(sibling)
             let target = runsDirectory.appending(component: sibling)
             if fm.fileExists(atPath: target.path) {
                 // Skip only when the BUNDLE'S evidence is already present
@@ -4874,6 +4873,7 @@ public enum EvidenceBundleImporter {
         // references through it, so a failed write is an import failure);
         // ANY failure rolls back everything this import moved.
         var completed: [URL] = []
+        let importResult: EvidenceImportResult
         do {
             for (source, target) in moves {
                 try fm.moveItem(at: source, to: target)
@@ -4887,6 +4887,10 @@ public enum EvidenceBundleImporter {
                         to: targetRun.appending(component: "pipeline-portable.json"))
                 }
             }
+            importResult = try EvidenceCustodyStore.record(
+                archive: archive, metadata: object, metadataData: data,
+                runID: runID, importedRunIDs: importedRunIDs, workspaceRoot: workspaceRoot,
+                origin: origin, portableData: portableData)
         } catch {
             // The rollback is what keeps "failed import" and "absent
             // destination" the same thing. It used to be silently best-effort
@@ -4914,7 +4918,7 @@ public enum EvidenceBundleImporter {
             }
             throw error
         }
-        return targetRun
+        return importResult
     }
 
     /// The bundle's evidence for this run id is already present and
@@ -4977,6 +4981,24 @@ public enum EvidenceBundleImporter {
             }
         }
         return try Data(contentsOf: url)
+    }
+
+    /// Reject archive links and special files before opening metadata or
+    /// evidence. A symlink is not an independently held evidence file, even
+    /// when it currently resolves to bytes with a matching digest.
+    private static func ensureRegularArchiveTree(_ root: URL) throws {
+        let fm = FileManager.default
+        guard let entries = fm.enumerator(at: root, includingPropertiesForKeys: nil) else {
+            throw ChatServiceError(reason: "could not enumerate extracted evidence")
+        }
+        for case let url as URL in entries {
+            let attributes = try fm.attributesOfItem(atPath: url.path)
+            let kind = attributes[.type] as? FileAttributeType
+            guard kind == .typeDirectory || (kind == .typeRegular
+                && (attributes[.referenceCount] as? NSNumber)?.intValue == 1) else {
+                throw ChatServiceError(reason: "evidence archive contains a link or nonregular entry")
+            }
+        }
     }
 
     /// Reject empty names and any path separators / traversal in a name that

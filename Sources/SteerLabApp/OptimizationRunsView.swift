@@ -308,7 +308,7 @@ struct OptimizationRunsView: View {
             // the same unit-tested reconciliation the evidence-import path
             // runs, with its loud conflict arm intact.
             if let directory = sweepRun?.directory {
-                panel.noteEvidenceRevisionAdoption(forImportedRun: directory)
+                panel.noteEvidenceRevisionAdoption(forImportedRun: directory, workspaceRoot: ExperimentStore.workspaceRoot)
                 // And the sweep's projected conditions (the server wrote
                 // them into ITS manifest copy; a local `run` submission
                 // needs the arms too) — conflict-safe, loud, idempotent.

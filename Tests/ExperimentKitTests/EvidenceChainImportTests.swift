@@ -388,6 +388,7 @@ struct EvidenceChainImportTests {
         let resolution = ClusterRemoteSiteResolution(
             siteID: "example-hpc", siteName: "Example HPC",
             baseURL: URL(string: "http://127.0.0.1:8718")!,
+            serverIdentity: "ssh://example.invalid:8080",
             token: "sk-CHAIN-SECRET", tokenSource: "keychain")
         #expect(!resolution.redactedSummary.contains("sk-CHAIN-SECRET"))
         #expect(resolution.redactedSummary.contains("keychain"))

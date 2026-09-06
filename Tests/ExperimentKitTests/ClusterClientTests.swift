@@ -1233,7 +1233,7 @@ import Testing
             // its hash) is skipped, and the rest imports.
             try Data("{}".utf8).write(
                 to: existingAgent.appending(component: "chain-fear-agent.json"))
-            let imported = try EvidenceBundleImporter.importEvidenceBundle(bundle)
+            let imported = try EvidenceBundleImporter.importEvidenceBundle(bundle).runDirectory
             #expect(imported.lastPathComponent == pipelineID)
             #expect(fm.fileExists(
                 atPath: runs.appending(components: pipelineID, "pipeline.json").path))

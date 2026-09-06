@@ -204,7 +204,7 @@ public enum EvidenceChainImport {
     /// server-side packaging, download, `EvidenceBundleImporter` (per-file
     /// hash verification), `EvidenceRevisionAdoption`.
     public static func liveEngine(
-        client: ClusterClient, workspaceRoot: URL
+        client: ClusterClient, workspaceRoot: URL, origin: EvidenceImportOrigin? = nil
     ) -> Engine {
         Engine(
             packageEvidence: { runID in
@@ -217,7 +217,7 @@ public enum EvidenceChainImport {
                     path: bundlePath, to: downloads)
                 return try EvidenceBundleImporter.importEvidenceBundle(
                     local, expectedSHA256: sha256, workspaceRoot: workspaceRoot,
-                    verifyExistingRun: true)
+                    verifyExistingRun: true, origin: origin).runDirectory
             },
             adoptRevision: { imported in
                 EvidenceRevisionAdoption.adoptModelRevision(

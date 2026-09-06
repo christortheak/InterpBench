@@ -33,7 +33,7 @@ struct EvidenceImportAtomicityTests {
     /// stamped", which is what a dead tunnel produces.
     private func bundle(
         runID: String, files: [String: String], corruptEntryHashes: Bool = false,
-        portable: String? = nil
+        portable: String? = nil, extraLog: Bool = false, unlistedLink: Bool = false
     ) throws -> URL {
         let fm = FileManager.default
         let staging = fm.temporaryDirectory.appending(
@@ -50,6 +50,17 @@ struct EvidenceImportAtomicityTests {
                 "sha256": corruptEntryHashes ? String(repeating: "0", count: 64)
                     : sha(data),
             ])
+        }
+        if extraLog {
+            let logDirectory = staging.appending(component: "logs")
+            try fm.createDirectory(at: logDirectory, withIntermediateDirectories: true)
+            let bytes = Data("worker log".utf8)
+            try bytes.write(to: logDirectory.appending(component: "worker.log"))
+            entries.append(["path": "logs/worker.log", "sha256": sha(bytes)])
+        }
+        if unlistedLink {
+            try fm.createSymbolicLink(atPath: dir.appending(component: "unlisted-link").path,
+                                      withDestinationPath: "records.jsonl")
         }
         var metadata: [String: Any] = ["runID": runID, "entries": entries]
         if let portable {
@@ -78,7 +89,7 @@ struct EvidenceImportAtomicityTests {
             let other = root.appending(component: "other-workspace")
             ExperimentStore.rootOverride = other
             defer { ExperimentStore.rootOverride = root }
-            let imported = try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root)
+            let imported = try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root).runDirectory
             #expect(imported.path == root.appending(components: "runs", "captured-run").path)
             #expect(!FileManager.default.fileExists(atPath: other.appending(component: "runs").path))
         }
@@ -88,7 +99,7 @@ struct EvidenceImportAtomicityTests {
         try ExperimentRootOverrideLock.withTempRoot(prefix: "verified-reimport") { root in
             let archive = try bundle(runID: "run", files: ["records.jsonl": "{}\n"], portable: "{}")
             defer { try? FileManager.default.removeItem(at: archive) }
-            let target = try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root)
+            let target = try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root).runDirectory
             let records = target.appending(component: "records.jsonl")
             let before = try FileManager.default.attributesOfItem(atPath: records.path)
             // Default manual policy still refuses; the verified reuse path is explicit.
@@ -96,7 +107,7 @@ struct EvidenceImportAtomicityTests {
                 try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root)
             }
             let reused = try EvidenceBundleImporter.importEvidenceBundle(
-                archive, workspaceRoot: root, verifyExistingRun: true)
+                archive, workspaceRoot: root, verifyExistingRun: true).runDirectory
             #expect(reused == target)
             let after = try FileManager.default.attributesOfItem(atPath: records.path)
             #expect(before[.systemFileNumber] as? NSNumber == after[.systemFileNumber] as? NSNumber)
@@ -157,6 +168,128 @@ struct EvidenceImportAtomicityTests {
         }
     }
 
+    @Test func custodyRetainsAnExactArchiveIncludingUnexpandedLogs() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "archive-custody") { root in
+            let fm = FileManager.default
+            let archive = try bundle(runID: "run", files: ["records.jsonl": "{}\n"], extraLog: true)
+            defer { try? fm.removeItem(at: archive) }
+            let bytes = try Data(contentsOf: archive)
+            let origin = EvidenceImportOrigin(serverIdentity: "ssh://example.invalid:8080", remoteRoot: "/remote", workspaceRoot: root)
+            let result = try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root, origin: origin)
+            #expect(result.receipt.origin == origin)
+            #expect(result.receipt.archiveSHA256 == sha(bytes))
+            #expect(result.receipt.files.map(\.path) == ["runs/run/records.jsonl"])
+            #expect(!fm.fileExists(atPath: result.runDirectory.appending(component: "logs").path))
+            let retained = root.appending(path: result.receipt.archivePath)
+            #expect(try Data(contentsOf: retained) == bytes)
+            #expect(result.receiptURL.path.contains("/.steerlab/evidence-custody/"))
+            // The transport download can disappear; retained custody is independent.
+            try fm.removeItem(at: archive)
+            #expect(try EvidenceCustodyStore.loadVerified(receiptSHA256: result.receiptSHA256, workspaceRoot: root) == result.receipt)
+        }
+    }
+
+    @Test(arguments: ["archive", "evidence", "receipt", "missing", "symlink"])
+    func custodyRefusesChangedOrMissingLocalBytes(change: String) throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "lost-custody") { root in
+            let fm = FileManager.default
+            let archive = try bundle(runID: "run", files: ["records.jsonl": "{}\n"])
+            defer { try? fm.removeItem(at: archive) }
+            let result = try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root)
+            let evidence = result.runDirectory.appending(component: "records.jsonl")
+            switch change {
+            case "archive": try Data("changed".utf8).write(to: root.appending(path: result.receipt.archivePath))
+            case "receipt": try Data("changed".utf8).write(to: result.receiptURL)
+            case "missing": try fm.removeItem(at: evidence)
+            case "symlink":
+                let outside = root.appending(component: "other.jsonl")
+                try fm.copyItem(at: evidence, to: outside)
+                try fm.removeItem(at: evidence)
+                try fm.createSymbolicLink(at: evidence, withDestinationURL: outside)
+            default: try Data("changed".utf8).write(to: evidence)
+            }
+            #expect(throws: (any Error).self) {
+                try EvidenceCustodyStore.loadVerified(receiptSHA256: result.receiptSHA256, workspaceRoot: root)
+            }
+        }
+    }
+
+    @Test func custodyCLIUsesTheSharedVerifierAndRefusesMissingEvidence() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "custody-cli") { root in
+            let archive = try bundle(runID: "run", files: ["records.jsonl": "{}\n"])
+            defer { try? FileManager.default.removeItem(at: archive) }
+            let imported = try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root)
+            let invocation = try ExperimentCLIParser.parse(namespace: "data",
+                ["verify-custody", imported.receiptSHA256, "--json"])
+            let runner = ExperimentCLIRunner(sink: .discarding)
+            let result = try runner.runDataCommand(invocation)
+            #expect(result.payload["verified"] == .bool(true))
+            #expect(result.payload["receiptSHA256"] == .string(imported.receiptSHA256))
+            #expect(!result.changed)
+            try FileManager.default.removeItem(at: imported.runDirectory.appending(component: "records.jsonl"))
+            do {
+                _ = try runner.runDataCommand(invocation)
+                Issue.record("The public command must not accept stale custody")
+            } catch let refusal as ExperimentCLIStop {
+                #expect(refusal.exitCode == 65)
+                #expect(refusal.code == "custodyUnverified")
+                #expect(!refusal.repairAction.isEmpty)
+            }
+            let missing = try ExperimentCLIParser.parse(namespace: "data", ["verify-custody", "--json"])
+            #expect(throws: ExperimentError.self) { try runner.runDataCommand(missing) }
+        }
+    }
+
+    @Test func custodyCannotBeReboundToAnotherWorkspace() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "custody-workspace") { root in
+            let archive = try bundle(runID: "run", files: ["records.jsonl": "{}\n"])
+            defer { try? FileManager.default.removeItem(at: archive) }
+            let result = try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root)
+            #expect(throws: (any Error).self) {
+                try EvidenceCustodyStore.verify(result.receipt, workspaceRoot: root.appending(component: "other"))
+            }
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func receiptPublicationFailureRollsBackOnlyNewRuns(existing: Bool) throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "receipt-publication") { root in
+            let fm = FileManager.default
+            let archive = try bundle(runID: "run", files: ["records.jsonl": "{}\n"])
+            defer { try? fm.removeItem(at: archive) }
+            let target = root.appending(components: "runs", "run")
+            if existing {
+                try fm.createDirectory(at: target, withIntermediateDirectories: true)
+                try Data("{}\n".utf8).write(to: target.appending(component: "records.jsonl"))
+            }
+            let state = root.appending(component: ".steerlab")
+            try fm.createDirectory(at: state, withIntermediateDirectories: true)
+            let obstruction = state.appending(component: "evidence-custody")
+            try Data("occupied".utf8).write(to: obstruction)
+            #expect(throws: (any Error).self) {
+                try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root, verifyExistingRun: true)
+            }
+            #expect(fm.fileExists(atPath: target.path) == existing)
+            if existing { #expect(try Data(contentsOf: target.appending(component: "records.jsonl")) == Data("{}\n".utf8)) }
+            #expect(try Data(contentsOf: obstruction) == Data("occupied".utf8))
+        }
+    }
+
+    @Test func unlistedArchiveLinksRefuseBeforePublication() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "archive-link") { root in
+            let fm = FileManager.default
+            let archive = try bundle(runID: "run", files: ["records.jsonl": "{}\n"], unlistedLink: true)
+            defer { try? fm.removeItem(at: archive) }
+            do {
+                _ = try EvidenceBundleImporter.importEvidenceBundle(archive, workspaceRoot: root)
+                Issue.record("An archive link must not become local run content")
+            } catch {
+                #expect(String(describing: error).contains("link or nonregular"))
+            }
+            #expect(!fm.fileExists(atPath: root.appending(components: "runs", "run").path))
+        }
+    }
+
     private func leftoverStaging() -> [String] {
         let root = EvidenceBundleImporter.stagingRoot()
         let contents = (try? FileManager.default.contentsOfDirectory(
@@ -196,7 +329,7 @@ struct EvidenceImportAtomicityTests {
                         "config.json": "{\"schema\":4}"])
             defer { try? fm.removeItem(at: archive) }
 
-            let imported = try EvidenceBundleImporter.importEvidenceBundle(archive)
+            let imported = try EvidenceBundleImporter.importEvidenceBundle(archive).runDirectory
             #expect(imported == ExperimentStore.runsDirectory
                 .appending(component: runID))
             #expect(try String(
@@ -270,7 +403,7 @@ struct EvidenceImportAtomicityTests {
             #expect(throws: (any Error).self) {
                 _ = try EvidenceBundleImporter.importEvidenceBundle(broken)
             }
-            let imported = try EvidenceBundleImporter.importEvidenceBundle(good)
+            let imported = try EvidenceBundleImporter.importEvidenceBundle(good).runDirectory
             #expect(fm.fileExists(
                 atPath: imported.appending(component: "generations.jsonl").path))
         }

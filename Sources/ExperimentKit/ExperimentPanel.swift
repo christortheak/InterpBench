@@ -1464,20 +1464,20 @@ public final class ExperimentPanel {
         do {
             results.remoteResultsStatus = "downloading evidence from \(run.id)..."
             let downloads = workspaceRoot
-                .appending(components: ".steerlab", "downloads")
+                .appending(components: ".steerlab", "downloads", UUID().uuidString)
             let bundlePath = run.path.hasSuffix("/")
                 ? run.path + bundleName : run.path + "/" + bundleName
             let localBundle = try await remoteClient.downloadArtifact(
                 path: bundlePath, to: downloads)
             let imported = try await Task.detached {
-                try EvidenceBundleImporter.importEvidenceBundle(localBundle, workspaceRoot: workspaceRoot)
+                try EvidenceBundleImporter.importEvidenceBundle(localBundle, workspaceRoot: workspaceRoot).runDirectory
             }.value
             remoteJobs.remoteImportedRunDirectory = imported.path
             let importedMessage = "evidence from \(run.id) imported → "
                 + "runs/\(imported.lastPathComponent) (hashes verified)"
             results.remoteResultsStatus = importedMessage
             note(importedMessage, severity: .success)
-            noteEvidenceRevisionAdoption(forImportedRun: imported)
+            noteEvidenceRevisionAdoption(forImportedRun: imported, workspaceRoot: workspaceRoot)
             refreshResults(selecting: imported.lastPathComponent)
             // An imported chain appears under Imported / local immediately
             // — the round trip is visible without a manual refresh.
@@ -1494,9 +1494,9 @@ public final class ExperimentPanel {
     /// leaves local freeze readiness blocked on "revision not pinned").
     /// Decision + save live in `EvidenceRevisionAdoption` (unit-tested);
     /// this is the notice glue.
-    public func noteEvidenceRevisionAdoption(forImportedRun imported: URL) {
+    public func noteEvidenceRevisionAdoption(forImportedRun imported: URL, workspaceRoot: URL) {
         let outcome = EvidenceRevisionAdoption.adoptModelRevision(
-            fromImportedRun: imported)
+            fromImportedRun: imported, workspaceRoot: workspaceRoot)
         guard let notice = EvidenceRevisionAdoption.notice(for: outcome) else {
             return
         }
@@ -1742,18 +1742,18 @@ public final class ExperimentPanel {
                 in: .object(result), keyPath: ["runResult", "evidenceBundle", "bundleSha256"])
                 ?? Self.findString(in: .object(result), keyPath: ["evidenceBundle", "bundleSha256"])
             remoteJobs.remoteStatus = "downloading evidence..."
-            let downloads = workspaceRoot.appending(components: ".steerlab", "downloads")
+            let downloads = workspaceRoot.appending(components: ".steerlab", "downloads", UUID().uuidString)
             let localBundle = try await remoteClient.downloadArtifact(path: bundlePath, to: downloads)
             // Extraction + per-file hashing off the main actor.
             let imported = try await Task.detached {
-                try EvidenceBundleImporter.importEvidenceBundle(localBundle, expectedSHA256: expectedSHA, workspaceRoot: workspaceRoot)
+                try EvidenceBundleImporter.importEvidenceBundle(localBundle, expectedSHA256: expectedSHA, workspaceRoot: workspaceRoot).runDirectory
             }.value
             remoteJobs.remoteImportedRunDirectory = imported.path
             let importedMessage = "evidence from job \(jobID) imported → "
                 + "runs/\(imported.lastPathComponent) (hashes verified)"
             remoteJobs.remoteStatus = importedMessage
             note(importedMessage, severity: .success)
-            noteEvidenceRevisionAdoption(forImportedRun: imported)
+            noteEvidenceRevisionAdoption(forImportedRun: imported, workspaceRoot: workspaceRoot)
             refreshResults(selecting: imported.lastPathComponent)
             // An imported chain appears under Imported / local immediately
             // — the round trip is visible without a manual refresh.

@@ -756,6 +756,28 @@ public struct ExperimentCLIRunner: Sendable {
     {
         let args = invocation.args
         switch args.first {
+        case "verify-custody":
+            guard args.count == 2 else {
+                throw ExperimentError.malformed("A custody receipt digest is required.",
+                    repair: "steerlab-cli data verify-custody <receipt-sha256> --json")
+            }
+            let digest = args[1]
+            let receipt: EvidenceCustodyReceipt
+            do {
+                receipt = try EvidenceCustodyStore.loadVerified(
+                    receiptSHA256: digest, workspaceRoot: ExperimentStore.workspaceRoot)
+            } catch {
+                throw ExperimentCLIStop(
+                    exitCode: 65, state: .refused, code: "custodyUnverified",
+                    reason: String(describing: error),
+                    repairAction: "Check the originating workspace and receipt digest. Recover or re-import missing evidence from its source; do not edit runs or use an unverified receipt for remote cleanup.")
+            }
+            let data = try JSONEncoder().encode(receipt)
+            let payload = try JSONDecoder().decode(JSONValue.self, from: data)
+            sink.out("Verified local archive and evidence for \(receipt.runID).")
+            return ExperimentCLIResult(
+                message: "Local evidence custody verified; scientific validity and cleanup authorization are separate.",
+                payload: ["receiptSHA256": .string(digest), "receipt": payload, "verified": .bool(true)])
         case "check":
             guard args.count >= 2 else {
                 throw ExperimentError(reason: "usage: data check <experiment>")
@@ -816,7 +838,7 @@ public struct ExperimentCLIRunner: Sendable {
             return ExperimentCLIResult(
                 message: summary.line, payload: payload)
         default:
-            throw ExperimentError(reason: "usage: data check <experiment>")
+            throw ExperimentError(reason: "usage: data check <experiment> | verify-custody <receipt-sha256>")
         }
     }
 
@@ -2128,6 +2150,8 @@ public struct ExperimentCLIRunner: Sendable {
         let token: String?
         var siteSummary: String?
         var siteID: String?
+        let serverIdentity: String
+        let remoteWorkspaceRoot = ExperimentStore.workspaceRoot
         switch try ClusterRemoteSiteResolver.choose(site: flag("--site"), url: flag("--url")) {
         case .site(let reference):
             let resolved = try await ClusterRemoteSiteResolver.resolve(reference: reference)
@@ -2137,6 +2161,7 @@ public struct ExperimentCLIRunner: Sendable {
             sink.err("remote: \(resolved.redactedSummary)\n")
             siteSummary = resolved.redactedSummary
             siteID = resolved.siteID
+            serverIdentity = resolved.serverIdentity
         case .url(let explicit):
             // 8080 is the port EVERY server surface serves (both `serve`
             // verbs, the app's default connection URL, the tunnel
@@ -2146,6 +2171,7 @@ public struct ExperimentCLIRunner: Sendable {
                 throw ExperimentError(reason: "bad --url '\(explicit ?? "")'")
             }
             url = parsed
+            serverIdentity = ClusterConnectionStore.normalizedEndpointKey(parsed.absoluteString)
             token = flag("--token") ?? ProcessInfo.processInfo.environment["STEERLAB_AUTH_TOKEN"]
         }
         let client = ClusterClient(profile: ClusterConnectionProfile(baseURL: url), token: token)
@@ -2452,18 +2478,21 @@ public struct ExperimentCLIRunner: Sendable {
             guard let path = flag("--path") ?? (args.count >= 2 ? args[1] : nil) else {
                 throw ExperimentError(reason: "usage: remote import <server-evidence-path> [--out dir] [--sha256 hex]")
             }
-            let workspaceRoot = ExperimentStore.workspaceRoot
+            let workspaceRoot = remoteWorkspaceRoot
+            let origin = EvidenceImportOrigin(serverIdentity: serverIdentity,
+                remoteRoot: (try? await client.serverInfo())?.root, workspaceRoot: workspaceRoot)
             let out = URL(filePath: flag("--out") ?? ".steerlab-downloads")
             let local = try await client.downloadArtifact(path: path, to: out)
-            let imported = try EvidenceBundleImporter.importEvidenceBundle(
-                local, expectedSHA256: flag("--sha256"), workspaceRoot: workspaceRoot)
+            let result = try EvidenceBundleImporter.importEvidenceBundle(
+                local, expectedSHA256: flag("--sha256"), workspaceRoot: workspaceRoot, origin: origin)
+            let imported = result.runDirectory
             // The adoption reconciliation every import path must run
             // (2026-08-06, a replication-run incident): this raw verb was the one
             // importer that skipped it, and a server-auto-pinned revision then
             // made the local analyze refuse on an epoch diff the researcher
             // never authored.
             let adoption = EvidenceRevisionAdoption.adoptModelRevision(
-                fromImportedRun: imported)
+                fromImportedRun: imported, workspaceRoot: workspaceRoot)
             var advisories: [SteerLabCLIEnvelope.Advisory] = []
             if let notice = EvidenceRevisionAdoption.notice(for: adoption) {
                 sink.err(
@@ -2481,6 +2510,9 @@ public struct ExperimentCLIRunner: Sendable {
                 payload: [
                     "remotePath": .string(path),
                     "importedRun": .string(imported.path),
+                    "custodyReceipt": .string(result.receiptURL.path),
+                    "custodyReceiptSHA256": .string(result.receiptSHA256),
+                    "archiveSHA256": .string(result.receipt.archiveSHA256),
                 ],
                 advisories: advisories)
         case "import-chain":
@@ -2495,6 +2527,9 @@ public struct ExperimentCLIRunner: Sendable {
                     reason: "usage: remote import-chain <pipeline-run-id-or-experiment-name> (--site <id> | --url <server> [--token <t>])")
             }
             let reference = args[1]
+            let workspaceRoot = remoteWorkspaceRoot
+            let origin = EvidenceImportOrigin(serverIdentity: serverIdentity,
+                remoteRoot: (try? await client.serverInfo())?.root, workspaceRoot: workspaceRoot)
             var rows: [ClusterClient.PipelineRunSummary]
             do {
                 rows = try await client.allPipelineRuns()
@@ -2513,7 +2548,7 @@ public struct ExperimentCLIRunner: Sendable {
             let reports = await EvidenceChainImport.importChain(
                 chain,
                 engine: EvidenceChainImport.liveEngine(
-                    client: client, workspaceRoot: VectorCatalog.projectRoot))
+                    client: client, workspaceRoot: workspaceRoot, origin: origin))
             let lines = EvidenceChainImport.summaryLines(reports)
             for line in lines { sink.out(line) }
             let payload: [String: JSONValue] = [

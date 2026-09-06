@@ -11,13 +11,13 @@ completion; a passing focused test does not establish release or scientific qual
 
 | Package | Status | Remaining gate |
 |---|---|---|
-| WP-0 operation inventory | [49-operation matrix](RESEARCH-OPERATION-MATRIX.md) and shared backlog | Expand advanced/per-field mappings and link executable journey evidence |
+| WP-0 operation inventory | [50-operation matrix](RESEARCH-OPERATION-MATRIX.md) and shared backlog | Expand advanced/per-field mappings and link executable journey evidence |
 | WP-1 observation and context | In progress | Finish origin persistence/actions, import context, transport policy, explicit submission and offline results; both suites |
 | WP-2 shared services | Runtime roles and draft preconditions implemented; writer/adapter migration in progress | External stale-write preconditions, authoring owners, service roles, bridge retirement |
 | WP-3 public operations | Pending | Designs, models, assembly, advanced-method mappings and adapters |
 | WP-4 research guidance | Extraction contract and control interpretation corrected; full guides pending | Shipped method guides, prompt resources, scientific wording and executable examples |
-| WP-5 cluster coauthoring | Pending, in scope | Prompt, fact/question schema, validation and common preview |
-| WP-6 remote lifecycle | Pending, in scope | Composed recovery/import, bounded cleanup plan/apply with custody and dependency checks |
+| WP-5 cluster coauthoring | Mac guide, sourced-fact review and shared preview implemented | Real documentation-to-profile journey, interactive qualification and cross-platform adapter mapping |
+| WP-6 remote lifecycle | Origin-aware import and durable archive custody implemented; in progress | Composed recovery, receipt adapters and bounded cleanup plan/apply with dependency checks |
 | WP-7 qualification | Pending | Journey harness, UI checks, scientific matrix results or explicit unavailable outcomes |
 
 ## WP-1 working ledger
@@ -456,3 +456,32 @@ after an earlier import; it needs a current bundle stamp to prove unchanged byte
 Durable archive/member custody receipts, cleanup plans, remaining auxiliary
 operations and interactive UI qualification remain work. Main is still `bfd13a5`;
 there was no merge, install, allocation, or real remote cleanup.
+
+
+## Durable local archive custody
+
+The shared Swift importer now retains an exact content-addressed archive and
+publishes a separate custody receipt after verifying local files. Receipt failure
+rolls back new run publications, preserving verified existing runs. Unexpanded
+logs remain in the archive. Completeness and failure status remain distinct from
+byte verification, and absent completeness metadata stays unknown. Root comparison
+uses canonical filesystem paths, accepting platform aliases without rebinding a
+receipt to a different workspace.
+
+Auto-import records receipt/archive digests; explicit manual import can refresh
+a legacy record. CLI import returns the receipt digest, and the read-only
+`data verify-custody` command calls the shared verifier with typed refusal and
+repair. See [the custody contract](EVIDENCE-CUSTODY.md) for storage, semantics,
+and remaining adapters. This does not authorize remote deletion.
+
+Validation: full Xcode beta passes 277 SteeringKit and 4,471 ExperimentKit
+tests (`TEST SUCCEEDED`); full Python passes 5,896 with 9 skipped and 8 warnings
+(157.98 seconds). The compiled CLI passes a disposable loopback import → local
+verification → missing-evidence refusal round trip, including exit 64 on a
+missing argument and no network requests from verification. Tests cover complete archive
+retention after transport download removal, corrupted/missing archive, receipt
+or evidence, symlinks, another workspace, receipt-publication failure and CLI
+verification/refusal. Generated CLI reference, shipped contract equality, bridge
+ratchet and whitespace checks pass. The actual source/test/document diff was read.
+No mechanical body move is claimed. Main remains untouched; this is an isolated
+branch checkpoint, not a landing or release qualification.

@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import Observation
 
@@ -74,10 +73,13 @@ public final class EvidenceAutoImportService {
         /// This is not a cleanup receipt or a claim about current remote origin.
         public var contentsVerified: Bool
         public var origin: EvidenceImportOrigin?
+        public var custodyReceiptSHA256: String?
+        public var archiveSHA256: String?
 
         public init(bundlePath: String, runId: String?, importedAt: String,
                     sha256: String?, isPartial: Bool = false,
-                    contentsVerified: Bool = false, origin: EvidenceImportOrigin? = nil) {
+                    contentsVerified: Bool = false, origin: EvidenceImportOrigin? = nil,
+                    custodyReceiptSHA256: String? = nil, archiveSHA256: String? = nil) {
             self.bundlePath = bundlePath
             self.runId = runId
             self.importedAt = importedAt
@@ -85,6 +87,8 @@ public final class EvidenceAutoImportService {
             self.isPartial = isPartial
             self.contentsVerified = contentsVerified
             self.origin = origin
+            self.custodyReceiptSHA256 = custodyReceiptSHA256
+            self.archiveSHA256 = archiveSHA256
         }
 
         /// Hand-written so a LEGACY ledger still decodes. Swift's
@@ -104,6 +108,8 @@ public final class EvidenceAutoImportService {
             contentsVerified = try container.decodeIfPresent(
                 Bool.self, forKey: .contentsVerified) ?? false
             origin = try container.decodeIfPresent(EvidenceImportOrigin.self, forKey: .origin)
+            custodyReceiptSHA256 = try container.decodeIfPresent(String.self, forKey: .custodyReceiptSHA256)
+            archiveSHA256 = try container.decodeIfPresent(String.self, forKey: .archiveSHA256)
         }
     }
 
@@ -510,7 +516,7 @@ public final class EvidenceAutoImportService {
                     outcome: .refused(code: "evidenceContextChanged", repairAction: EvidenceImportOrigin.changedRepair), origin: origin))
                 continue
             }
-            guard !isImported(candidate: candidate, origin: origin) else { continue }
+            guard bypassBackoff || !isImported(candidate: candidate, origin: origin) else { continue }
             let key = EvidenceImportKey(candidate: candidate, origin: origin)
             if !bypassBackoff, let failure = failures[key],
                 failure.exhausted || now() < failure.nextRetryAt
@@ -518,11 +524,11 @@ public final class EvidenceAutoImportService {
                 continue  // backing off (or capped out) — not silent: `failures` shows it
             }
             do {
-                let imported = try await performImport(candidate, client: client)
-                try appendLedger(for: candidate, origin: origin)
+                let imported = try await performImport(candidate, client: client, origin: origin)
+                try appendLedger(for: candidate, origin: origin, custody: imported.custody)
                 failures[key] = nil
                 produced.append(
-                    publish(candidate: candidate, outcome: .imported(runDirectory: imported.path), origin: origin))
+                    publish(candidate: candidate, outcome: .imported(runDirectory: imported.directory.path), origin: origin))
             } catch {
                 let message = String(describing: error)
                 recordFailure(key: key, message: message)
@@ -532,8 +538,10 @@ public final class EvidenceAutoImportService {
         return produced
     }
 
-    private func performImport(_ candidate: EvidenceCandidate, client: ClusterClient?) async throws -> URL {
-        if let performImportOverride { return try await performImportOverride(candidate) }
+    private func performImport(
+        _ candidate: EvidenceCandidate, client: ClusterClient?, origin: EvidenceImportOrigin
+    ) async throws -> (directory: URL, custody: EvidenceImportResult?) {
+        if let performImportOverride { return (try await performImportOverride(candidate), nil) }
         guard let client else {
             throw ChatServiceError(reason: "no connected server client for evidence import")
         }
@@ -548,32 +556,31 @@ public final class EvidenceAutoImportService {
         // Extraction + per-file hashing off the main actor (same rule as the
         // manual import path).
         let imported = try await Task.detached {
-            let actual = SHA256.hash(data: try Data(contentsOf: localBundle))
-                .map { String(format: "%02x", $0) }.joined()
-            if let expected, !expected.isEmpty, expected != actual {
-                throw ChatServiceError(reason: "evidence bundle hash mismatch before import")
-            }
-            return try EvidenceBundleImporter.importEvidenceBundle(
-                localBundle, expectedSHA256: actual, workspaceRoot: workspaceRoot,
-                verifyExistingRun: true)
+            try EvidenceBundleImporter.importEvidenceBundle(
+                localBundle, expectedSHA256: expected, workspaceRoot: workspaceRoot,
+                verifyExistingRun: true, origin: origin)
         }.value
         // Server-manifest-mutation family (2026-08-04): the AUTO path was
         // how runs arrived WITHOUT revision adoption — only the manual
         // Import Evidence button reconciled. Every imported run's snapshot
         // now reconciles here too; outcomes surface in the import summary.
         let outcome = EvidenceRevisionAdoption.adoptModelRevision(
-            fromImportedRun: imported, workspaceRoot: workspaceRoot)
+            fromImportedRun: imported.runDirectory, workspaceRoot: workspaceRoot)
         if let notice = EvidenceRevisionAdoption.notice(for: outcome) {
             lastSummary = notice.message
         }
-        return imported
+        return (imported.runDirectory, imported)
     }
 
-    private func appendLedger(for candidate: EvidenceCandidate, origin: EvidenceImportOrigin) throws {
+    private func appendLedger(
+        for candidate: EvidenceCandidate, origin: EvidenceImportOrigin, custody: EvidenceImportResult?
+    ) throws {
         let entry = LedgerEntry(
             bundlePath: candidate.bundlePath, runId: candidate.runId,
             importedAt: HousekeepingDates.format(now()), sha256: candidate.sha256,
-            isPartial: candidate.isPartial, contentsVerified: true, origin: origin)
+            isPartial: candidate.isPartial || custody?.receipt.evidenceComplete == false || custody?.receipt.failureRecorded == true,
+            contentsVerified: true, origin: origin, custodyReceiptSHA256: custody?.receiptSHA256,
+            archiveSHA256: custody?.receipt.archiveSHA256)
         let url = Self.ledgerURL(workspaceRoot: workspaceRoot)
         // Read/merge/publish under a stable file lock, so two processes cannot
         // discard each other's receipts. Corrupt existing bytes are preserved.
@@ -585,10 +592,15 @@ public final class EvidenceAutoImportService {
             } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
                 current = []
             }
-            if !current.contains(where: {
+            if let index = current.firstIndex(where: {
                 $0.origin == origin && $0.contentsVerified
                     && $0.bundlePath == candidate.bundlePath && $0.sha256 == candidate.sha256
             }) {
+                if custody != nil {
+                    current[index] = entry
+                    try Self.saveLedger(current, to: url)
+                }
+            } else {
                 current.append(entry)
                 try Self.saveLedger(current, to: url)
             }

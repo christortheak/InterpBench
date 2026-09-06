@@ -291,6 +291,10 @@ public enum ExperimentCLIParser {
             namespace: "data", verb: "check", positional: "<experiment>",
             purpose: "Report which study-data inputs the manifest still needs."),
 
+        .init(
+            namespace: "data", verb: "verify-custody", positional: "<receipt-sha256>",
+            purpose: "Verify a retained evidence archive and imported files against a local custody receipt; no network or cleanup."),
+
         // vectors
         .init(
             namespace: "vectors", verb: "compare",
