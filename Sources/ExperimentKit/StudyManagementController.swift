@@ -44,14 +44,19 @@ public final class StudyManagementController {
     /// supplied the displayed manifest. The target does not follow selection
     /// or a workspace switch during an operation.
     func persistReviewedDraft(_ manifest: ExperimentManifest) throws {
-        guard let reviewed = reviewedDrafts[manifest.name],
+        let reviewed = try reviewedDraft(named: manifest.name)
+        reviewedDrafts[manifest.name] = try DraftAuthoringTransaction.replace(manifest, reviewed: reviewed)
+    }
+
+    func reviewedDraft(named name: String) throws -> DraftAuthoringSnapshot {
+        guard let reviewed = reviewedDrafts[name],
             reviewed.workspaceRoot == ExperimentStore.workspaceRoot.standardizedFileURL
         else {
             throw ExperimentError.refusing(.staleManifest,
                 "The reviewed draft is unavailable in this workspace.",
                 repair: "Refresh the study, review the current document, and apply the edit again.")
         }
-        reviewedDrafts[manifest.name] = try DraftAuthoringTransaction.replace(manifest, reviewed: reviewed)
+        return reviewed
     }
 
     public func refreshTemplates() { designs.refresh(experiments: experiments) }

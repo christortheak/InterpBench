@@ -161,3 +161,40 @@ landing still requires the maintainer's independent review and final suite gates
 Combining workspace-mutating suites under SwiftPM's focused runner stalled again.
 Use the nonparallel Xcode invocation for combined/full Swift qualification; do
 not interrupt the installed production app to work around a test-runner stall.
+
+## Protocol authoring owner
+
+`StudyProtocolAuthoring` now owns setup validation, model-change invalidation,
+judge declaration, input pinning, seat compilation and publication. It accepts
+independent values plus a reviewed workspace snapshot. `ExperimentPanel` captures
+those values, invokes the operation, then presents advisories and refreshes.
+Input helpers now accept explicit roots, so a captured operation can complete in
+its original workspace even after another workspace becomes current.
+
+This is a semantic authoring migration, not a claimed mechanical body move:
+
+- The manifest precondition and draft gate run before input pinning/compilation,
+  under the shared lock retained through publication.
+- Temperature, token count and sample count use the existing field policies;
+  invalid values cannot publish, including a zero sample count.
+- A scenario selection contains a decode and hash of the same input bytes.
+  Compiled provenance retains that hash, or the previous casting's provenance,
+  rather than re-identifying older semantic content with a later file read.
+- Seat edits and warnings are presented after successful publication.
+
+Five direct-service regressions pass, covering stale admission before input work,
+workspace switches across pins/compilation, semantic-source drift, a scenario
+from a different workspace, and invalid sampling. The first full Swift run exposed
+one existing test borrowing the checkout's rubric instead of creating a fixture
+in its temporary workspace. The test now authors its own rubric and asserts its
+exact pinned hash. The final full Xcode beta run passes 277 SteeringKit and 4,418
+ExperimentKit tests (`TEST SUCCEEDED`). The full Python suite passes 5,896 tests,
+with 9 skipped and 8 warnings (151.82 seconds). The bridge ratchet and
+`git diff --check` pass; the actual diff was read locally. Main remains `bfd13a5`.
+
+Remaining boundaries are explicit: protocol HTTP requests still adapt through
+panel state; prompt-file editing and other authoring operations need their own
+captured requests; three compatibility bridges remain. The manifest publication
+is atomic, but generated scenario creation and manifest publication are not a
+crash-atomic multi-file transaction. Unreferenced generated inputs after a disk
+failure remain a recovery/cleanup concern; no frozen or run files are rewritten.

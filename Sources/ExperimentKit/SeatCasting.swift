@@ -125,11 +125,12 @@ public enum SeatCasting {
     public static func state(
         of manifest: ExperimentManifest,
         selected: (scenario: MultiAgentScenario, path: String)? = nil,
-        overlay: [String: SeatOccupant] = [:]
+        overlay: [String: SeatOccupant] = [:],
+        workspaceRoot: URL = ExperimentStore.workspaceRoot
     ) -> State? {
         guard manifest.studyKind == .multiAgent else { return nil }
         var advisories: [String] = []
-        let pinned = loadScenario(manifest.multiAgentScenarioPath)
+        let pinned = loadScenario(manifest.multiAgentScenarioPath, workspaceRoot: workspaceRoot)
 
         // The pinned file, split into the two halves the section shows.
         var pinnedSemantic: MultiAgentScenario?
@@ -139,7 +140,7 @@ public enum SeatCasting {
             if PanelComposition.isSemantic(pinned.scenario) {
                 pinnedSemantic = pinned.scenario
                 pinnedForm = .uncast
-            } else if PanelComposition.isCompiledPath(pinned.path)
+            } else if PanelComposition.isCompiledPath(pinned.path, workspaceRoot: workspaceRoot)
                 || manifest.multiAgentSemanticScenarioPath != nil
             {
                 pinnedSemantic = PanelComposition.semanticForm(pinned.scenario)
@@ -187,7 +188,7 @@ public enum SeatCasting {
         if form == .legacyBound {
             advisories.append(legacyAdvisory)
         }
-        if form == .cast, let drift = sourceDriftAdvisory(manifest) {
+        if form == .cast, let drift = sourceDriftAdvisory(manifest, workspaceRoot: workspaceRoot) {
             advisories.append(drift)
         }
         if pinned == nil, manifest.multiAgentScenarioPath?.isEmpty == false {
@@ -235,7 +236,8 @@ public enum SeatCasting {
         semantic: MultiAgentScenario,
         semanticPath: String?,
         into manifest: inout ExperimentManifest,
-        fileSlug: String? = nil
+        fileSlug: String? = nil,
+        workspaceRoot: URL = ExperimentStore.workspaceRoot
     ) throws -> (path: String, hash: String) {
         let compiled = try PanelComposition.compileAndPin(
             semantic: semantic,
@@ -243,12 +245,12 @@ public enum SeatCasting {
             modelID: manifest.modelID,
             temperature: manifest.temperature,
             maxTokens: manifest.maxTokens,
-            fileSlug: fileSlug ?? manifest.name)
+            fileSlug: fileSlug ?? manifest.name, workspaceRoot: workspaceRoot)
         manifest.multiAgentScenarioPath = compiled.path
         manifest.multiAgentScenarioHash = compiled.hash
         manifest.multiAgentSemanticScenarioPath = semanticPath
         manifest.multiAgentSemanticScenarioHash = semanticPath.flatMap {
-            try? MultiAgentScenarioStore.hash(ExperimentStore.resolveProjectPath($0))
+            try? MultiAgentScenarioStore.hash(ExperimentStore.resolveProjectPath($0, root: workspaceRoot))
         }
         return (compiled.path, compiled.hash)
     }
@@ -338,11 +340,13 @@ public enum SeatCasting {
 
     /// Says the drift and what it means, without pretending it is a violation:
     /// the study runs the compiled bytes, which is the honest reading.
-    private static func sourceDriftAdvisory(_ manifest: ExperimentManifest) -> String? {
+    private static func sourceDriftAdvisory(
+        _ manifest: ExperimentManifest, workspaceRoot: URL
+    ) -> String? {
         guard let path = manifest.multiAgentSemanticScenarioPath, !path.isEmpty
         else { return nil }
         guard let pinnedHash = manifest.multiAgentSemanticScenarioHash else { return nil }
-        let url = ExperimentStore.resolveProjectPath(path)
+        let url = ExperimentStore.resolveProjectPath(path, root: workspaceRoot)
         guard let live = try? MultiAgentScenarioStore.hash(url) else {
             return "the scenario this casting came from (\(path)) is no longer "
                 + "in the workspace. The study still runs its compiled "
@@ -359,10 +363,10 @@ public enum SeatCasting {
     // MARK: - Helpers
 
     private static func loadScenario(
-        _ path: String?
+        _ path: String?, workspaceRoot: URL
     ) -> (scenario: MultiAgentScenario, path: String)? {
         guard let path, !path.isEmpty else { return nil }
-        let url = ExperimentStore.resolveProjectPath(path)
+        let url = ExperimentStore.resolveProjectPath(path, root: workspaceRoot)
         guard let data = try? Data(contentsOf: url),
             let scenario = try? JSONDecoder().decode(MultiAgentScenario.self, from: data)
         else { return nil }

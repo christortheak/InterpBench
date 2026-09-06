@@ -60,6 +60,23 @@ snapshot under the common lock. The panel's whole-document persistence uses the
 snapshot that supplied the displayed document. Fresh field setters hold the
 lock for their entire load–modify–save operation.
 
+`StudyProtocolAuthoring.save` accepts a reviewed snapshot, complete
+`StudyProtocolFields` values and an optional `StudyProtocolScenario`. It checks
+the manifest precondition and draft admission before pinning inputs or compiling
+seats, retaining the common lock through publication. The app captures its field
+values through `StudyDraftState`; the service retains no panel or observable
+editor state. Rubric and prompt pins, scenario reads and compiled output use the
+snapshot's explicit workspace. A scenario selection carries decoded content and
+the hash of the same bytes. Recompilation preserves that provenance rather than
+stamping a later source-file version onto earlier content.
+
+This command returns the saved snapshot, seat-edit reset status and advisories,
+or a request to select a scenario. It throws typed admission/field errors without
+publishing the manifest. These are complete setup values, not a sparse patch:
+adapters must deliberately populate the fields they intend to retain. Public
+CLI/HTTP request-schema migration remains part of WP-2/WP-3; the existing app
+HTTP setup adapter currently reaches the command through the panel.
+
 Server draft sync carries the digest read during its earlier identity check;
 it refuses a missing reviewed version instead of inventing one at push time.
 Its transport binds that review to the connection and workspace. Model revision
@@ -74,6 +91,6 @@ without an explicit precondition. They now serialize publication, but a caller
 holding an old whole document still needs conversion to a reviewed snapshot or
 a narrowly scoped transaction. Finish the remaining task, pipeline, optimization,
 creation/rename and adapter audit; remove selection-dependent authoring and the
-four compatibility bridges. Do not treat a lock around publication alone as
+three remaining compatibility bridges. Do not treat a lock around publication alone as
 protection against a stale read. The complete acceptance gate remains in the
 [implementation plan](RESEARCHER-WORKFLOW-IMPLEMENTATION-PLAN.md).

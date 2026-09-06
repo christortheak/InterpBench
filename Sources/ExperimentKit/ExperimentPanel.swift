@@ -1790,15 +1790,7 @@ public final class ExperimentPanel {
     private func applyStudyBaseModelChoice(
         to manifest: inout ExperimentManifest
     ) -> Bool {
-        let requested = draft.studyBaseModelID.trimmingCharacters(
-            in: .whitespacesAndNewlines)
-        guard !requested.isEmpty, requested != manifest.modelID else {
-            return false
-        }
-        manifest.modelID = requested
-        manifest.modelRevision = nil
-        manifest.variantConditions.removeAll()
-        return true
+        StudyProtocolAuthoring.applyBaseModelChoice(draft.studyBaseModelID, to: &manifest)
     }
 
     /// Re-reads the panel's base-model choice from the selected manifest.
@@ -1812,166 +1804,28 @@ public final class ExperimentPanel {
     }
 
     public func saveProtocol() {
-        guard var manifest = selected, manifest.status == .draft else { return }
+        guard let manifest = selected, manifest.status == .draft else { return }
         do {
-            // Validate every protocol field before pinning or publishing. These
-            // are the same field policies used by the named store setters, but
-            // the setup edit publishes once instead of leaving a partial edit
-            // behind if a later policy refuses it.
-            let name = manifest.name
-            try ManifestDraftEdits.setPhase(
-                nilIfEmpty(draft.phaseField), experimentName: name, manifest: &manifest)
-            try ManifestDraftEdits.setCaseFamily(
-                nilIfEmpty(draft.caseFamilyField), experimentName: name, manifest: &manifest)
-            try ManifestDraftEdits.setSamplingPolicy(
-                samplesPerItem: draft.samplesPerItemField <= 1 ? nil : draft.samplesPerItemField,
-                seedPolicy: nilIfEmpty(draft.seedPolicyField),
-                experimentName: name, manifest: &manifest)
-            try ManifestDraftEdits.setAcknowledgeUnequalOptionLengths(
-                draft.acknowledgeUnequalOptionLengthsField, experimentName: name, manifest: &manifest)
-            manifest.experimentDescription = draft.protocolDescription
-            manifest.taskDescription = nilIfEmpty(draft.taskDescription)
-            manifest.outcomeMeasures = nilIfEmpty(draft.outcomeMeasures)
-            manifest.studyKind = draft.studyKind
-            let baseModelChanged = applyStudyBaseModelChoice(to: &manifest)
-            manifest.promptMode = draft.promptMode
-            manifest.systemPrompt = nilIfEmpty(draft.systemPrompt)
-            // The panel writes the effort spelling and drops the legacy
-            // boolean, exactly as `setSamplingProtocol` does; the joint
-            // rules (budget beside a non-off effort, on a family with a
-            // thinking mode) are refused HERE with the store's sentences so
-            // a draft the run would refuse is never saved.
-            let reasoningProblems = ReasoningEffort.protocolViolations(
-                effort: draft.reasoningEffort, reasoningMaxTokens: draft.reasoningMaxTokens,
-                modelID: manifest.modelID)
-            guard reasoningProblems.isEmpty else {
-                throw ExperimentError.malformed(
-                    reasoningProblems.joined(separator: "; "),
-                    repair: "declare a reasoning budget beside a non-off "
-                        + "effort (or set the effort to off)")
+            let reviewed = try management.reviewedDraft(named: manifest.name)
+            let selection = draft.selectedMultiAgentScenarioID.flatMap { id in
+                multiAgentScenarioOptions.first { $0.id == id }
             }
-            manifest.reasoningEffort = draft.reasoningEffort
-            manifest.reasoningMaxTokens = draft.reasoningMaxTokens
-            manifest.qwenThinkingEnabled = nil
-            manifest.dtype = nilIfEmpty(draft.studyDtypeField)
-            // Judge-rubric versioning: pin the selected rubric file at its
-            // CURRENT hash ("" clears the pin — draft-only inline text).
-            let rubricFile = draft.judgeRubricFile.trimmingCharacters(in: .whitespacesAndNewlines)
-            if rubricFile.isEmpty {
-                manifest.judgeRubricFile = nil
-                manifest.judgeRubricHash = nil
-            } else {
-                try JudgeRubricStore.pin(rubricFile, into: &manifest)
+            let scenario = try (draft.studyKind == .multiAgent ? selection : nil).map {
+                try StudyProtocolScenario(
+                    path: relativeProjectPath(for: $0.url), workspaceRoot: reviewed.workspaceRoot)
             }
-            let panelJudges = draft.judges
-                .map {
-                    ExperimentManifest.JudgeRef(
-                        name: $0.name.trimmingCharacters(in: .whitespacesAndNewlines),
-                        kind: $0.kind,
-                        model: nilIfEmpty($0.model ?? ""),
-                        // The provider is a PIN (openrouter judges) — a save
-                        // that drops it invalidates the judge (2026-07-19) —
-                        // and so are the local-judge revision/dtype pins
-                        // (2026-07-23), which this reconstruction previously
-                        // dropped.
-                        provider: nilIfEmpty($0.provider ?? ""),
-                        revision: nilIfEmpty($0.revision ?? ""),
-                        dtype: nilIfEmpty($0.dtype ?? ""))
-                        // The write funnel serializes only the fields the
-                        // judge's kind OWNS (field bug 2026-08-07): no UI
-                        // path can leak a kind-foreign field — a local
-                        // judge keeping "provider" from its OpenRouter
-                        // past — into the manifest.
-                        .keepingKindOwnedFields()
-                }
-                .filter { !$0.name.isEmpty }
-            manifest.judges = panelJudges.isEmpty ? nil : panelJudges
-            // The explicit declaration (2026-07-22 incident): pinned judges
-            // + a chosen rubric file ARE paired judging, so the save WRITES
-            // the `evaluation` block — new drafts carry one unambiguous
-            // declaration instead of relying on the engines' pin-pair
-            // synthesis. Removing the last judge or clearing the rubric
-            // clears/updates it coherently on the same save.
-            manifest.evaluation = Self.evaluationDeclaration(
-                judges: panelJudges,
-                rubricFile: rubricFile,
-                inlineRubric: draft.evaluationPrompt,
-                structuredPrompt: nilIfEmpty(draft.evaluationStructuredPrompt),
-                inlineJudgeModel: resolvedInlineJudgeModel())
-            // Saving as one study type NEVER deletes the other type's
-            // configuration (the Study Type picker's "switching never
-            // deletes anything" promise, enforced here where it was once
-            // broken): a multi-agent save keeps concepts, injection
-            // conditions, agents, and the task-prompts pin exactly as they
-            // were; a model-output save keeps a previously pinned
-            // scenario. Carried-but-hidden content surfaces through the
-            // type section's hidden-content note.
-            // Sampling settings are assigned BEFORE the scenario branch: a
-            // compiled scenario binds them, so a recompile must read the values
-            // this save is writing, not the previous ones.
-            manifest.temperature = draft.runTemperature
-            manifest.maxTokens = draft.runMaxTokens
-            if draft.studyKind == .multiAgent {
-                let selection = draft.selectedMultiAgentScenarioID.flatMap { id in
-                    multiAgentScenarioOptions.first { $0.id == id }
-                }
-                let casting = SeatCasting.state(
-                    of: manifest,
-                    selected: selection.map {
-                        ($0.scenario, relativeProjectPath(for: $0.url))
-                    },
-                    overlay: draft.seatCastingEdits)
-                switch casting?.form {
-                case .uncast, .cast:
-                    // The compile inputs are manifest fields, so the scenario is
-                    // (re-)compiled on every setup save: a study whose model,
-                    // temperature or token budget moved after it was cast would
-                    // otherwise go on pinning a scenario that binds the previous
-                    // ones — a silent disagreement between the manifest and the
-                    // file the run actually reads.
-                    if let casting {
-                        let assignment = baseModelChanged
-                            ? SeatCasting.resetToBaseline(casting.assignment)
-                            : casting.assignment
-                        if baseModelChanged, SeatCasting.isTreated(casting.assignment) {
-                            note(
-                                "the base model changed, so every seat was reset "
-                                    + "to baseline — agents built on the previous "
-                                    + "model cannot run in this panel. Recast the "
-                                    + "seats below.",
-                                severity: .warning)
-                        }
-                        try SeatCasting.compile(
-                            assignment, semantic: casting.semantic,
-                            semanticPath: casting.semanticPath, into: &manifest)
-                        draft.seatCastingEdits = [:]
-                    }
-                case .legacyBound:
-                    // A hand-bound scenario is pinned as it stands — its casting
-                    // is inside the file, and this save must not rewrite it.
-                    guard let scenario = selection else { break }
-                    manifest.multiAgentScenarioPath =
-                        relativeProjectPath(for: scenario.url)
-                    manifest.multiAgentScenarioHash =
-                        try MultiAgentScenarioStore.hash(scenario.url)
-                    manifest.multiAgentSemanticScenarioPath = nil
-                    manifest.multiAgentSemanticScenarioHash = nil
-                case nil:
-                    note("select a scenario first", severity: .info)
-                    return
-                }
-                manifest.multiAgentIncludeBaseline = draft.multiAgentIncludeBaseline
-            } else if !draft.taskPromptsFile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                _ = try ExperimentStore.pinTaskPrompts(draft.taskPromptsFile, into: &manifest)
-            } else {
-                // An EMPTIED prompts field on a model-output study is the
-                // one explicit clear this save performs.
-                manifest.taskPromptsFile = nil
-                manifest.taskPromptsHash = nil
+            let result = try StudyProtocolAuthoring.save(
+                reviewed: reviewed, fields: draft.protocolFields(inlineJudgeModel: resolvedInlineJudgeModel()),
+                scenario: scenario)
+            switch result {
+            case .requiresScenario:
+                note("select a scenario first", severity: .info)
+            case .saved(_, let didCompileSeats, let advisories):
+                if didCompileSeats { draft.seatCastingEdits = [:] }
+                refresh()
+                for advisory in advisories { note(advisory, severity: .warning) }
+                note("saved protocol notes and run defaults", severity: .success)
             }
-            try management.persistReviewedDraft(manifest)
-            refresh()
-            note("saved protocol notes and run defaults", severity: .success)
         } catch {
             note(
                 "Couldn't save the study setup — check the study is still a "

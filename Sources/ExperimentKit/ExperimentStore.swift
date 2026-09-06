@@ -5175,11 +5175,12 @@ public enum ExperimentStore {
 
     @discardableResult
     public static func pinTaskPrompts(
-        _ file: String, into manifest: inout ExperimentManifest
+        _ file: String, into manifest: inout ExperimentManifest,
+        workspaceRoot: URL = ExperimentStore.workspaceRoot
     ) throws -> String {
         // Same resolution as verify() (root-override aware — the study-pack
         // import pins under the test seam and any future root override).
-        let url = resolveProjectPath(file)
+        let url = resolveProjectPath(file, root: workspaceRoot)
         guard let data = try? Data(contentsOf: url) else {
             // Typed at the PIN, not only at the run (2026-08-18): the run
             // loop's twin (`ExperimentTasks.loadTaskPrompts`) has thrown this

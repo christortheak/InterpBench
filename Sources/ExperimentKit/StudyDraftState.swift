@@ -166,6 +166,37 @@ public final class StudyDraftState {
     /// button so the scaffold never pretends to be the whole Step-5 matrix).
     public internal(set) var lastControlMatrixNotes: [String] = []
 
+    /// Capture setup as independent values for the shared authoring command.
+    func protocolFields(inlineJudgeModel: String) -> StudyProtocolFields {
+        var fields = StudyProtocolFields()
+        fields.protocolDescription = protocolDescription
+        fields.taskDescription = taskDescription
+        fields.outcomeMeasures = outcomeMeasures
+        fields.studyKind = studyKind
+        fields.baseModelID = studyBaseModelID
+        fields.promptMode = promptMode
+        fields.systemPrompt = systemPrompt
+        fields.reasoningEffort = reasoningEffort
+        fields.reasoningMaxTokens = reasoningMaxTokens
+        fields.dtype = studyDtypeField
+        fields.judgeRubricFile = judgeRubricFile
+        fields.judges = judges
+        fields.evaluationPrompt = evaluationPrompt
+        fields.evaluationStructuredPrompt = evaluationStructuredPrompt
+        fields.inlineJudgeModel = inlineJudgeModel
+        fields.temperature = runTemperature
+        fields.maxTokens = runMaxTokens
+        fields.seatCastingEdits = seatCastingEdits
+        fields.multiAgentIncludeBaseline = multiAgentIncludeBaseline
+        fields.taskPromptsFile = taskPromptsFile
+        fields.phase = phaseField
+        fields.caseFamily = caseFamilyField
+        fields.samplesPerItem = samplesPerItemField
+        fields.seedPolicy = seedPolicyField
+        fields.acknowledgeUnequalOptionLengths = acknowledgeUnequalOptionLengthsField
+        return fields
+    }
+
     public enum FormField: String, Sendable, Hashable, CaseIterable {
         case addCondition
         case sweepSpec

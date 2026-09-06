@@ -453,8 +453,12 @@ import Testing
     }
 
     @Test func aSingleJudgeIsAdvisedAgainstButNeverRefused() async throws {
-        try await withTempRoot { _ in
+        try await withTempRoot { root in
             await invoke(["create", "one-judge", "--model", Self.model])
+            // The rubric is study input in this disposable workspace; do not
+            // borrow the checkout's default through a different root resolver.
+            let rubric = "Assess the response against the declared criterion."
+            try write(rubric, to: root.appending(path: JudgeRubricStore.defaultRubricFile))
             let outcome = await invoke(
                 [
                     "pin-rubric", "one-judge",
@@ -462,6 +466,8 @@ import Testing
                 ])
             // A one-judge DRAFT is legal; freeze is where it stops.
             #expect(outcome.exitCode == 0)
+            #expect(try ExperimentStore.load(name: "one-judge").judgeRubricHash
+                == ManifestFileTransaction.digest(Data(rubric.utf8)))
             #expect(
                 (outcome.envelope.advisories ?? []).contains {
                     $0.code == "judgePanelTooSmall"

@@ -11,7 +11,10 @@ The workflow implementation has retired `StudyPanelBindings.swift`: all 109
 forwarding properties are gone. The app, local HTTP handlers and tests now read
 and mutate `StudyDraftState`, local/remote job controllers, result state and
 submission state directly. SwiftUI edits bind to the relevant observable owner.
-The other three bridges and the substantive panel-authoring migration remain;
+Protocol setup now runs through `StudyProtocolAuthoring`, using captured values
+and a reviewed workspace snapshot. The panel composes the request and presents
+the result. Prompt-file editing, condition authorship, the other three bridges
+and the rest of the substantive panel-authoring migration remain;
 the 1.0 retirement gate is not yet satisfied.
 
 The historical inventory below remains the ratchet baseline. Its old property

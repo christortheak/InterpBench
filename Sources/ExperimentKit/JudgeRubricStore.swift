@@ -86,9 +86,10 @@ public enum JudgeRubricStore {
     /// `experimentName` is used ONLY to make the missing-file repair runnable;
     /// it defaults to a placeholder for the callers that have no manifest.
     public static func load(
-        _ relativePath: String, experimentName: String = "<name>"
+        _ relativePath: String, experimentName: String = "<name>",
+        workspaceRoot: URL = ExperimentStore.workspaceRoot
     ) throws -> (text: String, hash: String) {
-        let url = try VectorCatalog.projectFile(relativePath)
+        let url = try VectorCatalog.projectFile(relativePath, workspaceRoot: workspaceRoot)
         guard let data = try? Data(contentsOf: url) else {
             throw ExperimentError.refusing(
                 .missingPrerequisite,
@@ -103,9 +104,11 @@ public enum JudgeRubricStore {
     /// Pins a rubric file's current hash into a manifest. Returns the hash.
     @discardableResult
     public static func pin(
-        _ relativePath: String, into manifest: inout ExperimentManifest
+        _ relativePath: String, into manifest: inout ExperimentManifest,
+        workspaceRoot: URL = ExperimentStore.workspaceRoot
     ) throws -> String {
-        let (_, hash) = try load(relativePath, experimentName: manifest.name)
+        let (_, hash) = try load(
+            relativePath, experimentName: manifest.name, workspaceRoot: workspaceRoot)
         manifest.judgeRubricFile = relativePath
         manifest.judgeRubricHash = hash
         return hash

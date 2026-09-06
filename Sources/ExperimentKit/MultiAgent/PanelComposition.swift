@@ -111,11 +111,13 @@ public enum PanelComposition {
     /// a hand-authored one whose castings live in the file (see
     /// `hoistLegacyScenario`). Accepts the workspace-relative form a manifest
     /// pins as well as an absolute path.
-    public static func isCompiledPath(_ path: String) -> Bool {
+    public static func isCompiledPath(
+        _ path: String, workspaceRoot: URL = ExperimentStore.workspaceRoot
+    ) -> Bool {
         guard !path.isEmpty else { return false }
-        let url = ExperimentStore.resolveProjectPath(path).standardizedFileURL
+        let url = ExperimentStore.resolveProjectPath(path, root: workspaceRoot).standardizedFileURL
         return url.deletingLastPathComponent().standardizedFileURL.path
-            == compiledDirectory.standardizedFileURL.path
+            == workspaceRoot.appending(path: "prompts/panels/compiled").standardizedFileURL.path
     }
 
     // MARK: - The semantic form
@@ -299,12 +301,13 @@ public enum PanelComposition {
         temperature: Double,
         maxTokens: Int,
         fileSlug: String,
-        name: String? = nil
+        name: String? = nil,
+        workspaceRoot: URL = ExperimentStore.workspaceRoot
     ) throws -> (path: String, hash: String, scenario: MultiAgentScenario) {
         let bound = try compile(
             semantic: semantic, assignment: assignment, modelID: modelID,
             temperature: temperature, maxTokens: maxTokens, name: name)
-        let root = compiledDirectory
+        let root = workspaceRoot.appending(path: "prompts/panels/compiled")
         try FileManager.default.createDirectory(
             at: root, withIntermediateDirectories: true)
         let base = ExperimentStore.canonicalSlug(fileSlug)
@@ -319,7 +322,7 @@ public enum PanelComposition {
         let data = try encoder.encode(bound)
         try data.write(to: url, options: .atomic)
         return (
-            path: FineTuneStore.relativePath(for: url),
+            path: "prompts/panels/compiled/" + url.lastPathComponent,
             hash: MultiAgentScenarioStore.hash(data),
             scenario: bound
         )

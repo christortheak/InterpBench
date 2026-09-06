@@ -125,8 +125,10 @@ public enum VectorCatalog {
     /// this for API-writable files such as task-prompt sets: the web server is
     /// unauthenticated, so an unchecked `projectRoot.appending(path:)` would be
     /// an arbitrary-file read/write primitive (CLAUDE.md security posture).
-    public static func projectFile(_ relative: String) throws -> URL {
-        let root = projectRoot.standardizedFileURL
+    public static func projectFile(
+        _ relative: String, workspaceRoot: URL = projectRoot
+    ) throws -> URL {
+        let root = workspaceRoot.standardizedFileURL
         let candidate = root.appending(path: relative).standardizedFileURL
         let rootPath = root.path
         guard candidate.path == rootPath || candidate.path.hasPrefix(rootPath + "/") else {
