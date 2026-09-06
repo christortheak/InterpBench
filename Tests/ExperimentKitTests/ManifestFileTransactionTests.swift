@@ -66,4 +66,42 @@ struct ManifestFileTransactionTests {
         #expect(current.manifest.experimentDescription == "first edit")
     }
 
+    @Test func pythonAndSwiftSerializeTheSameManifestThroughFilesystemAliases() throws {
+        let root = URL(fileURLWithPath: "/tmp").appending(component: "manifest-interop-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let manifest = root.appending(components: "experiments", "example", "experiment.json")
+        let marker = root.appending(component: "entered")
+        let sourceRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        child.arguments = ["-c", """
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, sys.argv[4])
+            from steerlab_server.experiment.manifest_files import transaction
+            print('ready', flush=True)
+            with transaction(sys.argv[1], workspace_root=sys.argv[2]):
+                Path(sys.argv[3]).write_text('entered')
+            """, manifest.path, root.path, marker.path, sourceRoot.appending(component: "Server").path]
+        let output = Pipe()
+        child.standardOutput = output
+        let finished = DispatchSemaphore(value: 0)
+        child.terminationHandler = { _ in finished.signal() }
+        defer { if child.isRunning { child.terminate(); child.waitUntilExit() } }
+        try ManifestFileTransaction.withLock(manifestURL: manifest, workspaceRoot: root) {
+            try child.run()
+            #expect(String(data: output.fileHandleForReading.readData(ofLength: 6), encoding: .utf8) == "ready\n")
+            #expect(finished.wait(timeout: .now() + 0.25) == .timedOut)
+            #expect(!FileManager.default.fileExists(atPath: marker.path))
+        }
+        #expect(finished.wait(timeout: .now() + 10) == .success)
+        if !child.isRunning { #expect(child.terminationStatus == 0) }
+        #expect(try String(contentsOf: marker, encoding: .utf8) == "entered")
+        let lockFiles = try FileManager.default.contentsOfDirectory(
+            atPath: root.appending(components: ".steerlab", "manifest-locks").path)
+            .filter { $0.hasSuffix(".lock") }
+        #expect(lockFiles.count == 1)
+    }
+
 }

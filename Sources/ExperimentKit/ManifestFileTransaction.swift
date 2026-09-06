@@ -33,13 +33,36 @@ public enum ManifestFileTransaction {
         ManifestFileSnapshot(data: try Data(contentsOf: url))
     }
 
+    /// Foundation's standardized file URLs can preserve platform aliases
+    /// such as /tmp. Hash the POSIX real path, as Python os.path.realpath does,
+    /// including when creation has not yet made the final path components.
+    static func canonicalPath(_ url: URL) throws -> String {
+        var path = url.path
+        var missing: [String] = []
+        while true {
+            if let resolved = Darwin.realpath(path, nil) {
+                defer { free(resolved) }
+                return missing.reversed().reduce(String(cString: resolved)) {
+                    ($0 as NSString).appendingPathComponent($1)
+                }
+            }
+            guard errno == ENOENT else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            let parent = (path as NSString).deletingLastPathComponent
+            guard parent != path, !parent.isEmpty else { throw POSIXError(.ENOENT) }
+            missing.append((path as NSString).lastPathComponent)
+            path = parent
+        }
+    }
+
     /// Python's manifest_files.transaction uses the same canonical-path key,
     /// directory and flock primitive. Keep the sidecar inode stable across writes.
     public static func withLock<T>(
         manifestURL: URL, workspaceRoot: URL, _ operation: () throws -> T
     ) throws -> T {
-        let canonical = manifestURL.resolvingSymlinksInPath().standardizedFileURL.path
-        let root = workspaceRoot.resolvingSymlinksInPath().standardizedFileURL
+        let canonical = try canonicalPath(manifestURL)
+        let root = URL(fileURLWithPath: try canonicalPath(workspaceRoot))
         let key = digest(Data(canonical.utf8))
         let directory = root.appending(components: ".steerlab", "manifest-locks")
         let lockPath = directory.appending(component: key + ".lock").path
