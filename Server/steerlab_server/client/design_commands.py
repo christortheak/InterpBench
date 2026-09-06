@@ -3,6 +3,7 @@ from pathlib import Path
 from ..cli_envelope import CLIResult, VerbSpec
 
 VERB_SPECS = (
+    VerbSpec("design", "expand", positional="<name>", purpose="Preview distinct panel castings as batch rows without creating studies.", value_flags=frozenset({"--file-sha256", "--casting", "--mode"}), required_flags=frozenset({"--file-sha256", "--casting", "--mode"})),
     VerbSpec("authoring", "study", positional="<intent>", purpose="Emit the shared researcher interview and reviewed study-pack workflow."),
     VerbSpec("design", "list", purpose="List reusable local designs and report unreadable entries."),
     VerbSpec("design", "inspect", positional="<name>", purpose="Inspect a design, its byte review and portable lineage identity."),
@@ -52,6 +53,9 @@ def run(invocation) -> CLIResult:
         result = designs.create(args[0], root=root, expected=one("--manifest-sha256"), name=one("--name"), description=one("--description"))
     elif spec.verb == "update":
         result = designs.update(args[0], one("--study"), root=root, expected=one("--file-sha256"), source_expected=one("--manifest-sha256"))
+    elif spec.verb == "expand":
+        from .design_expansion import expand
+        result = expand(args[0], library.decode(Path(one("--casting")).read_bytes()), one("--mode"), root=root, expected=one("--file-sha256"))
     elif spec.verb == "instantiate":
         result = designs.instantiate(args[0], library.decode(Path(one("--casting")).read_bytes()), root=root,
                                      expected=one("--file-sha256"), study_name=one("--study-name"))

@@ -65,7 +65,7 @@ public enum CLIReferenceDocument {
                 "experiment detach", "experiment attach-agent", "experiment inspect-artifact", "experiment attach-artifact", "experiment import-prompts",
                 "experiment pin-prompts", "experiment pin-rubric",
                 "experiment declare-condition", "experiment set-sweep-selection",
-                "experiment set-sweep-grid",
+                "experiment set-sweep-grid", "experiment set-pipeline",
                 "experiment set-instruments", "experiment set-sampling",
                 "experiment set-exclusions", "experiment set-system-prompt",
                 "experiment set-parser",
@@ -91,7 +91,7 @@ public enum CLIReferenceDocument {
             verbLabels: ["experiment promote", "experiment confirm"]),
         .init(
             id: "swift-panel",
-            verbLabels: ["panel list", "panel check", "panel compile"]),
+            verbLabels: ["panel list", "panel inspect", "panel check", "panel import", "panel compile"]),
         .init(
             id: "swift-model",
             verbLabels: ["model plan", "model install", "model capabilities", "model set-capability"]),
@@ -104,6 +104,7 @@ public enum CLIReferenceDocument {
         .init(
             id: "swift-remote",
             verbLabels: [
+                "remote model-plan", "remote model-install", "remote model-status", "remote model-cancel",
                 "remote capabilities", "remote package", "remote upload",
                 "remote submit-bundle", "remote jobs", "remote logs",
                 "remote cancel", "remote resubmit", "remote fetch",
@@ -111,7 +112,7 @@ public enum CLIReferenceDocument {
                 "remote chat",
             ]),
         .init(id: "swift-agent", verbLabels: ["agent list", "agent inspect"]),
-        .init(id: "swift-design", verbLabels: ["design list", "design inspect", "design describe", "design instantiate", "design batch", "design save", "design update"]),
+        .init(id: "swift-design", verbLabels: ["design expand", "design list", "design inspect", "design describe", "design instantiate", "design batch", "design save", "design update"]),
         .init(id: "swift-authoring", verbLabels: ["authoring prompt", "authoring study"]),
         .init(id: "swift-pack", verbLabels: ["pack preview", "pack apply", "pack export"]),
         .init(id: "swift-docs", verbLabels: ["docs cli-reference"]),

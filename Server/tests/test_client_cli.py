@@ -685,8 +685,14 @@ def test_no_authoring_verb_accepts_a_server_locator():
     Enforced by iterating the declared table rather than by reading the
     dispatch, so a verb added without a test is still covered.
     """
+    # Model capabilities are local declarations; preparation explicitly
+    # addresses a runner. Keep the exception exact so new model verbs cannot
+    # silently opt out of the local-authoring contract.
+    preparation = {'model plan', 'model install', 'model status', 'model cancel'}
+    assert {spec.label for spec in client_cli.model_commands.specs(frozenset())} == preparation
     authoring = [spec for spec in client_cli.CLIENT_VERB_SPECS
-                 if spec.family in client_cli.AUTHORING_FAMILIES]
+                 if spec.family in client_cli.AUTHORING_FAMILIES
+                 and spec.label not in preparation]
     # The exclusion must not silently swallow the whole table: it covers
     # EXACTLY the two families whose job is to address a runner — `runner`
     # (Phase 2/3) and the composite `run` (Phase 5) — and a third family
@@ -833,12 +839,11 @@ def test_the_client_declares_the_authoring_verbs_the_engine_refuses():
                   "outcomeInstrumentScope"):
         assert field not in store.PROTOCOL_FIELDS
 
-    # `panel compile` is redirected too and has no client counterpart: it
-    # compiles a scenario, which is not a store operation. Asserted rather
-    # than assumed, so a client `panel` family cannot appear unnoticed.
+    # Panel compilation now has a local authoring client counterpart. The
+    # engine still redirects it; it does not become runner-side authoring.
     assert set(cli_envelope.MAC_AUTHORITY_VERBS["panel"]) == {"compile"}
-    assert not any(spec.family == "panel"
-                   for spec in client_cli.CLIENT_VERB_SPECS)
+    assert set(cli_envelope.MAC_AUTHORITY_VERBS["panel"]) <= {
+        spec.verb for spec in client_cli.CLIENT_VERB_SPECS if spec.family == "panel"}
 
     # …and the engine's refusals are untouched by this module's existence.
     assert "create" not in {spec.verb for spec in cli_envelope.VERB_SPECS}
@@ -867,9 +872,7 @@ def test_the_redirect_names_the_client_spelling_off_the_mac():
             assert spelling.endswith(f"{client_cli.ROOT_FLAG} "
                                      "<workspace-dir>")
         assert mac.startswith("steerlab-cli experiment ")
-    # `panel compile` has no client spelling, and the reader says so rather
-    # than inventing one.
-    assert cli._client_spelling("panel compile") == ""
+    assert cli._client_spelling("panel compile").startswith("steerlab panel compile ")
 
 
 # =============================================================================

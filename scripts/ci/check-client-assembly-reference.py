@@ -9,7 +9,9 @@ sys.path.insert(0, str(ROOT / "Server"))
 from steerlab_server import client_cli
 from steerlab_server.client.study_assembly import VERB_SPECS as ASSEMBLY_SPECS
 from steerlab_server.client.design_commands import VERB_SPECS as DESIGN_SPECS
-VERB_SPECS = (*ASSEMBLY_SPECS, *DESIGN_SPECS)
+from steerlab_server.client.authoring_commands import VERB_SPECS as AUTHORING_SPECS
+MODEL_SPECS = tuple(s for s in client_cli.CLIENT_VERB_SPECS if s.family == "model" and s.verb in ("plan", "install", "status", "cancel"))
+VERB_SPECS = (*ASSEMBLY_SPECS, *DESIGN_SPECS, *AUTHORING_SPECS, *MODEL_SPECS)
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--write", action="store_true")

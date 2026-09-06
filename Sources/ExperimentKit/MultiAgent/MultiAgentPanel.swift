@@ -388,13 +388,11 @@ public final class MultiAgentPanel {
         do {
             let scenario = scenarioFromEditor()
             let record: MultiAgentScenarioRecord
-            if let selected = selectedScenario {
-                // No timestamps to carry across: the panel file is the recipe
-                // only (B2), so re-saving an unedited panel is a byte-for-byte
-                // no-op rather than gratuitous hash drift on a pinned input.
-                record = try MultiAgentScenarioStore.update(scenario, at: selected.url)
+            if let selected = selectedScenario, selected.scenario == scenario {
+                record = selected
             } else {
-                record = try MultiAgentScenarioStore.save(scenario)
+                // New immutable input: older study pins keep their original bytes.
+                record = try StudyPanelAuthoring.publish(scenario, root: ExperimentStore.workspaceRoot).record
             }
             refresh()
             selectedScenarioID = recordID(forFileAt: record.url) ?? record.id

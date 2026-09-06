@@ -398,6 +398,9 @@ private struct ServerEditorView: View {
                             "prefetch a Hugging Face repo into the server's cache as a "
                                 + "durable job (full-precision HF ids — MLX repos are rejected "
                                 + "with a family-twin hint)")
+                    Button("Plan") {
+                        Task { await cluster.previewModelPreparation(installModelID) }
+                    }
                     Button("Install") {
                         Task { await cluster.installModel(installModelID) }
                     }
@@ -405,6 +408,10 @@ private struct ServerEditorView: View {
                         installModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+                if cluster.modelPreparation.endpoint == cluster.connectionProfile?.baseURL,
+                    cluster.modelPreparation.requestedModelID == installModelID, let message = cluster.modelPreparation.message {
+                    Text(message).font(.caption).textSelection(.enabled)
+                }
             if isActiveServer, let status = cluster.status {
                 Text(status)
                     .font(.caption)

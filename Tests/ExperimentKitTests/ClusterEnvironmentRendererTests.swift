@@ -245,6 +245,7 @@ struct ClusterEnvironmentRendererTests {
             export HF_HOME="$HOME/.cache/huggingface"
             # Pre-stage models where there is egress, then stay offline.
             export HF_HUB_OFFLINE=1
+            export STEERLAB_COMPUTE_EGRESS=yes
             # Node-local model staging. SINGLE-QUOTED: $SLURM_JOB_ID expands in
             # the loader ON THE COMPUTE NODE, never here.
             export STEERLAB_NODE_STAGE_DIR='/lscratch/$SLURM_JOB_ID'

@@ -899,6 +899,8 @@ def environment_entries(profile: ClusterSiteProfile) -> list[EnvEntry]:
             quoting=BARE,
             comments=["Pre-stage models where there is egress, then stay offline."],
         ))
+    if profile.constraints.compute_egress != "unknown":
+        entries.append(EnvEntry("STEERLAB_COMPUTE_EGRESS", profile.constraints.compute_egress, BARE))
     # Audit c47 (the floor half; the pinned model LIST stays the script's).
     # Declare-or-omit in BOTH default sets: the ~8 GiB the script falls back to
     # is sized from SteerLab's own lens bytes, not from any site, so a v1 render

@@ -12,7 +12,7 @@ You are helping a researcher author a study for SteerLab, an activation-steering
 ## This study is a MULTI-AGENT SCENARIO (studyType "multiAgent")
 
 Run a pinned scenario (panel of agents, turn structure, visibility rules) and record the transcript. Ask the researcher:
-- Which scenario file, and which saved agents does it cast? Use a reviewed panel design and an explicit seat casting (null means baseline), or select and pin the scenario in the app. Task prompts do not apply to panels; remove taskPromptsFile and task files from the generic skeleton below.
+- Which scenario file, and which saved agents does it cast? Use a reviewed panel design and an explicit seat casting (null means baseline), or author semantic JSON, publish it with panel import, inspect its digest and cast it with panel compile --casting and both input/study reviews. Task prompts do not apply to panels; remove taskPromptsFile and task files from the generic skeleton below.
 - Whether to include the stripped-baseline transcript ("multiAgentIncludeBaseline": true).
 - Transcript judging, if any (judges + rubric).
 

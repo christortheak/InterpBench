@@ -223,9 +223,12 @@ import Testing
                 == ["sympathy-agent"])
 
             panel.setSeatAgent(agentID, seat: "seat-proposer")
+            #expect(try agentArtifactPath("sympathy-agent").hasPrefix("runs/"))
             #expect(panel.seatAgentID(for: "seat-proposer") == agentID)
             #expect(panel.seatAgentID(for: "seat-reviewer") == nil)
             panel.saveSeatCasting()
+
+            #expect(panel.status?.hasPrefix("cast ") == true, Comment(rawValue: panel.status ?? "No casting result"))
 
             let saved = try ExperimentStore.load(name: "allocation-study")
             let compiledPath = try #require(saved.multiAgentScenarioPath)

@@ -2102,6 +2102,11 @@ def build_router(state: ServiceState) -> APIRouter:
         return _run_or_submit(state, "vector:backfill-norms", work,
                               path="/api/vectors/backfill-norms", body=body)
 
+    @router.get("/api/models/plan")
+    def model_install_plan(model: str, revision: str | None = None):
+        from .model_preparation import plan
+        return plan(model, revision)
+
     @router.post("/api/models/install")
     def install_model(body: dict):
         """Prefetch a HF repo into this substrate's cache as a DURABLE JOB —
@@ -2118,6 +2123,9 @@ def build_router(state: ServiceState) -> APIRouter:
                 detail=f"{model_id!r} is an MLX-quantized repo — this engine "
                        "loads full-precision HF repos; install the family twin "
                        "instead (e.g. Qwen/Qwen3-4B, google/gemma-3-4b-it)")
+
+        from .model_preparation import admit_install
+        admit_install(model_id, revision, body.get("planSHA256"))
 
         def work(job):
             # Downloads run in an ONLINE child process even when this server

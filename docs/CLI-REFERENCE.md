@@ -199,6 +199,7 @@ steerlab experiment inspect <name>
 steerlab experiment import-prompts <name> --file <path> --manifest-sha256 <digest>
 steerlab experiment inspect-artifact <path>
 steerlab experiment attach-artifact <name> <concept> --artifact <runs/<run>/<name>> --artifact-sha256 <digest> --manifest-sha256 <digest> --sidecar-sha256 <digest> [--eval-run <run-dir>] [--source-concept <concept>]
+steerlab design expand <name> --casting <value> --file-sha256 <value> --mode <value>
 steerlab authoring study <intent>
 steerlab design list
 steerlab design inspect <name>
@@ -208,6 +209,18 @@ steerlab design update <name> --file-sha256 <value> --manifest-sha256 <digest> -
 steerlab design instantiate <name> --casting <value> --file-sha256 <value> [--study-name <value>]
 steerlab design batch <name> --file-sha256 <value> --rows <value>
 steerlab agent inspect <path>
+steerlab agent list
+steerlab experiment attach-agent <study> --artifact <runs/<run>/<name>> --artifact-sha256 <digest> --manifest-sha256 <digest>
+steerlab experiment set-pipeline <study> --file <path> --manifest-sha256 <digest>
+steerlab panel list
+steerlab panel inspect <path>
+steerlab panel check <file>
+steerlab panel import <file> --file-sha256 <value>
+steerlab panel compile <path> --casting <value> --experiment <value> --file-sha256 <value> --manifest-sha256 <digest>
+steerlab model plan <modelID> --runner <url> [--ca-bundle <path>] [--revision <commit>] [--timeout <seconds>] [--token-file <path>]
+steerlab model install <modelID> --plan-sha256 <value> --runner <url> [--ca-bundle <path>] [--revision <commit>] [--timeout <seconds>] [--token-file <path>]
+steerlab model status <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab model cancel <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 ```
 
 All commands accept `--root <directory>` and `--json`; `--out` writes the envelope.
@@ -947,6 +960,7 @@ steerlab-cli experiment pin-rubric <name> <prompts/rubrics/file.md> [--judge-pin
 steerlab-cli experiment declare-condition <name> <condition> [--alpha-units <norm|raw>] [--band-width <k>] [--baseline] [--control <name>] [--slots <spec>]
 steerlab-cli experiment set-sweep-selection <name> [--capability-tolerance <ratio>] [--choice-prompts <path>] [--coherence-backstop <ratio>] [--coherence-floor <ratio>] [--coherence-ratio <ratio>] [--control-apply-to <winner|topK>] [--control-margin <margin>] [--control-top-k <k>] [--objective <metric>]
 steerlab-cli experiment set-sweep-grid <name> [--alphas <a1,a2,…>] [--battery <path>] [--dev-prompts <path>] [--layer-fractions <f1,f2,…>] [--layers <L1,L2,…>] [--max-tokens <n>]
+steerlab-cli experiment set-pipeline <study> --file <value> --manifest-sha256 <sha256>
 steerlab-cli experiment set-instruments <name> <instrument>[,…] [--ordinal-aggregation <expectedValue|argmax>]
 steerlab-cli experiment set-sampling <name> [--max-tokens <n>] [--prompt-mode <chatAssistant|rawCompletion>] [--reasoning-effort <off|on|low|medium|high|xhigh>] [--reasoning-max-tokens <n>] [--samples-per-item <n>] [--seed-policy <manifestSeeds|derivedSHA256>] [--temperature <t>]
 steerlab-cli experiment set-exclusions <name> <rule>[,…] [--endpoint <key>] [--max <x>] [--min <x>]
@@ -976,6 +990,7 @@ steerlab-cli experiment duplicate <name> <new-name>
 | `experiment declare-condition` | Declare one experimental arm, or the explicit baseline. |
 | `experiment set-sweep-selection` | Declare the sweep's selection criterion as manifest data. |
 | `experiment set-sweep-grid` | Declare the sweep's layer × alpha grid, its instrument files, and its per-cell token budget. |
+| `experiment set-pipeline` | Replace or clear a reviewed pipeline declaration without executing it. |
 | `experiment set-instruments` | Declare which outcome instruments the run measures (sampledText, answerTokenLogprob, choiceProbability, repeReaderScore, ordinalScale; "" clears the declaration). |
 | `experiment set-sampling` | Declare the generation protocol: temperature, token budget, prompt mode (chatAssistant, rawCompletion), the stochastic replication policy (samples per item × seed policy: manifestSeeds, derivedSHA256), and the reasoning protocol (effort off, on, low, medium, high, xhigh × the reasoning block's own token cap; --max-tokens is then the answer budget). |
 | `experiment set-exclusions` | Declare the record-exclusion rules analysis applies (failedAttentionCheck, unparseableEndpoint, outOfRange; "" clears the declaration). |
@@ -1815,14 +1830,18 @@ Every verb above also accepts `--help` (print its arguments and run nothing), `-
 
 ```
 steerlab-cli panel list
+steerlab-cli panel inspect <path>
 steerlab-cli panel check <path-or-name>
-steerlab-cli panel compile <path-or-name> --experiment <name> [--file-slug <slug>] [--max-tokens <n>] [--model <id>] [--seat <seat>=<agent-artifact-path>] [--temperature <t>]
+steerlab-cli panel import <file> --file-sha256 <sha256>
+steerlab-cli panel compile <path-or-name> [--casting <file.json>] --experiment <name> [--file-sha256 <sha256>] [--file-slug <slug>] [--manifest-sha256 <sha256>] [--max-tokens <n>] [--model <id>] [--seat <seat>=<agent-artifact-path>] [--temperature <t>]
 ```
 
 | Verb | Purpose |
 |---|---|
 | `panel list` | List this workspace's panel scenarios. |
+| `panel inspect` | Read a semantic panel and its exact external file digest. |
 | `panel check` | Validate one panel scenario and report its advisories. |
+| `panel import` | Publish reviewed semantic panel JSON as a new immutable input. |
 | `panel compile` | Cast a semantic panel's seats and pin the compiled scenario into a draft study. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
@@ -2103,6 +2122,10 @@ workflow that works. The success message names the file to author:
 <!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
 
 ```
+steerlab-cli remote model-plan <modelID> [--revision <commit>] [--site <id>] [--url <server>]
+steerlab-cli remote model-install <modelID> --plan-sha256 <value> [--revision <commit>] [--site <id>] [--url <server>]
+steerlab-cli remote model-status <job-id> [--site <id>] [--url <server>]
+steerlab-cli remote model-cancel <job-id> [--site <id>] [--url <server>]
 steerlab-cli remote capabilities [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote package <experiment> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote upload <bundle> [--site <id>] [--token <token>] [--url <server>]
@@ -2120,6 +2143,10 @@ steerlab-cli remote chat [--hash <sha256>] [--max-tokens <n>] --prompt <text> [-
 
 | Verb | Purpose |
 |---|---|
+| `remote model-plan` | Inspect the selected server cache, installation policy and plan digest without downloading or loading weights. |
+| `remote model-install` | Start one durable installation on the reviewed server and return its job ID. |
+| `remote model-status` | Observe the exact model-install job and terminal outcome. |
+| `remote model-cancel` | Request cancellation of the exact model-install job, preserving partial cache files. |
 | `remote capabilities` | Report the paired server's capability snapshot. |
 | `remote package` | Build a hash-pinned run bundle locally and print its path. |
 | `remote upload` | Upload a run bundle to the server. |
@@ -2310,6 +2337,7 @@ Every verb above also accepts `--help` (print its arguments and run nothing), `-
 <!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
 
 ```
+steerlab-cli design expand <name> --casting <file.json> --file-sha256 <sha256> --mode <value>
 steerlab-cli design list
 steerlab-cli design inspect <name>
 steerlab-cli design describe <name> --description <text> --file-sha256 <sha256>
@@ -2321,6 +2349,7 @@ steerlab-cli design update <name> --file-sha256 <sha256> --manifest-sha256 <sha2
 
 | Verb | Purpose |
 |---|---|
+| `design expand` | Preview distinct panel castings as reviewable batch rows without creating studies. |
 | `design list` | List the workspace's designs and report unreadable entries. |
 | `design inspect` | Read a design and its external file digest for reviewed edits. |
 | `design describe` | Save a design description against the reviewed file version. |

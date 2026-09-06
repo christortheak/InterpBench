@@ -262,6 +262,7 @@ public enum ExperimentCLIParser {
 
     /// Flags every `remote` verb shares — the site-resolution preamble.
     private static let remoteConnection: Set<String> = ["--site", "--url", "--token"]
+    private static let modelPreparationConnection: Set<String> = ["--site", "--url"]
 
     /// The table. Data on purpose: step 11 generates `--help` and the
     /// reference document's flag rows from it, and a switch statement cannot
@@ -300,6 +301,8 @@ public enum ExperimentCLIParser {
 
         .init(namespace: "agent", verb: "list", purpose: "List discoverable local agent artifacts and their file digests."),
         .init(namespace: "agent", verb: "inspect", positional: "<path>", purpose: "Inspect a workspace agent artifact before attachment."),
+        .init(namespace: "design", verb: "expand", positional: "<name>", purpose: "Preview distinct panel castings as reviewable batch rows without creating studies.", valueFlags: ["--file-sha256", "--casting", "--mode"], requiredFlags: ["--file-sha256", "--casting", "--mode"]),
+        .init(namespace: "experiment", verb: "set-pipeline", positional: "<study>", purpose: "Replace or clear a reviewed pipeline declaration without executing it.", valueFlags: ["--file", "--manifest-sha256"], requiredFlags: ["--file", "--manifest-sha256"]),
         .init(namespace: "experiment", verb: "attach-agent", positional: "<name>",
             purpose: "Attach an agent using the reviewed study and artifact file versions.",
             valueFlags: ["--artifact", "--artifact-sha256", "--manifest-sha256"],
@@ -360,6 +363,8 @@ public enum ExperimentCLIParser {
             valueFlags: ["--concept", "--output-name"],
             requiredFlags: ["--concept"]),
 
+        .init(namespace: "panel", verb: "inspect", positional: "<path>", purpose: "Read a semantic panel and its exact external file digest."),
+        .init(namespace: "panel", verb: "import", positional: "<file>", purpose: "Publish reviewed semantic panel JSON as a new immutable input.", valueFlags: ["--file-sha256"], requiredFlags: ["--file-sha256"]),
         // panel — the multi-agent authoring family (open-issues §18). `list`
         // and `check` are the pre-existing read verbs, declared here when the
         // family joined the agent path so `--help` and the reference document
@@ -379,7 +384,7 @@ public enum ExperimentCLIParser {
                 + "scenario into a draft study.",
             valueFlags: [
                 "--experiment", "--seat", "--model", "--temperature",
-                "--max-tokens", "--file-slug",
+                "--max-tokens", "--file-slug", "--casting", "--file-sha256", "--manifest-sha256",
             ],
             requiredFlags: ["--experiment"]),
 
@@ -410,6 +415,10 @@ public enum ExperimentCLIParser {
                 + "runs; \"\" clears the override.",
             valueFlags: ["--revision", "--reason"]),
 
+        .init(namespace: "remote", verb: "model-plan", positional: "<modelID>", purpose: "Inspect the selected server cache, installation policy and plan digest without downloading or loading weights.", valueFlags: modelPreparationConnection.union(["--revision"])),
+        .init(namespace: "remote", verb: "model-install", positional: "<modelID>", purpose: "Start one durable installation on the reviewed server and return its job ID.", valueFlags: modelPreparationConnection.union(["--revision", "--plan-sha256"]), requiredFlags: ["--plan-sha256"]),
+        .init(namespace: "remote", verb: "model-status", positional: "<job-id>", purpose: "Observe the exact model-install job and terminal outcome.", valueFlags: modelPreparationConnection),
+        .init(namespace: "remote", verb: "model-cancel", positional: "<job-id>", purpose: "Request cancellation of the exact model-install job, preserving partial cache files.", valueFlags: modelPreparationConnection),
         // remote
         .init(
             namespace: "remote", verb: "capabilities",

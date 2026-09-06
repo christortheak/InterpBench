@@ -727,7 +727,7 @@ public final class SteerLabWebServer: Sendable {
             if response.succeeded && operation == .apply { service.experiments.refresh() }
             return Response(status: response.status, body: response.body)
 
-        case ("POST", "/api/design/list"), ("POST", "/api/design/inspect"), ("POST", "/api/design/describe"), ("POST", "/api/design/instantiate"), ("POST", "/api/design/batch"), ("POST", "/api/design/save"), ("POST", "/api/design/update"):
+        case ("POST", "/api/design/expand"), ("POST", "/api/design/list"), ("POST", "/api/design/inspect"), ("POST", "/api/design/describe"), ("POST", "/api/design/instantiate"), ("POST", "/api/design/batch"), ("POST", "/api/design/save"), ("POST", "/api/design/update"):
             let root = ExperimentStore.workspaceRoot
             let operation = StudyDesignHTTP.Operation(rawValue: String(path.split(separator: "/").last!))!
             let response = await Task.detached {
@@ -741,6 +741,11 @@ public final class SteerLabWebServer: Sendable {
             let response = await Task.detached {
                 EvidenceCustodyHTTP.perform(body: body, verifying: verifying, workspaceRoot: root)
             }.value
+            return Response(status: response.status, body: response.body)
+
+        case ("POST", "/api/experiment/pipeline"), ("POST", "/api/panel/inspect"), ("POST", "/api/panel/check"), ("POST", "/api/panel/import"), ("POST", "/api/panel/compile"):
+            let response = StudyAuthoringOperationsHTTP.perform(operation: String(path.split(separator: "/").last!), body: body, root: ExperimentStore.workspaceRoot)
+            if response.succeeded { service.experiments.refresh() }
             return Response(status: response.status, body: response.body)
 
         case ("POST", "/api/experiment/protocol"):

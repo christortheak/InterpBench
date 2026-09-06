@@ -696,7 +696,11 @@ public enum ModelVariantStore {
     }
 
     public static func relativePath(for record: ModelVariantRecord) -> String {
-        FineTuneStore.relativePath(for: record.url)
+        // Directory enumeration can return /var while the workspace names
+        // /private/var. Compare canonical roots before producing a public pin.
+        let root = VectorCatalog.projectRoot.resolvingSymlinksInPath().standardizedFileURL.path
+        let path = record.url.resolvingSymlinksInPath().standardizedFileURL.path
+        return path.hasPrefix(root + "/") ? String(path.dropFirst(root.count + 1)) : path
     }
 
     public static func absoluteURL(_ path: String) -> URL {

@@ -125,6 +125,8 @@ def test_every_entry_uses_the_methods_and_templates_the_router_declares():
 #: ``test_the_adapters_endpoint_scan_finds_nothing_undeclared`` below, which
 #: reads the adapter's source rather than trusting this list.
 _ADAPTER_ROUTES = (
+    ("GET", "/api/models/plan"),
+    ("POST", "/api/models/install"),
     ("GET", "/api/info"),
     ("GET", "/api/capabilities"),
     ("POST", "/api/bundles/upload"),
@@ -245,10 +247,11 @@ def test_the_read_side_privileged_prefixes_are_runner_reachable():
             f"`{entry.role.value}`")
 
 
-def test_the_runner_reads_that_carry_no_token_gate_are_the_expected_three():
+def test_the_runner_reads_that_carry_no_token_gate_are_explicitly_censused():
     # THE TENSION, recorded rather than forced. A runner's job roster, one
     # job's record, and its log stream are the runner's entire observable
-    # surface, and none of them is privileged under WP-S: mutating-by-default
+    # job-observation surface; model-cache planning is also read-only.
+    # None of these is privileged under WP-S: mutating-by-default
     # gates writes, and these are reads. In practice a real runner runs in
     # TOKEN MODE, where `auth_mode == "token"` gates every /api route
     # regardless of this classification — so there is no open runner today.
@@ -265,6 +268,7 @@ def test_the_runner_reads_that_carry_no_token_gate_are_the_expected_three():
         "GET /api/jobs",
         "GET /api/jobs/{job_id}",
         "GET /api/jobs/{job_id}/stream",
+        "GET /api/models/plan",
     ]
 
 

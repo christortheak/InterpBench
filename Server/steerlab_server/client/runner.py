@@ -656,6 +656,23 @@ class RunnerClient:
                     "runner returns {\"service\": \"steerlab-server\", …}."),
                 code="notARunner", state="blocked") from exc
 
+    def model_plan(self, model_id: str, *, revision: str | None = None) -> dict:
+        params = {"model": model_id}
+        if revision is not None:
+            params["revision"] = revision
+        return self._json("GET", "/api/models/plan", params=params)
+
+    def install_model(self, model_id: str, *, revision: str | None = None, plan_sha256: str) -> dict:
+        # Exactly one POST. A transport timeout requires job inspection, not retry.
+        if not _SHA256_HEX.fullmatch(plan_sha256):
+            raise RunnerRefusal("Use the exact SHA-256 from model plan.", repair_action="Review model plan on the intended runner.")
+        response = self._json("POST", "/api/models/install", json_body={
+            "modelID": model_id, "revision": revision, "planSHA256": plan_sha256})
+        if not isinstance(response, dict) or not isinstance(response.get("jobId"), str) or not response["jobId"]:
+            raise RunnerError("The installation response has no job ID; submission outcome is uncertain.",
+                              repair_action="Inspect runner jobs on the same endpoint before considering another installation.")
+        return response
+
     # -- capabilities / identity -------------------------------------------
 
     def info(self) -> dict:

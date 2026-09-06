@@ -60,6 +60,11 @@ enum StudyDesignCLI {
                         repairAction: document.repairAction!, payload: payload, changed: document.changed)
                 }
                 return ExperimentCLIResult(message: "Created \(batch.minted.count) drafts from the reviewed design.", changed: document.changed, payload: payload)
+            case "expand":
+                guard args.count >= 2, let expected = flag("--file-sha256"), let casting = flag("--casting"), let mode = flag("--mode") else { throw usage() }
+                let reviewed = try StudyDesignAuthoring.review(name: args[1], workspaceRoot: workspaceRoot, expectedFileSHA256: expected)
+                let expanded = try StudyDesignExpansion.expand(Data(contentsOf: URL(fileURLWithPath: casting)), mode: mode, reviewed: reviewed)
+                return try StudyAuthoringCommands.result(expanded, changed: false, sink: sink)
             case "instantiate":
                 guard args.count >= 2, let expected = flag("--file-sha256"), let castingPath = flag("--casting") else { throw usage() }
                 let reviewed = try StudyDesignAuthoring.review(name: args[1], workspaceRoot: workspaceRoot, expectedFileSHA256: expected)

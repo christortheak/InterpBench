@@ -1,14 +1,14 @@
 # Researcher workflow implementation status
 
-Current branch: `codex/python-design-interviews`, based directly on main
-`82da781`, including the reviewed `99891ff` authoring corrections and the
-terminal-job receipt / immutable sibling reimport gates. Earlier branches
-are retained. Main is unchanged by this implementation branch.
+Current branch: `codex/model-study-equivalence`, based directly on landed main
+`55606d9`, including the independently reviewed design/interview work. Main and
+installed applications remain unchanged by this implementation branch.
 
-This checkpoint adds the seven Python design operations, reviewed agent
-inspection for casting, shared study interviews, and real Python/Mac/app-owner
-journeys. See [the implementation and review handoff](PYTHON-DESIGN-INTERVIEW-WORKFLOW.md).
-The prior [Python assembly checkpoint](PYTHON-STUDY-ASSEMBLY-WORKFLOW.md) has
+This checkpoint completes the model preparation adapters, standalone agent
+attachment, semantic panel authorship, reviewed pipeline edits and casting
+expansion. The [implementation and review handoff](MODEL-STUDY-AUTHORING-EQUIVALENCE.md)
+records the operation mappings, deployment consequences and review scope.
+The prior [design/interview checkpoint](PYTHON-DESIGN-INTERVIEW-WORKFLOW.md) has
 landed; historical sections below retain their original review state.
 
 The [implementation plan](RESEARCHER-WORKFLOW-IMPLEMENTATION-PLAN.md) remains
@@ -18,9 +18,9 @@ maintainer's designated reviewing agent remains the landing gate.
 
 Validation for this checkpoint is recorded in the
 [validation history](RESEARCHER-WORKFLOW-VALIDATION-HISTORY.md).
-Final suites pass: **6,007 Python tests** (9 skipped), **277 SteeringKit tests**
-and **4,578 ExperimentKit tests**. Both AST audits, generated-reference and
-interview checks, bridge-retirement gates and the public scan pass.
+Final suites pass: **6,036 Python tests** (9 skipped), **277 SteeringKit tests**
+and **4,581 ExperimentKit tests**. AST, generated-reference, interview, bridge
+and public-tree gates pass. Independent review and deployment remain separate.
 
 ## What researchers and agents gain
 
@@ -177,8 +177,7 @@ qualification is claimed. See the audit handoff for review boundaries.
    remaining draft writer/adapter migration. All four Swift bridges are
    retired, and normal/release bridge checks pass. Observation, auxiliary jobs
    and delayed actions outside this slice still need end-to-end context coverage.
-2. **Complete public surface equivalence (WP-3/4).** Finish model preparation, remaining scenario/casting/pipeline authoring,
-   and advanced-method gaps; ship practical
+2. **Complete public surface equivalence (WP-3/4).** Complete advanced-method gaps and qualify the newly exposed preparation/authoring operations; ship practical
    method guides, dataset templates and coworker prompts. Every supported
    operation needs explicit inputs, truthful outcomes and actionable repairs.
 3. **Complete cluster coauthoring and the managed remote lifecycle (WP-5/6).**

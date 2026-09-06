@@ -725,22 +725,23 @@ public final class ExperimentPanel {
     /// bound scenario that the run loop, the freeze packager and the Python
     /// engine already understand.
     public func saveSeatCasting() {
-        guard var manifest = management.selected, let state = seatCasting else { return }
+        guard let manifest = management.selected, let state = seatCasting else { return }
         if let refusal = seatCastingRefusal(state) {
             note("Couldn't save the seats — " + refusal, severity: .error)
             return
         }
         do {
-            let compiled = try SeatCasting.compile(
-                state.assignment, semantic: state.semantic,
-                semanticPath: state.semanticPath, into: &manifest)
-            try management.persistReviewedDraft(manifest)
+            let reviewed = try management.reviewedDraft(named: manifest.name)
+            let saved = try StudyPanelAuthoring.saveAssignment(state.assignment, semantic: state.semantic,
+                semanticPath: state.semanticPath, reviewed: reviewed)
+            management.acceptAuthoringResult(saved)
+            let compiledPath = saved.manifest.multiAgentScenarioPath ?? ""
             draft.seatCastingEdits = [:]
             refresh()
             let cast = state.assignment.ordered.filter { $0 != .baseline }.count
             note(
                 "cast \(state.seats.count) seat(s) (\(cast) steered) and pinned "
-                    + "\(compiled.path) — this study now runs that compiled "
+                    + "\(compiledPath) — this study now runs that compiled "
                     + "scenario",
                 severity: .success)
         } catch {

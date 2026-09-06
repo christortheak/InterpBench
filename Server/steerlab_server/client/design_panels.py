@@ -76,14 +76,19 @@ def pin(panel: dict, root: Path, *, reuse: str | None = None, compiled=False) ->
             data = path.read_bytes()
             if panel_documents.normalized(design_files.decode(data)) == panel_documents.normalized(panel):
                 return {"path": relative, "hash": manifest_files.digest_bytes(data)}
+    return publish_pin(panel, root, compiled=compiled)[0]
+
+
+def publish_pin(panel: dict, root: Path, *, compiled=False) -> tuple[dict, bool]:
+    """Return the immutable reference and whether this call published it."""
     data = design_files.encode(panel)
     digest = manifest_files.digest_bytes(data)
     relative = f"prompts/panels/{'compiled/' if compiled else ''}{'casting' if compiled else 'semantic'}-{digest}.json"
     path = design_files.ordinary(root, relative)
     with manifest_files.transaction(str(path), workspace_root=str(root)):
         design_files.ordinary(root, relative)
-        files.publish_new(path, data)
-    return {"path": relative, "hash": digest}
+        changed = files.publish_new(path, data)
+    return {"path": relative, "hash": digest}, changed
 
 
 def review_agent(value: dict, root: Path, model: str | None = None) -> dict:

@@ -1489,6 +1489,9 @@ public struct ExperimentCLIRunner: Sendable {
     func runPanelCommand(_ invocation: ExperimentCLIInvocation) throws
         -> ExperimentCLIResult
     {
+        if ["inspect", "import"].contains(invocation.args.first ?? "") || invocation.args.contains("--casting") {
+            return try StudyAuthoringCommands.run(invocation, root: ExperimentStore.workspaceRoot, sink: sink)
+        }
         let args = invocation.args
         func flag(_ name: String) -> String? {
             guard let index = args.firstIndex(of: name), args.count > index + 1 else {
@@ -1643,7 +1646,11 @@ public struct ExperimentCLIRunner: Sendable {
         // `ExperimentStore.updateDraft`'s; only the repair is verb-specific,
         // because the shared one spells `experiment <the verb you just ran>`
         // and this verb's arguments have a different shape.
-        let existing = try ExperimentStore.load(name: experimentName)
+        let review = try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: experimentName)
+        if let expected = flag("--manifest-sha256"), expected != review.file.sha256 {
+            throw ExperimentError.refusing(.staleManifest, "The study changed after inspection.", repair: "Inspect and review the study again.")
+        }
+        let existing = review.manifest
         guard existing.status == .draft else {
             throw ExperimentError.refusing(
                 .statusImmutable,
@@ -1730,18 +1737,12 @@ public struct ExperimentCLIRunner: Sendable {
         // the CLI does not have; the change is reported in `result` and on the
         // human line, never silent.
         let declaresMultiAgent = existing.studyKind != .multiAgent
-        let manifest = try ExperimentStore.updateDraft(name: experimentName) {
-            manifest in
-            if let declaredModel { manifest.modelID = declaredModel }
-            if let declaredTemperature { manifest.temperature = declaredTemperature }
-            if let declaredMaxTokens { manifest.maxTokens = declaredMaxTokens }
-            manifest.studyKind = .multiAgent
-            manifest.studyType = StudyIntent.multiAgent.rawValue
-            compiled = try SeatCasting.compile(
-                assignment, semantic: record.scenario,
-                semanticPath: semanticPath, into: &manifest,
-                fileSlug: fileSlug?.isEmpty == false ? fileSlug : nil)
-        }
+        let saved = try StudyPanelAuthoring.saveAssignment(assignment, semantic: record.scenario,
+            semanticPath: semanticPath, reviewed: review, expectedPanel: flag("--file-sha256"),
+            modelID: declaredModel, temperature: declaredTemperature, maxTokens: declaredMaxTokens,
+            fileSlug: fileSlug?.isEmpty == false ? fileSlug : nil)
+        let manifest = saved.manifest
+        compiled = (manifest.multiAgentScenarioPath!, manifest.multiAgentScenarioHash!)
         guard let compiled else {
             throw ExperimentError(reason: "panel compile wrote nothing")
         }
@@ -2192,6 +2193,7 @@ public struct ExperimentCLIRunner: Sendable {
         var siteID: String?
         let serverIdentity: String
         let remoteWorkspaceRoot = ExperimentStore.workspaceRoot
+        let preparesModel = ["model-plan", "model-install", "model-status", "model-cancel"].contains(verb)
         switch try ClusterRemoteSiteResolver.choose(site: flag("--site"), url: flag("--url")) {
         case .site(let reference):
             let resolved = try await ClusterRemoteSiteResolver.resolve(reference: reference)
@@ -2212,9 +2214,16 @@ public struct ExperimentCLIRunner: Sendable {
             }
             url = parsed
             serverIdentity = ClusterConnectionStore.normalizedEndpointKey(parsed.absoluteString)
-            token = flag("--token") ?? ProcessInfo.processInfo.environment["STEERLAB_AUTH_TOKEN"]
+            if preparesModel {
+                token = ClusterTokenStore.load(key: ClusterTokenStore.key(forURLString: parsed.absoluteString))
+            } else {
+                token = flag("--token") ?? ProcessInfo.processInfo.environment["STEERLAB_AUTH_TOKEN"]
+            }
         }
         let client = ClusterClient(profile: ClusterConnectionProfile(baseURL: url), token: token)
+        if preparesModel {
+            return try await RemoteModelPreparationCLI.run(args, client: client, endpoint: url, sink: sink)
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
@@ -2686,6 +2695,8 @@ public struct ExperimentCLIRunner: Sendable {
             return try StudyArtifactCLI.run(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
         case "import-prompts":
             return try StudyInputCLI.importPrompts(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
+        case "set-pipeline":
+            return try StudyAuthoringCommands.run(invocation, root: ExperimentStore.workspaceRoot, sink: sink)
         case "attach-agent":
             return try StudyAgentCLI.attach(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
         case "list":

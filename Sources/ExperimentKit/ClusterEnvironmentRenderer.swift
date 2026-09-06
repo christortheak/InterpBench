@@ -443,6 +443,9 @@ public enum ClusterEnvironmentRenderer {
                 key: "HF_HUB_OFFLINE", value: resolvedHubOffline(profile) ? "1" : "0",
                 quoting: .bare,
                 comments: ["Pre-stage models where there is egress, then stay offline."]))
+        if profile.constraints.computeEgress != .unknown {
+            entries.append(EnvEntry(key: "STEERLAB_COMPUTE_EGRESS", value: profile.constraints.computeEgress.rawValue, quoting: .bare))
+        }
         // Audit c47 (the floor half; the pinned model LIST stays the script's).
         // Declare-or-omit in BOTH default sets: the ~8 GiB the script falls back
         // to is sized from SteerLab's own lens bytes, not from any site, so a v1

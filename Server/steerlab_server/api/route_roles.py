@@ -164,6 +164,8 @@ CENSUS: tuple[RouteRole, ...] = (
        "enforces. Scheduler policy for this deployment."),
 
     # ── The model cache and interactive model residency ────────────────────
+    _r("GET", "/api/models/plan", R,
+       "Reads this deployment model-cache target and install policy without contacting the hub or loading weights."),
     _r("POST", "/api/models/install", R,
        "Prefetches a HF repo into THIS substrate's cache as a durable job — a "
        "model-cache operation, and the way a runner acquires weights before a "

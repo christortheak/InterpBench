@@ -1003,6 +1003,43 @@ import Testing
         #expect(vector.residualNormPerLayer == [10.0, 20.0, 40.0])
     }
 
+    @Test @MainActor func reviewedModelPreparationUsesTheSamePlanAndRejectsStalePresentation() async throws {
+        let plan: [String: Any] = ["modelID":"test/model", "target":"pythonEngine", "cacheRoot":"/cache/models",
+            "computeEgress":"no", "installationAllowed":false, "planSHA256":String(repeating:"a",count:64),
+            "cacheFileSetPresent":false, "memoryFit":"notChecked", "credentials":"notChecked", "note":"No model load."]
+        let bytes = try JSONSerialization.data(withJSONObject: plan)
+        let profile = ClusterConnectionProfile(baseURL: URL(string:"http://server.test")!)
+        let client = ClusterClient(profile: profile, session: Self.session { request in
+            if request.url?.path == "/api/models/plan" {
+                #expect(request.httpMethod == "GET")
+                #expect(URLComponents(url: request.url!, resolvingAgainstBaseURL:false)?.queryItems?.first?.value == "test/model")
+                return (bytes, 200)
+            }
+            #expect(request.url?.path == "/api/models/install")
+            let data = try #require(Self.bodyData(from: request))
+            let body = try #require(JSONSerialization.jsonObject(with:data) as? [String:Any])
+            #expect(body["planSHA256"] as? String == String(repeating:"a",count:64))
+            return (Data(#"{"detail":"site policy refuses downloads"}"#.utf8),409)
+        })
+        let review = try await client.modelPreparationPlan("test/model")
+        #expect(!review.installationAllowed && !review.cacheFileSetPresent)
+        do {
+            _ = try await client.installModel("test/model", planSHA256:review.planSHA256)
+            Issue.record("Installation must surface the service refusal")
+        } catch ClusterClient.ClientError.badResponse(let code, _) { #expect(code == 409) }
+        let controller = RemoteModelPreparationController()
+        await controller.preview(modelID:"test/model", revision:nil, profile:profile, client:client, isCurrent:{false})
+        #expect(controller.plan == nil)
+        await controller.preview(modelID:"test/model", revision:nil, profile:profile, client:client, isCurrent:{true})
+        #expect(controller.plan == review)
+        #expect(controller.requestedModelID == "test/model")
+        let failing = ClusterClient(profile: profile, session: Self.session { _ in (Data(), 503) })
+        await controller.preview(modelID:"test/other", revision:nil, profile:profile, client:failing, isCurrent:{true})
+        #expect(controller.plan == nil)
+        #expect(controller.requestedModelID == "test/other")
+        #expect(controller.message?.hasPrefix("Could not inspect") == true)
+    }
+
     @Test func installModelPostsAndReturnsTheJobID() async throws {
         let client = ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),

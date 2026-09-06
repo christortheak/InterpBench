@@ -12,6 +12,17 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Model preparation now has Python client and Mac remote plan/install/status/cancel
+  adapters over the durable job service, with reviewed target digests, cache-file
+  inspection and deployment egress enforcement. The app exposes remote planning;
+  site environment renderers carry the known egress declaration to the engine.
+- Python agent discovery/attachment, semantic panel publication/casting and reviewed
+  pipeline editing now interchange with Mac authoring owners. Casting expansion
+  previews distinct batch rows on both clients. Changed app panel saves create
+  immutable input versions, preserving prior study pins. Updated app/CLI and engine
+  builds, plus rematerialized approved site configuration, enable the new workflow;
+  no historical studies or runs are migrated.
+
 - Python reusable design list/inspect/describe/save/update/instantiate/batch and
   reviewed agent inspection now support conceptual study authoring across clients.
   Shared study interviews teach the same pack and casting workflow in Python,

@@ -759,7 +759,9 @@ import Testing
             // transform outside the engine. `list` and `check` are the
             // pre-existing read verbs, declared when the family joined the
             // agent path; their human output is unchanged.
-            "panel list", "panel check", "panel compile",
+            "panel list", "panel check", "panel compile", "panel inspect", "panel import",
+            "experiment set-pipeline", "design expand",
+            "remote model-plan", "remote model-install", "remote model-status", "remote model-cancel",
             // The chat-template capability record (2026-09-05): shown, probed
             // from the pinned template through this Mac's tokenizer, or
             // overridden with a reason — the one place the family rules the
@@ -775,6 +777,9 @@ import Testing
             "experiment import-prompts", "experiment inspect-artifact", "experiment attach-artifact",
         ]
         #expect(declared == expected)
+        for spec in ExperimentCLIParser.specs where spec.namespace == "remote" && spec.verb.hasPrefix("model-") {
+            #expect(!spec.valueFlags.contains("--token"))
+        }
         // The audit's sixteen lifecycle verbs, the three headless authoring
         // verbs step 5½ added (P0-3), step 7's two (punch list #1 P3 +
         // P13: the sweep's selection criterion and the study's outcome
@@ -801,7 +806,7 @@ import Testing
         // the design lived in a command line rather than in the artifact
         // chain the evidence travels in.
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 34,
+            declared.filter { $0.hasPrefix("experiment ") }.count == 35,
             "the experiment lifecycle includes reviewed agent/vector attachment and prompt import")
     }
 

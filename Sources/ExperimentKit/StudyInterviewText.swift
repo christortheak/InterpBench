@@ -95,7 +95,7 @@ enum StudyInterviewText {
     ## This study is an AGENT COMPARISON (studyType "agentComparison")
 
     Run saved agents against the unmodified baseline over the same task prompts. No concept derivation happens here. Ask the researcher:
-    - Which agents? Inspect existing library agents with agent inspect <path> --json; cast them through design instantiate using their reviewed artifact paths and digests, or attach them through the Mac agent attach operation or app; agents that do not exist yet can be declared as forward references to a sweep — but that makes it a concept study's machinery; keep this pack focused on prompts + judging.
+    - Which agents? Inspect existing library agents with agent inspect <path> --json; cast them through design instantiate using their reviewed artifact paths and digests, or attach them through experiment attach-agent with both reviewed digests, or the app; agents that do not exist yet can be declared as forward references to a sweep — but that makes it a concept study's machinery; keep this pack focused on prompts + judging.
     - Task prompts: the prompts every arm answers — author them together and ship them in "files" (one {"text": ...} per line; add "options" + "target" per item for the answer-token instrument).
     - A capability battery (did general ability survive?), judges (≥2 for evidence grade) and a rubric criterion.
     Leave "variantConditions": [] until the artifact files are available for reviewed attachment or design casting.
@@ -171,7 +171,7 @@ enum StudyInterviewText {
     ## This study is a MULTI-AGENT SCENARIO (studyType "multiAgent")
 
     Run a pinned scenario (panel of agents, turn structure, visibility rules) and record the transcript. Ask the researcher:
-    - Which scenario file, and which saved agents does it cast? Use a reviewed panel design and an explicit seat casting (null means baseline), or select and pin the scenario in the app. Task prompts do not apply to panels; remove taskPromptsFile and task files from the generic skeleton below.
+    - Which scenario file, and which saved agents does it cast? Use a reviewed panel design and an explicit seat casting (null means baseline), or author semantic JSON, publish it with panel import, inspect its digest and cast it with panel compile --casting and both input/study reviews. Task prompts do not apply to panels; remove taskPromptsFile and task files from the generic skeleton below.
     - Whether to include the stripped-baseline transcript ("multiAgentIncludeBaseline": true).
     - Transcript judging, if any (judges + rubric).
 

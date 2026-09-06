@@ -114,7 +114,7 @@ import os
 import sys
 
 from . import cli_envelope as envelope
-from .client import study_assembly, design_commands
+from .client import study_assembly, design_commands, authoring_commands, model_commands
 from .cli_envelope import (HELP_FLAG, JSON_FLAG, OUT_FLAG, CLIResult,
                            UsageError, VerbSpec)
 
@@ -253,6 +253,8 @@ def _authoring_prompt_kinds():
 CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     *study_assembly.VERB_SPECS,
     *design_commands.VERB_SPECS,
+    *authoring_commands.VERB_SPECS,
+    *model_commands.specs(_RUNNER_FLAGS),
     VerbSpec("experiment", "create", positional="<name>",
              purpose="Create a draft study in this workspace.",
              value_flags=frozenset({"--model", "--revision", "--description"}),
@@ -526,7 +528,7 @@ SOLO_FAMILIES: dict = {"run": "run"}
 #: ``runner`` is excluded because addressing a runner is its entire job; it is
 #: a SEPARATE family precisely so the exclusion is a line in a table rather
 #: than a judgement call about a flag name.
-AUTHORING_FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "pack", "design", "agent",
+AUTHORING_FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "pack", "design", "agent", "panel",
                                        "model")
 
 #: The generation-prompt emitter. NOT in :data:`AUTHORING_FAMILIES` despite
@@ -1170,6 +1172,8 @@ def _parse_slots(spec_text: str) -> list:
 def _experiment(invocation: Invocation) -> CLIResult:
     """The study-authoring verbs. Every call is the one the matching route in
     ``api/routes.py`` makes; every payload key twins the Mac verb's."""
+    if invocation.spec.verb in authoring_commands.EXPERIMENT_VERBS:
+        return authoring_commands.run(invocation)
     if invocation.spec.verb in study_assembly.EXPERIMENT_VERBS:
         return study_assembly.run(invocation)
     from .experiment import experiment_store as store
@@ -1974,6 +1978,9 @@ def _model(invocation: Invocation) -> CLIResult:
     """The chat-template capability record — show it, or override one
     detected field with a reason. No probing here: this client holds no
     tokenizer, and a record it cannot derive it must not invent."""
+    if invocation.spec.verb in ("plan", "install", "status", "cancel"):
+        model_commands.validate(invocation)
+        return _runner(invocation)
     from .experiment import model_capabilities as mc
 
     spec = invocation.spec
@@ -2964,6 +2971,8 @@ def _runner(invocation: Invocation) -> CLIResult:
     #: What EVERY runner payload starts from. Presence, never the value.
     common = {"runner": client.base_url, "tokenPresent": client.has_token}
     try:
+        if spec.family == "model":
+            return model_commands.run(client, invocation, common)
         return _runner_verb(client, invocation, common)
     except runner_api.RunnerError as exc:
         # Translated here rather than in `_envelope_for_exception` so the
@@ -4085,7 +4094,7 @@ def _iso(value) -> str | None:
 
 
 HANDLERS = {"experiment": _experiment, "concept": _concept, "bundle": _bundle,
-            "pack": study_assembly.run, "design": design_commands.run, "agent": design_commands.run,
+            "pack": study_assembly.run, "design": design_commands.run, "agent": lambda i: authoring_commands.run(i) if i.spec.verb == "list" else design_commands.run(i), "panel": authoring_commands.run,
             "model": _model,
             "authoring": _authoring_prompt, "runner": _runner, "run": _run}
 

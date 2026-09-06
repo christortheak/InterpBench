@@ -2,7 +2,7 @@ import Foundation
 
 /// Explicit workbench adapters over design authorship, independent of selection.
 enum StudyDesignHTTP {
-    enum Operation: String, Sendable { case list, inspect, describe, instantiate, batch, save, update }
+    enum Operation: String, Sendable { case list, inspect, describe, instantiate, batch, save, update, expand }
     private struct Request: Decodable {
         let workspaceRoot: String
         let name: String?
@@ -13,6 +13,7 @@ enum StudyDesignHTTP {
         let sourceStudy: String?
         let manifestFileSHA256: String?
         let rows: JSONValue?
+        let mode: String?
     }
 
     static func perform(_ operation: Operation, body: Data, workspaceRoot: URL) -> StudyAuthoringHTTP.Response {
@@ -20,6 +21,7 @@ enum StudyDesignHTTP {
         if operation != .list { allowed.insert("name") }
         if operation == .describe { allowed.formUnion(["description", "designFileSHA256"]) }
         if operation == .instantiate { allowed.formUnion(["casting", "studyName", "designFileSHA256"]) }
+        if operation == .expand { allowed.formUnion(["casting", "mode", "designFileSHA256"]) }
         if operation == .batch { allowed.formUnion(["rows", "designFileSHA256"]) }
         if operation == .save { allowed.formUnion(["sourceStudy", "manifestFileSHA256", "description"]) }
         if operation == .update { allowed.formUnion(["sourceStudy", "manifestFileSHA256", "designFileSHA256"]) }
@@ -31,6 +33,7 @@ enum StudyDesignHTTP {
             (operation != .save && operation != .update) || request.sourceStudy != nil,
             operation != .describe || request.description != nil,
             operation != .batch || request.rows != nil,
+            operation != .expand || (request.casting != nil && request.mode != nil),
             operation != .instantiate || request.casting != nil else {
             return .failure("invalidDesignRequest", "Name the workspace and the design operation's fields explicitly.",
                 repair: "Use only: " + allowed.sorted().joined(separator: ", "))
@@ -39,7 +42,7 @@ enum StudyDesignHTTP {
             return .failure("source_precondition_required", "Saving a design requires the reviewed source study file digest.",
                 repair: "Inspect the source study and supply its manifestFileSHA256 after reviewing it.", status: "428 Precondition Required")
         }
-        if (operation == .describe || operation == .instantiate || operation == .batch || operation == .update), request.designFileSHA256 == nil {
+        if (operation == .describe || operation == .instantiate || operation == .batch || operation == .update || operation == .expand), request.designFileSHA256 == nil {
             return .failure("design_precondition_required", "This design operation requires the reviewed design file digest.",
                 repair: "Inspect the named design and supply its designFileSHA256 after reviewing it.", status: "428 Precondition Required")
         }
@@ -79,6 +82,9 @@ enum StudyDesignHTTP {
                 let batch = try StudyDesignBatchInput(data).mint(reviewed: reviewed)
                 let document = StudyDesignBatchDocument(batch, reviewed: reviewed)
                 return .json(document, status: document.ok ? "200 OK" : "207 Multi-Status")
+            }
+            if operation == .expand {
+                return .json(try StudyDesignExpansion.expand(JSONEncoder().encode(request.casting!), mode: request.mode!, reviewed: reviewed))
             }
             if operation == .instantiate {
                 let casting = try StudyDesignCastingInput.resolve(JSONEncoder().encode(request.casting!), reviewed: reviewed)

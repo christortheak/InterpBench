@@ -3148,14 +3148,15 @@ public struct ClusterClient: Sendable {
     /// Prefetch a HF repo into the server's cache as a durable job; returns
     /// the job id. Invalid/MLX ids surface as a 400 whose detail carries the
     /// server's family-twin hint.
-    public func installModel(_ modelID: String, revision: String? = nil) async throws -> String {
+    public func installModel(_ modelID: String, revision: String? = nil, planSHA256: String? = nil) async throws -> String {
         struct Body: Encodable {
             var modelID: String
             var revision: String?
+            var planSHA256: String?
         }
         struct Response: Decodable { var jobId: String }
         let response: Response = try await post(
-            "/api/models/install", body: Body(modelID: modelID, revision: revision))
+            "/api/models/install", body: Body(modelID: modelID, revision: revision, planSHA256: planSHA256))
         return response.jobId
     }
 
@@ -4232,8 +4233,8 @@ public struct ClusterClient: Sendable {
 
     // Internal (not private): same-module extensions in other files
     // (SweepJudgment) build on these request helpers.
-    func get<T: Decodable>(_ path: String) async throws -> T {
-        let request = try makeRequest(path: path, method: "GET")
+    func get<T: Decodable>(_ path: String, queryItems: [URLQueryItem]? = nil) async throws -> T {
+        let request = try makeRequest(path: path, method: "GET", queryItems: queryItems)
         let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
         return try decoder.decode(T.self, from: data)

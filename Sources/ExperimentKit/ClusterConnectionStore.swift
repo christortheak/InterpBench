@@ -716,6 +716,7 @@ public final class ClusterConnectionStore {
     /// composition — the adapter-catalog → composed-agent mapping — can be
     /// exercised end to end rather than asserted a layer at a time.
     public var clientSessionOverride: URLSession?
+    public let modelPreparation = RemoteModelPreparationController()
 
     /// Connection metadata for context checks; does not read the bearer token.
     public var connectionProfile: ClusterConnectionProfile? {
@@ -1643,8 +1644,14 @@ public final class ClusterConnectionStore {
     /// Ask the active server to prefetch a HF repo into its cache as a
     /// durable job. The server's 400 detail (e.g. the MLX family-twin hint)
     /// is surfaced verbatim in `status`.
+    public func previewModelPreparation(_ modelID: String, revision: String? = nil) async {
+        guard let profile = connectionProfile, let client else { return }
+        await modelPreparation.preview(modelID: modelID.trimmingCharacters(in: .whitespacesAndNewlines), revision: revision,
+            profile: profile, client: client, isCurrent: { [weak self] in self?.connectionProfile == profile })
+    }
+
     public func installModel(_ modelID: String, revision: String? = nil) async {
-        guard let client else {
+        guard let profile = connectionProfile, let client else {
             status = "invalid server URL"
             return
         }
@@ -1666,12 +1673,17 @@ public final class ClusterConnectionStore {
         }
         do {
             status = "requesting install of \(trimmed)..."
-            let jobID = try await client.installModel(trimmed, revision: revision)
+            let plan = try await client.modelPreparationPlan(trimmed, revision: revision)
+            guard connectionProfile == profile, !Task.isCancelled else { return }
+            let jobID = try await client.installModel(trimmed, revision: revision, planSHA256: plan.planSHA256)
+            guard connectionProfile == profile else { return }
             status = "install queued as job \(jobID) — open Compute to stream progress"
             await refreshRemoteState()
         } catch ClusterClient.ClientError.badResponse(let code, let body) {
+            guard connectionProfile == profile else { return }
             status = "install rejected (\(code)): \(Self.errorDetail(from: body))"
         } catch {
+            guard connectionProfile == profile else { return }
             status = "install failed: \(error.localizedDescription)"
         }
     }

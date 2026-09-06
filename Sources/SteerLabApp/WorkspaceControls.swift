@@ -234,11 +234,18 @@ struct InstallModelButton: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(minWidth: 280)
                 HStack {
+                    Button("Plan") {
+                        Task { await cluster.previewModelPreparation(modelID) }
+                    }
                     Button("Install") {
                         Task { await cluster.installModel(modelID) }
                     }
                     .disabled(modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     Spacer()
+                }
+                if cluster.modelPreparation.endpoint == cluster.connectionProfile?.baseURL,
+                    cluster.modelPreparation.requestedModelID == modelID, let message = cluster.modelPreparation.message {
+                    Text(message).font(.caption).textSelection(.enabled)
                 }
                 if let status = cluster.status {
                     Text(status)

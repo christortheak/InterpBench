@@ -638,6 +638,42 @@ own installer. A cancellation names the observed request ID; it cannot follow a
 newer install. Server installations remain separate and subject to server policy;
 never use the Mac cache result as evidence of server readiness.
 
+**Remote model preparation.** Python offers `model plan`, `model install`,
+`model status`, and `model cancel` with an explicit `--runner <url>`; a local
+Python runner uses the same workflow. The Mac offers `remote model-plan`,
+`remote model-install`, `remote model-status`, and `remote model-cancel` with
+`--site <id>` or the explicit endpoint. Review the plan's model, revision,
+cache location and policy, then supply its `--plan-sha256` to installation.
+The returned job ID and original endpoint identify later observation/cancellation.
+Use runner/remote logs to follow progress; never retry an uncertain submission
+without inspecting jobs. A known no-egress policy refuses downloads at the
+service boundary; stage through the permitted transfer host instead. Unknown
+size, credentials or memory fit remain unknown. Cached files are not numerical
+qualification. The app's Plan and Install controls use these same services.
+
+**Complete local authoring.** Both clients offer `agent list`, `agent inspect`,
+and `experiment attach-agent` with the reviewed artifact and manifest digests.
+`panel inspect` reads an input and its `fileSHA256`; `panel import <file>
+--file-sha256 <digest>` publishes a new semantic panel version, leaving earlier
+pins intact. Python `panel check <file>` checks proposed semantic JSON. For
+reviewed casting on either client, use `panel compile <workspace-relative-path>
+--experiment <study> --casting <file> --file-sha256 <panel-digest>
+--manifest-sha256 <study-digest>`. The casting names every seat, with null for
+baseline and artifactPath/artifactFileSHA256 for each agent. Change the study's
+model/sampling fields through its authoring operations before casting.
+`experiment set-pipeline <study> --file <file> --manifest-sha256 <digest>` writes
+only the reviewed pipeline declaration: an object, or JSON null to clear it.
+It does not run the chain. Mac HTTP equivalents are the explicit pipeline and
+panel authoring operations; a cluster runner does not become an authoring client.
+
+`design expand <design> --casting <file> --mode permutations|composition
+--file-sha256 <digest>` previews batch rows without minting or submitting.
+Permutations accepts a seats casting and emits distinct re-seatings; composition
+accepts agents:[one reviewed reference] and emits baseline, each solo-treated
+seat, then all-treated without a one-seat duplicate. Expansion is bounded to
+64 seats and 4,096 rows. Save `result.batch` as the rows file, review it, and use
+`design batch` explicitly. Retain successful batch rows and retry only failures.
+
 **`data custody <run-id>`** discovers receipts for an imported run, including
 receipts for a pipeline archive that carried that run. Discovery lists recorded
 imports; it does not verify current evidence bytes. Use `data verify-custody`

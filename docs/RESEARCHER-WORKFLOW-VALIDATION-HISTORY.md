@@ -1043,3 +1043,61 @@ live model/GPU, scheduler or remote-cleanup qualification. No app installation,
 engine deployment, study execution or merge to main was performed. Existing
 frozen manifests and runs were not migrated; new draft lineage is explicitly
 versioned, while stale-write preconditions remain outside manifest bytes.
+
+## Model preparation and study authoring equivalence — 2026-09-06
+
+Branch `codex/model-study-equivalence`, based on landed main `55606d9`.
+The [implementation handoff](MODEL-STUDY-AUTHORING-EQUIVALENCE.md) maps the
+new model preparation, agent, panel, pipeline and casting-expansion operations.
+The preceding maintainer audit's N1 is covered by a real Python-cast agent
+condition surviving Mac decode/re-encode, with source artifact bytes unchanged.
+N2 remains the app/CLI rebuild requirement at deployment.
+
+Final validation after all production and test changes:
+
+- Full Python: **6,036 passed, 9 skipped, 8 warnings**, 160.51 seconds;
+  `/private/tmp/interpbench-model-study-python-release.log`.
+- Full serial Xcode beta: **277 SteeringKit + 4,581 ExperimentKit passed**,
+  `TEST SUCCEEDED`; `/private/tmp/interpbench-model-study-xcode-release.log`.
+  Real Python/Mac owner journeys ran using the configured interpreter, with
+  no venv or symlink in the worktree.
+- Both existing AST audits and their negative controls pass. Scientific
+  execution bodies are not moved; the authoring, path-normalization and policy
+  changes in this slice are intentional semantic changes.
+- The interview copies, client reference, all 17 compiled Swift reference
+  regions, shipped contract tests, normal/release bridge gates, public scan
+  and whitespace checks pass. New files were staged before the public scan.
+  The actual diff was read locally; independent maintainer review remains the
+  landing gate.
+
+Earlier checks exposed stale verb/route censuses, a URL query incorrectly
+passed as path text, the new environment line missing from golden fixtures,
+and the app's agent catalog returning an absolute path across operating-system
+root aliases. These were corrected. Panel-edit tests now assert a new immutable
+version and unchanged prior input. Repeat imports report no change. The final
+error-path review converted malformed hub IDs into typed refusals before cache
+inspection; exact-job status/cancellation and partial-cache tests also pass.
+
+The full commands run from the worktree root, with the configured absolute
+Python interpreter supplied in `TEST_RUNNER_STEERLAB_TEST_PYTHON`, are:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
+TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.920.1 \
+PYTHONPATH=Server HF_HUB_OFFLINE=1 \
+"$TEST_RUNNER_STEERLAB_TEST_PYTHON" -m pytest Server/tests -q
+
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
+TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.920.1 \
+TEST_RUNNER_STEERLAB_TEST_PYTHON="$TEST_RUNNER_STEERLAB_TEST_PYTHON" \
+xcodebuild test -skipMacroValidation -scheme SteerLab-Package \
+-destination 'platform=macOS' -parallel-testing-enabled NO \
+-derivedDataPath /private/tmp/interpbench-workflow-xcode CLANG_COVERAGE_MAPPING=NO
+```
+
+No app installation, engine deployment, real model download, live scientific
+run, cluster operation or merge to main was performed. Cache observations do
+not establish memory fit or numerical qualification. Enabling the new server
+egress gate requires rematerializing the approved site profile at deployment;
+no live configuration was changed here. Reviewed file preconditions remain
+outside scientific manifest bytes, and existing frozen studies/runs are intact.

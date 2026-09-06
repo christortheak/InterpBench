@@ -269,8 +269,12 @@ import Testing
             panel.agents[0].variantArtifactPath = "runs/model-variants/x.json"
             panel.saveScenario()
 
+            let saved = try #require(panel.selectedScenario)
+            #expect(saved.url != seed.url)
+            #expect(try JSONDecoder().decode(MultiAgentScenario.self,
+                from: Data(contentsOf: seed.url)) == semanticPanel())
             let written = try JSONDecoder().decode(
-                MultiAgentScenario.self, from: try Data(contentsOf: seed.url))
+                MultiAgentScenario.self, from: try Data(contentsOf: saved.url))
             #expect(!PanelAuthoring.carriesBindings(written))
             #expect(written.sharedMaterials == "Two teams share 200 credits.")
             #expect(panel.status?.contains("saved scenario") == true)
