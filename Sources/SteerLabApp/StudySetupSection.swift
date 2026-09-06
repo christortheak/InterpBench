@@ -11,6 +11,12 @@ struct StudySetupSection: View {
     var body: some View {
         @Bindable var draft = panel.draft
         Section("Study Setup") {
+            if panel.management.selectedDraftNeedsReload {
+                Text("The saved study changed since these fields were loaded. Reload and review it before saving.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                Button("Discard edits and reload") { panel.reloadSelectedDraft() }
+            }
             TextField(
                 "question or purpose",
                 text: $draft.protocolDescription,
@@ -276,6 +282,10 @@ struct StudySetupSection: View {
             }
 
             if manifest.status == .draft {
+                if !panel.management.selectedDraftNeedsReload {
+                    Button("Discard edits and reload") { panel.reloadSelectedDraft() }
+                        .help("replace unsaved setup fields with the saved study; no study files are changed")
+                }
                 Button("Save Study Setup") { panel.saveProtocol() }
                     .help(
                         "save the study question, baseline model, "

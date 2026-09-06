@@ -1803,6 +1803,14 @@ public final class ExperimentPanel {
         if let modelID = selected?.modelID { draft.studyBaseModelID = modelID }
     }
 
+    /// Explicitly discard the editor's unsaved fields and start a new review.
+    /// A normal inventory refresh deliberately does neither.
+    public func reloadSelectedDraft() {
+        refresh()
+        syncDraftFieldsFromSelection(force: true)
+        note("reloaded the saved study setup", severity: .info)
+    }
+
     public func saveProtocol() {
         guard let manifest = selected, manifest.status == .draft else { return }
         do {
@@ -1820,7 +1828,8 @@ public final class ExperimentPanel {
             switch result {
             case .requiresScenario:
                 note("select a scenario first", severity: .info)
-            case .saved(_, let didCompileSeats, let advisories):
+            case .saved(let saved, let didCompileSeats, let advisories):
+                management.acceptAuthoringResult(saved)
                 if didCompileSeats { draft.seatCastingEdits = [:] }
                 refresh()
                 for advisory in advisories { note(advisory, severity: .warning) }
@@ -3079,6 +3088,7 @@ public final class ExperimentPanel {
             variantID: availableVariantsForStudy.first?.id,
             confirmAgentID: confirmableAgents.first?.id, scenarioID: scenarioID), force: force)
         guard changed else { return }
+        management.beginAuthoringReview(named: manifest?.name)
         if manifest == nil { results.clearSelectionAndRuns() }
         if manifest?.studyKind == .modelOutput { loadTaskPrompts() }
     }

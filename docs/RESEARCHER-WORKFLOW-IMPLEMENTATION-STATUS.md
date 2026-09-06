@@ -252,3 +252,26 @@ snapshots: a refresh must not silently replace the authoring precondition while
 retaining old form fields. The new HTTP route deliberately does not perform such
 a refresh, but other native refresh paths still need their own regression and
 migration. Prompt, condition, design and remaining HTTP operations also remain.
+
+## Native editor review survives inventory refresh
+
+The next regression reproduced the native refresh problem noted above: refresh
+kept unsaved fields but replaced their authoring digest, allowing them to overwrite
+a concurrent edit. `StudyManagementController` now retains a separate editor
+review. Inventory refresh updates the catalog only. Selection/explicit reload
+starts a review, and a successful operation from that editor advances it. The
+setup view flags differing versions and offers **Discard edits and reload**.
+
+The lost-update regression fails before the fix and passes after it. A second
+test proves that explicit reload adopts the saved fields and that consecutive
+successful saves advance the review normally. The focused run passes nine tests
+across two suites; full Xcode beta passes 277 SteeringKit and 4,424 ExperimentKit
+tests (`TEST SUCCEEDED`). Python implementation is unchanged; its latest complete
+result remains 5,896 passed, 9 skipped and 8 warnings from the preceding HTTP
+checkpoint. Final landing still requires both suites on the proposed landing
+state. This is a semantic concurrency fix, not a mechanical move.
+
+Prompt-file publication still needs its own early admission and file precondition:
+refusing a manifest write after a prompt file was already replaced is too late.
+Remaining asynchronous authoring callbacks must also retain the request's review
+at operation start rather than look up a newer review when their work completes.

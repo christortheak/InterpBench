@@ -20,6 +20,7 @@ public final class StudyManagementController {
     public var selected: ExperimentManifest? {
         experiments.first { $0.name == selectedName }
     }
+    @ObservationIgnored private var authoringReview: DraftAuthoringSnapshot?
     @ObservationIgnored private var reviewedDrafts: [String: DraftAuthoringSnapshot] = [:]
     @ObservationIgnored var presentation = StudyManagementPresentation()
 
@@ -45,16 +46,41 @@ public final class StudyManagementController {
     /// or a workspace switch during an operation.
     func persistReviewedDraft(_ manifest: ExperimentManifest) throws {
         let reviewed = try reviewedDraft(named: manifest.name)
-        reviewedDrafts[manifest.name] = try DraftAuthoringTransaction.replace(manifest, reviewed: reviewed)
+        acceptAuthoringResult(try DraftAuthoringTransaction.replace(manifest, reviewed: reviewed))
+    }
+
+    /// Advancing the editor's review is explicit: selection/reload starts it,
+    /// and a successful command from that editor advances it. Inventory refresh
+    /// alone may update the displayed catalog but cannot authorize old fields.
+    func beginAuthoringReview(named name: String?) {
+        authoringReview = name.flatMap { reviewedDrafts[$0] }
+    }
+
+    func acceptAuthoringResult(_ saved: DraftAuthoringSnapshot) {
+        reviewedDrafts[saved.manifest.name] = saved
+        if authoringReview?.manifest.name == saved.manifest.name,
+            authoringReview?.workspaceRoot == saved.workspaceRoot
+        {
+            authoringReview = saved
+        }
+    }
+
+    public var selectedDraftNeedsReload: Bool {
+        guard let selected else { return false }
+        guard let reviewed = authoringReview,
+            reviewed.manifest.name == selected.name,
+            reviewed.workspaceRoot == ExperimentStore.workspaceRoot.standardizedFileURL
+        else { return true }
+        return reviewedDrafts[selected.name]?.file.sha256 != reviewed.file.sha256
     }
 
     func reviewedDraft(named name: String) throws -> DraftAuthoringSnapshot {
-        guard let reviewed = reviewedDrafts[name],
+        guard let reviewed = authoringReview, reviewed.manifest.name == name,
             reviewed.workspaceRoot == ExperimentStore.workspaceRoot.standardizedFileURL
         else {
             throw ExperimentError.refusing(.staleManifest,
                 "The reviewed draft is unavailable in this workspace.",
-                repair: "Refresh the study, review the current document, and apply the edit again.")
+                repair: "Use Discard edits and reload to review the saved study, then apply the edit again.")
         }
         return reviewed
     }

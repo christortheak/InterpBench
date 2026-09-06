@@ -60,6 +60,14 @@ snapshot under the common lock. The panel's whole-document persistence uses the
 snapshot that supplied the displayed document. Fresh field setters hold the
 lock for their entire load–modify–save operation.
 
+The native editor retains its authoring snapshot separately from the refreshed
+study catalog. A catalog refresh can reveal a newer document but cannot advance
+the precondition attached to old unsaved fields. Selection or the explicit
+**Discard edits and reload** action starts a new review; a successful command
+from that editor advances its own review. The setup view reports when the
+catalog and editor versions differ. This distinction is runtime state only and
+adds no manifest field.
+
 `StudyProtocolAuthoring.save` accepts a reviewed snapshot, complete
 `StudyProtocolFields` values and an optional `StudyProtocolScenario`. It checks
 the manifest precondition and draft admission before pinning inputs or compiling

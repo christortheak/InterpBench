@@ -111,6 +111,45 @@ import Testing
         }
     }
 
+    @Test func inventoryRefreshDoesNotAuthorizeStaleEditorFields() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "editor-review") { root in
+            try variantDraft(named: "reviewed")
+            let panel = makePanel(selecting: "reviewed")
+            panel.draft.protocolDescription = "unsaved editor text"
+            let before = try DraftAuthoringSnapshot(workspaceRoot: root, name: "reviewed")
+            var updated = before.manifest
+            updated.experimentDescription = "concurrent author text"
+            let published = try DraftAuthoringTransaction.replace(updated, reviewed: before)
+            panel.refresh()
+            #expect(panel.draft.protocolDescription == "unsaved editor text")
+            panel.saveProtocol()
+            #expect(ExperimentStore.manifestData(name: "reviewed") == published.file.data)
+        }
+    }
+
+    @Test func explicitReloadStartsANewReviewAndOwnSavesAdvanceIt() throws {
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "editor-review") { root in
+            try variantDraft(named: "reviewed")
+            let panel = makePanel(selecting: "reviewed")
+            let before = try DraftAuthoringSnapshot(workspaceRoot: root, name: "reviewed")
+            var updated = before.manifest
+            updated.experimentDescription = "concurrent author text"
+            _ = try DraftAuthoringTransaction.replace(updated, reviewed: before)
+            panel.refresh()
+            #expect(panel.management.selectedDraftNeedsReload)
+            panel.reloadSelectedDraft()
+            #expect(!panel.management.selectedDraftNeedsReload)
+            #expect(panel.draft.protocolDescription == "concurrent author text")
+            panel.draft.taskPromptsFile = ""
+            panel.draft.protocolDescription = "reviewed edit"
+            panel.saveProtocol()
+            #expect(!panel.management.selectedDraftNeedsReload)
+            panel.draft.protocolDescription = "second reviewed edit"
+            panel.saveProtocol()
+            #expect(try ExperimentStore.load(name: "reviewed").experimentDescription == "second reviewed edit")
+        }
+    }
+
     @Test func invalidSamplingPolicyDoesNotPartiallyPublishProtocolChanges() throws {
         try ExperimentRootOverrideLock.withTempRoot(prefix: "protocol-transaction") { _ in
             try variantDraft(named: "reviewed")
