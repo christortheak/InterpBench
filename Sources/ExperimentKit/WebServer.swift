@@ -1208,7 +1208,8 @@ struct StateDTO: Encodable {
         let generationGuidance: String
         let proposals: [ProposalDTO]
         let status: String?
-        let hasAPIKey: Bool
+        let hasAPIKey: Bool?
+        let apiKeyStatus: CredentialObservation.State
     }
     struct MultiConceptRowDTO: Encodable {
         let concept: String
@@ -1567,7 +1568,8 @@ struct StateDTO: Encodable {
                     negative: $0.negative, included: $0.included)
             },
             status: builder.status,
-            hasAPIKey: ClaudeStimulusGenerator.apiKey != nil)
+            hasAPIKey: CredentialObservation.anthropic().knownPresence,
+            apiKeyStatus: CredentialObservation.anthropic())
     }
 
     private static func featureDTO(_ row: GemmaScopeFeatureRow) -> GemmaScopeFeatureDTO {

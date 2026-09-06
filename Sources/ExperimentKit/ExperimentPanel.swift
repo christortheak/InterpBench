@@ -413,8 +413,8 @@ public final class ExperimentPanel {
         return JudgeModelOffers.compose(
             selected: draft.judgeModel,
             candidates: candidates,
-            openRouterKeyPresent: judgeKeyPresenceOverrideForTesting
-                ?? (JudgeKeyStore.resolveKey(kind: "openrouter") != nil),
+            openRouterCredentialState: judgeKeyPresenceOverrideForTesting.map(CredentialObservation.State.init(present:))
+                ?? CredentialObservation.openRouter(),
             capability: judgeCapabilityOverrideForTesting
                 ?? JudgeModelOffers.liveCapability,
             installed: judgeInstalledOverrideForTesting

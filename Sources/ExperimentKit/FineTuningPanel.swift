@@ -1868,8 +1868,8 @@ public final class FineTuningPanel {
         return JudgeModelOffers.compose(
             selected: robustnessJudgeModel,
             candidates: candidates,
-            openRouterKeyPresent: judgeKeyPresenceOverrideForTesting
-                ?? (JudgeKeyStore.resolveKey(kind: "openrouter") != nil),
+            openRouterCredentialState: judgeKeyPresenceOverrideForTesting.map(CredentialObservation.State.init(present:))
+                ?? CredentialObservation.openRouter(),
             substrate: judgeSubstrate,
             capability: judgeCapabilityOverrideForTesting
                 ?? JudgeModelOffers.liveCapability,

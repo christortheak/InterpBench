@@ -147,6 +147,33 @@ public enum JudgeModelOffers {
         }
     }
 
+    /// Catalog observation can offer provider choices without retrieving a key.
+    /// A stored credential is deliberately unverified until execution preflight;
+    /// keep that uncertainty visible instead of reporting a missing credential.
+    public static func compose(
+        selected: String,
+        candidates: [Candidate],
+        openRouterCredentialState: CredentialObservation.State,
+        substrate: JudgeReadiness.Substrate = .local,
+        capability: CapabilityCheck = liveCapability,
+        installed: InstalledCheck = liveInstalled
+    ) -> Offers {
+        var offers = compose(selected: selected, candidates: candidates,
+            openRouterKeyPresent: openRouterCredentialState != .absent,
+            substrate: substrate, capability: capability, installed: installed)
+        if openRouterCredentialState == .notChecked {
+            offers.openRouterHint = CredentialObservation.deferredCheckMessage
+            offers.openRouter = offers.openRouter.map {
+                Option(id: $0.id, label: $0.label,
+                    caption: $0.caption ?? CredentialObservation.deferredCheckMessage)
+            }
+            if selected.lowercased().hasPrefix(JudgeModelSpelling.openRouterPrefix), offers.selectionCaption == nil {
+                offers.selectionCaption = CredentialObservation.deferredCheckMessage
+            }
+        }
+        return offers
+    }
+
     /// - Parameters:
     ///   - selected: the value the panel currently holds (may be blank).
     ///   - candidates: everything the pane would list, in its own order.

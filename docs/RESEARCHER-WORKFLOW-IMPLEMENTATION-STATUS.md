@@ -588,3 +588,24 @@ checkpoint does not extend the earlier mechanical AST claim.
 
 Other design writers (creation, save-back, rename, delete and instantiation),
 Python adapters and interactive UI qualification remain work.
+
+## State observation does not resolve stored credentials
+
+The Swift workbench's state DTO and both judge-option catalogs no longer call
+credential resolvers. `CredentialObservation` reports environment presence or
+`notChecked`; it performs no Keychain access or legacy-defaults migration.
+Unknown stored credentials remain unknown. The concept DTO now includes
+`apiKeyStatus`; its historical `hasAPIKey` field is omitted when presence is
+unknown. Consumers must not turn an omitted value into a missing-key claim.
+Judge options remain authorable with a deferred-check caption. Structural model
+refusals retain their existing explanations. Execution preflights still resolve
+the actual required credential.
+
+A temporary workbench answers `/api/state` in 0.002 seconds, and a selected-study
+state including judge options in 0.016 seconds, without environment API keys.
+Three focused tests pass. Full Swift tests pass 277 SteeringKit and 4,488
+ExperimentKit tests (`TEST SUCCEEDED`, 43.994 seconds). Full Python passes 5,896 with 9 skipped and 8 warnings (154.92 seconds).
+The actual diff was read; the bridge ratchet and whitespace checks pass.
+No mechanical-move claim is made. This is a bounded observation fix: other native readiness badges,
+settings appearance handlers and execution preflights still retrieve credentials;
+the whole app is not yet qualified as non-interactive during observation.
