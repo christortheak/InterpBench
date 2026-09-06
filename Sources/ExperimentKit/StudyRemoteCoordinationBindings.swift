@@ -43,10 +43,6 @@ extension ExperimentPanel {
             })
     }
 
-    public func savePipelineDeclaration(_ draft: PipelineDraft?) {
-        pipelines.saveDeclaration(draft, manifest: selected)
-    }
-
     /// Capture the intended workspace and options before presenting a GPU warning.
     public func pipelineSubmissionAction(
         manifest: ExperimentManifest, request: StudySubmissionRequest

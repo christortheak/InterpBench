@@ -514,3 +514,24 @@ qualification is still outstanding. Python receipt parity and managed remote
 cleanup remain work; no remote deletion is enabled. Generated reference, shipped
 contract equality, bridge ratchet and whitespace checks pass. The actual source,
 test and document diff was read. No mechanical move is claimed; main is unchanged.
+
+
+## Pipeline declaration authorship
+
+`StudyPipelineAuthoring` validates complete gates and stage dependencies for
+headless callers as well as the composer, and saves/removes the declaration
+through the reviewed manifest transaction. A concurrent edit or freeze refuses
+without replacing saved bytes. The composer captures the file used to seed its
+fields, preserves unsaved edits across inventory refresh, and advances the review
+only on its own successful save or explicit reload. Context mismatch refuses a
+UI save; the shared owner always targets its supplied workspace.
+
+The old `savePipelineDeclaration` compatibility forwarding method is removed.
+The three remaining bridge files still need migration; this does not satisfy
+the release retirement gate. Focused tests pass for save/removal, stale edit or
+freeze, incomplete gates/stage dependencies, and explicit workspace capture.
+Full Xcode beta passes 277 SteeringKit and 4,478 ExperimentKit tests
+(`TEST SUCCEEDED`); full Python passes 5,896 with 9 skipped and 8 warnings
+(150.09 seconds). The bridge ratchet and whitespace checks pass; the actual
+source/test/document diff was read. No mechanical body move is claimed.
+Interactive composer qualification remains outstanding. Main is unchanged.

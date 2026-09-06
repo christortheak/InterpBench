@@ -17,6 +17,12 @@ the result. Prompt-file editing, condition authorship, the other three bridges
 and the rest of the substantive panel-authoring migration remain;
 the 1.0 retirement gate is not yet satisfied.
 
+Pipeline declaration save/removal now calls `StudyPipelineController` directly
+with a reviewed snapshot and shares validation/publication with
+`StudyPipelineAuthoring`. The forwarding `savePipelineDeclaration` member was
+removed from `StudyRemoteCoordinationBindings.swift`; that file still contains
+other migration seams. This is a semantic concurrency fix, not a mechanical move.
+
 The historical inventory below remains the ratchet baseline. Its old property
 bridge file/count describes what was removed, not an existing compatibility API.
 No baseline allowance was expanded.

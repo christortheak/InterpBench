@@ -303,11 +303,16 @@ struct StudyRemoteCoordinationTests {
             let owner = StudyPipelineController()
             var refreshes = 0
             owner.presentation.refresh = { refreshes += 1 }
-            owner.saveDeclaration(nil, manifest: manifest)
+            let reviewed = try DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: manifest.name)
+            owner.saveDeclaration(nil, reviewed: reviewed)
             #expect(refreshes == 1)
             var frozen = manifest
             frozen.status = .frozen
-            owner.saveDeclaration(nil, manifest: frozen)
+            let data = try JSONEncoder().encode(frozen)
+            try data.write(to: ExperimentRepository(workspaceRoot: reviewed.workspaceRoot).manifestURL(manifest.name))
+            let frozenReview = try DraftAuthoringSnapshot(workspaceRoot: reviewed.workspaceRoot, name: manifest.name,
+                file: ManifestFileSnapshot(data: data))
+            owner.saveDeclaration(nil, reviewed: frozenReview)
             #expect(refreshes == 1)
         }
     }

@@ -58,23 +58,24 @@ public final class StudyPipelineController {
     /// Save the Pipeline Composer's declaration into the manifest (stage 5,
     /// sixth round — the app must AUTHOR the chain it runs, not just submit
     /// it). `nil` removes the block. Draft-only, like every declaration.
-    public func saveDeclaration(_ draft: PipelineDraft?, manifest selected: ExperimentManifest?) {
-        guard var manifest = selected, manifest.status == .draft else { return }
-        manifest.pipeline = draft?.encoded()
+    @discardableResult
+    public func saveDeclaration(_ draft: PipelineDraft?, reviewed: DraftAuthoringSnapshot) -> DraftAuthoringSnapshot? {
         do {
-            try ExperimentStore.save(manifest)
+            let saved = try StudyPipelineAuthoring.save(draft, reviewed: reviewed)
             presentation.refresh()
             note(
                 draft == nil
                     ? "pipeline declaration removed"
                     : "pipeline declared — submit it with Run Pipeline",
                 severity: .success)
+            return saved
         } catch {
             note(
                 "Couldn't save the pipeline declaration — the study must "
                     + "still be a draft and its file writable. "
-                    + "Details: \(error)",
+                    + "Details: \(error). Reload and review the declaration before retrying.",
                 severity: .error)
+            return nil
         }
     }
 }

@@ -87,6 +87,22 @@ adapter now invokes this command directly, without reading or mutating panel
 fields. An optional exclusion-rule edit is validated and published within that
 same operation; an omitted rule edit preserves the existing declaration.
 
+### Pipeline declaration edits
+
+`StudyPipelineAuthoring.save(_:reviewed:)` validates complete gate values and
+pipeline ordering before replacing only the pipeline field through the shared
+transaction. `nil` removes the declaration. A later manifest edit or freeze
+invalidates the old snapshot; even a fresh frozen snapshot cannot authorize an
+edit. No compatibility overload accepts an unreviewed manifest.
+
+The native composer captures the file that seeds its fields. Catalog refreshes
+and changes to stage visibility do not silently reseed those fields or advance
+their file digest. **Discard pipeline edits and reload** explicitly reads a new
+snapshot. Save/removal failure retains the edited values and shows a repair;
+success advances the composer's own review. A workspace or study mismatch
+refuses a UI save. The shared command itself targets its explicitly captured
+workspace, so programmatic callers do not follow global selection.
+
 ### Swift HTTP protocol edits
 
 Read `GET /api/experiment/manifest?name=<study>` from the Swift loopback service.

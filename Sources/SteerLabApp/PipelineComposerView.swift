@@ -29,6 +29,8 @@ struct PipelineComposerSection: View {
     @State private var declared = false
     @State private var draft = PipelineDraft()
     @State private var syncedFor: String?
+    @State private var reviewed: DraftAuthoringSnapshot?
+    @State private var authoringMessage: String?
 
     private var isDraft: Bool { manifest.status == .draft }
 
@@ -58,6 +60,10 @@ struct PipelineComposerSection: View {
     var body: some View {
         Section("Pipeline (chain runner)") {
             if isDraft {
+                if let authoringMessage {
+                    Text(authoringMessage).font(.caption).foregroundStyle(.orange)
+                }
+                Button("Discard pipeline edits and reload") { syncFromManifest(force: true) }
                 editor
             } else if let existing = PipelineDraft.parse(manifest.pipeline) {
                 frozenSummary(existing)
@@ -76,8 +82,7 @@ struct PipelineComposerSection: View {
         }
         .onAppear { syncFromManifest() }
         .onChange(of: manifest.name) { syncFromManifest() }
-        .onChange(of: manifest.pipeline) { syncFromManifest() }
-        .onChange(of: relevantStages) { syncFromManifest() }
+        .onChange(of: ExperimentStore.workspaceRoot.path) { syncFromManifest() }
     }
 
     // The ⓘ affordance itself is the shared `InfoButton` (InfoPopover.swift)
@@ -265,7 +270,7 @@ struct PipelineComposerSection: View {
                     .foregroundStyle(.red)
             }
             Button("Save Pipeline") {
-                panel.savePipelineDeclaration(draft)
+                saveDeclaration(draft)
             }
             .disabled(!draftViolations.isEmpty)
         }
@@ -376,8 +381,8 @@ struct PipelineComposerSection: View {
         Binding(
             get: { declared },
             set: { enabled in
-                declared = enabled
-                if !enabled { panel.savePipelineDeclaration(nil) }
+                if enabled { declared = true }
+                else { saveDeclaration(nil) }
             })
     }
 
@@ -470,23 +475,43 @@ struct PipelineComposerSection: View {
             })
     }
 
-    private func syncFromManifest() {
-        // Re-seed the local draft whenever the SELECTION, the saved block,
-        // or the study type changes — never mid-edit for unrelated view
-        // updates. A fresh declaration seeds only the stages the study
-        // type makes relevant (a compare-agents chain starts as `run`, not
-        // extract → …); type changes reseed an UNSAVED draft.
-        let marker = "\(manifest.name)|\(manifest.pipeline != nil)|"
-            + relevantStages.joined(separator: ",")
-        guard syncedFor != marker else { return }
+    private func saveDeclaration(_ value: PipelineDraft?) {
+        guard let reviewed,
+            reviewed.manifest.name == manifest.name,
+            reviewed.workspaceRoot == ExperimentStore.workspaceRoot.standardizedFileURL else {
+            authoringMessage = "The reviewed pipeline belongs to another context. Reload and review this study before saving."
+            return
+        }
+        guard let saved = panel.pipelines.saveDeclaration(value, reviewed: reviewed) else {
+            authoringMessage = "The pipeline could not be saved. Your edits are retained; review the study notice, then reload the saved declaration before retrying."
+            return
+        }
+        self.reviewed = saved
+        declared = value != nil
+        authoringMessage = nil
+    }
+
+    private func syncFromManifest(force: Bool = false) {
+        // A catalog refresh cannot advance the review attached to edited fields.
+        // Only another workspace/study or the explicit reload button resets it.
+        let root = ExperimentStore.workspaceRoot.standardizedFileURL
+        let marker = root.path + "|" + manifest.name
+        guard force || syncedFor != marker else { return }
         syncedFor = marker
-        if let existing = PipelineDraft.parse(manifest.pipeline) {
-            draft = existing
-            declared = true
-        } else {
-            draft = PipelineDraft(
-                stages: PipelineDraft.seedStages(relevant: relevantStages))
-            declared = false
+        do {
+            let snapshot = try DraftAuthoringSnapshot(workspaceRoot: root, name: manifest.name)
+            reviewed = snapshot
+            if let existing = PipelineDraft.parse(snapshot.manifest.pipeline) {
+                draft = existing
+                declared = true
+            } else {
+                draft = PipelineDraft(stages: PipelineDraft.seedStages(relevant: relevantStages))
+                declared = false
+            }
+            authoringMessage = nil
+        } catch {
+            reviewed = nil
+            authoringMessage = "Could not read the pipeline declaration: \(error)"
         }
     }
 }
