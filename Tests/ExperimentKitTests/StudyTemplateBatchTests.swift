@@ -694,4 +694,147 @@ import Testing
             #expect(message.contains("prompts/tasks/cases.jsonl"))
         }
     }
+    @Test @MainActor func openCastingTableRetainsDesignAndAgentVersionsUntilDiscard() async throws {
+        try await withTempWorkspace { root in
+            let template = try makeComparisonTemplate(named: "reviewed-design")
+            let agent = try plantAgent(named: "reviewed-agent")
+            let model = TemplateInstantiation(templateName: template.name)
+            model.rows[0].agentIDs = [try libraryID(model, "reviewed-agent")]
+            model.rows[0].name = "requested"
+            let review = try #require(model.reviewedDesign)
+            _ = try StudyDesignAuthoring.updateDescription("Edited elsewhere", reviewed: review)
+            let staleDesign = await model.mint()
+            #expect(staleDesign.contains("design changed"))
+            #expect(model.mintedStudies.isEmpty)
+            #expect(model.rows[0].name == "requested")
+            #expect(model.reviewedDesign?.file.sha256 == review.file.sha256)
+            model.discardAndReload()
+            #expect(model.rows[0].name.isEmpty)
+            #expect(model.reviewedDesign?.file.sha256 != review.file.sha256)
+            model.rows[0].agentIDs = [try libraryID(model, "reviewed-agent")]
+            model.rows[0].name = "requested"
+            var data = try Data(contentsOf: agent.url)
+            data.append(Data("\n".utf8))
+            try data.write(to: agent.url)
+            _ = await model.mint()
+            #expect(model.mintedStudies.isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: root.appending(path: "experiments/requested").path))
+        }
+    }
+
+    @Test @MainActor func openCastingTableRefusesWorkspaceSwitch() async throws {
+        try await withTempWorkspace { root in
+            let template = try makeComparisonTemplate(named: "reviewed-design")
+            let model = TemplateInstantiation(templateName: template.name)
+            model.rows[0].name = "requested"
+            WorkspaceRoot.programmaticOverride = root.appending(component: "other")
+            let result = await model.mint()
+            #expect(result.contains("active workspace changed"))
+            #expect(model.mintedStudies.isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: root.appending(path: "experiments/requested").path))
+            #expect(!FileManager.default.fileExists(atPath: root.appending(component: "other").path))
+        }
+    }
+
+    @Test func reviewedPanelCastingValidatesExactSeatsAndAgentVersionsBeforeWriting() throws {
+        try withTempWorkspace { root in
+            let template = try makePanelTemplate(named: "reviewed-panel", seats: 2)
+            let agent = try plantAgent(named: "reviewed-agent")
+            let reviewed = try StudyDesignSnapshot(workspaceRoot: root, name: template.name)
+            let artifact = try AgentArtifactSnapshot(workspaceRoot: root, reviewedRecord: agent)
+            let ref: [String: Any] = ["artifactPath": artifact.path, "artifactFileSHA256": artifact.file.sha256]
+            func casting(_ seats: [String: Any]) throws -> StudyDesignInstantiation.Casting {
+                try StudyDesignCastingInput.resolve(JSONSerialization.data(withJSONObject: ["seats": seats]), reviewed: reviewed)
+            }
+            let valid = try casting(["seat-0": ref, "seat-1": NSNull()])
+            let saved = try StudyDesignInstantiation.instantiate(reviewed: reviewed, casting: valid, studyName: "cast-study")
+            #expect(saved.manifest.multiAgentSemanticScenarioHash == template.semanticScenario?.hash)
+            let scenario = try JSONDecoder().decode(MultiAgentScenario.self, from: Data(contentsOf:
+                ExperimentStore.resolveProjectPath(saved.manifest.multiAgentScenarioPath!, root: root)))
+            #expect(scenario.agents[0].variantArtifactHash == artifact.file.sha256)
+            #expect(scenario.agents[1].variantArtifactHash == nil)
+            for seats: [String: Any] in [["seat-0": NSNull()], ["seat-0": NSNull(), "seat-1": NSNull(), "extra": NSNull()]] {
+                let invalid = try casting(seats)
+                #expect(throws: ExperimentError.self) {
+                    try StudyDesignInstantiation.instantiate(reviewed: reviewed, casting: invalid, studyName: "refused")
+                }
+            }
+            var changed = artifact.file.data
+            changed.append(Data("\n".utf8))
+            try changed.write(to: agent.url)
+            #expect(throws: ExperimentError.self) {
+                try StudyDesignInstantiation.instantiate(reviewed: reviewed, casting: valid, studyName: "refused")
+            }
+            #expect(!FileManager.default.fileExists(atPath: root.appending(path: "experiments/refused").path))
+        }
+    }
+
+    @Test @MainActor func batchStopsLaterSubmissionsWhenWorkspaceChanges() async throws {
+        try await withTempWorkspace { root in
+            let template = try makeComparisonTemplate(named: "reviewed-design")
+            let model = TemplateInstantiation(templateName: template.name)
+            model.rows[0].name = "first"
+            model.addRow()
+            model.rows[1].name = "second"
+            let summary = await model.mint(submit: { study in
+                #expect(study == "first")
+                WorkspaceRoot.programmaticOverride = root.appending(component: "other")
+                return .success("job-first")
+            })
+            #expect(model.mintedStudies == ["first", "second"])
+            #expect(summary.contains("submitted 1 of 2"))
+            #expect(!model.lastMintWasClean)
+            #expect(!model.isCurrentWorkspace)
+            #expect(!FileManager.default.fileExists(atPath: root.appending(component: "other").path))
+        }
+    }
+
+    @Test func driftedPanelStillAllowsDesignInspectionAndDescriptionResult() throws {
+        try withTempWorkspace { root in
+            let template = try makePanelTemplate(named: "reviewed-panel")
+            let reviewed = try StudyDesignSnapshot(workspaceRoot: root, name: template.name)
+            let ref = try #require(template.semanticScenario)
+            try FileManager.default.removeItem(at: ExperimentStore.resolveProjectPath(ref.path, root: root))
+            let document = try StudyDesignDocument(reviewed)
+            #expect(document.seatIDs == nil)
+            #expect(document.advisories.count == 1)
+            let response = StudyDesignHTTP.perform(.describe, body: try JSONSerialization.data(withJSONObject: [
+                "workspaceRoot": root.path, "name": template.name, "description": "Readable metadata",
+                "designFileSHA256": reviewed.file.sha256]), workspaceRoot: root)
+            #expect(response.status == "200 OK")
+            let saved = try StudyDesignSnapshot(workspaceRoot: root, name: template.name)
+            #expect(saved.template.templateDescription == "Readable metadata")
+            #expect(StudyTemplateStore.hash(saved.template) == StudyTemplateStore.hash(template))
+        }
+    }
+
+    @Test @MainActor func retainedAbsoluteSeatPinsNormalizeOnlyInsideTheirReviewedWorkspace() throws {
+        try withTempWorkspace { root in
+            let template = try makePanelTemplate(named: "reviewed-panel", seats: 2)
+            let record = try plantAgent(named: "reviewed-agent")
+            let agent = try AgentArtifactSnapshot(workspaceRoot: root, reviewedRecord: record)
+            let reviewed = try StudyDesignSnapshot(workspaceRoot: root, name: template.name)
+            var assignment = SeatAssignment(seatIDs: ["seat-0", "seat-1"], ordered: [
+                .agent(name: record.artifact.name, artifactPath: record.url.path, artifactHash: agent.file.sha256), .baseline])
+            let table = TemplateInstantiation(templateName: template.name)
+            table.preloadPermutations(occupants: assignment.ordered)
+            #expect(table.rows.count == 2)
+            #expect(table.permutationAgentIDs.count == 1)
+            #expect(table.rows.flatMap { $0.seating.values }.filter { occupant in
+                if case .agent(_, let path, let hash) = occupant { return path == agent.path && hash == agent.file.sha256 }
+                return false
+            }.count == 2)
+            let saved = try StudyDesignInstantiation.instantiate(reviewed: reviewed, casting: .seating(assignment), studyName: "normalized")
+            let scenario = try JSONDecoder().decode(MultiAgentScenario.self, from: Data(contentsOf:
+                ExperimentStore.resolveProjectPath(saved.manifest.multiAgentScenarioPath!, root: root)))
+            #expect(scenario.agents[0].variantArtifactPath == agent.path)
+            #expect(scenario.agents[0].variantArtifactHash == agent.file.sha256)
+            assignment.occupants["seat-0"] = .agent(name: "outside", artifactPath: root.deletingLastPathComponent().appending(component: "outside.json").path, artifactHash: agent.file.sha256)
+            #expect(throws: ExperimentError.self) {
+                try StudyDesignInstantiation.instantiate(reviewed: reviewed, casting: .seating(assignment), studyName: "refused")
+            }
+            #expect(!FileManager.default.fileExists(atPath: root.appending(path: "experiments/refused").path))
+        }
+    }
+
 }

@@ -6,6 +6,7 @@ import SwiftUI
 struct TemplateInstantiationRequest: Identifiable {
     let id = UUID()
     let templateName: String
+    let workspaceRoot = ExperimentStore.workspaceRoot
     /// Mirrored from the panel's Remote options so the totals line counts the
     /// jobs this batch will really create, not a default.
     let shardsPerStudy: Int
@@ -46,7 +47,7 @@ struct TemplateInstantiationSheet: View {
     init(request: TemplateInstantiationRequest, panel: ExperimentPanel) {
         self.request = request
         self.panel = panel
-        let instantiation = TemplateInstantiation(templateName: request.templateName)
+        let instantiation = TemplateInstantiation(templateName: request.templateName, workspaceRoot: request.workspaceRoot)
         instantiation.shardsPerStudy = request.shardsPerStudy
         instantiation.jobNoun = request.jobNoun
         // Opened from a study's Seats section: the table arrives holding one
@@ -80,6 +81,8 @@ struct TemplateInstantiationSheet: View {
                 }
                 .formStyle(.grouped)
             }
+            Button("Discard casting edits and reload design") { model.discardAndReload() }
+                .disabled(model.isWorking)
             totalsLine
             footer
         }
@@ -338,7 +341,8 @@ struct TemplateInstantiationSheet: View {
                     case .agent(_, let path, _) = row.seating[seat] ?? .baseline
                 else { return Self.baselineTag }
                 return model.agents.first {
-                    ModelVariantStore.relativePath(for: $0) == path
+                    guard case .agent(_, let reviewedPath, _) = model.occupant(for: $0) else { return false }
+                    return reviewedPath == path
                 }?.id ?? Self.baselineTag
             },
             set: { newValue in
@@ -396,15 +400,16 @@ struct TemplateInstantiationSheet: View {
             Button("Load Only") {
                 Task {
                     await model.mint()
+                    guard model.isCurrentWorkspace else { return }
                     panel.refresh()
                     // LOADS the first minted draft in the Studies editor: the
                     // point of minting without submitting is to keep editing,
                     // and leaving the researcher to find the study in a picker
                     // of thirty is the same as not opening it.
                     if let first = model.firstMintedStudy {
-                        panel.selectedName = first
+                        panel.management.selectedName = first
                     }
-                    panel.note(model.lastSummary ?? "", severity: .success)
+                    panel.note(model.lastSummary ?? "", severity: model.lastMintWasClean ? .success : .warning)
                     // Failures stay on screen to be read; a clean batch has
                     // nothing left to say here.
                     if model.lastMintWasClean { dismiss() }
@@ -421,11 +426,12 @@ struct TemplateInstantiationSheet: View {
                     await model.mint(submit: { study in
                         await panel.submitStudyBundle(named: study)
                     })
+                    guard model.isCurrentWorkspace else { return }
                     panel.refresh()
                     if let first = model.firstMintedStudy {
-                        panel.selectedName = first
+                        panel.management.selectedName = first
                     }
-                    panel.note(model.lastSummary ?? "", severity: .info)
+                    panel.note(model.lastSummary ?? "", severity: model.lastMintWasClean ? .info : .warning)
                     if model.lastMintWasClean { dismiss() }
                 }
             }

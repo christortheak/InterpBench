@@ -111,7 +111,7 @@ public enum CLIReferenceDocument {
                 "remote chat",
             ]),
         .init(id: "swift-agent", verbLabels: ["agent list", "agent inspect"]),
-        .init(id: "swift-design", verbLabels: ["design list", "design inspect", "design describe"]),
+        .init(id: "swift-design", verbLabels: ["design list", "design inspect", "design describe", "design instantiate"]),
         .init(id: "swift-authoring", verbLabels: ["authoring prompt"]),
         .init(id: "swift-docs", verbLabels: ["docs cli-reference"]),
         .init(

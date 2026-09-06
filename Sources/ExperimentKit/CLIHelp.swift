@@ -602,7 +602,7 @@ public enum ExperimentCLIHelp {
                 synopsis: "experiment <verb> <name> …",
                 purpose: "The study lifecycle."),
             .init(synopsis: "agent list | inspect <path>", purpose: "Inspect local agents for reviewed attachment."),
-            .init(synopsis: "design list | inspect | describe …", purpose: "Inspect designs and edit reviewed descriptions."),
+            .init(synopsis: "design list | inspect | describe | instantiate …", purpose: "Inspect designs, edit reviewed descriptions, and create studies from castings."),
             .init(
                 synopsis: "data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>",
                 purpose: "Study-data readiness and local evidence custody."),

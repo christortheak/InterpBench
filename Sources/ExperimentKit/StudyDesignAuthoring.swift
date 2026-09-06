@@ -35,6 +35,8 @@ public struct StudyDesignDocument: Encodable, Sendable {
     public let designFileSHA256: String
     public let contentHash: String
     public let document: JSONValue
+    public let seatIDs: [String]?
+    public let advisories: [String]
 
     public init(_ snapshot: StudyDesignSnapshot) throws {
         name = snapshot.template.name
@@ -42,6 +44,18 @@ public struct StudyDesignDocument: Encodable, Sendable {
         designFileSHA256 = snapshot.file.sha256
         contentHash = StudyTemplateStore.hash(snapshot.template)
         document = try JSONDecoder().decode(JSONValue.self, from: snapshot.file.data)
+        if let ref = snapshot.template.semanticScenario {
+            do {
+                seatIDs = PanelComposition.seatIDs(try StudyTemplateStore.loadSemanticPanel(ref, workspaceRoot: snapshot.workspaceRoot))
+                advisories = []
+            } catch {
+                seatIDs = nil
+                advisories = ["The design was read, but its panel cannot currently be cast: " + error.localizedDescription]
+            }
+        } else {
+            seatIDs = nil
+            advisories = []
+        }
     }
 }
 
@@ -119,17 +133,25 @@ public enum StudyDesignAuthoring {
         return reviewed
     }
 
-    @discardableResult
-    public static func updateDescription(_ description: String, reviewed: StudyDesignSnapshot) throws -> StudyDesignSnapshot {
+    /// Holds the shared design lock throughout admission and publication by the
+    /// supplied operation. The external file version never becomes study data.
+    static func withReviewedDesign<T>(_ reviewed: StudyDesignSnapshot, _ body: (URL) throws -> T) throws -> T {
         let repository = StudyDesignRepository(workspaceRoot: reviewed.workspaceRoot)
         let url = try repository.existingFile(name: reviewed.template.name)
         return try ManifestFileTransaction.withLock(manifestURL: url, workspaceRoot: reviewed.workspaceRoot) {
             _ = try repository.existingFile(name: reviewed.template.name)
             do { try ManifestFileTransaction.requireCurrent(.sha256(reviewed.file.sha256), at: url) }
             catch let error as ExperimentError where error.lifecycleRefusal?.gate == .staleManifest {
-                throw StudyDesignAuthoringError(code: "designChanged", reason: "The design changed after its description was read; no edit was published.",
-                    repairAction: "Discard description edits and reload the named design, review the intervening changes, then apply the intended edit again.")
+                throw StudyDesignAuthoringError(code: "designChanged", reason: "The design changed after it was reviewed; this operation published no study or design edit.",
+                    repairAction: "Discard the old design review and reload it, review the intervening changes, then reconstruct the intended operation.")
             }
+            return try body(url)
+        }
+    }
+
+    @discardableResult
+    public static func updateDescription(_ description: String, reviewed: StudyDesignSnapshot) throws -> StudyDesignSnapshot {
+        try withReviewedDesign(reviewed) { url in
             if reviewed.template.templateDescription == description { return reviewed }
             var updated = reviewed.template
             updated.templateDescription = description

@@ -307,6 +307,8 @@ public enum ExperimentCLIParser {
 
         .init(namespace: "design", verb: "list", purpose: "List the workspace's designs and report unreadable entries."),
         .init(namespace: "design", verb: "inspect", positional: "<name>", purpose: "Read a design and its external file digest for reviewed edits."),
+        .init(namespace: "design", verb: "instantiate", positional: "<name>", purpose: "Create a draft from a reviewed design and explicit casting JSON file.",
+            valueFlags: ["--casting", "--file-sha256", "--study-name"], requiredFlags: ["--casting", "--file-sha256"]),
         .init(namespace: "design", verb: "describe", positional: "<name>", purpose: "Save a design description against the reviewed file version.",
             valueFlags: ["--description", "--file-sha256"], requiredFlags: ["--description", "--file-sha256"]),
 

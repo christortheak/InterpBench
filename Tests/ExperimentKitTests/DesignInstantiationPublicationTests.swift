@@ -68,4 +68,101 @@ struct DesignInstantiationPublicationTests {
             #expect(captured.outcomeInstrumentScope == nil)
         }
     }
+    @Test func retainedReviewRefusesChangedOrDeletedDesignWithoutPublishing() throws {
+        try fixture { root, template in
+            let reviewed = try StudyDesignSnapshot(workspaceRoot: root, name: template.name)
+            _ = try StudyDesignAuthoring.updateDescription("Changed", reviewed: reviewed)
+            do {
+                _ = try StudyDesignInstantiation.instantiate(reviewed: reviewed, casting: .agents([]), studyName: "refused")
+                Issue.record("A stale design review must refuse")
+            } catch let error as StudyDesignAuthoringError { #expect(error.code == "designChanged") }
+            #expect(!FileManager.default.fileExists(atPath: root.appending(path: "experiments/refused").path))
+            try StudyTemplateStore.delete(name: template.name)
+            #expect(throws: (any Error).self) {
+                try StudyDesignInstantiation.instantiate(reviewed: reviewed, casting: .agents([]), studyName: "refused")
+            }
+            #expect(!FileManager.default.fileExists(atPath: root.appending(path: "experiments/refused").path))
+        }
+    }
+
+    @Test func retainedReviewUsesItsWorkspaceForInputsNamingAndPublication() throws {
+        try fixture { root, template in
+            let reviewed = try StudyDesignSnapshot(workspaceRoot: root, name: template.name)
+            let other = root.appending(component: "other")
+            WorkspaceRoot.programmaticOverride = other
+            let first = try StudyDesignInstantiation.instantiate(reviewed: reviewed, casting: .agents([]), studyName: "new-study")
+            let second = try StudyDesignInstantiation.instantiate(reviewed: reviewed, casting: .agents([]), studyName: "new-study")
+            #expect(first.manifest.name == "new-study")
+            #expect(second.manifest.name == "new-study-2")
+            #expect(first.manifest.outcomeInstrumentScope?.itemCount == 1)
+            #expect(!FileManager.default.fileExists(atPath: other.path))
+            #expect(try DraftAuthoringSnapshot(workspaceRoot: root, name: first.manifest.name).file.data == first.file.data)
+        }
+    }
+
+    @Test func bothAdaptersUseTheReviewedCommandAndRequireItsPreconditions() throws {
+        try fixture { root, template in
+            let reviewed = try StudyDesignSnapshot(workspaceRoot: root, name: template.name)
+            let casting = root.appending(component: "casting.json")
+            try Data(#"{"agents":[]}"#.utf8).write(to: casting)
+            let invocation = try ExperimentCLIParser.parse(namespace: "design", ["instantiate", template.name,
+                "--file-sha256", reviewed.file.sha256, "--casting", casting.path, "--study-name", "cli-study", "--json"])
+            let result = try StudyDesignCLI.run(invocation, workspaceRoot: root, sink: .discarding)
+            #expect(result.changed)
+            #expect(result.payload["name"] == .string("cli-study"))
+            var fields: [String: Any] = ["workspaceRoot": root.path, "name": template.name,
+                "casting": ["agents": []], "studyName": "http-study"]
+            func send() throws -> StudyAuthoringHTTP.Response {
+                StudyDesignHTTP.perform(.instantiate, body: try JSONSerialization.data(withJSONObject: fields), workspaceRoot: root)
+            }
+            #expect(try send().status == "428 Precondition Required")
+            fields["designFileSHA256"] = reviewed.file.sha256
+            fields["workspaceRoot"] = root.appending(component: "other").path
+            #expect(try send().status == "409 Conflict")
+            fields["workspaceRoot"] = root.path
+            fields["casting"] = ["agents": [], "force": true] as [String: Any]
+            #expect(try send().status == "400 Bad Request")
+            fields["casting"] = ["agents": []]
+            #expect(try send().status == "200 OK")
+            let cli = try DraftAuthoringSnapshot(workspaceRoot: root, name: "cli-study")
+            let http = try DraftAuthoringSnapshot(workspaceRoot: root, name: "http-study")
+            #expect(cli.manifest.outcomeInstrumentScope == http.manifest.outcomeInstrumentScope)
+            #expect(cli.manifest.templateProvenance == http.manifest.templateProvenance)
+            _ = try StudyDesignAuthoring.updateDescription("Changed", reviewed: reviewed)
+            fields["studyName"] = "refused"
+            #expect(try send().status == "412 Precondition Failed")
+            #expect(!FileManager.default.fileExists(atPath: root.appending(path: "experiments/refused").path))
+        }
+    }
+
+    @Test func batchRetainsOneReviewAndReportsAlreadyPublishedRows() throws {
+        try fixture { root, template in
+            let reviewed = try StudyDesignSnapshot(workspaceRoot: root, name: template.name)
+            let batch = StudyDesignInstantiation.mintBatch(reviewed: reviewed, castings: [.agents([]), .agents([])],
+                names: ["first", "second"], onRow: { index, _ in
+                    if index == 0 { _ = try? StudyDesignAuthoring.updateDescription("Changed between rows", reviewed: reviewed) }
+                })
+            #expect(batch.minted == ["first"])
+            #expect(batch.failures.map(\.row) == [1])
+            #expect(batch.failures.first?.failure?.contains("design changed") == true)
+            #expect(!FileManager.default.fileExists(atPath: root.appending(path: "experiments/second").path))
+        }
+    }
+
+    @Test func creationRefusesAStudyDirectoryRedirectIntoEvidence() throws {
+        try fixture { root, template in
+            let reviewed = try StudyDesignSnapshot(workspaceRoot: root, name: template.name)
+            let studies = root.appending(component: "experiments")
+            let original = root.appending(component: "original-studies")
+            let evidence = root.appending(component: "runs")
+            try FileManager.default.moveItem(at: studies, to: original)
+            try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: studies, withDestinationURL: evidence)
+            #expect(throws: ExperimentError.self) {
+                try StudyDesignInstantiation.instantiate(reviewed: reviewed, casting: .agents([]), studyName: "refused")
+            }
+            #expect(try FileManager.default.contentsOfDirectory(atPath: evidence.path).isEmpty)
+        }
+    }
+
 }

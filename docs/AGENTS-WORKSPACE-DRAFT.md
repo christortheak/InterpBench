@@ -561,8 +561,15 @@ complete design document and `designFileSHA256`. To edit its description, use
 `steerlab-cli design describe <name> --description <text> --file-sha256 <digest> --json`
 with that reviewed file digest. A stale digest refuses; inspect and review the
 intervening changes before reconstructing the edit. Descriptions do not change
-the scientific design hash. Creation, instantiation and broader design edits are
-not yet exposed by this CLI family; do not invent verbs or hand-edit frozen studies.
+the scientific design hash. To create a study, use `steerlab-cli design instantiate <name> --casting <file> --file-sha256 <digest> --study-name <new-name> --json`.
+The casting JSON contains either `agents` (an array of objects naming
+`artifactPath` and `artifactFileSHA256`; empty means baseline) or `seats`
+(an object keyed by the inspected design's `seatIDs`, with null for baseline
+and the same artifact objects for treated seats). The command checks reviewed
+pins and derives an ordinary draft with design provenance. It reports the actual
+name, including a suffix if the requested name was occupied. Review the draft
+before freezing or submitting it. Design creation, batch adapters and broader
+edits remain separate gaps; do not invent verbs or hand-edit frozen studies.
 
 **`data custody <run-id>`** discovers receipts for an imported run, including
 receipts for a pipeline archive that carried that run. Discovery lists recorded

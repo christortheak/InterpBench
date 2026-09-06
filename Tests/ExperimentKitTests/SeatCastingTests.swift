@@ -474,7 +474,7 @@ import Testing
             let minted = StudyTemplateStore.mintBatch(
                 templateName: invitation.design,
                 cells: table.rows.compactMap { table.cell(for: $0) })
-            #expect(minted.failures.isEmpty)
+            #expect(minted.failures == [])
             #expect(minted.minted.count == 2)
             let paths = try minted.minted.map {
                 try #require(

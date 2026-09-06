@@ -14,7 +14,7 @@ completion; a passing focused test does not establish release or scientific qual
 | WP-0 operation inventory | [52-operation matrix](RESEARCH-OPERATION-MATRIX.md) and shared backlog | Expand advanced/per-field mappings and link executable journey evidence |
 | WP-1 observation and context | In progress | Finish origin persistence/actions, import context, transport policy, explicit submission and offline results; both suites |
 | WP-2 shared services | Runtime roles and draft preconditions implemented; writer/adapter migration in progress | External stale-write preconditions, authoring owners, service roles, bridge retirement |
-| WP-3 public operations | Design inspection/description and reviewed agent attachment implemented; in progress | Designs, models, assembly, advanced-method mappings and adapters |
+| WP-3 public operations | Design inspection/description/instantiation and reviewed agent attachment implemented; in progress | Designs, models, assembly, advanced-method mappings and adapters |
 | WP-4 research guidance | Extraction contract and control interpretation corrected; full guides pending | Shipped method guides, prompt resources, scientific wording and executable examples |
 | WP-5 cluster coauthoring | Mac guide, sourced-fact review and shared preview implemented | Real documentation-to-profile journey, interactive qualification and cross-platform adapter mapping |
 | WP-6 remote lifecycle | Origin-aware import and durable archive custody implemented; in progress | Composed recovery, receipt adapters and bounded cleanup plan/apply with dependency checks |
@@ -668,3 +668,69 @@ Generic artifact/reader attachment, Python parity, reviewed design batches and
 interactive UI qualification remain. Discovery uses the existing store's
 recognition rules and is not a complete malformed-file census. This semantic
 change does not claim a mechanical body move.
+
+
+## Reviewed design instantiation and casting-table checkpoint
+
+- Added `StudyDesignInstantiation`: a retained design file review, captured
+  workspace and explicit casting supply the command. It holds the shared design
+  lock, checks the destination is unoccupied, validates prompt and agent pins,
+  derives scope, and delegates arm attachment and seat compilation to their
+  existing owners before publishing an ordinary draft. Existing stateless store
+  calls capture one review; batch callers retain it across rows.
+- `steerlab-cli design instantiate` and `POST /api/design/instantiate` call that
+  command. The shared casting JSON accepts agent references or exact panel seat
+  IDs, with explicit baseline seats. Unknown fields, missing/stale design
+  preconditions, stale artifacts, wrong base models, workspace mismatch and
+  unsafe destinations refuse. Results carry the actual collision-resolved name,
+  exact saved manifest and its external file digest. No submission occurs.
+- Design inspection includes ordered seat IDs when the pinned panel is readable.
+  A missing/drifted panel becomes an inspection advisory, so inspection and an
+  already-published description edit can still return their actual result;
+  instantiation continues to refuse unusable panel inputs.
+- The app's casting table captures design/agent reviews and its originating
+  workspace, retains rows after refusals, and offers an explicit discard/reload.
+  Presets use the displayed seat IDs. Workspace switches stop minting or later
+  submissions and prevent completion callbacks selecting a study in another
+  workspace. Partial batches preserve and report every earlier successful row.
+- Existing absolute seat pins are normalized only inside the captured workspace,
+  including macOS path aliases, then subjected to the same artifact hash and
+  ordinary-file checks. The original study and artifact bytes remain unchanged.
+  This also keeps preloaded permutation pickers aligned with their actual cast.
+- Updated the shipped agent contract and mirror, generated CLI reference, design
+  guide and operation matrix. No compatibility wrapper was added. This changes
+  admission and behavior; it is not claimed as a mechanical move or AST-equivalent
+  refactor.
+
+Validation for this checkpoint:
+
+- Focused instantiation command suite: 8 tests passed, covering stale/deleted
+  designs, explicit-root naming/publication, CLI/HTTP preconditions, partial
+  outcomes, scope preservation and destination redirects.
+- Final casting-table/batch suite: 36 tests passed, including reviewed agents,
+  exact seats, workspace switches before/during submission, retained absolute
+  pins and inspection of a design whose panel input is unavailable.
+- The first full Swift run exposed a real permutation regression: existing
+  absolute seat pins were rejected as new relative input. The focused original
+  regression reproduced it, passed after the bounded normalization fix, and
+  remains in the suite with a more informative failure assertion.
+- Final full Xcode beta suite: 277 SteeringKit + 4,510 ExperimentKit tests passed;
+  `TEST SUCCEEDED` (41.468 seconds of ExperimentKit execution). Log:
+  `/private/tmp/interpbench-reviewed-instantiation-xcode-qualified.log`.
+- Full Python suite: 5,896 passed, 9 skipped, 8 warnings (155.80 seconds). Log:
+  `/private/tmp/interpbench-reviewed-instantiation-python.log`. Subsequent edits
+  affected only Swift, its tests and documentation; Python source was unchanged.
+- Actual compiled CLI and disposable HTTP workbench: reviewed casting, artifact
+  pins, lineage, collision names, byte digests and missing/stale/root/unknown-field
+  refusals passed. Final log:
+  `/private/tmp/interpbench-instantiation-wire-qualified.log`.
+- Actual diff read, CLI reference regeneration, bridge ratchet and whitespace
+  checks completed. Independent maintainer review remains the landing gate.
+
+Limits remain explicit: public batch/expansion adapters and design creation,
+save-back, rename/deletion, Python design parity and interactive UI qualification
+are unfinished. The design lock cannot serialize external editors or legacy
+writers that have not migrated. A compiled panel can remain unreferenced if later
+manifest publication fails; this is not a crash-atomic multi-file transaction.
+No scientific hashing schema, frozen study, immutable run, main checkout,
+installed app or live scheduler job was changed by this checkpoint.

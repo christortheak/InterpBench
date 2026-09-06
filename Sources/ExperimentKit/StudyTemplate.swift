@@ -628,61 +628,15 @@ public enum StudyTemplateStore {
         batchGroup: String? = nil
     ) throws -> ExperimentManifest {
         let root = ExperimentStore.workspaceRoot
-        let template = try StudyDesignSnapshot(workspaceRoot: root, name: templateName).template
-        let templateHash = hash(template)
-
-        var draft = template.study
-        draft.createdAt = ISO8601DateFormatter().string(from: Date())
-        draft.status = .draft
-        draft.templateProvenance = ExperimentManifest.TemplateProvenance(
-            template: template.name, templateHash: templateHash,
-            batchGroup: batchGroup)
-
-        let name = ExperimentStore.unusedExperimentName(
-            base: studyName ?? "\(template.name)-\(cell.descriptor)")
-        guard !name.isEmpty else {
-            throw ExperimentError(
-                reason: "could not derive a study directory name for this casting")
+        let reviewed = try StudyDesignSnapshot(workspaceRoot: root, name: templateName)
+        let casting: StudyDesignInstantiation.Casting
+        switch cell {
+        case .agents(let records):
+            casting = .agents(try records.map { try AgentArtifactSnapshot(workspaceRoot: root, reviewedRecord: $0) })
+        case .seating(let assignment): casting = .seating(assignment)
         }
-        draft.name = name
-
-        let storage = ExperimentRepository(workspaceRoot: root)
-        return try ManifestFileTransaction.withLock(manifestURL: storage.manifestURL(name), workspaceRoot: root) {
-            try ManifestFileTransaction.requireCurrent(.absent, at: storage.manifestURL(name))
-            let prompts = try reviewedTaskPrompts(draft, workspaceRoot: root)
-            if let scope = draft.outcomeInstrumentScope {
-                try OutcomeInstrumentScopeAuthoring.apply(responseFormats: scope.responseFormats,
-                    into: &draft, workspaceRoot: root, reviewedPrompts: prompts)
-            }
-
-            switch cell {
-            case .agents(let records):
-                // The SAME path the Studies panel's "Add agent" uses, so a minted
-                // arm and a clicked arm are byte-identical.
-                for record in records {
-                    try ExperimentStore.attachAgent(record, into: &draft)
-                }
-            case .seating(let assignment):
-                guard let ref = template.semanticScenario else {
-                    throw ExperimentError(
-                        reason: "template '\(templateName)' declares no semantic "
-                            + "panel — a seat casting has nothing to compile against")
-                }
-                let semantic = try loadSemanticPanel(ref, workspaceRoot: root)
-                // The ONE compile-and-pin (`SeatCasting.compile`), shared with the
-                // Studies editor's Seats section — a minted casting and a
-                // hand-cast one are the same write, including the provenance that
-                // lets the study's seats be re-listed and re-cast later.
-                try SeatCasting.compile(
-                    assignment, semantic: semantic, semanticPath: ref.path,
-                    into: &draft, workspaceRoot: root)
-            }
-
-            // Publish only the fully derived draft. A competing creation at the
-            // chosen name cannot be overwritten by an upsert.
-            try ExperimentStore.save(draft, allowCreate: true, workspaceRoot: root, expectedFile: .absent)
-            return draft
-        }
+        return try StudyDesignInstantiation.instantiate(reviewed: reviewed, casting: casting,
+            studyName: studyName, batchGroup: batchGroup).manifest
     }
 
     // MARK: - The scratch draft "Edit design…" opens
@@ -798,7 +752,7 @@ public enum StudyTemplateStore {
 
     // MARK: - Helpers
 
-    private static func loadSemanticPanel(
+    static func loadSemanticPanel(
         _ ref: StudyTemplate.SemanticScenarioRef,
         workspaceRoot: URL = ExperimentStore.workspaceRoot
     ) throws -> MultiAgentScenario {
@@ -823,7 +777,7 @@ public enum StudyTemplateStore {
     /// launder drift: the minted study would verify cleanly while measuring
     /// items the template never described. Refusing sends the researcher back
     /// to re-mint the template deliberately.
-    private static func reviewedTaskPrompts(_ draft: ExperimentManifest, workspaceRoot: URL) throws -> Data? {
+    static func reviewedTaskPrompts(_ draft: ExperimentManifest, workspaceRoot: URL) throws -> Data? {
         guard let file = draft.taskPromptsFile, !file.isEmpty,
             let pinned = draft.taskPromptsHash
         else { return nil }

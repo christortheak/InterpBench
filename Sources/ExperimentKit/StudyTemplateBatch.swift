@@ -122,10 +122,10 @@ public struct TemplateBatchTotals: Sendable, Equatable {
     /// Rows of a task-prompts file, counted once (never from a SwiftUI body).
     /// Absent or unreadable reads as 1 so the totals line degrades to the row
     /// count instead of claiming zero work.
-    public static func taskItemCount(_ template: StudyTemplate) -> Int {
+    public static func taskItemCount(_ template: StudyTemplate, workspaceRoot: URL = ExperimentStore.workspaceRoot) -> Int {
         guard let file = template.study.taskPromptsFile, !file.isEmpty,
             let text = try? String(
-                contentsOf: ExperimentStore.resolveProjectPath(file), encoding: .utf8)
+                contentsOf: ExperimentStore.resolveProjectPath(file, root: workspaceRoot), encoding: .utf8)
         else { return 1 }
         let rows = text.split(whereSeparator: \.isNewline)
             .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -164,12 +164,9 @@ extension StudyTemplateStore {
     /// Mints one draft per casting under a SHARED batch id, isolating each
     /// row's refusal.
     ///
-    /// `instantiateBatch` is the headless contract and is right for a CLI: it
-    /// maps and rethrows, so a batch either happens or does not. Interactively
-    /// that is worse than useless — the throw comes from row k with rows
-    /// 0..<k already written to disk, and the researcher is told a message
-    /// about one casting while N orphan drafts they cannot see have appeared
-    /// in the study list. Isolating per row keeps the shared `batchGroup` (the
+    /// A map-and-rethrow batch can fail after publishing earlier rows. This
+    /// operation reports those partial outcomes explicitly: the throw from row
+    /// k must not hide drafts 0..<k already written to disk. Isolating per row keeps the shared `batchGroup` (the
     /// only thing tying panel siblings together) and reports exactly which
     /// castings landed and which refused.
     public static func mintBatch(
@@ -179,26 +176,40 @@ extension StudyTemplateStore {
         batchID: String? = nil,
         onRow: ((Int, RowMint) -> Void)? = nil
     ) -> BatchMint {
+        let root = ExperimentStore.workspaceRoot
+        let review = Result { try StudyDesignSnapshot(workspaceRoot: root, name: templateName) }
+        return mintRows(count: cells.count, names: names, batchID: batchID, onRow: onRow) { index, name, batch in
+            let casting: StudyDesignInstantiation.Casting
+            switch cells[index] {
+            case .agents(let records): casting = .agents(try records.map { try AgentArtifactSnapshot(workspaceRoot: root, reviewedRecord: $0) })
+            case .seating(let assignment): casting = .seating(assignment)
+            }
+            return try StudyDesignInstantiation.instantiate(reviewed: review.get(), casting: casting,
+                studyName: name, batchGroup: batch).manifest
+        }
+    }
+
+    static func mintRows(count: Int, names: [String?], batchID: String?,
+                         onRow: ((Int, RowMint) -> Void)? = nil,
+                         mint: (Int, String?, String) throws -> ExperimentManifest) -> BatchMint {
         let batch = batchID ?? newBatchID()
         var results: [RowMint] = []
-        for (index, cell) in cells.enumerated() {
+        for index in 0..<count {
             let requested = index < names.count ? names[index] : nil
             let result: RowMint
             do {
-                let manifest = try instantiate(
-                    templateName: templateName, cell: cell,
-                    studyName: requested, batchGroup: batch)
+                let manifest = try mint(index, requested, batch)
                 result = RowMint(row: index, study: manifest.name, failure: nil)
             } catch {
-                result = RowMint(
-                    row: index, study: nil,
-                    failure: (error as? ExperimentError)?.reason ?? "\(error)")
+                result = RowMint(row: index, study: nil,
+                    failure: (error as? ExperimentError)?.reason ?? error.localizedDescription)
             }
             results.append(result)
             onRow?(index, result)
         }
         return BatchMint(batchGroup: batch, results: results)
     }
+
 }
 
 // MARK: - Submitting a batch, sequentially
@@ -349,6 +360,9 @@ public struct TemplateCellRow: Identifiable, Sendable, Equatable {
 @Observable @MainActor
 public final class TemplateInstantiation {
 
+    public let workspaceRoot: URL
+    public private(set) var reviewedDesign: StudyDesignSnapshot?
+    private var reviewedAgents: [String: AgentArtifactSnapshot] = [:]
     public private(set) var template: StudyTemplate?
     public private(set) var templateName: String
     /// Seats of the template's semantic panel, in panel order. Empty for a
@@ -398,26 +412,50 @@ public final class TemplateInstantiation {
 
     private var taskItems = 1
 
-    public init(templateName: String) {
+    public init(templateName: String, workspaceRoot: URL = ExperimentStore.workspaceRoot) {
         self.templateName = templateName
-        load()
+        self.workspaceRoot = workspaceRoot.standardizedFileURL
+        discardAndReload()
     }
 
     // MARK: Loading
 
-    public func load() {
+    public func discardAndReload() {
+        guard !isWorking else { return }
         loadFailure = nil
         advisories = []
+        rows = []
+        template = nil
+        reviewedDesign = nil
+        agents = []
+        reviewedAgents = [:]
+        seatIDs = []
+        sweepAgentID = nil
+        permutationAgentIDs = []
+        lastSummary = nil
+        mintedStudies = []
+        lastBatchGroup = nil
+        lastMintWasClean = false
         do {
-            let template = try StudyTemplateStore.load(name: templateName)
+            let reviewed = try StudyDesignSnapshot(workspaceRoot: workspaceRoot, name: templateName)
+            let template = reviewed.template
             self.template = template
-            taskItems = TemplateBatchTotals.taskItemCount(template)
-            agents = ModelVariantStore.scan().filter {
-                $0.artifact.baseModelID == template.study.modelID
+            reviewedDesign = reviewed
+            taskItems = TemplateBatchTotals.taskItemCount(template, workspaceRoot: workspaceRoot)
+            let runs = workspaceRoot.appending(component: "runs")
+            for record in ModelVariantStore.scan(directory: runs.appending(component: "model-variants"), importedRoot: runs)
+                where record.artifact.baseModelID == template.study.modelID {
+                do {
+                    let agent = try AgentArtifactSnapshot(workspaceRoot: workspaceRoot, reviewedRecord: record)
+                    agents.append(agent.record)
+                    reviewedAgents[agent.record.id] = agent
+                } catch { advisories.append("Could not review agent \(record.artifact.name): \(error.localizedDescription)") }
             }
             if template.intent == .multiAgent {
-                seatIDs = try StudyTemplateStore.semanticSeatIDs(
-                    templateName: templateName)
+                guard let ref = template.semanticScenario else {
+                    throw ExperimentError(reason: "The design declares no semantic panel.")
+                }
+                seatIDs = PanelComposition.seatIDs(try StudyTemplateStore.loadSemanticPanel(ref, workspaceRoot: workspaceRoot))
             } else {
                 seatIDs = []
             }
@@ -463,7 +501,8 @@ public final class TemplateInstantiation {
     }
 
     public func occupant(for record: ModelVariantRecord) -> SeatOccupant {
-        SeatCasting.occupant(for: record)
+        guard let agent = reviewedAgents[record.id] else { return .baseline }
+        return .agent(name: agent.record.artifact.name, artifactPath: agent.path, artifactHash: agent.file.sha256)
     }
 
     // MARK: Presets
@@ -472,13 +511,7 @@ public final class TemplateInstantiation {
     public func addCompositionSweep() {
         guard let template, template.intent == .multiAgent else { return }
         let agent = occupant(forAgentID: sweepAgentID)
-        do {
-            let cells = try StudyTemplateStore.compositionSweepCells(
-                templateName: templateName, agent: agent)
-            append(cells: cells)
-        } catch {
-            loadFailure = (error as? ExperimentError)?.reason ?? "\(error)"
-        }
+        append(cells: PanelComposition.compositionSweep(seatIDs: seatIDs, agent: agent).map(StudyTemplateStore.Cell.seating))
     }
 
     /// The occupant multiset "Add all permutations" would expand, padded with
@@ -522,9 +555,20 @@ public final class TemplateInstantiation {
     /// panel is an advisory, not a load failure: the design's scenario may
     /// simply have a different number of seats than the study's, and the table
     /// stays usable.
-    public func preloadPermutations(occupants: [SeatOccupant]) {
+    public func preloadPermutations(occupants incoming: [SeatOccupant]) {
         guard let template, template.intent == .multiAgent else { return }
-        guard !occupants.isEmpty else { return }
+        guard !incoming.isEmpty else { return }
+        let occupants: [SeatOccupant]
+        do {
+            occupants = try incoming.map { occupant in
+                guard case .agent(let name, let path, let hash) = occupant else { return occupant }
+                return .agent(name: name,
+                    artifactPath: try StudyDesignInstantiation.workspaceAgentPath(path, root: workspaceRoot), artifactHash: hash)
+            }
+        } catch {
+            loadFailure = error.localizedDescription
+            return
+        }
         guard occupants.count == seatIDs.count else {
             advisories.append(
                 "the study's casting fills \(occupants.count) seat(s) but this "
@@ -544,7 +588,7 @@ public final class TemplateInstantiation {
             permutationAgentIDs = occupants.compactMap { occupant in
                 guard case .agent(_, let path, _) = occupant else { return nil }
                 return agents.first {
-                    ModelVariantStore.relativePath(for: $0) == path
+                    reviewedAgents[$0.id]?.path == path
                 }?.id
             }
             permutationPadsWithBaseline = occupants.contains(.baseline)
@@ -628,6 +672,12 @@ public final class TemplateInstantiation {
     }
 
     /// Enough to WRITE the drafts.
+    public var isCurrentWorkspace: Bool {
+        guard let active = try? ManifestFileTransaction.canonicalPath(ExperimentStore.workspaceRoot),
+            let reviewed = try? ManifestFileTransaction.canonicalPath(workspaceRoot) else { return false }
+        return active == reviewed
+    }
+
     public var readyToMint: Bool {
         loadFailure == nil && !rows.isEmpty
             && rows.allSatisfy { refusal(for: $0) == nil }
@@ -694,17 +744,25 @@ public final class TemplateInstantiation {
     public func mint(
         submit: (@MainActor @Sendable (String) async -> Result<String, StudyBatchSubmission.Failure>)? = nil
     ) async -> String {
-        guard !isWorking, readyToMint else { return lastSummary ?? "" }
+        guard !isWorking, readyToMint, let reviewedDesign else { return lastSummary ?? "" }
+        guard let activeRoot = try? ManifestFileTransaction.canonicalPath(ExperimentStore.workspaceRoot),
+            let reviewedRoot = try? ManifestFileTransaction.canonicalPath(workspaceRoot), activeRoot == reviewedRoot else {
+            lastSummary = "The active workspace changed. Reopen the design in its workspace before minting or submitting."
+            lastMintWasClean = false
+            return lastSummary!
+        }
         isWorking = true
         defer { isWorking = false }
 
-        let cells = rows.compactMap { cell(for: $0) }
+        let castings: [StudyDesignInstantiation.Casting] = rows.map { row in
+            if template?.intent == .multiAgent { return .seating(.init(seatIDs: seatIDs, occupants: row.seating)) }
+            return .agents(row.agentIDs.compactMap { reviewedAgents[$0] })
+        }
         let names = rows.map { row -> String? in
             let trimmed = row.name.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
         }
-        let mint = StudyTemplateStore.mintBatch(
-            templateName: templateName, cells: cells, names: names)
+        let mint = StudyDesignInstantiation.mintBatch(reviewed: reviewedDesign, castings: castings, names: names)
         lastBatchGroup = mint.batchGroup
         mintedStudies = mint.minted
         lastMintWasClean = mint.failures.isEmpty
@@ -716,7 +774,7 @@ public final class TemplateInstantiation {
             }
         }
 
-        var summary = "minted \(mint.minted.count) of \(cells.count) "
+        var summary = "minted \(mint.minted.count) of \(castings.count) "
             + "draft(s) in batch \(mint.batchGroup)"
         for failure in mint.failures {
             summary += " — row \(failure.row + 1): \(failure.failure ?? "")"
@@ -724,7 +782,12 @@ public final class TemplateInstantiation {
 
         if let submit, !mint.minted.isEmpty {
             let outcomes = await StudyBatchSubmission.submit(
-                studies: mint.minted, submit: submit)
+                studies: mint.minted, submit: { study in
+                    guard (try? ManifestFileTransaction.canonicalPath(ExperimentStore.workspaceRoot)) == reviewedRoot else {
+                        return .failure(.init(reason: "The active workspace changed during the batch. Return to the original workspace and review the remaining submissions."))
+                    }
+                    return await submit(study)
+                })
             lastMintWasClean = lastMintWasClean && outcomes.allSatisfy(\.succeeded)
             for outcome in outcomes {
                 guard let index = rows.firstIndex(where: {

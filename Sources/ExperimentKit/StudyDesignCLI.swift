@@ -23,6 +23,16 @@ enum StudyDesignCLI {
                 guard args.count == 2 else { throw usage() }
                 let read = try StudyDesignSnapshot(workspaceRoot: workspaceRoot, name: args[1])
                 return try result(read, changed: false, sink: sink)
+            case "instantiate":
+                guard args.count >= 2, let expected = flag("--file-sha256"), let castingPath = flag("--casting") else { throw usage() }
+                let reviewed = try StudyDesignAuthoring.review(name: args[1], workspaceRoot: workspaceRoot, expectedFileSHA256: expected)
+                let data = try Data(contentsOf: URL(fileURLWithPath: castingPath))
+                let casting = try StudyDesignCastingInput.resolve(data, reviewed: reviewed)
+                let saved = try StudyDesignInstantiation.instantiate(reviewed: reviewed, casting: casting, studyName: flag("--study-name"))
+                let encoded = try JSONEncoder().encode(StudyAuthoringHTTP.Document(saved))
+                sink.out(String(decoding: encoded, as: UTF8.self))
+                return ExperimentCLIResult(message: "Draft created from reviewed design.", changed: true,
+                    payload: try JSONDecoder().decode([String: JSONValue].self, from: encoded))
             case "describe":
                 guard args.count >= 2, let description = flag("--description"), let expected = flag("--file-sha256") else { throw usage() }
                 let reviewed = try StudyDesignAuthoring.review(name: args[1], workspaceRoot: workspaceRoot, expectedFileSHA256: expected)
@@ -36,7 +46,7 @@ enum StudyDesignCLI {
                 code: error.code, reason: error.reason, repairAction: error.repairAction)
         } catch CocoaError.fileReadNoSuchFile {
             throw ExperimentCLIStop(exitCode: 66, state: .notFound, code: "designNotFound",
-                reason: "The named design does not exist in this workspace.", repairAction: "Use design list --json and inspect a design from that library.")
+                reason: "The named design or casting file does not exist.", repairAction: "Use design list --json and inspect a design from that library.")
         }
     }
 
@@ -50,7 +60,7 @@ enum StudyDesignCLI {
     }
 
     private static func usage() -> ExperimentError {
-        .malformed("Use design list, inspect <name>, or describe <name> --description <text> --file-sha256 <digest>.",
+        .malformed("Use design list, inspect <name>, describe <name> --description <text> --file-sha256 <digest>, or instantiate <name> --casting <file> --file-sha256 <digest>.",
             repair: "steerlab-cli design --help")
     }
 }

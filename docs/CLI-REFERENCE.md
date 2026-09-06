@@ -784,7 +784,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   workspace init <path>                         Create and seed a data workspace.
   experiment <verb> <name> …                    The study lifecycle.
   agent list | inspect <path>                   Inspect local agents for reviewed attachment.
-  design list | inspect | describe …            Inspect designs and edit reviewed descriptions.
+  design list | inspect | describe | instantiate …  Inspect designs, edit reviewed descriptions, and create studies from castings.
   data check <experiment> | custody <run-id> | verify-custody <receipt-sha256>  Study-data readiness and local evidence custody.
   vectors <verb> …                              Vector artifacts.
   remote <verb> (--site <id> | --url <server>)  Cluster client.
@@ -2234,6 +2234,7 @@ the service computes and records the actual artifact pin. Frozen studies refuse.
 steerlab-cli design list
 steerlab-cli design inspect <name>
 steerlab-cli design describe <name> --description <text> --file-sha256 <value>
+steerlab-cli design instantiate <name> --casting <value> --file-sha256 <value> [--study-name <value>]
 ```
 
 | Verb | Purpose |
@@ -2241,6 +2242,7 @@ steerlab-cli design describe <name> --description <text> --file-sha256 <value>
 | `design list` | List the workspace's designs and report unreadable entries. |
 | `design inspect` | Read a design and its external file digest for reviewed edits. |
 | `design describe` | Save a design description against the reviewed file version. |
+| `design instantiate` | Create a draft from a reviewed design and explicit casting JSON file. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-design END -->
