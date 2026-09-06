@@ -94,7 +94,7 @@ public enum CLIReferenceDocument {
             verbLabels: ["panel list", "panel check", "panel compile"]),
         .init(
             id: "swift-model",
-            verbLabels: ["model capabilities", "model set-capability"]),
+            verbLabels: ["model plan", "model install", "model capabilities", "model set-capability"]),
         .init(
             id: "swift-diagnostics",
             verbLabels: [

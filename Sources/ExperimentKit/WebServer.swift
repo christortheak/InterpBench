@@ -265,6 +265,12 @@ public final class SteerLabWebServer: Sendable {
         case ("GET", "/api/state"):
             return .json(StateDTO(service: service))
 
+        case ("GET", "/api/local-model/status"), ("POST", "/api/local-model/plan"),
+             ("POST", "/api/local-model/install"), ("POST", "/api/local-model/cancel"):
+            let operation = LocalModelPreparationHTTP.Operation(rawValue: String(path.split(separator: "/").last!))!
+            let response = LocalModelPreparationHTTP.perform(operation, body: body, installer: service.modelInstaller)
+            return Response(status: response.status, body: response.body)
+
         case _ where method == "GET" && path.hasPrefix("/api/experiment/result/file"):
             guard let filename = queryValue("name", in: path) else {
                 return .error("missing file name")

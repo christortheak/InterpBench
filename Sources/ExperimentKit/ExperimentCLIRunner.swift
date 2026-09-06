@@ -1299,6 +1299,9 @@ public struct ExperimentCLIRunner: Sendable {
     func runModelCommand(_ invocation: ExperimentCLIInvocation) async throws
         -> ExperimentCLIResult
     {
+        if ["plan", "install"].contains(invocation.args.first ?? "") {
+            return try await LocalModelPreparationCLI.run(invocation, sink: sink)
+        }
         let args = invocation.args
         func flag(_ name: String) -> String? {
             guard let index = args.firstIndex(of: name), args.count > index + 1 else {

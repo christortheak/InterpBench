@@ -21,6 +21,13 @@ import SteeringKit
 @Observable @MainActor
 public final class LocalModelInstaller {
 
+    public struct Request: Sendable, Equatable, Encodable {
+        public let id: UUID
+        public let modelID: String
+        public let revision: String?
+    }
+    public private(set) var request: Request?
+
     public enum Phase: Equatable, Sendable {
         case idle
         /// Fetching; `percent` is the hub client's own progress (0…100).
@@ -35,20 +42,20 @@ public final class LocalModelInstaller {
     /// The fetch itself, injectable so the state machine is testable without
     /// a network or a multi-gigabyte download. Reports 0…100.
     private let fetch:
-        @Sendable (String, @Sendable @escaping (Int) -> Void) async throws -> Void
+        @Sendable (String, String?, @Sendable @escaping (Int) -> Void) async throws -> Void
 
     private var task: Task<Void, Never>?
-    /// Bumped per install so a cancelled predecessor's tail cannot clobber
-    /// its successor's phase or task handle.
+    /// Bumped on install and cancellation so a predecessor's tail cannot
+    /// clobber a successor or restore status after the user clears it.
     private var epoch = 0
 
     public init(
         fetch: (
-            @Sendable (String, @Sendable @escaping (Int) -> Void) async throws -> Void
+            @Sendable (String, String?, @Sendable @escaping (Int) -> Void) async throws -> Void
         )? = nil
     ) {
-        self.fetch = fetch ?? { modelID, report in
-            try await SteeredContainerLoader.downloadSnapshot(modelID: modelID) { progress in
+        self.fetch = fetch ?? { modelID, revision, report in
+            try await SteeredContainerLoader.downloadSnapshot(modelID: modelID, revision: revision) { progress in
                 report(Int(progress.fractionCompleted * 100))
             }
         }
@@ -96,18 +103,20 @@ public final class LocalModelInstaller {
     /// Start an install. Returns the refusal reason when it will not start
     /// (already installing, empty/malformed slug), nil when it did.
     @discardableResult
-    public func install(_ modelID: String) -> String? {
+    public func install(_ modelID: String, revision: String? = nil) -> String? {
         let trimmed = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let refusal = Self.installRefusal(slug: modelID, isInstalling: isInstalling) {
+        if let refusal = Self.installRefusal(slug: modelID, isInstalling: isInstalling, revision: revision) {
             // A refusal must be visible, not silent — except when it is "one
             // is already running", whose in-flight status line is the more
             // useful thing to keep on screen.
             if !isInstalling {
+                request = nil
                 phase = .failed(modelID: trimmed, reason: refusal)
             }
             return refusal
         }
         phase = .installing(modelID: trimmed, percent: 0)
+        request = Request(id: UUID(), modelID: trimmed, revision: revision)
         epoch += 1
         let epoch = self.epoch
         let fetch = self.fetch
@@ -117,7 +126,7 @@ public final class LocalModelInstaller {
         // task ends, so the reference does too.
         task = Task { [self] in
             do {
-                try await fetch(trimmed) { percent in
+                try await fetch(trimmed, revision) { percent in
                     Task { @MainActor in
                         self.reportProgress(epoch: epoch, modelID: trimmed, percent: percent)
                     }
@@ -155,6 +164,7 @@ public final class LocalModelInstaller {
     /// Stop waiting for (and stop fetching) the current install. Partial
     /// files stay in the HF cache; a re-run resumes from them.
     public func cancel() {
+        epoch += 1
         task?.cancel()
         task = nil
         if case .installing(let modelID, _) = phase {
@@ -162,9 +172,29 @@ public final class LocalModelInstaller {
         }
     }
 
+    /// Programmatic cancellation must name the install it observed. A delayed
+    /// request cannot cancel a successor, even when it installs the same model.
+    public func cancel(requestID: UUID) throws {
+        guard request?.id == requestID else { throw LocalModelPreparationError.requestChanged() }
+        cancel()
+    }
+
+    public func completion(requestID: UUID) async throws -> Phase {
+        guard request?.id == requestID else { throw LocalModelPreparationError.requestChanged() }
+        let running = task
+        await withTaskCancellationHandler {
+            await running?.value
+        } onCancel: {
+            Task { @MainActor in try? self.cancel(requestID: requestID) }
+        }
+        guard request?.id == requestID else { throw LocalModelPreparationError.requestChanged() }
+        return phase
+    }
+
     public func clearStatus() {
         guard !isInstalling else { return }
         phase = .idle
+        request = nil
     }
 
     /// Called on the main actor after a successful install — the seam the
@@ -177,19 +207,30 @@ public final class LocalModelInstaller {
     /// Why this install cannot start, or nil when it may. Slug shape is the
     /// hub's own: `owner/repo`, no whitespace, no leading or trailing slash.
     public nonisolated static func installRefusal(
-        slug: String, isInstalling: Bool
+        slug: String, isInstalling: Bool, revision: String? = nil
     ) -> String? {
         if isInstalling {
             return "an install is already running — wait for it to finish or cancel it"
         }
         let trimmed = slug.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return "enter a Hugging Face repo id to install" }
-        if trimmed.contains(" ") {
+        if trimmed.contains(where: \.isWhitespace) {
             return "a Hugging Face repo id has no spaces (e.g. mlx-community/gemma-3-4b-it-4bit)"
         }
         let parts = trimmed.split(separator: "/", omittingEmptySubsequences: false)
         guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else {
             return "use the owner/repo form (e.g. mlx-community/gemma-3-4b-it-4bit)"
+        }
+        guard parts.allSatisfy({ $0 != "." && $0 != ".." }),
+            trimmed.range(of: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", options: .regularExpression) != nil else {
+            return "use an owner/repo id containing only letters, digits, underscores, dots and hyphens"
+        }
+        if let revision {
+            let components = revision.split(separator: "/", omittingEmptySubsequences: false)
+            guard !revision.isEmpty, components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
+                revision.range(of: "^[A-Za-z0-9_./-]+$", options: .regularExpression) != nil else {
+                return "use a commit, branch or tag without empty or parent-directory path components"
+            }
         }
         return nil
     }

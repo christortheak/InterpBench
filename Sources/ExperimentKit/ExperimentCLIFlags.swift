@@ -380,6 +380,8 @@ public enum ExperimentCLIParser {
         // record; without it the verb shows the record, or the id heuristic
         // and says so. Server twin: `steerlab-server model capabilities`;
         // client twin: `steerlab model capabilities|set-capability`.
+        .init(namespace: "model", verb: "plan", positional: "<modelID>", purpose: "Inspect the local model cache for a requested revision without downloading or loading weights.", valueFlags: ["--revision"]),
+        .init(namespace: "model", verb: "install", positional: "<modelID>", purpose: "Install model files into this Mac's cache and wait for the existing installer to finish; does not load weights.", valueFlags: ["--revision"]),
         .init(
             namespace: "model", verb: "capabilities", positional: "<modelID>",
             purpose: "Show the model's chat-template capability record — or "

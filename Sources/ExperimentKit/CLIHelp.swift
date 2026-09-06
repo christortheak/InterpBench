@@ -640,8 +640,8 @@ public enum ExperimentCLIHelp {
                 synopsis: "panel <verb> …",
                 purpose: "Panel scenarios and seat casting."),
             .init(
-                synopsis: "model capabilities <modelID> [--probe] | set-capability …",
-                purpose: "The chat-template capability record."),
+                synopsis: "model plan | install | capabilities | set-capability …",
+                purpose: "Local model preparation and chat-template capabilities."),
             .init(
                 synopsis: "artifacts audit [--json]",
                 purpose: "Vector-sidecar audit."),

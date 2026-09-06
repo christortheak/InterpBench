@@ -793,7 +793,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   authoring prompt <kind> …                     Generation prompts for missing study data.
   docs cli-reference [--check | --write]        Regenerate the reference document.
   panel <verb> …                                Panel scenarios and seat casting.
-  model capabilities <modelID> [--probe] | set-capability …  The chat-template capability record.
+  model plan | install | capabilities | set-capability …  Local model preparation and chat-template capabilities.
   artifacts audit [--json]                      Vector-sidecar audit.
   serve [--port N]                              The loopback web front end.
   --config <path.json>                          Smoke-test / toy-concept tasks.
@@ -2823,12 +2823,16 @@ record the same way; `--probe` does it by hand.
 <!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
 
 ```
+steerlab-cli model plan <modelID> [--revision <commit>]
+steerlab-cli model install <modelID> [--revision <commit>]
 steerlab-cli model capabilities <modelID> [--probe] [--revision <commit>]
 steerlab-cli model set-capability <modelID> <field> <value> [--reason <text>] [--revision <commit>]
 ```
 
 | Verb | Purpose |
 |---|---|
+| `model plan` | Inspect the local model cache for a requested revision without downloading or loading weights. |
+| `model install` | Install model files into this Mac's cache and wait for the existing installer to finish; does not load weights. |
 | `model capabilities` | Show the model's chat-template capability record — or with --probe, derive it from the pinned template (system role, thinking switch, accepted reasoning-effort levels) and write it into the workspace. |
 | `model set-capability` | Override one detected capability on the record (systemRole, thinkingSwitch, thinkOpenInPrompt) with a reason that is displayed beside the detected value and stamped into runs; "" clears the override. |
 

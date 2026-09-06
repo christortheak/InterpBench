@@ -829,3 +829,55 @@ parity and interactive app qualification remain open. Batch results are returned
 synchronously and are not a durable command journal; an interrupted caller must
 inspect the workspace before reconstructing a request. Main, installed software,
 real research data and live remote jobs were unchanged.
+
+## Local model preparation through the shared installer
+
+- Added `model plan` and foreground `model install`, plus the Swift workbench's
+  explicit `/api/local-model/plan`, `install`, `status` and `cancel` operations.
+  Planning delegates to the loader's existing requested-revision cache checks;
+  installation delegates to the app's existing `LocalModelInstaller`. No second
+  downloader, weight loader or server submission path was introduced.
+- Plan output distinguishes cached file presence from memory fit, credential
+  readiness and scientific qualification. It reports the resolved cached revision
+  when available and makes no download-size estimate. Planning and status perform
+  no download, weight load or credential query.
+- Each accepted installation records a fresh in-process request ID and optional
+  revision. The revision is forwarded to the existing snapshot downloader. Busy
+  admission preserves the current request. HTTP cancellation requires the observed
+  ID and refuses a successor, including another install of the same model.
+- Cancellation now invalidates the predecessor's epoch immediately, preventing a
+  late completion from restoring status after cancellation and clearing. Existing
+  installer tests retain their state-machine checks with the revision argument
+  added to injected fetches.
+- The CLI waits for its own installer and reports completion or failure. The
+  workbench API observes the app's installer; it cannot observe a separate CLI
+  process. These are local-cache operations, independent of the app's selected
+  remote server. No source study or scientific revision pin is modified.
+- Updated the shipped agent instructions and mirror, parser/help and generated
+  reference, operation matrix and `LOCAL-MODEL-PREPARATION.md`. This is semantic
+  operation/admission work, not a mechanical move or AST-equivalence claim.
+
+Validation:
+
+- Five focused tests passed, covering incomplete/exact-revision cache observation,
+  invalid path/ref input, revision forwarding, successful/failed injected fetches,
+  busy admission, status, stale cancellation and cancelled-tail suppression.
+- Actual compiled CLI and disposable HTTP workbench passed read-only cache-plan
+  parity, explicit revision observation and invalid/unknown-target/cancellation
+  refusal checks. Log: `/private/tmp/interpbench-local-model-preparation-wire.log`.
+  Valid installation was exercised through injected fetches only: no real model
+  download, weight load or server installation occurred.
+- Full Xcode beta suite: 277 SteeringKit and 4,527 ExperimentKit tests passed,
+  `TEST SUCCEEDED`; `/private/tmp/interpbench-local-model-preparation-xcode.log`.
+- Full Python suite: 5,896 passed, 9 skipped, 8 warnings (181.21 seconds);
+  `/private/tmp/interpbench-local-model-preparation-python.log`.
+- Actual diff/new-file review, generated reference, bridge ratchet and whitespace
+  checks passed. Independent maintainer review remains required before landing.
+
+Server preparation plans and CLI adapters, durable remote install observation,
+server policy qualification, native revision-entry controls and interactive UI
+qualification remain open. Local installation status is not a durable journal;
+restarting its process requires inspecting the cache and reconstructing an
+explicit request. Failed installs may leave partial files. Cache presence and
+successful fetching do not prove memory fit or scientific correctness. Main,
+installed software, researcher data and live remote jobs were unchanged.

@@ -591,6 +591,21 @@ creates more studies. Nothing is frozen or submitted. The app casting table uses
 the same per-row publication owner. Automatic expansion adapters, rename/deletion
 and Python design parity remain gaps; do not invent verbs or edit frozen studies.
 
+**Local model preparation.** Use `steerlab-cli model plan <owner/repo> --revision <commit-or-ref> --json`
+to inspect this Mac's cached file set without a download, credential lookup or
+weight load. Omit revision to inspect `main`. Missing or partial cache files are
+not an installed revision. A present file set is not memory-fit or scientific
+qualification; those remain separate checks. Then explicitly use
+`steerlab-cli model install <owner/repo> --revision <commit-or-ref> --json`
+to fetch through the app's installer and wait for completion. This foreground
+command is local to the Mac; it creates no server job. Failed or interrupted
+fetches can leave partial cache files for a later install. Inspect the returned
+status and run `model plan` again before loading or conducting a study. The app's
+local-model HTTP operations expose plan, install, status and cancellation of its
+own installer. A cancellation names the observed request ID; it cannot follow a
+newer install. Server installations remain separate and subject to server policy;
+never use the Mac cache result as evidence of server readiness.
+
 **`data custody <run-id>`** discovers receipts for an imported run, including
 receipts for a pipeline archive that carried that run. Discovery lists recorded
 imports; it does not verify current evidence bytes. Use `data verify-custody`

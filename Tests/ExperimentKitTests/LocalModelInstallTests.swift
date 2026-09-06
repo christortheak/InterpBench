@@ -121,7 +121,7 @@ struct LocalModelInstallTests {
 
     @Test func successfulInstallReportsProgressAndNotifiesTheRegistry() async throws {
         let finished = Mailbox()
-        let installer = LocalModelInstaller { _, report in
+        let installer = LocalModelInstaller { _, _, report in
             report(40)
             report(100)
         }
@@ -139,7 +139,7 @@ struct LocalModelInstallTests {
         struct Refused: LocalizedError {
             var errorDescription: String? { "repository not found" }
         }
-        let installer = LocalModelInstaller { _, _ in throw Refused() }
+        let installer = LocalModelInstaller { _, _, _ in throw Refused() }
 
         installer.install("vendor-a/model-small-4bit")
         try await settle(installer)
@@ -152,14 +152,14 @@ struct LocalModelInstallTests {
     /// A malformed slug is reported in the same place a fetch failure is —
     /// a refusal the researcher never sees is a hang with extra steps.
     @Test func malformedSlugSurfacesAsAVisibleFailure() {
-        let installer = LocalModelInstaller { _, _ in }
+        let installer = LocalModelInstaller { _, _, _ in }
         #expect(installer.install("not-a-slug") != nil)
         #expect(installer.isFailed)
         #expect(installer.statusLine?.contains("owner/repo") == true)
     }
 
     @Test func cancelStopsTheInstallAndSaysSo() {
-        let installer = LocalModelInstaller { _, _ in
+        let installer = LocalModelInstaller { _, _, _ in
             try await Task.sleep(for: .seconds(60))
         }
         installer.install("vendor-a/model-small-4bit")
