@@ -111,7 +111,11 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
         case .status: flags = ["--refresh"]
         case .diagnose: flags = ["--redact"]
         case .push: flags = ["--dry-run"]
-        case .importRuns: flags = ["--dry-run"]
+        // `import --reimport-drifted`: the "import the remote one under a
+        // different name" half of the immutability refusal, as a verb.
+        // Never the default — a drifted directory is a human's question
+        // first, and the copy costs disk the researcher should expect.
+        case .importRuns: flags = ["--dry-run", "--reimport-drifted"]
         case .controllerLogs: flags = ["--follow"]
         // `sites import --force`: replace a site the canonical registry
         // already holds. Never the default — see `ClusterSiteRepository.
@@ -476,6 +480,9 @@ public struct ClusterCLIInvocation: Sendable, Equatable {
     /// space so the filter reads the run's START, not a filesystem mtime a
     /// later touch would move.
     public var since: String?
+    /// `import --reimport-drifted`: for every directory refused as drifted,
+    /// also bring the cluster's copy home beside it as `<name>-reimport`.
+    public var reimportDrifted: Bool
     /// The one positional argument any verb takes (`sites import <file>`).
     public var positional: String?
     public var overrides: ClusterCLIOverrides
@@ -499,11 +506,13 @@ public struct ClusterCLIInvocation: Sendable, Equatable {
         outPath: String? = nil,
         jobClass: ClusterEnvironmentRenderer.JobClass? = nil,
         since: String? = nil,
+        reimportDrifted: Bool = false,
         positional: String? = nil,
         overrides: ClusterCLIOverrides = ClusterCLIOverrides(),
         help: Bool = false
     ) {
         self.since = since
+        self.reimportDrifted = reimportDrifted
         self.verb = verb
         self.siteReference = siteReference
         self.target = target
@@ -709,6 +718,7 @@ public enum ClusterCLIParser {
                 case "--refresh": invocation.refresh = true
                 case "--redact": invocation.redact = true
                 case "--dry-run": invocation.dryRun = true
+                case "--reimport-drifted": invocation.reimportDrifted = true
                 case "--follow": invocation.follow = true
                 case "--force": invocation.force = true
                 case "--render-only": invocation.renderOnly = true

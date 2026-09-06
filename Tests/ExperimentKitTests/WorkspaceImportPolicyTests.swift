@@ -114,6 +114,36 @@ struct WorkspaceImportPolicyClassificationTests {
         #expect(reason.contains("client"))
     }
 
+    /// A `-reimport<N>` copy — what `--reimport-drifted` makes of a drifted
+    /// directory — classifies exactly as its original: same kind, stamp, and
+    /// family, so the catalog groups the pair and every rule sees the run it
+    /// is. The ordinal is carried; the shape is not changed by it.
+    @Test func reimportCopiesClassifyAsTheirOriginal() {
+        let original = classify("submit-bundle-alpha-run")
+        let copy = classify("submit-bundle-alpha-run-reimport")
+        let second = classify("submit-bundle-alpha-run-reimport2")
+        #expect(copy.kind == .submit)
+        #expect(second.kind == .submit)
+        #expect(copy.stem == original.stem)
+        #expect(copy.stamp == original.stamp)
+        #expect(original.reimportOrdinal == nil)
+        #expect(copy.reimportOrdinal == 1)
+        #expect(second.reimportOrdinal == 2)
+        // The suffix is stripped BEFORE the verb is read, so a stage copy
+        // keeps its stage instead of falling to the `.run` default.
+        let evaluate = classify("exp-alpha-evaluate-reimport")
+        #expect(evaluate.kind == .evaluate)
+        #expect(evaluate.stem == "alpha")
+        #expect(WorkspaceImportPolicy.reimportName("x", ordinal: 1) == "x-reimport")
+        #expect(WorkspaceImportPolicy.reimportName("x", ordinal: 3) == "x-reimport3")
+        // A study whose own name carries the word is not a copy: only a LAST
+        // token, after the verb, is the suffix.
+        let named = classify("exp-reimport-run")
+        #expect(named.reimportOrdinal == nil)
+        #expect(named.kind == .run)
+        #expect(named.stem == "reimport")
+    }
+
     // MARK: The in-progress gate
 
     /// The completion artifacts are the ENGINE's own: the study report for a
@@ -630,6 +660,181 @@ struct WorkspaceImportVerificationTests {
     }
 }
 
+// MARK: - The receipt gate (the Slurm jobs a directory names)
+
+struct WorkspaceImportPolicyReceiptGateTests {
+
+    private func stat(_ path: String, _ size: Int64 = 1) -> WorkspaceImportPolicy.FileStat {
+        WorkspaceImportPolicy.FileStat(relativePath: path, size: size)
+    }
+
+    private func job(
+        _ id: String, in directory: String = "slurm", marked: Bool = false
+    ) -> WorkspaceImportPolicy.NamedJob {
+        WorkspaceImportPolicy.NamedJob(
+            id: id, bundleDirectory: directory, hasEndMarker: marked,
+            captures: ["\(directory)/slurm-\(id).out"])
+    }
+
+    /// A receipt names its jobs by the scheduler's own captures — one bundle
+    /// directory per sbatch — and the engine's end marker beside a capture
+    /// settles that job by content. Records, scripts, and manifests name
+    /// nothing; neither does a marker with no capture beside it.
+    @Test func namedJobsAreReadOffTheCaptureNames() {
+        let jobs = WorkspaceImportPolicy.namedJobs(remote: [
+            stat("records/0123456789ab.json", 400),
+            stat("slurm/run.sbatch", 2_000), stat("slurm/bundle.json", 900),
+            stat("slurm/slurm-47923657.out", 143), stat("slurm/slurm-47923657.err", 0),
+            stat("slurm-shard-1/slurm-47923658.out", 14_336),
+            stat("slurm-shard-1/slurm-47923658.exit", 2),
+            stat("slurm-shard-0/slurm-47923659.out", 14_336),
+            stat("slurm-judge-0-x/slurm-4.exit", 2),
+            stat("slurm/slurm-notanid.out", 5),
+            stat("slurm/slurm-.out", 5),
+        ])
+        #expect(jobs.map(\.id) == ["47923657", "47923659", "47923658"])
+        #expect(jobs.map(\.bundleDirectory) == ["slurm", "slurm-shard-0", "slurm-shard-1"])
+        #expect(jobs.map(\.hasEndMarker) == [false, false, true])
+        #expect(jobs[0].captures == ["slurm/slurm-47923657.err", "slurm/slurm-47923657.out"])
+        #expect(jobs[2].endMarkerPath == "slurm-shard-1/slurm-47923658.exit")
+        // A stage directory carries no captures and names no jobs.
+        #expect(
+            WorkspaceImportPolicy.namedJobs(remote: [
+                stat("config.json"), stat("generations.jsonl"), stat("report.json"),
+            ]).isEmpty)
+        // A capture at the directory root has an empty bundle directory.
+        let root = WorkspaceImportPolicy.namedJobs(remote: [stat("slurm-7.out")])
+        #expect(root.map(\.bundleDirectory) == [""])
+        #expect(root.first?.endMarkerPath == "slurm-7.exit")
+    }
+
+    /// The scheduler's answers, read the way the engine's own poll reads
+    /// them: `squeue` presence is live (whatever `sacct` says); a terminal
+    /// `sacct` state is ended; a requeue-class state is still alive; an id
+    /// neither knows is ended only when both queries answered.
+    @Test func schedulerAnswersAreInterpretedLikeTheEngines() {
+        let states = WorkspaceImportPolicy.schedulerStates(
+            requested: ["1", "2", "3", "4", "5", "6"],
+            squeueRows: ["1|RUNNING", "2|PENDING", "999|RUNNING", "garbage"],
+            sacctRows: ["3|COMPLETED", "4|CANCELLED by 1234", "5|REQUEUED", "1|COMPLETED"],
+            sacctAnswered: true)
+        #expect(states["1"] == .live("RUNNING"))
+        #expect(states["2"] == .live("PENDING"))
+        #expect(states["3"] == .ended("COMPLETED"))
+        #expect(states["4"] == .ended("CANCELLED"))
+        #expect(states["5"] == .live("REQUEUED"))
+        #expect(states["6"] == .ended("not known to squeue or sacct"))
+        #expect(states["999"] == nil, "only requested ids are answered")
+
+        let silent = WorkspaceImportPolicy.schedulerStates(
+            requested: ["6"], squeueRows: [], sacctRows: [], sacctAnswered: false)
+        #expect(silent["6"] == .unknown("sacct did not answer"))
+
+        let terminal = ["TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL", "FAILED", "BOOT_FAIL", "DEADLINE"]
+        for state in terminal {
+            #expect(
+                WorkspaceImportPolicy.schedulerStates(
+                    requested: ["9"], squeueRows: [], sacctRows: ["9|\(state)"],
+                    sacctAnswered: true)["9"] == .ended(state))
+        }
+        for state in ["PREEMPTED", "SUSPENDED", "RESIZING", "COMPLETING"] {
+            #expect(
+                WorkspaceImportPolicy.schedulerStates(
+                    requested: ["9"], squeueRows: [], sacctRows: ["9|\(state)"],
+                    sacctAnswered: true)["9"] == .live(state))
+        }
+    }
+
+    /// The gate: a marked job is settled by content and never looked up; an
+    /// unmarked one is held unless the scheduler said ENDED; an id the
+    /// scheduler did not answer for — or a query that threw — is UNKNOWN,
+    /// and unknown holds rather than guesses.
+    @Test func markedJobsAreSettledByContentAndTheRestByTheScheduler() {
+        let marked = job("1", marked: true)
+        let running = job("2", in: "slurm-shard-1")
+        let ended = job("3", in: "slurm-shard-0")
+        let unasked = job("4")
+        let held = WorkspaceImportPolicy.heldJobs(
+            [marked, running, ended, unasked],
+            states: ["2": .live("RUNNING"), "3": .ended("COMPLETED")])
+        #expect(held.map(\.job.id) == ["2", "4"])
+        #expect(held[0].state == "RUNNING")
+        #expect(!held[0].isUnknown)
+        #expect(held[1].isUnknown)
+        #expect(held[1].state == "the scheduler was not asked")
+
+        // A marker outranks a scheduler that still calls the job live.
+        #expect(WorkspaceImportPolicy.heldJobs([marked], states: ["1": .live("RUNNING")]).isEmpty)
+        // A failed query is carried into the reason, and still holds.
+        let failed = WorkspaceImportPolicy.heldJobs(
+            [unasked], states: [:], failure: "squeue exited 255")
+        #expect(failed.first?.state == "squeue exited 255")
+        #expect(failed.first?.isUnknown == true)
+        let unknown = WorkspaceImportPolicy.heldJobs(
+            [unasked], states: ["4": .unknown("sacct did not answer")])
+        #expect(unknown.first?.state == "sacct did not answer")
+        #expect(WorkspaceImportPolicy.heldJobs([], states: [:]).isEmpty)
+    }
+
+    /// The hold reason names each job, where its captures live, the
+    /// scheduler's word, what ends the hold, and the frozen-partial caveat.
+    @Test func theLiveJobsReasonNamesJobsStatesAndTheRepair() {
+        let running = WorkspaceImportPolicy.HeldJob(
+            job: job("47923657", in: "slurm-shard-1"), state: "RUNNING", isUnknown: false)
+        let plain = WorkspaceImportPolicy.liveJobsReason(
+            directory: "d", held: [running], localFiles: 0)
+        #expect(plain.contains("'d' names 1 Slurm job that has not ended"))
+        #expect(plain.contains("job 47923657 (slurm-shard-1/): RUNNING"))
+        #expect(plain.contains("slurm-<jobid>.exit"))
+        #expect(plain.contains("Import again once the job has ended"))
+        #expect(!plain.contains("earlier import"))
+        #expect(!plain.contains("auth open"))
+
+        let partial = WorkspaceImportPolicy.liveJobsReason(
+            directory: "d", held: [running], localFiles: 3)
+        #expect(partial.contains("3 files from an earlier import already sit here"))
+        #expect(partial.contains("--reimport-drifted"))
+
+        let unknown = WorkspaceImportPolicy.HeldJob(
+            job: job("5"), state: "sacct did not answer", isUnknown: true)
+        let refused = WorkspaceImportPolicy.liveJobsReason(
+            directory: "d", held: [unknown], localFiles: 0)
+        #expect(refused.contains("whose state the scheduler could not report"))
+        #expect(refused.contains("job 5 (slurm/): state unknown — sacct did not answer"))
+        #expect(refused.contains("refusal to guess"))
+        #expect(refused.contains("auth open"))
+
+        let mixed = WorkspaceImportPolicy.liveJobsReason(
+            directory: "d", held: [running, unknown], localFiles: 0)
+        #expect(mixed.contains("names 2 Slurm jobs not yet ended, or whose state"))
+    }
+
+    /// The immutability refusal now ends with the repair: the copy name and
+    /// the exact command. Earlier copies that drifted too are named, and the
+    /// bare form (no copy offered) carries no repair sentence.
+    @Test func theRefusalNamesTheReimportCopyAndTheCommand() {
+        let drift: [WorkspaceImportPolicy.Finding] = [
+            .sizeDrift(relativePath: "slurm/slurm-1.out", remote: 14_336, local: 143)
+        ]
+        let text = WorkspaceImportPolicy.immutabilityRefusal(
+            directory: "d", violations: drift, reimportCopy: "d-reimport")
+        #expect(text.contains("Nothing was overwritten"))
+        #expect(text.contains("'d-reimport'"))
+        #expect(text.contains("`steerlab-cli cluster import --site <id> --reimport-drifted`"))
+        #expect(text.contains("resolved instead of as a violation"))
+
+        let again = WorkspaceImportPolicy.immutabilityRefusal(
+            directory: "d", violations: drift, reimportCopy: "d-reimport2",
+            driftedCopies: ["d-reimport"])
+        #expect(again.contains("d-reimport is here from an earlier --reimport-drifted"))
+        #expect(again.contains("'d-reimport2'"))
+
+        let bare = WorkspaceImportPolicy.immutabilityRefusal(directory: "d", violations: drift)
+        #expect(!bare.contains("--reimport-drifted"))
+        #expect(bare.contains("under a different name"))
+    }
+}
+
 // MARK: - The operation
 
 /// A scripted remote: names, per-directory inventories, and a local tree that
@@ -648,6 +853,13 @@ private final class FakeImportRemote: @unchecked Sendable {
     var unstamped: [WorkspaceImportPolicy.UnstampedMergeCandidate] = []
     var runManifestArms: [String: WorkspaceImportPolicy.ManifestArms] = [:]
     var liveArms: [String: WorkspaceImportPolicy.ManifestArms] = [:]
+    /// What the fake scheduler says per Slurm job id; an id absent here is
+    /// unknown to it, exactly as a live query that returned no row.
+    var schedulerStates: [String: WorkspaceImportPolicy.SchedulerJobState] = [:]
+    /// When set, the scheduler seam throws this instead of answering.
+    var schedulerFailure: ExperimentError?
+    /// Every id list the operation asked the scheduler about.
+    private(set) var schedulerAsked: [[String]] = []
     private(set) var transferred: [String] = []
     private(set) var catalogRebuilds = 0
     /// Runs AFTER the modelled rsync — what the landing writes locally
@@ -665,8 +877,9 @@ private final class FakeImportRemote: @unchecked Sendable {
                 for name in names { out[name] = self.inventories[name] ?? [] }
                 return out
             },
-            transfer: { name, rules in
-                self.transferred.append(name)
+            transfer: { remoteName, localName, rules in
+                self.transferred.append(
+                    remoteName == localName ? remoteName : "\(remoteName) -> \(localName)")
                 if let override = self.transferOverride {
                     override()
                     return
@@ -674,18 +887,24 @@ private final class FakeImportRemote: @unchecked Sendable {
                 // The live transfer is `rsync --ignore-existing`: it can only
                 // ever ADD files the policy keeps. The fake obeys the same
                 // rule, so a re-import over a complete tree is a no-op here
-                // exactly as it is there.
-                var local = self.localFiles[name] ?? []
+                // exactly as it is there. The destination may be a reimport
+                // copy of the source, which is the one case the names differ.
+                var local = self.localFiles[localName] ?? []
                 let known = Set(local.map(\.relativePath))
-                for file in self.inventories[name] ?? []
+                for file in self.inventories[remoteName] ?? []
                 where !known.contains(file.relativePath)
                     && !WorkspaceImportPolicy.isExcluded(
                         relativePath: file.relativePath, rules: rules)
                 {
                     local.append(file)
                 }
-                self.localFiles[name] = local
+                self.localFiles[localName] = local
                 self.transferHook?()
+            },
+            remoteSchedulerStates: { ids in
+                self.schedulerAsked.append(ids)
+                if let failure = self.schedulerFailure { throw failure }
+                return self.schedulerStates.filter { ids.contains($0.key) }
             },
             localExists: { self.localFiles[$0] != nil },
             localInventory: { self.localFiles[$0] ?? [] },
@@ -1194,6 +1413,372 @@ struct WorkspaceRunImportOperationTests {
         #expect(fake.localFiles[run]?.contains { $0.relativePath == "report.json" } == true)
     }
 
+    // MARK: The receipt gate, end to end
+
+    /// A sharded receipt as the engine writes it: one bundle directory per
+    /// shard, the scheduler's captures inside, a child record per finished
+    /// shard, and — for a shard whose script ran its EXIT trap — the end
+    /// marker beside its capture.
+    private func receiptInventory(
+        runningCaptureBytes: Int64 = 143, finishedMarked: Bool = true
+    ) -> [WorkspaceImportPolicy.FileStat] {
+        var files: [(String, Int64)] = [
+            ("slurm-shard-0/run.sbatch", 2_000), ("slurm-shard-0/bundle.json", 900),
+            ("slurm-shard-0/slurm-47923657.out", runningCaptureBytes),
+            ("slurm-shard-0/slurm-47923657.err", 0),
+            ("slurm-shard-1/run.sbatch", 2_000), ("slurm-shard-1/bundle.json", 900),
+            ("slurm-shard-1/slurm-47923658.out", 14_336),
+            ("slurm-shard-1/slurm-47923658.err", 0),
+            ("records/0123456789ab.json", 400),
+        ]
+        if finishedMarked { files.append(("slurm-shard-1/slurm-47923658.exit", 2)) }
+        return remote(files: files)
+    }
+
+    /// The field case (2026-09-04): a sharded receipt imported while its
+    /// shards ran froze 143-byte captures that were 14 KB on the cluster by
+    /// the next import — an immutability violation no re-import could clear.
+    /// Now a receipt naming a job the scheduler still lists is held back
+    /// whole, nothing is created locally, and the marked shard is never
+    /// asked about.
+    @Test func aReceiptWhoseJobIsStillRunningIsSkippedAsInProgress() async {
+        let fake = FakeImportRemote()
+        let receipt = "\(stamp)-submit-bundle-alpha-run"
+        fake.directories = [receipt]
+        fake.inventories[receipt] = receiptInventory()
+        fake.schedulerStates = ["47923657": .live("RUNNING")]
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.transferred.isEmpty, "a receipt with a live job must not be transferred")
+        #expect(fake.localFiles[receipt] == nil, "nothing may be created locally")
+        #expect(fake.schedulerAsked == [["47923657"]], "only the unmarked job is asked about")
+        #expect(report.skippedInProgress.map(\.name) == [receipt])
+        #expect(report.imported.isEmpty)
+        #expect(report.violations.isEmpty)
+        #expect(report.failures.isEmpty)
+        #expect(report.skippedByPolicy.isEmpty)
+        guard case .skippedJobsLive(let held, let localFiles)? = report.directories.first?.outcome
+        else {
+            Issue.record("expected a live-job hold, got \(String(describing: report.directories.first))")
+            return
+        }
+        #expect(held.map(\.job.id) == ["47923657"])
+        #expect(held.first?.state == "RUNNING")
+        #expect(held.first?.isUnknown == false)
+        #expect(localFiles == 0)
+        #expect(fake.catalogRebuilds == 1)
+        #expect(report.purgeablePaths.isEmpty, "a held receipt names nothing as purgeable")
+
+        let text = WorkspaceRunImport.summaryLines(report).joined(separator: "\n")
+        #expect(text.contains("\(receipt)  [submit receipt]  skipped — in progress: Slurm job 47923657 RUNNING"))
+        #expect(text.contains("IN PROGRESS"))
+        #expect(text.contains("job 47923657 (slurm-shard-0/): RUNNING"))
+        #expect(text.contains("in progress 1"))
+        #expect(!text.contains("imported 1"))
+    }
+
+    /// Once the scheduler reports the job ended, the same receipt imports in
+    /// full on the next pass — with the capture at its final size.
+    @Test func theSameReceiptImportsOnceItsJobHasEnded() async {
+        let fake = FakeImportRemote()
+        let receipt = "\(stamp)-submit-bundle-alpha-run"
+        fake.directories = [receipt]
+        fake.inventories[receipt] = receiptInventory()
+        fake.schedulerStates = ["47923657": .live("RUNNING")]
+
+        let first = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(first.skippedInProgress.map(\.name) == [receipt])
+        #expect(fake.transferred.isEmpty)
+
+        fake.inventories[receipt] = receiptInventory(runningCaptureBytes: 14_336)
+        fake.schedulerStates = ["47923657": .ended("COMPLETED")]
+        let second = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(second.skippedInProgress.isEmpty)
+        #expect(second.imported.map(\.name) == [receipt])
+        #expect(fake.transferred == [receipt])
+        #expect(second.violations.isEmpty)
+        #expect(
+            fake.localFiles[receipt]?.first { $0.relativePath == "slurm-shard-0/slurm-47923657.out" }?
+                .size == 14_336)
+    }
+
+    /// A receipt whose every job carries the engine's end marker is settled
+    /// by content: it imports, and the scheduler is never asked — even a
+    /// scheduler that would have called the job live.
+    @Test func aReceiptWithEndMarkersNeverAsksTheScheduler() async {
+        let fake = FakeImportRemote()
+        let receipt = "\(stamp)-submit-bundle-alpha-run"
+        fake.directories = [receipt]
+        fake.inventories[receipt] =
+            receiptInventory(runningCaptureBytes: 14_336)
+            + remote(files: [("slurm-shard-0/slurm-47923657.exit", 2)])
+        fake.schedulerStates = ["47923657": .live("RUNNING")]
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.schedulerAsked.isEmpty, "marked jobs are settled by content")
+        #expect(report.imported.map(\.name) == [receipt])
+        #expect(report.skippedInProgress.isEmpty)
+        #expect(report.violations.isEmpty)
+    }
+
+    /// A scheduler that cannot be asked holds the receipt — a refusal to
+    /// guess, with the failure as the reason — and touches nothing else: a
+    /// stage directory in the same pass is judged by content as before.
+    @Test func aSchedulerThatCannotBeAskedHoldsTheReceiptAndNothingElse() async {
+        let fake = FakeImportRemote()
+        let receipt = "\(stamp)-submit-bundle-alpha-run"
+        let run = "\(stamp)-exp-alpha-run"
+        fake.directories = [receipt, run]
+        fake.inventories[receipt] = receiptInventory()
+        fake.inventories[run] = remote(files: [("generations.jsonl", 4096), ("report.json", 64)])
+        fake.schedulerFailure = ExperimentError(reason: "squeue exited 255: stale ControlMaster")
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.transferred == [run], "the run is judged by content and imports")
+        #expect(report.imported.map(\.name) == [run])
+        #expect(report.skippedInProgress.map(\.name) == [receipt])
+        #expect(report.violations.isEmpty, "a failed query is a hold, not a violation")
+        #expect(report.failures.isEmpty)
+        guard
+            let outcome = report.directories.first(where: { $0.name == receipt })?.outcome,
+            case .skippedJobsLive(let held, _) = outcome
+        else {
+            Issue.record("expected the receipt to be held")
+            return
+        }
+        #expect(held.first?.isUnknown == true)
+        #expect(held.first?.state.contains("squeue exited 255") == true)
+        let text = WorkspaceRunImport.summaryLines(report).joined(separator: "\n")
+        #expect(text.contains("Slurm job 47923657 (state unknown)"))
+        #expect(text.contains("could not report"))
+    }
+
+    /// An id the scheduler answered nothing for — no row anywhere, although
+    /// it did answer — is the seam's `.ended` positive absence; an id simply
+    /// missing from the seam's answer is unknown and holds.
+    @Test func anIdTheSchedulerDidNotAnswerForHolds() async {
+        let fake = FakeImportRemote()
+        let receipt = "\(stamp)-submit-bundle-alpha-run"
+        fake.directories = [receipt]
+        fake.inventories[receipt] = receiptInventory()
+        fake.schedulerStates = [:]
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(report.skippedInProgress.map(\.name) == [receipt])
+        #expect(fake.transferred.isEmpty)
+
+        fake.schedulerStates = ["47923657": .ended("not known to squeue or sacct")]
+        let again = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(again.imported.map(\.name) == [receipt])
+    }
+
+    /// A frozen partial capture from a pre-gate import is held, not refused,
+    /// while the job still runs — the reason says the partial is here — and
+    /// only once the job has ended is the drift judged, with the repair
+    /// named.
+    @Test func aFrozenPartialReceiptIsHeldWhileTheJobRunsAndJudgedAfter() async {
+        let fake = FakeImportRemote()
+        let receipt = "\(stamp)-submit-bundle-alpha-run"
+        fake.directories = [receipt]
+        fake.inventories[receipt] = receiptInventory(runningCaptureBytes: 14_336)
+        fake.localFiles[receipt] = receiptInventory(runningCaptureBytes: 143)
+        fake.schedulerStates = ["47923657": .live("RUNNING")]
+
+        let held = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(held.violations.isEmpty, "drift is not judged while the job runs")
+        #expect(held.failures.isEmpty)
+        #expect(fake.transferred.isEmpty)
+        guard case .skippedJobsLive(_, let localFiles)? = held.directories.first?.outcome else {
+            Issue.record("expected a hold")
+            return
+        }
+        #expect(localFiles == 10)
+        let heldText = WorkspaceRunImport.summaryLines(held).joined(separator: "\n")
+        #expect(heldText.contains("10 files from an earlier import already here"))
+
+        fake.schedulerStates = ["47923657": .ended("COMPLETED")]
+        let judged = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.transferred.isEmpty, "a drifted directory must not be rsynced")
+        guard case .refusedByteDrift(let message)? = judged.directories.first?.outcome else {
+            Issue.record("expected a byte-drift refusal once the job ended")
+            return
+        }
+        #expect(message.contains("slurm-shard-0/slurm-47923657.out: remote 14336 bytes, local 143 bytes"))
+        #expect(message.contains("'\(receipt)-reimport'"))
+        #expect(message.contains("--reimport-drifted"))
+        #expect(judged.violations.count == 1)
+    }
+
+    // MARK: Drift repair: the reimport copy
+
+    /// The five field receipts: local captures frozen at 143 bytes, the
+    /// cluster's at 14 KB, every job long ended. Without the flag the
+    /// refusal names the copy and the exact command; with it the cluster's
+    /// copy comes home BESIDE the untouched local one, verified; and the
+    /// next import reads the pair as resolved instead of as a violation.
+    @Test func reimportDriftedBringsTheClusterCopyHomeBesideTheLocalOne() async {
+        let fake = FakeImportRemote()
+        let receipt = "\(stamp)-submit-bundle-alpha-run"
+        let copy = "\(receipt)-reimport"
+        fake.directories = [receipt]
+        fake.inventories[receipt] =
+            receiptInventory(runningCaptureBytes: 14_336)
+            + remote(files: [("slurm-shard-0/slurm-47923657.exit", 2)])
+        fake.localFiles[receipt] = receiptInventory(runningCaptureBytes: 143)
+
+        let refused = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(refused.failures.count == 1)
+        #expect(refused.violations.first?.contains("'\(copy)'") == true)
+        #expect(fake.transferred.isEmpty)
+
+        let repaired = await WorkspaceRunImport.run(
+            engine: fake.engine(),
+            options: WorkspaceRunImport.Options(reimportDrifted: true))
+        #expect(fake.transferred == ["\(receipt) -> \(copy)"])
+        guard case .reimported(let named, let files, _)? = repaired.directories.first?.outcome
+        else {
+            Issue.record("expected a reimport, got \(String(describing: repaired.directories.first))")
+            return
+        }
+        #expect(named == copy)
+        #expect(files == 11)
+        #expect(repaired.reimported.map(\.name) == [receipt])
+        #expect(repaired.violations.isEmpty)
+        #expect(repaired.failures.isEmpty)
+        #expect(repaired.transferredAnything)
+        #expect(
+            fake.localFiles[receipt]?.first { $0.relativePath == "slurm-shard-0/slurm-47923657.out" }?
+                .size == 143, "the local original is never rewritten")
+        #expect(
+            fake.localFiles[copy]?.first { $0.relativePath == "slurm-shard-0/slurm-47923657.out" }?
+                .size == 14_336)
+        #expect(fake.localFiles[copy]?.count == 11)
+        let repairedText = WorkspaceRunImport.summaryLines(repaired).joined(separator: "\n")
+        #expect(repairedText.contains("DRIFTED — the cluster's copy imported beside it as '\(copy)'"))
+        #expect(repairedText.contains("reimported 1"))
+
+        let settled = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.transferred == ["\(receipt) -> \(copy)"], "nothing more transfers")
+        guard case .driftResolved(let resolvedCopy, _)? = settled.directories.first?.outcome else {
+            Issue.record("expected the drift to read as resolved")
+            return
+        }
+        #expect(resolvedCopy == copy)
+        #expect(settled.driftResolved.map(\.name) == [receipt])
+        #expect(settled.violations.isEmpty)
+        #expect(settled.failures.isEmpty)
+        #expect(!settled.transferredAnything)
+        let settledText = WorkspaceRunImport.summaryLines(settled).joined(separator: "\n")
+        #expect(settledText.contains("drifted, resolved — '\(copy)' holds the cluster's copy"))
+        #expect(settledText.contains("drift resolved 1"))
+        #expect(!settledText.contains("VIOLATIONS"))
+    }
+
+    /// A dry run names the copy it would make and makes nothing.
+    @Test func aDryRunReimportMakesNothing() async {
+        let fake = FakeImportRemote()
+        let receipt = "\(stamp)-submit-bundle-alpha-run"
+        fake.directories = [receipt]
+        fake.inventories[receipt] =
+            receiptInventory(runningCaptureBytes: 14_336)
+            + remote(files: [("slurm-shard-0/slurm-47923657.exit", 2)])
+        fake.localFiles[receipt] = receiptInventory(runningCaptureBytes: 143)
+
+        let report = await WorkspaceRunImport.run(
+            engine: fake.engine(),
+            options: WorkspaceRunImport.Options(dryRun: true, reimportDrifted: true))
+        #expect(fake.transferred.isEmpty)
+        #expect(fake.localFiles["\(receipt)-reimport"] == nil)
+        #expect(fake.catalogRebuilds == 0)
+        guard case .reimported(let copy, _, _)? = report.directories.first?.outcome else {
+            Issue.record("expected a would-reimport")
+            return
+        }
+        #expect(copy == "\(receipt)-reimport")
+        let text = WorkspaceRunImport.summaryLines(report).joined(separator: "\n")
+        #expect(text.contains("would be imported beside it"))
+        #expect(text.contains("would reimport 1"))
+    }
+
+    /// A copy that itself differs from the cluster (the job wrote more after
+    /// it) is named as drifted too, and the next ordinal is what a repair
+    /// uses.
+    @Test func aDriftedReimportCopyIsNamedAndTheNextOrdinalIsUsed() async {
+        let fake = FakeImportRemote()
+        let receipt = "\(stamp)-submit-bundle-alpha-run"
+        let first = "\(receipt)-reimport"
+        let second = "\(receipt)-reimport2"
+        fake.directories = [receipt]
+        fake.inventories[receipt] =
+            receiptInventory(runningCaptureBytes: 14_336)
+            + remote(files: [("slurm-shard-0/slurm-47923657.exit", 2)])
+        fake.localFiles[receipt] = receiptInventory(runningCaptureBytes: 143)
+        fake.localFiles[first] = receiptInventory(runningCaptureBytes: 7_000)
+
+        let refused = await WorkspaceRunImport.run(engine: fake.engine())
+        guard case .refusedByteDrift(let message)? = refused.directories.first?.outcome else {
+            Issue.record("expected a refusal")
+            return
+        }
+        #expect(message.contains("\(first) is here from an earlier --reimport-drifted"))
+        #expect(message.contains("'\(second)'"))
+
+        let repaired = await WorkspaceRunImport.run(
+            engine: fake.engine(),
+            options: WorkspaceRunImport.Options(reimportDrifted: true))
+        #expect(fake.transferred == ["\(receipt) -> \(second)"])
+        guard case .reimported(let copy, _, _)? = repaired.directories.first?.outcome else {
+            Issue.record("expected a reimport under the next ordinal")
+            return
+        }
+        #expect(copy == second)
+        #expect(fake.localFiles[first]?.count == 10, "the drifted copy is untouched")
+    }
+
+    /// A copy the cluster has since added files to (a continuation that ran
+    /// after the reimport) is filled like any partial import, flag or no
+    /// flag — its bytes agree; only files are missing.
+    @Test func aReimportCopyWithGapsIsFilled() async {
+        let fake = FakeImportRemote()
+        let receipt = "\(stamp)-submit-bundle-alpha-run"
+        let copy = "\(receipt)-reimport"
+        let full =
+            receiptInventory(runningCaptureBytes: 14_336)
+            + remote(files: [("slurm-shard-0/slurm-47923657.exit", 2)])
+        fake.directories = [receipt]
+        fake.inventories[receipt] = full + remote(files: [("records/fedcba987654.json", 300)])
+        fake.localFiles[receipt] = receiptInventory(runningCaptureBytes: 143)
+        fake.localFiles[copy] = full
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.transferred == ["\(receipt) -> \(copy)"])
+        guard case .reimported(let named, let files, let bytes)? = report.directories.first?.outcome
+        else {
+            Issue.record("expected the copy's gap to be filled")
+            return
+        }
+        #expect(named == copy)
+        #expect(files == 1)
+        #expect(bytes == 300)
+        #expect(fake.localFiles[copy]?.count == 12)
+        #expect(report.violations.isEmpty)
+    }
+
+    /// A stage directory names no jobs, so the scheduler is never asked for
+    /// a pass that holds only stages — the gate costs nothing where it does
+    /// not apply.
+    @Test func aPassWithoutReceiptsNeverAsksTheScheduler() async {
+        let fake = FakeImportRemote()
+        let run = "\(stamp)-exp-alpha-run"
+        fake.directories = [run]
+        fake.inventories[run] = remote(files: [("generations.jsonl", 4096), ("report.json", 64)])
+        fake.schedulerFailure = ExperimentError(reason: "must not be asked")
+
+        let report = await WorkspaceRunImport.run(engine: fake.engine())
+        #expect(fake.schedulerAsked.isEmpty)
+        #expect(report.imported.map(\.name) == [run])
+    }
+
     /// Tightening 4: remote bytes that DIFFER from imported local bytes refuse,
     /// loudly, and nothing transfers.
     @Test func byteDriftRefusesAndTransfersNothing() async {
@@ -1529,6 +2114,89 @@ struct WorkspaceImportTransferSeamTests {
         #expect(argv.last?.hasSuffix("/") == true)
     }
 
+    /// The receipt gate asks the scheduler directly, through the same SSH
+    /// master: one `squeue` listing of the user's live jobs (never `-j`,
+    /// which fails outright on a finished id) and one `sacct` for the ids —
+    /// and never `steerlab-server jobs list`, which sweeps a controller's
+    /// jobs. The site's declared command names are honoured.
+    @Test func schedulerArgvsAskSqueueForTheUserAndSacctForTheIds() throws {
+        var profile = ClusterSiteProfile.exampleCluster
+        profile.transport = .ssh(
+            host: "user@login.example.edu", proxyJump: nil, remotePort: 8080,
+            vpnExpected: true)
+        let squeue = try #require(WorkspaceRunImport.squeueArgv(site: profile))
+        #expect(squeue.first == ClusterProvisioner.sshExecutablePath)
+        #expect(squeue.contains("user@login.example.edu"))
+        let listing = try #require(squeue.last)
+        #expect(listing.hasPrefix("squeue -h -u $USER -o "))
+        #expect(listing.contains("%i|%T"))
+        #expect(!listing.contains(" -j "))
+        #expect(!listing.contains("steerlab-server"))
+
+        let sacct = try #require(WorkspaceRunImport.sacctArgv(site: profile, ids: ["1", "2"]))
+        #expect(sacct.last == "sacct -n -X -P -j 1,2 -o JobID,State")
+        #expect(WorkspaceRunImport.sacctArgv(site: profile, ids: []) == nil)
+
+        guard case .slurm(var slurm) = profile.scheduler else {
+            Issue.record("the example cluster declares Slurm")
+            return
+        }
+        slurm.commands.query = "site-squeue"
+        slurm.commands.accounting = "site-sacct"
+        profile.scheduler = .slurm(slurm)
+        #expect(WorkspaceRunImport.squeueArgv(site: profile)?.last?.hasPrefix("site-squeue ") == true)
+        #expect(WorkspaceRunImport.sacctArgv(site: profile, ids: ["1"])?.last?.hasPrefix("site-sacct ") == true)
+
+        var noScheduler = profile
+        noScheduler.scheduler = .none
+        #expect(WorkspaceRunImport.squeueArgv(site: noScheduler) == nil)
+    }
+
+    /// The live seam: a failed `squeue` THROWS (its listing is what proves a
+    /// job live, so a listing that did not happen must not read as "nothing
+    /// running"); a failed `sacct` leaves the ids it would have decided
+    /// unknown; and both answering yields the policy's reading.
+    @Test func theLiveSchedulerSeamRefusesToReadSilenceAsAbsence() async throws {
+        var profile = ClusterSiteProfile.exampleCluster
+        profile.transport = .ssh(
+            host: "user@login.example.edu", proxyJump: nil, remotePort: 8080,
+            vpnExpected: true)
+
+        let healthy = ScriptedSchedulerShell(
+            squeue: ClusterShellResult(exitCode: 0, lines: ["1|RUNNING"]),
+            sacct: ClusterShellResult(exitCode: 0, lines: ["2|COMPLETED"]))
+        let states = try await WorkspaceRunImport.schedulerStates(
+            site: profile, ids: ["1", "2", "3"], shell: healthy)
+        #expect(states["1"] == .live("RUNNING"))
+        #expect(states["2"] == .ended("COMPLETED"))
+        #expect(states["3"] == .ended("not known to squeue or sacct"))
+        #expect(healthy.commands.count == 2)
+
+        let deafAccounting = ScriptedSchedulerShell(
+            squeue: ClusterShellResult(exitCode: 0, lines: []),
+            sacct: ClusterShellResult(exitCode: 1, lines: ["sacct: error"]))
+        let partial = try await WorkspaceRunImport.schedulerStates(
+            site: profile, ids: ["2"], shell: deafAccounting)
+        #expect(partial["2"] == .unknown("sacct did not answer"))
+
+        let deafQueue = ScriptedSchedulerShell(
+            squeue: ClusterShellResult(exitCode: 255, lines: ["ssh: connection closed"]),
+            sacct: ClusterShellResult(exitCode: 0, lines: ["2|COMPLETED"]))
+        await #expect(throws: ExperimentError.self) {
+            try await WorkspaceRunImport.schedulerStates(
+                site: profile, ids: ["2"], shell: deafQueue)
+        }
+        #expect(deafQueue.commands.count == 1, "sacct is not asked once squeue has failed")
+
+        // Nothing to ask about: no command runs at all.
+        let idle = ScriptedSchedulerShell(
+            squeue: ClusterShellResult(exitCode: 0), sacct: ClusterShellResult(exitCode: 0))
+        let none = try await WorkspaceRunImport.schedulerStates(
+            site: profile, ids: ["not-an-id"], shell: idle)
+        #expect(none.isEmpty)
+        #expect(idle.commands.isEmpty)
+    }
+
     /// The remote inventory parser turns `find -printf '%p\t%s\n'` into
     /// directory-relative stats, and ignores anything outside the requested set.
     @Test func inventoryParsingIsRelativeToTheRunDirectory() throws {
@@ -1592,6 +2260,29 @@ struct WorkspaceImportTransferSeamTests {
 // complete. The fixtures below are the shape no fixture had: a far side whose
 // shell actually expands.
 // =============================================================================
+
+/// A far side that answers `squeue` and `sacct` with canned results and
+/// records every command it was handed.
+private final class ScriptedSchedulerShell: ClusterShellRunner, @unchecked Sendable {
+    // @unchecked Sendable: written only by the serialized test body and the
+    // seam under test; never escapes the test.
+    let squeue: ClusterShellResult
+    let sacct: ClusterShellResult
+    private(set) var commands: [String] = []
+
+    init(squeue: ClusterShellResult, sacct: ClusterShellResult) {
+        self.squeue = squeue
+        self.sacct = sacct
+    }
+
+    func run(_ argv: [String]) async -> ClusterShellResult {
+        let command = argv.last ?? ""
+        commands.append(command)
+        if command.hasPrefix("squeue") { return squeue }
+        if command.hasPrefix("sacct") { return sacct }
+        return ClusterShellResult(exitCode: 127, lines: ["unexpected: \(command)"])
+    }
+}
 
 /// A far side that expands what its shell is handed. `find` answers with
 /// EXPANDED paths, exactly as a real cluster does.

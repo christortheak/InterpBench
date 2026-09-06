@@ -54,6 +54,20 @@ public enum WorkspaceRunImport {
         /// would otherwise be frozen here as-is. `localFiles` counts what an
         /// earlier import already brought home, if anything.
         case skippedInProgress(awaiting: [String], localFiles: Int)
+        /// The directory names Slurm jobs that have not ended (or whose
+        /// state the scheduler could not report): their `slurm-<jobid>.out`
+        /// captures may still be growing. Held back whole — the 2026-09-04
+        /// receipt defect. `localFiles` counts what an earlier import
+        /// already froze here, if anything.
+        case skippedJobsLive(held: [WorkspaceImportPolicy.HeldJob], localFiles: Int)
+        /// A drifted directory whose cluster copy came home BESIDE it under
+        /// `copy` (`--reimport-drifted`, or a gap fill into an earlier copy).
+        /// The local original is untouched.
+        case reimported(copy: String, files: Int, bytes: Int64)
+        /// A drifted directory an earlier `--reimport-drifted` already
+        /// settled: `copy` matches the cluster byte for byte, so the pair is
+        /// resolved and no later import calls it a violation.
+        case driftResolved(copy: String, files: Int)
         /// Nothing to bring home (library subtree, stray entry, upload
         /// staging).
         case notApplicable(reason: String)
@@ -80,11 +94,13 @@ public enum WorkspaceRunImport {
             }
         }
 
-        /// Held back by the in-progress gate — nothing about the directory
-        /// is settled until its stage finishes.
+        /// Held back by an in-progress gate — nothing about the directory
+        /// is settled until its stage finishes or its jobs end.
         public var isInProgress: Bool {
-            if case .skippedInProgress = self { return true }
-            return false
+            switch self {
+            case .skippedInProgress, .skippedJobsLive: true
+            default: false
+            }
         }
     }
 
@@ -204,6 +220,22 @@ public enum WorkspaceRunImport {
             directories.filter(\.outcome.isFailure)
         }
 
+        /// Drifted directories whose cluster copy came home beside them.
+        public var reimported: [DirectoryReport] {
+            directories.filter {
+                if case .reimported = $0.outcome { return true }
+                return false
+            }
+        }
+
+        /// Drifted directories an earlier reimport already settled.
+        public var driftResolved: [DirectoryReport] {
+            directories.filter {
+                if case .driftResolved = $0.outcome { return true }
+                return false
+            }
+        }
+
         /// Runs whose remote inventory has records but no `report.json` —
         /// never certified complete, and never counted as imported.
         public var incompleteRuns: [DirectoryReport] {
@@ -218,7 +250,7 @@ public enum WorkspaceRunImport {
         /// Whether this pass moved any bytes at all: a complete import, or a
         /// gap fill into a run that is not yet complete.
         public var transferredAnything: Bool {
-            if !imported.isEmpty { return true }
+            if !imported.isEmpty || !reimported.isEmpty { return true }
             return incompleteRuns.contains {
                 if case .incompleteRun(_, let transferred) = $0.outcome {
                     return transferred > 0
@@ -259,10 +291,21 @@ public enum WorkspaceRunImport {
         /// the named remote directories.
         public var remoteInventory: @Sendable ([String]) async throws
             -> [String: [WorkspaceImportPolicy.FileStat]]
-        /// rsync one directory home under the policy's exclusions, filling
-        /// gaps only — never overwriting an existing local file.
-        public var transfer: @Sendable (String, [WorkspaceImportPolicy.ExclusionRule])
+        /// rsync one remote directory (first name) into one local directory
+        /// (second name) under the policy's exclusions, filling gaps only —
+        /// never overwriting an existing local file. The two names differ
+        /// exactly when a drifted directory's cluster copy comes home under
+        /// its `-reimport` name.
+        public var transfer: @Sendable (String, String, [WorkspaceImportPolicy.ExclusionRule])
             async throws -> Void
+        /// The scheduler's word on Slurm job ids that receipts name without
+        /// an end marker: one `squeue` + one `sacct` round trip for the whole
+        /// pass. Never `steerlab-server jobs list` — that verb sweeps a live
+        /// controller's jobs. Throwing holds every affected directory back
+        /// with the error as its reason; an id left out of the answer is
+        /// unknown, and unknown holds too.
+        public var remoteSchedulerStates: @Sendable ([String]) async throws
+            -> [String: WorkspaceImportPolicy.SchedulerJobState]
         public var localExists: @Sendable (String) -> Bool
         public var localInventory: @Sendable (String) -> [WorkspaceImportPolicy.FileStat]
         public var pinnedHashes: @Sendable (String) -> [WorkspaceImportPolicy.PinnedHash]
@@ -292,8 +335,10 @@ public enum WorkspaceRunImport {
             remoteShardStamped: @escaping @Sendable () async throws -> Set<String> = { [] },
             remoteInventory: @escaping @Sendable ([String]) async throws
                 -> [String: [WorkspaceImportPolicy.FileStat]],
-            transfer: @escaping @Sendable (String, [WorkspaceImportPolicy.ExclusionRule])
+            transfer: @escaping @Sendable (String, String, [WorkspaceImportPolicy.ExclusionRule])
                 async throws -> Void,
+            remoteSchedulerStates: @escaping @Sendable ([String]) async throws
+                -> [String: WorkspaceImportPolicy.SchedulerJobState] = { _ in [:] },
             localExists: @escaping @Sendable (String) -> Bool,
             localInventory: @escaping @Sendable (String)
                 -> [WorkspaceImportPolicy.FileStat],
@@ -320,6 +365,7 @@ public enum WorkspaceRunImport {
             self.remoteShardStamped = remoteShardStamped
             self.remoteInventory = remoteInventory
             self.transfer = transfer
+            self.remoteSchedulerStates = remoteSchedulerStates
             self.localExists = localExists
             self.localInventory = localInventory
             self.pinnedHashes = pinnedHashes
@@ -336,10 +382,16 @@ public enum WorkspaceRunImport {
         public var since: String?
         /// Classify, plan, and report — write nothing, transfer nothing.
         public var dryRun: Bool
+        /// For every directory refused as drifted, also bring the cluster's
+        /// copy home beside it as `<name>-reimport` (a new directory; the
+        /// local one is never rewritten). The "import the remote one under
+        /// a different name" half of the immutability refusal, as a verb.
+        public var reimportDrifted: Bool
 
-        public init(since: String? = nil, dryRun: Bool = false) {
+        public init(since: String? = nil, dryRun: Bool = false, reimportDrifted: Bool = false) {
             self.since = since
             self.dryRun = dryRun
+            self.reimportDrifted = reimportDrifted
         }
     }
 
@@ -435,6 +487,39 @@ public enum WorkspaceRunImport {
             return report
         }
 
+        // The receipt gate's one scheduler round trip: every Slurm job the
+        // transferable directories name WITHOUT an end marker, asked about
+        // once, before the loop — a wide workspace costs two remote commands,
+        // not two per receipt. A failed query is carried into every affected
+        // directory's reason rather than aborting the pass: the other
+        // directories are judged by content exactly as before.
+        var schedulerStates: [String: WorkspaceImportPolicy.SchedulerJobState] = [:]
+        var schedulerFailure: String?
+        let unmarkedJobIDs = Set(
+            transferable.flatMap { classification in
+                WorkspaceImportPolicy.namedJobs(remote: inventories[classification.name] ?? [])
+                    .filter { !$0.hasEndMarker }
+                    .map(\.id)
+            }
+        ).sorted()
+        if !unmarkedJobIDs.isEmpty {
+            emit(
+                "asking the scheduler about \(unmarkedJobIDs.count) job"
+                    + "\(unmarkedJobIDs.count == 1 ? "" : "s") named by receipts "
+                    + "without an end marker")
+            do {
+                schedulerStates = try await engine.remoteSchedulerStates(unmarkedJobIDs)
+            } catch {
+                let reason =
+                    (error as? LocalizedError)?.errorDescription
+                    ?? String(describing: error)
+                schedulerFailure = reason
+                emit(
+                    "the scheduler could not be asked (\(reason)) — directories "
+                        + "naming those jobs are held back, not guessed about")
+            }
+        }
+
         for classification in transferable {
             let rules = WorkspaceImportPolicy.exclusions(for: classification.kind)
             let remote = inventories[classification.name] ?? []
@@ -444,7 +529,8 @@ public enum WorkspaceRunImport {
 
             let outcome = await importOne(
                 classification, remote: remote, rules: rules, engine: engine,
-                options: options, emit: emit)
+                options: options, schedulerStates: schedulerStates,
+                schedulerFailure: schedulerFailure, emit: emit)
             // The bytes the policy leaves on the cluster are named as
             // purgeable only for a directory whose stage has finished: a
             // running job's checkpoint tree is what its resume reads.
@@ -541,6 +627,8 @@ public enum WorkspaceRunImport {
         remote: [WorkspaceImportPolicy.FileStat],
         rules: [WorkspaceImportPolicy.ExclusionRule],
         engine: Engine, options: Options,
+        schedulerStates: [String: WorkspaceImportPolicy.SchedulerJobState] = [:],
+        schedulerFailure: String? = nil,
         emit: @Sendable (String) -> Void
     ) async -> Outcome {
         let name = classification.name
@@ -572,6 +660,21 @@ public enum WorkspaceRunImport {
             return .refusedEmptyRemoteInventory(localFiles: local.count)
         }
 
+        // The RECEIPT gate (2026-09-06): a directory that names Slurm jobs —
+        // by their `slurm-<jobid>.out` captures — is in progress until every
+        // one of them has ended. Ended is proved by content where the engine
+        // wrote its end marker, and by the scheduler otherwise; a job the
+        // scheduler could not speak for holds the directory rather than
+        // being guessed about. Before the drift check on purpose, like the
+        // stage gate below: a frozen partial capture is what this exists to
+        // prevent, and where one already exists the reason says so.
+        let held = WorkspaceImportPolicy.heldJobs(
+            WorkspaceImportPolicy.namedJobs(remote: remote),
+            states: schedulerStates, failure: schedulerFailure)
+        if !held.isEmpty {
+            return .skippedJobsLive(held: held, localFiles: local.count)
+        }
+
         // The in-progress gate, by CONTENT: a stage that has not written its
         // completion artifact is held back, whether or not an earlier import
         // already brought part of it home. Before the drift check on purpose
@@ -593,7 +696,7 @@ public enum WorkspaceRunImport {
                 "importing \(name) — \(kept.count) files, \(formatted(bytes: bytes))"
                     + (incomplete ? " (INCOMPLETE: no report.json on the cluster)" : ""))
             do {
-                try await engine.transfer(name, rules)
+                try await engine.transfer(name, name, rules)
             } catch {
                 return .failed(message: String(describing: error))
             }
@@ -614,9 +717,10 @@ public enum WorkspaceRunImport {
             name, remote: remote, local: local, rules: rules, engine: engine)
         let violations = findings.filter(\.isViolation)
         guard violations.isEmpty else {
-            return .refusedByteDrift(
-                message: WorkspaceImportPolicy.immutabilityRefusal(
-                    directory: name, violations: violations))
+            return await resolveDrift(
+                name, violations: violations, remote: remote, kept: kept,
+                bytes: bytes, rules: rules, engine: engine, options: options,
+                emit: emit)
         }
         let gaps = findings.compactMap { finding -> WorkspaceImportPolicy.FileStat? in
             if case .gap(let path, let size) = finding {
@@ -642,7 +746,7 @@ public enum WorkspaceRunImport {
             "\(name) is partially present — filling \(gaps.count) gap"
                 + "\(gaps.count == 1 ? "" : "s")")
         do {
-            try await engine.transfer(name, rules)
+            try await engine.transfer(name, name, rules)
         } catch {
             return .failed(message: String(describing: error))
         }
@@ -654,6 +758,97 @@ public enum WorkspaceRunImport {
         return incomplete
             ? .incompleteRun(files: kept.count, transferred: gaps.count)
             : .imported(files: gaps.count, bytes: gaps.reduce(0) { $0 + $1.size })
+    }
+
+    /// The most reimport copies one directory may accumulate before the
+    /// probe stops: a bound on the name walk, never a limit anyone reaches.
+    static let reimportCopyLimit = 99
+
+    /// A drifted directory. The local bytes are durable and never rewritten,
+    /// so the only import that can happen is of the cluster's copy under
+    /// ANOTHER name — `<name>-reimport`, `-reimport2`, … — which is the
+    /// "import the remote one under a different name" half of the refusal.
+    ///
+    /// Copies already here are read first: one that matches the cluster
+    /// RESOLVES the drift (the pair is settled, and this import says so
+    /// instead of repeating the violation); one the cluster has since added
+    /// files to is filled like any partial import; one that itself differs
+    /// is named as drifted too. With `--reimport-drifted` the next copy is
+    /// made; without it, the refusal names that copy and the exact command.
+    static func resolveDrift(
+        _ name: String, violations: [WorkspaceImportPolicy.Finding],
+        remote: [WorkspaceImportPolicy.FileStat],
+        kept: [WorkspaceImportPolicy.FileStat], bytes: Int64,
+        rules: [WorkspaceImportPolicy.ExclusionRule],
+        engine: Engine, options: Options,
+        emit: @Sendable (String) -> Void
+    ) async -> Outcome {
+        var copies: [String] = []
+        var drifted: [String] = []
+        for ordinal in 1...reimportCopyLimit {
+            let copy = WorkspaceImportPolicy.reimportName(name, ordinal: ordinal)
+            guard engine.localExists(copy) else { break }
+            copies.append(copy)
+            let findings = verifyLanded(
+                copy, remote: remote, local: engine.localInventory(copy),
+                rules: rules, engine: engine)
+            guard findings.filter(\.isViolation).isEmpty else {
+                drifted.append(copy)
+                continue
+            }
+            let gaps = findings.compactMap { finding -> WorkspaceImportPolicy.FileStat? in
+                if case .gap(let path, let size) = finding {
+                    return WorkspaceImportPolicy.FileStat(relativePath: path, size: size)
+                }
+                return nil
+            }
+            guard !gaps.isEmpty else {
+                return .driftResolved(copy: copy, files: kept.count)
+            }
+            let gapBytes = gaps.reduce(Int64(0)) { $0 + $1.size }
+            guard !options.dryRun else {
+                return .reimported(copy: copy, files: gaps.count, bytes: gapBytes)
+            }
+            emit(
+                "\(copy) is partially present — filling \(gaps.count) gap"
+                    + "\(gaps.count == 1 ? "" : "s") from \(name)")
+            do {
+                try await engine.transfer(name, copy, rules)
+            } catch {
+                return .failed(message: String(describing: error))
+            }
+            let remaining = Self.transferProblems(
+                verifyLanded(copy, remote: remote, rules: rules, engine: engine))
+            guard remaining.isEmpty else {
+                return .verificationFailed(findings: remaining.map(describe))
+            }
+            return .reimported(copy: copy, files: gaps.count, bytes: gapBytes)
+        }
+
+        let next = WorkspaceImportPolicy.reimportName(name, ordinal: copies.count + 1)
+        guard options.reimportDrifted else {
+            return .refusedByteDrift(
+                message: WorkspaceImportPolicy.immutabilityRefusal(
+                    directory: name, violations: violations,
+                    reimportCopy: next, driftedCopies: drifted))
+        }
+        guard !options.dryRun else {
+            return .reimported(copy: next, files: kept.count, bytes: bytes)
+        }
+        emit(
+            "\(name) differs from its local copy — importing the cluster's copy "
+                + "beside it as \(next) (\(kept.count) files, \(formatted(bytes: bytes)))")
+        do {
+            try await engine.transfer(name, next, rules)
+        } catch {
+            return .failed(message: String(describing: error))
+        }
+        let problems = Self.transferProblems(
+            verifyLanded(next, remote: remote, rules: rules, engine: engine))
+        guard problems.isEmpty else {
+            return .verificationFailed(findings: problems.map(describe))
+        }
+        return .reimported(copy: next, files: kept.count, bytes: bytes)
     }
 
     /// The findings that indict a TRANSFER, from everything verification saw.
@@ -785,6 +980,29 @@ public enum WorkspaceRunImport {
                             ? " (\(localFiles) file\(localFiles == 1 ? "" : "s") "
                                 + "from an earlier import already here)"
                             : ""))
+            case .skippedJobsLive(let held, let localFiles):
+                let jobs = held.map {
+                    "\($0.job.id) \($0.isUnknown ? "(state unknown)" : $0.state)"
+                }
+                lines.append(
+                    "\(directory.name)  [\(label)]  skipped — in progress: Slurm job"
+                        + "\(held.count == 1 ? "" : "s") " + jobs.joined(separator: ", ")
+                        + " — slurm-<jobid>.out may still be written"
+                        + (localFiles > 0
+                            ? " (\(localFiles) file\(localFiles == 1 ? "" : "s") "
+                                + "from an earlier import already here)"
+                            : ""))
+            case .reimported(let copy, let files, let bytes):
+                lines.append(
+                    "\(directory.name)  [\(label)]  DRIFTED — the cluster's copy "
+                        + (report.dryRun ? "would be imported" : "imported")
+                        + " beside it as '\(copy)' (\(files) file\(files == 1 ? "" : "s"), "
+                        + "\(formatted(bytes: bytes))); the local directory is untouched")
+            case .driftResolved(let copy, let files):
+                lines.append(
+                    "\(directory.name)  [\(label)]  drifted, resolved — '\(copy)' "
+                        + "holds the cluster's copy (\(files) file\(files == 1 ? "" : "s") "
+                        + "verified); the local directory is untouched")
             case .notApplicable(let reason):
                 lines.append("\(directory.name)  skipped — \(reason)")
             case .outsideWindow(let stamp):
@@ -837,15 +1055,25 @@ public enum WorkspaceRunImport {
             lines.append("")
             lines.append(
                 "IN PROGRESS (skipped — no completion artifact on the cluster "
-                    + "yet; import again once these jobs finish):")
+                    + "yet, or a Slurm job the directory names has not ended; "
+                    + "import again once these jobs finish):")
             for directory in inProgress {
-                guard case .skippedInProgress(let awaiting, let localFiles) = directory.outcome
-                else { continue }
-                lines.append(
-                    "  · "
-                        + WorkspaceImportPolicy.inProgressReason(
-                            directory: directory.name, awaiting: awaiting,
-                            localFiles: localFiles))
+                switch directory.outcome {
+                case .skippedInProgress(let awaiting, let localFiles):
+                    lines.append(
+                        "  · "
+                            + WorkspaceImportPolicy.inProgressReason(
+                                directory: directory.name, awaiting: awaiting,
+                                localFiles: localFiles))
+                case .skippedJobsLive(let held, let localFiles):
+                    lines.append(
+                        "  · "
+                            + WorkspaceImportPolicy.liveJobsReason(
+                                directory: directory.name, held: held,
+                                localFiles: localFiles))
+                default:
+                    continue
+                }
             }
         }
 
@@ -890,6 +1118,12 @@ public enum WorkspaceRunImport {
         if imported > 0 {
             totals.append((report.dryRun ? "would import " : "imported ") + "\(imported)")
         }
+        let reimported = report.reimported.count
+        if reimported > 0 {
+            totals.append((report.dryRun ? "would reimport " : "reimported ") + "\(reimported)")
+        }
+        let resolved = report.driftResolved.count
+        if resolved > 0 { totals.append("drift resolved \(resolved)") }
         let skipped = report.skippedByPolicy.count
         if skipped > 0 { totals.append("skipped \(skipped)") }
         if !inProgress.isEmpty { totals.append("in progress \(inProgress.count)") }
@@ -1083,20 +1317,25 @@ extension WorkspaceRunImport {
                 for name in names where inventory[name] == nil { inventory[name] = [] }
                 return inventory
             },
-            transfer: { name, rules in
-                let destination = localRuns.appending(component: name)
+            transfer: { remoteName, localName, rules in
+                let destination = localRuns.appending(component: localName)
                 try FileManager.default.createDirectory(
                     at: destination, withIntermediateDirectories: true)
                 let argv = rsyncArgv(
-                    site: site, remoteRunRoot: runRoot, name: name,
+                    site: site, remoteRunRoot: runRoot, name: remoteName,
                     destination: destination, rules: rules)
                 let result = await shell.run(argv)
                 guard result.succeeded else {
                     throw ExperimentError(
-                        reason: "rsync of '\(name)' failed (exit "
+                        reason: "rsync of '\(remoteName)' failed (exit "
                             + "\(result.exitCode)): \(result.text)")
                 }
-                emit("transferred \(name)")
+                emit(
+                    "transferred \(remoteName)"
+                        + (localName == remoteName ? "" : " as \(localName)"))
+            },
+            remoteSchedulerStates: { ids in
+                try await schedulerStates(site: site, ids: ids, shell: shell)
             },
             localExists: { name in
                 var isDirectory: ObjCBool = false
@@ -1132,6 +1371,73 @@ extension WorkspaceRunImport {
             rebuildCatalog: {
                 try WorkspaceRunCatalog.rebuild(workspaceRoot: workspaceRoot)
             })
+    }
+
+    // MARK: The scheduler, asked directly
+
+    /// `squeue -h -u $USER -o '%i|%T'`: every live job of the login user, in
+    /// one listing. Deliberately NOT `squeue -j <ids>`: a finished id in that
+    /// list makes squeue fail with "Invalid job id specified" and print
+    /// nothing for the live ones. `$USER` is left for the far shell to
+    /// expand, the same way a declared storage root is.
+    public static func squeueArgv(site: ClusterSiteProfile) -> [String]? {
+        guard case .slurm(let slurm) = site.scheduler,
+            ClusterProvisioner.isValidSchedulerCommand(slurm.commands.query)
+        else { return nil }
+        let argv = ClusterProvisioner.sshRemoteArgv(
+            site: site,
+            remoteWords: [slurm.commands.query, "-h", "-u", "$USER", "-o", "%i|%T"])
+        return argv.isEmpty ? nil : argv
+    }
+
+    /// `sacct -n -X -P -j <ids> -o JobID,State`: one row per requested job
+    /// the accounting database knows, no steps.
+    public static func sacctArgv(site: ClusterSiteProfile, ids: [String]) -> [String]? {
+        guard case .slurm(let slurm) = site.scheduler,
+            ClusterProvisioner.isValidSchedulerCommand(slurm.commands.accounting),
+            !ids.isEmpty
+        else { return nil }
+        let argv = ClusterProvisioner.sshRemoteArgv(
+            site: site,
+            remoteWords: [
+                slurm.commands.accounting, "-n", "-X", "-P", "-j",
+                ids.joined(separator: ","), "-o", "JobID,State",
+            ])
+        return argv.isEmpty ? nil : argv
+    }
+
+    /// The live `remoteSchedulerStates` seam: the two short commands above
+    /// through the shared SSH master, read by `WorkspaceImportPolicy
+    /// .schedulerStates`. A failed `squeue` THROWS — presence in it is what
+    /// proves a job live, so a listing that did not happen must not read as
+    /// "nothing is running". A failed `sacct` leaves the ids it would have
+    /// decided unknown, which holds them.
+    static func schedulerStates(
+        site: ClusterSiteProfile, ids: [String], shell: any ClusterShellRunner
+    ) async throws -> [String: WorkspaceImportPolicy.SchedulerJobState] {
+        let requested = ids.filter { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
+        guard !requested.isEmpty else { return [:] }
+        guard let squeue = squeueArgv(site: site) else {
+            throw ExperimentError(
+                reason: "the site declares no Slurm scheduler (or no valid "
+                    + "squeue command) to ask about the jobs its receipts name")
+        }
+        let listing = await shell.run(squeue)
+        guard listing.succeeded else {
+            throw ExperimentError(
+                reason: "squeue exited \(listing.exitCode): "
+                    + listing.text.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        var sacctRows: [String] = []
+        var sacctAnswered = false
+        if let sacct = sacctArgv(site: site, ids: requested) {
+            let accounting = await shell.run(sacct)
+            sacctAnswered = accounting.succeeded
+            if accounting.succeeded { sacctRows = accounting.lines }
+        }
+        return WorkspaceImportPolicy.schedulerStates(
+            requested: requested, squeueRows: listing.lines, sacctRows: sacctRows,
+            sacctAnswered: sacctAnswered)
     }
 
     // MARK: The run root, resolved on the far side

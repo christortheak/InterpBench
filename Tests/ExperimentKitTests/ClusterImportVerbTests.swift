@@ -159,7 +159,7 @@ struct ClusterImportRunnerTests {
                         WorkspaceImportPolicy.FileStat(relativePath: "report.json", size: 8),
                     ]]
                 },
-                transfer: { _, _ in },
+                transfer: { _, _, _ in },
                 localExists: { _ in false },
                 localInventory: { _ in
                     [
@@ -209,7 +209,7 @@ struct ClusterImportRunnerTests {
                         WorkspaceImportPolicy.FileStat(relativePath: "report.json", size: 8),
                     ]]
                 },
-                transfer: { name, _ in transfers.record(name) },
+                transfer: { name, _, _ in transfers.record(name) },
                 localExists: { _ in false },
                 localInventory: { _ in [] },
                 rebuildCatalog: {
@@ -255,7 +255,7 @@ struct ClusterImportRunnerTests {
                         ],
                     ]
                 },
-                transfer: { name, _ in transfers.record(name) },
+                transfer: { name, _, _ in transfers.record(name) },
                 localExists: { _ in false },
                 localInventory: { _ in [] })
         }
@@ -291,7 +291,7 @@ struct ClusterImportRunnerTests {
             WorkspaceRunImport.Engine(
                 listRemoteDirectories: { partials },
                 remoteInventory: { _ in [:] },
-                transfer: { _, _ in Issue.record("partials must never transfer") },
+                transfer: { _, _, _ in Issue.record("partials must never transfer") },
                 localExists: { _ in false },
                 localInventory: { _ in [] })
         }
@@ -324,7 +324,7 @@ struct ClusterImportRunnerTests {
                         WorkspaceImportPolicy.FileStat(relativePath: "report.json", size: 8),
                     ]]
                 },
-                transfer: { _, _ in },
+                transfer: { _, _, _ in },
                 localExists: { _ in false },
                 localInventory: { _ in
                     [
@@ -377,7 +377,7 @@ struct ClusterImportRunnerTests {
             WorkspaceRunImport.Engine(
                 listRemoteDirectories: { [run] },
                 remoteInventory: { _ in [run: files] },
-                transfer: { name, _ in transfers.record(name) },
+                transfer: { name, _, _ in transfers.record(name) },
                 localExists: { _ in false },
                 localInventory: { _ in [] })
         }
@@ -418,8 +418,10 @@ struct ClusterImportRunnerTests {
                         ]
                     ]
                 },
-                transfer: { _, _ in Issue.record("a drifted directory must not transfer") },
-                localExists: { _ in true },
+                transfer: { _, _, _ in Issue.record("a drifted directory must not transfer") },
+                // Only the drifted run is here: a fake that claims EVERY name
+                // exists would also claim ninety-nine reimport copies.
+                localExists: { $0 == run },
                 localInventory: { _ in
                     [
                         WorkspaceImportPolicy.FileStat(relativePath: "g.jsonl", size: 2048),
@@ -429,13 +431,77 @@ struct ClusterImportRunnerTests {
         }
         defer { try? FileManager.default.removeItem(at: harness.root) }
 
+        let site = try siteID(harness)
         let outcome = await harness.runner.run(
-            ClusterCLIInvocation(verb: .importRuns, siteReference: try siteID(harness)))
+            ClusterCLIInvocation(verb: .importRuns, siteReference: site))
         #expect(outcome.envelope.state == "failed")
         #expect(outcome.exitCode == 70)
         #expect(outcome.envelope.error?.code == "importIncomplete")
         #expect(
             outcome.envelope.error?.repairAction.contains("never a re-run of this verb") == true)
+        // The repair names the exact command, with THIS site's id, that keeps
+        // the local directory and imports the cluster's copy beside it.
+        #expect(
+            outcome.envelope.error?.repairAction.contains(
+                "`steerlab-cli cluster import --site \(site) --reimport-drifted`") == true)
+        #expect(outcome.envelope.message.contains("'\(run)-reimport'"))
+        #expect(try outcome.envelope.jsonText().contains("\"driftResolved\""))
+    }
+
+    /// `--reimport-drifted` parses, is declared (so `--help` and the
+    /// reference name it), and reaches the operation: the drifted run's
+    /// cluster copy comes home as `<name>-reimport`, the envelope is
+    /// `ready`, and the copy is reported under its own key.
+    @Test func reimportDriftedBringsTheCopyHomeAndReportsIt() async throws {
+        let parsed = try ClusterCLIParser.parse(
+            ["import", "--site", "somewhere", "--reimport-drifted", "--json"])
+        #expect(parsed.verb == .importRuns)
+        #expect(parsed.reimportDrifted)
+        #expect(!ClusterCLIInvocation(verb: .importRuns).reimportDrifted)
+        #expect(ClusterCLIVerb.importRuns.declaredFlags.contains("--reimport-drifted"))
+        #expect(!ClusterCLIVerb.importRuns.takesValue("--reimport-drifted"))
+
+        let stamp = "20260819T101500123"
+        let run = "\(stamp)-exp-alpha-run"
+        let copy = "\(run)-reimport"
+        let remote = [
+            WorkspaceImportPolicy.FileStat(relativePath: "g.jsonl", size: 4096),
+            WorkspaceImportPolicy.FileStat(relativePath: "report.json", size: 8),
+        ]
+        let transfers = TransferLog()
+        let harness = try harness("reimport") { _, _ in
+            WorkspaceRunImport.Engine(
+                listRemoteDirectories: { [run] },
+                remoteInventory: { _ in [run: remote] },
+                transfer: { remoteName, localName, _ in
+                    transfers.record("\(remoteName) -> \(localName)")
+                },
+                localExists: { $0 == run },
+                localInventory: { name in
+                    name == run
+                        ? [
+                            WorkspaceImportPolicy.FileStat(relativePath: "g.jsonl", size: 2048),
+                            WorkspaceImportPolicy.FileStat(relativePath: "report.json", size: 8),
+                        ]
+                        : remote
+                })
+        }
+        defer { try? FileManager.default.removeItem(at: harness.root) }
+
+        let outcome = await harness.runner.run(
+            ClusterCLIInvocation(
+                verb: .importRuns, siteReference: try siteID(harness), reimportDrifted: true))
+        #expect(outcome.exitCode == 0)
+        #expect(outcome.envelope.state == "ready")
+        #expect(outcome.envelope.changed)
+        #expect(transfers.names == ["\(run) -> \(copy)"])
+        let summary = try #require(outcome.envelope.importSummary)
+        #expect(summary.reimported == [copy])
+        #expect(summary.imported.isEmpty)
+        #expect(summary.driftResolved.isEmpty)
+        #expect(summary.violations.isEmpty)
+        #expect(outcome.envelope.message.contains("DRIFTED — the cluster's copy imported beside it as '\(copy)'"))
+        #expect(try outcome.envelope.jsonText().contains("\"reimported\""))
     }
 
     /// A setup refusal (no ssh transport, no declared run root, a workspace
@@ -460,7 +526,7 @@ struct ClusterImportRunnerTests {
             Issue.record("the engine must not be built for an unknown site")
             return WorkspaceRunImport.Engine(
                 listRemoteDirectories: { [] }, remoteInventory: { _ in [:] },
-                transfer: { _, _ in }, localExists: { _ in false },
+                transfer: { _, _, _ in }, localExists: { _ in false },
                 localInventory: { _ in [] })
         }
         defer { try? FileManager.default.removeItem(at: harness.root) }

@@ -82,6 +82,13 @@ public struct ClusterCLIEnvelope: Encodable, Sendable, Equatable {
         /// Run directories imported (or, in a dry run, that would be).
         public var imported: [String]
         public var alreadyComplete: [String]
+        /// The `<name>-reimport` copies `--reimport-drifted` made (or, in a
+        /// dry run, would make): drifted directories whose cluster copy came
+        /// home beside the untouched local one.
+        public var reimported: [String]
+        /// Drifted directories an earlier reimport already settled — a copy
+        /// here matches the cluster, so the pair is no longer a violation.
+        public var driftResolved: [String]
         /// Run directories whose remote inventory carries records but no
         /// `report.json`: the run, or its shard merge, has not finished on the
         /// cluster. Bytes came home; nothing was certified complete.

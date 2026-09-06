@@ -982,6 +982,66 @@ def scheduler_header_facts(resources: "SlurmResources") -> SchedulerHeaderFacts:
     )
 
 
+#: Suffix of the per-job END MARKER the rendered script writes beside the
+#: scheduler's own ``slurm-<jobid>.out`` from its EXIT trap (2026-09-06). Twin
+#: literal of ``WorkspaceImportPolicy.jobEndMarkerSuffix`` on the Mac, whose
+#: ``cluster import`` reads it as the content-based proof that a submission
+#: receipt's job has ended and its stdout/stderr captures will not grow again.
+JOB_END_MARKER_SUFFIX = ".exit"
+
+
+def job_end_marker_path(bundle_dir: str, slurm_job_id: str) -> str:
+    """Where ``render_slurm_script``'s EXIT trap writes the end marker for
+    Slurm job ``slurm_job_id`` of the bundle at ``bundle_dir``."""
+    return os.path.join(bundle_dir, f"slurm-{slurm_job_id}{JOB_END_MARKER_SUFFIX}")
+
+
+def job_end_marker_lines(bundle_dir: str) -> list[str]:
+    """The script block that writes the job-end marker — rendered LAST among
+    the EXIT-trap installers, so it is the trap that actually fires.
+
+    Composition: ``node_scratch.cleanup_lines`` installs its own
+    ``trap cleanup_node_scratch EXIT`` (or none, on a site whose scheduler
+    purges scratch); this block re-traps EXIT with a function that runs that
+    cleanup first when it is defined, THEN writes the marker, and prints
+    nothing — so ``slurm-<jobid>.out`` is final by the time the marker
+    exists, and the job's recorded exit status is untouched (the function
+    never calls ``exit``; bash keeps the status the script exited with).
+
+    The marker is written only under a real Slurm job (``$SLURM_JOB_ID``
+    set), so a bundle executed by hand outside the scheduler leaves nothing
+    that could be mistaken for one. A job the scheduler kills outright — a
+    SIGKILL after the checkpoint grace period, a node failure — never runs
+    the trap and writes no marker; a reader falls back to ``squeue``/``sacct``
+    for those. The ``exec`` path (``use_srun`` off) replaces the shell and
+    fires no EXIT trap either, so it writes no marker for the same reason.
+    """
+    return [
+        "",
+        "# Job-end marker: the LAST thing this script does. From the EXIT trap,",
+        "# after node-scratch cleanup, write slurm-<jobid>.exit beside the",
+        "# scheduler's own slurm-<jobid>.out, carrying the exit status. A reader",
+        "# of this directory (the Mac's `cluster import` receipt gate) can then",
+        "# tell a finished job from one whose stdout is still being written",
+        "# without asking the scheduler. It prints nothing and never calls",
+        "# exit, so the recorded exit status stays the job's own. A job the",
+        "# scheduler kills outright writes no marker; readers ask squeue/sacct.",
+        "steerlab_job_end() {",
+        "  local status=$?",
+        f"  local marker_dir={shlex.quote(bundle_dir)}",
+        "  if declare -F cleanup_node_scratch >/dev/null 2>&1; then",
+        "    cleanup_node_scratch",
+        "  fi",
+        '  if [ -n "${SLURM_JOB_ID:-}" ]; then',
+        "    printf '%s\\n' \"${status}\" "
+        f'> "${{marker_dir}}/slurm-${{SLURM_JOB_ID}}{JOB_END_MARKER_SUFFIX}" '
+        "2>/dev/null || true",
+        "  fi",
+        "}",
+        "trap steerlab_job_end EXIT",
+    ]
+
+
 def render_slurm_script(bundle: JobBundle) -> str:
     res = bundle.resources
     facts = scheduler_header_facts(res)
@@ -1029,6 +1089,9 @@ def render_slurm_script(bundle: JobBundle) -> str:
     # silently got neither the gres request nor the trap (ledger 2026-08-23).
     from ..node_scratch import cleanup_lines
     lines.extend(cleanup_lines())
+    # The job-end marker re-traps EXIT AFTER the cleanup block, chaining to
+    # it: rendered last on purpose, because the last `trap … EXIT` wins.
+    lines.extend(job_end_marker_lines(bundle.bundle_dir))
     lines.extend([
         "",
         "# Reconstruct the runtime explicitly; --export=NONE drops login-shell state.",

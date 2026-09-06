@@ -124,6 +124,53 @@ public enum WorkspaceImportPolicy {
     /// mints one per bundle a client sends up, and the bundle lands in it.
     public static let uploadStagingDirectoryShape = "uploaded-bundle"
 
+    /// The scheduler's own stdout/stderr captures inside a submission
+    /// receipt's bundle directories — `slurm-<jobid>.out` / `.err`, named by
+    /// the engine's `#SBATCH --output=slurm-%j.out`. Their NAMES are how a
+    /// receipt names its Slurm jobs; their BYTES are what keeps growing while
+    /// a job runs. That is the 2026-09-04 defect in one line: a sharded
+    /// receipt imported while its shards ran froze 143-byte captures here
+    /// that were 14 KB on the cluster by the next import — an immutability
+    /// violation no re-import could ever clear.
+    public static let schedulerCapturePrefix = "slurm-"
+    public static let schedulerCaptureExtensions: Set<String> = ["out", "err"]
+    /// The per-job END MARKER the rendered sbatch script writes from its EXIT
+    /// trap, after everything else and printing nothing, beside the captures
+    /// it certifies: `slurm-<jobid>.exit`, carrying the exit status. Twin
+    /// literal of the engine's `JOB_END_MARKER_SUFFIX`. Its presence is the
+    /// content-based proof that job `<jobid>` has ended and its captures are
+    /// final — read off the inventory, with no scheduler round trip.
+    public static let jobEndMarkerExtension = "exit"
+
+    /// The suffix under which `cluster import --reimport-drifted` brings the
+    /// cluster's copy of a DRIFTED directory home BESIDE the local one:
+    /// `<name>-reimport`, then `<name>-reimport2`, … — the "import the remote
+    /// one under a different name" half of the immutability refusal, spelled
+    /// once. Stripped before the name grammar runs, so a copy classifies
+    /// exactly as its original (same kind, stamp, and family) and the
+    /// catalog groups the two together.
+    public static let reimportSuffix = "reimport"
+
+    /// `<name>-reimport` for ordinal 1, `<name>-reimport<N>` after that.
+    public static func reimportName(_ name: String, ordinal: Int) -> String {
+        ordinal <= 1 ? "\(name)-\(reimportSuffix)" : "\(name)-\(reimportSuffix)\(ordinal)"
+    }
+
+    /// Split a trailing `-reimport<N>?` off a name's rest. Returns the body
+    /// and the ordinal (1 for the bare suffix), or nil when there is none.
+    public static func splitReimportSuffix(
+        _ text: String
+    ) -> (body: String, ordinal: Int)? {
+        guard let marker = text.range(of: "-" + reimportSuffix, options: .backwards)
+        else { return nil }
+        let tail = text[marker.upperBound...]
+        guard tail.allSatisfy(\.isNumber) else { return nil }
+        let body = String(text[text.startIndex..<marker.lowerBound])
+        guard !body.isEmpty else { return nil }
+        let ordinal = tail.isEmpty ? 1 : (Int(tail) ?? 1)
+        return (body, ordinal)
+    }
+
     /// The final trained-adapter weight file. A submit directory containing
     /// one under `run/<name>/` is a finetune receipt whose weights the
     /// model-variant artifacts reference by workspace-relative path and the
@@ -246,10 +293,15 @@ public enum WorkspaceImportPolicy {
         public var stem: String
         public var shardIndex: Int?
         public var shardCount: Int?
+        /// Set when the name carries the `-reimport<N>` suffix: this is the
+        /// N-th copy of a drifted directory that `--reimport-drifted`
+        /// brought home beside the original. Nil for every original.
+        public var reimportOrdinal: Int?
 
         public init(
             name: String, kind: DirectoryKind, stamp: String? = nil,
-            stem: String, shardIndex: Int? = nil, shardCount: Int? = nil
+            stem: String, shardIndex: Int? = nil, shardCount: Int? = nil,
+            reimportOrdinal: Int? = nil
         ) {
             self.name = name
             self.kind = kind
@@ -257,6 +309,7 @@ public enum WorkspaceImportPolicy {
             self.stem = stem
             self.shardIndex = shardIndex
             self.shardCount = shardCount
+            self.reimportOrdinal = reimportOrdinal
         }
 
         public var isShardPartial: Bool { kind == .shardPartial }
@@ -279,6 +332,15 @@ public enum WorkspaceImportPolicy {
         let stamp = split.stamp
         var rest = split.rest
 
+        // A reimport copy is the SAME directory under another name: strip the
+        // suffix first (it is outermost), and every rule below sees the
+        // original's shape.
+        var reimportOrdinal: Int?
+        if let reimport = splitReimportSuffix(rest) {
+            reimportOrdinal = reimport.ordinal
+            rest = reimport.body
+        }
+
         var shardIndex: Int?
         var shardCount: Int?
         if let shard = splitShardSuffix(rest) {
@@ -292,19 +354,23 @@ public enum WorkspaceImportPolicy {
         // prefix; they carry no stage verb.
         for prefix in ["optvec-", "sae-feature-", "derived-"] where rest.hasPrefix(prefix) {
             return Classification(
-                name: name, kind: .vectorArtifact, stamp: stamp, stem: rest)
+                name: name, kind: .vectorArtifact, stamp: stamp, stem: rest,
+                reimportOrdinal: reimportOrdinal)
         }
         if rest.hasPrefix("jlens-support-") {
             return Classification(
-                name: name, kind: .lensSupport, stamp: stamp, stem: rest)
+                name: name, kind: .lensSupport, stamp: stamp, stem: rest,
+                reimportOrdinal: reimportOrdinal)
         }
         if rest == "session" || rest.hasPrefix("session-") {
             return Classification(
-                name: name, kind: .session, stamp: stamp, stem: rest)
+                name: name, kind: .session, stamp: stamp, stem: rest,
+                reimportOrdinal: reimportOrdinal)
         }
         if rest == uploadStagingDirectoryShape {
             return Classification(
-                name: name, kind: .uploadStaging, stamp: stamp, stem: rest)
+                name: name, kind: .uploadStaging, stamp: stamp, stem: rest,
+                reimportOrdinal: reimportOrdinal)
         }
 
         // A re-execution prefix (`resume-`, `resume2-`) is bookkeeping about
@@ -339,17 +405,20 @@ public enum WorkspaceImportPolicy {
         if isPartial {
             return Classification(
                 name: name, kind: .shardPartial, stamp: stamp, stem: stem,
-                shardIndex: shardIndex, shardCount: shardCount)
+                shardIndex: shardIndex, shardCount: shardCount,
+                reimportOrdinal: reimportOrdinal)
         }
         if origin == "submit" {
             return Classification(
-                name: name, kind: .submit, stamp: stamp, stem: stem)
+                name: name, kind: .submit, stamp: stamp, stem: stem,
+                reimportOrdinal: reimportOrdinal)
         }
         guard origin == "exp" else {
             // Stamped, but neither a declared origin nor a known prefix. The
             // conservative branch: reported, and imported anyway.
             return Classification(
-                name: name, kind: .unknown, stamp: stamp, stem: stem)
+                name: name, kind: .unknown, stamp: stamp, stem: stem,
+                reimportOrdinal: reimportOrdinal)
         }
         let kind: DirectoryKind =
             switch verb {
@@ -370,7 +439,8 @@ public enum WorkspaceImportPolicy {
             default: .run
             }
         return Classification(
-            name: name, kind: kind, stamp: stamp, stem: stem)
+            name: name, kind: kind, stamp: stamp, stem: stem,
+            reimportOrdinal: reimportOrdinal)
     }
 
     // MARK: - The per-directory decision
@@ -473,6 +543,230 @@ public enum WorkspaceImportPolicy {
             + "that died before writing its report, which no import certifies "
             + "complete."
         return text
+    }
+
+    // MARK: - The receipt gate: the Slurm jobs a directory names
+
+    /// One Slurm job a directory names, read off its remote inventory: the id
+    /// from a `slurm-<id>.out`/`.err` capture name, the bundle directory the
+    /// capture sits in, and whether the engine's end marker for it is there.
+    ///
+    /// Receipts (`submit-…`) are where these live — one bundle directory per
+    /// sbatch (`slurm/`, `slurm-shard-<k>/`, `slurm-judge-…/`,
+    /// `slurm-continuation…/`) — but the reading is by shape, so a session
+    /// receipt or an unknown directory carrying captures is gated the same
+    /// way. A stage directory carries none and is never affected.
+    public struct NamedJob: Sendable, Equatable, Hashable {
+        public var id: String
+        /// Relative to the directory (`slurm`, `slurm-shard-1`, …); empty
+        /// for a capture at the directory's root.
+        public var bundleDirectory: String
+        /// `slurm-<id>.exit` sits beside the captures: the job has ended and
+        /// its captures are final. No scheduler round trip is needed.
+        public var hasEndMarker: Bool
+        /// The capture paths, relative to the directory, sorted.
+        public var captures: [String]
+
+        public init(
+            id: String, bundleDirectory: String, hasEndMarker: Bool,
+            captures: [String]
+        ) {
+            self.id = id
+            self.bundleDirectory = bundleDirectory
+            self.hasEndMarker = hasEndMarker
+            self.captures = captures
+        }
+
+        /// The marker's path, relative to the directory.
+        public var endMarkerPath: String {
+            let file = "\(schedulerCapturePrefix)\(id).\(jobEndMarkerExtension)"
+            return bundleDirectory.isEmpty ? file : "\(bundleDirectory)/\(file)"
+        }
+    }
+
+    /// Every Slurm job the inventory names, sorted by bundle directory then
+    /// id. A job is named by its captures; a bare marker with no capture
+    /// beside it names nothing (there is nothing of it that could grow).
+    public static func namedJobs(remote: [FileStat]) -> [NamedJob] {
+        struct Key: Hashable { var directory: String; var id: String }
+        var captures: [Key: [String]] = [:]
+        var markers: Set<Key> = []
+        for stat in remote {
+            let path = stat.relativePath
+            let components = path.split(separator: "/", omittingEmptySubsequences: false)
+            guard let last = components.last else { continue }
+            let file = String(last)
+            guard file.hasPrefix(schedulerCapturePrefix) else { continue }
+            let rest = file.dropFirst(schedulerCapturePrefix.count)
+            guard let dot = rest.lastIndex(of: ".") else { continue }
+            let id = String(rest[rest.startIndex..<dot])
+            let ext = String(rest[rest.index(after: dot)...])
+            guard !id.isEmpty, id.allSatisfy(\.isNumber) else { continue }
+            let key = Key(
+                directory: components.dropLast().joined(separator: "/"), id: id)
+            if schedulerCaptureExtensions.contains(ext) {
+                captures[key, default: []].append(path)
+            } else if ext == jobEndMarkerExtension {
+                markers.insert(key)
+            }
+        }
+        return captures.keys
+            .sorted { ($0.directory, $0.id) < ($1.directory, $1.id) }
+            .map { key in
+                NamedJob(
+                    id: key.id, bundleDirectory: key.directory,
+                    hasEndMarker: markers.contains(key),
+                    captures: (captures[key] ?? []).sorted())
+            }
+    }
+
+    /// What the scheduler said about one job the gate asked about.
+    public enum SchedulerJobState: Sendable, Equatable {
+        /// `squeue` lists it, or `sacct` reports a non-terminal state: queued,
+        /// running, or completing — its captures may still grow.
+        case live(String)
+        /// `sacct` reports a terminal state; or neither query knows the id
+        /// after both answered (positive absence: nothing can be writing).
+        case ended(String)
+        /// The scheduler could not be asked, or did not answer for this id.
+        case unknown(String)
+    }
+
+    /// Terminal Slurm states, keyed on the first token (sacct decorates some:
+    /// "CANCELLED by 1234"). Mirrors the engine's own `_SLURM_STATE_MAP`:
+    /// requeue-class states (REQUEUED, PREEMPTED, RESIZING, SUSPENDED) are
+    /// still ALIVE to the scheduler and are deliberately not here.
+    public static let terminalSlurmStates: Set<String> = [
+        "COMPLETED", "CANCELLED", "FAILED", "TIMEOUT", "NODE_FAIL",
+        "OUT_OF_MEMORY", "BOOT_FAIL", "DEADLINE",
+    ]
+
+    /// Interpret the scheduler's answers for `requested` ids. `squeueRows`
+    /// are `<id>|<STATE>` for the user's live jobs; `sacctRows` are
+    /// `<JobID>|<State>` (`-n -X -P`: one row per job, no steps). Presence in
+    /// `squeue` is authoritative for LIVE; a terminal `sacct` state is ENDED;
+    /// an id neither knows is ENDED only when `sacctAnswered` — positive
+    /// absence, the same reading the engine's `poll_state_detailed` gives —
+    /// and UNKNOWN when the accounting query itself failed, because a failed
+    /// query says nothing about the job.
+    public static func schedulerStates(
+        requested: [String], squeueRows: [String], sacctRows: [String],
+        sacctAnswered: Bool
+    ) -> [String: SchedulerJobState] {
+        func fields(_ row: String) -> (id: String, state: String)? {
+            let parts = row.split(separator: "|", omittingEmptySubsequences: false)
+            guard parts.count >= 2 else { return nil }
+            let id = parts[0].trimmingCharacters(in: .whitespaces)
+            let state = parts[1].trimmingCharacters(in: .whitespaces)
+                .split(separator: " ").first.map(String.init)?.uppercased() ?? ""
+            guard !id.isEmpty, !state.isEmpty else { return nil }
+            return (id, state)
+        }
+        var states: [String: SchedulerJobState] = [:]
+        let wanted = Set(requested)
+        for row in squeueRows {
+            guard let (id, state) = fields(row), wanted.contains(id) else { continue }
+            states[id] = .live(state)
+        }
+        for row in sacctRows {
+            guard let (id, state) = fields(row), wanted.contains(id),
+                states[id] == nil
+            else { continue }
+            states[id] = terminalSlurmStates.contains(state) ? .ended(state) : .live(state)
+        }
+        for id in requested where states[id] == nil {
+            states[id] = sacctAnswered
+                ? .ended("not known to squeue or sacct")
+                : .unknown("sacct did not answer")
+        }
+        return states
+    }
+
+    /// One job the gate holds a directory back for.
+    public struct HeldJob: Sendable, Equatable {
+        public var job: NamedJob
+        /// The scheduler's word, or why it had none.
+        public var state: String
+        /// True when the state is a guess-refusal, not a live reading.
+        public var isUnknown: Bool
+
+        public init(job: NamedJob, state: String, isUnknown: Bool) {
+            self.job = job
+            self.state = state
+            self.isUnknown = isUnknown
+        }
+    }
+
+    /// The gate. A job with its end marker is settled by content and is never
+    /// looked up; every other job is held unless the scheduler said it
+    /// ENDED. `states` may lack an id (the seam answered nothing, or threw:
+    /// `failure` is that error's text) — that is UNKNOWN, and unknown holds:
+    /// the policy refuses to guess in the direction that freezes a growing
+    /// file for good.
+    public static func heldJobs(
+        _ jobs: [NamedJob], states: [String: SchedulerJobState],
+        failure: String? = nil
+    ) -> [HeldJob] {
+        jobs.compactMap { job in
+            guard !job.hasEndMarker else { return nil }
+            switch states[job.id] {
+            case .ended?: return nil
+            case .live(let state)?:
+                return HeldJob(job: job, state: state, isUnknown: false)
+            case .unknown(let why)?:
+                return HeldJob(job: job, state: why, isUnknown: true)
+            case nil:
+                return HeldJob(
+                    job: job,
+                    state: failure ?? "the scheduler was not asked",
+                    isUnknown: true)
+            }
+        }
+    }
+
+    /// Why a directory whose jobs are still alive was held back, for the
+    /// human report. Names each job, its bundle directory, and the
+    /// scheduler's word, and says what ends the hold.
+    public static func liveJobsReason(
+        directory: String, held: [HeldJob], localFiles: Int
+    ) -> String {
+        let rows = held.map { entry -> String in
+            let job = entry.job
+            let whereabouts = job.bundleDirectory.isEmpty ? "" : " (\(job.bundleDirectory)/)"
+            return entry.isUnknown
+                ? "job \(job.id)\(whereabouts): state unknown — \(entry.state)"
+                : "job \(job.id)\(whereabouts): \(entry.state)"
+        }
+        let n = held.count
+        var text =
+            "'\(directory)' names \(n) Slurm job\(n == 1 ? "" : "s") "
+            + (held.allSatisfy(\.isUnknown)
+                ? "whose state the scheduler could not report"
+                : held.contains(where: \.isUnknown)
+                    ? "not yet ended, or whose state the scheduler could not report"
+                    : "that \(n == 1 ? "has" : "have") not ended")
+            + " — " + rows.joined(separator: "; ") + " — so its slurm-<jobid>.out "
+            + "captures may still be growing: skipped, because a capture copied "
+            + "now would be frozen here as-is (the transfer fills gaps and never "
+            + "rewrites) and the finished file could never replace it. Import "
+            + "again once the job has ended — the receipt then carries "
+            + "slurm-<jobid>.exit beside the capture, or squeue/sacct report it "
+            + "finished"
+        if localFiles > 0 {
+            text +=
+                " — and note that \(localFiles) file\(localFiles == 1 ? "" : "s") "
+                + "from an earlier import already sit here; if the finished "
+                + "captures differ from them, that import will refuse the "
+                + "directory as drifted, and `--reimport-drifted` brings the "
+                + "cluster's copy home beside it"
+        }
+        if held.contains(where: \.isUnknown) {
+            text +=
+                ". An unknown state is a refusal to guess, not a verdict: if the "
+                + "shared SSH session is stale, `steerlab-cli cluster auth open "
+                + "--site <id>` and import again"
+        }
+        return text + "."
     }
 
     // MARK: - What never travels, INSIDE a directory that does
@@ -946,8 +1240,12 @@ public enum WorkspaceImportPolicy {
     }
 
     /// The refusal text for a directory whose bytes drifted (tightening 4).
+    /// `reimportCopy` is the name `--reimport-drifted` would bring the
+    /// cluster's copy home under; `driftedCopies` are earlier reimport copies
+    /// that ALSO differ from the cluster (the job kept writing after them).
     public static func immutabilityRefusal(
-        directory: String, violations: [Finding]
+        directory: String, violations: [Finding],
+        reimportCopy: String? = nil, driftedCopies: [String] = []
     ) -> String {
         let rows = violations.map { finding -> String in
             switch finding {
@@ -967,6 +1265,31 @@ public enum WorkspaceImportPolicy {
             + "hand (keep the local directory and import the remote one under "
             + "a different name, or establish which is the real run) rather "
             + "than by re-running the import."
+            + driftRepair(reimportCopy: reimportCopy, driftedCopies: driftedCopies)
+    }
+
+    /// The repair sentence the refusal ends with: the exact command that
+    /// keeps the local directory and imports the remote one beside it.
+    public static func driftRepair(
+        reimportCopy: String?, driftedCopies: [String]
+    ) -> String {
+        guard let reimportCopy else { return "" }
+        var text = ""
+        if !driftedCopies.isEmpty {
+            let n = driftedCopies.count
+            text +=
+                " \(driftedCopies.joined(separator: ", ")) \(n == 1 ? "is" : "are") "
+                + "here from an earlier --reimport-drifted and differ"
+                + "\(n == 1 ? "s" : "") from the cluster too (the job wrote more "
+                + "after that copy)."
+        }
+        text +=
+            " To keep the local directory and bring the cluster's copy home "
+            + "beside it as '\(reimportCopy)' — a new directory; nothing here is "
+            + "rewritten — run `steerlab-cli cluster import --site <id> "
+            + "--reimport-drifted`. A later import then reads the pair as "
+            + "resolved instead of as a violation."
+        return text
     }
 
     // MARK: - Authoring-locus divergence (open-issues §8 residual (a))

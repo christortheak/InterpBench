@@ -1152,7 +1152,9 @@ The cluster lifecycle has first-class verbs — prefer them to raw `ssh`:
 `steerlab-cli cluster push` (deploys the engine AND re-stamps its build
 identity — read §8.1 before you reach for it), `cluster ensure`, `cluster
 tunnel open`, `cluster remote --site <id> …`, and `cluster import --site <id>`
-(verified, never-purging run import). Site profiles live in the SteerLab
+(verified, never-purging run import: a receipt or stage still running is held
+back, and a drifted directory is never rewritten — `--reimport-drifted` brings
+the cluster's copy home beside it). Site profiles live in the SteerLab
 home's `Sites/cluster-sites/` registry — never invent one; ask the researcher
 for theirs.
 

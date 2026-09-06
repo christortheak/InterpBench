@@ -821,7 +821,8 @@ public struct ClusterCLIRunner: Sendable {
         let report = await WorkspaceRunImport.run(
             engine: engine,
             options: WorkspaceRunImport.Options(
-                since: invocation.since, dryRun: invocation.dryRun),
+                since: invocation.since, dryRun: invocation.dryRun,
+                reimportDrifted: invocation.reimportDrifted),
             emit: emit)
 
         let loud = report.hasLoudPurgeFindings || report.hasAuthoringDivergences
@@ -835,6 +836,12 @@ public struct ClusterCLIRunner: Sendable {
             changed: !invocation.dryRun && report.transferredAnything)
         envelope.importSummary = summary(of: report)
         if broken {
+            // A drift refusal's repair is spelled with THIS site's id, so the
+            // command in the envelope is the one to run, not a template.
+            let drifted = report.directories.contains {
+                if case .refusedByteDrift = $0.outcome { return true }
+                return false
+            }
             envelope.error = ClusterCLIEnvelope.Failure(
                 code: "importIncomplete",
                 reason: "\(report.violations.count) violation(s) and "
@@ -842,7 +849,13 @@ public struct ClusterCLIRunner: Sendable {
                     + "was overwritten and nothing was deleted",
                 repairAction: "read the VIOLATIONS section: a byte-drift "
                     + "refusal needs a human decision about which copy is the "
-                    + "real run, and never a re-run of this verb")
+                    + "real run, and never a re-run of this verb"
+                    + (drifted
+                        ? "; to keep the local directory and bring the cluster's "
+                            + "copy home beside it as <name>-reimport (a new "
+                            + "directory, nothing rewritten), run `steerlab-cli "
+                            + "cluster import --site \(site.id) --reimport-drifted`"
+                        : ""))
         } else if loud {
             var details: [String] = []
             if report.hasLoudPurgeFindings {
@@ -886,6 +899,11 @@ public struct ClusterCLIRunner: Sendable {
                 if case .alreadyComplete = directory.outcome { return directory.name }
                 return nil
             },
+            reimported: report.reimported.compactMap { directory in
+                if case .reimported(let copy, _, _) = directory.outcome { return copy }
+                return nil
+            },
+            driftResolved: report.driftResolved.map(\.name),
             incompleteRuns: report.incompleteRuns.map(\.name),
             skippedByPolicy: report.skippedByPolicy.map(\.name),
             skippedInProgress: report.skippedInProgress.map(\.name),

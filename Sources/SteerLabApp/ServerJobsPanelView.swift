@@ -546,7 +546,9 @@ struct ServerJobsPanelView: View {
         // Off the main actor: an import walks a remote tree and rsyncs GBs.
         let report = await Task.detached { await WorkspaceRunImport.run(engine: engine) }.value
         importDetail = WorkspaceRunImport.summaryLines(report).joined(separator: "\n")
-        let imported = report.imported.count
+        // A drifted directory's cluster copy, brought home beside it, is an
+        // import too — under its `-reimport` name.
+        let imported = report.imported.count + report.reimported.count
         var line = imported == 0
             ? "nothing new to import"
             : "imported \(imported) run director\(imported == 1 ? "y" : "ies")"

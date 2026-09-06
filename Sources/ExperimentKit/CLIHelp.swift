@@ -416,6 +416,10 @@ public enum CLIFlagVocabulary {
             "Print the classification, what would transfer, what is still in "
             + "progress, and the purge-eligibility report; transfer and write "
             + "nothing.",
+        "cluster import --reimport-drifted":
+            "For every directory refused as drifted, also bring the cluster's "
+            + "copy home beside it as <name>-reimport (a new directory; the "
+            + "local one is never rewritten).",
         "install stamp --revision":
             "Record this source revision in the stamp (the build's git SHA).",
     ]
