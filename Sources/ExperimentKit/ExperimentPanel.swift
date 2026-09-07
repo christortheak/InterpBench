@@ -1542,7 +1542,8 @@ public final class ExperimentPanel {
             // — the round trip is visible without a manual refresh.
             await pipelines.refresh(in: operationEnvironment)
         } catch {
-            results.remoteResultsStatus = "evidence import failed: \(error)"
+            results.remoteResultsStatus =
+                "evidence import failed: \(error.localizedDescription)"
         }
     }
 

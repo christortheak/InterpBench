@@ -39,16 +39,21 @@ struct SweepDoseMonotonicityView: View {
                     .foregroundStyle(color(dose))
             }
             Text(
-                "dose-monotonicity at layer L\(layer) across the sweep's "
-                    + "strength ladder, on \(metric) — a promotion-rule criterion")
+                "dose–response monotonicity at layer L\(layer) across the "
+                    + "sweep's strength ladder, on "
+                    + "\(EffectNarrative.metricPhrase(metric)) — a "
+                    + "promotion-rule criterion")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if showsChart, points.count >= 2 {
-                DoseResponseChart(series: [
-                    EffectNarrative.DoseSeries(
-                        concept: concept, layer: layer, metric: metric,
-                        points: points)
-                ])
+                DoseResponseChart(
+                    series: [
+                        EffectNarrative.DoseSeries(
+                            concept: concept, layer: layer, metric: metric,
+                            points: points)
+                    ],
+                    metricLabel: axisMetricLabel(metric))
             }
         }
     }

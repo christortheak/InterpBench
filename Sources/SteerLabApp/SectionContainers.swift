@@ -852,6 +852,10 @@ struct ResultsPanelView: View {
     @State private var filterText = ""
     @State private var runTypeFilter: String?
     @State private var selectedID: String?
+    /// Bumped by every rescan so the selected run's DETAIL pane reloads its
+    /// file list too: Refresh used to rescan the list only, leaving the open
+    /// run's files stale after an analyze or an import wrote beside it.
+    @State private var reloadToken = 0
     /// Unpaired-server workspaces (the normal CLUSTER shape: compute on
     /// the cluster, data local) get a source toggle instead of a
     /// remote-only view. LOCAL IS THE DEFAULT (field report 2026-08-03:
@@ -871,7 +875,7 @@ struct ResultsPanelView: View {
         Group {
             if service.experiments.resultsSource == .remoteServer {
                 VStack(spacing: 0) {
-                    Picker("", selection: $remoteWorkspaceSource) {
+                    Picker("Results source", selection: $remoteWorkspaceSource) {
                         ForEach(RemoteWorkspaceSource.allCases) { source in
                             Text(source.rawValue).tag(source)
                         }
@@ -891,11 +895,19 @@ struct ResultsPanelView: View {
                     }
                 }
                 .onChange(of: remoteWorkspaceSource) {
-                    // Switching to the local list retires the remote
-                    // selection so the viewer column follows the browser
-                    // the researcher is actually looking at.
-                    if remoteWorkspaceSource == .local {
+                    // The viewer column must follow the browser the
+                    // researcher is actually looking at — in BOTH
+                    // directions. Switching to the local list retires the
+                    // remote selection; switching to the server list parks
+                    // the local one (returning re-selects it from
+                    // `selectedID`, so nothing is lost) rather than leaving
+                    // a local run rendering beside a server listing.
+                    switch remoteWorkspaceSource {
+                    case .local:
                         service.experiments.results.selectedRemoteResultsRun = nil
+                    case .server:
+                        service.selectedResultsRun = nil
+                        service.experiments.results.selectedResultsFile = nil
                     }
                 }
             } else {
@@ -911,11 +923,7 @@ struct ResultsPanelView: View {
                 pairedCaptionRow
             }
             Divider()
-            if items.isEmpty {
-                emptyState
-            } else {
-                browser
-            }
+            browser
         }
         .onAppear { rescan() }
         .onChange(of: selectedID) { syncSelection() }
@@ -942,9 +950,13 @@ struct ResultsPanelView: View {
         .padding(.bottom, 6)
     }
 
+    /// TWO rows, always: title + count on the first, the controls on the
+    /// second. One row of title + caption + explorer + type picker + a
+    /// fixed 220 pt field + Refresh needs ~800 pt and hyphenated itself
+    /// ("Run directo-ries", "Typ e") at this section's 560 pt minimum.
     private var header: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("Run directories")
                     .font(.headline)
                 Text(
@@ -952,23 +964,37 @@ struct ResultsPanelView: View {
                         + "newest first")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
             }
-            Spacer()
+            headerControls
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    private var headerControls: some View {
+        HStack(spacing: 8) {
             // Workspace-level entry: the explorer's own run picker over
             // every run in the workspace — no selection required.
             ResultsExplorerButton(runName: nil)
             runTypePicker
             TextField("filter (name, type, experiment, model)", text: $filterText)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 220)
+                .frame(minWidth: 110, idealWidth: 220)
+                .help(
+                    "narrow the list to runs whose directory name, run type, "
+                        + "study, or model contains this text")
             Button {
                 rescan()
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
+            .help(
+                "rescan this workspace's runs/ directory and reload the "
+                    + "selected run's file list — runs are immutable, so "
+                    + "this only picks up newly written ones")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     /// Run types actually present in the scan (config.json runType stamps,
@@ -1003,10 +1029,19 @@ struct ResultsPanelView: View {
         }
     }
 
+    /// The split stays MOUNTED whether or not the scan found runs. A
+    /// `VSplitView` whose children carry fixed minimum heights, mounted
+    /// only once `.onAppear` has filled the list, changes this HSplitView
+    /// column's SwiftUI minimum height (0 to 340) after first layout — the
+    /// documented fatal class on this macOS beta. The empty state overlays
+    /// the list instead of replacing the split.
     private var browser: some View {
         VSplitView {
             runList
                 .frame(minHeight: 140, idealHeight: 220)
+                .overlay {
+                    if items.isEmpty { emptyState }
+                }
             detailPane
                 .frame(minHeight: 200, maxHeight: .infinity)
         }
@@ -1021,8 +1056,14 @@ struct ResultsPanelView: View {
 
     @ViewBuilder
     private var detailPane: some View {
-        if let item = selectedItem {
-            RunDetailView(service: service, item: item)
+        if items.isEmpty {
+            // Nothing to select — the overlay above already says why, and
+            // a second "Select a run" placeholder would only repeat it.
+            Color.clear
+        } else if let item = selectedItem {
+            RunDetailView(
+                service: service, item: item, reloadToken: reloadToken,
+                rescanSelecting: { name in rescanSelecting(runNamed: name) })
         } else {
             ContentUnavailableView {
                 Label("Select a run", systemImage: "cursorarrow.click")
@@ -1057,6 +1098,21 @@ struct ResultsPanelView: View {
         if let selectedID, !items.contains(where: { $0.id == selectedID }) {
             self.selectedID = nil
         }
+        reloadToken &+= 1
+        syncSelection()
+    }
+
+    /// Rescan and focus a run by directory NAME — how a finished analyze
+    /// hands the run it just wrote to the browser, instead of telling the
+    /// researcher to go and find Refresh.
+    private func rescanSelecting(runNamed name: String) {
+        items = RunBrowser.list()
+        if let match = items.first(where: { $0.name == name }) {
+            selectedID = match.id
+        } else if let selectedID, !items.contains(where: { $0.id == selectedID }) {
+            self.selectedID = nil
+        }
+        reloadToken &+= 1
         syncSelection()
     }
 
@@ -1081,6 +1137,9 @@ private struct RunDirectoryRow: View {
                     .font(.callout.monospaced())
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    // Timestamp-prefixed names lose their middle here; the
+                    // whole name has to stay reachable.
+                    .help(item.name)
                 Text(detailLine)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -1093,8 +1152,10 @@ private struct RunDirectoryRow: View {
             }
             .buttonStyle(.borderless)
             .help("reveal this run directory in Finder")
+            .accessibilityLabel("Reveal in Finder")
         }
         .padding(.vertical, 2)
+        .help("select this run to read its stamps, statistics, and files")
     }
 
     private var detailLine: String {
@@ -1117,6 +1178,12 @@ private struct RunDirectoryRow: View {
 private struct RunDetailView: View {
     @Bindable var service: ChatService
     let item: RunBrowser.Item
+    /// Bumped by the browser's Refresh (and by a finished analyze) so the
+    /// file list reloads for the SAME run — `item.id` alone never changes
+    /// when a run gains artifacts beside it.
+    let reloadToken: Int
+    /// Rescan the run list and focus the run with this directory name.
+    let rescanSelecting: (String) -> Void
     @State private var previewable: [RunBrowser.FileEntry] = []
     @State private var unpreviewed: [RunBrowser.FileEntry] = []
     /// System QuickLook target (field request 2026-08-03: a file row should
@@ -1131,7 +1198,8 @@ private struct RunDetailView: View {
                 // classification, categorical study view, analyze action,
                 // statistics tables, structured validation report — all
                 // derived read-only from the run's own artifacts.
-                RunSemanticSectionsView(service: service, item: item)
+                RunSemanticSectionsView(
+                    service: service, item: item, onAnalyzed: rescanSelecting)
                 if !previewable.isEmpty {
                     previewableFilesBox
                 }
@@ -1142,8 +1210,9 @@ private struct RunDetailView: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .onAppear { load() }
-        .onChange(of: item.id) { load() }
+        // One cancellable load per (run, refresh): `.task(id:)` retires the
+        // previous one, so a fast re-selection cannot land a stale file list.
+        .task(id: "\(item.id)#\(reloadToken)") { await load() }
         .quickLookPreview($quickLookURL)
     }
 
@@ -1176,9 +1245,12 @@ private struct RunDetailView: View {
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([item.url])
                 } label: {
-                    Label("Open in Finder", systemImage: "folder")
+                    Label("Reveal in Finder", systemImage: "folder")
                 }
                 .controlSize(.small)
+                .help(
+                    "select this run's immutable directory in Finder — the "
+                    + "run itself is never written to from here")
                 ResultsExplorerButton(runName: item.name)
             }
             Text(stampLine)
@@ -1211,26 +1283,42 @@ private struct RunDetailView: View {
         }
     }
 
-    private func load() {
-        let files = RunBrowser.files(in: item.url)
-        var shown: [RunBrowser.FileEntry] = []
-        var rest: [RunBrowser.FileEntry] = []
-        for file in files {
-            if case .unavailable = RunBrowser.preview(for: file) {
-                rest.append(file)
-            } else {
-                shown.append(file)
+    /// Split the run's files into previewable and not — by EXTENSION AND
+    /// SIZE, off the main actor. This used to call `RunBrowser.preview` on
+    /// every top-level file just to make that yes/no decision, which
+    /// whole-parses each JSON up to 1 MiB and reads 256 KiB / 128 KiB heads
+    /// per JSONL / CSV, synchronously, on selection — and then the viewer
+    /// parsed the focused file a second time. The parse now happens once,
+    /// when a file is actually previewed.
+    private func load() async {
+        let url = item.url
+        let classified = await Task.detached(priority: .userInitiated) {
+            () -> (shown: [RunBrowser.FileEntry], rest: [RunBrowser.FileEntry]) in
+            var shown: [RunBrowser.FileEntry] = []
+            var rest: [RunBrowser.FileEntry] = []
+            for file in RunBrowser.files(in: url) {
+                if RunBrowser.isPreviewable(file) {
+                    shown.append(file)
+                } else {
+                    rest.append(file)
+                }
             }
-        }
-        shown.sort { runFilePreviewPriority($0.name) < runFilePreviewPriority($1.name) }
-        previewable = shown
-        unpreviewed = rest
+            shown.sort {
+                runFilePreviewPriority($0.name) < runFilePreviewPriority($1.name)
+            }
+            return (shown, rest)
+        }.value
+        guard !Task.isCancelled else { return }
+        previewable = classified.shown
+        unpreviewed = classified.rest
         // Keep a still-valid focused file across reloads; otherwise focus the
         // top-priority file so the viewer shows content as soon as a run is
         // selected (never an empty viewer next to a populated list).
         let currentID = service.experiments.results.selectedResultsFile?.id
-        if currentID == nil || !shown.contains(where: { $0.id == currentID }) {
-            service.experiments.results.selectedResultsFile = shown.first
+        if currentID == nil
+            || !classified.shown.contains(where: { $0.id == currentID })
+        {
+            service.experiments.results.selectedResultsFile = classified.shown.first
         }
     }
 }
@@ -1267,11 +1355,14 @@ private struct SelectableRunFileRow: View {
             }
             .buttonStyle(.plain)
             .help("preview \(file.name) in the viewer pane")
+            .accessibilityAddTraits(
+                isSelected ? AccessibilityTraits.isSelected : [])
             Button(action: quickLook) {
                 Image(systemName: "eye")
             }
             .buttonStyle(.borderless)
             .help("Quick Look \(file.name)")
+            .accessibilityLabel("Quick Look")
             Button {
                 NSWorkspace.shared.open(file.url)
             } label: {
@@ -1279,6 +1370,7 @@ private struct SelectableRunFileRow: View {
             }
             .buttonStyle(.borderless)
             .help("open \(file.name) in its default app")
+            .accessibilityLabel("Open in default app")
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
@@ -1324,27 +1416,35 @@ private struct OtherFileRow: View {
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
+            // ONE icon per action across both file rows: eye = Quick Look,
+            // arrow.up.forward.square = open in the default app, folder =
+            // reveal in Finder. (This row used to draw a PENCIL on files the
+            // app declares immutable, and spend arrow.up.forward.square on
+            // the reveal the sibling row spends it on opening.)
             if !file.isDirectory, let quickLook {
                 Button(action: quickLook) {
                     Image(systemName: "eye")
                 }
                 .buttonStyle(.borderless)
                 .help("Quick Look \(file.name)")
+                .accessibilityLabel("Quick Look")
                 Button {
                     NSWorkspace.shared.open(file.url)
                 } label: {
-                    Image(systemName: "square.and.pencil")
+                    Image(systemName: "arrow.up.forward.square")
                 }
                 .buttonStyle(.borderless)
-                .help("open \(file.name) in its default app")
+                .help("open \(file.name) in its default app — the run stays immutable")
+                .accessibilityLabel("Open in default app")
             }
             Button {
                 NSWorkspace.shared.activateFileViewerSelecting([file.url])
             } label: {
-                Image(systemName: "arrow.up.forward.square")
+                Image(systemName: "folder")
             }
             .buttonStyle(.borderless)
-            .help("reveal in Finder")
+            .help("reveal \(file.name) in Finder")
+            .accessibilityLabel("Reveal in Finder")
         }
     }
 }
@@ -1358,15 +1458,28 @@ struct RunFilePreviewBox: View {
     let name: String
     let size: Int
     let preview: RunBrowser.FilePreview
+    /// Whether these bytes came from the SERVER. The truncation captions
+    /// differ: a remote preview's whole file is not on this machine, so
+    /// "open the file" names nothing a researcher can act on.
+    let isRemote: Bool
 
-    init(name: String, size: Int, preview: RunBrowser.FilePreview) {
+    init(
+        name: String, size: Int, preview: RunBrowser.FilePreview,
+        isRemote: Bool = false
+    ) {
         self.name = name
         self.size = size
         self.preview = preview
+        self.isRemote = isRemote
     }
 
-    init(file: RunBrowser.FileEntry, preview: RunBrowser.FilePreview) {
-        self.init(name: file.name, size: file.size, preview: preview)
+    init(
+        file: RunBrowser.FileEntry, preview: RunBrowser.FilePreview,
+        isRemote: Bool = false
+    ) {
+        self.init(
+            name: file.name, size: file.size, preview: preview,
+            isRemote: isRemote)
     }
 
     var body: some View {
@@ -1391,17 +1504,34 @@ struct RunFilePreviewBox: View {
         case .keyValues(let rows):
             KeyValuePreviewGrid(rows: rows)
         case .table(let header, let rows, let truncated):
-            CSVPreviewTable(header: header, rows: rows, truncated: truncated)
+            CSVPreviewTable(
+                header: header, rows: rows, truncated: truncated,
+                isRemote: isRemote)
         case .records(let records, let truncated):
-            JSONLPreviewList(records: records, truncated: truncated)
+            JSONLPreviewList(
+                records: records, truncated: truncated, isRemote: isRemote)
         case .text(let text, let truncated):
-            TextPreview(text: text, truncated: truncated)
+            TextPreview(text: text, truncated: truncated, isRemote: isRemote)
         case .unavailable(let reason):
             Text(reason)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
     }
+}
+
+/// Truncation caption for a BOUNDED preview. Preview-kind NEUTRAL, because
+/// `RunFilePreviewBox` is the one renderer for local files and for
+/// server-fetched heads alike: "open in Finder for the full file" named a
+/// file that does not exist on the remote side, and on the local side named
+/// an action (reveal) that does not open anything either.
+private func previewTruncationCaption(_ shown: String, isRemote: Bool) -> String {
+    if isRemote {
+        return "preview shows \(shown) — the full file stays on the server; "
+            + "Import Evidence to read it here"
+    }
+    return "preview shows \(shown) — Quick Look the file, or open it in its "
+        + "default app, for the whole thing"
 }
 
 private struct KeyValuePreviewGrid: View {
@@ -1419,6 +1549,9 @@ private struct KeyValuePreviewGrid: View {
                         .font(.caption)
                         .textSelection(.enabled)
                         .lineLimit(3)
+                        // Nested report.json values run past three lines
+                        // with nothing else to read them by.
+                        .help(row.value)
                 }
             }
         }
@@ -1430,6 +1563,7 @@ private struct CSVPreviewTable: View {
     let header: [String]
     let rows: [[String]]
     let truncated: Bool
+    let isRemote: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -1444,9 +1578,12 @@ private struct CSVPreviewTable: View {
                 .padding(.vertical, 2)
             }
             if truncated {
-                Text("first \(rows.count) rows — open in Finder for the full table")
+                Text(
+                    previewTruncationCaption(
+                        "the first \(rows.count) rows", isRemote: isRemote))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -1473,6 +1610,7 @@ private struct CSVPreviewTable: View {
 private struct JSONLPreviewList: View {
     let records: [RunBrowser.RecordExcerpt]
     let truncated: Bool
+    let isRemote: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1480,9 +1618,12 @@ private struct JSONLPreviewList: View {
                 recordView(record)
             }
             if truncated {
-                Text("first \(records.count) records — open in Finder for the full file")
+                Text(
+                    previewTruncationCaption(
+                        "the first \(records.count) records", isRemote: isRemote))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -1531,6 +1672,7 @@ private struct JSONLPreviewList: View {
 private struct TextPreview: View {
     let text: String
     let truncated: Bool
+    let isRemote: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -1538,9 +1680,12 @@ private struct TextPreview: View {
                 .font(.caption.monospaced())
                 .textSelection(.enabled)
             if truncated {
-                Text("head only — open in Finder for the full file")
+                Text(
+                    previewTruncationCaption(
+                        "the head of the file", isRemote: isRemote))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -1557,6 +1702,10 @@ private struct RemoteResultsBrowserView: View {
     @Bindable var service: ChatService
     @State private var filterText = ""
     @State private var runTypeFilter: String?
+    /// Bumped by Refresh so the OPEN run re-fetches its bounded previews
+    /// too — re-listing alone left the detail pane showing the previous
+    /// fetch (and the previous fetch failures).
+    @State private var reloadToken = 0
 
     private var runs: [RemoteStampedRunRecord] {
         service.experiments.results.remoteResultsRuns
@@ -1566,63 +1715,95 @@ private struct RemoteResultsBrowserView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            content
-        }
-        .task { await service.experiments.refreshRemoteResultsRuns() }
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        if runs.isEmpty {
-            emptyState
-        } else {
             browser
         }
+        .task { await service.experiments.refreshRemoteResultsRuns() }
     }
 
     private var serverLabel: String {
         service.cluster.substrateLabel
     }
 
+    /// The same two-row shape as the local header, for the same reason: one
+    /// row of title + caption + picker + a fixed 220 pt field + Refresh does
+    /// not fit this section's 560 pt minimum.
     private var header: some View {
-        HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             headerTitle
-            Spacer()
-            runTypePicker
-            TextField("filter (name, type, experiment, model)", text: $filterText)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 220)
-            refreshButton
+            headerControls
+            statusRow
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
 
     private var headerTitle: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Label("Server runs — \(serverLabel)", systemImage: "server.rack")
                 .font(.headline)
-            Text(headerCaption)
+                .lineLimit(1)
+            Text(
+                "\(filtered.count) of \(runs.count) shown · read-only, "
+                    + "newest first")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .truncationMode(.middle)
+            Spacer(minLength: 0)
         }
     }
 
-    private var headerCaption: String {
-        let counts = "\(filtered.count) of \(runs.count) shown · read-only, newest first"
-        guard let status = service.experiments.results.remoteResultsStatus else { return counts }
-        return "\(counts) · \(status)"
+    private var headerControls: some View {
+        HStack(spacing: 8) {
+            runTypePicker
+            TextField("filter (name, type, experiment, model)", text: $filterText)
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 110, idealWidth: 220)
+                .help(
+                    "narrow the list to server runs whose directory name, run "
+                        + "type, study, or model contains this text")
+            refreshButton
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// The server's own words — listing counts, transport failures,
+    /// per-file fetch failures, import progress — in a row of THEIR OWN.
+    /// They used to ride the header caption at `lineLimit(1)` +
+    /// `.truncationMode(.middle)`, which cut the reason out of the middle of
+    /// every error and made it uncopyable. The slot is always present and
+    /// always exactly two lines: a row that appeared with the error would
+    /// change this HSplitView column's minimum height on async state.
+    private var statusRow: some View {
+        let status = service.experiments.results.remoteResultsStatus
+        let failed = service.experiments.results.remoteResultsFailed
+        let text = status ?? "read-only browse of the server's immutable runs/ tree"
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(
+                systemName: failed
+                    ? "exclamationmark.triangle.fill" : "info.circle")
+                .imageScale(.small)
+                .foregroundStyle(failed ? Color.orange : Color.secondary)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(failed ? Color.orange : Color.secondary)
+                .textSelection(.enabled)
+                .lineLimit(2, reservesSpace: true)
+                .help(text)
+            Spacer(minLength: 0)
+        }
     }
 
     private var refreshButton: some View {
         Button {
+            reloadToken &+= 1
             Task { await service.experiments.refreshRemoteResultsRuns() }
         } label: {
             Label("Refresh", systemImage: "arrow.clockwise")
         }
         .disabled(service.experiments.results.isLoadingRemoteResults)
+        .help(
+            "re-list the server's runs/ tree and re-fetch the selected run's "
+                + "bounded previews — disabled while a listing is in flight")
     }
 
     /// Run types present in the remote stamps — same filter mechanics as the
@@ -1672,10 +1853,17 @@ private struct RemoteResultsBrowserView: View {
             })
     }
 
+    /// Mounted whether or not the listing has landed — see the local
+    /// browser's note: a `VSplitView` with fixed child minimums that appears
+    /// only after the `.task` fills the list moves this column's minimum
+    /// height on async state.
     private var browser: some View {
         VSplitView {
             runList
                 .frame(minHeight: 140, idealHeight: 220)
+                .overlay {
+                    if runs.isEmpty { listPlaceholder }
+                }
             detailPane
                 .frame(minHeight: 200, maxHeight: .infinity)
         }
@@ -1688,10 +1876,57 @@ private struct RemoteResultsBrowserView: View {
         }
     }
 
+    /// Three distinct states behind one empty list: still fetching, could
+    /// not ask, and genuinely nothing there. Conflated, the pane told a
+    /// connected, mid-fetch researcher to "Connect to the server", and told
+    /// one whose transport had just failed that the server "reported nothing
+    /// to browse".
+    @ViewBuilder
+    private var listPlaceholder: some View {
+        if service.experiments.results.isLoadingRemoteResults {
+            loadingState
+        } else if service.experiments.results.remoteResultsFailed {
+            failureState
+        } else {
+            emptyState
+        }
+    }
+
+    private var loadingState: some View {
+        VStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("fetching runs from \(serverLabel)…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var failureState: some View {
+        ContentUnavailableView {
+            Label(
+                "Could not list the server's runs",
+                systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        } description: {
+            Text(
+                service.experiments.results.remoteResultsStatus
+                    ?? "the server did not answer — check the connection in "
+                        + "the Compute section")
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     @ViewBuilder
     private var detailPane: some View {
-        if let run = service.experiments.results.selectedRemoteResultsRun {
-            RemoteRunDetailView(service: service, run: run)
+        if runs.isEmpty {
+            // Nothing to select — the overlay above already says why.
+            Color.clear
+        } else if let run = service.experiments.results.selectedRemoteResultsRun {
+            RemoteRunDetailView(
+                service: service, run: run, reloadToken: reloadToken)
         } else {
             ContentUnavailableView {
                 Label("Select a server run", systemImage: "cursorarrow.click")
@@ -1706,16 +1941,12 @@ private struct RemoteResultsBrowserView: View {
         ContentUnavailableView {
             Label("No server runs listed", systemImage: "archivebox")
         } description: {
-            Text(emptyDescription)
+            Text(
+                "\(serverLabel) answered with an empty runs/ tree — nothing "
+                    + "has been run there yet, or its runs have been cleaned "
+                    + "up.")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var emptyDescription: String {
-        if let status = service.experiments.results.remoteResultsStatus {
-            return "This unpaired server reported nothing to browse. \(status)"
-        }
-        return "Connect to \(serverLabel) to browse its immutable runs/ tree read-only."
     }
 }
 
@@ -1728,11 +1959,15 @@ private struct RemoteRunDirectoryRow: View {
                 .font(.callout.monospaced())
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .help(run.id)
             Text(detailLine)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
+        .help(
+            "select this server run to fetch its stamps and bounded previews "
+                + "— nothing is written, here or there")
     }
 
     private var detailLine: String {
@@ -1752,10 +1987,19 @@ private struct RemoteRunDirectoryRow: View {
 private struct RemoteRunDetailView: View {
     @Bindable var service: ChatService
     let run: RemoteStampedRunRecord
+    /// Bumped by the browser's Refresh so the OPEN run re-fetches too.
+    let reloadToken: Int
     @State private var previewed: [RemoteRunFilePreviewItem] = []
     @State private var other: [RemoteRunFileEntry] = []
+    /// Why each "other" file has no preview, keyed by name — a download
+    /// failure has to be attributable to the file it happened to.
+    @State private var otherReasons: [String: String] = [:]
     @State private var semanticModel: RunResults.Model?
     @State private var isLoading = false
+    /// Import Evidence is a download + hash verify + extract. Without this
+    /// the button stayed live throughout and a second click started a
+    /// second download into a second staging directory.
+    @State private var isImporting = false
 
     var body: some View {
         ScrollView {
@@ -1769,11 +2013,36 @@ private struct RemoteRunDetailView: View {
                     // local surfaces, absent-artifact tolerant. The analyze
                     // action lives in the stamp header (RemoteRunAnalyzeRow).
                     RunSemanticSectionsContent(model: semanticModel)
+                    // The exclusions stamp is read from a LOCAL run
+                    // directory, which a server run has none of: a study
+                    // that declared exclusion rules would otherwise show
+                    // nothing here and look as though it declared none.
+                    Text(
+                        "declared exclusion rules are read from a local run "
+                            + "directory — import this run's evidence to see "
+                            + "what the stamped rules dropped")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !previewed.isEmpty {
+                    // Local runs list their files here and render the focused
+                    // one in the VIEWER; a server run has no local file to
+                    // focus, so its previews render inline. Say which model
+                    // is in play rather than leaving two silently different
+                    // ones side by side.
+                    Text(
+                        "Bounded previews fetched from the server — a server "
+                            + "run's files render here in the browser, not in "
+                            + "the viewer pane")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 ForEach(previewed) { item in
                     RunFilePreviewBox(
                         name: item.file.name, size: item.file.size,
-                        preview: item.preview)
+                        preview: item.preview, isRemote: true)
                 }
                 if !other.isEmpty {
                     otherFilesBox
@@ -1782,7 +2051,7 @@ private struct RemoteRunDetailView: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .task(id: run.id) { await load() }
+        .task(id: "\(run.id)#\(reloadToken)") { await load() }
     }
 
     private var stampHeader: some View {
@@ -1822,17 +2091,34 @@ private struct RemoteRunDetailView: View {
     @ViewBuilder
     private var importRow: some View {
         if ExperimentPanel.evidenceBundleFileName(in: run.files) != nil {
-            HStack(spacing: 8) {
-                Button {
-                    Task { await service.experiments.importEvidence(fromServerRun: run) }
-                } label: {
-                    Label("Import Evidence", systemImage: "square.and.arrow.down")
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Button {
+                        guard !isImporting else { return }
+                        isImporting = true
+                        Task {
+                            await service.experiments.importEvidence(
+                                fromServerRun: run)
+                            isImporting = false
+                        }
+                    } label: {
+                        Label(
+                            isImporting
+                                ? "Importing Evidence…" : "Import Evidence",
+                            systemImage: "square.and.arrow.down")
+                    }
+                    .controlSize(.small)
+                    .disabled(isImporting)
+                    .help(
+                        "download this run's evidence bundle, verify its hashes, "
+                            + "and land it under this workspace's runs/ as an "
+                            + "immutable imported run")
+                    if isImporting {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    Spacer(minLength: 0)
                 }
-                .controlSize(.small)
-                .help(
-                    "download this run's evidence bundle, verify its hashes, "
-                        + "and land it under this workspace's runs/ as an "
-                        + "immutable imported run")
                 importStatusText
             }
             .padding(.top, 4)
@@ -1847,16 +2133,20 @@ private struct RemoteRunDetailView: View {
         }
     }
 
+    /// The import's own outcome, in full: a verified-hashes success line or
+    /// the refusal that stopped it. It used to be clipped to one line with
+    /// the middle elided — precisely the half of a failure that says why.
     @ViewBuilder
     private var importStatusText: some View {
         if let status = service.experiments.results.remoteResultsStatus,
             status.contains("evidence")
         {
+            let failed = status.hasPrefix("evidence import failed")
             Text(status)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+                .foregroundStyle(failed ? Color.orange : Color.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -1888,7 +2178,8 @@ private struct RemoteRunDetailView: View {
         GroupBox("Other files") {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(other) { file in
-                    RemoteOtherFileRow(file: file)
+                    RemoteOtherFileRow(
+                        file: file, reason: otherReasons[file.name])
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1899,6 +2190,7 @@ private struct RemoteRunDetailView: View {
         isLoading = true
         previewed = []
         other = []
+        otherReasons = [:]
         semanticModel = nil
         // ONE fetch pass feeds both the previews and the semantic model —
         // no double download; failures surface via remoteResultsStatus.
@@ -1907,6 +2199,7 @@ private struct RemoteRunDetailView: View {
         shown.sort { runFilePreviewPriority($0.file.name) < runFilePreviewPriority($1.file.name) }
         previewed = shown
         other = detail.other
+        otherReasons = detail.otherReasons
         semanticModel = detail.model
         isLoading = false
     }
@@ -1914,21 +2207,38 @@ private struct RemoteRunDetailView: View {
 
 private struct RemoteOtherFileRow: View {
     let file: RemoteRunFileEntry
+    /// Why there is no preview: a download failure, or a size/type refusal.
+    /// Without it a file whose fetch FAILED reads exactly like one that
+    /// simply has no renderer — and the missing semantic section above it
+    /// has no attributable cause.
+    var reason: String?
+
+    private var isFailure: Bool { reason?.hasPrefix("fetch failed") == true }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "doc")
-                .foregroundStyle(.secondary)
-                .imageScale(.small)
-            Text(file.name)
-                .font(.caption.monospaced())
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer()
-            Text(ByteCountFormatter.string(
-                fromByteCount: Int64(file.size), countStyle: .file))
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                Image(systemName: isFailure ? "exclamationmark.triangle" : "doc")
+                    .foregroundStyle(isFailure ? Color.orange : Color.secondary)
+                    .imageScale(.small)
+                Text(file.name)
+                    .font(.caption.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(file.name)
+                Spacer()
+                Text(ByteCountFormatter.string(
+                    fromByteCount: Int64(file.size), countStyle: .file))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            if let reason {
+                Text(reason)
+                    .font(.caption2)
+                    .foregroundStyle(isFailure ? Color.orange : Color.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }
